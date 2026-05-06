@@ -4,14 +4,16 @@
 //
 //	<root>/
 //	├── agents/
-//	│   └── <name>.md        ← frontmatter (type: agent, capabilities)
+//	│   └── <name>/
+//	│       └── AGENT.md     ← frontmatter (type: agent, capabilities)
 //	├── skills/
-//	│   └── <name>.md        ← frontmatter (type: skill, dependencies)
+//	│   └── <name>/
+//	│       └── SKILL.md     ← frontmatter (type: skill, dependencies)
 //	└── mcps/
 //	    └── <name>.json      ← native JSON (MCP server config)
 //
-// Agents and Skills use YAML frontmatter in markdown files.
-// MCPs use plain JSON files.
+// Agents and Skills are directories with a fixed entry file (AGENT.md / SKILL.md).
+// MCPs are plain JSON files (flat, no directory).
 //
 // Import path:
 //

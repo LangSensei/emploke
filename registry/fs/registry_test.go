@@ -16,12 +16,13 @@ func setupTestRegistry(t *testing.T) (*regfs.Registry, string) {
 	dir := t.TempDir()
 
 	// Create directory structure
-	os.MkdirAll(filepath.Join(dir, "agents"), 0755)
-	os.MkdirAll(filepath.Join(dir, "skills"), 0755)
+	os.MkdirAll(filepath.Join(dir, "agents", "researcher"), 0755)
+	os.MkdirAll(filepath.Join(dir, "skills", "xiaohongshu"), 0755)
+	os.MkdirAll(filepath.Join(dir, "skills", "planning"), 0755)
 	os.MkdirAll(filepath.Join(dir, "mcps"), 0755)
 
 	// Write a skill with dependencies
-	os.WriteFile(filepath.Join(dir, "skills", "xiaohongshu.md"), []byte(`---
+	os.WriteFile(filepath.Join(dir, "skills", "xiaohongshu", "SKILL.md"), []byte(`---
 name: xiaohongshu
 version: "1.2.0"
 type: skill
@@ -36,7 +37,7 @@ Browser automation for xiaohongshu.
 `), 0644)
 
 	// Write a skill without dependencies
-	os.WriteFile(filepath.Join(dir, "skills", "planning.md"), []byte(`---
+	os.WriteFile(filepath.Join(dir, "skills", "planning", "SKILL.md"), []byte(`---
 name: planning
 version: "1.0.0"
 type: skill
@@ -53,7 +54,7 @@ type: skill
 `), 0644)
 
 	// Write an agent
-	os.WriteFile(filepath.Join(dir, "agents", "researcher.md"), []byte(`---
+	os.WriteFile(filepath.Join(dir, "agents", "researcher", "AGENT.md"), []byte(`---
 name: researcher
 version: "1.0.0"
 type: agent
@@ -169,7 +170,8 @@ func TestMissing(t *testing.T) {
 	ctx := context.Background()
 
 	// Create agent referencing non-existent capability
-	os.WriteFile(filepath.Join(dir, "agents", "broken.md"), []byte(`---
+	os.MkdirAll(filepath.Join(dir, "agents", "broken"), 0755)
+	os.WriteFile(filepath.Join(dir, "agents", "broken", "AGENT.md"), []byte(`---
 name: broken
 version: "1.0.0"
 type: agent

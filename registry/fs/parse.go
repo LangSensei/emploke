@@ -252,3 +252,21 @@ func listDir(dir, ext string) ([]string, error) {
 	return names, nil
 }
 
+// listSubdirs returns subdirectory names in a directory.
+func listSubdirs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+

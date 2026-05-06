@@ -27,7 +27,7 @@ func New(root string) (*Registry, error) {
 // --- AgentRegistry ---
 
 func (r *Registry) GetAgent(_ context.Context, name string) (kernel.Agent, error) {
-	path := filepath.Join(r.root, "agents", name+".md")
+	path := filepath.Join(r.root, "agents", name, "AGENT.md")
 	fm, _, err := parseFrontmatter(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -39,13 +39,13 @@ func (r *Registry) GetAgent(_ context.Context, name string) (kernel.Agent, error
 }
 
 func (r *Registry) ListAgents(_ context.Context) ([]kernel.Agent, error) {
-	names, err := listDir(filepath.Join(r.root, "agents"), ".md")
+	names, err := listSubdirs(filepath.Join(r.root, "agents"))
 	if err != nil {
 		return nil, fmt.Errorf("fs: list agents: %w", err)
 	}
 	var agents []kernel.Agent
 	for _, name := range names {
-		path := filepath.Join(r.root, "agents", name+".md")
+		path := filepath.Join(r.root, "agents", name, "AGENT.md")
 		fm, _, err := parseFrontmatter(path)
 		if err != nil {
 			continue
@@ -66,13 +66,13 @@ func (r *Registry) RegisterAgent(_ context.Context, agent kernel.Agent) error {
 		},
 	}
 	body := metaString(agent.Metadata, "body")
-	path := filepath.Join(r.root, "agents", agent.Name+".md")
+	path := filepath.Join(r.root, "agents", agent.Name, "AGENT.md")
 	return writeFrontmatter(path, fm, body)
 }
 
 func (r *Registry) RemoveAgent(_ context.Context, name string) error {
-	path := filepath.Join(r.root, "agents", name+".md")
-	err := os.Remove(path)
+	dir := filepath.Join(r.root, "agents", name)
+	err := os.RemoveAll(dir)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -83,7 +83,7 @@ func (r *Registry) RemoveAgent(_ context.Context, name string) error {
 
 func (r *Registry) GetCapability(_ context.Context, name string) (kernel.Capability, error) {
 	// Try skill first
-	path := filepath.Join(r.root, "skills", name+".md")
+	path := filepath.Join(r.root, "skills", name, "SKILL.md")
 	if _, err := os.Stat(path); err == nil {
 		fm, body, err := parseFrontmatter(path)
 		if err != nil {
@@ -108,12 +108,12 @@ func (r *Registry) ListCapabilities(_ context.Context) ([]kernel.Capability, err
 	var caps []kernel.Capability
 
 	// Skills
-	skills, err := listDir(filepath.Join(r.root, "skills"), ".md")
+	skills, err := listSubdirs(filepath.Join(r.root, "skills"))
 	if err != nil {
 		return nil, fmt.Errorf("fs: list skills: %w", err)
 	}
 	for _, name := range skills {
-		path := filepath.Join(r.root, "skills", name+".md")
+		path := filepath.Join(r.root, "skills", name, "SKILL.md")
 		fm, body, err := parseFrontmatter(path)
 		if err != nil {
 			continue
@@ -163,19 +163,19 @@ func (r *Registry) RegisterCapability(_ context.Context, cap kernel.Capability) 
 			fm.Dependencies = &depsBlock{Skills: nil, MCPs: mcps}
 		}
 		body := metaString(cap.Metadata, "body")
-		path := filepath.Join(r.root, "skills", cap.Name+".md")
+		path := filepath.Join(r.root, "skills", cap.Name, "SKILL.md")
 		return writeFrontmatter(path, fm, body)
 	}
 }
 
 func (r *Registry) RemoveCapability(_ context.Context, name string) error {
-	// Try skill
-	path := filepath.Join(r.root, "skills", name+".md")
-	if err := os.Remove(path); err == nil {
-		return nil
+	// Try skill directory
+	dir := filepath.Join(r.root, "skills", name)
+	if _, err := os.Stat(dir); err == nil {
+		return os.RemoveAll(dir)
 	}
 	// Try MCP
-	path = filepath.Join(r.root, "mcps", name+".json")
+	path := filepath.Join(r.root, "mcps", name+".json")
 	err := os.Remove(path)
 	if os.IsNotExist(err) {
 		return nil
