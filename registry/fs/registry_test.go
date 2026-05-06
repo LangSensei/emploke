@@ -2,6 +2,7 @@ package fs_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -564,5 +565,83 @@ type: skill
 	}
 	if len(caps) != 3 {
 		t.Fatalf("expected 3, got %d", len(caps))
+	}
+}
+
+func TestProvision(t *testing.T) {
+	reg, dir := setupTestRegistry(t)
+	ctx := context.Background()
+
+	// Add a sub-skill file to xiaohongshu directory
+	os.WriteFile(filepath.Join(dir, "skills", "xiaohongshu", "helpers.md"), []byte("# Helpers\n"), 0644)
+
+	agent, err := reg.GetAgent(ctx, "researcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetDir := t.TempDir()
+	if err := reg.Provision(ctx, agent, targetDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check skills were copied
+	skillDir := filepath.Join(targetDir, ".github", "skills", "xiaohongshu")
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatalf("expected SKILL.md in provisioned skill dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "helpers.md")); err != nil {
+		t.Fatalf("expected helpers.md in provisioned skill dir: %v", err)
+	}
+
+	// planning is a transitive dep, should also be copied
+	planningDir := filepath.Join(targetDir, ".github", "skills", "planning")
+	if _, err := os.Stat(filepath.Join(planningDir, "SKILL.md")); err != nil {
+		t.Fatalf("expected planning SKILL.md (transitive dep): %v", err)
+	}
+
+	// Check .mcp.json was written
+	mcpPath := filepath.Join(targetDir, ".mcp.json")
+	data, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("expected .mcp.json: %v", err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("invalid .mcp.json: %v", err)
+	}
+	servers, ok := config["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected mcpServers key")
+	}
+	if _, ok := servers["playwright"]; !ok {
+		t.Fatal("expected playwright in mcpServers")
+	}
+}
+
+func TestProvision_NoCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := regfs.New(dir)
+	ctx := context.Background()
+
+	// Agent with no capabilities
+	os.MkdirAll(filepath.Join(dir, "agents", "empty-agent"), 0755)
+	os.WriteFile(filepath.Join(dir, "agents", "empty-agent", "AGENT.md"), []byte(`---
+name: empty-agent
+version: "1.0.0"
+type: agent
+---
+`), 0644)
+
+	agent, _ := reg.GetAgent(ctx, "empty-agent")
+	targetDir := t.TempDir()
+
+	if err := reg.Provision(ctx, agent, targetDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// No .mcp.json should be written
+	if _, err := os.Stat(filepath.Join(targetDir, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatal("expected no .mcp.json for agent with no capabilities")
 	}
 }

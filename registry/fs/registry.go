@@ -405,5 +405,6 @@ var _ registry.AgentRegistry = (*Registry)(nil)
 var _ registry.CapabilityRegistry = (*Registry)(nil)
 var _ registry.Resolver = (*Registry)(nil)
 var _ registry.Registry = (*Registry)(nil)
+var _ registry.Provisioner = (*Registry)(nil)
 
 // unexported helpers to avoid unused import
