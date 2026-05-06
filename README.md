@@ -1,10 +1,10 @@
-# emploke
+# Emploke
 
 > *From εμπλοκή (emplokí) — entanglement.*
 >
 > Layer 1 axiom kernel for agentic systems — pure data types, pure transition function, zero implementations.
 
-emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Query` for reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
+Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Query` for reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
 
 ## Repository layout
 

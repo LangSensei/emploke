@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>emploke — A Minimal Kernel for Agentic Systems · 面向智能体系统的极简内核</title>
+<title>Emploke — A Minimal Kernel for Agentic Systems · 面向智能体系统的极简内核</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <style>
@@ -462,7 +462,7 @@
 
 <aside class="sidebar">
   <div class="brand">
-    <div class="brand-name">emploke</div>
+    <div class="brand-name">Emploke</div>
     <div class="brand-sub">
       <span data-lang="en">Design Book · Layer 1</span>
       <span data-lang="zh">设计文档 · Layer 1</span>
@@ -527,7 +527,7 @@
     <span data-lang="en">Design Book</span>
     <span data-lang="zh">设计文档</span>
   </div>
-  <h1>emploke</h1>
+  <h1>Emploke</h1>
   <p class="subtitle">
     <span data-lang="en">A Minimal Kernel for Agentic Systems</span>
     <span data-lang="zh">面向智能体系统的极简内核</span>
@@ -542,10 +542,10 @@
   </div>
 
   <div data-lang="en" class="abstract">
-    emploke is the bedrock of an agentic system. It defines what an agent is, what a task is, where things execute, and what can be loaded — and nothing else. No graph. No scheduler. No vocabulary. No persistence. This book is a complete account of Layer 1.
+    Emploke is the bedrock of an agentic system. It defines what an agent is, what a task is, where things execute, and what can be loaded — and nothing else. No graph. No scheduler. No vocabulary. No persistence. This book is a complete account of Layer 1.
   </div>
   <div data-lang="zh" class="abstract">
-    emploke 是智能体系统的基石。它定义了什么是 Agent、什么是 Task、在哪里执行、可加载什么——仅此而已。没有图（graph），没有调度器，没有词汇表，没有持久化。本书是 Layer 1 的完整阐述。
+    Emploke 是智能体系统的基石。它定义了什么是 Agent、什么是 Task、在哪里执行、可加载什么——仅此而已。没有图（graph），没有调度器，没有词汇表，没有持久化。本书是 Layer 1 的完整阐述。
   </div>
 
   <p class="reading-guide" data-lang="en">
@@ -574,21 +574,21 @@
   <div data-lang="en">
     <p>This book defines <strong>Layer 1 only</strong>. Everything else — orchestration, persistence implementations, role vocabularies, UI conventions — lives above. We do not refer to those layers by name in this book. Where we must point upward, we say "the layer above the kernel".</p>
 
-    <p>The reader we have in mind is a developer building on top of emploke, an architect designing a sibling product on the same kernel, or a reviewer asking "did they get the fundamentals right?". For the first reader, the concept chapters in Part II are the contract. For the second, Part III's invariants and Appendix C's design decisions matter most. For the third, this whole book is a self-justification.</p>
+    <p>The reader we have in mind is a developer building on top of Emploke, an architect designing a sibling product on the same kernel, or a reviewer asking "did they get the fundamentals right?". For the first reader, the concept chapters in Part II are the contract. For the second, Part III's invariants and Appendix C's design decisions matter most. For the third, this whole book is a self-justification.</p>
 
     <p>We use a mixed voice throughout. <em>Definitions and invariants are stated declaratively</em> — "Capability is a name", "Task is the only Aggregate Root" — because they are commitments, not opinions. <em>Rationale is stated as "we"</em> — "we kept it that small because" — because it is choice, and choice has authors.</p>
 
-    <p>The single takeaway from this foreword: <strong>emploke is a self-contained, theme-neutral kernel with four axioms, two invariants, and two interfaces (Runtime + Query).</strong> Everything in this book justifies that sentence.</p>
+    <p>The single takeaway from this foreword: <strong>Emploke is a self-contained, theme-neutral kernel with four axioms, two invariants, and two interfaces (Runtime + Query).</strong> Everything in this book justifies that sentence.</p>
   </div>
 
   <div data-lang="zh">
     <p>本书只定义 <strong>Layer 1</strong>。所有其他内容——编排、持久化实现、角色词汇、UI 约定——都在内核之上。书中不点名引用那些上层。当必须向上指代时，我们说"内核之上的层"。</p>
 
-    <p>本书的目标读者有三类：在 emploke 之上构建产品的开发者；基于同一内核设计兄弟产品的架构师；以及审视"基础是否扎实"的评审者。第一类读者，第二部分的概念章节就是契约；第二类读者，第三部分的不变量与附录 C 的设计决策最为关键；第三类读者，整本书都是一次自我论证。</p>
+    <p>本书的目标读者有三类：在 Emploke 之上构建产品的开发者；基于同一内核设计兄弟产品的架构师；以及审视"基础是否扎实"的评审者。第一类读者，第二部分的概念章节就是契约；第二类读者，第三部分的不变量与附录 C 的设计决策最为关键；第三类读者，整本书都是一次自我论证。</p>
 
     <p>全书使用混合语气。<em>定义与不变量采用陈述式</em>——"Capability 就是一个 name"、"Task 是唯一的 Aggregate Root"——因为它们是承诺，而非观点。<em>论证与权衡采用"我们"</em>——"我们之所以把它压缩到这么小是因为……"——因为这是选择，而选择有作者。</p>
 
-    <p>本前言的唯一要点：<strong>emploke 是一个自洽、主题中立的内核，包含 4 条公理、2 条不变量、以及 2 个接口（Runtime + Query）。</strong>本书余下的全部内容，都是在论证这一句话。</p>
+    <p>本前言的唯一要点：<strong>Emploke 是一个自洽、主题中立的内核，包含 4 条公理、2 条不变量、以及 2 个接口（Runtime + Query）。</strong>本书余下的全部内容，都是在论证这一句话。</p>
   </div>
 </section>
 
@@ -617,7 +617,7 @@
       <li><strong>Where does work execute?</strong></li>
       <li><strong>What can be loaded into the system?</strong></li>
     </ol>
-    <p>emploke is that small, stable answer. It is the <strong>Layer 1</strong> of the architecture: a microkernel in the literal sense — the smallest set of concepts that <em>any</em> agentic product can reuse, regardless of what kind of work it does.</p>
+    <p>Emploke is that small, stable answer. It is the <strong>Layer 1</strong> of the architecture: a microkernel in the literal sense — the smallest set of concepts that <em>any</em> agentic product can reuse, regardless of what kind of work it does.</p>
 
     <p>Every higher layer (orchestration, role definitions, persistence implementations, UIs) is built <strong>on top of</strong> these four concepts. The kernel itself does not know they exist.</p>
 
@@ -638,7 +638,7 @@
       <li><strong>工作在哪里执行？</strong></li>
       <li><strong>什么可以被加载进系统？</strong></li>
     </ol>
-    <p>emploke 就是这个稳定的小答案。它是整个架构的 <strong>Layer 1</strong>：字面意义上的微内核——所有智能体产品都能复用的最小概念集合，无论这些产品具体做什么样的工作。</p>
+    <p>Emploke 就是这个稳定的小答案。它是整个架构的 <strong>Layer 1</strong>：字面意义上的微内核——所有智能体产品都能复用的最小概念集合，无论这些产品具体做什么样的工作。</p>
 
     <p>所有更高的层（编排、角色定义、持久化实现、各种 UI）都建立在这四个概念<strong>之上</strong>。内核自己并不知道它们的存在。</p>
 
@@ -653,7 +653,7 @@
 
   <div class="mermaid" data-lang="en">
 graph TB
-  subgraph Kernel["emploke · Layer 1"]
+  subgraph Kernel["Emploke · Layer 1"]
     direction TB
     subgraph Catalog["Catalog · Loadable"]
       C[Capability<br/>name only — opaque]
@@ -674,7 +674,7 @@ graph TB
   </div>
   <div class="mermaid" data-lang="zh">
 graph TB
-  subgraph Kernel["emploke · Layer 1"]
+  subgraph Kernel["Emploke · Layer 1"]
     direction TB
     subgraph Catalog["Catalog · 可加载"]
       C[Capability<br/>仅 name — 不透明]
@@ -1024,7 +1024,7 @@ graph TB
 
     <h2>Why Capability is an axiom even though it is structurally trivial</h2>
     <ul>
-      <li><strong>Semantic anchor</strong> — every product on emploke agrees that the loadable units of an Agent are called Capabilities; the kernel is the registrar of that agreement.</li>
+      <li><strong>Semantic anchor</strong> — every product on Emploke agrees that the loadable units of an Agent are called Capabilities; the kernel is the registrar of that agreement.</li>
       <li><strong>Evolution-safe</strong> — future kernel interfaces (e.g. <code>deployAgent</code> / <code>deployCapability</code>) need a typed handle for capability-shaped arguments. Naming the concept <code>Capability</code> lets us add optional fields later without breaking consumers.</li>
       <li><strong>Documentation anchor</strong> — gives "what loaders must be able to resolve" a single home.</li>
       <li><strong>Cross-product API</strong> — interface signatures use <code>Capability</code> instead of bare <code>string</code>, making contracts self-describing.</li>
@@ -1058,7 +1058,7 @@ graph TB
 
     <h2>为什么 Capability 即使结构平凡也要作为公理</h2>
     <ul>
-      <li><strong>语义锚点</strong>——所有基于 emploke 的产品都同意"Agent 的可加载单元叫 Capability"；kernel 是这一约定的注册中心。</li>
+      <li><strong>语义锚点</strong>——所有基于 Emploke 的产品都同意"Agent 的可加载单元叫 Capability"；kernel 是这一约定的注册中心。</li>
       <li><strong>Evolution-safe</strong>——未来的 kernel 接口（如 <code>deployAgent</code> / <code>deployCapability</code>）需要 capability-shaped 参数的类型化句柄；以 <code>Capability</code> 作为命名概念，可以在不破坏 consumer 的前提下追加可选字段。</li>
       <li><strong>文档锚点</strong>——给"loader 必须能解析什么"一个单一去处。</li>
       <li><strong>跨产品 API</strong>——接口签名用 <code>Capability</code> 而非裸 <code>string</code>，使契约自描述。</li>
@@ -1703,10 +1703,10 @@ interface Runtime {
     <h2>Invariant 2 — Architectural Equivalence</h2>
     <p>This invariant is what makes the kernel a <em>kernel</em>, not a particular product's foundation:</p>
     <div class="callout">
-      <strong>Architectural Equivalence</strong> — Two completely different agentic products, with different methodologies, vocabularies, runtime substrates, and persistence backends, can be built on top of the same emploke. The kernel does not encode anything that distinguishes one product from another.
+      <strong>Architectural Equivalence</strong> — Two completely different agentic products, with different methodologies, vocabularies, runtime substrates, and persistence backends, can be built on top of the same Emploke. The kernel does not encode anything that distinguishes one product from another.
     </div>
     <p>This invariant is what we mean by "theme-neutral". It is also what every chapter of Part I (Boundaries, Conventions, the "is it kernel?" rule) was preparing you to enforce.</p>
-    <p>An implementation of emploke that ships with built-in roles, built-in runtime kinds, or built-in persistence is, by this invariant, not an implementation of emploke — it is a product on top of one.</p>
+    <p>An implementation of Emploke that ships with built-in roles, built-in runtime kinds, or built-in persistence is, by this invariant, not an implementation of Emploke — it is a product on top of one.</p>
 
     <h2>Why exactly two invariants</h2>
     <p>Every additional invariant in a kernel is a constraint that all consumers must accept. Two felt like the floor: anything fewer and the kernel would not be useful (concurrency would be undefined; portability would be unstated). Anything more and the kernel would start dictating product choices.</p>
@@ -1764,10 +1764,10 @@ interface Runtime {
     <h2>不变量 2 — 架构等价性</h2>
     <p>这一条是让内核成为<em>内核</em>而不是某个具体产品根基的关键：</p>
     <div class="callout">
-      <strong>架构等价性</strong>——两个完全不同的智能体产品，使用不同的方法论、不同的词汇、不同的 runtime 基底、不同的持久化后端，都可以建立在同一个 emploke 之上。内核不编码任何能区分一个产品与另一个产品的东西。
+      <strong>架构等价性</strong>——两个完全不同的智能体产品，使用不同的方法论、不同的词汇、不同的 runtime 基底、不同的持久化后端，都可以建立在同一个 Emploke 之上。内核不编码任何能区分一个产品与另一个产品的东西。
     </div>
     <p>这就是我们说的"主题中立"。也是第一部分每一章（边界、约定、"它属于内核吗？"法则）所做铺垫的目的——让你能去执行这一条。</p>
-    <p>一个出厂自带角色、自带 runtime 种类或自带持久化的 emploke 实现，按这一不变量来说，并不是 emploke 的实现——而是建在它之上的某个产品。</p>
+    <p>一个出厂自带角色、自带 runtime 种类或自带持久化的 Emploke 实现，按这一不变量来说，并不是 emploke 的实现——而是建在它之上的某个产品。</p>
 
     <h2>为什么恰好是两条不变量</h2>
     <p>内核中的每一条额外不变量都是所有消费者必须接受的约束。两条像是底线：再少，内核就不够有用（并发未定义、可移植性未声明）；再多，内核就开始替产品做选择了。</p>
@@ -1791,7 +1791,7 @@ interface Runtime {
 
   <div data-lang="en">
     <dl>
-      <dt>emploke</dt>
+      <dt>Emploke</dt>
       <dd>The Layer 1 microkernel defined by this book: 4 axioms, 2 invariants, 2 interfaces (Runtime + Query).</dd>
 
       <dt>Layer 1</dt>
@@ -1864,7 +1864,7 @@ interface Runtime {
 
   <div data-lang="zh">
     <dl>
-      <dt>emploke</dt>
+      <dt>Emploke</dt>
       <dd>本书所定义的 Layer 1 微内核：4 公理、2 不变量、2 接口（Runtime + Query）。</dd>
 
       <dt>Layer 1</dt>
@@ -1972,7 +1972,7 @@ interface Runtime {
     <p>Higher layers are free to introduce additional vocabulary (for roles, workflows, methodologies). Those vocabularies must not <em>replace</em> the kernel terms; they layer above them.</p>
 
     <h2>Bounded context</h2>
-    <p>"emploke" is the bounded context for Layer 1. The two sub-contexts (Catalog, Execution) are <em>inside</em> that single context, not outside it. This is why an implementation may freely place all four concepts in one module — the boundaries are conceptual, not deployment.</p>
+    <p>"Emploke" is the bounded context for Layer 1. The two sub-contexts (Catalog, Execution) are <em>inside</em> that single context, not outside it. This is why an implementation may freely place all four concepts in one module — the boundaries are conceptual, not deployment.</p>
 
     <h2>What is deliberately absent from the DDD picture</h2>
     <p>The kernel has no Repositories, no Domain Events, no Application Services, no Factories at the kernel level. Every one of these patterns is a fine choice <em>above</em> the kernel, but each would impose a particular implementation style on every consumer. We left them out for the same reason we left out tools, persistence, and orchestration: optionality.</p>
@@ -1999,7 +1999,7 @@ interface Runtime {
     <p>更高的层可以自由引入额外词汇（用于角色、workflow、方法论）。这些词汇不得<em>替换</em>内核术语，而是在其之上叠加。</p>
 
     <h2>限界上下文</h2>
-    <p>"emploke" 是 Layer 1 的限界上下文。两个子上下文（Catalog、Execution）位于这个单一上下文之<em>内</em>，而不是之外。这就是为什么具体实现可以把四个概念都放进同一个模块——边界是概念性的，不是部署性的。</p>
+    <p>"Emploke" 是 Layer 1 的限界上下文。两个子上下文（Catalog、Execution）位于这个单一上下文之<em>内</em>，而不是之外。这就是为什么具体实现可以把四个概念都放进同一个模块——边界是概念性的，不是部署性的。</p>
 
     <h2>DDD 图景中刻意缺席的东西</h2>
     <p>内核里没有 Repository，没有 Domain Event，没有 Application Service，内核层面也没有 Factory。这些模式中的每一个，<em>在内核之上</em>都是不错的选择，但任何一个都会把某种特定的实现风格强加给所有消费者。我们把它们排除在外，原因和把工具、持久化、编排排除在外是一样的：可选性。</p>
@@ -2189,8 +2189,8 @@ interface Runtime {
 </section>
 
 <div class="book-footer">
-  <span data-lang="en">emploke · Design Book · Layer 1 — A Self-Contained Kernel</span>
-  <span data-lang="zh">emploke · 设计文档 · Layer 1 — 一个自洽的内核</span>
+  <span data-lang="en">Emploke · Design Book · Layer 1 — A Self-Contained Kernel</span>
+  <span data-lang="zh">Emploke · 设计文档 · Layer 1 — 一个自洽的内核</span>
 </div>
 
 </main>
