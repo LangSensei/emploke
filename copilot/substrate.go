@@ -18,6 +18,6 @@ type Config struct {
 
 	// BaseDir is the root directory for provisioned workspaces.
 	// Each task gets a subdirectory named by its TaskID.
-	// Defaults to ~/.emploke/tasks if empty.
+	// Defaults to ~/.copilot/tasks if empty.
 	BaseDir string
 }

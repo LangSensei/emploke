@@ -24,7 +24,7 @@ func NewRuntime(cfg Config) *Runtime {
 	baseDir := cfg.BaseDir
 	if baseDir == "" {
 		home, _ := os.UserHomeDir()
-		baseDir = filepath.Join(home, ".emploke", "tasks")
+		baseDir = filepath.Join(home, ".copilot", "tasks")
 	}
 	return &Runtime{
 		repo:     cfg.Repo,
