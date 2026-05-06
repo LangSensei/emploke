@@ -24,7 +24,7 @@ jobs:
           go-version: '1.24'
 
       - name: Check formatting
-        run: test -z "$(gofmt -l kernel conformance/kernel registry copilot)"
+        run: test -z "$(gofmt -l kernel conformance/kernel registry registry/fs copilot)"
 
       - name: Build & Test
         run: go test ./kernel/... ./conformance/kernel/... && go build ./registry/... ./copilot/...

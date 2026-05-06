@@ -11,11 +11,11 @@ import (
 
 // frontmatter represents parsed YAML frontmatter from a .md file.
 type frontmatter struct {
-	Name         string       `json:"name"`
-	Version      string       `json:"version"`
-	Type         string       `json:"type"` // "agent" or "skill"
-	Capabilities *depsBlock   `json:"capabilities,omitempty"`
-	Dependencies *depsBlock   `json:"dependencies,omitempty"`
+	Name         string     `json:"name"`
+	Version      string     `json:"version"`
+	Type         string     `json:"type"` // "agent" or "skill"
+	Capabilities *depsBlock `json:"capabilities,omitempty"`
+	Dependencies *depsBlock `json:"dependencies,omitempty"`
 }
 
 // depsBlock represents capabilities (on Agent) or dependencies (on Skill).
@@ -269,4 +269,3 @@ func listSubdirs(dir string) ([]string, error) {
 	}
 	return names, nil
 }
-
