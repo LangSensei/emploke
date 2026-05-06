@@ -1,11 +1,11 @@
-// Package inmemory is the AgenticKernel reference Runtime + Query implementation.
+// Package kerneltest is the emploke reference Runtime + Query implementation.
 //
 // It tracks Tasks in a process-local map and delegates all state transitions
 // to kernel.Apply. It performs no real work: a dispatched Task stays running
 // until something explicitly completes or fails it via the Runtime's
 // Complete and Fail methods.
 //
-// inmemory passes the AgenticKernel conformance suite.
+// kerneltest passes the emploke conformance suite.
 package kerneltest // import "github.com/LangSensei/emploke/conformance/kernel"
 
 import (

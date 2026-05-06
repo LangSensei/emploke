@@ -1,19 +1,18 @@
 # emploke
 
-*From εμπλοκή (emplokí) — entanglement.*
+> *From εμπλοκή (emplokí) — entanglement.*
+>
+> Layer 1 axiom kernel for agentic systems — pure data types, pure transition function, zero implementations.
 
-An agentic framework for building multi-agent systems with pluggable runtime substrates.
+emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Query` for reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
 
-## Structure
+## Repository layout
 
-```
-emploke/
-├── kernel/               ← Core types, interfaces, Apply (zero dependencies)
-├── conformance/
-│   └── kernel/           ← Contract tests + reference implementation
-├── docs/                 ← Design book
-└── go.work
-```
+| Path | Module | Purpose |
+|------|--------|---------|
+| `/kernel` | `github.com/LangSensei/emploke/kernel` | Kernel — Task aggregate, Apply transition function, Runtime/Query interfaces, value objects |
+| `/conformance/kernel` | `github.com/LangSensei/emploke/conformance/kernel` | Contract tests + reference implementation — every Runtime+Query impl runs this suite |
+| `/docs` | — | Architectural design book (see [Design book](#design-book)) |
 
 ### Dependency graph
 
@@ -23,42 +22,117 @@ copilot (future)   ──→ kernel
 registry (future)  ──→ kernel
 ```
 
-## Kernel
-
-The kernel defines four axioms (Capability, Agent, Task, Runtime), two invariants, and two interfaces (Runtime + Query).
-
-- **Task** — a pure value type with a six-state machine (`not_started → running → paused → success/failure/cancelled`)
-- **Apply** — a pure function: `Apply(task, event) → (task, error)`. No I/O, no locks, no time calls.
-- **Runtime** — command interface with six verbs: `Dispatch`, `Pause`, `Resume`, `Kill`, `Complete`, `Fail`
-- **Query** — read interface: `Get(id)`, `List(filter...State)`
-
-```go
-import "github.com/LangSensei/emploke/kernel"
-
-task := kernel.New("t1", "my-agent", "copilot", "analyze this code")
-task, err := kernel.Apply(task, kernel.Dispatched{At: time.Now()})
-```
-
-## Conformance
-
-Substrate authors verify their implementation against the contract:
+## Quick start
 
 ```go
 import (
+    "context"
+
+    "github.com/LangSensei/emploke/kernel"
+    kerneltest "github.com/LangSensei/emploke/conformance/kernel"
+)
+
+func main() {
+    ctx := context.Background()
+    rt, q := kerneltest.New()
+
+    task := kernel.New("t1", "agent-1", "inmemory", "do the thing")
+
+    if err := rt.Dispatch(ctx, task); err != nil { /* ... */ }
+
+    // Query to observe state (CQRS read side)
+    got, _ := q.Get(ctx, task.ID)
+    // got.Status == kernel.StateRunning
+
+    _ = rt.Complete(ctx, task.ID, kernel.Result{Payload: "ok"})
+
+    got, _ = q.Get(ctx, task.ID)
+    // got.Status == kernel.StateSuccess
+}
+```
+
+## Runtime interface (6 verbs)
+
+```go
+type Runtime interface {
+    Dispatch(ctx context.Context, task Task) error
+    Pause(ctx context.Context, id TaskID) error
+    Resume(ctx context.Context, id TaskID, extra *Supplement) error
+    Kill(ctx context.Context, id TaskID) error
+    Complete(ctx context.Context, id TaskID, result Result) error
+    Fail(ctx context.Context, id TaskID, failure Failure) error
+}
+```
+
+The signatures are deliberately asymmetric: `Dispatch` takes the whole `Task` (the materialisation moment); the other five take only `TaskID` (the Task is already materialised).
+
+## Query interface (CQRS read side)
+
+```go
+type Query interface {
+    Get(ctx context.Context, id TaskID) (Task, error)
+    List(ctx context.Context, filter ...State) ([]Task, error)
+}
+```
+
+Components that only need to observe (dashboards, monitors, webhooks) depend on `Query` alone.
+
+## The six Task states
+
+```
+not_started ──► running ⇄ paused
+                  │         │
+                  ▼         ▼
+              success / failure / cancelled  (terminal)
+```
+
+Terminal Tasks are forever frozen. Re-execution is by clone-and-redispatch (construct a new Task with a fresh ID; record lineage in `Metadata`). The kernel exposes no `reset` or `retry` verb.
+
+## Pure transition function
+
+All state transitions go through a single pure function:
+
+```go
+func Apply(task Task, event Event) (Task, error)
+```
+
+`Apply` has no side effects — no I/O, no locks, no time calls (timestamps come from the Event). Concurrency control is the responsibility of the Runtime/Query implementation.
+
+## Writing a new substrate
+
+1. Implement the `kernel.Runtime` and `kernel.Query` interfaces.
+2. In your tests, call `kerneltest.RunSuite` to verify the impl satisfies the contract.
+
+```go
+import (
+    "testing"
+
     kerneltest "github.com/LangSensei/emploke/conformance/kernel"
     "github.com/LangSensei/emploke/kernel"
 )
 
 func TestConformance(t *testing.T) {
     kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Query) {
-        return myimpl.New()
+        return mysubstrate.New()
     })
 }
 ```
 
-## Design Book
+## Development
 
-See [docs/index.html](docs/index.html) or visit the [published site](https://langsensei.github.io/emploke/).
+This repo is a Go [multi-module workspace](https://go.dev/ref/mod#workspaces). The `go.work` file is committed:
+
+```sh
+go test ./kernel/... ./conformance/kernel/...
+```
+
+## Design book
+
+The full architectural rationale — including the six-state Task lifecycle, the Concurrency Contract, and the Observability floor (G1) — lives in [`docs/index.html`](docs/index.html).
+
+Read online: **<https://langsensei.github.io/emploke/>**
+
+The book is bilingual (English + 中文).
 
 ## License
 

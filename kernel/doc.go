@@ -8,7 +8,7 @@
 // The kernel is fully described by these types plus the Runtime/Query
 // interface contracts; nothing else is required to implement an agentic
 // substrate. Concrete substrates live in sibling repositories named
-// agentic-kernel-<substrate> (e.g. agentic-kernel-copilot).
+// sibling modules in this repository (e.g. emploke/copilot).
 //
 // See the design book in docs/index.html for the architectural rationale,
 // including the six-state Task lifecycle, the Concurrency Contract, and

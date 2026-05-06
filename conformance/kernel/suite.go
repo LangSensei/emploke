@@ -1,5 +1,5 @@
 // Package conformance provides a shared, executable form of the
-// AgenticKernel contract. Any Runtime + Query implementation can verify
+// emploke contract. Any Runtime + Query implementation can verify
 // itself by calling RunSuite from a test:
 //
 //	func TestConformance(t *testing.T) {
