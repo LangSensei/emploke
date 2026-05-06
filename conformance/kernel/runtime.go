@@ -8,7 +8,7 @@ import (
 )
 
 // Runtime is the command-side implementation of kernel.Runtime.
-type Runtime struct{ s *store }
+type Runtime struct{ repo *Repository }
 
 // Dispatch implements kernel.Runtime.
 func (r *Runtime) Dispatch(_ context.Context, task kernel.Task) error {
@@ -16,38 +16,38 @@ func (r *Runtime) Dispatch(_ context.Context, task kernel.Task) error {
 	if err != nil {
 		return err
 	}
-	r.s.mu.Lock()
-	defer r.s.mu.Unlock()
-	if _, exists := r.s.tasks[next.ID]; exists {
+	r.repo.mu.Lock()
+	defer r.repo.mu.Unlock()
+	if _, exists := r.repo.tasks[next.ID]; exists {
 		return kernel.ErrInvalidTransition
 	}
-	r.s.tasks[next.ID] = next
+	r.repo.tasks[next.ID] = next
 	return nil
 }
 
 // Pause implements kernel.Runtime.
 func (r *Runtime) Pause(_ context.Context, id kernel.TaskID) error {
-	return r.s.apply(id, kernel.Paused{At: time.Now()})
+	return r.repo.apply(id, kernel.Paused{At: time.Now()})
 }
 
 // Resume implements kernel.Runtime.
 func (r *Runtime) Resume(_ context.Context, id kernel.TaskID, extra *kernel.Supplement) error {
-	return r.s.apply(id, kernel.Resumed{At: time.Now(), Extra: extra})
+	return r.repo.apply(id, kernel.Resumed{At: time.Now(), Extra: extra})
 }
 
 // Kill implements kernel.Runtime.
 func (r *Runtime) Kill(_ context.Context, id kernel.TaskID) error {
-	return r.s.apply(id, kernel.Cancelled{At: time.Now()})
+	return r.repo.apply(id, kernel.Cancelled{At: time.Now()})
 }
 
 // Complete drives a tracked Task to StateSuccess.
 func (r *Runtime) Complete(_ context.Context, id kernel.TaskID, result kernel.Result) error {
-	return r.s.apply(id, kernel.Completed{At: time.Now(), Result: result})
+	return r.repo.apply(id, kernel.Completed{At: time.Now(), Result: result})
 }
 
 // Fail drives a tracked Task to StateFailure.
 func (r *Runtime) Fail(_ context.Context, id kernel.TaskID, failure kernel.Failure) error {
-	return r.s.apply(id, kernel.Failed{At: time.Now(), Failure: failure})
+	return r.repo.apply(id, kernel.Failed{At: time.Now(), Failure: failure})
 }
 
 // Compile-time interface check.

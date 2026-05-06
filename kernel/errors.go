@@ -6,6 +6,6 @@ import "errors"
 // transition is not legal from the Task's current state.
 var ErrInvalidTransition = errors.New("kernel: invalid state transition")
 
-// ErrTaskNotFound is returned by Runtime/Query impls when an operation
-// references a TaskID that is not currently tracked.
+// ErrTaskNotFound is returned by Repository.Load when the requested
+// TaskID does not exist in storage.
 var ErrTaskNotFound = errors.New("kernel: task not found")

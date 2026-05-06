@@ -4,15 +4,16 @@
 >
 > Layer 1 axiom kernel for agentic systems — pure data types, pure transition function, zero implementations.
 
-Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Query` for reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
+Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Repository` for persistence and reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
 
 ## Repository layout
 
 | Path | Module | Purpose |
 |------|--------|---------|
-| `/kernel` | `github.com/LangSensei/emploke/kernel` | Kernel — Task aggregate, Apply transition function, Runtime/Query interfaces, value objects |
-| `/conformance/kernel` | `github.com/LangSensei/emploke/conformance/kernel` | Contract tests + reference implementation — every Runtime+Query impl runs this suite |
+| `/kernel` | `github.com/LangSensei/emploke/kernel` | Kernel — Task aggregate, Apply transition function, Runtime/Repository interfaces, value objects |
+| `/conformance/kernel` | `github.com/LangSensei/emploke/conformance/kernel` | Contract tests + reference implementation — every Runtime+Repository impl runs this suite |
 | `/registry` | `github.com/LangSensei/emploke/registry` | AgentRegistry + CapabilityRegistry interfaces |
+| `/copilot` | `github.com/LangSensei/emploke/copilot` | Copilot CLI substrate — Runtime implementation |
 | `/docs` | — | Architectural design book (see [Design book](#design-book)) |
 
 ### Dependency graph
@@ -20,7 +21,7 @@ Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`
 ```
 conformance/kernel ──→ kernel
 registry           ──→ kernel
-copilot (future)   ──→ kernel, registry
+copilot            ──→ kernel, registry
 ```
 
 ## Quick start
@@ -35,19 +36,19 @@ import (
 
 func main() {
     ctx := context.Background()
-    rt, q := kerneltest.New()
+    rt, repo := kerneltest.New()
 
     task := kernel.New("t1", "agent-1", "inmemory", "do the thing")
 
     if err := rt.Dispatch(ctx, task); err != nil { /* ... */ }
 
-    // Query to observe state (CQRS read side)
-    got, _ := q.Get(ctx, task.ID)
+    // Read task state from the repository
+    got, _ := repo.Load(ctx, task.ID)
     // got.Status == kernel.StateRunning
 
     _ = rt.Complete(ctx, task.ID, kernel.Result{Payload: "ok"})
 
-    got, _ = q.Get(ctx, task.ID)
+    got, _ = repo.Load(ctx, task.ID)
     // got.Status == kernel.StateSuccess
 }
 ```
@@ -67,16 +68,18 @@ type Runtime interface {
 
 The signatures are deliberately asymmetric: `Dispatch` takes the whole `Task` (the materialisation moment); the other five take only `TaskID` (the Task is already materialised).
 
-## Query interface (CQRS read side)
+## Repository interface
 
 ```go
-type Query interface {
-    Get(ctx context.Context, id TaskID) (Task, error)
+type Repository interface {
+    Save(ctx context.Context, task Task) error
+    Load(ctx context.Context, id TaskID) (Task, error)
     List(ctx context.Context, filter ...State) ([]Task, error)
+    Delete(ctx context.Context, id TaskID) error
 }
 ```
 
-Components that only need to observe (dashboards, monitors, webhooks) depend on `Query` alone.
+Repository is the single interface for task persistence and lookup. Runtime implementations use it internally; callers use it to read task state.
 
 ## The six Task states
 
@@ -97,12 +100,13 @@ All state transitions go through a single pure function:
 func Apply(task Task, event Event) (Task, error)
 ```
 
-`Apply` has no side effects — no I/O, no locks, no time calls (timestamps come from the Event). Concurrency control is the responsibility of the Runtime/Query implementation.
+`Apply` has no side effects — no I/O, no locks, no time calls (timestamps come from the Event). Concurrency control is the responsibility of the Runtime/Repository implementation.
 
 ## Writing a new substrate
 
-1. Implement the `kernel.Runtime` and `kernel.Query` interfaces.
-2. In your tests, call `kerneltest.RunSuite` to verify the impl satisfies the contract.
+1. Implement the `kernel.Runtime` interface.
+2. Provide or reuse a `kernel.Repository` implementation.
+3. In your tests, call `kerneltest.RunSuite` to verify the impl satisfies the contract.
 
 ```go
 import (
@@ -113,7 +117,7 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-    kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Query) {
+    kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Repository) {
         return mysubstrate.New()
     })
 }
