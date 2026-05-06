@@ -62,7 +62,7 @@ func (r *Runtime) Dispatch(ctx context.Context, task kernel.Task) error {
 	}
 
 	// 5. Start CLI process
-	sessionID, err := r.procs.start(task.ID, workdir, task.Instructions)
+	sessionID, err := r.procs.start(workdir, task.Instructions)
 	if err != nil {
 		_ = cleanup(r.baseDir, task.ID)
 		return fmt.Errorf("copilot: %w", err)

@@ -1,12 +1,12 @@
 package copilot
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 
@@ -19,7 +19,6 @@ type session struct {
 	pid       int
 	sessionID string
 	workdir   string
-	logFile   *os.File
 	done      chan struct{}
 	exitCode  int
 }
@@ -27,44 +26,40 @@ type session struct {
 // processTable manages all active Copilot CLI processes.
 type processTable struct {
 	mu       sync.Mutex
-	sessions map[string]*session // keyed by sessionID (= taskID)
+	sessions map[string]*session // keyed by sessionID
 }
 
 func newProcessTable() *processTable {
 	return &processTable{sessions: make(map[string]*session)}
 }
 
-// start launches a Copilot CLI process for the given task.
-func (pt *processTable) start(taskID kernel.TaskID, workdir, prompt string) (string, error) {
-	cmd := exec.Command("copilot", "-p", prompt, "--yolo", "--output-format", "json")
-	cmd.Dir = workdir
+// start launches a Copilot CLI process with a new session ID.
+func (pt *processTable) start(workdir, prompt string) (string, error) {
+	sessionID := newUUID()
 
-	// Log output to file
-	logPath := filepath.Join(workdir, "agent.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return "", fmt.Errorf("create log file: %w", err)
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	cmd := exec.Command("copilot",
+		"-p", prompt,
+		"--resume="+sessionID,
+		"--yolo",
+		"--output-format", "json",
+	)
+	cmd.Dir = workdir
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
 		return "", fmt.Errorf("start copilot: %w", err)
 	}
 
-	sid := string(taskID)
 	s := &session{
 		cmd:       cmd,
 		pid:       cmd.Process.Pid,
-		sessionID: sid,
+		sessionID: sessionID,
 		workdir:   workdir,
-		logFile:   logFile,
 		done:      make(chan struct{}),
 	}
 
 	go func() {
-		defer logFile.Close()
 		defer close(s.done)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -76,27 +71,25 @@ func (pt *processTable) start(taskID kernel.TaskID, workdir, prompt string) (str
 	}()
 
 	pt.mu.Lock()
-	pt.sessions[sid] = s
+	pt.sessions[sessionID] = s
 	pt.mu.Unlock()
 
-	return sid, nil
+	return sessionID, nil
 }
 
-// resume restarts a previously paused session using --resume.
+// resume restarts a previously paused session.
 func (pt *processTable) resume(sessionID, workdir, prompt string) error {
-	cmd := exec.Command("copilot", "-p", prompt, "--resume", sessionID, "--yolo", "--output-format", "json")
+	cmd := exec.Command("copilot",
+		"-p", prompt,
+		"--resume="+sessionID,
+		"--yolo",
+		"--output-format", "json",
+	)
 	cmd.Dir = workdir
-
-	logPath := filepath.Join(workdir, "agent.log")
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
 		return fmt.Errorf("resume copilot: %w", err)
 	}
 
@@ -105,12 +98,10 @@ func (pt *processTable) resume(sessionID, workdir, prompt string) error {
 		pid:       cmd.Process.Pid,
 		sessionID: sessionID,
 		workdir:   workdir,
-		logFile:   logFile,
 		done:      make(chan struct{}),
 	}
 
 	go func() {
-		defer logFile.Close()
 		defer close(s.done)
 		if err := cmd.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -137,7 +128,6 @@ func (pt *processTable) kill(sessionID string) error {
 		return nil // already gone
 	}
 
-	// Send SIGTERM, then wait
 	if s.cmd.Process != nil {
 		_ = s.cmd.Process.Signal(syscall.SIGTERM)
 	}
@@ -228,18 +218,12 @@ func cleanup(baseDir string, id kernel.TaskID) error {
 	return os.RemoveAll(workdir)
 }
 
-// pidFromMetadata extracts the PID from task metadata for persistence.
-func pidFromMetadata(task kernel.Task) int {
-	if v, ok := task.Metadata["copilot.pid"]; ok {
-		switch p := v.(type) {
-		case int:
-			return p
-		case float64:
-			return int(p)
-		case string:
-			n, _ := strconv.Atoi(p)
-			return n
-		}
-	}
-	return 0
+// newUUID generates a random UUID v4 string.
+func newUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
