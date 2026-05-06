@@ -12,14 +12,15 @@ Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`
 |------|--------|---------|
 | `/kernel` | `github.com/LangSensei/emploke/kernel` | Kernel — Task aggregate, Apply transition function, Runtime/Query interfaces, value objects |
 | `/conformance/kernel` | `github.com/LangSensei/emploke/conformance/kernel` | Contract tests + reference implementation — every Runtime+Query impl runs this suite |
+| `/registry` | `github.com/LangSensei/emploke/registry` | AgentRegistry + CapabilityRegistry interfaces |
 | `/docs` | — | Architectural design book (see [Design book](#design-book)) |
 
 ### Dependency graph
 
 ```
 conformance/kernel ──→ kernel
-copilot (future)   ──→ kernel
-registry (future)  ──→ kernel
+registry           ──→ kernel
+copilot (future)   ──→ kernel, registry
 ```
 
 ## Quick start
