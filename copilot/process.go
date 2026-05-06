@@ -74,24 +74,18 @@ func killProcess(pid int) {
 // Order: mkdir → clone/init → write AGENTS.md → write .mcp.json.
 // Clone must happen before writing files so that git clone into a
 // non-empty directory doesn't fail.
-func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kernel.Capability) (string, error) {
+func provision(baseDir string, task kernel.Task, caps []kernel.Capability) (string, error) {
 	workdir := filepath.Join(baseDir, string(task.ID))
 
 	if err := os.MkdirAll(workdir, 0755); err != nil {
 		return "", fmt.Errorf("create workdir: %w", err)
 	}
 
-	// 1. Clone repo or init git (must be first — clone requires empty dir)
-	if repo, ok := agent.Metadata["repo"].(string); ok && repo != "" {
-		cmd := exec.Command("git", "clone", repo, ".")
-		cmd.Dir = workdir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git clone: %s: %w", out, err)
-		}
-	} else {
-		cmd := exec.Command("git", "init")
-		cmd.Dir = workdir
-		_ = cmd.Run()
+	// 1. Init git (Copilot CLI requires a .git directory)
+	cmd := exec.Command("git", "init")
+	cmd.Dir = workdir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git init: %s: %w", out, err)
 	}
 
 	// 2. Ensure .github/ exists (may already exist after clone)
@@ -100,11 +94,8 @@ func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kern
 		return "", fmt.Errorf("create .github: %w", err)
 	}
 
-	// 3. Write AGENTS.md
-	instructions, _ := agent.Metadata["instructions"].(string)
-	if instructions == "" {
-		instructions = task.Instructions
-	}
+	// 3. Write AGENTS.md (instructions come from task, not agent)
+	instructions := task.Instructions
 	agentFile := filepath.Join(workdir, "AGENTS.md")
 	if err := os.WriteFile(agentFile, []byte(instructions), 0644); err != nil {
 		return "", fmt.Errorf("write AGENTS.md: %w", err)

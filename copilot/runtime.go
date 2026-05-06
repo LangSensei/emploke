@@ -44,7 +44,7 @@ func (r *Runtime) Dispatch(ctx context.Context, task kernel.Task) error {
 		return fmt.Errorf("copilot: resolve capabilities: %w", err)
 	}
 
-	workdir, err := provision(r.baseDir, task, agent, caps)
+	workdir, err := provision(r.baseDir, task, caps)
 	if err != nil {
 		return fmt.Errorf("copilot: provision: %w", err)
 	}
