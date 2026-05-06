@@ -1,0 +1,22 @@
+{
+  "name": "emploke-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "emploke — TypeScript rewrite (workspace root)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" run build",
+    "test": "pnpm -r --filter \"./packages/**\" run test",
+    "typecheck": "pnpm -r --filter \"./packages/**\" run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}
