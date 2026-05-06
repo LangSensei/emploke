@@ -24,10 +24,10 @@ jobs:
           go-version: '1.24'
 
       - name: Check formatting
-        run: test -z "$(gofmt -l kernel conformance/kernel)"
+        run: test -z "$(gofmt -l kernel conformance/kernel registry)"
 
       - name: Build & Test
-        run: go test ./kernel/... ./conformance/kernel/...
+        run: go test ./kernel/... ./conformance/kernel/... && go build ./registry/...
 
   links:
     runs-on: ubuntu-latest
