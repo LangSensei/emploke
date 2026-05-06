@@ -72,11 +72,7 @@ func (r *Registry) RegisterAgent(_ context.Context, agent kernel.Agent) error {
 
 func (r *Registry) RemoveAgent(_ context.Context, name string) error {
 	dir := filepath.Join(r.root, "agents", name)
-	err := os.RemoveAll(dir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
+	return os.RemoveAll(dir)
 }
 
 // --- CapabilityRegistry ---
@@ -288,9 +284,19 @@ func (r *Registry) Orphans(ctx context.Context) ([]kernel.Capability, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Collect all capabilities reachable from any agent (recursive)
 	used := make(map[string]bool)
 	for _, agent := range agents {
-		for _, cap := range agent.Capabilities {
+		caps, err := r.Resolve(ctx, agent)
+		if err != nil {
+			// If resolve fails (missing dep), still mark direct refs as used
+			for _, cap := range agent.Capabilities {
+				used[cap.Name] = true
+			}
+			continue
+		}
+		for _, cap := range caps {
 			used[cap.Name] = true
 		}
 	}

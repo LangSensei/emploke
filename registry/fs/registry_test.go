@@ -254,19 +254,32 @@ func TestListCapabilities(t *testing.T) {
 }
 
 func TestOrphans(t *testing.T) {
-	reg, _ := setupTestRegistry(t)
+	reg, dir := setupTestRegistry(t)
 	ctx := context.Background()
+
+	// Add an unreferenced skill
+	os.MkdirAll(filepath.Join(dir, "skills", "unused"), 0755)
+	os.WriteFile(filepath.Join(dir, "skills", "unused", "SKILL.md"), []byte(`---
+name: unused
+version: "1.0.0"
+type: skill
+---
+`), 0644)
 
 	orphans, err := reg.Orphans(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// planning is not directly referenced by any agent
+	// "planning" is reachable via researcher→xiaohongshu→planning, not orphan
+	// "unused" is not reachable by any agent, is orphan
 	names := make(map[string]bool)
 	for _, o := range orphans {
 		names[o.Name] = true
 	}
-	if !names["planning"] {
-		t.Errorf("expected planning to be orphan, got %v", names)
+	if names["planning"] {
+		t.Error("planning should NOT be orphan (reachable via xiaohongshu)")
+	}
+	if !names["unused"] {
+		t.Errorf("expected unused to be orphan, got %v", names)
 	}
 }
