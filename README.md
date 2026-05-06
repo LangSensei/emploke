@@ -2,138 +2,37 @@
 
 > *From εμπλοκή (emplokí) — entanglement.*
 >
-> Layer 1 axiom kernel for agentic systems — pure data types, pure transition function, zero implementations.
+> A TypeScript toolkit for managing and orchestrating agentic systems on top of [Anthropic Claude Skills](https://www.claude.com/news/agent-skills) and [Model Context Protocol](https://modelcontextprotocol.io) servers.
 
-Emploke ships **only** pure data types (`Task`, `Agent`, `Capability`, `Failure`, `Result`, `Supplement`), a pure transition function (`Apply`), and two interfaces (`Runtime` for commands, `Repository` for persistence and reads). Zero implementations, zero I/O, zero concurrency primitives. Concrete substrates (Copilot CLI, OpenAI, Claude, etc.) live as sibling modules in this repository.
+> **Note**: This is a TypeScript rewrite in progress. The previous Go axiom kernel is preserved unchanged under [`archive/`](./archive/) and continues to be built/tested by CI.
 
-## Repository layout
+## Status
 
-| Path | Module | Purpose |
-|------|--------|---------|
-| `/kernel` | `github.com/LangSensei/emploke/kernel` | Kernel — Task aggregate, Apply transition function, Runtime/Repository interfaces, value objects |
-| `/conformance/kernel` | `github.com/LangSensei/emploke/conformance/kernel` | Contract tests + reference implementation — every Runtime+Repository impl runs this suite |
-| `/registry` | `github.com/LangSensei/emploke/registry` | AgentRegistry + CapabilityRegistry interfaces |
-| `/copilot` | `github.com/LangSensei/emploke/copilot` | Copilot CLI substrate — Runtime implementation |
-| `/docs` | — | Architectural design book (see [Design book](#design-book)) |
+| Package | Description | Status |
+|---|---|---|
+| [`@emploke/catalog`](./packages/catalog) | File-system registry of skills + MCPs with dependency-graph algorithms | ✅ in progress (this PR) |
 
-### Dependency graph
+## Design
 
-```
-conformance/kernel ──→ kernel
-registry           ──→ kernel
-copilot            ──→ kernel, registry
-```
+The TypeScript rewrite is structured as a pnpm monorepo. The first package, [`@emploke/catalog`](./packages/catalog), owns a single concern: maintaining a local marketplace directory of skills + MCPs with their dependency graph (resolve in topological order, reject cycles, block uninstall when something still depends on you).
 
-## Quick start
-
-```go
-import (
-    "context"
-
-    "github.com/LangSensei/emploke/kernel"
-    kerneltest "github.com/LangSensei/emploke/conformance/kernel"
-)
-
-func main() {
-    ctx := context.Background()
-    rt, repo := kerneltest.New()
-
-    task := kernel.New("t1", "agent-1", "inmemory", "do the thing")
-
-    if err := rt.Dispatch(ctx, task); err != nil { /* ... */ }
-
-    // Read task state from the repository
-    got, _ := repo.Load(ctx, task.ID)
-    // got.Status == kernel.StateRunning
-
-    _ = rt.Complete(ctx, task.ID, kernel.Result{Payload: "ok"})
-
-    got, _ = repo.Load(ctx, task.ID)
-    // got.Status == kernel.StateSuccess
-}
-```
-
-## Runtime interface (6 verbs)
-
-```go
-type Runtime interface {
-    Dispatch(ctx context.Context, task Task) error
-    Pause(ctx context.Context, id TaskID) error
-    Resume(ctx context.Context, id TaskID, extra *Supplement) error
-    Kill(ctx context.Context, id TaskID) error
-    Complete(ctx context.Context, id TaskID, result Result) error
-    Fail(ctx context.Context, id TaskID, failure Failure) error
-}
-```
-
-The signatures are deliberately asymmetric: `Dispatch` takes the whole `Task` (the materialisation moment); the other five take only `TaskID` (the Task is already materialised).
-
-## Repository interface
-
-```go
-type Repository interface {
-    Save(ctx context.Context, task Task) error
-    Load(ctx context.Context, id TaskID) (Task, error)
-    List(ctx context.Context, filter ...State) ([]Task, error)
-    Delete(ctx context.Context, id TaskID) error
-}
-```
-
-Repository is the single interface for task persistence and lookup. Runtime implementations use it internally; callers use it to read task state.
-
-## The six Task states
-
-```
-not_started ──► running ⇄ paused
-                  │         │
-                  ▼         ▼
-              success / failure / cancelled  (terminal)
-```
-
-Terminal Tasks are forever frozen. Re-execution is by clone-and-redispatch (construct a new Task with a fresh ID; record lineage in `Metadata`). The kernel exposes no `reset` or `retry` verb.
-
-## Pure transition function
-
-All state transitions go through a single pure function:
-
-```go
-func Apply(task Task, event Event) (Task, error)
-```
-
-`Apply` has no side effects — no I/O, no locks, no time calls (timestamps come from the Event). Concurrency control is the responsibility of the Runtime/Repository implementation.
-
-## Writing a new substrate
-
-1. Implement the `kernel.Runtime` interface.
-2. Provide or reuse a `kernel.Repository` implementation.
-3. In your tests, call `kerneltest.RunSuite` to verify the impl satisfies the contract.
-
-```go
-import (
-    "testing"
-
-    kerneltest "github.com/LangSensei/emploke/conformance/kernel"
-    "github.com/LangSensei/emploke/kernel"
-)
-
-func TestConformance(t *testing.T) {
-    kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Repository) {
-        return mysubstrate.New()
-    })
-}
-```
+Subsequent packages will layer on top of catalog (task lifecycle / substrates / conformance suite) — see prior Go work in [`archive/`](./archive/) and the [design book](https://langsensei.github.io/emploke/) for background.
 
 ## Development
 
-This repo is a Go [multi-module workspace](https://go.dev/ref/mod#workspaces). The `go.work` file is committed:
+This repo is a [pnpm workspace](https://pnpm.io/workspaces). Requires Node ≥ 20, pnpm ≥ 10.
 
 ```sh
-go test ./kernel/... ./conformance/kernel/...
+pnpm install
+pnpm typecheck   # tsc --noEmit across all packages
+pnpm test        # vitest across all packages
+pnpm lint        # biome check
+pnpm build       # tsc emit
 ```
 
-## Design book
+## Design book (archived Go axiom kernel)
 
-The full architectural rationale — including the six-state Task lifecycle, the Concurrency Contract, and the Observability floor (G1) — lives in [`docs/index.html`](docs/index.html).
+The original architectural rationale — six-state Task lifecycle, Concurrency Contract, Observability floor — lives in [`docs/index.html`](docs/index.html).
 
 Read online: **<https://langsensei.github.io/emploke/>**
 
