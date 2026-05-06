@@ -8,8 +8,8 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Query) {
-		rt, q := kerneltest.New()
-		return rt, q
+	kerneltest.RunSuite(t, func() (kernel.Runtime, kernel.Repository) {
+		rt, repo := kerneltest.New()
+		return rt, repo
 	})
 }

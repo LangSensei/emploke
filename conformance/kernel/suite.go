@@ -1,17 +1,17 @@
 // Package conformance provides a shared, executable form of the
-// emploke contract. Any Runtime + Query implementation can verify
+// emploke contract. Any Runtime + Repository implementation can verify
 // itself by calling RunSuite from a test:
 //
 //	func TestConformance(t *testing.T) {
-//	    conformance.RunSuite(t, func() (kernel.Runtime, kernel.Query) {
-//	        rt, q := myimpl.New()
-//	        return rt, q
+//	    conformance.RunSuite(t, func() (kernel.Runtime, kernel.Repository) {
+//	        rt, repo := myimpl.New()
+//	        return rt, repo
 //	    })
 //	}
 //
 // The suite covers: state-machine transitions, supplement append-atomicity,
 // kill idempotence on terminal Tasks, Complete/Fail from non-running
-// rejection, double-dispatch rejection, Query filtering, and TaskNotFound
+// rejection, double-dispatch rejection, Repository filtering, and TaskNotFound
 // error propagation.
 package kerneltest // import "github.com/LangSensei/emploke/conformance/kernel"
 
@@ -23,8 +23,8 @@ import (
 	"github.com/LangSensei/emploke/kernel"
 )
 
-// Factory constructs a fresh Runtime+Query pair for a single subtest.
-type Factory func() (kernel.Runtime, kernel.Query)
+// Factory constructs a fresh Runtime+Repository pair for a single subtest.
+type Factory func() (kernel.Runtime, kernel.Repository)
 
 // RunSuite executes the full conformance suite.
 func RunSuite(t *testing.T, factory Factory) {
@@ -32,14 +32,14 @@ func RunSuite(t *testing.T, factory Factory) {
 	ctx := context.Background()
 
 	t.Run("Dispatch_TransitionsToRunning", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-disp", "a", "test", "do work")
 		if err := rt.Dispatch(ctx, task); err != nil {
 			t.Fatalf("Dispatch: %v", err)
 		}
-		got, err := q.Get(ctx, task.ID)
+		got, err := repo.Load(ctx, task.ID)
 		if err != nil {
-			t.Fatalf("Get: %v", err)
+			t.Fatalf("Load: %v", err)
 		}
 		if got.Status != kernel.StateRunning {
 			t.Fatalf("expected running, got %s", got.Status)
@@ -47,14 +47,14 @@ func RunSuite(t *testing.T, factory Factory) {
 	})
 
 	t.Run("PauseResume_WithExtra", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-pause", "a", "test", "x")
 		mustDispatch(t, rt, ctx, task)
 
 		if err := rt.Pause(ctx, task.ID); err != nil {
 			t.Fatalf("Pause: %v", err)
 		}
-		got, _ := q.Get(ctx, task.ID)
+		got, _ := repo.Load(ctx, task.ID)
 		if got.Status != kernel.StatePaused {
 			t.Fatalf("expected paused, got %s", got.Status)
 		}
@@ -63,7 +63,7 @@ func RunSuite(t *testing.T, factory Factory) {
 		if err := rt.Resume(ctx, task.ID, extra); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
-		got, _ = q.Get(ctx, task.ID)
+		got, _ = repo.Load(ctx, task.ID)
 		if got.Status != kernel.StateRunning {
 			t.Fatalf("expected running after resume, got %s", got.Status)
 		}
@@ -73,32 +73,32 @@ func RunSuite(t *testing.T, factory Factory) {
 	})
 
 	t.Run("ResumeWithoutExtra_DoesNotGrowSupplements", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-res-noex", "a", "test", "x")
 		mustDispatch(t, rt, ctx, task)
 		_ = rt.Pause(ctx, task.ID)
 		_ = rt.Resume(ctx, task.ID, nil)
-		got, _ := q.Get(ctx, task.ID)
+		got, _ := repo.Load(ctx, task.ID)
 		if len(got.Supplements) != 0 {
 			t.Fatalf("supplements should not grow, got %d", len(got.Supplements))
 		}
 	})
 
 	t.Run("Kill_TransitionsActiveToCancelled", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-kill", "a", "test", "x")
 		mustDispatch(t, rt, ctx, task)
 		if err := rt.Kill(ctx, task.ID); err != nil {
 			t.Fatalf("Kill: %v", err)
 		}
-		got, _ := q.Get(ctx, task.ID)
+		got, _ := repo.Load(ctx, task.ID)
 		if got.Status != kernel.StateCancelled {
 			t.Fatalf("expected cancelled, got %s", got.Status)
 		}
 	})
 
 	t.Run("Kill_OnCompletedIsNoop", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-kill-done", "a", "test", "x")
 		mustDispatch(t, rt, ctx, task)
 		if err := rt.Complete(ctx, task.ID, kernel.Result{Payload: "ok"}); err != nil {
@@ -107,14 +107,14 @@ func RunSuite(t *testing.T, factory Factory) {
 		if err := rt.Kill(ctx, task.ID); err != nil {
 			t.Fatalf("Kill on terminal should be no-op, got %v", err)
 		}
-		got, _ := q.Get(ctx, task.ID)
+		got, _ := repo.Load(ctx, task.ID)
 		if got.Status != kernel.StateSuccess {
 			t.Fatalf("should remain success, got %s", got.Status)
 		}
 	})
 
 	t.Run("Kill_OnFailedIsNoop", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		task := kernel.New("t-kill-fail", "a", "test", "x")
 		mustDispatch(t, rt, ctx, task)
 		if err := rt.Fail(ctx, task.ID, kernel.Failure{Code: "x", Message: "y"}); err != nil {
@@ -123,7 +123,7 @@ func RunSuite(t *testing.T, factory Factory) {
 		if err := rt.Kill(ctx, task.ID); err != nil {
 			t.Fatalf("Kill on failed should be no-op, got %v", err)
 		}
-		got, _ := q.Get(ctx, task.ID)
+		got, _ := repo.Load(ctx, task.ID)
 		if got.Status != kernel.StateFailure {
 			t.Fatalf("should remain failure, got %s", got.Status)
 		}
@@ -153,27 +153,27 @@ func RunSuite(t *testing.T, factory Factory) {
 		}
 	})
 
-	t.Run("Get_OnUnknownReturnsTaskNotFound", func(t *testing.T) {
-		_, q := factory()
-		_, err := q.Get(ctx, "nonexistent")
+	t.Run("Load_OnUnknownReturnsTaskNotFound", func(t *testing.T) {
+		_, repo := factory()
+		_, err := repo.Load(ctx, "nonexistent")
 		if !errors.Is(err, kernel.ErrTaskNotFound) {
 			t.Fatalf("expected ErrTaskNotFound, got %v", err)
 		}
 	})
 
 	t.Run("List_FiltersByState", func(t *testing.T) {
-		rt, q := factory()
+		rt, repo := factory()
 		t1 := kernel.New("t-list-1", "a", "test", "x")
 		t2 := kernel.New("t-list-2", "a", "test", "y")
 		mustDispatch(t, rt, ctx, t1)
 		mustDispatch(t, rt, ctx, t2)
 		_ = rt.Complete(ctx, t1.ID, kernel.Result{})
 
-		running, _ := q.List(ctx, kernel.StateRunning)
+		running, _ := repo.List(ctx, kernel.StateRunning)
 		if len(running) != 1 || running[0].ID != t2.ID {
 			t.Fatalf("expected 1 running task (t2), got %d", len(running))
 		}
-		all, _ := q.List(ctx)
+		all, _ := repo.List(ctx)
 		if len(all) != 2 {
 			t.Fatalf("expected 2 total tasks, got %d", len(all))
 		}

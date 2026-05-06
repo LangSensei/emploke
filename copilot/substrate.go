@@ -5,24 +5,6 @@ import (
 	"github.com/LangSensei/emploke/registry"
 )
 
-// Store persists Task state to durable storage.
-//
-// Implementations are expected to be file-system based (one file per task),
-// but the interface does not prescribe the format or layout.
-type Store interface {
-	// Save persists the current state of a Task.
-	Save(task kernel.Task) error
-
-	// Load retrieves a Task by its ID.
-	Load(id kernel.TaskID) (kernel.Task, error)
-
-	// List returns all persisted Tasks, optionally filtered by state.
-	List(filter ...kernel.State) ([]kernel.Task, error)
-
-	// Delete removes a Task from storage.
-	Delete(id kernel.TaskID) error
-}
-
 // Provisioner prepares an execution environment for a Task.
 //
 // The provisioner consults the registry to resolve the agent profile and
@@ -56,7 +38,7 @@ type ProcessManager interface {
 
 // Config holds dependencies for the copilot substrate.
 type Config struct {
-	Store          Store
+	Repo           kernel.Repository
 	Provisioner    Provisioner
 	ProcessManager ProcessManager
 	Agents         registry.AgentRegistry

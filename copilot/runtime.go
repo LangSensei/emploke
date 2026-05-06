@@ -9,7 +9,7 @@ import (
 
 // Runtime implements [kernel.Runtime] for the Copilot CLI substrate.
 type Runtime struct {
-	store   Store
+	repo    kernel.Repository
 	prov    Provisioner
 	proc    ProcessManager
 	agents  interface{ GetAgent(context.Context, string) (kernel.Agent, error) }
@@ -19,7 +19,7 @@ type Runtime struct {
 // NewRuntime creates a Runtime from the given Config.
 func NewRuntime(cfg Config) *Runtime {
 	return &Runtime{
-		store:   cfg.Store,
+		repo:    cfg.Repo,
 		prov:    cfg.Provisioner,
 		proc:    cfg.ProcessManager,
 		agents:  cfg.Agents,
@@ -66,7 +66,7 @@ func (r *Runtime) Dispatch(ctx context.Context, task kernel.Task) error {
 	dispatched.Metadata["copilot.workdir"] = workdir
 
 	// 7. Persist
-	if err := r.store.Save(dispatched); err != nil {
+	if err := r.repo.Save(ctx, dispatched); err != nil {
 		_ = r.proc.Kill(sessionID)
 		_ = r.prov.Cleanup(task.ID)
 		return fmt.Errorf("copilot: save: %w", err)
@@ -76,7 +76,7 @@ func (r *Runtime) Dispatch(ctx context.Context, task kernel.Task) error {
 }
 
 func (r *Runtime) Pause(ctx context.Context, id kernel.TaskID) error {
-	task, err := r.store.Load(id)
+	task, err := r.repo.Load(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -92,11 +92,11 @@ func (r *Runtime) Pause(ctx context.Context, id kernel.TaskID) error {
 	if err != nil {
 		return err
 	}
-	return r.store.Save(paused)
+	return r.repo.Save(ctx, paused)
 }
 
 func (r *Runtime) Resume(ctx context.Context, id kernel.TaskID, extra *kernel.Supplement) error {
-	task, err := r.store.Load(id)
+	task, err := r.repo.Load(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -118,11 +118,11 @@ func (r *Runtime) Resume(ctx context.Context, id kernel.TaskID, extra *kernel.Su
 		return fmt.Errorf("copilot: resume process: %w", err)
 	}
 
-	return r.store.Save(resumed)
+	return r.repo.Save(ctx, resumed)
 }
 
 func (r *Runtime) Kill(ctx context.Context, id kernel.TaskID) error {
-	task, err := r.store.Load(id)
+	task, err := r.repo.Load(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -138,11 +138,11 @@ func (r *Runtime) Kill(ctx context.Context, id kernel.TaskID) error {
 	}
 
 	_ = r.prov.Cleanup(id) // best-effort
-	return r.store.Save(cancelled)
+	return r.repo.Save(ctx, cancelled)
 }
 
 func (r *Runtime) Complete(ctx context.Context, id kernel.TaskID, result kernel.Result) error {
-	task, err := r.store.Load(id)
+	task, err := r.repo.Load(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -151,11 +151,11 @@ func (r *Runtime) Complete(ctx context.Context, id kernel.TaskID, result kernel.
 	if err != nil {
 		return err
 	}
-	return r.store.Save(completed)
+	return r.repo.Save(ctx, completed)
 }
 
 func (r *Runtime) Fail(ctx context.Context, id kernel.TaskID, failure kernel.Failure) error {
-	task, err := r.store.Load(id)
+	task, err := r.repo.Load(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -164,5 +164,5 @@ func (r *Runtime) Fail(ctx context.Context, id kernel.TaskID, failure kernel.Fai
 	if err != nil {
 		return err
 	}
-	return r.store.Save(failed)
+	return r.repo.Save(ctx, failed)
 }
