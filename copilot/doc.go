@@ -1,10 +1,10 @@
-// Package copilot implements [kernel.Runtime] and [kernel.Query] using
-// GitHub Copilot CLI as the execution substrate.
+// Package copilot implements [kernel.Runtime] using GitHub Copilot CLI
+// as the execution substrate.
 //
 // Copilot is a library, not a standalone service. It manages CLI processes,
-// persists task state to the file system, and provisions execution environments
-// by consulting a [registry.AgentRegistry]. It does not own any network
-// listener or daemon lifecycle — those are product-layer concerns.
+// persists task state via [kernel.Repository], and provisions execution
+// environments by consulting a [registry.AgentRegistry]. It does not own
+// any network listener or daemon lifecycle — those are product-layer concerns.
 //
 // # Lifecycle
 //
@@ -18,7 +18,7 @@
 //
 // # Dependencies
 //
-//   - [kernel]: Task types and Runtime/Query interfaces
+//   - [kernel]: Task types, Runtime and Repository interfaces
 //   - [registry]: AgentRegistry for provisioning (clone repo, resolve capabilities)
 //
 // Import path:

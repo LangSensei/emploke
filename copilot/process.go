@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 
 	"github.com/LangSensei/emploke/kernel"
 )
@@ -31,6 +30,7 @@ func startProcess(workdir, prompt string) (sessionID string, pid int, err error)
 	}
 
 	// Detach — we track by PID, not by process handle.
+	// The goroutine reaps the zombie when the process exits.
 	go cmd.Wait()
 
 	return sessionID, cmd.Process.Pid, nil
@@ -57,24 +57,50 @@ func resumeProcess(sessionID, workdir, prompt string) (pid int, err error) {
 	return cmd.Process.Pid, nil
 }
 
-// killProcess sends SIGTERM to a process by PID. Best-effort.
+// killProcess terminates a process by PID. Best-effort, cross-platform.
 func killProcess(pid int) {
 	if pid <= 0 {
 		return
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = p.Kill()
 }
 
 // provision prepares the execution environment for a task.
+//
+// Order: mkdir → clone/init → write AGENTS.md → write .mcp.json.
+// Clone must happen before writing files so that git clone into a
+// non-empty directory doesn't fail.
 func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kernel.Capability) (string, error) {
 	workdir := filepath.Join(baseDir, string(task.ID))
-	dotDir := filepath.Join(workdir, ".github")
 
-	if err := os.MkdirAll(dotDir, 0755); err != nil {
+	if err := os.MkdirAll(workdir, 0755); err != nil {
 		return "", fmt.Errorf("create workdir: %w", err)
 	}
 
-	// Write AGENTS.md
+	// 1. Clone repo or init git (must be first — clone requires empty dir)
+	if repo, ok := agent.Metadata["repo"].(string); ok && repo != "" {
+		cmd := exec.Command("git", "clone", repo, ".")
+		cmd.Dir = workdir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git clone: %s: %w", out, err)
+		}
+	} else {
+		cmd := exec.Command("git", "init")
+		cmd.Dir = workdir
+		_ = cmd.Run()
+	}
+
+	// 2. Ensure .github/ exists (may already exist after clone)
+	dotDir := filepath.Join(workdir, ".github")
+	if err := os.MkdirAll(dotDir, 0755); err != nil {
+		return "", fmt.Errorf("create .github: %w", err)
+	}
+
+	// 3. Write AGENTS.md
 	instructions, _ := agent.Metadata["instructions"].(string)
 	if instructions == "" {
 		instructions = task.Instructions
@@ -84,7 +110,7 @@ func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kern
 		return "", fmt.Errorf("write AGENTS.md: %w", err)
 	}
 
-	// Write .mcp.json if there are MCP capabilities
+	// 4. Write .mcp.json if there are MCP capabilities
 	mcpServers := make(map[string]any)
 	for _, cap := range caps {
 		if cfg, ok := cap.Metadata["mcp_config"]; ok {
@@ -101,19 +127,6 @@ func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kern
 		if err := os.WriteFile(mcpPath, data, 0644); err != nil {
 			return "", fmt.Errorf("write .mcp.json: %w", err)
 		}
-	}
-
-	// Clone repo if specified
-	if repo, ok := agent.Metadata["repo"].(string); ok && repo != "" {
-		cmd := exec.Command("git", "clone", repo, ".")
-		cmd.Dir = workdir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git clone: %s: %w", out, err)
-		}
-	} else {
-		cmd := exec.Command("git", "init")
-		cmd.Dir = workdir
-		_ = cmd.Run()
 	}
 
 	return workdir, nil
