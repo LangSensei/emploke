@@ -7,35 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"syscall"
 
 	"github.com/LangSensei/emploke/kernel"
 )
 
-// session tracks a running Copilot CLI process.
-type session struct {
-	cmd       *exec.Cmd
-	pid       int
-	sessionID string
-	workdir   string
-	done      chan struct{}
-	exitCode  int
-}
-
-// processTable manages all active Copilot CLI processes.
-type processTable struct {
-	mu       sync.Mutex
-	sessions map[string]*session // keyed by sessionID
-}
-
-func newProcessTable() *processTable {
-	return &processTable{sessions: make(map[string]*session)}
-}
-
-// start launches a Copilot CLI process with a new session ID.
-func (pt *processTable) start(workdir, prompt string) (string, error) {
-	sessionID := newUUID()
+// startProcess launches a Copilot CLI process and returns the session ID and PID.
+func startProcess(workdir, prompt string) (sessionID string, pid int, err error) {
+	sessionID = newUUID()
 
 	cmd := exec.Command("copilot",
 		"-p", prompt,
@@ -48,37 +27,17 @@ func (pt *processTable) start(workdir, prompt string) (string, error) {
 	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start copilot: %w", err)
+		return "", 0, fmt.Errorf("start copilot: %w", err)
 	}
 
-	s := &session{
-		cmd:       cmd,
-		pid:       cmd.Process.Pid,
-		sessionID: sessionID,
-		workdir:   workdir,
-		done:      make(chan struct{}),
-	}
+	// Detach — we track by PID, not by process handle.
+	go cmd.Wait()
 
-	go func() {
-		defer close(s.done)
-		if err := cmd.Wait(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				s.exitCode = exitErr.ExitCode()
-			} else {
-				s.exitCode = -1
-			}
-		}
-	}()
-
-	pt.mu.Lock()
-	pt.sessions[sessionID] = s
-	pt.mu.Unlock()
-
-	return sessionID, nil
+	return sessionID, cmd.Process.Pid, nil
 }
 
-// resume restarts a previously paused session.
-func (pt *processTable) resume(sessionID, workdir, prompt string) error {
+// resumeProcess restarts a previously paused session.
+func resumeProcess(sessionID, workdir, prompt string) (pid int, err error) {
 	cmd := exec.Command("copilot",
 		"-p", prompt,
 		"--resume="+sessionID,
@@ -90,74 +49,23 @@ func (pt *processTable) resume(sessionID, workdir, prompt string) error {
 	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("resume copilot: %w", err)
+		return 0, fmt.Errorf("resume copilot: %w", err)
 	}
 
-	s := &session{
-		cmd:       cmd,
-		pid:       cmd.Process.Pid,
-		sessionID: sessionID,
-		workdir:   workdir,
-		done:      make(chan struct{}),
-	}
+	go cmd.Wait()
 
-	go func() {
-		defer close(s.done)
-		if err := cmd.Wait(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				s.exitCode = exitErr.ExitCode()
-			} else {
-				s.exitCode = -1
-			}
-		}
-	}()
-
-	pt.mu.Lock()
-	pt.sessions[sessionID] = s
-	pt.mu.Unlock()
-
-	return nil
+	return cmd.Process.Pid, nil
 }
 
-// kill terminates a running process.
-func (pt *processTable) kill(sessionID string) error {
-	pt.mu.Lock()
-	s, ok := pt.sessions[sessionID]
-	pt.mu.Unlock()
-	if !ok {
-		return nil // already gone
+// killProcess sends SIGTERM to a process by PID. Best-effort.
+func killProcess(pid int) {
+	if pid <= 0 {
+		return
 	}
-
-	if s.cmd.Process != nil {
-		_ = s.cmd.Process.Signal(syscall.SIGTERM)
-	}
-	<-s.done
-
-	pt.mu.Lock()
-	delete(pt.sessions, sessionID)
-	pt.mu.Unlock()
-
-	return nil
-}
-
-// isRunning reports whether the process is still alive.
-func (pt *processTable) isRunning(sessionID string) bool {
-	pt.mu.Lock()
-	s, ok := pt.sessions[sessionID]
-	pt.mu.Unlock()
-	if !ok {
-		return false
-	}
-	select {
-	case <-s.done:
-		return false
-	default:
-		return true
-	}
+	_ = syscall.Kill(pid, syscall.SIGTERM)
 }
 
 // provision prepares the execution environment for a task.
-// It creates a working directory, writes AGENTS.md, and sets up MCP config.
 func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kernel.Capability) (string, error) {
 	workdir := filepath.Join(baseDir, string(task.ID))
 	dotDir := filepath.Join(workdir, ".github")
@@ -166,7 +74,7 @@ func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kern
 		return "", fmt.Errorf("create workdir: %w", err)
 	}
 
-	// Write AGENTS.md from agent instructions (stored in Metadata)
+	// Write AGENTS.md
 	instructions, _ := agent.Metadata["instructions"].(string)
 	if instructions == "" {
 		instructions = task.Instructions
@@ -203,7 +111,6 @@ func provision(baseDir string, task kernel.Task, agent kernel.Agent, caps []kern
 			return "", fmt.Errorf("git clone: %s: %w", out, err)
 		}
 	} else {
-		// Init git so Copilot CLI can discover .github/
 		cmd := exec.Command("git", "init")
 		cmd.Dir = workdir
 		_ = cmd.Run()
@@ -222,8 +129,8 @@ func cleanup(baseDir string, id kernel.TaskID) error {
 func newUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
