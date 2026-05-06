@@ -4,5 +4,6 @@ use (
 	./kernel
 	./conformance/kernel
 	./registry
+	./registry/fs
 	./copilot
 )
