@@ -15,7 +15,7 @@ type Repository interface {
 	Save(ctx context.Context, task Task) error
 
 	// Load retrieves a Task by its ID.
-	// Returns an error wrapping ErrNotFound if the Task does not exist.
+	// Returns ErrTaskNotFound if the Task does not exist.
 	Load(ctx context.Context, id TaskID) (Task, error)
 
 	// List returns all persisted Tasks, optionally filtered by state.
