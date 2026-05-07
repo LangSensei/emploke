@@ -36,3 +36,37 @@ describe("validateName (kebab-case)", () => {
     expect(() => validateName(undefined)).toThrow(NameInvalid);
   });
 });
+
+import { validateMcpName } from "../src/validate.js";
+
+describe("validateMcpName (scoped)", () => {
+  it.each([
+    "github",
+    "io.playwright/mcp",
+    "com.example.team/my-server",
+    "langsensei/weather",
+  ])("accepts %j", (name) => {
+    expect(() => validateMcpName(name)).not.toThrow();
+  });
+
+  it.each([
+    "io.playwright/mcp/extra",
+    ".bad/name",
+    "scope/Bad",
+  ])("rejects %j", (name) => {
+    expect(() => validateMcpName(name)).toThrow(NameInvalid);
+  });
+});
+
+describe("validateName (dots in scope)", () => {
+  it.each([
+    "io.playwright/browser",
+    "com.example/tool",
+  ])("accepts %j", (name) => {
+    expect(() => validateName(name)).not.toThrow();
+  });
+
+  it("rejects dots in name segment", () => {
+    expect(() => validateName("scope/na.me")).toThrow(NameInvalid);
+  });
+});

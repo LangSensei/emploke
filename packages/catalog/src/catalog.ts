@@ -164,16 +164,17 @@ export class Catalog {
 
   // ─── MCP ────────────────────────────────────────────────
 
-  async installMcp(sourceFile: string): Promise<string> {
+  async installMcp(sourceFile: string, mcpName?: string): Promise<string> {
     const content = await readFile(sourceFile, "utf8");
     const parsed = JSON.parse(content);
-    const name = sourceFile.split("/").pop()!.replace(/\.json$/, "");
+    const name = mcpName ?? sourceFile.split("/").pop()!.replace(/\.json$/, "");
     validateMcpName(name);
 
     return this.withWriteLock(async () => {
-      const destFile = join(this.catalogDir, "mcps", `${name}.json`);
+      const destFile = join(this.catalogDir, "mcps", nameToPath(name) + ".json");
       const exists = this.mcps.has(name);
-      await mkdirFs(join(this.catalogDir, "mcps"), { recursive: true });
+      const destDir = destFile.substring(0, destFile.lastIndexOf("/"));
+      await mkdirFs(destDir, { recursive: true });
       await atomicWriteJsonFile(parsed, destFile);
       this.mcps.add(name);
 
@@ -200,7 +201,7 @@ export class Catalog {
         throw new HasDependents(name, dependents.map((d) => d.name));
       }
 
-      const destFile = join(this.catalogDir, "mcps", `${name}.json`);
+      const destFile = join(this.catalogDir, "mcps", nameToPath(name) + ".json");
       await rm(destFile, { force: true });
       this.mcps.delete(name);
       this.events.publish({ type: "McpUninstalled", name, at: new Date() });
@@ -209,7 +210,7 @@ export class Catalog {
 
   getMcpPath(name: string): string | null {
     if (!this.mcps.has(name)) return null;
-    return join(this.catalogDir, "mcps", `${name}.json`);
+    return join(this.catalogDir, "mcps", nameToPath(name) + ".json");
   }
 
   listMcps(): string[] {
@@ -401,19 +402,28 @@ export class Catalog {
   private async scanMcps(): Promise<void> {
     const mcpsDir = join(this.catalogDir, "mcps");
     if (!(await pathExists(mcpsDir))) return;
-    const entries = await readdir(mcpsDir, { withFileTypes: true });
+    await this.scanMcpsDir(mcpsDir, null);
+  }
+
+  private async scanMcpsDir(dir: string, scope: string | null): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const name = entry.name.replace(/\.json$/, "");
-      try {
-        const content = await readFile(join(mcpsDir, entry.name), "utf8");
-        JSON.parse(content); // validate parseable
-        this.mcps.add(name);
-      } catch (e) {
-        this._issues.push({
-          path: join(mcpsDir, entry.name),
-          reason: (e as Error).message,
-        });
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        const baseName = entry.name.replace(/\.json$/, "");
+        const fullName = scope ? `${scope}/${baseName}` : baseName;
+        try {
+          const content = await readFile(join(dir, entry.name), "utf8");
+          JSON.parse(content);
+          this.mcps.add(fullName);
+        } catch (e) {
+          this._issues.push({
+            path: join(dir, entry.name),
+            reason: (e as Error).message,
+          });
+        }
+      } else if (entry.isDirectory() && scope === null) {
+        // Scope directory
+        await this.scanMcpsDir(join(dir, entry.name), entry.name);
       }
     }
   }
