@@ -6,3 +6,6 @@ dist/
 coverage/
 .vitest-cache/
 *.log
+packages/catalog/dist/
+packages/dashboard/dist/
+packages/server/dist/
