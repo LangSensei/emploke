@@ -121,6 +121,12 @@ export class Catalog {
     return this.resolver.resolve(name);
   }
 
+  // ─── Rescan ──────────────────────────────────────────────
+
+  async rescan(): Promise<void> {
+    await this.scan();
+  }
+
   // ─── Inspection ─────────────────────────────────────────
 
   async inspectSource(sourceDir: string): Promise<Skill | Agent> {
