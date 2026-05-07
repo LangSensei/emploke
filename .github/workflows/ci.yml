@@ -14,11 +14,32 @@ permissions:
   contents: read
 
 jobs:
-  ts:
-    name: TypeScript (Node ${{ matrix.node }})
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+  ts:
+    name: TypeScript (${{ matrix.os }} / Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: ['22']
     steps:
       - uses: actions/checkout@v4
@@ -32,9 +53,6 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
 
       - name: Build
         run: pnpm build
