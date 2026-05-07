@@ -9,7 +9,7 @@ import { NameInvalid } from "./errors.js";
  * Name segments are kebab-case only.
  */
 const NAME_SEGMENT = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
-const SCOPE_SEGMENT = /^[a-z][a-z0-9]*([.\-][a-z0-9]+)*$/;
+const SCOPE_SEGMENT = /^[a-z][a-z0-9]*([.-][a-z0-9]+)*$/;
 
 export function validateName(name: unknown): asserts name is string {
   if (typeof name !== "string" || name.length === 0) {
@@ -21,11 +21,17 @@ export function validateName(name: unknown): asserts name is string {
   const parts = name.split("/");
   if (parts.length === 1) {
     if (!NAME_SEGMENT.test(parts[0]!)) {
-      throw new NameInvalid(name, "must be kebab-case (lowercase letters, digits, single hyphens, starts with a letter)");
+      throw new NameInvalid(
+        name,
+        "must be kebab-case (lowercase letters, digits, single hyphens, starts with a letter)",
+      );
     }
   } else if (parts.length === 2) {
     if (!SCOPE_SEGMENT.test(parts[0]!)) {
-      throw new NameInvalid(name, `scope "${parts[0]}" must be lowercase alphanumeric with hyphens or dots`);
+      throw new NameInvalid(
+        name,
+        `scope "${parts[0]}" must be lowercase alphanumeric with hyphens or dots`,
+      );
     }
     if (!NAME_SEGMENT.test(parts[1]!)) {
       throw new NameInvalid(name, `name "${parts[1]}" must be kebab-case`);

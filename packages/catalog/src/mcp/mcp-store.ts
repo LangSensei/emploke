@@ -20,10 +20,15 @@ export class McpStore {
   async install(sourceFile: string, mcpName?: string): Promise<string> {
     const content = await readFile(sourceFile, "utf8");
     const parsed = JSON.parse(content);
-    const name = mcpName ?? sourceFile.split("/").pop()!.replace(/\.json$/, "");
+    const name =
+      mcpName ??
+      sourceFile
+        .split("/")
+        .pop()!
+        .replace(/\.json$/, "");
     validateMcpName(name);
 
-    const destFile = join(this.baseDir, nameToPath(name) + ".json");
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     const destDir = destFile.substring(0, destFile.lastIndexOf("/"));
     await mkdir(destDir, { recursive: true });
     const exists = this.mcps.has(name);
@@ -46,7 +51,7 @@ export class McpStore {
     const dependents = getDependents(name);
     if (dependents.length > 0) throw new HasDependents(name, dependents);
 
-    const destFile = join(this.baseDir, nameToPath(name) + ".json");
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     await rm(destFile, { force: true });
     this.mcps.delete(name);
     this.events.publish({ type: "McpUninstalled", name, at: new Date() });
@@ -54,7 +59,7 @@ export class McpStore {
 
   getPath(name: string): string | null {
     if (!this.mcps.has(name)) return null;
-    return join(this.baseDir, nameToPath(name) + ".json");
+    return join(this.baseDir, `${nameToPath(name)}.json`);
   }
 
   list(): string[] {

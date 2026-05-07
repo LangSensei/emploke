@@ -1,25 +1,34 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { InMemoryEventBus } from "../src/event-bus.js";
 import { SkillStore } from "../src/skill/skill-store.js";
 import type { CatalogEvent } from "../src/types.js";
-import { NameInvalid, NotFound, HasDependents } from "../src/errors.js";
 
 let catalogDir: string;
 let sourceDir: string;
 let events: InMemoryEventBus<CatalogEvent>;
 let store: SkillStore;
 
-async function makeSkill(name: string, opts: { deps?: { skills?: string[]; mcps?: string[] }; prereqs?: string } = {}): Promise<string> {
+async function makeSkill(
+  name: string,
+  opts: { deps?: { skills?: string[]; mcps?: string[] }; prereqs?: string } = {},
+): Promise<string> {
   const dir = join(sourceDir, name.replace("/", "--"));
   await mkdir(dir, { recursive: true });
   const lines = [
     "---",
     `name: ${name}`,
     `description: Skill ${name}`,
-    ...(opts.deps ? [`dependencies:`, ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map(s => `    - ${s}`)] : []), ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map(m => `    - ${m}`)] : [])] : []),
+    ...(opts.deps
+      ? [
+          `dependencies:`,
+          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
+          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
+        ]
+      : []),
     ...(opts.prereqs ? [`prereqs: "${opts.prereqs}"`] : []),
     "---",
     "# Instructions",
@@ -68,7 +77,7 @@ describe("SkillStore", () => {
 
     it("emits SkillInstalled event", async () => {
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       const src = await makeSkill("weather");
       await store.install(src);
       expect(collected[0]!.type).toBe("SkillInstalled");
@@ -78,7 +87,7 @@ describe("SkillStore", () => {
       const src = await makeSkill("weather");
       await store.install(src);
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       await store.install(src);
       expect(collected[0]!.type).toBe("SkillUpdated");
     });
@@ -125,7 +134,7 @@ describe("SkillStore", () => {
       const src = await makeSkill("weather");
       await store.install(src);
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       await store.remove("weather", () => []);
       expect(collected[0]!.type).toBe("SkillUninstalled");
     });
@@ -139,7 +148,12 @@ describe("SkillStore", () => {
     it("list returns all installed", async () => {
       await store.install(await makeSkill("a"));
       await store.install(await makeSkill("b"));
-      expect(store.list().map(s => s.name).sort()).toEqual(["a", "b"]);
+      expect(
+        store
+          .list()
+          .map((s) => s.name)
+          .sort(),
+      ).toEqual(["a", "b"]);
     });
 
     it("has returns false for unknown", () => {
@@ -160,7 +174,10 @@ describe("SkillStore", () => {
     it("scans scoped skills", async () => {
       const dir = join(catalogDir, "skills", "langsensei", "weather");
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "SKILL.md"), "---\nname: langsensei/weather\ndescription: W\n---\n");
+      await writeFile(
+        join(dir, "SKILL.md"),
+        "---\nname: langsensei/weather\ndescription: W\n---\n",
+      );
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
       expect(store.has("langsensei/weather")).toBe(true);

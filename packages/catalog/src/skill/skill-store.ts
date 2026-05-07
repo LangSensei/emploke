@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
-import { NotFound, HasDependents } from "../errors.js";
+import { HasDependents, NotFound } from "../errors.js";
 import { frontmatterToSkill, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
 import type { CatalogEvent, EventBus, Skill } from "../types.js";
@@ -76,10 +76,7 @@ export class SkillStore {
   graphNodes(): GraphNode[] {
     return [...this.skills].map(([name, skill]) => ({
       name,
-      dependencies: [
-        ...(skill.dependencies?.skills ?? []),
-        ...(skill.dependencies?.mcps ?? []),
-      ],
+      dependencies: [...(skill.dependencies?.skills ?? []), ...(skill.dependencies?.mcps ?? [])],
     }));
   }
 

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
@@ -9,7 +9,15 @@ import type { CatalogEvent } from "../src/types.js";
 let catalogDir: string;
 let sourceDir: string;
 
-async function makeSkillSource(name: string, opts: { description?: string; version?: string; deps?: { skills?: string[]; mcps?: string[] }; prereqs?: string } = {}): Promise<string> {
+async function makeSkillSource(
+  name: string,
+  opts: {
+    description?: string;
+    version?: string;
+    deps?: { skills?: string[]; mcps?: string[] };
+    prereqs?: string;
+  } = {},
+): Promise<string> {
   const dir = join(sourceDir, name.replace("/", "--"));
   await mkdir(dir, { recursive: true });
   const fm = [
@@ -17,7 +25,13 @@ async function makeSkillSource(name: string, opts: { description?: string; versi
     `name: ${name}`,
     `description: ${opts.description ?? "A skill"}`,
     ...(opts.version ? [`version: ${opts.version}`] : []),
-    ...(opts.deps ? [`dependencies:`, ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map(s => `    - ${s}`)] : []), ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map(m => `    - ${m}`)] : [])] : []),
+    ...(opts.deps
+      ? [
+          `dependencies:`,
+          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
+          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
+        ]
+      : []),
     ...(opts.prereqs ? [`prereqs: "${opts.prereqs}"`] : []),
     "---",
     "",
@@ -28,14 +42,23 @@ async function makeSkillSource(name: string, opts: { description?: string; versi
   return dir;
 }
 
-async function makeAgentSource(name: string, opts: { description?: string; deps?: { skills?: string[]; mcps?: string[] } } = {}): Promise<string> {
+async function makeAgentSource(
+  name: string,
+  opts: { description?: string; deps?: { skills?: string[]; mcps?: string[] } } = {},
+): Promise<string> {
   const dir = join(sourceDir, `agent-${name.replace("/", "--")}`);
   await mkdir(dir, { recursive: true });
   const fm = [
     "---",
     `name: ${name}`,
     `description: ${opts.description ?? "An agent"}`,
-    ...(opts.deps ? [`dependencies:`, ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map(s => `    - ${s}`)] : []), ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map(m => `    - ${m}`)] : [])] : []),
+    ...(opts.deps
+      ? [
+          `dependencies:`,
+          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
+          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
+        ]
+      : []),
     "---",
     "",
     "## Instructions",
@@ -76,20 +99,34 @@ describe("Catalog", () => {
       // Create skills on disk directly
       const skillDir = join(catalogDir, "skills", "weather");
       await mkdir(skillDir, { recursive: true });
-      await writeFile(join(skillDir, "SKILL.md"), "---\nname: weather\ndescription: Weather\n---\n");
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        "---\nname: weather\ndescription: Weather\n---\n",
+      );
 
       const scopedDir = join(catalogDir, "skills", "langsensei", "analytics");
       await mkdir(scopedDir, { recursive: true });
-      await writeFile(join(scopedDir, "SKILL.md"), "---\nname: langsensei/analytics\ndescription: Analytics\n---\n");
+      await writeFile(
+        join(scopedDir, "SKILL.md"),
+        "---\nname: langsensei/analytics\ndescription: Analytics\n---\n",
+      );
 
       const c = await Catalog.open({ catalogDir });
-      expect(c.listSkills().map(s => s.name).sort()).toEqual(["langsensei/analytics", "weather"]);
+      expect(
+        c
+          .listSkills()
+          .map((s) => s.name)
+          .sort(),
+      ).toEqual(["langsensei/analytics", "weather"]);
     });
 
     it("scans existing agents", async () => {
       const agentDir = join(catalogDir, "agents", "reviewer");
       await mkdir(agentDir, { recursive: true });
-      await writeFile(join(agentDir, "AGENTS.md"), "---\nname: reviewer\ndescription: Reviews\n---\n");
+      await writeFile(
+        join(agentDir, "AGENTS.md"),
+        "---\nname: reviewer\ndescription: Reviews\n---\n",
+      );
 
       const c = await Catalog.open({ catalogDir });
       expect(c.listAgents()).toHaveLength(1);
@@ -154,7 +191,7 @@ describe("Catalog", () => {
     it("emits SkillInstalled event", async () => {
       const c = await Catalog.open({ catalogDir });
       const events: CatalogEvent[] = [];
-      c.events.subscribe(e => events.push(e));
+      c.events.subscribe((e) => events.push(e));
       const src = await makeSkillSource("weather");
       await c.installSkill(src);
       expect(events).toHaveLength(1);
@@ -166,7 +203,7 @@ describe("Catalog", () => {
       const src = await makeSkillSource("weather");
       await c.installSkill(src);
       const events: CatalogEvent[] = [];
-      c.events.subscribe(e => events.push(e));
+      c.events.subscribe((e) => events.push(e));
       const src2 = await makeSkillSource("weather", { version: "2.0.0" });
       await c.installSkill(src2);
       expect(events[0]!.type).toBe("SkillUpdated");
@@ -253,13 +290,19 @@ describe("Catalog", () => {
       await c.installMcp(mcpSrc);
       const skillSrc = await makeSkillSource("security-audit");
       await c.installSkill(skillSrc);
-      const agentSrc = await makeAgentSource("reviewer", { deps: { skills: ["security-audit"], mcps: ["github"] } });
+      const agentSrc = await makeAgentSource("reviewer", {
+        deps: { skills: ["security-audit"], mcps: ["github"] },
+      });
       await c.installAgent(agentSrc);
 
       const result = c.resolve("reviewer");
-      expect(result.entry).toEqual({ kind: "agent", agent: expect.objectContaining({ name: "reviewer" }), path: expect.stringContaining("agents/reviewer") });
-      expect(result.skills.map(s => s.skill.name)).toContain("security-audit");
-      expect(result.mcps.map(m => m.name)).toContain("github");
+      expect(result.entry).toEqual({
+        kind: "agent",
+        agent: expect.objectContaining({ name: "reviewer" }),
+        path: expect.stringContaining("agents/reviewer"),
+      });
+      expect(result.skills.map((s) => s.skill.name)).toContain("security-audit");
+      expect(result.mcps.map((m) => m.name)).toContain("github");
     });
 
     it("resolves transitive skill dependencies", async () => {
@@ -268,18 +311,20 @@ describe("Catalog", () => {
       await c.installMcp(mcpSrc);
       const leafSrc = await makeSkillSource("cve-db");
       await c.installSkill(leafSrc);
-      const midSrc = await makeSkillSource("security-audit", { deps: { skills: ["cve-db"], mcps: ["semgrep"] } });
+      const midSrc = await makeSkillSource("security-audit", {
+        deps: { skills: ["cve-db"], mcps: ["semgrep"] },
+      });
       await c.installSkill(midSrc);
       const agentSrc = await makeAgentSource("reviewer", { deps: { skills: ["security-audit"] } });
       await c.installAgent(agentSrc);
 
       const result = c.resolve("reviewer");
-      const names = result.skills.map(s => s.skill.name);
+      const names = result.skills.map((s) => s.skill.name);
       expect(names).toContain("cve-db");
       expect(names).toContain("security-audit");
       // cve-db before security-audit (topological)
       expect(names.indexOf("cve-db")).toBeLessThan(names.indexOf("security-audit"));
-      expect(result.mcps.map(m => m.name)).toContain("semgrep");
+      expect(result.mcps.map((m) => m.name)).toContain("semgrep");
     });
 
     it("throws for unknown name", async () => {

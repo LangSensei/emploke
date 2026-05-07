@@ -64,10 +64,7 @@ export class AgentStore {
   graphNodes(): GraphNode[] {
     return [...this.agents].map(([name, agent]) => ({
       name,
-      dependencies: [
-        ...(agent.dependencies?.skills ?? []),
-        ...(agent.dependencies?.mcps ?? []),
-      ],
+      dependencies: [...(agent.dependencies?.skills ?? []), ...(agent.dependencies?.mcps ?? [])],
     }));
   }
 

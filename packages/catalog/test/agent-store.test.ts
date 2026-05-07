@@ -1,25 +1,34 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InMemoryEventBus } from "../src/event-bus.js";
 import { AgentStore } from "../src/agent/agent-store.js";
-import type { CatalogEvent } from "../src/types.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
+import { InMemoryEventBus } from "../src/event-bus.js";
+import type { CatalogEvent } from "../src/types.js";
 
 let catalogDir: string;
 let sourceDir: string;
 let events: InMemoryEventBus<CatalogEvent>;
 let store: AgentStore;
 
-async function makeAgent(name: string, opts: { deps?: { skills?: string[]; mcps?: string[] } } = {}): Promise<string> {
+async function makeAgent(
+  name: string,
+  opts: { deps?: { skills?: string[]; mcps?: string[] } } = {},
+): Promise<string> {
   const dir = join(sourceDir, `agent-${name.replace("/", "--")}`);
   await mkdir(dir, { recursive: true });
   const lines = [
     "---",
     `name: ${name}`,
     `description: Agent ${name}`,
-    ...(opts.deps ? [`dependencies:`, ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map(s => `    - ${s}`)] : []), ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map(m => `    - ${m}`)] : [])] : []),
+    ...(opts.deps
+      ? [
+          `dependencies:`,
+          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
+          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
+        ]
+      : []),
     "---",
     "# Instructions",
   ].join("\n");
@@ -64,7 +73,7 @@ describe("AgentStore", () => {
 
     it("emits AgentInstalled", async () => {
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       await store.install(await makeAgent("reviewer"));
       expect(collected[0]!.type).toBe("AgentInstalled");
     });
@@ -72,7 +81,7 @@ describe("AgentStore", () => {
     it("emits AgentUpdated on re-install", async () => {
       await store.install(await makeAgent("reviewer"));
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       await store.install(await makeAgent("reviewer"));
       expect(collected[0]!.type).toBe("AgentUpdated");
     });
@@ -105,7 +114,7 @@ describe("AgentStore", () => {
     it("emits AgentUninstalled", async () => {
       await store.install(await makeAgent("reviewer"));
       const collected: CatalogEvent[] = [];
-      events.subscribe(e => collected.push(e));
+      events.subscribe((e) => collected.push(e));
       await store.remove("reviewer");
       expect(collected[0]!.type).toBe("AgentUninstalled");
     });
@@ -124,7 +133,10 @@ describe("AgentStore", () => {
     it("scans scoped agents", async () => {
       const dir = join(catalogDir, "agents", "langsensei", "reviewer");
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "AGENTS.md"), "---\nname: langsensei/reviewer\ndescription: R\n---\n");
+      await writeFile(
+        join(dir, "AGENTS.md"),
+        "---\nname: langsensei/reviewer\ndescription: R\n---\n",
+      );
       await store.scan();
       expect(store.has("langsensei/reviewer")).toBe(true);
     });
@@ -140,7 +152,9 @@ describe("AgentStore", () => {
 
   describe("graphNodes", () => {
     it("returns dependency graph", async () => {
-      await store.install(await makeAgent("reviewer", { deps: { skills: ["lint"], mcps: ["gh"] } }));
+      await store.install(
+        await makeAgent("reviewer", { deps: { skills: ["lint"], mcps: ["gh"] } }),
+      );
       const nodes = store.graphNodes();
       expect(nodes[0]!.dependencies).toEqual(["lint", "gh"]);
     });

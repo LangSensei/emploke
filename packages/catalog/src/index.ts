@@ -1,5 +1,5 @@
-export { Catalog } from "./catalog.js";
 export type { CatalogOptions, ScanIssue } from "./catalog.js";
+export { Catalog } from "./catalog.js";
 export {
   CatalogError,
   CatalogStateError,
@@ -23,9 +23,9 @@ export type {
   McpUninstalled,
   McpUpdated,
   ResolvedAgent,
-  ResolveEntry,
   ResolvedMcp,
   ResolvedSkill,
+  ResolveEntry,
   ResolveResult,
   Skill,
   SkillInstalled,

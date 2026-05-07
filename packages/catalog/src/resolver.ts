@@ -1,7 +1,6 @@
 import { join } from "node:path";
-import { NotFound } from "./errors.js";
-import { type GraphNode, resolveTopological } from "./graph.js";
 import type { AgentStore } from "./agent/agent-store.js";
+import { type GraphNode, resolveTopological } from "./graph.js";
 import type { McpStore } from "./mcp/mcp-store.js";
 import type { SkillStore } from "./skill/skill-store.js";
 import type { ResolvedMcp, ResolvedSkill, ResolveEntry, ResolveResult } from "./types.js";
@@ -37,15 +36,9 @@ export class Resolver {
     const agent = this.agents.get(name);
     const skill = this.skills.get(name);
     if (agent) {
-      rootDeps = [
-        ...(agent.dependencies?.skills ?? []),
-        ...(agent.dependencies?.mcps ?? []),
-      ];
+      rootDeps = [...(agent.dependencies?.skills ?? []), ...(agent.dependencies?.mcps ?? [])];
     } else if (skill) {
-      rootDeps = [
-        ...(skill.dependencies?.skills ?? []),
-        ...(skill.dependencies?.mcps ?? []),
-      ];
+      rootDeps = [...(skill.dependencies?.skills ?? []), ...(skill.dependencies?.mcps ?? [])];
     } else {
       throw new Error(`not found in catalog: "${name}" (expected agent or skill)`);
     }
@@ -63,7 +56,7 @@ export class Resolver {
       } else if (this.mcps.has(node.name)) {
         mcps.push({
           name: node.name,
-          path: join(this.catalogDir, "mcps", nameToPath(node.name) + ".json"),
+          path: join(this.catalogDir, "mcps", `${nameToPath(node.name)}.json`),
         });
       }
     }
@@ -72,7 +65,11 @@ export class Resolver {
     if (agent) {
       entry = { kind: "agent", agent, path: join(this.catalogDir, "agents", nameToPath(name)) };
     } else {
-      entry = { kind: "skill", skill: skill!, path: join(this.catalogDir, "skills", nameToPath(name)) };
+      entry = {
+        kind: "skill",
+        skill: skill!,
+        path: join(this.catalogDir, "skills", nameToPath(name)),
+      };
     }
 
     return { entry, skills, mcps };

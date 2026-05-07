@@ -1,21 +1,15 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
 import { join } from "node:path";
+import { AgentStore } from "./agent/agent-store.js";
 import { pathExists } from "./atomic.js";
 import { CatalogStateError } from "./errors.js";
 import { InMemoryEventBus } from "./event-bus.js";
-import { findDirectDependents } from "./graph.js";
 import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
-import { AgentStore } from "./agent/agent-store.js";
+import { findDirectDependents } from "./graph.js";
 import { McpStore } from "./mcp/mcp-store.js";
-import { SkillStore } from "./skill/skill-store.js";
 import { Resolver } from "./resolver.js";
-import type {
-  Agent,
-  CatalogEvent,
-  EventBus,
-  ResolveResult,
-  Skill,
-} from "./types.js";
+import { SkillStore } from "./skill/skill-store.js";
+import type { Agent, CatalogEvent, EventBus, ResolveResult, Skill } from "./types.js";
 
 export interface ScanIssue {
   readonly path: string;
@@ -64,9 +58,7 @@ export class Catalog {
   }
 
   async removeSkill(name: string): Promise<void> {
-    return this.withWriteLock(() =>
-      this.skillStore.remove(name, (n) => this.getDependents(n)),
-    );
+    return this.withWriteLock(() => this.skillStore.remove(name, (n) => this.getDependents(n)));
   }
 
   getSkill(name: string): Skill | null {
@@ -102,9 +94,7 @@ export class Catalog {
   }
 
   async removeMcp(name: string): Promise<void> {
-    return this.withWriteLock(() =>
-      this.mcpStore.remove(name, (n) => this.getDependents(n)),
-    );
+    return this.withWriteLock(() => this.mcpStore.remove(name, (n) => this.getDependents(n)));
   }
 
   getMcpPath(name: string): string | null {
@@ -149,10 +139,7 @@ export class Catalog {
   // ─── Internal ───────────────────────────────────────────
 
   private getDependents(name: string): string[] {
-    const allNodes = [
-      ...this.skillStore.graphNodes(),
-      ...this.agentStore.graphNodes(),
-    ];
+    const allNodes = [...this.skillStore.graphNodes(), ...this.agentStore.graphNodes()];
     return findDirectDependents(name, allNodes).map((d) => d.name);
   }
 
