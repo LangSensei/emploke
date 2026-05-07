@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 
@@ -459,5 +459,56 @@ describe("entry status", () => {
     await writeFile(join(mcpDir, "github.json"), JSON.stringify({ type: "stdio", command: "gh" }));
     await c.rescan();
     expect(c.getSkillEntry("lint")!.status).toBe("ready");
+  });
+
+  describe("rescanIfStale", () => {
+    it("skips scan when not stale", async () => {
+      const c = await Catalog.open({ catalogDir });
+      // open() already runs an initial scan, so _lastScanAt is fresh.
+      const spy = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(60_000);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("triggers scan when stale", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      // maxAgeMs=-1 makes any elapsed time count as stale.
+      await c.rescanIfStale(-1);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("coalesces concurrent stale calls into a single scan (single-flight)", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      // Fire 4 parallel calls — without single-flight all 4 would scan.
+      await Promise.all([
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+      ]);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the in-flight slot so the next stale call scans again", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(-1);
+      await c.rescanIfStale(-1);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("propagates rescan errors and clears the in-flight slot", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const boom = new Error("disk on fire");
+      const spy = vi.spyOn(c, "rescan").mockRejectedValueOnce(boom);
+      await expect(c.rescanIfStale(-1)).rejects.toThrow("disk on fire");
+      // Slot must be cleared even on failure so subsequent calls aren't stuck.
+      spy.mockRestore();
+      const spy2 = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(-1);
+      expect(spy2).toHaveBeenCalledTimes(1);
+    });
   });
 });
