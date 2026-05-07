@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Catalog } from "@emploke/catalog";
 import { serve } from "@hono/node-server";
@@ -6,7 +7,7 @@ import { Hono } from "hono";
 import { apiRoutes } from "./routes/api.js";
 
 const catalogDir =
-  process.env.EMPLOKE_CATALOG_DIR ?? resolve(process.env.HOME ?? "~", ".emploke/catalog");
+  process.env.EMPLOKE_CATALOG_DIR ?? resolve(homedir(), ".emploke/catalog");
 const port = Number(process.env.PORT ?? 3000);
 // Bind to loopback by default — the server exposes destructive endpoints
 // (DELETE /api/skills/:name, etc.) and is intended as a single-user local
