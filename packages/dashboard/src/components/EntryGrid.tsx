@@ -53,7 +53,9 @@ function NeedsLine({ deps }: { deps: readonly MissingDep[] }) {
   if (mcps.length > 0) parts.push(`mcp: ${mcps.map((d) => d.name).join(", ")}`);
   return (
     <p className="card-grid__desc card-grid__desc--needs" title={`Missing: ${fullList}`}>
-      <span className="card-grid__needs-icon" aria-hidden="true">⛔</span>{" "}
+      <span className="card-grid__needs-icon" aria-hidden="true">
+        ⛔
+      </span>{" "}
       Needs {parts.join(" · ")}
     </p>
   );
