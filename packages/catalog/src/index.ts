@@ -23,6 +23,7 @@ export type {
   McpUninstalled,
   McpUpdated,
   ResolvedAgent,
+  ResolveEntry,
   ResolvedMcp,
   ResolvedSkill,
   ResolveResult,

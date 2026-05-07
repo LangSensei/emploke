@@ -257,6 +257,7 @@ describe("Catalog", () => {
       await c.installAgent(agentSrc);
 
       const result = c.resolve("reviewer");
+      expect(result.entry).toEqual({ kind: "agent", agent: expect.objectContaining({ name: "reviewer" }), path: expect.stringContaining("agents/reviewer") });
       expect(result.skills.map(s => s.skill.name)).toContain("security-audit");
       expect(result.mcps.map(m => m.name)).toContain("github");
     });

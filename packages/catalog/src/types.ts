@@ -44,8 +44,16 @@ export interface ResolvedAgent {
   readonly path: string;
 }
 
+export type ResolveEntry =
+  | { readonly kind: "agent"; readonly agent: Agent; readonly path: string }
+  | { readonly kind: "skill"; readonly skill: Skill; readonly path: string };
+
 export interface ResolveResult {
+  /** The resolved entry itself (agent or skill). */
+  readonly entry: ResolveEntry;
+  /** Transitive skill dependencies in topological order. */
   readonly skills: readonly ResolvedSkill[];
+  /** All referenced MCPs. */
   readonly mcps: readonly ResolvedMcp[];
 }
 

@@ -4,7 +4,7 @@ import { type GraphNode, resolveTopological } from "./graph.js";
 import type { AgentStore } from "./agent/agent-store.js";
 import type { McpStore } from "./mcp/mcp-store.js";
 import type { SkillStore } from "./skill/skill-store.js";
-import type { ResolvedMcp, ResolvedSkill, ResolveResult } from "./types.js";
+import type { ResolvedMcp, ResolvedSkill, ResolveEntry, ResolveResult } from "./types.js";
 import { nameToPath } from "./validate.js";
 
 export class Resolver {
@@ -68,6 +68,13 @@ export class Resolver {
       }
     }
 
-    return { skills, mcps };
+    let entry: ResolveEntry;
+    if (agent) {
+      entry = { kind: "agent", agent, path: join(this.catalogDir, "agents", nameToPath(name)) };
+    } else {
+      entry = { kind: "skill", skill: skill!, path: join(this.catalogDir, "skills", nameToPath(name)) };
+    }
+
+    return { entry, skills, mcps };
   }
 }
