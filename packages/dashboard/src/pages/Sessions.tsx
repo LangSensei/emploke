@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   type CopilotSessionInfo,
   createSession,
@@ -43,12 +43,25 @@ export function SessionsPage({ agents }: SessionsProps) {
   const [launchModal, setLaunchModal] = useState<LaunchModalState | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
 
+  // Tracks whether the component is still mounted so async handlers can skip
+  // setState calls on a tombstoned instance (avoids future-React warnings and
+  // wasted state churn if the user navigates away mid-fetch).
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+
   const refresh = async () => {
     try {
-      setError(null);
       const next = await listSessions(filter === ALL_AGENTS ? undefined : filter);
+      if (!mountedRef.current) return;
+      setError(null);
       setSessions(next);
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     }
   };
@@ -63,12 +76,14 @@ export function SessionsPage({ agents }: SessionsProps) {
     setError(null);
     try {
       await createSession(agent);
+      if (!mountedRef.current) return;
       setCreateOpen(false);
       await refresh();
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
@@ -76,8 +91,10 @@ export function SessionsPage({ agents }: SessionsProps) {
     setError(null);
     try {
       const cmd = await getLaunchCommand(s.id);
+      if (!mountedRef.current) return;
       setLaunchModal({ session: s, command: cmd });
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     }
   };
@@ -88,12 +105,14 @@ export function SessionsPage({ agents }: SessionsProps) {
     setError(null);
     try {
       await deleteSession(deleteModal.session.id, deleteModal.alsoDeleteCopilotState);
+      if (!mountedRef.current) return;
       setDeleteModal(null);
       await refresh();
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 

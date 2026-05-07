@@ -55,6 +55,10 @@ export async function scanCopilotSessions(
     const obj = parsed as Record<string, unknown>;
     const cwdRaw = obj.cwd;
     if (typeof cwdRaw !== "string" || cwdRaw.length === 0) continue;
+    // Reject relative paths — copilot session cwds are always absolute.
+    // A non-absolute string like "." would otherwise resolve against the
+    // server's process.cwd() and could falsely match an unrelated workdir.
+    if (!path.isAbsolute(cwdRaw)) continue;
     const cwdKey = await realNormalizeCwd(cwdRaw);
     const info: CopilotSessionInfo = {
       sessionId,

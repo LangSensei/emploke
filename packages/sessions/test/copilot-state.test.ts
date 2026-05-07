@@ -72,6 +72,15 @@ describe("scanCopilotSessions", () => {
     expect(await scanCopilotSessions(stateDir, r.logger)).toEqual([]);
   });
 
+  it("skips entries with relative cwd (only absolute paths are accepted)", async () => {
+    // A relative cwd like "." would otherwise resolve against process.cwd()
+    // and could falsely match an unrelated workdir.
+    await writeSession("66666666-6666-6666-6666-666666666666", `cwd: .\n`);
+    await writeSession("77777777-7777-7777-7777-777777777777", `cwd: ./relative/path\n`);
+    const r = recorder();
+    expect(await scanCopilotSessions(stateDir, r.logger)).toEqual([]);
+  });
+
   it("skips and logs malformed YAML", async () => {
     await writeSession("55555555-5555-5555-5555-555555555555", `cwd:\n  - not\n  -valid: : :\n`);
     const r = recorder();

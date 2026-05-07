@@ -459,11 +459,53 @@ describe("delete()", () => {
       await expect(m.delete(rec.id, { deleteCopilotState: true })).rejects.toBeInstanceOf(
         CopilotStateDeletionFailed,
       );
-      // Workdir should still exist.
-      await expect(stat(rec.workdir)).resolves.toBeDefined();
+      // Workdir should still exist as a real directory (not just any node).
+      const st = await stat(rec.workdir);
+      expect(st.isDirectory()).toBe(true);
     } finally {
       vi.mocked(fsp.rm).mockImplementation(realRm);
     }
+  });
+
+  it("with deleteCopilotState=true: post-rm sweep removes stragglers created during the delete window", async () => {
+    // Simulates a copilot session being created in the workdir BETWEEN the
+    // initial scan and the workdir rm. The post-rm sweep should catch it.
+    const m = new SessionsManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      provisioner: new FakeProvisioner(),
+      root,
+      copilotStateDir,
+    });
+    const rec = await m.create({ agent: "demo" });
+    const cwdKey = await realNormalizeCwd(rec.workdir);
+    const sidA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    await mkdir(path.join(copilotStateDir, sidA), { recursive: true });
+    await writeFile(path.join(copilotStateDir, sidA, "workspace.yaml"), `cwd: ${cwdKey}\n`, "utf8");
+    const sidB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const fsp = await import("node:fs/promises");
+    const realRm = vi.mocked(fsp.rm).getMockImplementation();
+    if (!realRm) throw new Error("expected wrapped rm impl");
+    let plantedStraggler = false;
+    vi.mocked(fsp.rm).mockImplementation(async (p, opts) => {
+      if (typeof p === "string" && p === rec.workdir && !plantedStraggler) {
+        plantedStraggler = true;
+        await mkdir(path.join(copilotStateDir, sidB), { recursive: true });
+        await writeFile(
+          path.join(copilotStateDir, sidB, "workspace.yaml"),
+          `cwd: ${cwdKey}\n`,
+          "utf8",
+        );
+      }
+      return realRm(p, opts);
+    });
+    try {
+      await m.delete(rec.id, { deleteCopilotState: true });
+    } finally {
+      vi.mocked(fsp.rm).mockImplementation(realRm);
+    }
+    // Both A (caught in first pass) and B (the straggler) should be gone.
+    await expect(stat(path.join(copilotStateDir, sidA))).rejects.toThrow();
+    await expect(stat(path.join(copilotStateDir, sidB))).rejects.toThrow();
   });
 });
 

@@ -216,9 +216,12 @@ export class SessionsManager {
       throw new SessionNotFoundError(id);
     }
 
-    if (opts.deleteCopilotState) {
+    // Compute cwdKey BEFORE rm-ing the workdir (realpath needs the path to
+    // exist). Used by both the primary cleanup and the post-rm sweep.
+    const cwdKey = opts.deleteCopilotState ? await realNormalizeCwd(workdir) : null;
+
+    if (opts.deleteCopilotState && cwdKey !== null) {
       const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
-      const cwdKey = await realNormalizeCwd(workdir);
       const matches = copilotEntries.filter((e) => e.cwdKey === cwdKey);
       const failures: { copilotSessionId: string; reason: string }[] = [];
       for (const m of matches) {
@@ -239,6 +242,27 @@ export class SessionsManager {
     }
 
     await rm(workdir, { recursive: true, force: true });
+
+    // Post-rm sweep: catch copilot sessions that may have been created in
+    // the workdir during the delete window. Best-effort — workdir is gone,
+    // so we log warnings instead of throwing.
+    if (opts.deleteCopilotState && cwdKey !== null) {
+      const stragglers = (await scanCopilotSessions(this.copilotStateDir, this.logger)).filter(
+        (e) => e.cwdKey === cwdKey,
+      );
+      for (const s of stragglers) {
+        const dir = path.join(this.copilotStateDir, s.info.sessionId);
+        try {
+          await rm(dir, { recursive: true, force: true });
+        } catch (err) {
+          this.logger.warn("sessions: failed to clean up straggler copilot state", {
+            sessionId: id,
+            copilotSessionId: s.info.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
   }
 
   // ─── launch / resume ─────────────────────────────────────
