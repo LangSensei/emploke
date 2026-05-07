@@ -52,6 +52,9 @@ export class Catalog {
 
   static async open(opts: CatalogOptions): Promise<Catalog> {
     const c = new Catalog(opts);
+    // Ensure catalog dir exists so subsequent writes (incl. .lock acquisition)
+    // don't fail with ENOENT on a fresh install.
+    await mkdirFs(opts.catalogDir, { recursive: true });
     // Remove stale lock from previous crash. Safe under single-owner constraint.
     await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
     await c.scan();
@@ -126,6 +129,15 @@ export class Catalog {
     const name = await this.withWriteLock(() => this.mcpStore.install(sourceFile, mcpName));
     this.recomputeStatus();
     return name;
+  }
+
+  async updateMcpContent(name: string, content: unknown): Promise<void> {
+    await this.withWriteLock(() => this.mcpStore.updateContent(name, content));
+    this.recomputeStatus();
+  }
+
+  getMcpContent(name: string): Promise<unknown> {
+    return this.mcpStore.getContent(name);
   }
 
   async removeMcp(name: string): Promise<void> {

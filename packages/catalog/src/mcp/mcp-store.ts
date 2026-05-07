@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { atomicWriteJsonFile, pathExists } from "../atomic.js";
 import { HasDependents, NotFound } from "../errors.js";
 import type { CatalogEvent, EventBus } from "../types.js";
@@ -22,17 +22,12 @@ export class McpStore {
     const parsed = JSON.parse(content);
     // For scoped MCPs (e.g. io.playwright/mcp), mcpName must be provided explicitly.
     // Auto-inference only works for unscoped names derived from filename.
-    const name =
-      mcpName ??
-      sourceFile
-        .split("/")
-        .pop()!
-        .replace(/\.json$/, "");
+    // Use path.basename so this works on both Windows (\) and POSIX (/) paths.
+    const name = mcpName ?? basename(sourceFile, ".json");
     validateMcpName(name);
 
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
-    const destDir = destFile.substring(0, destFile.lastIndexOf("/"));
-    await mkdir(destDir, { recursive: true });
+    await mkdir(dirname(destFile), { recursive: true });
     const exists = this.mcps.has(name);
     await atomicWriteJsonFile(parsed, destFile);
     this.mcps.add(name);
@@ -44,6 +39,36 @@ export class McpStore {
       at: new Date(),
     });
     return name;
+  }
+
+  /**
+   * Read the on-disk JSON content of an installed MCP. Throws NotFound if
+   * the MCP is not in the catalog.
+   */
+  async getContent(name: string): Promise<unknown> {
+    if (!this.mcps.has(name)) throw new NotFound("mcp", name);
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
+    const raw = await readFile(destFile, "utf8");
+    return JSON.parse(raw);
+  }
+
+  /**
+   * Replace the JSON content of an existing MCP atomically. The MCP must
+   * already exist in the catalog (use install() to create new entries).
+   */
+  async updateContent(name: string, content: unknown): Promise<void> {
+    validateMcpName(name);
+    if (!this.mcps.has(name)) throw new NotFound("mcp", name);
+
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
+    await atomicWriteJsonFile(content, destFile);
+
+    this.events.publish({
+      type: "McpUpdated",
+      name,
+      path: destFile,
+      at: new Date(),
+    });
   }
 
   async remove(name: string, getDependents: (name: string) => string[]): Promise<void> {
