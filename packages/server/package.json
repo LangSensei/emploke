@@ -3,9 +3,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node --watch --import tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js --serve-static"
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",

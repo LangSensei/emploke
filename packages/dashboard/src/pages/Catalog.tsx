@@ -1,0 +1,526 @@
+import type { AgentEntry, SkillEntry } from "@emploke/catalog";
+import { type FormEvent, useEffect, useState } from "react";
+import {
+  getAgent,
+  getMcp,
+  getSkill,
+  installAgent,
+  installMcp,
+  installSkill,
+  type McpItem,
+  patchAgentMetadata,
+  patchSkillMetadata,
+  removeAgent,
+  removeMcp,
+  removeSkill,
+  updateAgentContent,
+  updateMcpContent,
+  updateSkillContent,
+} from "../api";
+import { CodeEditor } from "../components/CodeEditor";
+import { EntryGrid } from "../components/EntryGrid";
+import { PlusIcon } from "../components/Icons";
+import { McpGrid } from "../components/McpGrid";
+import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
+import { Modal } from "../components/Modal";
+
+export type CatalogTab = "agents" | "skills" | "mcps";
+
+interface CatalogProps {
+  tab: CatalogTab;
+  onTabChange: (tab: CatalogTab) => void;
+  skills: SkillEntry[];
+  agents: AgentEntry[];
+  mcps: McpItem[];
+  onChanged: () => void;
+}
+
+const KIND_LABEL: Record<CatalogTab, string> = {
+  agents: "Agent",
+  skills: "Skill",
+  mcps: "MCP",
+};
+
+type EditTarget =
+  | { kind: "skill"; name: string }
+  | { kind: "agent"; name: string }
+  | { kind: "mcp"; name: string };
+
+export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged }: CatalogProps) {
+  const [installOpen, setInstallOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [edit, setEdit] = useState<EditTarget | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const doInstall = async (sourcePath: string, name?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (tab === "agents") await installAgent(sourcePath);
+      else if (tab === "skills") await installSkill(sourcePath);
+      else await installMcp(sourcePath, name);
+      setInstallOpen(false);
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRemove = async (name: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (tab === "agents") await removeAgent(name);
+      else if (tab === "skills") await removeSkill(name);
+      else await removeMcp(name);
+      setConfirmRemove(null);
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="page-toolbar">
+        <nav className="section-tabs">
+          <button
+            type="button"
+            className={tab === "agents" ? "active" : ""}
+            onClick={() => onTabChange("agents")}
+          >
+            Agents <span className="count">{agents.length}</span>
+          </button>
+          <button
+            type="button"
+            className={tab === "skills" ? "active" : ""}
+            onClick={() => onTabChange("skills")}
+          >
+            Skills <span className="count">{skills.length}</span>
+          </button>
+          <button
+            type="button"
+            className={tab === "mcps" ? "active" : ""}
+            onClick={() => onTabChange("mcps")}
+          >
+            MCPs <span className="count">{mcps.length}</span>
+          </button>
+        </nav>
+        <div className="page-toolbar__actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => {
+              setError(null);
+              setInstallOpen(true);
+            }}
+          >
+            <PlusIcon />
+            Install {KIND_LABEL[tab]}
+          </button>
+        </div>
+      </div>
+
+      {error && !installOpen && !confirmRemove && (
+        <div className="alert alert--error" style={{ marginBottom: 16 }}>
+          ⚠ {error}
+        </div>
+      )}
+
+      {tab === "agents" && (
+        <EntryGrid
+          items={agents.map((a) => ({
+            name: a.agent.name,
+            description: a.agent.description,
+            version: a.agent.version,
+            status: a.status,
+            missingDeps: a.missingDeps,
+            skillsCount: a.agent.dependencies?.skills?.length ?? 0,
+            mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
+          }))}
+          emptyTitle="No agents installed"
+          emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
+          onEdit={(name) => {
+            setError(null);
+            setEdit({ kind: "agent", name });
+          }}
+          onRemove={(name) => setConfirmRemove(name)}
+        />
+      )}
+
+      {tab === "skills" && (
+        <EntryGrid
+          items={skills.map((s) => ({
+            name: s.skill.name,
+            description: s.skill.description,
+            version: s.skill.version,
+            status: s.status,
+            missingDeps: s.missingDeps,
+            skillsCount: s.skill.dependencies?.skills?.length ?? 0,
+            mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
+          }))}
+          emptyTitle="No skills installed"
+          emptyHint={<>A skill is a reusable capability package referenced by agents.</>}
+          onEdit={(name) => {
+            setError(null);
+            setEdit({ kind: "skill", name });
+          }}
+          onRemove={(name) => setConfirmRemove(name)}
+        />
+      )}
+
+      {tab === "mcps" && (
+        <McpGrid
+          mcps={mcps}
+          onEdit={(name) => {
+            setError(null);
+            setEdit({ kind: "mcp", name });
+          }}
+          onRemove={(name) => setConfirmRemove(name)}
+        />
+      )}
+
+      <InstallDialog
+        kind={tab}
+        open={installOpen}
+        busy={busy}
+        error={error}
+        onClose={() => {
+          setInstallOpen(false);
+          setError(null);
+        }}
+        onSubmit={doInstall}
+      />
+
+      <ConfirmRemoveDialog
+        kind={tab}
+        name={confirmRemove}
+        busy={busy}
+        error={error}
+        onClose={() => {
+          setConfirmRemove(null);
+          setError(null);
+        }}
+        onConfirm={() => confirmRemove && doRemove(confirmRemove)}
+      />
+
+      {edit !== null && (
+        <EditDialog
+          target={edit}
+          availableSkills={skills.map((s) => s.skill.name)}
+          availableMcps={mcps.map((m) => m.name)}
+          onClose={() => setEdit(null)}
+          onSaved={() => {
+            setEdit(null);
+            onChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── InstallDialog ────────────────────────────────────────────────
+
+interface InstallDialogProps {
+  kind: CatalogTab;
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (sourcePath: string, name?: string) => void;
+}
+
+function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDialogProps) {
+  const [sourcePath, setSourcePath] = useState("");
+  const [name, setName] = useState("");
+  const isFile = kind === "mcps";
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!sourcePath.trim()) return;
+    onSubmit(sourcePath.trim(), name.trim() || undefined);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Install ${KIND_LABEL[kind]}`}>
+      <form onSubmit={handleSubmit}>
+        <div className="modal__body">
+          <div className="form-field">
+            <label htmlFor="install-source">
+              {isFile ? "Source JSON file" : "Source directory"}
+            </label>
+            <input
+              id="install-source"
+              type="text"
+              value={sourcePath}
+              onChange={(e) => setSourcePath(e.target.value)}
+              placeholder={isFile ? "/absolute/path/to/server.json" : "/absolute/path/to/skill-dir"}
+              // biome-ignore lint/a11y/noAutofocus: install dialog opens in response to a user click; auto-focusing the only field is expected UX
+              autoFocus
+              disabled={busy}
+            />
+            <p className="form-hint">
+              Path on the <strong>server's</strong> local filesystem.
+            </p>
+          </div>
+
+          {isFile && (
+            <div className="form-field">
+              <label htmlFor="install-name">Name (optional)</label>
+              <input
+                id="install-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Defaults to filename"
+                disabled={busy}
+              />
+            </div>
+          )}
+
+          {error && <div className="alert alert--error">⚠ {error}</div>}
+        </div>
+
+        <div className="modal__footer">
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn--primary" disabled={busy || !sourcePath.trim()}>
+            {busy ? "Installing..." : "Install"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── ConfirmRemoveDialog ──────────────────────────────────────────
+
+interface ConfirmRemoveDialogProps {
+  kind: CatalogTab;
+  name: string | null;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+function ConfirmRemoveDialog({
+  kind,
+  name,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: ConfirmRemoveDialogProps) {
+  return (
+    <Modal open={name !== null} onClose={onClose} title={`Remove ${KIND_LABEL[kind]}`}>
+      <div className="modal__body">
+        <p>
+          Remove <code>{name}</code>? This deletes the entry from the catalog. Other entries that
+          declare it as a dependency will be marked <strong>disabled</strong>.
+        </p>
+        {error && <div className="alert alert--error">⚠ {error}</div>}
+      </div>
+      <div className="modal__footer">
+        <button type="button" className="btn" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn--danger" onClick={onConfirm} disabled={busy}>
+          {busy ? "Removing..." : "Remove"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── EditDialog ────────────────────────────────────────────────────
+
+interface EditDialogProps {
+  target: EditTarget;
+  // Available names for chip autocomplete in the metadata form.
+  availableSkills: string[];
+  availableMcps: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+type EditMode = "form" | "source";
+
+function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }: EditDialogProps) {
+  // ─ source-mode state (raw editor) ──────────────────
+  const [text, setText] = useState("");
+  // ─ form-mode state (metadata form) ─────────────────
+  const [form, setForm] = useState<MetadataFormValues>({
+    description: "",
+    version: "",
+    prereqs: "",
+    skills: [],
+    mcps: [],
+  });
+
+  const [mode, setMode] = useState<EditMode>(target.kind === "mcp" ? "source" : "form");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load on mount / target change. We always fetch the raw content (covers
+  // source mode) and additionally project the server's structured fields
+  // into the form values — no client-side YAML parsing needed.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const load = async (): Promise<void> => {
+      if (target.kind === "mcp") {
+        const d = await getMcp(target.name);
+        if (!cancelled) setText(d.content);
+        return;
+      }
+      const detail =
+        target.kind === "skill" ? await getSkill(target.name) : await getAgent(target.name);
+      if (cancelled) return;
+      setText(detail.content);
+      const meta = "skill" in detail ? detail.skill : detail.agent;
+      setForm({
+        description: meta.description ?? "",
+        version: meta.version ?? "",
+        prereqs: "skill" in detail ? (detail.skill.prereqs ?? "") : "",
+        skills: [...(meta.dependencies?.skills ?? [])],
+        mcps: [...(meta.dependencies?.mcps ?? [])],
+      });
+    };
+    load()
+      .catch((e) => {
+        if (!cancelled) setError((e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (target.kind === "mcp") {
+        // Server validates that `text` is parseable JSON; no need to re-parse
+        // here. Sending raw string preserves user's formatting verbatim.
+        await updateMcpContent(target.name, text);
+      } else if (mode === "source") {
+        // Skill / Agent source mode: write raw content via PUT.
+        if (target.kind === "skill") await updateSkillContent(target.name, text);
+        else await updateAgentContent(target.name, text);
+      } else {
+        // Skill / Agent form mode: PATCH the metadata fields only.
+        const patch =
+          target.kind === "skill"
+            ? {
+                description: form.description,
+                version: form.version,
+                prereqs: form.prereqs.trim() === "" ? null : form.prereqs,
+                dependencies:
+                  form.skills.length === 0 && form.mcps.length === 0
+                    ? null
+                    : { skills: form.skills, mcps: form.mcps },
+              }
+            : {
+                description: form.description,
+                version: form.version,
+                dependencies:
+                  form.skills.length === 0 && form.mcps.length === 0
+                    ? null
+                    : { skills: form.skills, mcps: form.mcps },
+              };
+        if (target.kind === "skill") await patchSkillMetadata(target.name, patch);
+        else await patchAgentMetadata(target.name, patch);
+      }
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
+  const title = `Edit ${kindLabel}: ${target.name}`;
+  const isLargeMode = mode === "source" || target.kind === "mcp";
+
+  return (
+    <Modal open onClose={onClose} title={title} size={isLargeMode ? "large" : "default"}>
+      <div className="modal__body modal__body--scroll">
+        {loading ? (
+          <p className="form-hint">Loading...</p>
+        ) : target.kind === "mcp" ? (
+          <CodeEditor
+            value={text}
+            onChange={setText}
+            language="json"
+            disabled={saving}
+            height="500px"
+          />
+        ) : mode === "form" ? (
+          <MetadataForm
+            kind={target.kind}
+            values={form}
+            onChange={setForm}
+            availableSkills={availableSkills.filter((n) => n !== target.name)}
+            availableMcps={availableMcps}
+            missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
+            missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
+            disabled={saving}
+          />
+        ) : (
+          <CodeEditor
+            value={text}
+            onChange={setText}
+            language="markdown"
+            disabled={saving}
+            height="500px"
+          />
+        )}
+        {error && <div className="alert alert--error">⚠ {error}</div>}
+      </div>
+      <div className="modal__footer">
+        {target.kind !== "mcp" && (
+          <button
+            type="button"
+            className="btn btn--ghost modal__footer-secondary"
+            onClick={() => setMode(mode === "form" ? "source" : "form")}
+            disabled={saving || loading}
+          >
+            {mode === "form" ? "Edit source →" : "← Back to form"}
+          </button>
+        )}
+        <button type="button" className="btn" onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={handleSave}
+          disabled={loading || saving}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Frontmatter helpers (client-side, best-effort) ───────────────
+//
+// (Removed: server already parses frontmatter authoritatively and exposes
+// the structured fields via GET /api/skills/:name and /api/agents/:name.
+// We project from those rather than re-parsing on the client, which avoids
+// drift and edge-case bugs like inline-flow YAML arrays.)

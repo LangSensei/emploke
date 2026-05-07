@@ -4,12 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentStore } from "../src/agent/agent-store.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
-import { InMemoryEventBus } from "../src/event-bus.js";
-import type { CatalogEvent } from "../src/types.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let events: InMemoryEventBus<CatalogEvent>;
 let store: AgentStore;
 
 async function makeAgent(
@@ -42,8 +39,7 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  events = new InMemoryEventBus<CatalogEvent>();
-  store = new AgentStore(catalogDir, events);
+  store = new AgentStore(catalogDir);
 });
 
 afterEach(async () => {
@@ -71,21 +67,6 @@ describe("AgentStore", () => {
       expect(store.list()).toHaveLength(1);
     });
 
-    it("emits AgentInstalled", async () => {
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.install(await makeAgent("reviewer"));
-      expect(collected[0]!.type).toBe("AgentInstalled");
-    });
-
-    it("emits AgentUpdated on re-install", async () => {
-      await store.install(await makeAgent("reviewer"));
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.install(await makeAgent("reviewer"));
-      expect(collected[0]!.type).toBe("AgentUpdated");
-    });
-
     it("rejects invalid name", async () => {
       const dir = join(sourceDir, "bad");
       await mkdir(dir, { recursive: true });
@@ -109,14 +90,6 @@ describe("AgentStore", () => {
 
     it("throws NotFound for unknown", async () => {
       await expect(store.remove("nope")).rejects.toThrow(NotFound);
-    });
-
-    it("emits AgentUninstalled", async () => {
-      await store.install(await makeAgent("reviewer"));
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.remove("reviewer");
-      expect(collected[0]!.type).toBe("AgentUninstalled");
     });
   });
 

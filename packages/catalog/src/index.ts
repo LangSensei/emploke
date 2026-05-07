@@ -1,4 +1,9 @@
-export type { CatalogOptions, ScanIssue } from "./catalog.js";
+export type {
+  AgentMetadataPatch,
+  CatalogOptions,
+  ScanIssue,
+  SkillMetadataPatch,
+} from "./catalog.js";
 export { Catalog } from "./catalog.js";
 export {
   CatalogError,
@@ -13,24 +18,14 @@ export {
 export type {
   Agent,
   AgentEntry,
-  AgentInstalled,
-  AgentUninstalled,
-  AgentUpdated,
-  CatalogEvent,
-  CatalogEventHandler,
   CatalogKind,
+  DependencyKind,
   EntryStatus,
-  EventBus,
-  McpInstalled,
-  McpUninstalled,
-  McpUpdated,
+  MissingDep,
   ResolvedMcp,
   ResolvedSkill,
   ResolveEntry,
   ResolveResult,
   Skill,
   SkillEntry,
-  SkillInstalled,
-  SkillUninstalled,
-  SkillUpdated,
 } from "./types.js";

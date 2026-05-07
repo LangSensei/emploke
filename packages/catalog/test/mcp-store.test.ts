@@ -3,13 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import { InMemoryEventBus } from "../src/event-bus.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
-import type { CatalogEvent } from "../src/types.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let events: InMemoryEventBus<CatalogEvent>;
 let store: McpStore;
 
 async function makeMcp(name: string, content?: object): Promise<string> {
@@ -28,8 +25,7 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  events = new InMemoryEventBus<CatalogEvent>();
-  store = new McpStore(catalogDir, events);
+  store = new McpStore(catalogDir);
 });
 
 afterEach(async () => {
@@ -57,21 +53,6 @@ describe("McpStore", () => {
       await store.install(src);
       await store.install(src);
       expect(store.list()).toHaveLength(1);
-    });
-
-    it("emits McpInstalled", async () => {
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.install(await makeMcp("github"));
-      expect(collected[0]!.type).toBe("McpInstalled");
-    });
-
-    it("emits McpUpdated on re-install", async () => {
-      await store.install(await makeMcp("github"));
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.install(await makeMcp("github"));
-      expect(collected[0]!.type).toBe("McpUpdated");
     });
 
     it("rejects invalid name", async () => {
@@ -108,25 +89,19 @@ describe("McpStore", () => {
       await store.install(await makeMcp("github"));
       await expect(store.remove("github", () => ["reviewer"])).rejects.toThrow(HasDependents);
     });
-
-    it("emits McpUninstalled", async () => {
-      await store.install(await makeMcp("github"));
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.remove("github", () => []);
-      expect(collected[0]!.type).toBe("McpUninstalled");
-    });
   });
 
   describe("getPath", () => {
     it("returns path for installed", async () => {
       await store.install(await makeMcp("github"));
-      expect(store.getPath("github")).toContain("mcps/github.json");
+      expect(store.getPath("github")).toContain(join("mcps", "github.json"));
     });
 
     it("returns path for scoped mcp", async () => {
       await store.install(await makeMcp("mcp"), "io.playwright/mcp");
-      expect(store.getPath("io.playwright/mcp")).toContain("mcps/io.playwright/mcp.json");
+      expect(store.getPath("io.playwright/mcp")).toContain(
+        join("mcps", "io.playwright", "mcp.json"),
+      );
     });
 
     it("returns null for unknown", () => {

@@ -33,6 +33,47 @@ export function parseFrontmatter(
   return { data: parsed as Record<string, unknown>, body };
 }
 
+/**
+ * Apply a partial patch to the frontmatter of a raw markdown document.
+ *
+ * - Preserves the body byte-for-byte (only the YAML block changes).
+ * - Preserves frontmatter keys that are not in the patch (e.g. user-defined
+ *   `tags`, `category`, etc.).
+ * - Patch values of `null` or `undefined` remove the key.
+ * - Comments inside frontmatter are NOT preserved (YAML round-trip
+ *   limitation; this is consistent with most md-frontmatter tools).
+ */
+export function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
+  const match = raw.match(FRONTMATTER_RE);
+  let existing: Record<string, unknown> = {};
+  let body = raw;
+  if (match) {
+    let parsed: unknown;
+    try {
+      parsed = yaml.load(match[1] ?? "");
+    } catch {
+      // Existing frontmatter unparseable; replace it whole rather than merge.
+      parsed = {};
+    }
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>;
+    }
+    body = raw.slice(match[0].length);
+  }
+
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) {
+      delete merged[k];
+    } else {
+      merged[k] = v;
+    }
+  }
+
+  const yamlText = yaml.dump(merged, { lineWidth: -1, noRefs: true }).trimEnd();
+  return `---\n${yamlText}\n---\n${body}`;
+}
+
 function parseCommonFields(
   data: Record<string, unknown>,
   sourcePath: string,

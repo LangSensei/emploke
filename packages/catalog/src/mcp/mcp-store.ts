@@ -1,17 +1,14 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { atomicWriteJsonFile, pathExists } from "../atomic.js";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { pathExists } from "../atomic.js";
 import { HasDependents, NotFound } from "../errors.js";
-import type { CatalogEvent, EventBus } from "../types.js";
+
 import { nameToPath, validateMcpName } from "../validate.js";
 
 export class McpStore {
   private readonly mcps = new Set<string>();
 
-  constructor(
-    private readonly catalogDir: string,
-    private readonly events: EventBus<CatalogEvent>,
-  ) {}
+  constructor(private readonly catalogDir: string) {}
 
   private get baseDir() {
     return join(this.catalogDir, "mcps");
@@ -19,31 +16,51 @@ export class McpStore {
 
   async install(sourceFile: string, mcpName?: string): Promise<string> {
     const content = await readFile(sourceFile, "utf8");
-    const parsed = JSON.parse(content);
+    // Validate JSON before installing (we don't reformat — preserve user's
+    // whitespace / comments / etc. byte-for-byte).
+    JSON.parse(content);
     // For scoped MCPs (e.g. io.playwright/mcp), mcpName must be provided explicitly.
     // Auto-inference only works for unscoped names derived from filename.
-    const name =
-      mcpName ??
-      sourceFile
-        .split("/")
-        .pop()!
-        .replace(/\.json$/, "");
+    // Use path.basename so this works on both Windows (\) and POSIX (/) paths.
+    const name = mcpName ?? basename(sourceFile, ".json");
     validateMcpName(name);
 
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
-    const destDir = destFile.substring(0, destFile.lastIndexOf("/"));
-    await mkdir(destDir, { recursive: true });
-    const exists = this.mcps.has(name);
-    await atomicWriteJsonFile(parsed, destFile);
+    await mkdir(dirname(destFile), { recursive: true });
+    await writeFile(destFile, content, "utf8");
     this.mcps.add(name);
-
-    this.events.publish({
-      type: exists ? "McpUpdated" : "McpInstalled",
-      name,
-      path: destFile,
-      at: new Date(),
-    });
     return name;
+  }
+
+  /**
+   * Read the on-disk JSON content of an installed MCP as a raw string.
+   * Server returns the bytes verbatim; the client gets to display whatever
+   * formatting the user wrote, not a re-serialized canonical form.
+   */
+  async getContent(name: string): Promise<string> {
+    if (!this.mcps.has(name)) throw new NotFound("mcp", name);
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
+    return readFile(destFile, "utf8");
+  }
+
+  /**
+   * Replace the JSON content of an existing MCP atomically. The new content
+   * must be valid JSON; we validate by attempting to parse but write the
+   * original string so user formatting is preserved.
+   */
+  async updateContent(name: string, content: string): Promise<void> {
+    validateMcpName(name);
+    if (!this.mcps.has(name)) throw new NotFound("mcp", name);
+
+    // Validate JSON shape before touching disk.
+    try {
+      JSON.parse(content);
+    } catch (cause) {
+      throw new Error(`invalid JSON: ${(cause as Error).message}`);
+    }
+
+    const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
+    await writeFile(destFile, content, "utf8");
   }
 
   async remove(name: string, getDependents: (name: string) => string[]): Promise<void> {
@@ -56,7 +73,6 @@ export class McpStore {
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     await rm(destFile, { force: true });
     this.mcps.delete(name);
-    this.events.publish({ type: "McpUninstalled", name, at: new Date() });
   }
 
   getPath(name: string): string | null {

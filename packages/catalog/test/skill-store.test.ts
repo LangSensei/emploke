@@ -3,13 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import { InMemoryEventBus } from "../src/event-bus.js";
 import { SkillStore } from "../src/skill/skill-store.js";
-import type { CatalogEvent } from "../src/types.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let events: InMemoryEventBus<CatalogEvent>;
 let store: SkillStore;
 
 async function makeSkill(
@@ -43,8 +40,7 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  events = new InMemoryEventBus<CatalogEvent>();
-  store = new SkillStore(catalogDir, events);
+  store = new SkillStore(catalogDir);
 });
 
 afterEach(async () => {
@@ -73,23 +69,6 @@ describe("SkillStore", () => {
       const src2 = await makeSkill("weather");
       await store.install(src2);
       expect(store.list()).toHaveLength(1);
-    });
-
-    it("emits SkillInstalled event", async () => {
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      const src = await makeSkill("weather");
-      await store.install(src);
-      expect(collected[0]!.type).toBe("SkillInstalled");
-    });
-
-    it("emits SkillUpdated on re-install", async () => {
-      const src = await makeSkill("weather");
-      await store.install(src);
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.install(src);
-      expect(collected[0]!.type).toBe("SkillUpdated");
     });
 
     it("rejects invalid name", async () => {
@@ -128,15 +107,6 @@ describe("SkillStore", () => {
       const src = await makeSkill("leaf");
       await store.install(src);
       await expect(store.remove("leaf", () => ["parent"])).rejects.toThrow(HasDependents);
-    });
-
-    it("emits SkillUninstalled", async () => {
-      const src = await makeSkill("weather");
-      await store.install(src);
-      const collected: CatalogEvent[] = [];
-      events.subscribe((e) => collected.push(e));
-      await store.remove("weather", () => []);
-      expect(collected[0]!.type).toBe("SkillUninstalled");
     });
   });
 

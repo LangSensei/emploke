@@ -1,10 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import type { CatalogEvent } from "../src/types.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -187,27 +186,6 @@ describe("Catalog", () => {
       await writeFile(join(dir, "SKILL.md"), "---\nname: Bad_Name\ndescription: x\n---\n");
       await expect(c.installSkill(dir)).rejects.toThrow(NameInvalid);
     });
-
-    it("emits SkillInstalled event", async () => {
-      const c = await Catalog.open({ catalogDir });
-      const events: CatalogEvent[] = [];
-      c.events.subscribe((e) => events.push(e));
-      const src = await makeSkillSource("weather");
-      await c.installSkill(src);
-      expect(events).toHaveLength(1);
-      expect(events[0]!.type).toBe("SkillInstalled");
-    });
-
-    it("emits SkillUpdated on re-install", async () => {
-      const c = await Catalog.open({ catalogDir });
-      const src = await makeSkillSource("weather");
-      await c.installSkill(src);
-      const events: CatalogEvent[] = [];
-      c.events.subscribe((e) => events.push(e));
-      const src2 = await makeSkillSource("weather", { version: "2.0.0" });
-      await c.installSkill(src2);
-      expect(events[0]!.type).toBe("SkillUpdated");
-    });
   });
 
   describe("removeSkill", () => {
@@ -299,7 +277,7 @@ describe("Catalog", () => {
       expect(result.entry).toEqual({
         kind: "agent",
         agent: expect.objectContaining({ name: "reviewer" }),
-        path: expect.stringContaining("agents/reviewer"),
+        path: expect.stringContaining(join("agents", "reviewer")),
       });
       expect(result.skills.map((s) => s.skill.name)).toContain("security-audit");
       expect(result.mcps.map((m) => m.name)).toContain("github");
@@ -402,7 +380,8 @@ describe("entry status", () => {
 
     const entry = c.getSkillEntry("lint");
     expect(entry!.status).toBe("disabled");
-    expect(entry!.missingDeps).toContain("github");
+    expect(entry!.missingDeps?.map((d) => d.name)).toContain("github");
+    expect(entry!.missingDeps?.find((d) => d.name === "github")?.kind).toBe("mcp");
   });
 
   it("skill becomes ready after dep installed", async () => {
@@ -435,7 +414,8 @@ describe("entry status", () => {
 
     const entry = c.getAgentEntry("reviewer");
     expect(entry!.status).toBe("disabled");
-    expect(entry!.missingDeps).toContain("lint");
+    expect(entry!.missingDeps?.map((d) => d.name)).toContain("lint");
+    expect(entry!.missingDeps?.find((d) => d.name === "lint")?.kind).toBe("skill");
   });
 
   it("agent becomes ready after skill installed", async () => {
@@ -479,5 +459,56 @@ describe("entry status", () => {
     await writeFile(join(mcpDir, "github.json"), JSON.stringify({ type: "stdio", command: "gh" }));
     await c.rescan();
     expect(c.getSkillEntry("lint")!.status).toBe("ready");
+  });
+
+  describe("rescanIfStale", () => {
+    it("skips scan when not stale", async () => {
+      const c = await Catalog.open({ catalogDir });
+      // open() already runs an initial scan, so _lastScanAt is fresh.
+      const spy = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(60_000);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("triggers scan when stale", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      // maxAgeMs=-1 makes any elapsed time count as stale.
+      await c.rescanIfStale(-1);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("coalesces concurrent stale calls into a single scan (single-flight)", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      // Fire 4 parallel calls — without single-flight all 4 would scan.
+      await Promise.all([
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+        c.rescanIfStale(-1),
+      ]);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the in-flight slot so the next stale call scans again", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const spy = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(-1);
+      await c.rescanIfStale(-1);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("propagates rescan errors and clears the in-flight slot", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const boom = new Error("disk on fire");
+      const spy = vi.spyOn(c, "rescan").mockRejectedValueOnce(boom);
+      await expect(c.rescanIfStale(-1)).rejects.toThrow("disk on fire");
+      // Slot must be cleared even on failure so subsequent calls aren't stuck.
+      spy.mockRestore();
+      const spy2 = vi.spyOn(c, "rescan");
+      await c.rescanIfStale(-1);
+      expect(spy2).toHaveBeenCalledTimes(1);
+    });
   });
 });
