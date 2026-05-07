@@ -51,7 +51,7 @@ export class HasDependents extends CatalogError {
 
 export class NotFound extends CatalogError {
   constructor(
-    public readonly kind: string,
+    public readonly kind: "skill" | "agent" | "mcp",
     public readonly missingName: string,
   ) {
     super(`${kind} not found: "${missingName}"`);

@@ -47,7 +47,7 @@ export class Resolver {
         ...(skill.dependencies?.mcps ?? []),
       ];
     } else {
-      throw new NotFound("agent or skill", name);
+      throw new Error(`not found in catalog: "${name}" (expected agent or skill)`);
     }
 
     const resolved = resolveTopological(rootDeps, lookup);

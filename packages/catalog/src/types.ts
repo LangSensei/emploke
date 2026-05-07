@@ -5,6 +5,8 @@
  * https://github.com/metaagents-ai/metaagents
  */
 
+export type CatalogKind = "skill" | "agent" | "mcp";
+
 export interface Skill {
   readonly name: string;
   readonly description: string;

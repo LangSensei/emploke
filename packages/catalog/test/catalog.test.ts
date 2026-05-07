@@ -282,9 +282,9 @@ describe("Catalog", () => {
       expect(result.mcps.map(m => m.name)).toContain("semgrep");
     });
 
-    it("throws NotFound for unknown name", async () => {
+    it("throws for unknown name", async () => {
       const c = await Catalog.open({ catalogDir });
-      expect(() => c.resolve("nope")).toThrow(NotFound);
+      expect(() => c.resolve("nope")).toThrow("not found in catalog");
     });
   });
 
