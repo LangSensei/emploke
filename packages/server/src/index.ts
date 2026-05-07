@@ -1,12 +1,16 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Catalog } from "@emploke/catalog";
+import { CopilotProvisioner } from "@emploke/provisioner";
+import { SessionsManager } from "@emploke/sessions";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { apiRoutes } from "./routes/api.js";
+import { sessionsRoutes } from "./routes/sessions.js";
 
 const catalogDir = process.env.EMPLOKE_CATALOG_DIR ?? resolve(homedir(), ".emploke/catalog");
+const sessionsRoot = process.env.EMPLOKE_SESSIONS_DIR ?? resolve(homedir(), ".emploke/sessions");
 const port = Number(process.env.PORT ?? 3000);
 // Bind to loopback by default — the server exposes destructive endpoints
 // (DELETE /api/skills/:name, etc.) and is intended as a single-user local
@@ -21,10 +25,16 @@ const serveStaticFiles = process.argv.includes("--serve-static");
 
 async function main() {
   const catalog = await Catalog.open({ catalogDir });
+  const sessions = new SessionsManager({
+    catalog,
+    provisioner: new CopilotProvisioner(),
+    root: sessionsRoot,
+  });
 
   const app = new Hono();
 
   app.route("/api", apiRoutes(catalog));
+  app.route("/api/sessions", sessionsRoutes(sessions));
 
   if (serveStaticFiles) {
     app.use("/*", serveStatic({ root: staticDir }));
@@ -32,8 +42,9 @@ async function main() {
 
   const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
   console.log(`emploke server listening on http://${displayHost}:${port}`);
-  console.log(`catalog: ${catalogDir}`);
-  console.log(serveStaticFiles ? `static: ${staticDir}` : "static: disabled (dev mode)");
+  console.log(`catalog:  ${catalogDir}`);
+  console.log(`sessions: ${sessionsRoot}`);
+  console.log(serveStaticFiles ? `static:   ${staticDir}` : "static:   disabled (dev mode)");
   if (hostname === "0.0.0.0") {
     console.warn(
       "⚠️  EMPLOKE_HOST=0.0.0.0 — server is reachable from the local network. " +

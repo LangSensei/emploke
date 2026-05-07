@@ -150,3 +150,73 @@ export interface AgentMetadataPatch {
 
 export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
   mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
+
+// ─── Sessions ─────────────────────────────────────────────────────
+
+export interface CopilotSessionInfo {
+  sessionId: string;
+  name?: string;
+  summary?: string;
+  /** ISO 8601 string. */
+  createdAt?: string;
+  /** ISO 8601 string. */
+  updatedAt?: string;
+}
+
+export interface SessionRecord {
+  id: string;
+  workdir: string;
+  agent: string;
+  catalogDir?: string;
+  /** ISO 8601 string. */
+  createdAt: string;
+  copilotSessions: CopilotSessionInfo[];
+  latestCopilotSession: CopilotSessionInfo | null;
+}
+
+export interface LaunchCommand {
+  cmd: string;
+  args: string[];
+  cwd: string;
+  display: string;
+}
+
+export const listSessions = (agent?: string): Promise<SessionRecord[]> => {
+  const qs = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+  return fetchJson<SessionRecord[]>(`/api/sessions${qs}`, "sessions");
+};
+
+export const getSession = (id: string): Promise<SessionRecord> =>
+  fetchJson<SessionRecord>(`/api/sessions/${encodeURIComponent(id)}`, "session");
+
+export const createSession = async (agent: string): Promise<SessionRecord> => {
+  const r = await fetch("/api/sessions", jsonInit("POST", { agent }));
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const body = await r.json();
+      if (body && typeof body.error === "string") msg = body.error;
+    } catch {
+      // body not JSON; keep status
+    }
+    throw new Error(msg);
+  }
+  return (await r.json()) as SessionRecord;
+};
+
+export const deleteSession = (id: string, deleteCopilotState = false) => {
+  const qs = deleteCopilotState ? "?deleteCopilotState=1" : "";
+  return mutate(`/api/sessions/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+};
+
+export const getLaunchCommand = (id: string): Promise<LaunchCommand> =>
+  fetchJson<LaunchCommand>(
+    `/api/sessions/${encodeURIComponent(id)}/launch-command`,
+    "launch-command",
+  );
+
+export const getResumeCommand = (id: string, copilotSessionId: string): Promise<LaunchCommand> =>
+  fetchJson<LaunchCommand>(
+    `/api/sessions/${encodeURIComponent(id)}/resume-command/${encodeURIComponent(copilotSessionId)}`,
+    "resume-command",
+  );

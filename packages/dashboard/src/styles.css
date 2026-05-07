@@ -604,6 +604,44 @@ button {
   color: var(--color-warn);
 }
 
+.badge--ok {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-accent);
+}
+
+.badge--muted {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+/* Single-line "label + value + copy" presentation used in launch/resume modals.
+   The text is monospace and ellipsizes; the copy button stays full-size. */
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.copy-row__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.copy-row__btn {
+  flex: 0 0 auto;
+}
+
 /* ─── Empty / placeholder states ────────────────────────────────── */
 
 .empty {
