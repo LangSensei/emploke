@@ -9,7 +9,15 @@ import { findDirectDependents } from "./graph.js";
 import { McpStore } from "./mcp/mcp-store.js";
 import { Resolver } from "./resolver.js";
 import { SkillStore } from "./skill/skill-store.js";
-import type { Agent, CatalogEvent, EventBus, ResolveResult, Skill } from "./types.js";
+import type {
+  Agent,
+  AgentEntry,
+  CatalogEvent,
+  EventBus,
+  ResolveResult,
+  Skill,
+  SkillEntry,
+} from "./types.js";
 
 export interface ScanIssue {
   readonly path: string;
@@ -30,6 +38,8 @@ export class Catalog {
   private readonly mcpStore: McpStore;
   private readonly resolver: Resolver;
   private _issues: ScanIssue[] = [];
+  private _skillEntries = new Map<string, SkillEntry>();
+  private _agentEntries = new Map<string, AgentEntry>();
   readonly events: EventBus<CatalogEvent> = new InMemoryEventBus<CatalogEvent>();
 
   private constructor(opts: CatalogOptions) {
@@ -55,47 +65,72 @@ export class Catalog {
   // ─── Skill ──────────────────────────────────────────────
 
   async installSkill(sourceDir: string): Promise<Skill> {
-    return this.withWriteLock(() => this.skillStore.install(sourceDir));
+    const skill = await this.withWriteLock(() => this.skillStore.install(sourceDir));
+    this.recomputeStatus();
+    return skill;
   }
 
   async removeSkill(name: string): Promise<void> {
-    return this.withWriteLock(() => this.skillStore.remove(name, (n) => this.getDependents(n)));
+    await this.withWriteLock(() => this.skillStore.remove(name, (n) => this.getDependents(n)));
+    this.recomputeStatus();
   }
 
   getSkill(name: string): Skill | null {
     return this.skillStore.get(name);
   }
 
+  getSkillEntry(name: string): SkillEntry | null {
+    return this._skillEntries.get(name) ?? null;
+  }
+
   listSkills(): Skill[] {
     return this.skillStore.list();
+  }
+
+  listSkillEntries(): SkillEntry[] {
+    return [...this._skillEntries.values()];
   }
 
   // ─── Agent ──────────────────────────────────────────────
 
   async installAgent(sourceDir: string): Promise<Agent> {
-    return this.withWriteLock(() => this.agentStore.install(sourceDir));
+    const agent = await this.withWriteLock(() => this.agentStore.install(sourceDir));
+    this.recomputeStatus();
+    return agent;
   }
 
   async removeAgent(name: string): Promise<void> {
-    return this.withWriteLock(() => this.agentStore.remove(name, (n) => this.getDependents(n)));
+    await this.withWriteLock(() => this.agentStore.remove(name, (n) => this.getDependents(n)));
+    this.recomputeStatus();
   }
 
   getAgent(name: string): Agent | null {
     return this.agentStore.get(name);
   }
 
+  getAgentEntry(name: string): AgentEntry | null {
+    return this._agentEntries.get(name) ?? null;
+  }
+
   listAgents(): Agent[] {
     return this.agentStore.list();
+  }
+
+  listAgentEntries(): AgentEntry[] {
+    return [...this._agentEntries.values()];
   }
 
   // ─── MCP ────────────────────────────────────────────────
 
   async installMcp(sourceFile: string, mcpName?: string): Promise<string> {
-    return this.withWriteLock(() => this.mcpStore.install(sourceFile, mcpName));
+    const name = await this.withWriteLock(() => this.mcpStore.install(sourceFile, mcpName));
+    this.recomputeStatus();
+    return name;
   }
 
   async removeMcp(name: string): Promise<void> {
-    return this.withWriteLock(() => this.mcpStore.remove(name, (n) => this.getDependents(n)));
+    await this.withWriteLock(() => this.mcpStore.remove(name, (n) => this.getDependents(n)));
+    this.recomputeStatus();
   }
 
   getMcpPath(name: string): string | null {
@@ -152,6 +187,47 @@ export class Catalog {
       this.mcpStore.scan(),
     ]);
     this._issues = [...skillIssues, ...agentIssues, ...mcpIssues];
+    this.recomputeStatus();
+  }
+
+  private recomputeStatus(): void {
+    this._skillEntries.clear();
+    this._agentEntries.clear();
+
+    for (const skill of this.skillStore.list()) {
+      const missing = this.findMissing(skill.dependencies);
+      this._skillEntries.set(
+        skill.name,
+        missing.length > 0
+          ? { skill, status: "disabled", missingDeps: missing }
+          : { skill, status: "ready" },
+      );
+    }
+
+    for (const agent of this.agentStore.list()) {
+      const missing = this.findMissing(agent.dependencies);
+      this._agentEntries.set(
+        agent.name,
+        missing.length > 0
+          ? { agent, status: "disabled", missingDeps: missing }
+          : { agent, status: "ready" },
+      );
+    }
+  }
+
+  private findMissing(dependencies?: {
+    readonly skills?: readonly string[];
+    readonly mcps?: readonly string[];
+  }): string[] {
+    if (!dependencies) return [];
+    const missing: string[] = [];
+    for (const s of dependencies.skills ?? []) {
+      if (!this.skillStore.has(s)) missing.push(s);
+    }
+    for (const m of dependencies.mcps ?? []) {
+      if (!this.mcpStore.has(m)) missing.push(m);
+    }
+    return missing;
   }
 
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {

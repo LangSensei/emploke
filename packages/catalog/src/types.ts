@@ -7,6 +7,20 @@
 
 export type CatalogKind = "skill" | "agent" | "mcp";
 
+export type EntryStatus = "ready" | "disabled";
+
+export interface SkillEntry {
+  readonly skill: Skill;
+  readonly status: EntryStatus;
+  readonly missingDeps?: readonly string[];
+}
+
+export interface AgentEntry {
+  readonly agent: Agent;
+  readonly status: EntryStatus;
+  readonly missingDeps?: readonly string[];
+}
+
 export interface Skill {
   readonly name: string;
   readonly description: string;
