@@ -417,13 +417,23 @@ function ResumePicker({ session }: ResumePickerProps) {
   const [cmd, setCmd] = useState<LaunchCommand | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+
   const onPick = async (info: CopilotSessionInfo) => {
     setError(null);
     try {
       const c = await getResumeCommand(session.id, info.sessionId);
+      if (!mountedRef.current) return;
       setPicked(info);
       setCmd(c);
     } catch (e) {
+      if (!mountedRef.current) return;
       setError((e as Error).message);
     }
   };
@@ -516,11 +526,22 @@ interface CopyRowProps {
 
 function CopyRow({ text }: CopyRowProps) {
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
   const onCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setCopied(false);
+      }, 1500);
     } catch {
       // Clipboard may be unavailable in non-secure contexts; user can select
       // the text manually.
