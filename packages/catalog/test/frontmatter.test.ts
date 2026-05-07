@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FrontmatterError } from "../src/errors.js";
-import { frontmatterToSkill, parseFrontmatter } from "../src/frontmatter.js";
+import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "../src/frontmatter.js";
 
 describe("parseFrontmatter", () => {
   it("returns empty data and full body when no frontmatter present", () => {
@@ -42,16 +42,16 @@ describe("parseFrontmatter", () => {
 });
 
 describe("frontmatterToSkill", () => {
-  it("projects only the fields emploke cares about", () => {
+  it("projects MetaAgents fields (no type field)", () => {
     const skill = frontmatterToSkill(
       {
         name: "git-pr",
         description: "Open a PR",
         version: "1.2.3",
-        type: "skill",
-        prereq: "references/SETUP.md", // ignored
+        type: "skill", // ignored — not in MetaAgents
         license: "MIT", // ignored
         dependencies: { skills: ["sop"], mcps: ["swat"] },
+        prereqs: "Run setup.sh first",
       },
       "git-pr/SKILL.md",
     );
@@ -59,8 +59,8 @@ describe("frontmatterToSkill", () => {
       name: "git-pr",
       description: "Open a PR",
       version: "1.2.3",
-      type: "skill",
       dependencies: { skills: ["sop"], mcps: ["swat"] },
+      prereqs: "Run setup.sh first",
     });
   });
 
@@ -69,10 +69,10 @@ describe("frontmatterToSkill", () => {
     expect(skill.version).toBe("0.0.1");
   });
 
-  it("omits type and dependencies when not present", () => {
+  it("omits dependencies and prereqs when not present", () => {
     const skill = frontmatterToSkill({ name: "a", description: "x" }, "a/SKILL.md");
-    expect(skill.type).toBeUndefined();
     expect(skill.dependencies).toBeUndefined();
+    expect(skill.prereqs).toBeUndefined();
   });
 
   it("throws when name is missing", () => {
@@ -87,6 +87,12 @@ describe("frontmatterToSkill", () => {
     expect(() => frontmatterToSkill({ name: "a", description: "x", version: 1 }, "x.md")).toThrow(
       FrontmatterError,
     );
+  });
+
+  it("throws when prereqs is non-string", () => {
+    expect(() =>
+      frontmatterToSkill({ name: "a", description: "x", prereqs: ["a"] }, "x.md"),
+    ).toThrow(FrontmatterError);
   });
 
   it("throws when dependencies is not a mapping", () => {
@@ -113,5 +119,34 @@ describe("frontmatterToSkill", () => {
       "x.md",
     );
     expect(b.dependencies).toEqual({ mcps: ["m"] });
+  });
+});
+
+describe("frontmatterToAgent", () => {
+  it("parses agent frontmatter", () => {
+    const agent = frontmatterToAgent(
+      {
+        name: "langsensei/reviewer",
+        description: "Reviews PRs",
+        version: "1.0.0",
+        dependencies: { skills: ["security-audit"], mcps: ["github"] },
+      },
+      "AGENTS.md",
+    );
+    expect(agent).toEqual({
+      name: "langsensei/reviewer",
+      description: "Reviews PRs",
+      version: "1.0.0",
+      dependencies: { skills: ["security-audit"], mcps: ["github"] },
+    });
+  });
+
+  it("defaults version to 0.0.1", () => {
+    const agent = frontmatterToAgent({ name: "a", description: "x" }, "AGENTS.md");
+    expect(agent.version).toBe("0.0.1");
+  });
+
+  it("throws when name is missing", () => {
+    expect(() => frontmatterToAgent({ description: "x" }, "AGENTS.md")).toThrow(FrontmatterError);
   });
 });
