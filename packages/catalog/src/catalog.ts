@@ -8,7 +8,15 @@ import { findDirectDependents } from "./graph.js";
 import { McpStore } from "./mcp/mcp-store.js";
 import { Resolver } from "./resolver.js";
 import { type SkillMetadataPatch, SkillStore } from "./skill/skill-store.js";
-import type { Agent, AgentEntry, MissingDep, ResolveResult, Skill, SkillEntry } from "./types.js";
+import type {
+  Agent,
+  AgentEntry,
+  AgentResolveResult,
+  MissingDep,
+  Skill,
+  SkillEntry,
+  SkillResolveResult,
+} from "./types.js";
 
 export type { AgentMetadataPatch, SkillMetadataPatch };
 
@@ -181,8 +189,12 @@ export class Catalog {
 
   // ─── Resolution ─────────────────────────────────────────
 
-  resolve(name: string): ResolveResult {
-    return this.resolver.resolve(name);
+  resolveAgent(name: string): AgentResolveResult {
+    return this.resolver.resolveAgent(name);
+  }
+
+  resolveSkill(name: string): SkillResolveResult {
+    return this.resolver.resolveSkill(name);
   }
 
   // ─── Rescan ──────────────────────────────────────────────

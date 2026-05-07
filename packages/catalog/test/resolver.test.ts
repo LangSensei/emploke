@@ -83,37 +83,43 @@ afterEach(async () => {
 });
 
 describe("Resolver", () => {
-  it("resolves agent with direct deps", async () => {
+  it("resolveAgent: agent with direct deps", async () => {
     await mcps.install(await makeMcp("github"));
     await skills.install(await makeSkill("lint"));
     await agents.install(await makeAgent("reviewer", { skills: ["lint"], mcps: ["github"] }));
 
-    const result = resolver.resolve("reviewer");
-    expect(result.entry.kind).toBe("agent");
+    const result = resolver.resolveAgent("reviewer");
+    expect(result.agent.name).toBe("reviewer");
+    expect(result.agentPath).toContain(join("agents", "reviewer"));
     expect(result.skills.map((s) => s.skill.name)).toEqual(["lint"]);
     expect(result.mcps.map((m) => m.name)).toEqual(["github"]);
   });
 
-  it("resolves skill with direct deps", async () => {
+  it("resolveSkill: skill with direct deps; entry skill is included in skills[]", async () => {
     await mcps.install(await makeMcp("semgrep"));
     await skills.install(await makeSkill("cve-db"));
     await skills.install(
       await makeSkill("security-audit", { skills: ["cve-db"], mcps: ["semgrep"] }),
     );
 
-    const result = resolver.resolve("security-audit");
-    expect(result.entry.kind).toBe("skill");
-    expect(result.skills.map((s) => s.skill.name)).toContain("cve-db");
+    const result = resolver.resolveSkill("security-audit");
+    expect(result.skill.name).toBe("security-audit");
+    expect(result.skillPath).toContain(join("skills", "security-audit"));
+    const names = result.skills.map((s) => s.skill.name);
+    expect(names).toContain("cve-db");
+    expect(names).toContain("security-audit");
+    // self appears AFTER its deps (topological)
+    expect(names.indexOf("cve-db")).toBeLessThan(names.indexOf("security-audit"));
     expect(result.mcps.map((m) => m.name)).toContain("semgrep");
   });
 
-  it("resolves transitive dependencies in topological order", async () => {
+  it("resolveAgent: transitive dependencies in topological order", async () => {
     await mcps.install(await makeMcp("db"));
     await skills.install(await makeSkill("leaf"));
     await skills.install(await makeSkill("mid", { skills: ["leaf"], mcps: ["db"] }));
     await agents.install(await makeAgent("top", { skills: ["mid"] }));
 
-    const result = resolver.resolve("top");
+    const result = resolver.resolveAgent("top");
     const names = result.skills.map((s) => s.skill.name);
     expect(names).toContain("leaf");
     expect(names).toContain("mid");
@@ -121,21 +127,53 @@ describe("Resolver", () => {
     expect(result.mcps.map((m) => m.name)).toContain("db");
   });
 
-  it("includes entry path", async () => {
-    await agents.install(await makeAgent("reviewer"));
-    const result = resolver.resolve("reviewer");
-    expect(result.entry.path).toContain(join("agents", "reviewer"));
+  it("resolveAgent: throws for unknown name", () => {
+    expect(() => resolver.resolveAgent("nope")).toThrow("agent not found in catalog");
   });
 
-  it("throws for unknown name", () => {
-    expect(() => resolver.resolve("nope")).toThrow("not found in catalog");
+  it("resolveSkill: throws for unknown name", () => {
+    expect(() => resolver.resolveSkill("nope")).toThrow("skill not found in catalog");
   });
 
-  it("resolves agent with no deps", async () => {
+  it("resolveAgent: throws helpful error when name is a skill", async () => {
+    await skills.install(await makeSkill("a-skill"));
+    expect(() => resolver.resolveAgent("a-skill")).toThrow(
+      "is a skill, not an agent — use resolveSkill() instead",
+    );
+  });
+
+  it("resolveSkill: throws helpful error when name is an agent", async () => {
+    await agents.install(await makeAgent("an-agent"));
+    expect(() => resolver.resolveSkill("an-agent")).toThrow(
+      "is an agent, not a skill — use resolveAgent() instead",
+    );
+  });
+
+  it("resolveAgent: agent with no deps", async () => {
     await agents.install(await makeAgent("simple"));
-    const result = resolver.resolve("simple");
+    const result = resolver.resolveAgent("simple");
     expect(result.skills).toHaveLength(0);
     expect(result.mcps).toHaveLength(0);
-    expect(result.entry.kind).toBe("agent");
+    expect(result.agent.name).toBe("simple");
+  });
+
+  it("resolveSkill: skill with no deps still returns itself", async () => {
+    await skills.install(await makeSkill("standalone"));
+    const result = resolver.resolveSkill("standalone");
+    expect(result.skills.map((s) => s.skill.name)).toEqual(["standalone"]);
+    expect(result.mcps).toHaveLength(0);
+  });
+
+  it("rejects an agent listed as a dependency (agents can only depend on others, not be depended on)", async () => {
+    await agents.install(await makeAgent("inner-agent"));
+    await skills.install(await makeSkill("bad-skill", { skills: ["inner-agent"] }));
+    await agents.install(await makeAgent("outer-agent", { skills: ["bad-skill"] }));
+
+    expect(() => resolver.resolveAgent("outer-agent")).toThrow(
+      "is an agent and cannot be a dependency",
+    );
+    expect(() => resolver.resolveSkill("bad-skill")).toThrow(
+      "is an agent and cannot be a dependency",
+    );
   });
 });

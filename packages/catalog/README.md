@@ -45,10 +45,15 @@ await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });
 await catalog.installMcp({ name: "playwright", json: { type: "stdio", command: "npx", args: ["@modelcontextprotocol/server-playwright"] } });
 
 // Resolve
-const { root, transitiveSkills, transitiveMcps } = await catalog.resolveSkill("squad-lint");
-console.log(root.path);                 // <root>/skills/squad-lint
-console.log(transitiveSkills.length);   // includes squad-lint + transitive deps
-console.log(transitiveMcps.length);
+const { agent, agentPath, skills, mcps } = await catalog.resolveAgent("code-reviewer");
+console.log(agentPath);          // <root>/agents/code-reviewer
+console.log(skills.length);      // transitive skill deps in topological order
+console.log(mcps.length);
+
+// Or resolve a skill (for tooling / dep inspection)
+const sk = await catalog.resolveSkill("squad-lint");
+console.log(sk.skillPath);       // <root>/skills/squad-lint
+console.log(sk.skills.length);   // includes squad-lint + transitive deps
 
 // Update / uninstall
 await catalog.updateSkill({ name: "sop", sourceDir: "/tmp/sop-v2" });
