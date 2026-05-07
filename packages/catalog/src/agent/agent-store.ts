@@ -30,7 +30,6 @@ export class AgentStore {
     validateName(agent.name);
 
     const destDir = join(this.baseDir, nameToPath(agent.name));
-    const exists = this.agents.has(agent.name);
     await atomicReplaceDir(sourceDir, destDir);
     this.agents.set(agent.name, agent);
     return agent;

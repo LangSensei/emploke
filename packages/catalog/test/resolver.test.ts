@@ -6,6 +6,7 @@ import { AgentStore } from "../src/agent/agent-store.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
 import { Resolver } from "../src/resolver.js";
 import { SkillStore } from "../src/skill/skill-store.js";
+
 let catalogDir: string;
 let sourceDir: string;
 let skills: SkillStore;

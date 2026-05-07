@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
+
 let catalogDir: string;
 let sourceDir: string;
 

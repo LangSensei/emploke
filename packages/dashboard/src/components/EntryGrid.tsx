@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
 import type { MissingDep } from "@emploke/catalog";
+import type { ReactNode } from "react";
 import { TrashIcon } from "./Icons";
 
 export interface EntryCardItem {
@@ -59,32 +59,6 @@ function NeedsLine({ deps }: { deps: readonly MissingDep[] }) {
   );
 }
 
-function MissingLine({ deps }: { deps: readonly MissingDep[] }) {
-  const skills = deps.filter((d) => d.kind === "skill");
-  const mcps = deps.filter((d) => d.kind === "mcp");
-  const fullList = deps.map((d) => `${d.kind} ${d.name}`).join(", ");
-  return (
-    <div className="card-grid__missing-line" title={`Missing: ${fullList}`}>
-      {skills.length > 0 && (
-        <span className="card-grid__missing-segment">
-          <span className="card-grid__missing-label card-grid__missing-label--skill">
-            missing skill:
-          </span>{" "}
-          {skills.map((d) => d.name).join(", ")}
-        </span>
-      )}
-      {mcps.length > 0 && (
-        <span className="card-grid__missing-segment">
-          <span className="card-grid__missing-label card-grid__missing-label--mcp">
-            missing mcp:
-          </span>{" "}
-          {mcps.map((d) => d.name).join(", ")}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function EntryCard({
   item,
   onEdit,
@@ -96,6 +70,7 @@ function EntryCard({
 }) {
   const isDisabled = item.status === "disabled";
   return (
+    // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
       className={`card-grid__item${isDisabled ? " card-grid__item--disabled" : ""}`}
       role="button"

@@ -34,6 +34,7 @@ export class Catalog {
   private _skillEntries = new Map<string, SkillEntry>();
   private _agentEntries = new Map<string, AgentEntry>();
   private _lastScanAt = 0;
+  private _pendingScan: Promise<void> | null = null;
 
   private constructor(opts: CatalogOptions) {
     this.catalogDir = opts.catalogDir;
@@ -199,9 +200,16 @@ export class Catalog {
    * external writes (vim, git pull, third-party tools).
    */
   async rescanIfStale(maxAgeMs = 5_000): Promise<void> {
-    if (Date.now() - this._lastScanAt > maxAgeMs) {
-      await this.rescan();
+    if (Date.now() - this._lastScanAt <= maxAgeMs) return;
+    // Single-flight: coalesce concurrent callers into one disk scan. Without
+    // this, a dashboard mount that fires N parallel GETs would each pass the
+    // staleness check and trigger N concurrent rescans.
+    if (!this._pendingScan) {
+      this._pendingScan = this.rescan().finally(() => {
+        this._pendingScan = null;
+      });
     }
+    await this._pendingScan;
   }
 
   // ─── Inspection ─────────────────────────────────────────
@@ -291,8 +299,8 @@ export class Catalog {
       try {
         await mkdirFs(lockDir);
         break;
-      } catch (e: any) {
-        if (e.code === "EEXIST") {
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") {
           if (i === maxRetries - 1) {
             throw new CatalogStateError("failed to acquire write lock (timeout)");
           }

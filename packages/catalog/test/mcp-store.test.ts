@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
+
 let catalogDir: string;
 let sourceDir: string;
 let store: McpStore;

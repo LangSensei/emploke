@@ -11,6 +11,8 @@ interface ChipsInputProps {
   emptyText?: string;
   /** Values to render as "missing" (red) — typically deps that don't exist in the catalog. */
   invalidValues?: readonly string[];
+  /** id to apply to the underlying text input so an external <label htmlFor> can target it. */
+  inputId?: string;
 }
 
 interface SuggestRect {
@@ -37,12 +39,14 @@ export function ChipsInput({
   disabled,
   emptyText,
   invalidValues,
+  inputId: inputIdProp,
 }: ChipsInputProps) {
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [rect, setRect] = useState<SuggestRect | null>(null);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
-  const inputId = useId();
+  const generatedInputId = useId();
+  const inputId = inputIdProp ?? generatedInputId;
   const containerRef = useRef<HTMLDivElement>(null);
 
   const add = (raw: string) => {

@@ -61,8 +61,9 @@ export function MetadataForm({
       </div>
 
       <div className="form-field">
-        <label>Skill dependencies</label>
+        <label htmlFor="md-skills">Skill dependencies</label>
         <ChipsInput
+          inputId="md-skills"
           values={values.skills}
           onChange={(v) => update("skills", v)}
           options={availableSkills}
@@ -74,8 +75,9 @@ export function MetadataForm({
       </div>
 
       <div className="form-field">
-        <label>MCP dependencies</label>
+        <label htmlFor="md-mcps">MCP dependencies</label>
         <ChipsInput
+          inputId="md-mcps"
           values={values.mcps}
           onChange={(v) => update("mcps", v)}
           options={availableMcps}

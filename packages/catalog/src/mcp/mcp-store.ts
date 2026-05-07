@@ -27,7 +27,6 @@ export class McpStore {
 
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     await mkdir(dirname(destFile), { recursive: true });
-    const exists = this.mcps.has(name);
     await writeFile(destFile, content, "utf8");
     this.mcps.add(name);
     return name;

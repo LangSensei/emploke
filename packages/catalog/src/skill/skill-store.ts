@@ -33,7 +33,6 @@ export class SkillStore {
     validateName(skill.name);
 
     const destDir = join(this.baseDir, nameToPath(skill.name));
-    const exists = this.skills.has(skill.name);
     await atomicReplaceDir(sourceDir, destDir);
     this.skills.set(skill.name, skill);
     return skill;

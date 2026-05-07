@@ -261,6 +261,7 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
               value={sourcePath}
               onChange={(e) => setSourcePath(e.target.value)}
               placeholder={isFile ? "/absolute/path/to/server.json" : "/absolute/path/to/skill-dir"}
+              // biome-ignore lint/a11y/noAutofocus: install dialog opens in response to a user click; auto-focusing the only field is expected UX
               autoFocus
               disabled={busy}
             />

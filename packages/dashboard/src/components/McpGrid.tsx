@@ -20,6 +20,7 @@ export function McpGrid({ mcps, onEdit, onRemove }: McpGridProps) {
   return (
     <div className="card-grid">
       {mcps.map((m) => (
+        // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
         <div
           key={m.name}
           className="card-grid__item"

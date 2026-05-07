@@ -24,6 +24,7 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
   }, [open]);
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop-click only; ESC handled by native <dialog> onCancel
     <dialog
       ref={ref}
       className={`modal modal--${size}`}
