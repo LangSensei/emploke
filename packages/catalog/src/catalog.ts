@@ -1,4 +1,4 @@
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdir as mkdirFs, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicReplaceDir, atomicWriteJsonFile, pathExists } from "./atomic.js";
 import {
@@ -47,8 +47,8 @@ export interface CatalogOptions {
  * Lifecycle: construct via {@link Catalog.open} (which scans the root). After
  * that, the catalog mirrors the file system in memory until the next scan.
  *
- * Concurrency: the catalog is not thread-safe; callers must serialise writes
- * if multiple operations may run concurrently. Multiple readers are fine.
+ * Concurrency: all write operations acquire an exclusive file lock
+ * (`<root>/.lock`) via flock. Multiple readers are always safe.
  *
  * Source of truth: the file system. The in-memory state is a cached
  * projection. Restarting the process (or constructing a fresh Catalog) yields
@@ -81,6 +81,35 @@ export class Catalog {
   /** Re-scan the file system, replacing the in-memory projection. */
   async rescan(): Promise<void> {
     await this.scan();
+  }
+
+  // ─── Write lock (flock) ──────────────────────────────────────────────
+
+  private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const lockDir = join(this.root, ".lock");
+    // mkdir is atomic on POSIX — exactly one caller wins.
+    // Retry briefly in case another async operation holds the lock.
+    const maxRetries = 50;
+    const retryMs = 20;
+    let acquired = false;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await mkdirFs(lockDir, { recursive: false });
+        acquired = true;
+        break;
+      } catch (e: any) {
+        if (e.code !== "EEXIST") throw e;
+        await new Promise((r) => setTimeout(r, retryMs));
+      }
+    }
+    if (!acquired) {
+      throw new CatalogStateError("could not acquire write lock (timeout)");
+    }
+    try {
+      return await fn();
+    } finally {
+      await rmdir(lockDir).catch(() => {});
+    }
   }
 
   // ─── Path helpers ───────────────────────────────────────────────────
@@ -238,132 +267,144 @@ export class Catalog {
   // ─── Write API: skills ─────────────────────────────────────────────
 
   async installSkill(cmd: { sourceDir: string }): Promise<SkillInstalled> {
-    const skill = await this.parseSkillSource(cmd.sourceDir);
-    const { name } = skill;
-    if (this.skills.has(name) || this.mcps.has(name)) {
-      throw new NameConflict(name);
-    }
-    this.checkAllDepsExist(skill);
+    return this.withWriteLock(async () => {
+      const skill = await this.parseSkillSource(cmd.sourceDir);
+      const { name } = skill;
+      if (this.skills.has(name) || this.mcps.has(name)) {
+        throw new NameConflict(name);
+      }
+      this.checkAllDepsExist(skill);
 
-    // Speculatively install in memory for cycle check, rollback on any failure.
-    this.skills.set(name, skill);
-    try {
-      resolveTopological([name], (n) => this.adaptNode(n));
-      await atomicReplaceDir(cmd.sourceDir, this.skillDir(name));
-    } catch (e) {
-      this.skills.delete(name);
-      throw e;
-    }
+      // Speculatively install in memory for cycle check, rollback on any failure.
+      this.skills.set(name, skill);
+      try {
+        resolveTopological([name], (n) => this.adaptNode(n));
+        await atomicReplaceDir(cmd.sourceDir, this.skillDir(name));
+      } catch (e) {
+        this.skills.delete(name);
+        throw e;
+      }
 
-    const event: SkillInstalled = {
-      type: "SkillInstalled",
-      name,
-      path: this.skillDir(name),
-      at: new Date(),
-    };
-    this.events.publish(event);
-    return event;
+      const event: SkillInstalled = {
+        type: "SkillInstalled",
+        name,
+        path: this.skillDir(name),
+        at: new Date(),
+      };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   async updateSkill(cmd: { name: string; sourceDir: string }): Promise<SkillUpdated> {
-    validateName(cmd.name);
-    const previous = this.skills.get(cmd.name);
-    if (!previous) throw new NotFound("skill", cmd.name);
+    return this.withWriteLock(async () => {
+      validateName(cmd.name);
+      const previous = this.skills.get(cmd.name);
+      if (!previous) throw new NotFound("skill", cmd.name);
 
-    const skill = await this.parseSkillSource(cmd.sourceDir);
-    if (skill.name !== cmd.name) {
-      throw new NameInvalid(
-        skill.name,
-        `update target is "${cmd.name}" but source frontmatter declares "${skill.name}"; rename via update is not supported`,
-      );
-    }
+      const skill = await this.parseSkillSource(cmd.sourceDir);
+      if (skill.name !== cmd.name) {
+        throw new NameInvalid(
+          skill.name,
+          `update target is "${cmd.name}" but source frontmatter declares "${skill.name}"; rename via update is not supported`,
+        );
+      }
 
-    // Speculatively swap in for graph checks.
-    this.skills.set(skill.name, skill);
-    try {
-      this.checkAllDepsExist(skill);
-      resolveTopological([skill.name], (n) => this.adaptNode(n));
-      await atomicReplaceDir(cmd.sourceDir, this.skillDir(skill.name));
-    } catch (e) {
-      this.skills.set(cmd.name, previous);
-      throw e;
-    }
+      // Speculatively swap in for graph checks.
+      this.skills.set(skill.name, skill);
+      try {
+        this.checkAllDepsExist(skill);
+        resolveTopological([skill.name], (n) => this.adaptNode(n));
+        await atomicReplaceDir(cmd.sourceDir, this.skillDir(skill.name));
+      } catch (e) {
+        this.skills.set(cmd.name, previous);
+        throw e;
+      }
 
-    const event: SkillUpdated = {
-      type: "SkillUpdated",
-      name: skill.name,
-      path: this.skillDir(skill.name),
-      at: new Date(),
-    };
-    this.events.publish(event);
-    return event;
+      const event: SkillUpdated = {
+        type: "SkillUpdated",
+        name: skill.name,
+        path: this.skillDir(skill.name),
+        at: new Date(),
+      };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   async uninstallSkill(name: string): Promise<SkillUninstalled> {
-    validateName(name);
-    if (!this.skills.has(name)) throw new NotFound("skill", name);
-    const dependents = findDirectDependents(name, this.adaptedAll());
-    if (dependents.length > 0) {
-      throw new HasDependents(
-        name,
-        dependents.map((d) => d.name),
-      );
-    }
-    await rm(this.skillDir(name), { recursive: true, force: true });
-    this.skills.delete(name);
-    const event: SkillUninstalled = { type: "SkillUninstalled", name, at: new Date() };
-    this.events.publish(event);
-    return event;
+    return this.withWriteLock(async () => {
+      validateName(name);
+      if (!this.skills.has(name)) throw new NotFound("skill", name);
+      const dependents = findDirectDependents(name, this.adaptedAll());
+      if (dependents.length > 0) {
+        throw new HasDependents(
+          name,
+          dependents.map((d) => d.name),
+        );
+      }
+      await rm(this.skillDir(name), { recursive: true, force: true });
+      this.skills.delete(name);
+      const event: SkillUninstalled = { type: "SkillUninstalled", name, at: new Date() };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   // ─── Write API: MCPs ───────────────────────────────────────────────
 
   async installMcp(cmd: { name: string; json: unknown }): Promise<McpInstalled> {
-    validateName(cmd.name);
-    if (this.skills.has(cmd.name) || this.mcps.has(cmd.name)) {
-      throw new NameConflict(cmd.name);
-    }
-    await atomicWriteJsonFile(cmd.json, this.mcpFile(cmd.name));
-    this.mcps.add(cmd.name);
-    const event: McpInstalled = {
-      type: "McpInstalled",
-      name: cmd.name,
-      path: this.mcpFile(cmd.name),
-      at: new Date(),
-    };
-    this.events.publish(event);
-    return event;
+    return this.withWriteLock(async () => {
+      validateName(cmd.name);
+      if (this.skills.has(cmd.name) || this.mcps.has(cmd.name)) {
+        throw new NameConflict(cmd.name);
+      }
+      await atomicWriteJsonFile(cmd.json, this.mcpFile(cmd.name));
+      this.mcps.add(cmd.name);
+      const event: McpInstalled = {
+        type: "McpInstalled",
+        name: cmd.name,
+        path: this.mcpFile(cmd.name),
+        at: new Date(),
+      };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   async updateMcp(cmd: { name: string; json: unknown }): Promise<McpUpdated> {
-    validateName(cmd.name);
-    if (!this.mcps.has(cmd.name)) throw new NotFound("mcp", cmd.name);
-    await atomicWriteJsonFile(cmd.json, this.mcpFile(cmd.name));
-    const event: McpUpdated = {
-      type: "McpUpdated",
-      name: cmd.name,
-      path: this.mcpFile(cmd.name),
-      at: new Date(),
-    };
-    this.events.publish(event);
-    return event;
+    return this.withWriteLock(async () => {
+      validateName(cmd.name);
+      if (!this.mcps.has(cmd.name)) throw new NotFound("mcp", cmd.name);
+      await atomicWriteJsonFile(cmd.json, this.mcpFile(cmd.name));
+      const event: McpUpdated = {
+        type: "McpUpdated",
+        name: cmd.name,
+        path: this.mcpFile(cmd.name),
+        at: new Date(),
+      };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   async uninstallMcp(name: string): Promise<McpUninstalled> {
-    validateName(name);
-    if (!this.mcps.has(name)) throw new NotFound("mcp", name);
-    const dependents = findDirectDependents(name, this.adaptedAll());
-    if (dependents.length > 0) {
-      throw new HasDependents(
-        name,
-        dependents.map((d) => d.name),
-      );
-    }
-    await rm(this.mcpFile(name), { force: true });
-    this.mcps.delete(name);
-    const event: McpUninstalled = { type: "McpUninstalled", name, at: new Date() };
-    this.events.publish(event);
-    return event;
+    return this.withWriteLock(async () => {
+      validateName(name);
+      if (!this.mcps.has(name)) throw new NotFound("mcp", name);
+      const dependents = findDirectDependents(name, this.adaptedAll());
+      if (dependents.length > 0) {
+        throw new HasDependents(
+          name,
+          dependents.map((d) => d.name),
+        );
+      }
+      await rm(this.mcpFile(name), { force: true });
+      this.mcps.delete(name);
+      const event: McpUninstalled = { type: "McpUninstalled", name, at: new Date() };
+      this.events.publish(event);
+      return event;
+    });
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────
