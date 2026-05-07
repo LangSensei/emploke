@@ -6,7 +6,6 @@ import {
   FrontmatterError,
   HasDependents,
   MissingDependencies,
-  NameConflict,
   NameInvalid,
   NotFound,
 } from "../src/errors.js";
@@ -15,7 +14,6 @@ describe("Error hierarchy", () => {
   it("all errors extend CatalogError", () => {
     const errors = [
       new NameInvalid("x", "reason"),
-      new NameConflict("x"),
       new MissingDependencies(["a"]),
       new CycleDetected(["a", "b"]),
       new HasDependents("x", ["y"]),

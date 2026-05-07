@@ -40,12 +40,6 @@ export interface ResolvedMcp {
   readonly path: string;
 }
 
-export interface ResolvedAgent {
-  readonly agent: Agent;
-  /** Absolute path to the agent directory. */
-  readonly path: string;
-}
-
 export type ResolveEntry =
   | { readonly kind: "agent"; readonly agent: Agent; readonly path: string }
   | { readonly kind: "skill"; readonly skill: Skill; readonly path: string };

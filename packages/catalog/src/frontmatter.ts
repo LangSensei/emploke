@@ -33,15 +33,16 @@ export function parseFrontmatter(
   return { data: parsed as Record<string, unknown>, body };
 }
 
-/**
- * Project frontmatter into a Skill.
- */
-export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: string): Skill {
-  const name = data.name;
-  const description = data.description;
-  const version = data.version;
-  const dependencies = data.dependencies;
-  const prereqs = data.prereqs;
+function parseCommonFields(
+  data: Record<string, unknown>,
+  sourcePath: string,
+): {
+  name: string;
+  description: string;
+  version: string;
+  dependencies?: { skills?: readonly string[]; mcps?: readonly string[] };
+} {
+  const { name, description, version, dependencies } = data;
 
   if (typeof name !== "string" || name.length === 0) {
     throw new FrontmatterError(sourcePath, "missing or non-string `name`");
@@ -52,9 +53,6 @@ export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: st
   if (version !== undefined && typeof version !== "string") {
     throw new FrontmatterError(sourcePath, "`version` must be a string when present");
   }
-  if (prereqs !== undefined && typeof prereqs !== "string") {
-    throw new FrontmatterError(sourcePath, "`prereqs` must be a string when present");
-  }
 
   return {
     name,
@@ -63,6 +61,22 @@ export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: st
     ...(dependencies !== undefined
       ? { dependencies: parseDependencies(dependencies, sourcePath) }
       : {}),
+  };
+}
+
+/**
+ * Project frontmatter into a Skill.
+ */
+export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: string): Skill {
+  const common = parseCommonFields(data, sourcePath);
+  const { prereqs } = data;
+
+  if (prereqs !== undefined && typeof prereqs !== "string") {
+    throw new FrontmatterError(sourcePath, "`prereqs` must be a string when present");
+  }
+
+  return {
+    ...common,
     ...(prereqs !== undefined ? { prereqs: prereqs as string } : {}),
   };
 }
@@ -71,29 +85,7 @@ export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: st
  * Project frontmatter into an Agent.
  */
 export function frontmatterToAgent(data: Record<string, unknown>, sourcePath: string): Agent {
-  const name = data.name;
-  const description = data.description;
-  const version = data.version;
-  const dependencies = data.dependencies;
-
-  if (typeof name !== "string" || name.length === 0) {
-    throw new FrontmatterError(sourcePath, "missing or non-string `name`");
-  }
-  if (typeof description !== "string") {
-    throw new FrontmatterError(sourcePath, "missing or non-string `description`");
-  }
-  if (version !== undefined && typeof version !== "string") {
-    throw new FrontmatterError(sourcePath, "`version` must be a string when present");
-  }
-
-  return {
-    name,
-    description,
-    version: (version as string) ?? "0.0.1",
-    ...(dependencies !== undefined
-      ? { dependencies: parseDependencies(dependencies, sourcePath) }
-      : {}),
-  };
+  return parseCommonFields(data, sourcePath);
 }
 
 function parseDependencies(
