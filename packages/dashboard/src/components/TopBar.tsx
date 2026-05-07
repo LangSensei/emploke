@@ -1,11 +1,9 @@
 interface TopBarProps {
   title: string;
   crumb?: string;
-  onRefresh: () => void;
-  refreshing?: boolean;
 }
 
-export function TopBar({ title, crumb, onRefresh, refreshing }: TopBarProps) {
+export function TopBar({ title, crumb }: TopBarProps) {
   return (
     <header className="topbar">
       <div>
@@ -13,12 +11,8 @@ export function TopBar({ title, crumb, onRefresh, refreshing }: TopBarProps) {
         {crumb && <div className="topbar__crumb">{crumb}</div>}
       </div>
       <div className="topbar__spacer" />
-      <div className="topbar__actions">
-        <button type="button" className="btn" onClick={onRefresh} disabled={refreshing}>
-          <span>{refreshing ? "⟳" : "↻"}</span>
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
+      {/* Future: search, notifications, workspace switcher. Page-level
+          actions belong inside their own page header, not here. */}
     </header>
   );
 }

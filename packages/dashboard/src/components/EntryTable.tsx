@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TrashIcon } from "./Icons";
 
 interface EntryRow {
   name: string;
@@ -12,9 +13,10 @@ interface EntryTableProps {
   items: EntryRow[];
   emptyTitle: string;
   emptyHint?: ReactNode;
+  onRemove?: (name: string) => void;
 }
 
-export function EntryTable({ items, emptyTitle, emptyHint }: EntryTableProps) {
+export function EntryTable({ items, emptyTitle, emptyHint, onRemove }: EntryTableProps) {
   if (items.length === 0) {
     return (
       <div className="empty">
@@ -32,6 +34,7 @@ export function EntryTable({ items, emptyTitle, emptyHint }: EntryTableProps) {
           <th>Description</th>
           <th>Version</th>
           <th>Status</th>
+          {onRemove && <th className="actions-col" />}
         </tr>
       </thead>
       <tbody>
@@ -52,6 +55,19 @@ export function EntryTable({ items, emptyTitle, emptyHint }: EntryTableProps) {
                 </span>
               )}
             </td>
+            {onRemove && (
+              <td className="actions-cell">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--icon"
+                  onClick={() => onRemove(item.name)}
+                  aria-label={`Remove ${item.name}`}
+                  title="Remove"
+                >
+                  <TrashIcon />
+                </button>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

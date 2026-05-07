@@ -8,16 +8,16 @@ import { OverviewPage } from "./pages/Overview";
 import { SettingsPage } from "./pages/Settings";
 
 const SECTIONS: SectionDef[] = [
-  { id: "overview", label: "Overview", icon: "🏠" },
-  { id: "catalog", label: "Catalog", icon: "📚" },
-  { id: "sessions", label: "Sessions", icon: "⚡", badge: "soon", disabled: true },
-  { id: "substrates", label: "Substrates", icon: "🖥️", badge: "soon", disabled: true },
-  { id: "settings", label: "Settings", icon: "⚙️" },
+  { id: "overview", label: "Overview" },
+  { id: "catalog", label: "Catalog" },
+  { id: "sessions", label: "Sessions", badge: "soon", disabled: true },
+  { id: "substrates", label: "Substrates", badge: "soon", disabled: true },
+  { id: "settings", label: "Settings" },
 ];
 
 const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
   overview: { title: "Overview", crumb: "System health" },
-  catalog: { title: "Catalog", crumb: "Skills · Agents · MCPs" },
+  catalog: { title: "Catalog", crumb: "Agents · Skills · MCPs" },
   sessions: { title: "Sessions", crumb: "Task execution history" },
   substrates: { title: "Substrates", crumb: "Compute backends" },
   settings: { title: "Settings", crumb: "Server & environment" },
@@ -25,7 +25,7 @@ const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
 
 export function App() {
   const [section, setSection] = useState<SectionId>("overview");
-  const [catalogTab, setCatalogTab] = useState<CatalogTab>("skills");
+  const [catalogTab, setCatalogTab] = useState<CatalogTab>("agents");
   const [data, setData] = useState<CatalogData>({
     overview: null,
     skills: [],
@@ -33,24 +33,30 @@ export function App() {
     mcps: [],
   });
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = async () => {
-    setRefreshing(true);
     try {
       setError(null);
       const next = await fetchAll();
       setData(next);
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setRefreshing(false);
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stable refresh
   useEffect(() => {
     refresh();
+    // Re-fetch when the tab/window becomes visible again so the dashboard
+    // shows fresh data after the user comes back. Combined with the server's
+    // periodic rescan, this avoids needing a manual Refresh button.
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
   const meta = SECTION_TITLES[section];
@@ -61,12 +67,7 @@ export function App() {
       <Sidebar sections={SECTIONS} active={section} onSelect={setSection} />
 
       <div className="main">
-        <TopBar
-          title={meta.title + titleSuffix}
-          crumb={meta.crumb}
-          onRefresh={refresh}
-          refreshing={refreshing}
-        />
+        <TopBar title={meta.title + titleSuffix} crumb={meta.crumb} />
 
         <div className="content">
           {error && <div className="alert alert--error">⚠️ {error}</div>}
@@ -80,6 +81,7 @@ export function App() {
               skills={data.skills}
               agents={data.agents}
               mcps={data.mcps}
+              onChanged={refresh}
             />
           )}
 
@@ -102,15 +104,6 @@ export function App() {
           {section === "settings" && (
             <SettingsPage
               serverUrl={typeof window !== "undefined" ? window.location.origin : "—"}
-              catalogCounts={
-                data.overview
-                  ? {
-                      skills: data.overview.counts.skills,
-                      agents: data.overview.counts.agents,
-                      mcps: data.overview.counts.mcps,
-                    }
-                  : undefined
-              }
             />
           )}
         </div>

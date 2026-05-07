@@ -1,9 +1,8 @@
 interface SettingsProps {
   serverUrl: string;
-  catalogCounts?: { skills: number; agents: number; mcps: number };
 }
 
-export function SettingsPage({ serverUrl, catalogCounts }: SettingsProps) {
+export function SettingsPage({ serverUrl }: SettingsProps) {
   return (
     <div className="card">
       <div className="card__header">
@@ -18,16 +17,6 @@ export function SettingsPage({ serverUrl, catalogCounts }: SettingsProps) {
 
         <dt>Build mode</dt>
         <dd>{import.meta.env.MODE}</dd>
-
-        {catalogCounts && (
-          <>
-            <dt>Catalog totals</dt>
-            <dd>
-              {catalogCounts.skills} skills · {catalogCounts.agents} agents · {catalogCounts.mcps}{" "}
-              MCPs
-            </dd>
-          </>
-        )}
       </dl>
 
       <div className="card__header" style={{ marginTop: 32 }}>

@@ -11,8 +11,8 @@ export function OverviewPage({ overview }: OverviewProps) {
   return (
     <div>
       <div className="stat-grid" style={{ marginBottom: 32 }}>
-        <Stat label="Skills" value={overview.counts.skills} />
         <Stat label="Agents" value={overview.counts.agents} />
+        <Stat label="Skills" value={overview.counts.skills} />
         <Stat label="MCPs" value={overview.counts.mcps} />
         <Stat label="Disabled" value={overview.counts.disabled} warn />
       </div>
