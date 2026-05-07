@@ -556,7 +556,7 @@ describe("CopilotProvisioner — end-to-end shape", () => {
 
     // ─── 3. Construct the full AgentResolveResult INLINE ────
     //
-    // This is exactly what `Catalog.resolve("code-reviewer")` would
+    // This is exactly what `catalog.resolveAgent("code-reviewer")` would
     // return in production. Provisioner only depends on this shape.
 
     const codeReviewer: Agent = {

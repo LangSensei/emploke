@@ -76,7 +76,7 @@ The mapping is exposed as `flattenSkillName(name)` and is fully reversible
 ### Why a fully-resolved manifest, not an agent name?
 
 The provisioner does not import the catalog at runtime — it imports only the
-`ResolveResult` type. Three benefits:
+`AgentResolveResult` type. Three benefits:
 
 1. **Independence** — provisioner and catalog can evolve separately; tests
    don't need a real on-disk catalog.

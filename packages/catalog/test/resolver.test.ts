@@ -163,4 +163,17 @@ describe("Resolver", () => {
     expect(result.skills.map((s) => s.skill.name)).toEqual(["standalone"]);
     expect(result.mcps).toHaveLength(0);
   });
+
+  it("rejects an agent listed as a dependency (agents can only depend on others, not be depended on)", async () => {
+    await agents.install(await makeAgent("inner-agent"));
+    await skills.install(await makeSkill("bad-skill", { skills: ["inner-agent"] }));
+    await agents.install(await makeAgent("outer-agent", { skills: ["bad-skill"] }));
+
+    expect(() => resolver.resolveAgent("outer-agent")).toThrow(
+      "is an agent and cannot be a dependency",
+    );
+    expect(() => resolver.resolveSkill("bad-skill")).toThrow(
+      "is an agent and cannot be a dependency",
+    );
+  });
 });
