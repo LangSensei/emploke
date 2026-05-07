@@ -20,6 +20,8 @@ export class McpStore {
   async install(sourceFile: string, mcpName?: string): Promise<string> {
     const content = await readFile(sourceFile, "utf8");
     const parsed = JSON.parse(content);
+    // For scoped MCPs (e.g. io.playwright/mcp), mcpName must be provided explicitly.
+    // Auto-inference only works for unscoped names derived from filename.
     const name =
       mcpName ??
       sourceFile

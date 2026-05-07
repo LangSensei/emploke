@@ -42,6 +42,7 @@ export class Catalog {
 
   static async open(opts: CatalogOptions): Promise<Catalog> {
     const c = new Catalog(opts);
+    // Remove stale lock from previous crash. Safe under single-owner constraint.
     await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
     await c.scan();
     return c;
@@ -76,7 +77,7 @@ export class Catalog {
   }
 
   async removeAgent(name: string): Promise<void> {
-    return this.withWriteLock(() => this.agentStore.remove(name));
+    return this.withWriteLock(() => this.agentStore.remove(name, (n) => this.getDependents(n)));
   }
 
   getAgent(name: string): Agent | null {

@@ -1,7 +1,7 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
-import { NotFound } from "../errors.js";
+import { HasDependents, NotFound } from "../errors.js";
 import { frontmatterToAgent, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
 import type { Agent, CatalogEvent, EventBus } from "../types.js";
@@ -40,9 +40,15 @@ export class AgentStore {
     return agent;
   }
 
-  async remove(name: string): Promise<void> {
+  async remove(name: string, getDependents?: (name: string) => string[]): Promise<void> {
     validateName(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
+
+    if (getDependents) {
+      const dependents = getDependents(name);
+      if (dependents.length > 0) throw new HasDependents(name, dependents);
+    }
+
     const destDir = join(this.baseDir, nameToPath(name));
     await rm(destDir, { recursive: true, force: true });
     this.agents.delete(name);

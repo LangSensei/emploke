@@ -29,6 +29,12 @@ export class Resolver {
       if (this.mcps.has(n)) {
         return { name: n, dependencies: [] };
       }
+      // Agents cannot be dependencies — surface a clear error
+      if (this.agents.has(n)) {
+        throw new Error(
+          `"${n}" is an agent and cannot be a dependency (agents can only depend on skills and mcps)`,
+        );
+      }
       return undefined;
     };
 
