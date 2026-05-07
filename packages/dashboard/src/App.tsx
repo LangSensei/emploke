@@ -11,16 +11,31 @@ export function App() {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [agents, setAgents] = useState<AgentEntry[]>([]);
   const [tab, setTab] = useState<"overview" | "skills" | "agents" | "mcps">("overview");
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
-    const [ov, sk, ag] = await Promise.all([
-      fetch("/api/overview").then((r) => r.json()),
-      fetch("/api/skills").then((r) => r.json()),
-      fetch("/api/agents").then((r) => r.json()),
-    ]);
-    setOverview(ov);
-    setSkills(sk);
-    setAgents(ag);
+    try {
+      setError(null);
+      const [ov, sk, ag] = await Promise.all([
+        fetch("/api/overview").then((r) => {
+          if (!r.ok) throw new Error(`overview: ${r.status}`);
+          return r.json();
+        }),
+        fetch("/api/skills").then((r) => {
+          if (!r.ok) throw new Error(`skills: ${r.status}`);
+          return r.json();
+        }),
+        fetch("/api/agents").then((r) => {
+          if (!r.ok) throw new Error(`agents: ${r.status}`);
+          return r.json();
+        }),
+      ]);
+      setOverview(ov);
+      setSkills(sk);
+      setAgents(ag);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
@@ -31,6 +46,20 @@ export function App() {
   return (
     <div style={{ fontFamily: "system-ui", maxWidth: 960, margin: "0 auto", padding: 24 }}>
       <h1>🔮 Emploke Dashboard</h1>
+
+      {error && (
+        <div
+          style={{
+            padding: 12,
+            marginBottom: 16,
+            background: "#fed7d7",
+            borderRadius: 8,
+            color: "#c53030",
+          }}
+        >
+          ⚠️ {error}
+        </div>
+      )}
 
       <nav style={{ display: "flex", gap: 12, marginBottom: 24 }}>
         {(["overview", "skills", "agents", "mcps"] as const).map((t) => (
