@@ -22,21 +22,15 @@ export class NameInvalid extends CatalogError {
   }
 }
 
-export class NameConflict extends CatalogError {
-  constructor(public readonly conflictingName: string) {
-    super(`name already exists in catalog: "${conflictingName}"`);
+export class CycleDetected extends CatalogError {
+  constructor(public readonly cycle: readonly string[]) {
+    super(`dependency cycle detected: ${cycle.join(" → ")}`);
   }
 }
 
 export class MissingDependencies extends CatalogError {
   constructor(public readonly missing: readonly string[]) {
     super(`missing dependencies: ${missing.join(", ")}`);
-  }
-}
-
-export class CycleDetected extends CatalogError {
-  constructor(public readonly cycle: readonly string[]) {
-    super(`dependency cycle detected: ${cycle.join(" → ")}`);
   }
 }
 
@@ -51,7 +45,7 @@ export class HasDependents extends CatalogError {
 
 export class NotFound extends CatalogError {
   constructor(
-    public readonly kind: "skill" | "mcp",
+    public readonly kind: "skill" | "agent" | "mcp",
     public readonly missingName: string,
   ) {
     super(`${kind} not found: "${missingName}"`);

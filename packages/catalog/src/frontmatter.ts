@@ -1,18 +1,11 @@
 import yaml from "js-yaml";
 import { FrontmatterError } from "./errors.js";
-import type { Skill } from "./types.js";
+import type { Agent, Skill } from "./types.js";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/;
 
 /**
- * Parse a SKILL.md-style document: YAML frontmatter delimited by `---` lines,
- * followed by an optional Markdown body.
- *
- * Returns the raw frontmatter object and the body. If no frontmatter is
- * present, returns an empty object and the entire content as body.
- *
- * Throws {@link FrontmatterError} when the YAML is malformed or evaluates to
- * a non-object value.
+ * Parse YAML frontmatter from a markdown document.
  */
 export function parseFrontmatter(
   source: string,
@@ -40,23 +33,16 @@ export function parseFrontmatter(
   return { data: parsed as Record<string, unknown>, body };
 }
 
-/**
- * Project a frontmatter object into the {@link Skill} fields emploke cares
- * about. Other fields are intentionally ignored — they remain on disk but
- * are not exposed through the catalog API.
- *
- * Defaulting rules:
- *  - `version` is required by the {@link Skill} type. If frontmatter omits it,
- *    emploke fills `"0.0.1"` here in memory only; the source file is never
- *    rewritten.
- *  - `dependencies` is left out (undefined) when absent.
- */
-export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: string): Skill {
-  const name = data.name;
-  const description = data.description;
-  const version = data.version;
-  const type = data.type;
-  const dependencies = data.dependencies;
+function parseCommonFields(
+  data: Record<string, unknown>,
+  sourcePath: string,
+): {
+  name: string;
+  description: string;
+  version: string;
+  dependencies?: { skills?: readonly string[]; mcps?: readonly string[] };
+} {
+  const { name, description, version, dependencies } = data;
 
   if (typeof name !== "string" || name.length === 0) {
     throw new FrontmatterError(sourcePath, "missing or non-string `name`");
@@ -67,20 +53,39 @@ export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: st
   if (version !== undefined && typeof version !== "string") {
     throw new FrontmatterError(sourcePath, "`version` must be a string when present");
   }
-  if (type !== undefined && typeof type !== "string") {
-    throw new FrontmatterError(sourcePath, "`type` must be a string when present");
-  }
 
-  const skill: Skill = {
+  return {
     name,
     description,
-    version: version ?? "0.0.1",
-    ...(type !== undefined ? { type } : {}),
+    version: (version as string) ?? "0.0.1",
     ...(dependencies !== undefined
       ? { dependencies: parseDependencies(dependencies, sourcePath) }
       : {}),
   };
-  return skill;
+}
+
+/**
+ * Project frontmatter into a Skill.
+ */
+export function frontmatterToSkill(data: Record<string, unknown>, sourcePath: string): Skill {
+  const common = parseCommonFields(data, sourcePath);
+  const { prereqs } = data;
+
+  if (prereqs !== undefined && typeof prereqs !== "string") {
+    throw new FrontmatterError(sourcePath, "`prereqs` must be a string when present");
+  }
+
+  return {
+    ...common,
+    ...(prereqs !== undefined ? { prereqs: prereqs as string } : {}),
+  };
+}
+
+/**
+ * Project frontmatter into an Agent.
+ */
+export function frontmatterToAgent(data: Record<string, unknown>, sourcePath: string): Agent {
+  return parseCommonFields(data, sourcePath);
 }
 
 function parseDependencies(
