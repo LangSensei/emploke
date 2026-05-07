@@ -263,17 +263,6 @@ export function apiRoutes(catalog: Catalog) {
     }
   });
 
-  // ─── Resolution ─────────────────────────────────────────
-
-  api.get("/resolve/:name{.+}", (c) => {
-    try {
-      const result = catalog.resolve(c.req.param("name"));
-      return c.json(result);
-    } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
-    }
-  });
-
   // ─── Overview ───────────────────────────────────────────
 
   api.get("/overview", (c) => {

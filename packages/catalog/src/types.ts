@@ -61,15 +61,28 @@ export interface ResolvedMcp {
   readonly path: string;
 }
 
-export type ResolveEntry =
-  | { readonly kind: "agent"; readonly agent: Agent; readonly path: string }
-  | { readonly kind: "skill"; readonly skill: Skill; readonly path: string };
-
-export interface ResolveResult {
-  /** The resolved entry itself (agent or skill). */
-  readonly entry: ResolveEntry;
+export interface AgentResolveResult {
+  /** The resolved agent definition. */
+  readonly agent: Agent;
+  /** Absolute path to the agent's directory (contains AGENTS.md). */
+  readonly agentPath: string;
   /** Transitive skill dependencies in topological order. */
   readonly skills: readonly ResolvedSkill[];
-  /** All referenced MCPs. */
+  /** All referenced MCPs (transitive). */
+  readonly mcps: readonly ResolvedMcp[];
+}
+
+export interface SkillResolveResult {
+  /** The resolved skill definition (the entry itself). */
+  readonly skill: Skill;
+  /** Absolute path to the skill's directory (contains SKILL.md). */
+  readonly skillPath: string;
+  /**
+   * Transitive closure of skills, INCLUDING the entry skill itself, in
+   * topological order (deps before dependents). Useful for tooling that
+   * needs to enumerate every skill that participates in this dispatch.
+   */
+  readonly skills: readonly ResolvedSkill[];
+  /** All referenced MCPs (transitive). */
   readonly mcps: readonly ResolvedMcp[];
 }

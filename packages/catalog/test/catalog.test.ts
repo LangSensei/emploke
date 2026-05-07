@@ -261,8 +261,8 @@ describe("Catalog", () => {
     });
   });
 
-  describe("resolve", () => {
-    it("resolves agent dependencies (skills + mcps)", async () => {
+  describe("resolveAgent / resolveSkill", () => {
+    it("resolveAgent: returns agent + transitive deps", async () => {
       const c = await Catalog.open({ catalogDir });
       const mcpSrc = await makeMcpSource("github");
       await c.installMcp(mcpSrc);
@@ -273,17 +273,14 @@ describe("Catalog", () => {
       });
       await c.installAgent(agentSrc);
 
-      const result = c.resolve("reviewer");
-      expect(result.entry).toEqual({
-        kind: "agent",
-        agent: expect.objectContaining({ name: "reviewer" }),
-        path: expect.stringContaining(join("agents", "reviewer")),
-      });
+      const result = c.resolveAgent("reviewer");
+      expect(result.agent.name).toBe("reviewer");
+      expect(result.agentPath).toContain(join("agents", "reviewer"));
       expect(result.skills.map((s) => s.skill.name)).toContain("security-audit");
       expect(result.mcps.map((m) => m.name)).toContain("github");
     });
 
-    it("resolves transitive skill dependencies", async () => {
+    it("resolveAgent: transitive skill dependencies in topological order", async () => {
       const c = await Catalog.open({ catalogDir });
       const mcpSrc = await makeMcpSource("semgrep");
       await c.installMcp(mcpSrc);
@@ -296,7 +293,7 @@ describe("Catalog", () => {
       const agentSrc = await makeAgentSource("reviewer", { deps: { skills: ["security-audit"] } });
       await c.installAgent(agentSrc);
 
-      const result = c.resolve("reviewer");
+      const result = c.resolveAgent("reviewer");
       const names = result.skills.map((s) => s.skill.name);
       expect(names).toContain("cve-db");
       expect(names).toContain("security-audit");
@@ -305,9 +302,29 @@ describe("Catalog", () => {
       expect(result.mcps.map((m) => m.name)).toContain("semgrep");
     });
 
+    it("resolveSkill: includes the entry skill itself in skills[]", async () => {
+      const c = await Catalog.open({ catalogDir });
+      const mcpSrc = await makeMcpSource("semgrep");
+      await c.installMcp(mcpSrc);
+      const leafSrc = await makeSkillSource("cve-db");
+      await c.installSkill(leafSrc);
+      const midSrc = await makeSkillSource("security-audit", {
+        deps: { skills: ["cve-db"], mcps: ["semgrep"] },
+      });
+      await c.installSkill(midSrc);
+
+      const result = c.resolveSkill("security-audit");
+      expect(result.skill.name).toBe("security-audit");
+      expect(result.skillPath).toContain(join("skills", "security-audit"));
+      const names = result.skills.map((s) => s.skill.name);
+      expect(names).toEqual(["cve-db", "security-audit"]);
+      expect(result.mcps.map((m) => m.name)).toContain("semgrep");
+    });
+
     it("throws for unknown name", async () => {
       const c = await Catalog.open({ catalogDir });
-      expect(() => c.resolve("nope")).toThrow("not found in catalog");
+      expect(() => c.resolveAgent("nope")).toThrow("agent not found in catalog");
+      expect(() => c.resolveSkill("nope")).toThrow("skill not found in catalog");
     });
   });
 

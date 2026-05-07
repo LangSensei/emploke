@@ -18,14 +18,14 @@ export {
 export type {
   Agent,
   AgentEntry,
+  AgentResolveResult,
   CatalogKind,
   DependencyKind,
   EntryStatus,
   MissingDep,
   ResolvedMcp,
   ResolvedSkill,
-  ResolveEntry,
-  ResolveResult,
   Skill,
   SkillEntry,
+  SkillResolveResult,
 } from "./types.js";
