@@ -8,6 +8,10 @@ import { apiRoutes } from "./routes/api.js";
 const catalogDir =
   process.env.EMPLOKE_CATALOG_DIR ?? resolve(process.env.HOME ?? "~", ".emploke/catalog");
 const port = Number(process.env.PORT ?? 3000);
+// Bind to loopback by default — the server exposes destructive endpoints
+// (DELETE /api/skills/:name, etc.) and is intended as a single-user local
+// dashboard. To intentionally expose on the LAN, set EMPLOKE_HOST=0.0.0.0.
+const hostname = process.env.EMPLOKE_HOST ?? "127.0.0.1";
 const staticDir =
   process.env.EMPLOKE_STATIC_DIR ?? resolve(import.meta.dirname, "../../dashboard/dist");
 
@@ -22,9 +26,16 @@ async function main() {
   // Static files (dashboard build output)
   app.use("/*", serveStatic({ root: staticDir }));
 
-  console.log(`emploke server listening on http://localhost:${port}`);
+  const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
+  console.log(`emploke server listening on http://${displayHost}:${port}`);
   console.log(`catalog: ${catalogDir}`);
-  serve({ fetch: app.fetch, port });
+  if (hostname === "0.0.0.0") {
+    console.warn(
+      "⚠️  EMPLOKE_HOST=0.0.0.0 — server is reachable from the local network. " +
+        "Anyone on this network can call destructive endpoints (DELETE /api/...).",
+    );
+  }
+  serve({ fetch: app.fetch, port, hostname });
 }
 
 main().catch((err) => {

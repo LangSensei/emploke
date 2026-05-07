@@ -1,22 +1,28 @@
-import { useEffect, useState } from "react";
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
+import { useEffect, useState } from "react";
 
 interface Overview {
   counts: { skills: number; agents: number; mcps: number; disabled: number };
   issues: { path: string; reason: string }[];
 }
 
+interface McpItem {
+  name: string;
+  path: string | null;
+}
+
 export function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [agents, setAgents] = useState<AgentEntry[]>([]);
+  const [mcps, setMcps] = useState<McpItem[]>([]);
   const [tab, setTab] = useState<"overview" | "skills" | "agents" | "mcps">("overview");
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
       setError(null);
-      const [ov, sk, ag] = await Promise.all([
+      const [ov, sk, ag, mc] = await Promise.all([
         fetch("/api/overview").then((r) => {
           if (!r.ok) throw new Error(`overview: ${r.status}`);
           return r.json();
@@ -29,10 +35,15 @@ export function App() {
           if (!r.ok) throw new Error(`agents: ${r.status}`);
           return r.json();
         }),
+        fetch("/api/mcps").then((r) => {
+          if (!r.ok) throw new Error(`mcps: ${r.status}`);
+          return r.json();
+        }),
       ]);
       setOverview(ov);
       setSkills(sk);
       setAgents(ag);
+      setMcps(mc);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -131,7 +142,7 @@ export function App() {
         </div>
       )}
 
-      {tab === "mcps" && <McpList />}
+      {tab === "mcps" && <McpList mcps={mcps} />}
     </div>
   );
 }
@@ -195,13 +206,7 @@ function EntryTable({
   );
 }
 
-function McpList() {
-  const [mcps, setMcps] = useState<{ name: string; path: string }[]>([]);
-  useEffect(() => {
-    fetch("/api/mcps")
-      .then((r) => r.json())
-      .then(setMcps);
-  }, []);
+function McpList({ mcps }: { mcps: McpItem[] }) {
   return (
     <div>
       <h2>MCPs</h2>
