@@ -12,12 +12,14 @@ export {
 } from "./errors.js";
 export type {
   Agent,
+  AgentEntry,
   AgentInstalled,
   AgentUninstalled,
   AgentUpdated,
   CatalogEvent,
   CatalogEventHandler,
   CatalogKind,
+  EntryStatus,
   EventBus,
   McpInstalled,
   McpUninstalled,
@@ -27,6 +29,7 @@ export type {
   ResolveEntry,
   ResolveResult,
   Skill,
+  SkillEntry,
   SkillInstalled,
   SkillUninstalled,
   SkillUpdated,

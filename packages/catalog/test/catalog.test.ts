@@ -381,3 +381,103 @@ describe("Catalog", () => {
     });
   });
 });
+
+describe("entry status", () => {
+  it("skill is ready when all deps present", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const mcpSrc = await makeMcpSource("github");
+    await c.installMcp(mcpSrc);
+    const skillSrc = await makeSkillSource("lint", { deps: { mcps: ["github"] } });
+    await c.installSkill(skillSrc);
+
+    const entry = c.getSkillEntry("lint");
+    expect(entry!.status).toBe("ready");
+    expect(entry!.missingDeps).toBeUndefined();
+  });
+
+  it("skill is disabled when dep missing", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const skillSrc = await makeSkillSource("lint", { deps: { mcps: ["github"] } });
+    await c.installSkill(skillSrc);
+
+    const entry = c.getSkillEntry("lint");
+    expect(entry!.status).toBe("disabled");
+    expect(entry!.missingDeps).toContain("github");
+  });
+
+  it("skill becomes ready after dep installed", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const skillSrc = await makeSkillSource("lint", { deps: { mcps: ["github"] } });
+    await c.installSkill(skillSrc);
+    expect(c.getSkillEntry("lint")!.status).toBe("disabled");
+
+    const mcpSrc = await makeMcpSource("github");
+    await c.installMcp(mcpSrc);
+    expect(c.getSkillEntry("lint")!.status).toBe("ready");
+  });
+
+  it("skill becomes disabled after dep removed", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const mcpSrc = await makeMcpSource("github");
+    await c.installMcp(mcpSrc);
+    const skillSrc = await makeSkillSource("lint", { deps: { mcps: ["github"] } });
+    await c.installSkill(skillSrc);
+    expect(c.getSkillEntry("lint")!.status).toBe("ready");
+
+    // Remove dep — but lint depends on it, so should be blocked
+    await expect(c.removeMcp("github")).rejects.toThrow();
+  });
+
+  it("agent is disabled when skill dep missing", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const agentSrc = await makeAgentSource("reviewer", { deps: { skills: ["lint"] } });
+    await c.installAgent(agentSrc);
+
+    const entry = c.getAgentEntry("reviewer");
+    expect(entry!.status).toBe("disabled");
+    expect(entry!.missingDeps).toContain("lint");
+  });
+
+  it("agent becomes ready after skill installed", async () => {
+    const c = await Catalog.open({ catalogDir });
+    const agentSrc = await makeAgentSource("reviewer", { deps: { skills: ["lint"] } });
+    await c.installAgent(agentSrc);
+    expect(c.getAgentEntry("reviewer")!.status).toBe("disabled");
+
+    const skillSrc = await makeSkillSource("lint");
+    await c.installSkill(skillSrc);
+    expect(c.getAgentEntry("reviewer")!.status).toBe("ready");
+  });
+
+  it("listSkillEntries returns all with status", async () => {
+    const c = await Catalog.open({ catalogDir });
+    await c.installSkill(await makeSkillSource("a"));
+    await c.installSkill(await makeSkillSource("b", { deps: { skills: ["missing"] } }));
+
+    const entries = c.listSkillEntries();
+    expect(entries).toHaveLength(2);
+    expect(entries.find((e) => e.skill.name === "a")!.status).toBe("ready");
+    expect(entries.find((e) => e.skill.name === "b")!.status).toBe("disabled");
+  });
+
+  it("listAgentEntries returns all with status", async () => {
+    const c = await Catalog.open({ catalogDir });
+    await c.installAgent(await makeAgentSource("simple"));
+    const entries = c.listAgentEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.status).toBe("ready");
+  });
+
+  it("rescan recomputes status", async () => {
+    const c = await Catalog.open({ catalogDir });
+    await c.installSkill(await makeSkillSource("lint", { deps: { mcps: ["github"] } }));
+    expect(c.getSkillEntry("lint")!.status).toBe("disabled");
+
+    // Manually write MCP file to disk (bypass catalog API) then rescan
+    const mcpDir = join(catalogDir, "mcps");
+    await mkdir(mcpDir, { recursive: true });
+    await writeFile(join(mcpDir, "github.json"), JSON.stringify({ type: "stdio", command: "gh" }));
+    await c.rescan();
+    expect(c.getSkillEntry("lint")!.status).toBe("ready");
+  });
+});
