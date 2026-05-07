@@ -69,6 +69,8 @@ export class Catalog {
   /** Open a catalog rooted at the given directory and scan its contents. */
   static async open(opts: CatalogOptions): Promise<Catalog> {
     const c = new Catalog(opts);
+    // Clear any stale write lock left by a crashed process.
+    await rmdir(join(opts.root, ".lock")).catch(() => {});
     await c.scan();
     return c;
   }
@@ -412,7 +414,7 @@ export class Catalog {
   private async parseSkillSource(sourceDir: string): Promise<Skill> {
     const file = join(sourceDir, "SKILL.md");
     if (!(await pathExists(file))) {
-      throw new NameInvalid(sourceDir, `SKILL.md not found at ${file}`);
+      throw new CatalogStateError(`SKILL.md not found at ${file}`);
     }
     const content = await readFile(file, "utf8");
     const { data } = parseFrontmatter(content, file);

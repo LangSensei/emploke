@@ -75,7 +75,7 @@ All errors thrown by the public API extend `CatalogError`:
 
 ## Design
 
-See the [TS rewrite design](https://github.com/LangSensei/emploke/pull/new) (PR description) for the rationale behind the API shape, the CQRS-flavoured read/write split, and the deliberately narrow scope.
+See the [emploke repository](https://github.com/LangSensei/emploke) for the rationale behind the API shape, the CQRS-flavoured read/write split, and the deliberately narrow scope.
 
 ## License
 
