@@ -18,24 +18,9 @@ const staticDir =
 // server only provides /api. In production, pass --serve-static so the server
 // serves the dashboard build output too, enabling single-port deployment.
 const serveStaticFiles = process.argv.includes("--serve-static");
-// Catalog rescans the filesystem on this interval so that out-of-band changes
-// (CLI installs, manual edits, git pulls) are picked up without a server
-// restart. 60s is a reasonable trade-off between freshness and IO churn for a
-// local single-user catalog with tens-to-hundreds of entries.
-const rescanIntervalMs = Number(process.env.EMPLOKE_RESCAN_INTERVAL_MS ?? 60_000);
 
 async function main() {
   const catalog = await Catalog.open({ catalogDir });
-
-  if (rescanIntervalMs > 0) {
-    const timer = setInterval(() => {
-      catalog.rescan().catch((err) => {
-        console.error("[rescan] failed:", err);
-      });
-    }, rescanIntervalMs);
-    // Don't keep the event loop alive just for the timer.
-    timer.unref();
-  }
 
   const app = new Hono();
 
@@ -49,11 +34,6 @@ async function main() {
   console.log(`emploke server listening on http://${displayHost}:${port}`);
   console.log(`catalog: ${catalogDir}`);
   console.log(serveStaticFiles ? `static: ${staticDir}` : "static: disabled (dev mode)");
-  console.log(
-    rescanIntervalMs > 0
-      ? `rescan: every ${rescanIntervalMs}ms`
-      : "rescan: disabled (set EMPLOKE_RESCAN_INTERVAL_MS > 0 to enable)",
-  );
   if (hostname === "0.0.0.0") {
     console.warn(
       "⚠️  EMPLOKE_HOST=0.0.0.0 — server is reachable from the local network. " +

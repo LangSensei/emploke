@@ -44,19 +44,9 @@ export function App() {
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stable refresh
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
   useEffect(() => {
     refresh();
-    // Re-fetch when the tab/window becomes visible again so the dashboard
-    // shows fresh data after the user comes back. Combined with the server's
-    // periodic rescan, this avoids needing a manual Refresh button.
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        refresh();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
   const meta = SECTION_TITLES[section];

@@ -40,6 +40,7 @@ export class Catalog {
   private _issues: ScanIssue[] = [];
   private _skillEntries = new Map<string, SkillEntry>();
   private _agentEntries = new Map<string, AgentEntry>();
+  private _lastScanAt = 0;
   readonly events: EventBus<CatalogEvent> = new InMemoryEventBus<CatalogEvent>();
 
   private constructor(opts: CatalogOptions) {
@@ -165,6 +166,20 @@ export class Catalog {
     await this.scan();
   }
 
+  /**
+   * Re-scan the on-disk catalog if the in-memory state is older than
+   * maxAgeMs. Throttle prevents back-to-back GETs (e.g. a dashboard mount
+   * firing four parallel requests) from each triggering a full disk scan.
+   *
+   * Mutations always update memory synchronously, so this only catches
+   * external writes (vim, git pull, third-party tools).
+   */
+  async rescanIfStale(maxAgeMs = 5_000): Promise<void> {
+    if (Date.now() - this._lastScanAt > maxAgeMs) {
+      await this.rescan();
+    }
+  }
+
   // ─── Inspection ─────────────────────────────────────────
 
   async inspectSource(sourceDir: string): Promise<Skill | Agent> {
@@ -200,6 +215,7 @@ export class Catalog {
     ]);
     this._issues = [...skillIssues, ...agentIssues, ...mcpIssues];
     this.recomputeStatus();
+    this._lastScanAt = Date.now();
   }
 
   private recomputeStatus(): void {

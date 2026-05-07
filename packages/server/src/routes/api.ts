@@ -28,6 +28,18 @@ async function readInstallBody(c: {
 export function apiRoutes(catalog: Catalog) {
   const api = new Hono();
 
+  // Refresh in-memory state from disk if it's older than the throttle
+  // window. Mutations always update memory synchronously, so this is a
+  // best-effort sync to catch external writes (vim, git pull). Throttled
+  // (5s by default) so a dashboard mount firing four parallel GETs only
+  // triggers one disk scan.
+  api.use("/*", async (c, next) => {
+    if (c.req.method === "GET") {
+      await catalog.rescanIfStale();
+    }
+    await next();
+  });
+
   // ─── Skills ─────────────────────────────────────────────
 
   api.get("/skills", (c) => c.json(catalog.listSkillEntries()));
@@ -173,13 +185,6 @@ export function apiRoutes(catalog: Catalog) {
       },
       issues: catalog.scanIssues,
     });
-  });
-
-  // ─── Rescan ─────────────────────────────────────────────
-
-  api.post("/rescan", async (c) => {
-    await catalog.rescan();
-    return c.json({ ok: true });
   });
 
   return api;
