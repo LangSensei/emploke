@@ -473,9 +473,11 @@ describe("entry status", () => {
     await c.installSkill(await makeSkillSource("lint", { deps: { mcps: ["github"] } }));
     expect(c.getSkillEntry("lint")!.status).toBe("disabled");
 
-    // Manually install mcp on disk and rescan
-    const mcpSrc = await makeMcpSource("github");
-    await c.installMcp(mcpSrc);
+    // Manually write MCP file to disk (bypass catalog API) then rescan
+    const mcpDir = join(catalogDir, "mcps");
+    await mkdir(mcpDir, { recursive: true });
+    await writeFile(join(mcpDir, "github.json"), JSON.stringify({ type: "stdio", command: "gh" }));
+    await c.rescan();
     expect(c.getSkillEntry("lint")!.status).toBe("ready");
   });
 });
