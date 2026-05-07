@@ -43,6 +43,9 @@ importers:
         specifier: ^19.1.0
         version: 19.2.6(react@19.2.6)
     devDependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@types/react':
         specifier: ^19.1.0
         version: 19.2.14

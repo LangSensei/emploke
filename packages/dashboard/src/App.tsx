@@ -1,20 +1,9 @@
 import { useEffect, useState } from "react";
+import type { AgentEntry, SkillEntry } from "@emploke/catalog";
 
 interface Overview {
   counts: { skills: number; agents: number; mcps: number; disabled: number };
   issues: { path: string; reason: string }[];
-}
-
-interface SkillEntry {
-  skill: { name: string; description: string; version: string };
-  status: "ready" | "disabled";
-  missingDeps?: string[];
-}
-
-interface AgentEntry {
-  agent: { name: string; description: string; version: string };
-  status: "ready" | "disabled";
-  missingDeps?: string[];
 }
 
 export function App() {
@@ -142,8 +131,8 @@ function EntryTable({
     name: string;
     description: string;
     version: string;
-    status: string;
-    missingDeps?: string[];
+    status: "ready" | "disabled";
+    missingDeps?: readonly string[];
   }[];
 }) {
   if (items.length === 0) return <p style={{ color: "#666" }}>No entries.</p>;
