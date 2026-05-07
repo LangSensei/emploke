@@ -80,7 +80,7 @@ describe("Catalog (integration)", () => {
 
   describe("open + scan", () => {
     it("opens an empty root with no skills, no mcps, no issues", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       expect(await c.listSkills()).toEqual([]);
       expect(await c.listMcps()).toEqual([]);
       expect(c.scanIssues).toEqual([]);
@@ -101,7 +101,7 @@ describe("Catalog (integration)", () => {
         "utf8",
       );
 
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const skills = await c.listSkills();
       expect(skills).toHaveLength(1);
       expect(skills[0]).toMatchObject({ name: "git-pr", version: "1.0.0" });
@@ -118,7 +118,7 @@ describe("Catalog (integration)", () => {
         "---\nname: actual-name\ndescription: x\n---\n",
         "utf8",
       );
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       expect(await c.listSkills()).toEqual([]);
       expect(c.scanIssues).toHaveLength(1);
       expect(c.scanIssues[0]?.reason).toMatch(/does not match folder name/);
@@ -134,7 +134,7 @@ describe("Catalog (integration)", () => {
       await mkdir(join(root, "skills", "bad"), { recursive: true });
       await writeFile(join(root, "skills", "bad", "SKILL.md"), "not yaml", "utf8");
 
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const skills = await c.listSkills();
       expect(skills.map((s) => s.name)).toEqual(["good"]);
       expect(c.scanIssues).toHaveLength(1);
@@ -142,7 +142,7 @@ describe("Catalog (integration)", () => {
 
     it("ignores hidden temp/backup directories", async () => {
       await mkdir(join(root, "skills", ".something.tmp.abc"), { recursive: true });
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       expect(await c.listSkills()).toEqual([]);
       expect(c.scanIssues).toEqual([]);
     });
@@ -150,7 +150,7 @@ describe("Catalog (integration)", () => {
 
   describe("installSkill", () => {
     it("installs a leaf skill (no deps)", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, { name: "sop", description: "method" });
 
       const event = await c.installSkill({ sourceDir: src });
@@ -167,7 +167,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("preserves un-interpreted frontmatter fields on disk", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, {
         name: "git-pr",
         description: "x",
@@ -187,7 +187,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("fills version 0.0.1 when frontmatter omits it (memory only, file unchanged)", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, { name: "anth", description: "x" });
 
       await c.installSkill({ sourceDir: src });
@@ -200,7 +200,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects install when name already exists as skill", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src1 = await makeSkillSource(root, { name: "x", description: "1" });
       await c.installSkill({ sourceDir: src1 });
       const src2 = await makeSkillSource(root, { name: "x", description: "2" });
@@ -209,7 +209,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects install when name already exists as mcp", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installMcp({ name: "shared-name", json: { type: "stdio", command: "x" } });
       const src = await makeSkillSource(root, { name: "shared-name", description: "x" });
 
@@ -217,7 +217,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects install when dependency does not exist", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, {
         name: "needs",
         description: "x",
@@ -236,7 +236,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects self-dependency", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, {
         name: "selfish",
         description: "x",
@@ -247,13 +247,13 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects invalid name (not kebab-case)", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, { name: "Bad_Name", description: "x" });
       await expect(c.installSkill({ sourceDir: src })).rejects.toThrow(NameInvalid);
     });
 
     it("emits SkillInstalled event", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const events: CatalogEvent[] = [];
       c.events.subscribe((e) => events.push(e));
       const src = await makeSkillSource(root, { name: "evt", description: "x" });
@@ -265,7 +265,7 @@ describe("Catalog (integration)", () => {
 
   describe("installMcp", () => {
     it("installs an mcp from a JSON object", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const event = await c.installMcp({
         name: "playwright",
         json: { type: "stdio", command: "npx" },
@@ -279,7 +279,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("emploke does not validate json content", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       // arbitrary nonsense — emploke writes it as-is
       await c.installMcp({ name: "weird", json: { whatever: 42, nope: null } });
       const content = await readFile(join(root, "mcps", "weird.json"), "utf8");
@@ -287,7 +287,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects name conflict with existing skill", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, { name: "shared", description: "x" });
       await c.installSkill({ sourceDir: src });
       await expect(
@@ -296,7 +296,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects invalid name", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await expect(
         c.installMcp({ name: "BAD", json: { type: "stdio", command: "x" } }),
       ).rejects.toThrow(NameInvalid);
@@ -305,7 +305,7 @@ describe("Catalog (integration)", () => {
 
   describe("resolveSkill", () => {
     it("returns root with no transitive deps when leaf", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "leaf", description: "x" }),
       });
@@ -317,7 +317,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("returns deps in topological order (deps before dependents)", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "base", description: "x" }),
       });
@@ -338,14 +338,14 @@ describe("Catalog (integration)", () => {
     });
 
     it("throws NotFound when skill does not exist", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await expect(c.resolveSkill("ghost")).rejects.toThrow(NotFound);
     });
   });
 
   describe("updateSkill", () => {
     it("replaces files on disk and updates in-memory skill", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, {
           name: "u",
@@ -368,7 +368,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects rename via update", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "orig", description: "x" }),
       });
@@ -379,7 +379,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("rejects update introducing a cycle", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "a", description: "x" }),
       });
@@ -403,7 +403,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("throws NotFound when updating missing skill", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const src = await makeSkillSource(root, { name: "ghost", description: "x" });
       await expect(c.updateSkill({ name: "ghost", sourceDir: src })).rejects.toThrow(NotFound);
     });
@@ -411,7 +411,7 @@ describe("Catalog (integration)", () => {
 
   describe("uninstallSkill", () => {
     it("removes from disk and memory", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "rm", description: "x" }),
       });
@@ -423,7 +423,7 @@ describe("Catalog (integration)", () => {
     });
 
     it("blocks uninstall when something still depends on it", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "lib", description: "x" }),
       });
@@ -444,21 +444,21 @@ describe("Catalog (integration)", () => {
     });
 
     it("throws NotFound for missing skill", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await expect(c.uninstallSkill("ghost")).rejects.toThrow(NotFound);
     });
   });
 
   describe("uninstallMcp", () => {
     it("removes from disk and memory", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installMcp({ name: "tmp", json: { type: "stdio", command: "x" } });
       await c.uninstallMcp("tmp");
       expect(await c.listMcps()).toEqual([]);
     });
 
     it("blocks uninstall when a skill depends on it", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installMcp({ name: "tool", json: { type: "stdio", command: "x" } });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, {
@@ -473,7 +473,7 @@ describe("Catalog (integration)", () => {
 
   describe("dependents", () => {
     it("lists direct dependents only", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, { name: "base", description: "x" }),
       });
@@ -499,7 +499,7 @@ describe("Catalog (integration)", () => {
 
   describe("listSkills with type filter", () => {
     it("filters by type", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       await c.installSkill({
         sourceDir: await makeSkillSource(root, {
           name: "a",
@@ -525,7 +525,7 @@ describe("Catalog (integration)", () => {
 
   describe("event subscription", () => {
     it("emits events for all write operations", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       const events: CatalogEvent[] = [];
       c.events.subscribe((e) => events.push(e));
 
@@ -562,7 +562,7 @@ describe("Catalog (integration)", () => {
 
   describe("rescan", () => {
     it("picks up changes made directly to the file system", async () => {
-      const c = await Catalog.open({ root });
+      const c = await Catalog.open({ catalogDir: root });
       expect(await c.listSkills()).toEqual([]);
 
       // External writer drops a skill folder

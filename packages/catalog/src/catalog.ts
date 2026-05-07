@@ -27,35 +27,35 @@ import type {
 } from "./types.js";
 import { validateName } from "./validate.js";
 
-/** A non-fatal problem encountered while scanning the catalog root. */
+/** A non-fatal problem encountered while scanning the catalog directory. */
 export interface ScanIssue {
   readonly path: string;
   readonly reason: string;
 }
 
 export interface CatalogOptions {
-  /** Absolute path to the marketplace root. Layout is hard-coded:
-   *    <root>/skills/<name>/SKILL.md
-   *    <root>/mcps/<name>.json
+  /** Absolute path to the local catalog directory. Layout is hard-coded:
+   *    <catalogDir>/skills/<name>/SKILL.md
+   *    <catalogDir>/mcps/<name>.json
    */
-  readonly root: string;
+  readonly catalogDir: string;
 }
 
 /**
  * The only public class of @emploke/catalog.
  *
- * Lifecycle: construct via {@link Catalog.open} (which scans the root). After
+ * Lifecycle: construct via {@link Catalog.open} (which scans the catalog dir). After
  * that, the catalog mirrors the file system in memory until the next scan.
  *
  * Concurrency: all write operations acquire an exclusive file lock
- * (`<root>/.lock`) via flock. Multiple readers are always safe.
+ * (`<catalogDir>/.lock`) via mkdir. Multiple readers are always safe.
  *
  * Source of truth: the file system. The in-memory state is a cached
  * projection. Restarting the process (or constructing a fresh Catalog) yields
  * the same state from disk.
  */
 export class Catalog {
-  private readonly root: string;
+  private readonly catalogDir: string;
   private readonly skills = new Map<string, Skill>();
   private readonly mcps = new Set<string>();
   private readonly _issues: ScanIssue[] = [];
@@ -63,14 +63,14 @@ export class Catalog {
   readonly events: EventBus<CatalogEvent> = new InMemoryEventBus<CatalogEvent>();
 
   private constructor(opts: CatalogOptions) {
-    this.root = opts.root;
+    this.catalogDir = opts.catalogDir;
   }
 
-  /** Open a catalog rooted at the given directory and scan its contents. */
+  /** Open a catalog at the given directory and scan its contents. */
   static async open(opts: CatalogOptions): Promise<Catalog> {
     const c = new Catalog(opts);
     // Clear any stale write lock left by a crashed process.
-    await rmdir(join(opts.root, ".lock")).catch(() => {});
+    await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
     await c.scan();
     return c;
   }
@@ -88,7 +88,7 @@ export class Catalog {
   // ─── Write lock (flock) ──────────────────────────────────────────────
 
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const lockDir = join(this.root, ".lock");
+    const lockDir = join(this.catalogDir, ".lock");
     // mkdir is atomic on POSIX — exactly one caller wins.
     // Retry briefly in case another async operation holds the lock.
     const maxRetries = 50;
@@ -117,11 +117,11 @@ export class Catalog {
   // ─── Path helpers ───────────────────────────────────────────────────
 
   private skillsDir(): string {
-    return join(this.root, "skills");
+    return join(this.catalogDir, "skills");
   }
 
   private mcpsDir(): string {
-    return join(this.root, "mcps");
+    return join(this.catalogDir, "mcps");
   }
 
   private skillDir(name: string): string {

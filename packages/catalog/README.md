@@ -39,7 +39,7 @@ The layout is hard-coded:
 ```ts
 import { Catalog } from "@emploke/catalog";
 
-const catalog = await Catalog.open({ root: "/path/to/marketplace" });
+const catalog = await Catalog.open({ catalogDir: "~/.emploke/catalog" });
 
 // Subscribe to events
 const unsub = catalog.events.subscribe((e) => console.log(e));
