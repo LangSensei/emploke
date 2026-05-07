@@ -1,5 +1,5 @@
-import { Hono } from "hono";
 import type { Catalog } from "@emploke/catalog";
+import { Hono } from "hono";
 
 export function apiRoutes(catalog: Catalog) {
   const api = new Hono();
@@ -83,7 +83,8 @@ export function apiRoutes(catalog: Catalog) {
         skills: skills.length,
         agents: agents.length,
         mcps: mcps.length,
-        disabled: skills.filter((s) => s.status === "disabled").length +
+        disabled:
+          skills.filter((s) => s.status === "disabled").length +
           agents.filter((a) => a.status === "disabled").length,
       },
       issues: catalog.scanIssues,

@@ -1,11 +1,12 @@
-import { Hono } from "hono";
+import { resolve } from "node:path";
+import { Catalog } from "@emploke/catalog";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Catalog } from "@emploke/catalog";
+import { Hono } from "hono";
 import { apiRoutes } from "./routes/api.js";
-import { resolve } from "node:path";
 
-const catalogDir = process.env.EMPLOKE_CATALOG_DIR ?? resolve(process.env.HOME ?? "~", ".emploke/catalog");
+const catalogDir =
+  process.env.EMPLOKE_CATALOG_DIR ?? resolve(process.env.HOME ?? "~", ".emploke/catalog");
 const port = Number(process.env.PORT ?? 3000);
 
 async function main() {

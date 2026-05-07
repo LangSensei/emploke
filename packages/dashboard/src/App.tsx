@@ -34,7 +34,10 @@ export function App() {
     setAgents(ag);
   };
 
-  useEffect(() => { refresh(); }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
+  useEffect(() => {
+    refresh();
+  }, []);
 
   return (
     <div style={{ fontFamily: "system-ui", maxWidth: 960, margin: "0 auto", padding: 24 }}>
@@ -43,6 +46,7 @@ export function App() {
       <nav style={{ display: "flex", gap: 12, marginBottom: 24 }}>
         {(["overview", "skills", "agents", "mcps"] as const).map((t) => (
           <button
+            type="button"
             key={t}
             onClick={() => setTab(t)}
             style={{ fontWeight: tab === t ? "bold" : "normal", padding: "6px 12px" }}
@@ -50,7 +54,7 @@ export function App() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <button onClick={refresh} style={{ marginLeft: "auto", padding: "6px 12px" }}>
+        <button type="button" onClick={refresh} style={{ marginLeft: "auto", padding: "6px 12px" }}>
           ↻ Refresh
         </button>
       </nav>
@@ -68,8 +72,10 @@ export function App() {
             <div style={{ marginTop: 24 }}>
               <h3>⚠️ Scan Issues</h3>
               <ul>
-                {overview.issues.map((i, idx) => (
-                  <li key={idx}><code>{i.path}</code> — {i.reason}</li>
+                {overview.issues.map((i) => (
+                  <li key={i.path}>
+                    <code>{i.path}</code> — {i.reason}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -114,14 +120,32 @@ export function App() {
 
 function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div style={{ textAlign: "center", padding: 16, border: "1px solid #ddd", borderRadius: 8, minWidth: 100 }}>
+    <div
+      style={{
+        textAlign: "center",
+        padding: 16,
+        border: "1px solid #ddd",
+        borderRadius: 8,
+        minWidth: 100,
+      }}
+    >
       <div style={{ fontSize: 32, color: warn && value > 0 ? "#e53e3e" : "#333" }}>{value}</div>
       <div style={{ fontSize: 14, color: "#666" }}>{label}</div>
     </div>
   );
 }
 
-function EntryTable({ items }: { items: { name: string; description: string; version: string; status: string; missingDeps?: string[] }[] }) {
+function EntryTable({
+  items,
+}: {
+  items: {
+    name: string;
+    description: string;
+    version: string;
+    status: string;
+    missingDeps?: string[];
+  }[];
+}) {
   if (items.length === 0) return <p style={{ color: "#666" }}>No entries.</p>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -140,7 +164,11 @@ function EntryTable({ items }: { items: { name: string; description: string; ver
             <td style={{ padding: 8 }}>{item.description}</td>
             <td style={{ padding: 8 }}>{item.version}</td>
             <td style={{ padding: 8 }}>
-              {item.status === "ready" ? "✅" : <span title={item.missingDeps?.join(", ")}>⛔ disabled</span>}
+              {item.status === "ready" ? (
+                "✅"
+              ) : (
+                <span title={item.missingDeps?.join(", ")}>⛔ disabled</span>
+              )}
             </td>
           </tr>
         ))}
@@ -151,14 +179,22 @@ function EntryTable({ items }: { items: { name: string; description: string; ver
 
 function McpList() {
   const [mcps, setMcps] = useState<{ name: string; path: string }[]>([]);
-  useEffect(() => { fetch("/api/mcps").then((r) => r.json()).then(setMcps); }, []);
+  useEffect(() => {
+    fetch("/api/mcps")
+      .then((r) => r.json())
+      .then(setMcps);
+  }, []);
   return (
     <div>
       <h2>MCPs</h2>
-      {mcps.length === 0 ? <p style={{ color: "#666" }}>No MCPs installed.</p> : (
+      {mcps.length === 0 ? (
+        <p style={{ color: "#666" }}>No MCPs installed.</p>
+      ) : (
         <ul>
           {mcps.map((m) => (
-            <li key={m.name}><code>{m.name}</code> — <span style={{ fontSize: 12, color: "#888" }}>{m.path}</span></li>
+            <li key={m.name}>
+              <code>{m.name}</code> — <span style={{ fontSize: 12, color: "#888" }}>{m.path}</span>
+            </li>
           ))}
         </ul>
       )}
