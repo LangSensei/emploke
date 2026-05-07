@@ -3,12 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentStore } from "../src/agent/agent-store.js";
-import { InMemoryEventBus } from "../src/event-bus.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
 import { Resolver } from "../src/resolver.js";
 import { SkillStore } from "../src/skill/skill-store.js";
-import type { CatalogEvent } from "../src/types.js";
-
 let catalogDir: string;
 let sourceDir: string;
 let skills: SkillStore;
@@ -74,10 +71,9 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  const events = new InMemoryEventBus<CatalogEvent>();
-  skills = new SkillStore(catalogDir, events);
-  agents = new AgentStore(catalogDir, events);
-  mcps = new McpStore(catalogDir, events);
+  skills = new SkillStore(catalogDir);
+  agents = new AgentStore(catalogDir);
+  mcps = new McpStore(catalogDir);
   resolver = new Resolver(skills, agents, mcps, catalogDir);
 });
 
@@ -127,7 +123,7 @@ describe("Resolver", () => {
   it("includes entry path", async () => {
     await agents.install(await makeAgent("reviewer"));
     const result = resolver.resolve("reviewer");
-    expect(result.entry.path).toContain("agents/reviewer");
+    expect(result.entry.path).toContain(join("agents", "reviewer"));
   });
 
   it("throws for unknown name", () => {

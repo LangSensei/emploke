@@ -1,18 +1,27 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
 import { type FormEvent, useEffect, useState } from "react";
 import {
+  getAgent,
   getMcp,
+  getSkill,
   installAgent,
   installMcp,
   installSkill,
   type McpItem,
+  patchAgentMetadata,
+  patchSkillMetadata,
   removeAgent,
   removeMcp,
   removeSkill,
+  updateAgentContent,
   updateMcpContent,
+  updateSkillContent,
 } from "../api";
-import { EntryTable } from "../components/EntryTable";
-import { PlusIcon, TrashIcon } from "../components/Icons";
+import { CodeEditor } from "../components/CodeEditor";
+import { EntryGrid } from "../components/EntryGrid";
+import { PlusIcon } from "../components/Icons";
+import { McpGrid } from "../components/McpGrid";
+import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
 import { Modal } from "../components/Modal";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
@@ -32,10 +41,15 @@ const KIND_LABEL: Record<CatalogTab, string> = {
   mcps: "MCP",
 };
 
+type EditTarget =
+  | { kind: "skill"; name: string }
+  | { kind: "agent"; name: string }
+  | { kind: "mcp"; name: string };
+
 export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged }: CatalogProps) {
   const [installOpen, setInstallOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  const [editMcp, setEditMcp] = useState<string | null>(null);
+  const [edit, setEdit] = useState<EditTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -119,43 +133,55 @@ export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged 
       )}
 
       {tab === "agents" && (
-        <EntryTable
+        <EntryGrid
           items={agents.map((a) => ({
             name: a.agent.name,
             description: a.agent.description,
             version: a.agent.version,
             status: a.status,
             missingDeps: a.missingDeps,
+            skillsCount: a.agent.dependencies?.skills?.length ?? 0,
+            mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
           }))}
           emptyTitle="No agents installed"
           emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
+          onEdit={(name) => {
+            setError(null);
+            setEdit({ kind: "agent", name });
+          }}
           onRemove={(name) => setConfirmRemove(name)}
         />
       )}
 
       {tab === "skills" && (
-        <EntryTable
+        <EntryGrid
           items={skills.map((s) => ({
             name: s.skill.name,
             description: s.skill.description,
             version: s.skill.version,
             status: s.status,
             missingDeps: s.missingDeps,
+            skillsCount: s.skill.dependencies?.skills?.length ?? 0,
+            mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
           }))}
           emptyTitle="No skills installed"
           emptyHint={<>A skill is a reusable capability package referenced by agents.</>}
+          onEdit={(name) => {
+            setError(null);
+            setEdit({ kind: "skill", name });
+          }}
           onRemove={(name) => setConfirmRemove(name)}
         />
       )}
 
       {tab === "mcps" && (
-        <McpList
+        <McpGrid
           mcps={mcps}
-          onRemove={(name) => setConfirmRemove(name)}
           onEdit={(name) => {
             setError(null);
-            setEditMcp(name);
+            setEdit({ kind: "mcp", name });
           }}
+          onRemove={(name) => setConfirmRemove(name)}
         />
       )}
 
@@ -183,80 +209,19 @@ export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged 
         onConfirm={() => confirmRemove && doRemove(confirmRemove)}
       />
 
-      {editMcp !== null && (
-        <EditMcpDialog
-          name={editMcp}
-          onClose={() => setEditMcp(null)}
+      {edit !== null && (
+        <EditDialog
+          target={edit}
+          availableSkills={skills.map((s) => s.skill.name)}
+          availableMcps={mcps.map((m) => m.name)}
+          onClose={() => setEdit(null)}
           onSaved={() => {
-            setEditMcp(null);
+            setEdit(null);
             onChanged();
           }}
         />
       )}
     </div>
-  );
-}
-
-// ─── McpList ──────────────────────────────────────────────────────
-
-function McpList({
-  mcps,
-  onRemove,
-  onEdit,
-}: {
-  mcps: McpItem[];
-  onRemove: (name: string) => void;
-  onEdit: (name: string) => void;
-}) {
-  if (mcps.length === 0) {
-    return (
-      <div className="empty">
-        <div className="empty__icon">∅</div>
-        <h3 className="empty__title">No MCPs installed</h3>
-        <p className="empty__hint">MCPs are JSON server configs referenced by skills/agents.</p>
-      </div>
-    );
-  }
-  return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Path</th>
-          <th className="actions-col" />
-        </tr>
-      </thead>
-      <tbody>
-        {mcps.map((m) => (
-          <tr key={m.name}>
-            <td className="name-cell">
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => onEdit(m.name)}
-                title="View / edit JSON"
-              >
-                {m.name}
-              </button>
-            </td>
-            <td className="desc-cell mono" style={{ fontSize: 12 }}>
-              {m.path ?? <em>—</em>}
-            </td>
-            <td className="actions-cell">
-              <button
-                type="button"
-                className="btn btn--ghost btn--icon"
-                onClick={() => onRemove(m.name)}
-                aria-label={`Remove ${m.name}`}
-                title="Remove"
-              >
-                <TrashIcon />
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }
 
@@ -374,28 +339,63 @@ function ConfirmRemoveDialog({
   );
 }
 
-// ─── EditMcpDialog ────────────────────────────────────────────────
+// ─── EditDialog ────────────────────────────────────────────────────
 
-interface EditMcpDialogProps {
-  name: string;
+interface EditDialogProps {
+  target: EditTarget;
+  // Available names for chip autocomplete in the metadata form.
+  availableSkills: string[];
+  availableMcps: string[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-function EditMcpDialog({ name, onClose, onSaved }: EditMcpDialogProps) {
+type EditMode = "form" | "source";
+
+function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }: EditDialogProps) {
+  // ─ source-mode state (raw editor) ──────────────────
   const [text, setText] = useState("");
+  // ─ form-mode state (metadata form) ─────────────────
+  const [form, setForm] = useState<MetadataFormValues>({
+    description: "",
+    version: "",
+    prereqs: "",
+    skills: [],
+    mcps: [],
+  });
+
+  const [mode, setMode] = useState<EditMode>(target.kind === "mcp" ? "source" : "form");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load on mount / target change. We always fetch the raw content (covers
+  // source mode) and additionally project the server's structured fields
+  // into the form values — no client-side YAML parsing needed.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getMcp(name)
-      .then((d) => {
-        if (!cancelled) setText(JSON.stringify(d.content, null, 2));
-      })
+    const load = async (): Promise<void> => {
+      if (target.kind === "mcp") {
+        const d = await getMcp(target.name);
+        if (!cancelled) setText(d.content);
+        return;
+      }
+      const detail =
+        target.kind === "skill" ? await getSkill(target.name) : await getAgent(target.name);
+      if (cancelled) return;
+      setText(detail.content);
+      const meta = "skill" in detail ? detail.skill : detail.agent;
+      setForm({
+        description: meta.description ?? "",
+        version: meta.version ?? "",
+        prereqs: "skill" in detail ? (detail.skill.prereqs ?? "") : "",
+        skills: [...(meta.dependencies?.skills ?? [])],
+        mcps: [...(meta.dependencies?.mcps ?? [])],
+      });
+    };
+    load()
       .catch((e) => {
         if (!cancelled) setError((e as Error).message);
       })
@@ -405,20 +405,44 @@ function EditMcpDialog({ name, onClose, onSaved }: EditMcpDialogProps) {
     return () => {
       cancelled = true;
     };
-  }, [name]);
+  }, [target]);
 
   const handleSave = async () => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      setError(`invalid JSON: ${(e as Error).message}`);
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
-      await updateMcpContent(name, parsed);
+      if (target.kind === "mcp") {
+        // Server validates that `text` is parseable JSON; no need to re-parse
+        // here. Sending raw string preserves user's formatting verbatim.
+        await updateMcpContent(target.name, text);
+      } else if (mode === "source") {
+        // Skill / Agent source mode: write raw content via PUT.
+        if (target.kind === "skill") await updateSkillContent(target.name, text);
+        else await updateAgentContent(target.name, text);
+      } else {
+        // Skill / Agent form mode: PATCH the metadata fields only.
+        const patch =
+          target.kind === "skill"
+            ? {
+                description: form.description,
+                version: form.version,
+                prereqs: form.prereqs.trim() === "" ? null : form.prereqs,
+                dependencies:
+                  form.skills.length === 0 && form.mcps.length === 0
+                    ? null
+                    : { skills: form.skills, mcps: form.mcps },
+              }
+            : {
+                description: form.description,
+                version: form.version,
+                dependencies:
+                  form.skills.length === 0 && form.mcps.length === 0
+                    ? null
+                    : { skills: form.skills, mcps: form.mcps },
+              };
+        if (target.kind === "skill") await patchSkillMetadata(target.name, patch);
+        else await patchAgentMetadata(target.name, patch);
+      }
       onSaved();
     } catch (e) {
       setError((e as Error).message);
@@ -427,28 +451,56 @@ function EditMcpDialog({ name, onClose, onSaved }: EditMcpDialogProps) {
     }
   };
 
+  const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
+  const title = `Edit ${kindLabel}: ${target.name}`;
+  const isLargeMode = mode === "source" || target.kind === "mcp";
+
   return (
-    <Modal open onClose={onClose} title={`Edit MCP: ${name}`}>
-      <div className="modal__body">
-        {loading && <p className="form-hint">Loading...</p>}
-        {!loading && (
-          <div className="form-field">
-            <label htmlFor="mcp-content">JSON content</label>
-            <textarea
-              id="mcp-content"
-              className="code-textarea"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              spellCheck={false}
-              rows={16}
-              disabled={saving}
-            />
-            <p className="form-hint">Edited atomically on the server.</p>
-          </div>
+    <Modal open onClose={onClose} title={title} size={isLargeMode ? "large" : "default"}>
+      <div className="modal__body modal__body--scroll">
+        {loading ? (
+          <p className="form-hint">Loading...</p>
+        ) : target.kind === "mcp" ? (
+          <CodeEditor
+            value={text}
+            onChange={setText}
+            language="json"
+            disabled={saving}
+            height="500px"
+          />
+        ) : mode === "form" ? (
+          <MetadataForm
+            kind={target.kind}
+            values={form}
+            onChange={setForm}
+            availableSkills={availableSkills.filter((n) => n !== target.name)}
+            availableMcps={availableMcps}
+            missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
+            missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
+            disabled={saving}
+          />
+        ) : (
+          <CodeEditor
+            value={text}
+            onChange={setText}
+            language="markdown"
+            disabled={saving}
+            height="500px"
+          />
         )}
         {error && <div className="alert alert--error">⚠ {error}</div>}
       </div>
       <div className="modal__footer">
+        {target.kind !== "mcp" && (
+          <button
+            type="button"
+            className="btn btn--ghost modal__footer-secondary"
+            onClick={() => setMode(mode === "form" ? "source" : "form")}
+            disabled={saving || loading}
+          >
+            {mode === "form" ? "Edit source →" : "← Back to form"}
+          </button>
+        )}
         <button type="button" className="btn" onClick={onClose} disabled={saving}>
           Cancel
         </button>
@@ -456,7 +508,7 @@ function EditMcpDialog({ name, onClose, onSaved }: EditMcpDialogProps) {
           type="button"
           className="btn btn--primary"
           onClick={handleSave}
-          disabled={loading || saving || text === ""}
+          disabled={loading || saving}
         >
           {saving ? "Saving..." : "Save"}
         </button>
@@ -464,3 +516,10 @@ function EditMcpDialog({ name, onClose, onSaved }: EditMcpDialogProps) {
     </Modal>
   );
 }
+
+// ─── Frontmatter helpers (client-side, best-effort) ───────────────
+//
+// (Removed: server already parses frontmatter authoritatively and exposes
+// the structured fields via GET /api/skills/:name and /api/agents/:name.
+// We project from those rather than re-parsing on the client, which avoids
+// drift and edge-case bugs like inline-flow YAML arrays.)

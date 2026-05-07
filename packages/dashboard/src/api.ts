@@ -1,4 +1,4 @@
-import type { AgentEntry, SkillEntry } from "@emploke/catalog";
+import type { AgentEntry, MissingDep, SkillEntry } from "@emploke/catalog";
 
 export interface OverviewData {
   counts: {
@@ -86,11 +86,67 @@ export const removeMcp = (name: string) =>
 export interface McpDetail {
   name: string;
   path: string | null;
-  content: unknown;
+  /** Raw JSON content as stored on disk (preserves user formatting). */
+  content: string;
 }
 
 export const getMcp = (name: string): Promise<McpDetail> =>
   fetchJson<McpDetail>(`/api/mcps/${encodeURIComponent(name)}`, "mcp");
 
-export const updateMcpContent = (name: string, content: unknown) =>
+export const updateMcpContent = (name: string, content: string) =>
   mutate(`/api/mcps/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+
+export interface MarkdownDetail {
+  content: string;
+}
+
+export interface SkillDetail {
+  skill: import("@emploke/catalog").Skill;
+  status: "ready" | "disabled";
+  missingDeps?: MissingDep[];
+  content: string;
+}
+
+export const getSkill = (name: string): Promise<SkillDetail> =>
+  fetchJson<SkillDetail>(`/api/skills/${encodeURIComponent(name)}`, "skill");
+
+export const getSkillContent = (name: string): Promise<string> =>
+  getSkill(name).then((d) => d.content);
+
+export const updateSkillContent = (name: string, content: string) =>
+  mutate(`/api/skills/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+
+export interface SkillMetadataPatch {
+  description?: string;
+  version?: string;
+  prereqs?: string | null;
+  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+}
+
+export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
+  mutate(`/api/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
+
+export interface AgentDetail {
+  agent: import("@emploke/catalog").Agent;
+  status: "ready" | "disabled";
+  missingDeps?: MissingDep[];
+  content: string;
+}
+
+export const getAgent = (name: string): Promise<AgentDetail> =>
+  fetchJson<AgentDetail>(`/api/agents/${encodeURIComponent(name)}`, "agent");
+
+export const getAgentContent = (name: string): Promise<string> =>
+  getAgent(name).then((d) => d.content);
+
+export const updateAgentContent = (name: string, content: string) =>
+  mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+
+export interface AgentMetadataPatch {
+  description?: string;
+  version?: string;
+  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+}
+
+export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
+  mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));

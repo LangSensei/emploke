@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import type { CatalogEvent } from "../src/types.js";
-
 let catalogDir: string;
 let sourceDir: string;
 
@@ -187,27 +185,6 @@ describe("Catalog", () => {
       await writeFile(join(dir, "SKILL.md"), "---\nname: Bad_Name\ndescription: x\n---\n");
       await expect(c.installSkill(dir)).rejects.toThrow(NameInvalid);
     });
-
-    it("emits SkillInstalled event", async () => {
-      const c = await Catalog.open({ catalogDir });
-      const events: CatalogEvent[] = [];
-      c.events.subscribe((e) => events.push(e));
-      const src = await makeSkillSource("weather");
-      await c.installSkill(src);
-      expect(events).toHaveLength(1);
-      expect(events[0]!.type).toBe("SkillInstalled");
-    });
-
-    it("emits SkillUpdated on re-install", async () => {
-      const c = await Catalog.open({ catalogDir });
-      const src = await makeSkillSource("weather");
-      await c.installSkill(src);
-      const events: CatalogEvent[] = [];
-      c.events.subscribe((e) => events.push(e));
-      const src2 = await makeSkillSource("weather", { version: "2.0.0" });
-      await c.installSkill(src2);
-      expect(events[0]!.type).toBe("SkillUpdated");
-    });
   });
 
   describe("removeSkill", () => {
@@ -299,7 +276,7 @@ describe("Catalog", () => {
       expect(result.entry).toEqual({
         kind: "agent",
         agent: expect.objectContaining({ name: "reviewer" }),
-        path: expect.stringContaining("agents/reviewer"),
+        path: expect.stringContaining(join("agents", "reviewer")),
       });
       expect(result.skills.map((s) => s.skill.name)).toContain("security-audit");
       expect(result.mcps.map((m) => m.name)).toContain("github");
@@ -402,7 +379,8 @@ describe("entry status", () => {
 
     const entry = c.getSkillEntry("lint");
     expect(entry!.status).toBe("disabled");
-    expect(entry!.missingDeps).toContain("github");
+    expect(entry!.missingDeps?.map((d) => d.name)).toContain("github");
+    expect(entry!.missingDeps?.find((d) => d.name === "github")?.kind).toBe("mcp");
   });
 
   it("skill becomes ready after dep installed", async () => {
@@ -435,7 +413,8 @@ describe("entry status", () => {
 
     const entry = c.getAgentEntry("reviewer");
     expect(entry!.status).toBe("disabled");
-    expect(entry!.missingDeps).toContain("lint");
+    expect(entry!.missingDeps?.map((d) => d.name)).toContain("lint");
+    expect(entry!.missingDeps?.find((d) => d.name === "lint")?.kind).toBe("skill");
   });
 
   it("agent becomes ready after skill installed", async () => {

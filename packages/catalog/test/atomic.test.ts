@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { atomicReplaceDir, atomicWriteJsonFile, pathExists } from "../src/atomic.js";
+import { atomicReplaceDir, pathExists } from "../src/atomic.js";
 
 describe("atomicReplaceDir", () => {
   let workDir: string;
@@ -75,39 +75,6 @@ describe("atomicReplaceDir", () => {
     const siblings = await readdir(workDir);
     expect(siblings.filter((n) => n.startsWith(".dst.tmp."))).toHaveLength(0);
     expect(siblings.filter((n) => n.startsWith(".dst.old."))).toHaveLength(0);
-  });
-});
-
-describe("atomicWriteJsonFile", () => {
-  let workDir: string;
-
-  beforeEach(async () => {
-    workDir = await mkdtemp(join(tmpdir(), "emploke-atomic-json-"));
-  });
-
-  afterEach(async () => {
-    await rm(workDir, { recursive: true, force: true });
-  });
-
-  it("writes a JSON file with pretty formatting", async () => {
-    const dst = join(workDir, "out.json");
-    await atomicWriteJsonFile({ a: 1, b: [2, 3] }, dst);
-    const content = await readFile(dst, "utf8");
-    expect(content).toBe(`{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}\n`);
-  });
-
-  it("overwrites existing file", async () => {
-    const dst = join(workDir, "out.json");
-    await writeFile(dst, "old", "utf8");
-    await atomicWriteJsonFile({ b: 2 }, dst);
-    const content = await readFile(dst, "utf8");
-    expect(content).toContain('"b": 2');
-  });
-
-  it("creates parent directories", async () => {
-    const dst = join(workDir, "deep", "nested", "out.json");
-    await atomicWriteJsonFile({ x: 1 }, dst);
-    expect(await pathExists(dst)).toBe(true);
   });
 });
 

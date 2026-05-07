@@ -12,7 +12,6 @@ What this package **does**:
 - Track the names of MCP server JSON files (`mcps/<name>.json`). The contents of those files are **never read** by emploke.
 - Resolve transitive dependency closures (topological sort) for any skill.
 - Validate graph rules on writes: name uniqueness, kebab-case, missing-dependency, no cycles, reverse-dependency safety on uninstall.
-- Emit `CatalogEvent`s on every write so external tools (UIs, install CLIs, audit logs, …) can react.
 
 What this package **does not** do:
 
@@ -41,9 +40,6 @@ import { Catalog } from "@emploke/catalog";
 
 const catalog = await Catalog.open({ catalogDir: "~/.emploke/catalog" });
 
-// Subscribe to events
-const unsub = catalog.events.subscribe((e) => console.log(e));
-
 // Install
 await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });
 await catalog.installMcp({ name: "playwright", json: { type: "stdio", command: "npx", args: ["@modelcontextprotocol/server-playwright"] } });
@@ -57,8 +53,6 @@ console.log(transitiveMcps.length);
 // Update / uninstall
 await catalog.updateSkill({ name: "sop", sourceDir: "/tmp/sop-v2" });
 await catalog.uninstallMcp("playwright");
-
-unsub();
 ```
 
 ## Errors

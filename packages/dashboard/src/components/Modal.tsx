@@ -6,13 +6,14 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  size?: "default" | "large";
 }
 
 /**
  * Thin wrapper around the native <dialog> element. Gives us focus trap,
  * ESC-to-close, and backdrop styling without importing any UI library.
  */
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, size = "default" }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -25,14 +26,12 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={`modal modal--${size}`}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
       }}
       onClick={(e) => {
-        // Click on backdrop = close. Backdrop is the dialog element itself
-        // (clicks on inner content bubble through the inner div, not dialog).
         if (e.target === ref.current) onClose();
       }}
     >

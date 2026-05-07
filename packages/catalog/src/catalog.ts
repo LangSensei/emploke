@@ -1,23 +1,16 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { AgentStore } from "./agent/agent-store.js";
+import { type AgentMetadataPatch, AgentStore } from "./agent/agent-store.js";
 import { pathExists } from "./atomic.js";
 import { CatalogStateError } from "./errors.js";
-import { InMemoryEventBus } from "./event-bus.js";
 import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpStore } from "./mcp/mcp-store.js";
 import { Resolver } from "./resolver.js";
-import { SkillStore } from "./skill/skill-store.js";
-import type {
-  Agent,
-  AgentEntry,
-  CatalogEvent,
-  EventBus,
-  ResolveResult,
-  Skill,
-  SkillEntry,
-} from "./types.js";
+import { type SkillMetadataPatch, SkillStore } from "./skill/skill-store.js";
+import type { Agent, AgentEntry, MissingDep, ResolveResult, Skill, SkillEntry } from "./types.js";
+
+export type { AgentMetadataPatch, SkillMetadataPatch };
 
 export interface ScanIssue {
   readonly path: string;
@@ -41,13 +34,12 @@ export class Catalog {
   private _skillEntries = new Map<string, SkillEntry>();
   private _agentEntries = new Map<string, AgentEntry>();
   private _lastScanAt = 0;
-  readonly events: EventBus<CatalogEvent> = new InMemoryEventBus<CatalogEvent>();
 
   private constructor(opts: CatalogOptions) {
     this.catalogDir = opts.catalogDir;
-    this.skillStore = new SkillStore(opts.catalogDir, this.events);
-    this.agentStore = new AgentStore(opts.catalogDir, this.events);
-    this.mcpStore = new McpStore(opts.catalogDir, this.events);
+    this.skillStore = new SkillStore(opts.catalogDir);
+    this.agentStore = new AgentStore(opts.catalogDir);
+    this.mcpStore = new McpStore(opts.catalogDir);
     this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore, opts.catalogDir);
   }
 
@@ -72,6 +64,22 @@ export class Catalog {
     const skill = await this.withWriteLock(() => this.skillStore.install(sourceDir));
     this.recomputeStatus();
     return skill;
+  }
+
+  async updateSkillContent(name: string, content: string): Promise<Skill> {
+    const skill = await this.withWriteLock(() => this.skillStore.updateContent(name, content));
+    this.recomputeStatus();
+    return skill;
+  }
+
+  async updateSkillMetadata(name: string, patch: SkillMetadataPatch): Promise<Skill> {
+    const skill = await this.withWriteLock(() => this.skillStore.updateMetadata(name, patch));
+    this.recomputeStatus();
+    return skill;
+  }
+
+  getSkillContent(name: string): Promise<string> {
+    return this.skillStore.getContent(name);
   }
 
   async removeSkill(name: string): Promise<void> {
@@ -103,6 +111,22 @@ export class Catalog {
     return agent;
   }
 
+  async updateAgentContent(name: string, content: string): Promise<Agent> {
+    const agent = await this.withWriteLock(() => this.agentStore.updateContent(name, content));
+    this.recomputeStatus();
+    return agent;
+  }
+
+  async updateAgentMetadata(name: string, patch: AgentMetadataPatch): Promise<Agent> {
+    const agent = await this.withWriteLock(() => this.agentStore.updateMetadata(name, patch));
+    this.recomputeStatus();
+    return agent;
+  }
+
+  getAgentContent(name: string): Promise<string> {
+    return this.agentStore.getContent(name);
+  }
+
   async removeAgent(name: string): Promise<void> {
     await this.withWriteLock(() => this.agentStore.remove(name, (n) => this.getDependents(n)));
     this.recomputeStatus();
@@ -132,12 +156,12 @@ export class Catalog {
     return name;
   }
 
-  async updateMcpContent(name: string, content: unknown): Promise<void> {
+  async updateMcpContent(name: string, content: string): Promise<void> {
     await this.withWriteLock(() => this.mcpStore.updateContent(name, content));
     this.recomputeStatus();
   }
 
-  getMcpContent(name: string): Promise<unknown> {
+  getMcpContent(name: string): Promise<string> {
     return this.mcpStore.getContent(name);
   }
 
@@ -246,14 +270,14 @@ export class Catalog {
   private findMissing(dependencies?: {
     readonly skills?: readonly string[];
     readonly mcps?: readonly string[];
-  }): string[] {
+  }): MissingDep[] {
     if (!dependencies) return [];
-    const missing: string[] = [];
+    const missing: MissingDep[] = [];
     for (const s of dependencies.skills ?? []) {
-      if (!this.skillStore.has(s)) missing.push(s);
+      if (!this.skillStore.has(s)) missing.push({ kind: "skill", name: s });
     }
     for (const m of dependencies.mcps ?? []) {
-      if (!this.mcpStore.has(m)) missing.push(m);
+      if (!this.mcpStore.has(m)) missing.push({ kind: "mcp", name: m });
     }
     return missing;
   }

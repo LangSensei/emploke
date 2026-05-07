@@ -1,19 +1,23 @@
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
-import { HasDependents, NotFound } from "../errors.js";
-import { frontmatterToSkill, parseFrontmatter } from "../frontmatter.js";
+import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
+import { applyFrontmatterPatch, frontmatterToSkill, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
-import type { CatalogEvent, EventBus, Skill } from "../types.js";
+import type { Skill } from "../types.js";
 import { nameToPath, validateName } from "../validate.js";
+
+export type SkillMetadataPatch = Partial<{
+  description: string;
+  version: string;
+  prereqs: string | null;
+  dependencies: { skills?: string[]; mcps?: string[] } | null;
+}>;
 
 export class SkillStore {
   private readonly skills = new Map<string, Skill>();
 
-  constructor(
-    private readonly catalogDir: string,
-    private readonly events: EventBus<CatalogEvent>,
-  ) {}
+  constructor(private readonly catalogDir: string) {}
 
   private get baseDir() {
     return join(this.catalogDir, "skills");
@@ -32,13 +36,89 @@ export class SkillStore {
     const exists = this.skills.has(skill.name);
     await atomicReplaceDir(sourceDir, destDir);
     this.skills.set(skill.name, skill);
+    return skill;
+  }
 
-    this.events.publish({
-      type: exists ? "SkillUpdated" : "SkillInstalled",
-      name: skill.name,
-      path: destDir,
-      at: new Date(),
-    });
+  async getContent(name: string): Promise<string> {
+    if (!this.skills.has(name)) throw new NotFound("skill", name);
+    const skillMd = join(this.baseDir, nameToPath(name), "SKILL.md");
+    return readFile(skillMd, "utf8");
+  }
+
+  /**
+   * Replace the full SKILL.md content of an existing skill. The new
+   * content's frontmatter must parse and the `name` field must equal the
+   * existing name (renames go through remove + install).
+   */
+  async updateContent(name: string, content: string): Promise<Skill> {
+    if (!this.skills.has(name)) throw new NotFound("skill", name);
+    const skillMd = join(this.baseDir, nameToPath(name), "SKILL.md");
+
+    // Parse + validate before touching disk.
+    const { data } = parseFrontmatter(content, skillMd);
+    const skill = frontmatterToSkill(data, skillMd);
+    if (skill.name !== name) {
+      throw new FrontmatterError(
+        skillMd,
+        `cannot rename via edit: frontmatter name "${skill.name}" must equal "${name}". Remove and re-install instead.`,
+      );
+    }
+    validateName(skill.name);
+
+    await mkdir(join(this.baseDir, nameToPath(name)), { recursive: true });
+    await writeFile(skillMd, content, "utf8");
+    this.skills.set(name, skill);
+    return skill;
+  }
+
+  /**
+   * Patch the frontmatter metadata of an existing skill, preserving the
+   * markdown body and any unknown frontmatter keys. Used by the dashboard's
+   * form-mode editor.
+   */
+  async updateMetadata(name: string, patch: SkillMetadataPatch): Promise<Skill> {
+    if (!this.skills.has(name)) throw new NotFound("skill", name);
+    const skillMd = join(this.baseDir, nameToPath(name), "SKILL.md");
+    const existing = await readFile(skillMd, "utf8");
+
+    // Build the merge object. `null` values explicitly remove the key.
+    // Empty `dependencies` (no skills, no mcps) collapse to "remove key".
+    const merge: Record<string, unknown> = {};
+    if (patch.description !== undefined) merge.description = patch.description;
+    if (patch.version !== undefined) merge.version = patch.version;
+    if (patch.prereqs !== undefined) merge.prereqs = patch.prereqs;
+    if (patch.dependencies !== undefined) {
+      const d = patch.dependencies;
+      if (d === null) {
+        merge.dependencies = null;
+      } else {
+        const skills = d.skills ?? [];
+        const mcps = d.mcps ?? [];
+        if (skills.length === 0 && mcps.length === 0) {
+          merge.dependencies = null;
+        } else {
+          const obj: { skills?: readonly string[]; mcps?: readonly string[] } = {};
+          if (skills.length > 0) obj.skills = skills;
+          if (mcps.length > 0) obj.mcps = mcps;
+          merge.dependencies = obj;
+        }
+      }
+    }
+
+    const newContent = applyFrontmatterPatch(existing, merge);
+
+    // Re-validate.
+    const { data } = parseFrontmatter(newContent, skillMd);
+    const skill = frontmatterToSkill(data, skillMd);
+    if (skill.name !== name) {
+      throw new FrontmatterError(
+        skillMd,
+        `metadata patch must not change name (current="${name}", patched="${skill.name}")`,
+      );
+    }
+
+    await writeFile(skillMd, newContent, "utf8");
+    this.skills.set(name, skill);
     return skill;
   }
 
@@ -52,7 +132,6 @@ export class SkillStore {
     const destDir = join(this.baseDir, nameToPath(name));
     await rm(destDir, { recursive: true, force: true });
     this.skills.delete(name);
-    this.events.publish({ type: "SkillUninstalled", name, at: new Date() });
   }
 
   get(name: string): Skill | null {

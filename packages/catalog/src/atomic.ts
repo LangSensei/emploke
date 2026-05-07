@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /**
@@ -53,24 +53,6 @@ export async function atomicReplaceDir(src: string, dst: string): Promise<void> 
   }
   if (backedUp) {
     await rm(bak, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
-/**
- * Best-effort atomic file replacement (writes JSON-serialised content).
- */
-export async function atomicWriteJsonFile(content: unknown, dst: string): Promise<void> {
-  const parent = dirname(dst);
-  await mkdir(parent, { recursive: true });
-  const stamp = randomBytes(6).toString("hex");
-  const tmp = join(parent, `.${basename(dst)}.tmp.${stamp}`);
-
-  await writeFile(tmp, `${JSON.stringify(content, null, 2)}\n`, "utf8");
-  try {
-    await rename(tmp, dst);
-  } catch (err) {
-    await rm(tmp, { force: true }).catch(() => {});
-    throw err;
   }
 }
 

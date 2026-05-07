@@ -44,10 +44,16 @@ export function apiRoutes(catalog: Catalog) {
 
   api.get("/skills", (c) => c.json(catalog.listSkillEntries()));
 
-  api.get("/skills/:name{.+}", (c) => {
-    const entry = catalog.getSkillEntry(c.req.param("name"));
+  api.get("/skills/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    const entry = catalog.getSkillEntry(name);
     if (!entry) return c.json({ error: "not found" }, 404);
-    return c.json(entry);
+    try {
+      const content = await catalog.getSkillContent(name);
+      return c.json({ ...entry, content });
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   api.post("/skills", async (c) => {
@@ -56,6 +62,51 @@ export function apiRoutes(catalog: Catalog) {
     try {
       const skill = await catalog.installSkill(parsed.sourcePath);
       return c.json(skill, 201);
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+  });
+
+  api.put("/skills/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be JSON" }, 400);
+    }
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      typeof (body as { content: unknown }).content !== "string"
+    ) {
+      return c.json({ error: "body must be { content: string }" }, 400);
+    }
+    try {
+      const skill = await catalog.updateSkillContent(name, (body as { content: string }).content);
+      return c.json(skill);
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+  });
+
+  api.patch("/skills/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be JSON" }, 400);
+    }
+    if (typeof body !== "object" || body === null) {
+      return c.json({ error: "body must be a JSON object" }, 400);
+    }
+    try {
+      const skill = await catalog.updateSkillMetadata(
+        name,
+        body as Parameters<typeof catalog.updateSkillMetadata>[1],
+      );
+      return c.json(skill);
     } catch (e: unknown) {
       return c.json({ error: (e as Error).message }, 400);
     }
@@ -74,10 +125,16 @@ export function apiRoutes(catalog: Catalog) {
 
   api.get("/agents", (c) => c.json(catalog.listAgentEntries()));
 
-  api.get("/agents/:name{.+}", (c) => {
-    const entry = catalog.getAgentEntry(c.req.param("name"));
+  api.get("/agents/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    const entry = catalog.getAgentEntry(name);
     if (!entry) return c.json({ error: "not found" }, 404);
-    return c.json(entry);
+    try {
+      const content = await catalog.getAgentContent(name);
+      return c.json({ ...entry, content });
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   api.post("/agents", async (c) => {
@@ -86,6 +143,51 @@ export function apiRoutes(catalog: Catalog) {
     try {
       const agent = await catalog.installAgent(parsed.sourcePath);
       return c.json(agent, 201);
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+  });
+
+  api.put("/agents/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be JSON" }, 400);
+    }
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      typeof (body as { content: unknown }).content !== "string"
+    ) {
+      return c.json({ error: "body must be { content: string }" }, 400);
+    }
+    try {
+      const agent = await catalog.updateAgentContent(name, (body as { content: string }).content);
+      return c.json(agent);
+    } catch (e: unknown) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+  });
+
+  api.patch("/agents/:name{.+}", async (c) => {
+    const name = c.req.param("name");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "request body must be JSON" }, 400);
+    }
+    if (typeof body !== "object" || body === null) {
+      return c.json({ error: "body must be a JSON object" }, 400);
+    }
+    try {
+      const agent = await catalog.updateAgentMetadata(
+        name,
+        body as Parameters<typeof catalog.updateAgentMetadata>[1],
+      );
+      return c.json(agent);
     } catch (e: unknown) {
       return c.json({ error: (e as Error).message }, 400);
     }
@@ -137,11 +239,15 @@ export function apiRoutes(catalog: Catalog) {
     } catch {
       return c.json({ error: "request body must be JSON" }, 400);
     }
-    if (typeof body !== "object" || body === null || !("content" in body)) {
-      return c.json({ error: "body must be { content: object }" }, 400);
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      typeof (body as { content: unknown }).content !== "string"
+    ) {
+      return c.json({ error: "body must be { content: string }" }, 400);
     }
     try {
-      await catalog.updateMcpContent(name, (body as { content: unknown }).content);
+      await catalog.updateMcpContent(name, (body as { content: string }).content);
       return c.json({ ok: true });
     } catch (e: unknown) {
       return c.json({ error: (e as Error).message }, 400);

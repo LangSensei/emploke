@@ -483,6 +483,13 @@ button {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  /* Fixed layout: columns size by <th>/<td> width, not by content. Prevents
+     column widths from jumping between tabs (skill / agent / mcp) and stops
+     long names from squeezing the description column. */
+  table-layout: fixed;
+  /* Cap on very wide screens so version / status / actions don't drift far
+     from the description text; left-aligned table feels more anchored. */
+  max-width: 1100px;
 }
 
 .table th {
@@ -510,16 +517,67 @@ button {
 .table .name-cell {
   font-family: var(--font-mono);
   font-weight: 500;
+  /* Long scoped names ellipsize; full string is in the title attr. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The clickable name button inside name-cell: respects ellipsis. */
+.table .name-cell .link-button {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .table .desc-cell {
   color: var(--color-text-muted);
+  /* Single-line description with ellipsis. Description is the flexible
+     column but doesn't sprawl visually — long text wraps would push the
+     row very tall, while ellipsis keeps everything compact and the full
+     content is still available via hover. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table .desc-cell.mono {
+  /* Used by the MCP "Path" column. Truncate long absolute paths. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table .version-cell {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* ─── Column widths per table layout ───────────────────────────── */
+
+/* Skills / Agents: Name | Description | Version | Status | (Actions) */
+.table th.col-name {
+  width: 200px;
+}
+.table th.col-version {
+  width: 80px;
+}
+.table th.col-status {
+  width: 110px;
+}
+
+/* MCPs: Name | Path | (Actions) */
+.table th.col-path {
+  width: auto;
+}
+
+.actions-col {
+  width: 56px;
 }
 
 /* ─── Status badges ─────────────────────────────────────────────── */
@@ -618,6 +676,190 @@ button {
   word-break: break-all;
 }
 
+/* ─── Card grid (catalog entries) ──────────────────────────────── */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-3);
+}
+
+.card-grid__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  cursor: pointer;
+  transition:
+    border-color 0.1s ease,
+    box-shadow 0.1s ease,
+    transform 0.1s ease;
+}
+
+.card-grid__item:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.card-grid__item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.card-grid__item--disabled {
+  background: var(--color-surface);
+  opacity: 0.85;
+}
+
+.card-grid__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.card-grid__name {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  /* Long scoped names: allow word-break so the whole name shows wrapped
+     instead of being cut off; tooltip still has the full string. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+/* Footer: meta on left, Remove button on right. */
+.card-grid__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
+.card-grid__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+/* Remove button — bottom-right of card, subtle gray, reddens on hover. */
+.card-grid__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+  flex-shrink: 0;
+}
+
+.card-grid__action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.card-grid__action:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.card-grid__desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  /* Clamp to 2 lines with ellipsis; reserve 2 lines so cards stay aligned. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(13px * 1.45 * 2);
+}
+
+.card-grid__desc--mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  /* MCP paths are single-line so just ellipsize. */
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.card-grid__sep {
+  color: var(--color-text-subtle);
+}
+
+.card-grid__version {
+  color: var(--color-text-muted);
+}
+
+.card-grid__desc--needs {
+  color: var(--color-text);
+  -webkit-line-clamp: 2;
+}
+
+.card-grid__needs-icon {
+  font-size: 13px;
+  margin-right: 2px;
+}
+
+.card-grid__missing-line {
+  display: flex;
+  flex: 1 1 0;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 2px var(--space-2);
+  background: rgba(180, 83, 9, 0.08);
+  border-left: 2px solid var(--color-warn);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.card-grid__missing-segment {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-grid__missing-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.card-grid__missing-label--skill,
+.card-grid__missing-label--mcp {
+  color: var(--color-warn);
+}
+
 /* ─── Table actions column ──────────────────────────────────────── */
 
 .actions-col {
@@ -637,9 +879,17 @@ button {
   padding: 0;
   width: 480px;
   max-width: 90vw;
+  /* Cap modal height so the body can scroll while header/footer stay sticky. */
+  max-height: 85vh;
   background: var(--color-bg);
   color: var(--color-text);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+
+.modal--large {
+  width: 800px;
+  max-width: 95vw;
 }
 
 .modal::backdrop {
@@ -649,6 +899,7 @@ button {
 .modal__inner {
   display: flex;
   flex-direction: column;
+  max-height: 85vh;
 }
 
 .modal__header {
@@ -656,6 +907,7 @@ button {
   align-items: center;
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .modal__title {
@@ -671,6 +923,14 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal__body--scroll {
+  /* Editor and form variant: tighter top padding because content is dense. */
+  padding: var(--space-4) var(--space-5);
 }
 
 .modal__body p {
@@ -693,6 +953,11 @@ button {
   background: var(--color-surface);
   border-bottom-left-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
+  flex-shrink: 0;
+}
+
+.modal__footer-secondary {
+  margin-right: auto;
 }
 
 /* ─── Form fields (used inside modal) ───────────────────────────── */
@@ -709,25 +974,172 @@ button {
   color: var(--color-text);
 }
 
-.form-field input {
-  font-family: var(--font-mono);
+.form-field input,
+.form-field textarea {
+  font-family: var(--font-sans);
   font-size: 13px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text);
+  resize: vertical;
 }
 
-.form-field input:focus {
+.form-field input {
+  font-family: var(--font-mono);
+}
+
+.form-field input:focus,
+.form-field textarea:focus {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
   border-color: var(--color-accent);
 }
 
-.form-field input:disabled {
+.form-field input:disabled,
+.form-field textarea:disabled {
   background: var(--color-surface);
   cursor: not-allowed;
+}
+
+.metadata-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ─── Chips input ───────────────────────────────────────────────── */
+
+.chips {
+  position: relative;
+}
+
+.chips__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  min-height: 36px;
+}
+
+.chips__row:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+  border-color: var(--color-accent);
+}
+
+.chips__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 4px 2px 8px;
+  background: var(--color-accent-bg);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-accent);
+}
+
+.chips__chip--invalid {
+  background: rgba(220, 38, 38, 0.1);
+  color: rgb(185, 28, 28);
+}
+
+.chips__chip--invalid .chips__chip-remove {
+  color: rgb(185, 28, 28);
+}
+
+.chips__chip--invalid .chips__chip-remove:hover {
+  background: rgba(220, 38, 38, 0.18);
+}
+
+.chips__chip-text {
+  line-height: 1.2;
+}
+
+.chips__chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--color-accent);
+  padding: 0;
+  cursor: pointer;
+}
+
+.chips__chip-remove:hover {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.chips__chip-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.chips__input {
+  flex: 1;
+  min-width: 100px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 4px;
+  color: var(--color-text);
+}
+
+.chips__empty {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-style: italic;
+  padding: 0 var(--space-1);
+}
+
+.chips__suggest {
+  position: fixed;
+  z-index: 1000;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-1);
+}
+
+.chips__suggest-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.chips__suggest-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.chips__suggest-item svg {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-subtle);
 }
 
 .form-hint {
@@ -743,7 +1155,50 @@ button {
   font-size: 11px;
 }
 
-/* ─── Code textarea ─────────────────────────────────────────────── */
+/* ─── Code editor (CodeMirror wrapper) ─────────────────────────── */
+
+.code-editor {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.code-editor:focus-within {
+  border-color: var(--color-accent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.code-editor .cm-editor {
+  background: var(--color-bg);
+}
+
+.code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* CodeMirror's internal scroller — fixed height comes from `height` prop,
+   this just makes scroll behavior nice. */
+.code-editor .cm-scroller {
+  overflow: auto;
+}
+
+.code-editor .cm-gutters {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+}
+
+.code-editor .cm-activeLine {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.code-editor .cm-activeLineGutter {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+/* ─── Code textarea (legacy, MCP fallback only) ────────────────── */
 
 .code-textarea {
   font-family: var(--font-mono);
