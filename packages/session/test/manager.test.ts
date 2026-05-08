@@ -81,6 +81,11 @@ class StubRuntime implements Runtime {
   /** If set, refresh returns this. */
   refreshResult: { lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null =
     null;
+  /** Per-session-id overrides for refresh. Takes precedence over refreshResult. */
+  refreshResultBy: Map<
+    string,
+    { lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null
+  > = new Map();
   /** If set, refresh throws this. */
   refreshError: Error | null = null;
   /** If set, deleteState throws this. */
@@ -108,6 +113,7 @@ class StubRuntime implements Runtime {
   async refresh(s: Session) {
     this.refreshCalls.push(s);
     if (this.refreshError) throw this.refreshError;
+    if (this.refreshResultBy.has(s.id)) return this.refreshResultBy.get(s.id) ?? null;
     return this.refreshResult;
   }
 
@@ -450,17 +456,25 @@ describe("list()", () => {
       root,
     });
     // Three sessions: a is older, b is newer (no activity), c has activity.
+    // Sleep between each create so createdAt strictly increases — Linux/macOS
+    // can otherwise place two creates in the same millisecond and force the
+    // sort to fall through to its id tiebreaker, which the assertion below
+    // doesn't cover.
     rt.refreshResult = null;
     const a = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
     const b = await m.create({ agent: "demo" });
-    rt.refreshResult = {
+    await new Promise((r) => setTimeout(r, 5));
+    const c = await m.create({ agent: "demo" });
+    // create() doesn't call refresh, so lastActiveAt isn't persisted at create
+    // time. To make c sort by lastActiveAt during list(), we need refresh to
+    // return a non-null result *only for c* — refreshResultBy lets us do that
+    // without affecting a/b (which must fall back to createdAt).
+    rt.refreshResultBy.set(c.id, {
       lastActiveAt: "2099-01-01T00:00:00.000Z",
       preview: null,
       runtimeSessionId: rt.provisionId as string,
-    };
-    const c = await m.create({ agent: "demo" });
-    rt.refreshResult = null;
+    });
     const out = await m.list();
     // c has lastActiveAt=2099 → first. Then b/a sorted by createdAt desc.
     expect(out.map((r) => r.id)).toEqual([c.id, b.id, a.id]);
