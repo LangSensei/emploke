@@ -1284,3 +1284,134 @@ button {
 .link-button:hover {
   text-decoration: underline;
 }
+
+/* ─── Select (custom-styled native <select>) ────────────────────── */
+
+/* Native <select> on Windows/macOS/Linux looks completely different and
+   never matches our .btn aesthetic. This class normalizes it: same border,
+   radius, padding, focus ring as .btn, plus an inline SVG chevron so the
+   default platform arrow is hidden under the appearance:none reset. */
+.select {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: var(--space-2) var(--space-3);
+  padding-right: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  background-size: 12px;
+}
+
+.select:hover {
+  border-color: var(--color-border-strong);
+}
+
+.select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+  border-color: var(--color-accent);
+}
+
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--color-surface);
+}
+
+.select--full {
+  width: 100%;
+}
+
+/* ─── Sessions page ─────────────────────────────────────────────── */
+
+/* Sessions has 5 columns and benefits from filling the page width — the
+   default 1100px cap squeezes the activity column. */
+.table--wide {
+  max-width: none;
+}
+
+.table .col-session {
+  width: 200px;
+}
+
+.table .col-agent {
+  width: 180px;
+}
+
+.table .col-created {
+  width: 110px;
+}
+
+.table .col-actions {
+  width: 132px;
+}
+
+.session-id {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* Subtler than .badge--ok — the agent name is contextual metadata, not a
+   status, so a low-contrast outline tag keeps the row from being a wall
+   of blue when many sessions share the same agent. */
+.agent-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.activity-cell__count {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.activity-cell__label {
+  font-size: 12px;
+}
+
+.activity-cell__sep {
+  color: var(--color-text-subtle);
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}

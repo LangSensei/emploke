@@ -39,22 +39,27 @@ export function SessionsPage({ agents }: SessionsProps) {
   const [filter, setFilter] = useState<string>(ALL_AGENTS);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [launchModal, setLaunchModal] = useState<LaunchModalState | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
 
   // Tracks whether the component is still mounted so async handlers can skip
-  // setState calls on a tombstoned instance (avoids future-React warnings and
-  // wasted state churn if the user navigates away mid-fetch).
+  // setState calls on a tombstoned instance. CRITICAL: the effect must reset
+  // mountedRef to true on EVERY mount, not just the first — otherwise React 18
+  // StrictMode (which runs mount→unmount→mount in dev) leaves it stuck at
+  // false after the first cleanup, silently swallowing all post-await state
+  // updates (e.g. setBusy(false) never fires and the button stays "Creating…").
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const refresh = async () => {
+    setRefreshing(true);
     try {
       const next = await listSessions(filter === ALL_AGENTS ? undefined : filter);
       if (!mountedRef.current) return;
@@ -63,6 +68,8 @@ export function SessionsPage({ agents }: SessionsProps) {
     } catch (e) {
       if (!mountedRef.current) return;
       setError((e as Error).message);
+    } finally {
+      if (mountedRef.current) setRefreshing(false);
     }
   };
 
@@ -123,13 +130,13 @@ export function SessionsPage({ agents }: SessionsProps) {
       <div className="page-toolbar">
         <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
           <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
-            Agent:
+            Agent
           </label>
           <select
             id="agent-filter"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="filter-select"
+            className="select"
           >
             <option value={ALL_AGENTS}>All</option>
             {agents.map((a) => (
@@ -144,10 +151,11 @@ export function SessionsPage({ agents }: SessionsProps) {
             type="button"
             className="btn btn--ghost"
             onClick={refresh}
+            disabled={refreshing}
             aria-label="Refresh"
             title="Refresh"
           >
-            <RefreshIcon />
+            <RefreshIcon className={refreshing ? "spin" : undefined} />
             <span>Refresh</span>
           </button>
           <button
@@ -179,16 +187,14 @@ export function SessionsPage({ agents }: SessionsProps) {
           </p>
         </div>
       ) : (
-        <table className="table">
+        <table className="table table--wide">
           <thead>
             <tr>
-              <th className="col-name">Session</th>
-              <th>Agent</th>
-              <th>Workdir</th>
-              <th>Copilot sessions</th>
-              <th>Last activity</th>
-              <th>Created</th>
-              <th style={{ width: 140 }}>Actions</th>
+              <th className="col-session">Session</th>
+              <th className="col-agent">Agent</th>
+              <th>Activity</th>
+              <th className="col-created">Created</th>
+              <th className="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -259,42 +265,33 @@ interface RowProps {
 }
 
 function SessionRow({ session, onLaunch, onDelete }: RowProps) {
-  const latest = session.latestCopilotSession;
-  const count = session.copilotSessions.length;
-
   return (
     <tr>
-      <td className="name-cell" title={session.id}>
-        {session.id}
+      <td className="col-session" title={session.workdir}>
+        <span className="session-id">{session.id}</span>
+      </td>
+      <td className="col-agent">
+        <span className="agent-tag" title={session.agent}>
+          {session.agent}
+        </span>
       </td>
       <td>
-        <span className="badge badge--ok">{session.agent}</span>
+        <ActivityCell session={session} />
       </td>
-      <td className="desc-cell mono" title={session.workdir}>
-        {session.workdir}
-      </td>
-      <td>
-        {count === 0 ? (
-          <span className="muted">never run</span>
-        ) : (
-          <span title={latest?.summary}>
-            <span className="badge badge--muted">{count}</span>{" "}
-            {latest?.name ?? <em className="muted">(unnamed)</em>}
-          </span>
-        )}
-      </td>
-      <td className="muted">{latest?.updatedAt ? formatRelative(latest.updatedAt) : "—"}</td>
       <td className="muted">{formatRelative(session.createdAt)}</td>
       <td>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="row-actions">
           <button
             type="button"
             className="btn btn--ghost btn--icon"
-            title={count > 0 ? "Launch (resume option in dialog)" : "Launch"}
+            title={
+              session.copilotSessions.length > 0 ? "Launch (resume option in dialog)" : "Launch"
+            }
             onClick={onLaunch}
           >
             <PlayIcon />
           </button>
+          <CopyPathButton path={session.workdir} />
           <button
             type="button"
             className="btn btn--ghost btn--icon"
@@ -306,6 +303,61 @@ function SessionRow({ session, onLaunch, onDelete }: RowProps) {
         </div>
       </td>
     </tr>
+  );
+}
+
+function ActivityCell({ session }: { session: SessionRecord }) {
+  const count = session.copilotSessions.length;
+  if (count === 0) {
+    return <span className="muted">—</span>;
+  }
+  const latest = session.latestCopilotSession;
+  return (
+    <span className="activity-cell" title={latest?.summary ?? undefined}>
+      <span className="activity-cell__count">{count}</span>
+      <span className="activity-cell__label muted">{count === 1 ? "chat" : "chats"}</span>
+      {latest?.updatedAt && (
+        <>
+          <span className="activity-cell__sep">·</span>
+          <span className="muted">{formatRelative(latest.updatedAt)}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+function CopyPathButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setCopied(false);
+      }, 1500);
+    } catch {
+      // Clipboard may be unavailable in non-secure contexts.
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--icon"
+      title={copied ? "Copied!" : `Copy workdir path (${path})`}
+      aria-label="Copy workdir path"
+      onClick={onCopy}
+    >
+      <CopyIcon />
+    </button>
   );
 }
 
@@ -347,7 +399,7 @@ function CreateModal({ open, agents, busy, onClose, onCreate }: CreateModalProps
             onChange={(e) => setAgent(e.target.value)}
             disabled={busy}
             required
-            style={{ width: "100%" }}
+            className="select select--full"
           >
             {agents.map((a) => (
               <option key={a.agent.name} value={a.agent.name}>
@@ -418,12 +470,12 @@ function ResumePicker({ session }: ResumePickerProps) {
   const [error, setError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const onPick = async (info: CopilotSessionInfo) => {
     setError(null);
@@ -449,7 +501,8 @@ function ResumePicker({ session }: ResumePickerProps) {
           if (info) onPick(info);
         }}
         value={picked?.sessionId ?? ""}
-        style={{ width: "100%", marginBottom: 8 }}
+        className="select select--full"
+        style={{ marginBottom: 8 }}
       >
         <option value="" disabled>
           Choose…
