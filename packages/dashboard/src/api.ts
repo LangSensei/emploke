@@ -364,3 +364,77 @@ export const updateWorkspaceMetadata = async (
     `/api/workspaces/${encodeURIComponent(id)}`,
     jsonInit("PATCH", patch),
   );
+
+// ─ Tasks (workspace-scoped) ─
+//
+// A Task is an autonomous one-shot agent invocation: dispatch a brief +
+// instructions, the runtime spawns the agent, and the dashboard polls for
+// terminal status. The canonical execution log is `events.jsonl` inside the
+// runtime's per-task state directory; the server junctions that directory
+// under the task workdir and exposes it via `/tasks/:tid/events`.
+
+export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
+
+export interface TaskFailure {
+  reason: string;
+  exitCode?: number | null;
+  exitSignal?: string | null;
+}
+
+export interface TaskResult {
+  output: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  agent: string;
+  instructions: string;
+  status: TaskStatus;
+  /**
+   * Open-shape metadata. Includes runtime bookkeeping fields like
+   * `workdir`, `runtime`, `runtimeSessionId`, `pid`, `exitCode`,
+   * `exitSignal` — the runtime owns the keys, the kernel doesn't inspect.
+   */
+  metadata: Record<string, unknown>;
+  /** ISO 8601 string. */
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  result?: TaskResult;
+  failure?: TaskFailure;
+}
+
+export const listTasks = (): Promise<TaskRecord[]> =>
+  fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks`, "tasks");
+
+export const getTask = (id: string): Promise<TaskRecord> =>
+  fetchJson<TaskRecord>(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, "task");
+
+export const dispatchTask = async (
+  agent: string,
+  instructions: string,
+  runtime?: string,
+): Promise<TaskRecord> => {
+  const body: Record<string, string> = { agent, instructions };
+  if (runtime !== undefined) body.runtime = runtime;
+  return mutateJson<TaskRecord>(`${workspacePrefix()}/tasks`, jsonInit("POST", body));
+};
+
+export const deleteTask = (id: string) =>
+  mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/**
+ * Build the URL to the events.jsonl stream for a task. Used by the detail
+ * page; we let the browser pull the file via fetch + .text() rather than
+ * EventSource because the server returns the whole file (not SSE), and a
+ * single-shot fetch keeps the polling path simple.
+ */
+export const taskEventsUrl = (id: string): string =>
+  `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/events`;
+
+export const fetchTaskEvents = async (id: string): Promise<string | null> => {
+  const r = await fetch(taskEventsUrl(id));
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(await extractError(r));
+  return r.text();
+};

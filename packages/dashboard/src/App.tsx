@@ -23,19 +23,22 @@ import { ComingSoonPage } from "./pages/ComingSoon";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
+import { TasksPage } from "./pages/Tasks";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
   { id: "catalog", label: "Catalog" },
   { id: "sessions", label: "Sessions" },
+  { id: "tasks", label: "Tasks" },
   { id: "substrates", label: "Substrates", badge: "soon", disabled: true },
   { id: "settings", label: "Settings" },
 ];
 
 const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
   overview: { title: "Overview", crumb: "System health" },
-  catalog: { title: "Catalog", crumb: "Agents  Skills  MCPs" },
+  catalog: { title: "Catalog", crumb: "Agents · Skills · MCPs" },
   sessions: { title: "Sessions", crumb: "Per-agent workdirs" },
+  tasks: { title: "Tasks", crumb: "Autonomous agent runs" },
   substrates: { title: "Substrates", crumb: "Compute backends" },
   settings: { title: "Settings", crumb: "Server & environment" },
 };
@@ -44,6 +47,7 @@ const VALID_SECTIONS = new Set<SectionId>([
   "overview",
   "catalog",
   "sessions",
+  "tasks",
   "substrates",
   "settings",
 ]);
@@ -655,6 +659,8 @@ function WorkspaceLayout() {
               workspaces={workspaces ?? []}
             />
           )}
+
+          {section === "tasks" && <TasksPage agents={data.agents} currentWorkspaceId={wsId} />}
 
           {section === "substrates" && (
             <ComingSoonPage
