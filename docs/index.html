@@ -554,10 +554,10 @@
   </div>
 
   <p class="reading-guide" data-lang="en">
-    Read it linearly if you are new. Jump to <a href="#ch5">Part II</a> for the concept chapters (four axioms + Execution). Jump to <a href="#decisions">Appendix C</a> for the design decisions behind every choice.
+    Read it linearly if you are new — even if you skip ahead, the short <a href="#positioning">Positioning</a> chapter is worth reading first. Jump to <a href="#ch5">Part II</a> for the concept chapters (four axioms + Execution). Jump to <a href="#decisions">Appendix C</a> for the design decisions behind every choice.
   </p>
   <p class="reading-guide" data-lang="zh">
-    初读者建议线性通读。想直接看概念章节（四条公理 + Execution），请翻到<a href="#ch5">第二部分</a>。想了解每个选择背后的"为什么"，请翻到<a href="#decisions">附录 C</a>。
+    初读者建议线性通读——即便要跳读，<a href="#positioning">"定位"</a>章节短小、值得先看。想直接看概念章节（四条公理 + Execution），请翻到<a href="#ch5">第二部分</a>。想了解每个选择背后的"为什么"，请翻到<a href="#decisions">附录 C</a>。
   </p>
 </section>
 
@@ -638,22 +638,22 @@
         <tr>
           <td><strong>L1 MetaAgent</strong> — give AI a domain identity</td>
           <td>AI doesn't know your domain</td>
-          <td>Layer 0 (MetaAgents) + the kernel's Agent / Capability axioms ✅</td>
+          <td>Layer 0 (MetaAgents) + the kernel's Agent / Capability axioms · <strong>shipping</strong></td>
         </tr>
         <tr>
           <td><strong>L2 Session</strong> — keep the MetaAgent on duty with persistent context</td>
           <td>Every chat re-loads from zero</td>
-          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> ✅</td>
+          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>shipping</strong></td>
         </tr>
         <tr>
           <td><strong>L3 Task</strong> — encapsulate a multi-step intent so AI runs end-to-end; the human intervenes only at brief and at deliverable</td>
           <td>Real-time babysitting</td>
-          <td><code>@emploke/task</code> + the runtime layer ✅; the Task axiom and lifecycle in this book are <em>exactly</em> what makes L3 possible</td>
+          <td><code>@emploke/task</code> + the runtime layer · <strong>shipping</strong>; the Task axiom and lifecycle in this book are <em>exactly</em> what makes L3 possible</td>
         </tr>
         <tr>
           <td><strong>L4 Workflow</strong> — multiple agents hand off via an explicit protocol; the human only sets direction</td>
           <td>Stitching tasks back together</td>
-          <td>Roadmap; <strong>out of scope for this book</strong></td>
+          <td><strong>roadmap</strong> — out of scope for this book</td>
         </tr>
       </tbody>
     </table>
@@ -693,22 +693,22 @@
         <tr>
           <td><strong>L1 MetaAgent</strong>——给 AI 一个领域身份</td>
           <td>AI 不懂你的领域</td>
-          <td>Layer 0 (MetaAgents) + 内核的 Agent / Capability 公理 ✅</td>
+          <td>Layer 0 (MetaAgents) + 内核的 Agent / Capability 公理 · <strong>已落地</strong></td>
         </tr>
         <tr>
           <td><strong>L2 Session</strong>——让 MetaAgent 一直在岗，带持续上下文</td>
           <td>每次对话从零 load</td>
-          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> ✅</td>
+          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>已落地</strong></td>
         </tr>
         <tr>
           <td><strong>L3 Task</strong>——把多步意图封装成 SOP 端到端跑；人只在派发时与拿 deliverable 时介入</td>
           <td>实时盯梢</td>
-          <td><code>@emploke/task</code> + runtime 层 ✅；本书的 Task 公理和六态生命周期<em>正是</em> L3 之所以成立的根</td>
+          <td><code>@emploke/task</code> + runtime 层 · <strong>已落地</strong>；本书的 Task 公理和六态生命周期<em>正是</em> L3 之所以成立的根</td>
         </tr>
         <tr>
           <td><strong>L4 Workflow</strong>——多个 Agent 通过明确协议互相交接；人只设方向</td>
           <td>多 task 之间还要人串</td>
-          <td>roadmap；<strong>本书暂不覆盖</strong></td>
+          <td><strong>roadmap</strong> —— 本书暂不覆盖</td>
         </tr>
       </tbody>
     </table>
@@ -1184,7 +1184,7 @@ graph TB
     </div>
 
     <div class="callout note">
-      <strong>How Capability materialises in MetaAgents.</strong> emploke's reference catalog (<code>@emploke/catalog</code>) implements the <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> spec. There, every Capability is exactly one of two file shapes: a <strong>Skill</strong> (<code>SKILL.md</code> with frontmatter + Markdown body) or an <strong>MCP server</strong> (a <code>&lt;name&gt;.json</code> file whose contents the kernel never reads). From the kernel's point of view both register under the same <code>capabilities</code> namespace; the catalog distinguishes their types so loaders know whether to install instructions or to spawn a server.
+      <strong>How Capability materialises in MetaAgents.</strong> emploke's reference catalog (<code>@emploke/catalog</code>) is aligned with the <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> spec. There, every Capability is exactly one of two file shapes: a <strong>Skill</strong> (<code>SKILL.md</code> with frontmatter + Markdown body) or an <strong>MCP server</strong> (a <code>&lt;name&gt;.json</code> file whose contents the kernel never reads). From the kernel's point of view both register under the same <code>capabilities</code> namespace; the catalog distinguishes their types so loaders know whether to install instructions or to spawn a server.
     </div>
 
     <div class="callout why-not">
@@ -1222,7 +1222,7 @@ graph TB
     </div>
 
     <div class="callout note">
-      <strong>Capability 在 MetaAgents 中如何落地。</strong>emploke 的参考 catalog（<code>@emploke/catalog</code>）实现了 <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> 规范。在那里，每个 Capability 必然是两种文件形态之一：<strong>Skill</strong>（<code>SKILL.md</code> + frontmatter + Markdown 正文）或 <strong>MCP server</strong>（<code>&lt;name&gt;.json</code>，内核永不读取其内容）。从内核角度看两者注册在同一个 <code>capabilities</code> 命名空间下；catalog 对类型加以区分，以便 loader 知道是装载 instructions 还是拉起一个 server。
+      <strong>Capability 在 MetaAgents 中如何落地。</strong>emploke 的参考 catalog（<code>@emploke/catalog</code>）对齐 <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> 规范。在那里，每个 Capability 必然是两种文件形态之一：<strong>Skill</strong>（<code>SKILL.md</code> + frontmatter + Markdown 正文）或 <strong>MCP server</strong>（<code>&lt;name&gt;.json</code>，内核永不读取其内容）。从内核角度看两者注册在同一个 <code>capabilities</code> 命名空间下；catalog 对类型加以区分，以便 loader 知道是装载 instructions 还是拉起一个 server。
     </div>
 
     <div class="callout why-not">
