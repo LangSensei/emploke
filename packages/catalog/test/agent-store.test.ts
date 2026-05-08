@@ -132,4 +132,20 @@ describe("AgentStore", () => {
       expect(nodes[0]!.dependencies).toEqual(["lint", "gh"]);
     });
   });
+
+  // See SkillStore equivalent for rationale.
+  describe("getContent path-traversal hardening", () => {
+    it("rejects names with `..` segments", async () => {
+      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with multiple slashes", async () => {
+      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with backslashes", async () => {
+      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects empty string", async () => {
+      await expect(store.getContent("")).rejects.toBeInstanceOf(NameInvalid);
+    });
+  });
 });

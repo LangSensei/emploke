@@ -146,4 +146,30 @@ describe("McpStore", () => {
       expect(store.has("new-mcp")).toBe(true);
     });
   });
+
+  // See SkillStore equivalent for rationale.
+  describe("getContent / getPath path-traversal hardening", () => {
+    it("getContent rejects names with `..` segments", async () => {
+      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("getContent rejects names with multiple slashes", async () => {
+      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("getContent rejects names with backslashes", async () => {
+      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("getPath returns null for unknown name without throwing", () => {
+      // null short-circuit happens before validation — a not-installed name
+      // is a normal lookup outcome, not an attack.
+      expect(store.getPath("never-installed")).toBeNull();
+    });
+    it("getPath throws NameInvalid when an installed name is structurally bogus", async () => {
+      // Force the in-memory set to contain an invalid entry (simulates a
+      // scan() that loaded a malformed name from disk). getPath must not
+      // hand back a traversed path.
+      // biome-ignore lint/suspicious/noExplicitAny: probing a private field for the test.
+      (store as any).mcps.add("../escape");
+      expect(() => store.getPath("../escape")).toThrow(NameInvalid);
+    });
+  });
 });

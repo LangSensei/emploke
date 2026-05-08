@@ -39,6 +39,13 @@ export class SkillStore {
   }
 
   async getContent(name: string): Promise<string> {
+    // Defense-in-depth: validate the name before composing a path. Routes
+    // already throw NameInvalid on install/remove, but `getContent` was the
+    // one disk-touching method that trusted upstream validation. A malicious
+    // or buggy caller passing a name with `/`, `..`, or `\` could compose a
+    // path outside `baseDir`; rejecting at this boundary kills the class
+    // of bug regardless of which layer above is responsible for hardening.
+    validateName(name);
     if (!this.skills.has(name)) throw new NotFound("skill", name);
     const skillMd = join(this.baseDir, nameToPath(name), "SKILL.md");
     return readFile(skillMd, "utf8");

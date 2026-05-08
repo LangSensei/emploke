@@ -182,4 +182,25 @@ describe("SkillStore", () => {
       expect(nodes[0]!.dependencies).toEqual(["child", "gh"]);
     });
   });
+
+  // Defense-in-depth: getContent must validate the name even when the
+  // in-memory map check would short-circuit. A malicious name reaching the
+  // path-composition step could otherwise escape the catalog dir.
+  describe("getContent path-traversal hardening", () => {
+    it("rejects names with `..` segments before reading the filesystem", async () => {
+      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with multiple slashes", async () => {
+      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with backslashes (Windows traversal)", async () => {
+      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names containing `..` even with valid-looking prefix", async () => {
+      await expect(store.getContent("foo/..")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects empty string", async () => {
+      await expect(store.getContent("")).rejects.toBeInstanceOf(NameInvalid);
+    });
+  });
 });

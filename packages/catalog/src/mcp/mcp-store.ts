@@ -38,9 +38,24 @@ export class McpStore {
    * formatting the user wrote, not a re-serialized canonical form.
    */
   async getContent(name: string): Promise<string> {
+    // Defense-in-depth: validate before composing the on-disk path. Without
+    // this, an attacker-controlled name reaching this code path could
+    // escape `baseDir` via `..` segments and read arbitrary `*.json`
+    // files. updateContent / remove already validate; getContent was the
+    // last gap.
+    validateMcpName(name);
     if (!this.mcps.has(name)) throw new NotFound("mcp", name);
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     return readFile(destFile, "utf8");
+  }
+
+  /** Returns the on-disk path for an installed MCP, or `null` when absent. */
+  getPath(name: string): string | null {
+    if (!this.mcps.has(name)) return null;
+    // Validate so we never hand out a traversed path to callers (e.g. the
+    // resolver, which trusts whatever this returns).
+    validateMcpName(name);
+    return join(this.baseDir, `${nameToPath(name)}.json`);
   }
 
   /**
@@ -73,11 +88,6 @@ export class McpStore {
     const destFile = join(this.baseDir, `${nameToPath(name)}.json`);
     await rm(destFile, { force: true });
     this.mcps.delete(name);
-  }
-
-  getPath(name: string): string | null {
-    if (!this.mcps.has(name)) return null;
-    return join(this.baseDir, `${nameToPath(name)}.json`);
   }
 
   list(): string[] {
