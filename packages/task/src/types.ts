@@ -14,6 +14,9 @@
  *    archive — emploke "stores but never reads" runtime metadata.
  */
 
+import type { Catalog } from "@emploke/catalog";
+import type { RuntimeRegistry } from "@emploke/runtime";
+
 /** Status lifecycle: `not_started → running → success | failure | cancelled`. */
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
@@ -81,4 +84,39 @@ export interface FailEvent {
 export interface CancelEvent {
   readonly type: "cancel";
   readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+// ─── TaskManager-side types ───────────────────────────────────
+
+/**
+ * Pluggable logger surface; matches `@emploke/session`'s shape so callers
+ * can pass the same logger to both managers.
+ */
+export interface Logger {
+  warn(msg: string, meta?: Record<string, unknown>): void;
+}
+
+/** Constructor options for `TaskManager`. */
+export interface TaskManagerConfig {
+  readonly catalog: Catalog;
+  readonly runtimeRegistry: RuntimeRegistry;
+  /** Absolute path to the directory holding per-task workdirs. */
+  readonly tasksDir: string;
+  /** Default runtime kind to use when `dispatch` doesn't override. */
+  readonly defaultRuntime?: string;
+  readonly logger?: Logger;
+  /** Test seam: clock injection. */
+  readonly now?: () => Date;
+  /** Test seam: random source for id generation. */
+  readonly randomBytes?: (n: number) => Buffer;
+}
+
+/** Inputs to `TaskManager.dispatch`. */
+export interface DispatchOpts {
+  /** Catalog name of the agent to run. Required. */
+  readonly agent: string;
+  /** Free-form prompt / instructions for the agent. */
+  readonly instructions: string;
+  /** Override the configured `defaultRuntime`. */
+  readonly runtime?: string;
 }

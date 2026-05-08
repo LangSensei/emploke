@@ -177,6 +177,13 @@ importers:
         version: 2.1.9(@types/node@22.19.17)
 
   packages/task:
+    dependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

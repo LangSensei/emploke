@@ -20,19 +20,52 @@
  *  - There is no pause/resume — emploke runtimes can't truly pause a
  *    detached process. If a "soft pause" UX is needed later, model it
  *    in metadata, not in kernel state.
+ *
+ * The `TaskManager` class wraps the kernel with on-disk persistence,
+ * runtime spawn, and lifecycle (shutdown / orphan recovery). It is the
+ * normal entry point for hosting code (e.g. `@emploke/server`); the
+ * `apply` / `create` primitives below are exported for callers that
+ * want to drive the FSM directly (e.g. tests, custom orchestrators).
  */
 
 export { apply } from "./apply.js";
 export { type CreateParams, create } from "./create.js";
-export { InvalidTransition, TaskError } from "./errors.js";
+export {
+  AgentNotFoundError,
+  InvalidTaskIdError,
+  InvalidTransition,
+  RuntimeDoesNotSupportTasksError,
+  TaskError,
+  TaskIdAllocationFailedError,
+  TaskNotFoundError,
+} from "./errors.js";
+export {
+  assertValidTaskId,
+  generateTaskId,
+  TASK_ID_RE,
+} from "./ids.js";
+export { createDirJunction } from "./junction.js";
+export type { TaskRuntimeMetadata } from "./manager.js";
+export { readTaskRuntimeMetadata, TaskManager } from "./manager.js";
+export { safeJoinUnderRoot } from "./paths.js";
+export {
+  CURRENT_SCHEMA_VERSION,
+  type PersistedTask,
+  readPersistedTask,
+  TASK_FILE_NAME,
+  writePersistedTask,
+} from "./task-file.js";
 export type {
   CancelEvent,
   CompleteEvent,
+  DispatchOpts,
   FailEvent,
+  Logger,
   StartEvent,
   Task,
   TaskEvent,
   TaskFailure,
+  TaskManagerConfig,
   TaskResult,
   TaskStatus,
   TerminalStatus,
