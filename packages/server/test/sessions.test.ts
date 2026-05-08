@@ -2,8 +2,10 @@ import {
   AgentNotFoundError,
   InvalidSessionIdError,
   type LaunchCommand,
+  RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
   type Session,
+  SessionIdAllocationFailedError,
   type SessionManager,
   SessionNotFoundError,
   UnknownRuntimeError,
@@ -169,6 +171,38 @@ describe("sessionsRoutes", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("UnknownRuntimeError");
+  });
+
+  it("POST / maps RuntimeProvisionFailed to 500 (server-side fault, not a bad request)", async () => {
+    const m = stubManager({
+      create: vi.fn(async () => {
+        throw new RuntimeProvisionFailed("copilot", "/tmp/wd", new Error("git init failed"));
+      }),
+    });
+    const res = await sessionsRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "demo" }),
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.code).toBe("RuntimeProvisionFailed");
+  });
+
+  it("POST / maps SessionIdAllocationFailedError to 500", async () => {
+    const m = stubManager({
+      create: vi.fn(async () => {
+        throw new SessionIdAllocationFailedError(5);
+      }),
+    });
+    const res = await sessionsRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "demo" }),
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.code).toBe("SessionIdAllocationFailedError");
   });
 
   it("GET /:id returns 404 when not found", async () => {

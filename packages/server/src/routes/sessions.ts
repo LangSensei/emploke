@@ -2,6 +2,7 @@ import type { LaunchCommand } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
+  RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
   SessionIdAllocationFailedError,
   type SessionManager,
@@ -37,6 +38,10 @@ function statusForError(err: unknown): number | null {
   if (err instanceof UnknownRuntimeError) return 400;
   if (err instanceof RuntimeStateDeletionFailed) return 409;
   if (err instanceof SessionIdAllocationFailedError) return 500;
+  // Provisioning failures (git init, MCP/skill copy, agent file resolution)
+  // are server-side faults — the client's request was well-formed; the host
+  // environment broke. 500 lets clients distinguish from 4xx user errors.
+  if (err instanceof RuntimeProvisionFailed) return 500;
   return null;
 }
 
