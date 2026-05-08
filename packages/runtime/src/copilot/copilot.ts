@@ -8,7 +8,12 @@ import {
   RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
-import type { LaunchCommand, Runtime, Session } from "../types.js";
+import type { LaunchCommand, Runtime, Session, TaskHandle } from "../types.js";
+import {
+  type DispatchCopilotTaskDeps,
+  type DispatchCopilotTaskOpts,
+  dispatchCopilotTask,
+} from "./dispatch-task.js";
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
 import { provisionCopilotWorkdir } from "./provision.js";
@@ -38,6 +43,13 @@ export interface CopilotRuntimeConfig {
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
   readonly randomUUID?: () => string;
+  /**
+   * Optional injection of the dispatch dependencies. Production callers
+   * leave this unset; tests pass a stub spawn / mkdir to avoid actually
+   * launching the CLI. `copilotStateDir` and `randomUUID` here, if
+   * provided, override the top-level options for dispatch only.
+   */
+  readonly dispatchDeps?: Partial<DispatchCopilotTaskDeps>;
 }
 
 /**
@@ -68,11 +80,13 @@ export class CopilotRuntime implements Runtime {
   private readonly copilotStateDir: string;
   private readonly copilotSettingsPath: string;
   private readonly randomUUID: () => string;
+  private readonly dispatchDeps: Partial<DispatchCopilotTaskDeps>;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.copilotSettingsPath = config.copilotSettingsPath ?? DEFAULT_COPILOT_SETTINGS_PATH;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
+    this.dispatchDeps = config.dispatchDeps ?? {};
   }
 
   async provision(
@@ -142,6 +156,22 @@ export class CopilotRuntime implements Runtime {
     } catch (err) {
       throw new RuntimeStateDeletionFailed(this.kind, session.id, err as Error);
     }
+  }
+
+  /**
+   * Spawn copilot non-interactively against `taskDir` to consume `prompt`
+   * unattended. Delegates to `dispatchCopilotTask` so the spawn machinery
+   * stays isolated and unit-testable. The returned `TaskHandle` carries
+   * the runtime session id (so `TaskManager` can persist it for later
+   * inspection / debug) and a pre-resolved `sessionDir` Promise pointing
+   * at the just-created `<copilotStateDir>/<id>/`.
+   */
+  async dispatchTask(opts: DispatchCopilotTaskOpts): Promise<TaskHandle> {
+    return dispatchCopilotTask(opts, {
+      copilotStateDir: this.copilotStateDir,
+      randomUUID: this.randomUUID,
+      ...this.dispatchDeps,
+    });
   }
 }
 

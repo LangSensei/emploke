@@ -75,3 +75,25 @@ export class RuntimeRegisterWorkspaceFailed extends Error {
     this.cause = cause;
   }
 }
+
+/**
+ * Wraps a failure that happened inside `Runtime.dispatchTask`. Covers
+ * both pre-spawn errors (provisioning, mkdir on the runtime's session dir)
+ * and spawn-itself errors (binary not found, exec permission denied,
+ * platform refused to start the process).
+ *
+ * Once the subprocess is up, exit-time failures are surfaced via the
+ * returned `TaskHandle.exit` instead — that's a normal task outcome, not
+ * a dispatch failure.
+ */
+export class RuntimeDispatchTaskFailed extends Error {
+  constructor(
+    public readonly kind: string,
+    public readonly taskDir: string,
+    cause: Error,
+  ) {
+    super(`runtime "${kind}" dispatchTask failed at ${taskDir}: ${cause.message}`);
+    this.name = "RuntimeDispatchTaskFailed";
+    this.cause = cause;
+  }
+}

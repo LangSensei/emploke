@@ -102,6 +102,98 @@ export interface Runtime {
    * caller (the runtime can throw any error; the registry adapter wraps).
    */
   registerWorkspace?(workspaceDir: string): Promise<void>;
+
+  /**
+   * Optional. Runtimes whose underlying CLI supports non-interactive
+   * scripting (e.g. Copilot's `-p/--prompt`) implement this to spawn the
+   * CLI as a detached worker that consumes `prompt` and exits when done.
+   *
+   * The runtime owns the subprocess for the life of the call: it picks
+   * CLI flags appropriate for unattended execution (allow-all-tools,
+   * disable user prompts, structured output where available), wires up
+   * its own stderr capture, and returns a `TaskHandle` so the caller can
+   * observe completion without holding the spawn machinery itself.
+   *
+   * Runtimes that lack a non-interactive mode simply omit this method;
+   * `TaskManager` checks for its presence and raises a clear error at
+   * dispatch time when the chosen runtime cannot run tasks.
+   */
+  dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
+}
+
+/**
+ * Inputs to `Runtime.dispatchTask`. `taskDir` is guaranteed to exist and
+ * doubles as the subprocess `cwd`; the caller is responsible for laying
+ * down whatever the agent needs there before invoking dispatch (typically
+ * by calling `Runtime.provision` on the same dir first).
+ */
+export interface DispatchTaskOpts {
+  readonly taskDir: string;
+  readonly agent: AgentResolveResult;
+  readonly prompt: string;
+}
+
+/**
+ * Live handle to a dispatched task. Returned synchronously (via Promise)
+ * from `Runtime.dispatchTask` once the subprocess is up; the caller awaits
+ * `exit` for terminal status and may consult `sessionDir` to mount the
+ * runtime's native log directory under the task's workdir.
+ *
+ * **Why `sessionDir` is a Promise** rather than a sync `string | null`
+ * (which is the shape the interactive session surface uses on
+ * `Runtime.provision`): tasks are spawned by the runtime *now*, so the
+ * runtime owns a real subprocess and can naturally produce a future value
+ * for any id/path it learns post-spawn. Interactive sessions are launched
+ * by a human at some unknown later time, so the runtime can't promise
+ * anything; the manager discovers the id later via `refresh()`. Same
+ * underlying goal in both APIs — "don't assume the CLI knows its session
+ * id at any specific moment" — expressed with the mechanism that fits each
+ * ownership pattern.
+ */
+export interface TaskHandle {
+  /** OS process id of the spawned CLI. */
+  readonly pid: number;
+
+  /**
+   * Id the runtime minted for the underlying CLI session/state. Optional
+   * because only pre-allocating runtimes (Copilot) know it up front;
+   * discovery-only runtimes leave it undefined and the caller learns it
+   * (if at all) by other means.
+   *
+   * Persisted by `TaskManager` into `task.json` for later inspection (and
+   * for callers who want to drive the underlying CLI directly, e.g.
+   * `copilot --resume=<id>`).
+   */
+  readonly runtimeSessionId?: string;
+
+  /**
+   * Where the runtime is writing its native per-session log directory for
+   * this task. `TaskManager` junctions this into `<taskDir>/session/` so
+   * the dashboard can serve `events.jsonl` (or whatever the runtime calls
+   * its log) without coupling to per-runtime layout. See the type-level
+   * comment above for the Promise rationale.
+   */
+  readonly sessionDir: Promise<string>;
+
+  /**
+   * Resolves when the subprocess exits. `code` is `null` if the process
+   * was terminated by a signal (in which case `signal` carries it); `signal`
+   * is `null` for a normal exit.
+   */
+  readonly exit: Promise<TaskExit>;
+
+  /**
+   * Best-effort terminate. Sends SIGTERM (or the platform equivalent); the
+   * caller awaits `exit` to confirm termination. Used by
+   * `TaskManager.shutdown` during server shutdown; not exposed to end users
+   * in MVP.
+   */
+  kill(): void;
+}
+
+export interface TaskExit {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
 }
 
 /**
