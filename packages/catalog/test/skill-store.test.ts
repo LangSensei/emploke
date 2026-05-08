@@ -182,4 +182,42 @@ describe("SkillStore", () => {
       expect(nodes[0]!.dependencies).toEqual(["child", "gh"]);
     });
   });
+
+  // Defense-in-depth: getContent / path / getPath validate names before
+  // composing on-disk paths. See SkillStore equivalent for rationale.
+  describe("getContent path-traversal hardening", () => {
+    it("rejects names with `..` segments before reading the filesystem", async () => {
+      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with multiple slashes", async () => {
+      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names with backslashes (Windows traversal)", async () => {
+      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects names containing `..` even with valid-looking prefix", async () => {
+      await expect(store.getContent("foo/..")).rejects.toBeInstanceOf(NameInvalid);
+    });
+    it("rejects empty string", async () => {
+      await expect(store.getContent("")).rejects.toBeInstanceOf(NameInvalid);
+    });
+  });
+
+  // path() is a public method with no current caller in-repo, but as a
+  // public surface it must not hand back a traversed filesystem path
+  // either — otherwise a future caller inherits the same hole.
+  describe("path() path-traversal hardening", () => {
+    it("rejects malformed names before joining to baseDir", () => {
+      expect(() => store.path("../../etc")).toThrow(NameInvalid);
+      expect(() => store.path("a/b/c")).toThrow(NameInvalid);
+      expect(() => store.path("..\\evil")).toThrow(NameInvalid);
+    });
+    it("returns a valid path for well-formed names (smoke check)", () => {
+      // No assertion on the exact path — just that it doesn't throw and
+      // contains the name. The store doesn't need to have the skill
+      // installed; path() is purely structural.
+      const p = store.path("ok-name");
+      expect(p).toContain("ok-name");
+    });
+  });
 });

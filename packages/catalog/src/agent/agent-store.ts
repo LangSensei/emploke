@@ -36,6 +36,8 @@ export class AgentStore {
   }
 
   async getContent(name: string): Promise<string> {
+    // Defense-in-depth: see SkillStore.getContent for rationale.
+    validateName(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
     const agentMd = join(this.baseDir, nameToPath(name), "AGENTS.md");
     return readFile(agentMd, "utf8");
