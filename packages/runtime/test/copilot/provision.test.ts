@@ -403,6 +403,71 @@ describe("provisionCopilotWorkdir — trusted folders", () => {
     const written = JSON.parse(await readFile(sp, "utf8"));
     expect(written.trustedFolders).toEqual(["/already", path.resolve(t)]);
   });
+
+  // Concurrency hardening: the read-modify-write cycle on settings.json
+  // is protected by an O_EXCL lock file. Without the lock, two parallel
+  // provisions would both pass `isPathCovered` before either wrote, then
+  // the second `rename()` would clobber the first writer's entries (and
+  // any unrelated keys the user happened to have between the two reads).
+  // These tests pin the lock behavior.
+
+  it("serialises concurrent provisions: every workdir ends up trusted exactly once", async () => {
+    const sp = settingsPath();
+    // 8 distinct workdirs sharing the same settings file. Run all
+    // provisions in parallel — any lost-update race will leave at least
+    // one workdir absent from the final trustedFolders array.
+    const workdirs: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const w = path.join(scratch, `concurrent-${i}`);
+      workdirs.push(w);
+    }
+    const resolves = await Promise.all(workdirs.map(() => buildResolveResult([], [])));
+    await Promise.all(
+      workdirs.map((w, i) => provisionCopilotWorkdir(w, resolves[i]!, { copilotSettingsPath: sp })),
+    );
+
+    const written = JSON.parse(await readFile(sp, "utf8"));
+    const trusted: string[] = written.trustedFolders;
+    // Every workdir must appear (no lost updates).
+    for (const w of workdirs) {
+      expect(trusted).toContain(path.resolve(w));
+    }
+    // No duplicates — `isPathCovered` short-circuits inside the lock.
+    const uniq = new Set(trusted);
+    expect(uniq.size).toBe(trusted.length);
+  });
+
+  it("preserves unrelated keys across concurrent provisions (no lost-update on logLevel)", async () => {
+    const sp = settingsPath();
+    // Seed a settings file with a non-trustedFolders key. Concurrent
+    // provisions must not silently drop it on a stale read.
+    await mkdir(path.dirname(sp), { recursive: true });
+    await writeFile(
+      sp,
+      `${JSON.stringify({ logLevel: "info", lastLoggedInUser: { login: "alice" } }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const workdirs = Array.from({ length: 6 }, (_, i) => path.join(scratch, `co-${i}`));
+    const resolves = await Promise.all(workdirs.map(() => buildResolveResult([], [])));
+    await Promise.all(
+      workdirs.map((w, i) => provisionCopilotWorkdir(w, resolves[i]!, { copilotSettingsPath: sp })),
+    );
+
+    const written = JSON.parse(await readFile(sp, "utf8"));
+    expect(written.logLevel).toBe("info");
+    expect(written.lastLoggedInUser).toEqual({ login: "alice" });
+    for (const w of workdirs) {
+      expect(written.trustedFolders).toContain(path.resolve(w));
+    }
+  });
+
+  it("releases the lock file when provision succeeds (no zombie lock)", async () => {
+    const t = targetDir();
+    const sp = settingsPath();
+    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
+    expect(await exists(`${sp}.lock`)).toBe(false);
+  });
 });
 
 describe("provisionCopilotWorkdir — end-to-end shape", () => {

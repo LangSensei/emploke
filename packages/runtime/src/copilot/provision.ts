@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,6 +11,19 @@ const execFileAsync = promisify(execFile);
 const DOT_DIR = ".github";
 const MCP_CONFIG_PATH = ".mcp.json";
 const COPILOT_SETTINGS_REL = path.join(".copilot", "settings.json");
+
+/**
+ * How long to wait for the settings.json lock before giving up. Concurrent
+ * provisions normally finish their read-modify-write in milliseconds; 5
+ * seconds is generous enough to absorb cold-start contention without
+ * hanging a CI run that would benefit from failing fast.
+ */
+const SETTINGS_LOCK_WAIT_MS = 5000;
+/** Time after which an existing lock file is treated as stale and removed.
+ * Must comfortably exceed any plausible legitimate critical section. */
+const SETTINGS_LOCK_STALE_MS = 30000;
+/** Poll interval when waiting for an existing lock to release. */
+const SETTINGS_LOCK_POLL_MS = 50;
 
 /**
  * Separator used to flatten scoped names into single directory segments.
@@ -162,6 +175,13 @@ async function prepareWorkspace(workdir: string, opts: ProvisionCopilotOpts): Pr
  *   - any ancestor directory listed in `trustedFolders` counts as trusted
  *     (e.g. trusting `~/.emploke` covers every session under it)
  *
+ * Concurrency: the entire read-modify-write sequence runs under a
+ * `<settingsPath>.lock` file (`O_EXCL` create-or-fail, with stale-lock
+ * recovery after `SETTINGS_LOCK_STALE_MS`). Without the lock, two
+ * concurrent provisions could both pass `isPathCovered` before either
+ * wrote, then the second `rename()` would clobber the first writer's
+ * unrelated changes (e.g. user-edited `logLevel`).
+ *
  * If neither rule applies, the resolved workdir is appended verbatim and
  * the file is rewritten via temp+rename for atomicity. A missing or
  * unparseable settings file is treated as "start fresh"; we never refuse
@@ -171,32 +191,103 @@ async function prepareWorkspace(workdir: string, opts: ProvisionCopilotOpts): Pr
 async function ensureWorkdirTrusted(workdir: string, settingsPath: string): Promise<void> {
   const resolvedWorkdir = path.resolve(workdir);
 
-  let settings: Record<string, unknown> = {};
-  try {
-    const raw = await readFile(settingsPath, "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      settings = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // ENOENT or invalid JSON — fall through with `settings = {}`. We
-    // intentionally do NOT throw: a missing settings file is the normal
-    // case before the user has launched Copilot CLI for the first time.
-  }
-
-  const existing = readTrustedFolders(settings.trustedFolders);
-  if (isPathCovered(resolvedWorkdir, existing)) return;
-
-  const next = [...existing, resolvedWorkdir];
-  settings.trustedFolders = next;
-
   try {
     await mkdir(path.dirname(settingsPath), { recursive: true });
-    const tmp = `${settingsPath}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-    await rename(tmp, settingsPath);
   } catch (cause) {
     throw new WorkspacePrepFailed("trust workdir", settingsPath, cause as Error);
+  }
+
+  await withSettingsLock(`${settingsPath}.lock`, async () => {
+    let settings: Record<string, unknown> = {};
+    try {
+      const raw = await readFile(settingsPath, "utf8");
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        settings = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // ENOENT or invalid JSON — fall through with `settings = {}`. We
+      // intentionally do NOT throw: a missing settings file is the normal
+      // case before the user has launched Copilot CLI for the first time.
+    }
+
+    const existing = readTrustedFolders(settings.trustedFolders);
+    if (isPathCovered(resolvedWorkdir, existing)) return;
+
+    settings.trustedFolders = [...existing, resolvedWorkdir];
+
+    try {
+      const tmp = `${settingsPath}.tmp-${process.pid}-${Date.now()}`;
+      await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+      await rename(tmp, settingsPath);
+    } catch (cause) {
+      throw new WorkspacePrepFailed("trust workdir", settingsPath, cause as Error);
+    }
+  });
+}
+
+/**
+ * Acquire an advisory lock on `lockPath`, run `fn`, then release. The
+ * lock is implemented as `open(lockPath, 'wx')` — POSIX and Windows both
+ * implement `O_EXCL` create-or-fail at the kernel level, so two callers
+ * racing to create the same path are guaranteed to see exactly one
+ * succeed.
+ *
+ * If acquisition fails because the lock already exists, we poll for
+ * `SETTINGS_LOCK_WAIT_MS` (re-checking the lock's age each time so a
+ * crashed holder eventually unblocks us via `SETTINGS_LOCK_STALE_MS`
+ * stale recovery). After the wait timeout we throw.
+ *
+ * The lock file is always removed on the way out — even if `fn` throws —
+ * so a single failed run cannot wedge subsequent provisions.
+ */
+async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  while (true) {
+    try {
+      const fh = await open(lockPath, "wx");
+      try {
+        // Record holder PID for diagnostics. Best-effort — write
+        // failure does not block the critical section.
+        await fh.write(`${process.pid}\n`);
+      } catch {}
+      await fh.close();
+      try {
+        return await fn();
+      } finally {
+        try {
+          await unlink(lockPath);
+        } catch {
+          // Lock may have already been cleaned up by stale-recovery in
+          // another process — that's fine, we still released it.
+        }
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw err;
+
+      // Lock contended. Decide whether to wait or break it as stale.
+      if (Date.now() - start > SETTINGS_LOCK_WAIT_MS) {
+        throw new Error(`timed out (${SETTINGS_LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}`);
+      }
+      try {
+        const st = await stat(lockPath);
+        if (Date.now() - st.mtimeMs > SETTINGS_LOCK_STALE_MS) {
+          // Holder probably crashed. Remove and retry on the next loop
+          // iteration. If two waiters race the unlink, the second one's
+          // unlink fails and that's fine — both then race the open.
+          try {
+            await unlink(lockPath);
+          } catch {}
+          continue;
+        }
+      } catch {
+        // Lock vanished between EEXIST and stat — another waiter must
+        // have just released it. Retry immediately.
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, SETTINGS_LOCK_POLL_MS));
+    }
   }
 }
 
