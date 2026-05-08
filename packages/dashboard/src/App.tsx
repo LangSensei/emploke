@@ -491,6 +491,7 @@ function WorkspaceLayout() {
   });
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   // Sync the URL's wsId into the api module's active-workspace slot
   // BEFORE any child effect fires (useLayoutEffect runs before useEffect),
@@ -577,26 +578,10 @@ function WorkspaceLayout() {
     [navigate, section, catalogTab],
   );
 
-  const handleAddWorkspace = useCallback(async () => {
-    const pathInput = window.prompt(
-      "Workspace directory (absolute path). emploke will create workspace.json here if it doesn't exist.",
-    );
-    if (!pathInput || pathInput.trim() === "") return;
-    const nameInput = window.prompt(
-      "Display name for this workspace (free-form text, shown in the sidebar). Required.",
-    );
-    if (!nameInput || nameInput.trim() === "") {
-      setError("add workspace: a display name is required");
-      return;
-    }
-    try {
-      const created = await addWorkspace(pathInput.trim(), { name: nameInput.trim() });
-      await refreshWorkspaces();
-      navigate(buildWorkspacePath(created.id, section, catalogTab));
-    } catch (e) {
-      setError(`add workspace: ${(e as Error).message}`);
-    }
-  }, [navigate, refreshWorkspaces, section, catalogTab]);
+  const handleAddWorkspace = useCallback(() => {
+    setError(null);
+    setAddOpen(true);
+  }, []);
 
   const handleRenameWorkspace = useCallback(
     async (id: string, newDisplayName: string) => {
@@ -689,6 +674,18 @@ function WorkspaceLayout() {
           )}
         </div>
       </div>
+
+      <AddWorkspaceModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={async (id) => {
+          setAddOpen(false);
+          // Refresh the registry list so the sidebar dropdown picks up the
+          // new entry, then jump into it preserving the current section/tab.
+          await refreshWorkspaces();
+          navigate(buildWorkspacePath(id, section, catalogTab));
+        }}
+      />
     </div>
   );
 }
