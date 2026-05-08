@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   addWorkspace,
@@ -15,6 +15,7 @@ import {
   type WorkspaceListItem,
 } from "./api";
 import { PlusIcon, TrashIcon } from "./components/Icons";
+import { Modal } from "./components/Modal";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
@@ -83,7 +84,6 @@ function LandingPage() {
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[] | null>(null);
   const [recent, setRecent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -117,56 +117,8 @@ function LandingPage() {
     [navigate],
   );
 
-  const onAdd = useCallback(async () => {
-    const pathInput = window.prompt(
-      "Workspace directory (absolute path). emploke will create workspace.json here if it doesn't exist.",
-    );
-    if (!pathInput || pathInput.trim() === "") return;
-    const nameInput = window.prompt(
-      "Display name for this workspace (free-form text, shown in the sidebar). Required.",
-    );
-    if (!nameInput || nameInput.trim() === "") {
-      setError("add workspace: a display name is required");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await addWorkspace(pathInput.trim(), { name: nameInput.trim() });
-      navigate(`/workspaces/${encodeURIComponent(created.id)}/overview`);
-    } catch (e) {
-      setError(`add workspace: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [navigate]);
-
-  // Remove from registry only — files on disk (workspace.json, sessions/,
-  // catalog/, .lock, etc.) are intentionally left intact, matching the
-  // server's DELETE semantics. The user can always re-add the same path.
-  const onRemove = useCallback(
-    async (ws: WorkspaceListItem) => {
-      const display = ws.metadata?.name ?? ws.id;
-      const ok = window.confirm(
-        `Remove "${display}" from emploke?\n\n` +
-          `Path: ${ws.path}\n\n` +
-          `The workspace files on disk are kept untouched — only the registry entry ` +
-          `is removed. You can re-add this path later.`,
-      );
-      if (!ok) return;
-      setBusy(true);
-      setError(null);
-      try {
-        await removeWorkspace(ws.id);
-        await refresh();
-      } catch (e) {
-        setError(`remove workspace: ${(e as Error).message}`);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [refresh],
-  );
+  const [addOpen, setAddOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<WorkspaceListItem | null>(null);
 
   // Sort: recent first, then ok before broken, then by display name.
   const ordered = (workspaces ?? []).slice().sort((a, b) => {
@@ -201,8 +153,15 @@ function LandingPage() {
                 <span className="landing__section-count">{workspaces.length}</span>
               )}
             </h2>
-            <button type="button" className="btn btn--primary" onClick={onAdd} disabled={busy}>
-              <PlusIcon /> {busy ? "Adding" : "Add workspace"}
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => {
+                setError(null);
+                setAddOpen(true);
+              }}
+            >
+              <PlusIcon /> Add workspace
             </button>
           </div>
 
@@ -264,9 +223,9 @@ function LandingPage() {
                         className="landing__card-remove"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void onRemove(ws);
+                          setError(null);
+                          setRemoveTarget(ws);
                         }}
-                        disabled={busy}
                         aria-label={`Remove ${display}`}
                         title={`Remove "${display}" from registry`}
                       >
@@ -281,7 +240,195 @@ function LandingPage() {
           )}
         </section>
       </div>
+
+      <AddWorkspaceModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(id) => {
+          setAddOpen(false);
+          enterWorkspace(id);
+        }}
+      />
+
+      <RemoveWorkspaceModal
+        target={removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onRemoved={async () => {
+          setRemoveTarget(null);
+          await refresh();
+        }}
+      />
     </div>
+  );
+}
+
+interface AddWorkspaceModalProps {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}
+
+/**
+ * Two-field form: absolute path + display name. Both required. Used in
+ * place of two sequential window.prompt() dialogs which gave no chance
+ * to revise the path after entering the name and looked out of place
+ * compared to the rest of the dashboard.
+ */
+function AddWorkspaceModal({ open, onClose, onCreated }: AddWorkspaceModalProps) {
+  const [path, setPath] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset every time the modal opens so a previous failed attempt
+  // doesn't leak its values into the next session.
+  useEffect(() => {
+    if (open) {
+      setPath("");
+      setName("");
+      setError(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmedPath = path.trim();
+    const trimmedName = name.trim();
+    if (trimmedPath === "" || trimmedName === "") {
+      setError("Both path and display name are required.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await addWorkspace(trimmedPath, { name: trimmedName });
+      onCreated(created.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add workspace">
+      <form onSubmit={onSubmit}>
+        <div className="modal__body">
+          <div className="form-field">
+            <label htmlFor="add-ws-path">Workspace directory</label>
+            <input
+              id="add-ws-path"
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="/absolute/path/to/workspace"
+              // biome-ignore lint/a11y/noAutofocus: opens in response to a user click; auto-focusing the first field is expected UX
+              autoFocus
+              disabled={busy}
+              required
+            />
+            <p className="form-hint">
+              Absolute path on the <strong>server's</strong> filesystem. emploke will create
+              <code> workspace.json</code> here if it doesn't exist.
+            </p>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="add-ws-name">Display name</label>
+            <input
+              id="add-ws-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Acme prod"
+              disabled={busy}
+              required
+            />
+            <p className="form-hint">Free-form text shown in the sidebar and on this page.</p>
+          </div>
+
+          {error && <div className="alert alert--error">⚠ {error}</div>}
+        </div>
+        <div className="modal__footer">
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="btn btn--primary"
+            disabled={busy || path.trim() === "" || name.trim() === ""}
+          >
+            {busy ? "Adding…" : "Add workspace"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+interface RemoveWorkspaceModalProps {
+  target: WorkspaceListItem | null;
+  onClose: () => void;
+  onRemoved: () => void | Promise<void>;
+}
+
+/**
+ * Confirmation dialog for DELETE /api/workspaces/:id. The destructive
+ * action is intentionally a danger-style button so it stands out, but
+ * the message also makes clear that the on-disk workspace files are
+ * preserved — only the registry entry goes away.
+ */
+function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceModalProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (target) {
+      setBusy(false);
+      setError(null);
+    }
+  }, [target]);
+
+  if (!target) return null;
+  const display = target.metadata?.name ?? target.id;
+
+  const onConfirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await removeWorkspace(target.id);
+      await onRemoved();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={true} onClose={onClose} title="Remove workspace">
+      <div className="modal__body">
+        <p>
+          Remove <code>{display}</code> from emploke?
+        </p>
+        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+          Path: <code>{target.path}</code>
+        </p>
+        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+          The workspace files on disk are kept untouched — only the registry entry is removed. You
+          can re-add this path later.
+        </p>
+        {error && <div className="alert alert--error">⚠ {error}</div>}
+      </div>
+      <div className="modal__footer">
+        <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn--danger" onClick={onConfirm} disabled={busy}>
+          {busy ? "Removing…" : "Remove"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
