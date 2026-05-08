@@ -4,9 +4,9 @@ import {
   CopilotStateDeletionFailed,
   InvalidCopilotSessionIdError,
   InvalidSessionIdError,
+  type SessionManager,
   SessionNotFoundError,
-  type SessionsManager,
-} from "@emploke/sessions";
+} from "@emploke/session";
 import { Hono } from "hono";
 
 interface CreateBody {
@@ -38,7 +38,7 @@ function errorBody(err: unknown): { error: string; code?: string } {
  * call in index.ts strips the `/api/sessions` prefix, so paths here are
  * relative ("/", "/:id", etc.).
  */
-export function sessionsRoutes(manager: SessionsManager): Hono {
+export function sessionsRoutes(manager: SessionManager): Hono {
   const r = new Hono();
 
   // List sessions, optionally filtered by agent.

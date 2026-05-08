@@ -1,5 +1,5 @@
 {
-  "name": "@emploke/sessions",
+  "name": "@emploke/session",
   "version": "0.0.1",
   "description": "Per-session workdir registry for emploke (organizes Copilot CLI sessions baked from a catalog)",
   "license": "MIT",
@@ -40,6 +40,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/sessions"
+    "directory": "packages/session"
   }
 }

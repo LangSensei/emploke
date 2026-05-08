@@ -10,8 +10,8 @@ import {
   CopilotStateDeletionFailed,
   InvalidCopilotSessionIdError,
   InvalidSessionIdError,
+  SessionManager,
   SessionNotFoundError,
-  SessionsManager,
 } from "../src/index.js";
 import { realNormalizeCwd } from "../src/paths.js";
 
@@ -105,9 +105,9 @@ const seqRandom = () => {
 
 // ───── construction ──────────────────────────────────────────
 
-describe("SessionsManager defaults", () => {
+describe("SessionManager defaults", () => {
   it("constructs with only catalog", () => {
-    const m = new SessionsManager({ catalog: stubCatalog() });
+    const m = new SessionManager({ catalog: stubCatalog() });
     expect(m).toBeDefined();
   });
 });
@@ -117,7 +117,7 @@ describe("SessionsManager defaults", () => {
 describe("create()", () => {
   it("provisions and records the agent name from AGENTS.md", async () => {
     const fp = new FakeProvisioner();
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: fp,
       root,
@@ -139,12 +139,12 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     await expect(m.create({ agent: "" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it("throws AgentNotFoundError when catalog rejects", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog(),
       provisioner: new FakeProvisioner(),
       root,
@@ -156,7 +156,7 @@ describe("create()", () => {
   it("cleans up workdir on provisioner failure", async () => {
     const fp = new FakeProvisioner();
     fp.shouldFail = true;
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: fp,
       root,
@@ -171,7 +171,7 @@ describe("create()", () => {
   it("retries on EEXIST", async () => {
     let attempts = 0;
     const baseRand = seqRandom();
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -203,7 +203,7 @@ describe("create()", () => {
       await mkdir(p.targetDir, { recursive: true });
       throw new Error("boom");
     };
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: fp,
       root,
@@ -218,7 +218,7 @@ describe("create()", () => {
 
 describe("list()", () => {
   it("returns empty when root does not exist", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog(),
       root: path.join(root, "missing"),
       copilotStateDir,
@@ -227,7 +227,7 @@ describe("list()", () => {
   });
 
   it("ignores dirs without a readable AGENTS.md", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -247,7 +247,7 @@ describe("list()", () => {
   });
 
   it("filters by agent", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({
         agents: {
           a: fakeAgentResolve("a"),
@@ -266,7 +266,7 @@ describe("list()", () => {
   });
 
   it("joins copilot sessions by cwd and sets latest", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -296,7 +296,7 @@ describe("list()", () => {
   });
 
   it("tolerates missing copilot state dir", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -311,7 +311,7 @@ describe("list()", () => {
     // The id no longer encodes within-day order — sort is driven by the
     // workdir's birthtime (filesystem-side), which monotonically increases
     // for sequential mkdir calls in the same test.
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -331,7 +331,7 @@ describe("list()", () => {
 
 describe("get()", () => {
   it("returns the record by id", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -343,12 +343,12 @@ describe("get()", () => {
   });
 
   it("returns null for valid-but-unknown id", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     expect(await m.get("20260508-deadbeef")).toBeNull();
   });
 
   it("throws InvalidSessionIdError for malformed id", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     await expect(m.get("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 });
@@ -357,7 +357,7 @@ describe("get()", () => {
 
 describe("delete()", () => {
   it("removes the workdir", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -369,17 +369,17 @@ describe("delete()", () => {
   });
 
   it("throws SessionNotFoundError for unknown id", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     await expect(m.delete("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
   it("validates id format", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     await expect(m.delete("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 
   it("with deleteCopilotState=true: removes matched copilot dirs", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -395,7 +395,7 @@ describe("delete()", () => {
   });
 
   it("with deleteCopilotState=true: surfaces failure and leaves workdir intact", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -430,7 +430,7 @@ describe("delete()", () => {
   it("with deleteCopilotState=true: post-rm sweep removes stragglers created during the delete window", async () => {
     // Simulates a copilot session being created in the workdir BETWEEN the
     // initial scan and the workdir rm. The post-rm sweep should catch it.
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -473,7 +473,7 @@ describe("delete()", () => {
 
 describe("launch / resume", () => {
   it("returns launch command for a real session", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -487,14 +487,14 @@ describe("launch / resume", () => {
   });
 
   it("getLaunchCommand throws SessionNotFoundError for unknown", async () => {
-    const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
     await expect(m.getLaunchCommand("20260508-deadbeef")).rejects.toBeInstanceOf(
       SessionNotFoundError,
     );
   });
 
   it("getResumeCommand validates copilot session id", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -507,7 +507,7 @@ describe("launch / resume", () => {
   });
 
   it("getResumeCommand rejects UUID not associated with the workdir", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -521,7 +521,7 @@ describe("launch / resume", () => {
   });
 
   it("getResumeCommand returns shape", async () => {
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
@@ -547,7 +547,7 @@ describe("list() with relative root", () => {
     // pass relative form derived from process.cwd().
     const absRoot = root;
     const rel = path.relative(process.cwd(), absRoot);
-    const m = new SessionsManager({
+    const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root: rel,

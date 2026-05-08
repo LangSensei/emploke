@@ -1,4 +1,4 @@
-# @emploke/sessions
+# @emploke/session
 
 Per-session workdir registry for emploke. Each session is a directory with an
 agent baked in (via [`@emploke/provisioner`](../provisioner)). This package
@@ -38,10 +38,10 @@ The directory name is the **only source of truth for the session ID**.
 
 ```ts
 import { Catalog } from "@emploke/catalog";
-import { SessionsManager } from "@emploke/sessions";
+import { SessionManager } from "@emploke/session";
 
 const catalog = await Catalog.open({ catalogDir: "~/.emploke/catalog" });
-const sessions = new SessionsManager({ catalog });
+const sessions = new SessionManager({ catalog });
 
 const session = await sessions.create({ agent: "demo-agent" });
 console.log("workdir:", session.workdir);

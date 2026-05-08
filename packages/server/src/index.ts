@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Catalog } from "@emploke/catalog";
 import { CopilotProvisioner } from "@emploke/provisioner";
-import { SessionsManager } from "@emploke/sessions";
+import { SessionManager } from "@emploke/session";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -25,7 +25,7 @@ const serveStaticFiles = process.argv.includes("--serve-static");
 
 async function main() {
   const catalog = await Catalog.open({ catalogDir });
-  const sessions = new SessionsManager({
+  const sessions = new SessionManager({
     catalog,
     provisioner: new CopilotProvisioner(),
     root: sessionsRoot,

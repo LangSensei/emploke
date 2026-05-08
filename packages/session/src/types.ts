@@ -6,8 +6,8 @@ export interface Logger {
   warn(message: string, meta?: object): void;
 }
 
-/** Configuration for SessionsManager. All fields are optional except `catalog`. */
-export interface SessionsManagerConfig {
+/** Configuration for SessionManager. All fields are optional except `catalog`. */
+export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: Catalog;
   /** Provisioner used to bake agents into the workdir. Defaults to CopilotProvisioner. */
@@ -58,18 +58,18 @@ export interface LaunchCommand {
   readonly display: string;
 }
 
-/** Options for SessionsManager.create. */
+/** Options for SessionManager.create. */
 export interface CreateSessionOpts {
   readonly agent: string;
 }
 
-/** Options for SessionsManager.list. */
+/** Options for SessionManager.list. */
 export interface ListSessionOpts {
   /** Filter to sessions whose AGENTS.md frontmatter name matches this exact value. */
   readonly agent?: string;
 }
 
-/** Options for SessionsManager.delete. */
+/** Options for SessionManager.delete. */
 export interface DeleteSessionOpts {
   /**
    * If true, also remove `~/.copilot/session-state/<sid>/` for every Copilot

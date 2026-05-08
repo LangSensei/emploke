@@ -12,7 +12,7 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/provisioner": "workspace:*",
-    "@emploke/sessions": "workspace:*",
+    "@emploke/session": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "hono": "^4.7.11"
   },

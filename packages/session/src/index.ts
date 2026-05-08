@@ -1,5 +1,5 @@
 /**
- * @emploke/sessions — per-session workdir registry.
+ * @emploke/session — per-session workdir registry.
  *
  * Sessions live at `~/.emploke/sessions/<id>/` (configurable). Each is a
  * provisioned workdir for one agent. The agent name is read from the
@@ -20,7 +20,7 @@ export {
   SessionNotFoundError,
   SessionsError,
 } from "./errors.js";
-export { SessionsManager } from "./manager.js";
+export { SessionManager } from "./manager.js";
 export type {
   CopilotSessionInfo,
   CreateSessionOpts,
@@ -28,6 +28,6 @@ export type {
   LaunchCommand,
   ListSessionOpts,
   Logger,
+  SessionManagerConfig,
   SessionRecord,
-  SessionsManagerConfig,
 } from "./types.js";

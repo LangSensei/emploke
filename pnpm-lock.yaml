@@ -98,9 +98,9 @@ importers:
       '@emploke/provisioner':
         specifier: workspace:*
         version: link:../provisioner
-      '@emploke/sessions':
+      '@emploke/session':
         specifier: workspace:*
-        version: link:../sessions
+        version: link:../session
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.14(hono@4.12.18)
@@ -121,7 +121,7 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)
 
-  packages/sessions:
+  packages/session:
     dependencies:
       '@emploke/catalog':
         specifier: workspace:*

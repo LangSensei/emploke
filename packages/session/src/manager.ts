@@ -24,8 +24,8 @@ import type {
   LaunchCommand,
   ListSessionOpts,
   Logger,
+  SessionManagerConfig,
   SessionRecord,
-  SessionsManagerConfig,
 } from "./types.js";
 
 const SILENT_LOGGER: Logger = { warn: () => {} };
@@ -40,7 +40,7 @@ const MAX_CREATE_RETRIES = 5;
  * - Discovers Copilot sessions from `copilotStateDir` and joins them by cwd.
  * - Does not spawn any subprocess; getLaunchCommand returns the incantation.
  */
-export class SessionsManager {
+export class SessionManager {
   private readonly catalog: Catalog;
   private readonly provisioner: Provisioner;
   private readonly root: string;
@@ -49,7 +49,7 @@ export class SessionsManager {
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
 
-  constructor(config: SessionsManagerConfig) {
+  constructor(config: SessionManagerConfig) {
     this.catalog = config.catalog;
     this.provisioner = config.provisioner ?? new CopilotProvisioner();
     this.root = config.root ?? DEFAULT_ROOT;

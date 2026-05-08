@@ -5,10 +5,10 @@ import {
   InvalidCopilotSessionIdError,
   InvalidSessionIdError,
   type LaunchCommand,
+  type SessionManager,
   SessionNotFoundError,
   type SessionRecord,
-  type SessionsManager,
-} from "@emploke/sessions";
+} from "@emploke/session";
 import { describe, expect, it, vi } from "vitest";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 
@@ -28,8 +28,8 @@ const sampleLaunch: LaunchCommand = {
   display: 'cd "/tmp/wd" && copilot -i',
 };
 
-function stubManager(overrides: Partial<Record<keyof SessionsManager, unknown>>): SessionsManager {
-  const stub: Partial<Record<keyof SessionsManager, unknown>> = {
+function stubManager(overrides: Partial<Record<keyof SessionManager, unknown>>): SessionManager {
+  const stub: Partial<Record<keyof SessionManager, unknown>> = {
     list: vi.fn(async () => [sampleRecord]),
     get: vi.fn(async () => sampleRecord),
     create: vi.fn(async () => sampleRecord),
@@ -38,7 +38,7 @@ function stubManager(overrides: Partial<Record<keyof SessionsManager, unknown>>)
     getResumeCommand: vi.fn(async () => sampleLaunch),
     ...overrides,
   };
-  return stub as unknown as SessionsManager;
+  return stub as unknown as SessionManager;
 }
 
 describe("sessionsRoutes", () => {
