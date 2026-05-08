@@ -19,7 +19,6 @@ import { Modal } from "./components/Modal";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
-import { ComingSoonPage } from "./pages/ComingSoon";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
@@ -30,7 +29,6 @@ const SECTIONS: SectionDef[] = [
   { id: "catalog", label: "Catalog" },
   { id: "sessions", label: "Sessions" },
   { id: "tasks", label: "Tasks" },
-  { id: "substrates", label: "Substrates", badge: "soon", disabled: true },
   { id: "settings", label: "Settings" },
 ];
 
@@ -39,18 +37,10 @@ const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
   catalog: { title: "Catalog", crumb: "Agents · Skills · MCPs" },
   sessions: { title: "Sessions", crumb: "Per-agent workdirs" },
   tasks: { title: "Tasks", crumb: "Autonomous agent runs" },
-  substrates: { title: "Substrates", crumb: "Compute backends" },
   settings: { title: "Settings", crumb: "Server & environment" },
 };
 
-const VALID_SECTIONS = new Set<SectionId>([
-  "overview",
-  "catalog",
-  "sessions",
-  "tasks",
-  "substrates",
-  "settings",
-]);
+const VALID_SECTIONS = new Set<SectionId>(["overview", "catalog", "sessions", "tasks", "settings"]);
 const VALID_CATALOG_TABS = new Set<CatalogTab>(["agents", "skills", "mcps"]);
 
 /**
@@ -661,14 +651,6 @@ function WorkspaceLayout() {
           )}
 
           {section === "tasks" && <TasksPage agents={data.agents} currentWorkspaceId={wsId} />}
-
-          {section === "substrates" && (
-            <ComingSoonPage
-              title="Substrates"
-              description="Compute backends that execute resolved skill/agent dependencies."
-              hint="Will host runtime adapters (e.g. Copilot CLI, Claude Code, local subprocess)."
-            />
-          )}
 
           {section === "settings" && (
             <SettingsPage
