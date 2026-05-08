@@ -56,6 +56,13 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "TrustRegistrationFailed",
   "RuntimeRegisterWorkspaceFailed",
   "WorkdirPrepFailed",
+  // @emploke/task
+  "InvalidTaskIdError",
+  "TaskNotFoundError",
+  "TaskIdAllocationFailedError",
+  "RuntimeDoesNotSupportTasksError",
+  "TaskError",
+  "InvalidTransition",
   // @emploke/terminal (surface via /:id/spawn)
   "NoTerminalFoundError",
   "TerminalSpawnFailedError",

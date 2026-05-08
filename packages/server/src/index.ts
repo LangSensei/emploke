@@ -3,6 +3,7 @@ import type { Catalog } from "@emploke/catalog";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
+import type { TaskManager } from "@emploke/task";
 import { WorkspaceRegistry } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -12,6 +13,7 @@ import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
+import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { WorkspaceContextCache } from "./workspace-context.js";
 
@@ -21,6 +23,7 @@ import { WorkspaceContextCache } from "./workspace-context.js";
  */
 type WorkspaceVars = {
   sessionManager: SessionManager;
+  taskManager: TaskManager;
   catalog: Catalog;
 };
 
@@ -114,6 +117,15 @@ async function main() {
   );
   app.route("/api/workspaces", sessionsApp);
 
+  // Workspace-scoped tasks. Same middleware shape as sessions.
+  const tasksApp = new Hono<{ Variables: WorkspaceVars }>();
+  tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
+  tasksApp.route(
+    "/:id/tasks",
+    tasksRoutes((c) => c.get("taskManager")),
+  );
+  app.route("/api/workspaces", tasksApp);
+
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
   catalogApp.route(
@@ -159,7 +171,53 @@ async function main() {
         "API key gating is enforced; rotate EMPLOKE_API_KEY if it leaks.",
     );
   }
-  serve({ fetch: app.fetch, port, hostname });
+  const server = serve({ fetch: app.fetch, port, hostname });
+
+  // Graceful shutdown: kill every in-flight task subprocess and wait for
+  // the post-exit persistence to finish, so the dashboard sees consistent
+  // failure-reason="server shutdown" rows on next start (rather than
+  // ghost "running" entries waiting for orphan recovery).
+  //
+  // Timeout: 30s. Anything still alive after that gets process.exit(1) so
+  // a wedged subprocess can't pin the deploy host indefinitely.
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`received ${signal}, shutting down…`);
+    const deadline = setTimeout(() => {
+      console.error("shutdown timed out after 30s; forcing exit");
+      process.exit(1);
+    }, 30_000);
+    deadline.unref();
+    try {
+      const ctxs = cache.loaded();
+      await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
+    } catch (err) {
+      console.error("error during tasks shutdown", err);
+    }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        // @hono/node-server's `serve` returns a node http.Server, which
+        // has a standard `close(cb)`. Stop accepting new connections,
+        // then wait for in-flight ones to drain.
+        (server as unknown as { close: (cb?: (err?: Error) => void) => void }).close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } catch (err) {
+      console.error("error closing http server", err);
+    }
+    clearTimeout(deadline);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => {
+    void gracefulShutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void gracefulShutdown("SIGINT");
+  });
 }
 
 /**
@@ -193,6 +251,7 @@ function workspaceContextMiddleware(
       );
     }
     c.set("sessionManager", ctx.sessions);
+    c.set("taskManager", ctx.tasks);
     c.set("catalog", ctx.catalog);
     await next();
   };

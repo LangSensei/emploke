@@ -125,6 +125,9 @@ importers:
       '@emploke/session':
         specifier: workspace:*
         version: link:../session
+      '@emploke/task':
+        specifier: workspace:*
+        version: link:../task
       '@emploke/terminal':
         specifier: workspace:*
         version: link:../terminal
