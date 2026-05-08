@@ -1783,6 +1783,9 @@ button {
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-4);
+  /* Reserve space on the right edge for the absolute-positioned delete
+     button so it never overlaps the Recent / status badge. */
+  padding-right: calc(var(--space-4) + 24px + var(--space-2));
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -1798,13 +1801,13 @@ button {
 
 .landing__card-delete {
   position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
+  top: var(--space-3);
+  right: var(--space-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
@@ -1836,8 +1839,8 @@ button {
 }
 
 .landing__card-delete-icon {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 .landing__card:hover:not(:disabled) {
