@@ -7,14 +7,22 @@ import { RuntimeDispatchTaskFailed, RuntimeProvisionFailed } from "../errors.js"
 import type { TaskExit, TaskHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
 import { provisionCopilotWorkdir } from "./provision.js";
+import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js";
 
 /**
- * File name for the side-channel stderr capture under the task directory.
- * Copilot's primary log surface is `events.jsonl` inside the per-session
- * state dir (which `TaskManager` junctions in as `<taskDir>/session/`);
- * this file exists only to capture errors that occur before the session
- * dir contains anything (e.g. the CLI complaining about a missing flag).
+ * File names for side-channel stdout/stderr capture under the task
+ * directory. Copilot's primary log surface is `events.jsonl` inside the
+ * per-session state dir (which `TaskManager` junctions in as
+ * `<taskDir>/session/`); these files exist as a fallback for output that
+ * happens before the session dir has anything useful (e.g. the CLI
+ * complaining about a missing flag) and — crucially on Windows — to give
+ * the child process a real file handle as its stdout. Without that,
+ * `'ignore'` resolves to the NUL device, and any subsequent
+ * `process.stdout` flush from the child aborts with
+ * `Failed to sync '<stdout>': Incorrect function.` because Windows'
+ * NUL doesn't support `FlushFileBuffers`. Real files do.
  */
+export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
 
 /**
@@ -44,6 +52,11 @@ export interface DispatchCopilotTaskDeps {
   readonly spawn?: SpawnFn;
   /** Test seam for mkdir. */
   readonly mkdir?: typeof nodeMkdir;
+  /**
+   * Test/override seams for the WinGet-shim resolver. See
+   * `resolveCopilotBin`. Most callers should leave this unset.
+   */
+  readonly resolveBin?: ResolveCopilotBinDeps;
 }
 
 export interface DispatchCopilotTaskOpts {
@@ -67,9 +80,12 @@ export interface DispatchCopilotTaskOpts {
  *      `<copilotStateDir>/<id>/` so the returned `sessionDir` resolves to
  *      a path that already exists (TaskManager can junction it
  *      immediately, no race with Copilot's first event write).
- *   3. Spawn the CLI in non-interactive mode with stderr piped to
- *      `<taskDir>/stderr.log`. Stdout is discarded — the canonical log
- *      lives in events.jsonl under the session dir.
+ *   3. Spawn the CLI in non-interactive mode with stdout/stderr piped to
+ *      `<taskDir>/stdout.log` and `<taskDir>/stderr.log` respectively.
+ *      The canonical log lives in events.jsonl under the session dir;
+ *      these files mostly catch CLI-level diagnostics and exist
+ *      primarily to give the child a real file handle for stdout, which
+ *      Windows requires for `process.stdout` flushing to succeed.
  *   4. Wait for the `'spawn'` event to confirm the OS started the
  *      process. Spawn failures (ENOENT on `copilot`, EPERM, …) reject the
  *      dispatch promise with `RuntimeDispatchTaskFailed`. Once spawn is
@@ -89,7 +105,9 @@ export async function dispatchCopilotTask(
 
   const mkdirImpl = deps.mkdir ?? nodeMkdir;
   const spawnImpl = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
-  const bin = deps.copilotBin ?? "copilot";
+  // Resolve the WinGet shim if necessary — see resolve-bin.ts. On
+  // non-Windows platforms or non-shim binaries this is a pass-through.
+  const { bin } = resolveCopilotBin(deps.copilotBin ?? "copilot", deps.resolveBin);
 
   // Step 2: pre-allocate session id + dir.
   let sessionId: string;
@@ -127,9 +145,12 @@ export async function dispatchCopilotTask(
   try {
     child = spawnImpl(bin, args, {
       cwd: opts.taskDir,
-      // stdout: ignore — events.jsonl is canonical.
-      // stderr: pipe — we mirror to stderr.log for bug-out only.
-      stdio: ["ignore", "ignore", "pipe"],
+      // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
+      // 'ignore' would map stdout to NUL on Windows, which doesn't
+      // support FlushFileBuffers; the child process then aborts with
+      // "Failed to sync '<stdout>': Incorrect function." before any
+      // real work happens. Piping gives it a real handle.
+      stdio: ["ignore", "pipe", "pipe"],
       detached: false,
       windowsHide: true,
     });
@@ -158,19 +179,30 @@ export async function dispatchCopilotTask(
     });
   });
 
-  // Pipe stderr to disk. Append-mode so a re-dispatch (future feature)
-  // wouldn't truncate prior context, but in MVP each task dir is fresh.
+  // Pipe stdout/stderr to disk. Append-mode so a re-dispatch (future
+  // feature) wouldn't truncate prior context, but in MVP each task dir
+  // is fresh. Stdout *must* be a real file (not 'ignore'/NUL) for
+  // Windows: the child's `process.stdout` flush calls FlushFileBuffers,
+  // which fails on NUL with ERROR_INVALID_FUNCTION ("Incorrect
+  // function") and aborts the child before any real work happens.
+  const stdoutPath = path.join(opts.taskDir, COPILOT_STDOUT_LOG);
   const stderrPath = path.join(opts.taskDir, COPILOT_STDERR_LOG);
+  let stdoutStream: WriteStream | null = null;
   let stderrStream: WriteStream | null = null;
+  if (child.stdout !== null) {
+    stdoutStream = createWriteStream(stdoutPath, { flags: "a" });
+    child.stdout.pipe(stdoutStream);
+  }
   if (child.stderr !== null) {
     stderrStream = createWriteStream(stderrPath, { flags: "a" });
     child.stderr.pipe(stderrStream);
   }
 
-  // Build the exit promise. Closes the stderr stream on exit so the file
-  // descriptor doesn't linger.
+  // Build the exit promise. Closes the log streams on exit so file
+  // descriptors don't linger.
   const exit = new Promise<TaskExit>((resolve) => {
     child.once("exit", (code, signal) => {
+      stdoutStream?.end();
       stderrStream?.end();
       resolve({ code, signal });
     });

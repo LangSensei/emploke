@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SpawnFn } from "../../src/copilot/dispatch-task.js";
 import {
   COPILOT_STDERR_LOG,
+  COPILOT_STDOUT_LOG,
   dispatchCopilotTask,
   RuntimeDispatchTaskFailed,
   RuntimeProvisionFailed,
@@ -50,6 +51,7 @@ interface FakeSpawn {
 
 class FakeChild extends EventEmitter {
   pid: number | undefined = 12345;
+  stdout: Readable = new Readable({ read() {} });
   stderr: Readable = new Readable({ read() {} });
   killCalls = 0;
   killImpl: () => boolean = () => true;
@@ -77,6 +79,16 @@ function makeFakeSpawn(): FakeSpawn {
   return out;
 }
 
+/**
+ * Default-deps shape that suppresses the WinGet-shim resolver. Tests
+ * want deterministic command resolution; the resolver kicks in on
+ * Windows and would otherwise rewrite "copilot" to a full WinGet path
+ * found on the test machine.
+ */
+const NOOP_RESOLVE_BIN = {
+  platform: "linux" as NodeJS.Platform,
+};
+
 describe("dispatchCopilotTask", () => {
   it("provisions the workdir before spawning", async () => {
     const agent = await buildAgent();
@@ -87,6 +99,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const md = await readFile(path.join(taskDir, "AGENTS.md"), "utf8");
@@ -102,6 +115,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const sessionDir = await handle.sessionDir;
@@ -118,6 +132,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(fake.captures).not.toBeNull();
@@ -136,7 +151,7 @@ describe("dispatchCopilotTask", () => {
     ]);
     const opts = fake.captures?.options as { cwd: string; stdio: unknown };
     expect(opts.cwd).toBe(taskDir);
-    expect(opts.stdio).toEqual(["ignore", "ignore", "pipe"]);
+    expect(opts.stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
   it("honours an injected copilotBin override", async () => {
@@ -163,6 +178,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(handle.pid).toBe(12345);
@@ -178,6 +194,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", 0, null));
@@ -193,6 +210,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", 42, null));
@@ -208,6 +226,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", null, "SIGTERM"));
@@ -223,6 +242,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     handle.kill();
@@ -241,6 +261,7 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(() => handle.kill()).not.toThrow();
@@ -313,14 +334,43 @@ describe("dispatchCopilotTask", () => {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     fake.child.stderr.push(Buffer.from("warn: something\n"));
     fake.child.stderr.push(null);
+    fake.child.stdout.push(null);
     setImmediate(() => fake.child.emit("exit", 0, null));
     await handle.exit;
     await new Promise((r) => setTimeout(r, 20));
     const content = await readFile(path.join(taskDir, COPILOT_STDERR_LOG), "utf8");
     expect(content).toContain("warn: something");
+  });
+
+  it("mirrors child stdout to <taskDir>/stdout.log", async () => {
+    // Stdout is piped (not 'ignore') so the child's `process.stdout`
+    // flush has a real file handle on Windows, where 'ignore' →
+    // NUL → FlushFileBuffers fails with "Incorrect function." We
+    // assert both that the file is created and that pushed bytes
+    // land in it.
+    const agent = await buildAgent();
+    const fake = makeFakeSpawn();
+    const handle = await dispatchCopilotTask(
+      { taskDir, agent, prompt: "x" },
+      {
+        copilotStateDir: stateDir,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
+      },
+    );
+    fake.child.stdout.push(Buffer.from('{"event":"start"}\n'));
+    fake.child.stdout.push(null);
+    fake.child.stderr.push(null);
+    setImmediate(() => fake.child.emit("exit", 0, null));
+    await handle.exit;
+    await new Promise((r) => setTimeout(r, 20));
+    const content = await readFile(path.join(taskDir, COPILOT_STDOUT_LOG), "utf8");
+    expect(content).toContain('{"event":"start"}');
   });
 });

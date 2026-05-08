@@ -49,6 +49,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "SessionsError",
   // @emploke/runtime
   "InvalidMcpJson",
+  "RuntimeDispatchTaskFailed",
   "RuntimeProvisionFailed",
   "RuntimeRefreshFailed",
   "RuntimeStateDeletionFailed",
