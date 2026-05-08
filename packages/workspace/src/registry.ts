@@ -6,6 +6,7 @@ import { CURRENT_SCHEMA_VERSION } from "./constants.js";
 import {
   RegistryCorruptedError,
   WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "./errors.js";
@@ -81,7 +82,20 @@ export class WorkspaceRegistry {
     return new WorkspaceRegistry(resolvedFile, state);
   }
 
-  /** Snapshot of all registered workspaces. */
+  /**
+   * Snapshot of all registered workspaces.
+   *
+   * IMPORTANT: this is the in-memory view captured at `open()` (or after the
+   * last successful `add` / `remove` / `setCurrent` *on this instance*).
+   * Mutations made by another process between `open()` and this call are
+   * NOT reflected. Cross-process consumers that need fresh data should
+   * either re-`open()` the registry, or perform a no-op `setCurrent` /
+   * `add` to force the instance through `mutate()` (which always re-reads).
+   *
+   * This is intentional: the read APIs are sync and dependency-free, which
+   * keeps the dashboard's "list workspaces" path snappy. Multi-process
+   * deployments are not the primary use-case today.
+   */
   list(): readonly RegistryEntry[] {
     return this.state.entries;
   }
@@ -115,7 +129,7 @@ export class WorkspaceRegistry {
   async add(opts: RegistryAddOpts): Promise<RegistryEntry> {
     const id = opts.id ?? randomUUID();
     if (!isValidWorkspaceId(id)) {
-      throw new WorkspaceIdConflictError(id);
+      throw new WorkspaceIdInvalidError(id);
     }
     const absPath = path.resolve(opts.path);
     let added: RegistryEntry | undefined;
@@ -262,22 +276,30 @@ function parseRegistry(file: string, raw: string): ParseResult {
   }
 
   let currentId: string | undefined;
-  if (typeof obj.currentId === "string" && obj.currentId.length > 0) {
+  if (obj.currentId !== undefined) {
+    // Strict: a present-but-malformed currentId is corruption, not "ignore".
+    if (typeof obj.currentId !== "string" || obj.currentId.length === 0) {
+      throw new RegistryCorruptedError(file, "'currentId' must be a non-empty string if present");
+    }
     if (!isValidWorkspaceId(obj.currentId)) {
       throw new RegistryCorruptedError(file, "'currentId' is not a valid uuid");
     }
     currentId = obj.currentId;
-  } else if (typeof obj.currentName === "string" && obj.currentName.length > 0) {
-    // Legacy currentName  currentId migration.
+  } else if (obj.currentName !== undefined) {
+    // Strict (matches currentId above): a malformed currentName is also
+    // corruption rather than silently dropped. Only a well-formed
+    // currentName that maps to a known migrated entry yields a currentId.
+    if (typeof obj.currentName !== "string" || obj.currentName.length === 0) {
+      throw new RegistryCorruptedError(file, "'currentName' must be a non-empty string if present");
+    }
     const mapped = oldNameToId.get(obj.currentName);
     if (mapped) {
       currentId = mapped;
       migrated = true;
     }
-    // If currentName references a name that doesn't exist in entries, drop
-    // it silently  it was already broken.
-  } else if (obj.currentId !== undefined) {
-    throw new RegistryCorruptedError(file, "'currentId' must be a non-empty string if present");
+    // currentName referencing an unknown name: drop and force-migrate so we
+    // overwrite the legacy field instead of leaving it on disk forever.
+    migrated = true;
   }
 
   // Drop currentId if it points at an entry we didn't keep (defensive).

@@ -1,6 +1,13 @@
 /** Filename of the per-workspace metadata file. */
 export const WORKSPACE_FILE = "workspace.json";
 
+/**
+ * Filename of the per-workspace advisory lock used by `WorkspaceManager.init`
+ * and `update`. Lives inside the workspace directory so each workspace has
+ * its own lock; concurrent ops on different workspaces never contend.
+ */
+export const WORKSPACE_LOCK_FILE = ".workspace.lock";
+
 /** Schema version for both `workspace.json` and `workspaces.json`. */
 export const CURRENT_SCHEMA_VERSION = 1;
 

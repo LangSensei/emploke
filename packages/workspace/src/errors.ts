@@ -94,6 +94,20 @@ export class WorkspaceIdConflictError extends RegistryError {
   }
 }
 
+/**
+ * An explicit `id` was supplied to `WorkspaceRegistry.add` (or appeared in
+ * the on-disk registry) that does not match the UUID format we accept.
+ * Distinct from `WorkspaceIdConflictError` because the failure mode and
+ * remediation are different: conflict means "pick another id"; invalid
+ * means "the id you supplied is malformed".
+ */
+export class WorkspaceIdInvalidError extends RegistryError {
+  constructor(public readonly workspaceId: string) {
+    super(`workspace id "${workspaceId}" is not a valid UUID`);
+    this.name = "WorkspaceIdInvalidError";
+  }
+}
+
 /** Tried to add a workspace whose path conflicts with an existing entry. */
 export class WorkspacePathConflictError extends RegistryError {
   constructor(

@@ -86,18 +86,33 @@ export async function fetchAll(): Promise<CatalogData> {
 
 //  Mutations
 
+/**
+ * Best-effort extraction of a server-provided error message from a
+ * non-OK fetch response. Falls back to the bare HTTP status if the body
+ * isn't JSON or doesn't carry an `error` field. Used by both `mutate`
+ * (which discards the body) and `mutateJson` (which returns the parsed
+ * success body).
+ */
+async function extractError(r: Response): Promise<string> {
+  let msg = `${r.status}`;
+  try {
+    const body = await r.json();
+    if (body && typeof body.error === "string") msg = body.error;
+  } catch {
+    // body not JSON; keep status
+  }
+  return msg;
+}
+
 const mutate = async (path: string, init: RequestInit): Promise<void> => {
   const r = await fetch(path, init);
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const body = await r.json();
-      if (body && typeof body.error === "string") msg = body.error;
-    } catch {
-      // body not JSON; keep status
-    }
-    throw new Error(msg);
-  }
+  if (!r.ok) throw new Error(await extractError(r));
+};
+
+const mutateJson = async <T>(path: string, init: RequestInit): Promise<T> => {
+  const r = await fetch(path, init);
+  if (!r.ok) throw new Error(await extractError(r));
+  return (await r.json()) as T;
 };
 
 const jsonInit = (method: string, body: object): RequestInit => ({
@@ -256,18 +271,7 @@ export const getSession = (id: string): Promise<SessionRecord> =>
 export const createSession = async (agent: string, runtime?: string): Promise<SessionRecord> => {
   const body: Record<string, string> = { agent };
   if (runtime !== undefined) body.runtime = runtime;
-  const r = await fetch(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // body not JSON; keep status
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as SessionRecord;
+  return mutateJson<SessionRecord>(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
 };
 
 export const deleteSession = (id: string, deleteRuntimeState = false) => {
@@ -292,22 +296,10 @@ export interface SpawnFailure {
 
 export type SpawnResult = SpawnSuccess | SpawnFailure;
 
-export const spawnSession = async (id: string): Promise<SpawnResult> => {
-  const r = await fetch(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}/spawn`, {
+export const spawnSession = async (id: string): Promise<SpawnResult> =>
+  mutateJson<SpawnResult>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}/spawn`, {
     method: "POST",
   });
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // not json
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as SpawnResult;
-};
 
 //  Workspaces ─
 
@@ -358,18 +350,7 @@ export const addWorkspace = async (
 ): Promise<CreatedWorkspace> => {
   const body: Record<string, unknown> = { path: pathInput, name: opts.name };
   if (opts.defaults !== undefined) body.defaults = opts.defaults;
-  const r = await fetch("/api/workspaces", jsonInit("POST", body));
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // not json
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as CreatedWorkspace;
+  return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };
 
 export const removeWorkspace = (id: string) =>
@@ -378,17 +359,8 @@ export const removeWorkspace = (id: string) =>
 export const updateWorkspaceMetadata = async (
   id: string,
   patch: { name?: string; defaults?: WorkspaceMetadata["defaults"] | null },
-): Promise<WorkspaceListItem> => {
-  const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}`, jsonInit("PATCH", patch));
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // not json
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as WorkspaceListItem;
-};
+): Promise<WorkspaceListItem> =>
+  mutateJson<WorkspaceListItem>(
+    `/api/workspaces/${encodeURIComponent(id)}`,
+    jsonInit("PATCH", patch),
+  );

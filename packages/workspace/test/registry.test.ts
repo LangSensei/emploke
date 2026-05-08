@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegistryCorruptedError,
   WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "../src/errors.js";
@@ -117,6 +118,91 @@ describe("WorkspaceRegistry.open", () => {
   });
 });
 
+describe("WorkspaceRegistry.open (currentId / currentName edge cases)", () => {
+  it("rejects a malformed currentId (non-string)", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({ schemaVersion: 1, entries: [], currentId: 42 }),
+      "utf8",
+    );
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
+      RegistryCorruptedError,
+    );
+  });
+
+  it("rejects an empty-string currentId", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({ schemaVersion: 1, entries: [], currentId: "" }),
+      "utf8",
+    );
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
+      RegistryCorruptedError,
+    );
+  });
+
+  it("rejects a non-uuid currentId", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [{ id: UUID_A, path: "/a" }],
+        currentId: "not-a-uuid",
+      }),
+      "utf8",
+    );
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
+      RegistryCorruptedError,
+    );
+  });
+
+  it("rejects a malformed currentName (non-string) — symmetric with currentId", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [{ name: "alpha", path: "/a" }],
+        currentName: 42,
+      }),
+      "utf8",
+    );
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
+      RegistryCorruptedError,
+    );
+  });
+
+  it("drops a currentName that references an unknown legacy entry and persists the cleanup", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [{ name: "alpha", path: "/a" }],
+        currentName: "ghost",
+      }),
+      "utf8",
+    );
+    const r = await WorkspaceRegistry.open(registryFile);
+    expect(r.current()).toBeNull();
+    const onDisk = JSON.parse(await readFile(registryFile, "utf8"));
+    expect(onDisk.currentName).toBeUndefined();
+    expect(onDisk.currentId).toBeUndefined();
+  });
+
+  it("drops a currentId that references an unknown entry (defensive)", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [{ id: UUID_A, path: "/a" }],
+        currentId: UUID_B,
+      }),
+      "utf8",
+    );
+    const r = await WorkspaceRegistry.open(registryFile);
+    expect(r.current()).toBeNull();
+  });
+});
+
 describe("WorkspaceRegistry.add", () => {
   it("appends a new entry with a generated UUID", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
@@ -149,7 +235,7 @@ describe("WorkspaceRegistry.add", () => {
   it("rejects an explicit non-uuid id", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
     await expect(r.add({ id: "not-a-uuid", path: "/x" })).rejects.toBeInstanceOf(
-      WorkspaceIdConflictError,
+      WorkspaceIdInvalidError,
     );
   });
 

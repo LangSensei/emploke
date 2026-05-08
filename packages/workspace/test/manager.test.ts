@@ -132,6 +132,51 @@ describe("WorkspaceManager.open", () => {
     await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
   });
 
+  it("throws WorkspaceCorruptedError when 'name' is whitespace-only", async () => {
+    const dir = path.join(scratch, "ws-ws");
+    await import("node:fs/promises").then((m) => m.mkdir(dir));
+    await writeFile(
+      path.join(dir, WORKSPACE_FILE),
+      JSON.stringify({ schemaVersion: 1, name: "   ", createdAt: "2026-01-01T00:00:00Z" }),
+      "utf8",
+    );
+    // Read-side validation matches write-side (assertValidDisplayName), so
+    // a workspace.json that was hand-edited to a pathological name surfaces
+    // as corruption at open() rather than a confusing failure later inside
+    // update().
+    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
+  });
+
+  it("throws WorkspaceCorruptedError when 'name' contains control chars", async () => {
+    const dir = path.join(scratch, "ws-ctrl");
+    await import("node:fs/promises").then((m) => m.mkdir(dir));
+    await writeFile(
+      path.join(dir, WORKSPACE_FILE),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "bad\u0007name",
+        createdAt: "2026-01-01T00:00:00Z",
+      }),
+      "utf8",
+    );
+    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
+  });
+
+  it("throws WorkspaceCorruptedError when 'name' is too long", async () => {
+    const dir = path.join(scratch, "ws-long");
+    await import("node:fs/promises").then((m) => m.mkdir(dir));
+    await writeFile(
+      path.join(dir, WORKSPACE_FILE),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "x".repeat(65),
+        createdAt: "2026-01-01T00:00:00Z",
+      }),
+      "utf8",
+    );
+    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
+  });
+
   it("throws WorkspaceSchemaMismatchError on wrong schemaVersion", async () => {
     const dir = path.join(scratch, "p");
     await import("node:fs/promises").then((m) => m.mkdir(dir));

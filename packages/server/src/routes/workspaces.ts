@@ -4,6 +4,7 @@ import {
   WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
   WorkspaceManager,
   type WorkspaceMetadata,
   WorkspaceNameInvalidError,
@@ -286,6 +287,7 @@ export function workspacesRoutes(deps: {
  */
 function workspaceErrorStatus(err: unknown): number | null {
   if (err instanceof WorkspaceNameInvalidError) return 400;
+  if (err instanceof WorkspaceIdInvalidError) return 400;
   if (err instanceof WorkspaceNotRegisteredError) return 404;
   if (err instanceof WorkspaceNotFoundError) return 404;
   if (err instanceof WorkspaceIdConflictError) return 409;

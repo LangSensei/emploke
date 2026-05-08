@@ -1,14 +1,14 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { withFileLock, writeFileAtomic } from "./atomic.js";
-import { CURRENT_SCHEMA_VERSION, WORKSPACE_FILE } from "./constants.js";
+import { CURRENT_SCHEMA_VERSION, WORKSPACE_FILE, WORKSPACE_LOCK_FILE } from "./constants.js";
 import {
   WorkspaceAlreadyExistsError,
   WorkspaceCorruptedError,
   WorkspaceNotFoundError,
   WorkspaceSchemaMismatchError,
 } from "./errors.js";
-import { assertValidDisplayName } from "./names.js";
+import { assertValidDisplayName, isValidDisplayName } from "./names.js";
 import type { Workspace, WorkspaceMetadata } from "./types.js";
 import { workspaceSubdirs } from "./types.js";
 
@@ -85,16 +85,14 @@ export class WorkspaceManager {
    */
   static async init(dir: string, opts: WorkspaceInitOpts): Promise<Workspace> {
     const resolvedDir = path.resolve(dir);
-    if (opts.name === undefined) {
-      // Validate up-front so callers get a clear error before we lock /
-      // mkdir / write anything.
-      assertValidDisplayName(undefined);
-    }
+    // Validate up-front so callers get a clear error before we lock,
+    // mkdir, or write anything. assertValidDisplayName treats undefined
+    // as a non-string and rejects with WorkspaceNameInvalidError.
     assertValidDisplayName(opts.name);
 
     await mkdir(resolvedDir, { recursive: true });
 
-    const lockPath = path.join(resolvedDir, ".workspace.lock");
+    const lockPath = path.join(resolvedDir, WORKSPACE_LOCK_FILE);
     return withFileLock(lockPath, async () => {
       const metadataPath = path.join(resolvedDir, WORKSPACE_FILE);
       try {
@@ -188,7 +186,7 @@ export class WorkspaceManager {
     }
     if (patch.name !== undefined) assertValidDisplayName(patch.name);
 
-    const lockPath = path.join(resolvedDir, ".workspace.lock");
+    const lockPath = path.join(resolvedDir, WORKSPACE_LOCK_FILE);
     return withFileLock(lockPath, async () => {
       const current = await WorkspaceManager.open(resolvedDir);
 
@@ -248,8 +246,19 @@ function parseMetadata(dir: string, raw: string): WorkspaceMetadata {
     throw new WorkspaceSchemaMismatchError(dir, schemaVersion, CURRENT_SCHEMA_VERSION);
   }
 
-  if (typeof obj.name !== "string" || obj.name.length === 0) {
-    throw new WorkspaceCorruptedError(dir, "missing or invalid 'name'");
+  if (typeof obj.name !== "string") {
+    throw new WorkspaceCorruptedError(dir, "missing or non-string 'name'");
+  }
+  // Apply the same display-name rules we use on writes (assertValidDisplayName)
+  // when reading too. This means a workspace.json that was hand-edited to
+  // contain an empty/whitespace-only/64+-char/control-char name surfaces a
+  // corruption error at read time rather than ghost-loading and failing
+  // later inside `update()` with a confusing validation error.
+  if (!isValidDisplayName(obj.name)) {
+    throw new WorkspaceCorruptedError(
+      dir,
+      "'name' is not a valid display name (empty/whitespace/too long/contains control chars)",
+    );
   }
   if (typeof obj.createdAt !== "string" || obj.createdAt.length === 0) {
     throw new WorkspaceCorruptedError(dir, "missing or invalid 'createdAt'");

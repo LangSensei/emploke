@@ -27,6 +27,7 @@ export {
   TASKS_SUBDIR,
   WORKFLOWS_SUBDIR,
   WORKSPACE_FILE,
+  WORKSPACE_LOCK_FILE,
 } from "./constants.js";
 export {
   RegistryCorruptedError,
@@ -35,6 +36,7 @@ export {
   WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
   WorkspaceNameInvalidError,
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,

@@ -14,11 +14,21 @@ import { TrustRegistrationFailed } from "./errors.js";
  * Concurrency, atomicity and "covered-by-ancestor" matching all behave
  * exactly as the previous `ensureWorkdirTrusted` did — only the call site
  * and the meaning of the path argument have changed.
+ *
+ * Note: the lock implementation here is intentionally a sibling of the one
+ * in `@emploke/workspace`'s `atomic.ts` (same PID-guard hardening). The
+ * two are kept in sync by hand to avoid a `runtime → workspace` dependency.
+ * If a third caller appears, factor both into a shared `@emploke/fs-utils`.
  */
 
 /** Default time to wait for a contended lock before failing. */
 const SETTINGS_LOCK_WAIT_MS = 5000;
-/** Time after which an existing lock file is considered abandoned. */
+/**
+ * Time after which an existing lock file is *eligible* for stale-recovery
+ * via mtime alone. Even past this threshold we still try a PID liveness
+ * check first; the mtime threshold is the fallback for the case where the
+ * holder PID could not be parsed.
+ */
 const SETTINGS_LOCK_STALE_MS = 30000;
 /** Poll interval while waiting on a contended lock. */
 const SETTINGS_LOCK_POLL_MS = 50;
@@ -80,26 +90,33 @@ export async function ensureDirTrusted(dir: string, settingsPath: string): Promi
 }
 
 /**
- * Acquire an advisory lock on `lockPath`, run `fn`, then release. Same
- * semantics as the previous in-package implementation; kept here (rather
- * than depending on `@emploke/workspace`) so the runtime package's
- * dependency footprint stays minimal.
+ * Acquire an advisory lock on `lockPath`, run `fn`, then release.
+ *
+ * Stale-recovery is conservative: if we can read a PID from the existing
+ * lock file and `process.kill(pid, 0)` does not throw, we never steal —
+ * even if the file is older than `SETTINGS_LOCK_STALE_MS`. Only when the
+ * holder PID is dead, unparseable, or absent AND the file is past the
+ * mtime threshold do we evict and retry.
+ *
+ * Release only `unlink`s the file if its contents still match our PID.
+ * That guards the (now narrow) race where a long-running `fn()` was
+ * evicted by a waiter that decided we were stale; we must not then
+ * delete the new owner's lock.
  */
 async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
   const start = Date.now();
+  const myMarker = `${process.pid}\n`;
   while (true) {
     try {
       const fh = await open(lockPath, "wx");
       try {
-        await fh.write(`${process.pid}\n`);
+        await fh.write(myMarker);
       } catch {}
       await fh.close();
       try {
         return await fn();
       } finally {
-        try {
-          await unlink(lockPath);
-        } catch {}
+        await releaseIfMine(lockPath, myMarker);
       }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -112,20 +129,61 @@ async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Prom
           `timed out (${SETTINGS_LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}${detail}`,
         );
       }
-      try {
-        const st = await stat(lockPath);
-        if (Date.now() - st.mtimeMs > SETTINGS_LOCK_STALE_MS) {
-          try {
-            await unlink(lockPath);
-          } catch {}
-          continue;
-        }
-      } catch {
-        continue;
-      }
+
+      if (await tryStealStaleLock(lockPath)) continue;
       await new Promise((resolve) => setTimeout(resolve, SETTINGS_LOCK_POLL_MS));
     }
   }
+}
+
+/**
+ * Inspect the lock file and `unlink` it iff it is safely stealable.
+ * Returns true if the caller should immediately retry acquisition.
+ *
+ * Order of checks:
+ *   1. Holder PID readable AND alive → never steal (long-running fn).
+ *   2. Holder PID readable AND dead (ESRCH) → steal regardless of mtime.
+ *   3. PID unparseable AND mtime past `SETTINGS_LOCK_STALE_MS` → steal.
+ *   4. Otherwise leave alone; let the poll loop wait.
+ */
+async function tryStealStaleLock(lockPath: string): Promise<boolean> {
+  let st: Awaited<ReturnType<typeof stat>>;
+  try {
+    st = await stat(lockPath);
+  } catch {
+    // Lock file vanished between EEXIST and stat — race; retry now.
+    return true;
+  }
+  const holder = await readLockHolder(lockPath);
+  if (holder !== null) {
+    if (isProcessAlive(holder)) return false;
+    await unlinkIgnoreMissing(lockPath);
+    return true;
+  }
+  if (Date.now() - st.mtimeMs > SETTINGS_LOCK_STALE_MS) {
+    await unlinkIgnoreMissing(lockPath);
+    return true;
+  }
+  return false;
+}
+
+async function releaseIfMine(lockPath: string, expectedMarker: string): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readFile(lockPath, "utf8");
+  } catch {
+    return;
+  }
+  if (raw === expectedMarker) {
+    await unlinkIgnoreMissing(lockPath);
+  }
+  // else: another waiter took ownership; do not touch.
+}
+
+async function unlinkIgnoreMissing(p: string): Promise<void> {
+  try {
+    await unlink(p);
+  } catch {}
 }
 
 /** Best-effort read of the PID written by the current lock holder. */
@@ -136,6 +194,22 @@ async function readLockHolder(lockPath: string): Promise<number | null> {
     return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * `process.kill(pid, 0)` returns nothing on success and throws ESRCH if
+ * the pid is dead. EPERM means "exists but I don't own it" — treat as
+ * alive. Any other error: be conservative and assume alive.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    return true;
   }
 }
 

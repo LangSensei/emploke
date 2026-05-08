@@ -196,13 +196,59 @@ describe("ensureDirTrusted", () => {
     const sp = settingsPath();
     await mkdir(path.dirname(sp), { recursive: true });
     const lockPath = `${sp}.lock`;
-    await writeFile(lockPath, "98765\n", "utf8");
+    // Use *our own* PID as the fake holder. Liveness check (process.kill(pid, 0))
+    // will succeed because we are alive, so the new tryStealStaleLock will
+    // refuse to steal even though the file would otherwise look stealable.
+    // That makes the timeout (rather than a steal) the deterministic outcome.
+    await writeFile(lockPath, `${process.pid}\n`, "utf8");
 
     const t = targetDir();
     await mkdir(t, { recursive: true });
-    await expect(ensureDirTrusted(t, sp)).rejects.toThrow(/PID 98765/);
+    await expect(ensureDirTrusted(t, sp)).rejects.toThrow(new RegExp(`PID ${process.pid}`));
   }, 15000);
+
+  it("steals a fresh lock whose recorded PID is dead (process.kill ESRCH)", async () => {
+    // This pins the new PID-guard behaviour: a lock with a dead-process PID
+    // is taken immediately, regardless of mtime. Without the guard, a
+    // crashed registerWorkspace caller would block fresh writes for the
+    // full LOCK_STALE_MS (30s) until the mtime-based heuristic kicked in.
+    const dead = findDeadPid();
+    if (dead === null) {
+      // No portable way to forge a dead PID on this host; skip silently.
+      return;
+    }
+    const sp = settingsPath();
+    await mkdir(path.dirname(sp), { recursive: true });
+    const lockPath = `${sp}.lock`;
+    await writeFile(lockPath, `${dead}\n`, "utf8");
+
+    const t = targetDir();
+    await mkdir(t, { recursive: true });
+    const before = Date.now();
+    await ensureDirTrusted(t, sp);
+    const elapsed = Date.now() - before;
+    expect(elapsed).toBeLessThan(2000);
+    const written = JSON.parse(await readFile(sp, "utf8"));
+    expect(written.trustedFolders).toEqual([path.resolve(t)]);
+  });
 });
+
+/**
+ * Find a PID the OS reports as definitely dead. We need this to exercise
+ * the stale-lock path; on most systems any sufficiently large positive
+ * integer works because PIDs wrap well below it. We verify with
+ * `process.kill(pid, 0)` so the test stays self-checking.
+ */
+function findDeadPid(): number | null {
+  for (const candidate of [99999999, 999999, 9999999]) {
+    try {
+      process.kill(candidate, 0);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ESRCH") return candidate;
+    }
+  }
+  return null;
+}
 
 describe("isPathCovered", () => {
   it("returns true on exact match", () => {
