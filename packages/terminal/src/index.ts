@@ -1,13 +1,15 @@
 // Public surface for @emploke/terminal — host a LaunchCommand in a terminal.
+
+export { whichSyncDefault } from "./_shared.js";
+export { spawnTerminal, spawnTerminalWith } from "./dispatch.js";
 export {
-  type Launcher,
   NoTerminalFoundError,
-  type SpawnHandle,
-  type SpawnTerminalDeps,
-  type SpawnTerminalResult,
-  spawnTerminal,
-  spawnTerminalWith,
   TerminalSpawnFailedError,
   UnsupportedPlatformError,
-  whichSyncDefault,
-} from "./spawn-terminal.js";
+} from "./errors.js";
+export type {
+  Launcher,
+  SpawnHandle,
+  SpawnTerminalDeps,
+  SpawnTerminalResult,
+} from "./types.js";
