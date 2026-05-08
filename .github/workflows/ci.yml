@@ -63,23 +63,6 @@ jobs:
       - name: Test
         run: pnpm test
 
-  go-archive:
-    name: Go (archive/)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - name: Check formatting
-        run: test -z "$(gofmt -l archive/kernel archive/conformance/kernel archive/registry archive/registry/fs archive/copilot)"
-
-      - name: Build & Test
-        working-directory: archive
-        run: go test ./kernel/... ./conformance/kernel/... && go build ./registry/... ./copilot/...
-
   links:
     runs-on: ubuntu-latest
     steps:
