@@ -58,7 +58,7 @@ describe("safeJoinUnderRoot", () => {
 
   it("rejects ids that escape via ..", () => {
     expect(() => safeJoinUnderRoot(root, "..")).toThrow(/escapes root|equals root/);
-    expect(() => safeJoinUnderRoot(root, "../sibling")).toThrow(/escapes root/);
+    expect(() => safeJoinUnderRoot(root, path.join("..", "sibling"))).toThrow(/escapes root/);
   });
 
   it.runIf(!isWin)("rejects absolute path id on POSIX", () => {
@@ -71,7 +71,9 @@ describe("safeJoinUnderRoot", () => {
 
   it("treats /a/b vs /a/bb correctly (separator-suffixed root check)", () => {
     const r = path.resolve("/a/b");
-    // candidate /a/bb resolves outside /a/b
-    expect(() => safeJoinUnderRoot(r, "..\\bb")).toThrow();
+    // Candidate resolves to a sibling /a/bb that shares a string prefix with
+    // the root but is not under it. Use path.join so the separator is correct
+    // on every platform.
+    expect(() => safeJoinUnderRoot(r, path.join("..", "bb"))).toThrow(/escapes root/);
   });
 });
