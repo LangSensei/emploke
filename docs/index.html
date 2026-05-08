@@ -484,6 +484,11 @@
       <span data-lang="zh">前言</span>
     </a>
 
+    <a href="#positioning">
+      <span data-lang="en">Positioning</span>
+      <span data-lang="zh">定位</span>
+    </a>
+
     <h3>
       <span data-lang="en">Part I — Mental Model</span>
       <span data-lang="zh">第一部分 · 心智模型</span>
@@ -549,10 +554,10 @@
   </div>
 
   <p class="reading-guide" data-lang="en">
-    Read it linearly if you are new. Jump to <a href="#ch5">Part II</a> for the concept chapters (four axioms + Execution). Jump to <a href="#decisions">Appendix C</a> for the design decisions behind every choice.
+    Read it linearly if you are new — even if you skip ahead, the short <a href="#positioning">Positioning</a> chapter is worth reading first. Jump to <a href="#ch5">Part II</a> for the concept chapters (four axioms + Execution). Jump to <a href="#decisions">Appendix C</a> for the design decisions behind every choice.
   </p>
   <p class="reading-guide" data-lang="zh">
-    初读者建议线性通读。想直接看概念章节（四条公理 + Execution），请翻到<a href="#ch5">第二部分</a>。想了解每个选择背后的"为什么"，请翻到<a href="#decisions">附录 C</a>。
+    初读者建议线性通读——即便要跳读，<a href="#positioning">"定位"</a>章节短小、值得先看。想直接看概念章节（四条公理 + Execution），请翻到<a href="#ch5">第二部分</a>。想了解每个选择背后的"为什么"，请翻到<a href="#decisions">附录 C</a>。
   </p>
 </section>
 
@@ -589,6 +594,132 @@
     <p>全书使用混合语气。<em>定义与不变量采用陈述式</em>——"Capability 就是一个 name"、"Task 是唯一的 Aggregate Root"——因为它们是承诺，而非观点。<em>论证与权衡采用"我们"</em>——"我们之所以把它压缩到这么小是因为……"——因为这是选择，而选择有作者。</p>
 
     <p>本前言的唯一要点：<strong>Emploke 是一个自洽、主题中立的内核，包含 4 条公理、2 条不变量、以及 2 个接口（Runtime + Query）。</strong>本书余下的全部内容，都是在论证这一句话。</p>
+  </div>
+</section>
+
+<!-- ═══════════ POSITIONING ═══════════ -->
+<section class="chapter" id="positioning">
+  <p class="chapter-number">
+    <span data-lang="en">Positioning</span>
+    <span data-lang="zh">定位</span>
+  </p>
+  <h1 class="chapter-title">
+    <span data-lang="en">emploke as a Layered System</span>
+    <span data-lang="zh">emploke 是一个分层系统</span>
+  </h1>
+  <p class="chapter-subtitle">
+    <span data-lang="en">Where this kernel sits between an upstream format spec and a downstream evolution roadmap.</span>
+    <span data-lang="zh">本内核在上游格式规范与下游演化路线之间的位置。</span>
+  </p>
+
+  <div data-lang="en">
+    <p>emploke sits at the intersection of two complementary concerns.</p>
+
+    <h2>Layer 0 — Format</h2>
+    <p>Where on disk a Skill lives, how an MCP server is configured, how an Agent declares its dependencies, what the directory layout looks like. emploke does not invent any of this — it adopts the <a href="https://github.com/metaagents-ai/metaagents"><strong>MetaAgents</strong></a> specification verbatim:</p>
+    <ul>
+      <li>Agents (<code>AGENTS.md</code>), Skills (<code>SKILL.md</code>) and MCP servers (<code>&lt;name&gt;.json</code>) live under <code>agents/</code>, <code>skills/</code>, <code>mcps/</code>.</li>
+      <li>Frontmatter declares <code>dependencies.skills</code> and <code>dependencies.mcps</code>.</li>
+      <li>Names follow <code>scope/name</code>; MCPs additionally accept the <a href="https://registry.modelcontextprotocol.io">official MCP registry</a>'s scoped form.</li>
+      <li>Resolution is topological, cycle-free, missing-dependency-strict.</li>
+    </ul>
+    <p><strong>If your <code>AGENTS.md</code> or <code>SKILL.md</code> works with MetaAgents, it works with emploke.</strong></p>
+
+    <h2>Layer 1 — Kernel (this book)</h2>
+    <p>Above the format, emploke commits to four axioms (Capability, Agent, Task, Runtime), a six-state Task lifecycle, the Concurrency Contract (G2), and the Observability floor (G1). <strong>Capability</strong> is the kernel-level abstraction over what MetaAgents distinguishes as Skill and MCP; the kernel treats it as a reference and never inspects its content. Everything else in this book either elaborates or constrains those four axioms.</p>
+
+    <h2>Above the kernel — what emploke wants to be</h2>
+    <p>The kernel is the smallest set of concepts that lets human–AI collaboration evolve through four levels. The framing comes from emploke's own product narrative ("the bottleneck migrates upward"):</p>
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Solves</th><th>Status in emploke</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>L1 MetaAgent</strong> — give AI a domain identity</td>
+          <td>AI doesn't know your domain</td>
+          <td>Layer 0 (MetaAgents) + the kernel's Agent / Capability axioms · <strong>shipping</strong></td>
+        </tr>
+        <tr>
+          <td><strong>L2 Session</strong> — keep the MetaAgent on duty with persistent context</td>
+          <td>Every chat re-loads from zero</td>
+          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>shipping</strong></td>
+        </tr>
+        <tr>
+          <td><strong>L3 Task</strong> — encapsulate a multi-step intent so AI runs end-to-end; the human intervenes only at brief and at deliverable</td>
+          <td>Real-time babysitting</td>
+          <td><code>@emploke/task</code> + the runtime layer · <strong>shipping</strong>; the Task axiom and lifecycle in this book are <em>exactly</em> what makes L3 possible</td>
+        </tr>
+        <tr>
+          <td><strong>L4 Workflow</strong> — multiple agents hand off via an explicit protocol; the human only sets direction</td>
+          <td>Stitching tasks back together</td>
+          <td><strong>roadmap</strong> — out of scope for this book</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>This book defines the kernel — what L2/L3 are built on, and what L4 will eventually rest on. It deliberately does <em>not</em> specify L4 (the DAG / captain / hand-off-protocol vocabulary) yet; that belongs to a future companion specification.</p>
+
+    <h2>What this book is not</h2>
+    <ul>
+      <li>Not a substrate manual. Concrete Runtime impls live in sibling packages (today: the Copilot adapter inside <code>@emploke/runtime</code>; planned: Gemini, Claude Code, …).</li>
+      <li>Not a multi-agent / workflow specification. L4 is acknowledged here as the next layer above the kernel; its semantics are out of scope for this revision.</li>
+      <li>Not a package manager. Per MetaAgents Layer 0, fetch / publish / execute / spawn are all explicitly out of scope.</li>
+    </ul>
+  </div>
+
+  <div data-lang="zh">
+    <p>emploke 处在两个互补关切的交汇处。</p>
+
+    <h2>Layer 0 — 格式</h2>
+    <p>Skill 在磁盘上长什么样、MCP server 怎么配、Agent 如何声明依赖、目录如何布局——这些 emploke 都不发明，而是直接采用 <a href="https://github.com/metaagents-ai/metaagents"><strong>MetaAgents</strong></a> 规范：</p>
+    <ul>
+      <li>Agent（<code>AGENTS.md</code>）、Skill（<code>SKILL.md</code>）、MCP server（<code>&lt;name&gt;.json</code>）分别住在 <code>agents/</code>、<code>skills/</code>、<code>mcps/</code> 下。</li>
+      <li>frontmatter 声明 <code>dependencies.skills</code> 与 <code>dependencies.mcps</code>。</li>
+      <li>名字遵循 <code>scope/name</code>；MCP 额外接受 <a href="https://registry.modelcontextprotocol.io">MCP 官方注册表</a>的 scoped 形式。</li>
+      <li>依赖解析：拓扑、无环、缺失即失败。</li>
+    </ul>
+    <p><strong>只要你的 <code>AGENTS.md</code> 或 <code>SKILL.md</code> 在 MetaAgents 下能跑，在 emploke 下就能跑。</strong></p>
+
+    <h2>Layer 1 — Kernel（本书）</h2>
+    <p>在格式之上，emploke 承诺四条公理（Capability、Agent、Task、Runtime）、六态 Task 生命周期、Concurrency Contract (G2) 与 Observability floor (G1)。<strong>Capability</strong> 是内核层对 MetaAgents 中 Skill 与 MCP 的统一抽象；内核只把它当 reference，不解释内容。本书余下的全部内容，要么阐述、要么约束这四条公理。</p>
+
+    <h2>内核之上 —— emploke 想要做到的</h2>
+    <p>内核是让 人/AI 协作演化所需的最小一组概念。这一路线来自 emploke 自己的产品叙事（"瓶颈一路向上爬"）：</p>
+    <table>
+      <thead>
+        <tr><th>级别</th><th>解决什么</th><th>emploke 当前状态</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>L1 MetaAgent</strong>——给 AI 一个领域身份</td>
+          <td>AI 不懂你的领域</td>
+          <td>Layer 0 (MetaAgents) + 内核的 Agent / Capability 公理 · <strong>已落地</strong></td>
+        </tr>
+        <tr>
+          <td><strong>L2 Session</strong>——让 MetaAgent 一直在岗，带持续上下文</td>
+          <td>每次对话从零 load</td>
+          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>已落地</strong></td>
+        </tr>
+        <tr>
+          <td><strong>L3 Task</strong>——把多步意图封装成 SOP 端到端跑；人只在派发时与拿 deliverable 时介入</td>
+          <td>实时盯梢</td>
+          <td><code>@emploke/task</code> + runtime 层 · <strong>已落地</strong>；本书的 Task 公理和六态生命周期<em>正是</em> L3 之所以成立的根</td>
+        </tr>
+        <tr>
+          <td><strong>L4 Workflow</strong>——多个 Agent 通过明确协议互相交接；人只设方向</td>
+          <td>多 task 之间还要人串</td>
+          <td><strong>roadmap</strong> —— 本书暂不覆盖</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>本书定义的是<strong>内核</strong>——它支撑 L2/L3，也将是 L4 的基础。本书<em>故意不规定 L4</em>（DAG / captain / hand-off 协议这套词汇），那属于未来的伴生规范。</p>
+
+    <h2>本书不是什么</h2>
+    <ul>
+      <li>不是 substrate 手册。具体 Runtime impl 住在 sibling 包里（今天：<code>@emploke/runtime</code> 内的 Copilot adapter；计划中：Gemini、Claude Code 等）。</li>
+      <li>不是多智能体 / workflow 规范。L4 在此被点名为"内核之上的下一层"，但其语义不在本次修订范围。</li>
+      <li>不是包管理器。按 MetaAgents Layer 0 的纪律，fetch / publish / execute / spawn 都是显式 out of scope。</li>
+    </ul>
   </div>
 </section>
 
@@ -857,6 +988,10 @@ graph TB
     </ul>
     <p>Each sibling depends on <code>emploke</code>; none depends on another; <code>emploke</code> never depends on (or even names) any of them. The product layer picks which siblings to take as dependencies and registers them under its chosen <code>runtime_kind</code> values. The same discipline applies to every other port a higher layer may define (e.g. an <code>emploke/sqlite</code> for a Persistence impl).</p>
     <p>The rule is uncompromising: if a piece of code names a concrete substrate, it does not live in the kernel package — it lives in a sibling library or above.</p>
+
+    <div class="callout note">
+      <strong>Today's monorepo layout.</strong> The <code>LangSensei/emploke</code> reference monorepo currently consolidates all runtime adapters into a single <code>@emploke/runtime</code> package (today: a Copilot adapter; planned: Gemini, Claude Code, …). The "sibling library per substrate" pattern above remains the <em>design intent</em> for any future split — useful when a runtime grows enough to warrant its own dependency surface, or when third parties publish substrate adapters out-of-tree.
+    </div>
   </div>
 
   <div data-lang="zh">
@@ -923,6 +1058,10 @@ graph TB
     </ul>
     <p>每个 sibling 都依赖 <code>emploke</code>；它们之间互不依赖；<code>emploke</code> 永远不会依赖（甚至命名）任何一个 sibling。产品层挑选所需 sibling 作为依赖，并把它们注册到自己选定的 <code>runtime_kind</code> 值之下。同样的纪律也适用于更高层可能定义的任何 port（如 Persistence impl 走 <code>emploke/sqlite</code>）。</p>
     <p>规则不容讨价还价：任何点名具体 substrate 的代码都不能住在 kernel 包里——只能住在某个 sibling 库或更上层。</p>
+
+    <div class="callout note">
+      <strong>今天的 monorepo 布局。</strong>参考 monorepo <code>LangSensei/emploke</code> 当前把所有 runtime adapter 合并在一个 <code>@emploke/runtime</code> 包内（今天是 Copilot adapter；计划中：Gemini、Claude Code 等）。上面"按 substrate 拆 sibling 库"的纪律仍然是<em>设计意图</em>，留给未来拆分用——当某个 runtime 大到值得拥有自己独立的依赖面，或者第三方要发布树外的 substrate adapter 时。
+    </div>
   </div>
 </section>
 
@@ -1032,7 +1171,7 @@ graph TB
 
     <h2>Out of kernel scope (all delegated to product / loader layer)</h2>
     <ul>
-      <li><code>kind</code> (Skill / Tool / Memory / …) — the kernel does not dispatch by kind; that is the loader's job.</li>
+      <li><code>kind</code> (Skill / MCP / …) — the kernel does not dispatch by kind; that is the loader's job. In a MetaAgents-aligned implementation, every Capability is exactly one of two file shapes: a Skill (<code>SKILL.md</code>) or an MCP server (<code>&lt;name&gt;.json</code>) — see the callout below.</li>
       <li><code>payload</code> / actual content — the loader fetches by name and deploys to the Runtime.</li>
       <li>Dependencies between capabilities.</li>
       <li>Capability nesting.</li>
@@ -1042,6 +1181,10 @@ graph TB
 
     <div class="callout note">
       <strong>The kernel only ever sees the resolved, flat <code>capabilities</code> list on an Agent (a list of names).</strong> How that list is assembled — manual enumeration, dependency-graph traversal, single-root expansion — is the loader's responsibility, defined per product. What each name resolves to is also the loader's concern.
+    </div>
+
+    <div class="callout note">
+      <strong>How Capability materialises in MetaAgents.</strong> emploke's reference catalog (<code>@emploke/catalog</code>) is aligned with the <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> spec. There, every Capability is exactly one of two file shapes: a <strong>Skill</strong> (<code>SKILL.md</code> with frontmatter + Markdown body) or an <strong>MCP server</strong> (a <code>&lt;name&gt;.json</code> file whose contents the kernel never reads). From the kernel's point of view both register under the same <code>capabilities</code> namespace; the catalog distinguishes their types so loaders know whether to install instructions or to spawn a server.
     </div>
 
     <div class="callout why-not">
@@ -1066,7 +1209,7 @@ graph TB
 
     <h2>Kernel 范围之外（全部下放到产品 / loader 层）</h2>
     <ul>
-      <li><code>kind</code>（Skill / Tool / Memory / …）—— kernel 不按 kind 分派，那是 loader 的事。</li>
+      <li><code>kind</code>（Skill / MCP / …）—— kernel 不按 kind 分派，那是 loader 的事。在 MetaAgents 实现里，每个 Capability 必然是两种文件形态之一：Skill（<code>SKILL.md</code>）或 MCP server（<code>&lt;name&gt;.json</code>）—— 详见下方 callout。</li>
       <li><code>payload</code> / 实际内容—— loader 按 name 取，部署到 Runtime。</li>
       <li>Capability 之间的依赖。</li>
       <li>Capability 嵌套。</li>
@@ -1076,6 +1219,10 @@ graph TB
 
     <div class="callout note">
       <strong>Kernel 只看到 Agent 上已解析的扁平 <code>capabilities</code> 列表（一组 name）。</strong>这个列表如何被组装——手动列举、依赖图遍历、单根展开——是 loader 的职责，由产品定义。每个 name 解析成什么，也是 loader 的职责。
+    </div>
+
+    <div class="callout note">
+      <strong>Capability 在 MetaAgents 中如何落地。</strong>emploke 的参考 catalog（<code>@emploke/catalog</code>）对齐 <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> 规范。在那里，每个 Capability 必然是两种文件形态之一：<strong>Skill</strong>（<code>SKILL.md</code> + frontmatter + Markdown 正文）或 <strong>MCP server</strong>（<code>&lt;name&gt;.json</code>，内核永不读取其内容）。从内核角度看两者注册在同一个 <code>capabilities</code> 命名空间下；catalog 对类型加以区分，以便 loader 知道是装载 instructions 还是拉起一个 server。
     </div>
 
     <div class="callout why-not">
@@ -1287,6 +1434,10 @@ graph TB
       <strong>Best-effort control verbs.</strong> <code>pause</code>, <code>resume</code>, and <code>kill</code> are <em>requests</em>, not commands. Different Runtime substrates have different control over their work — an LLM-chat impl can pause between turns; a one-shot HTTP-call impl physically cannot. Every impl must <em>accept</em> all six verbs; the <em>effectiveness</em> varies by substrate. Callers see the truth via <code>Task.status</code>. <code>pause</code> may lose to natural completion; <code>kill</code> may race to <code>success</code>/<code>failure</code> if completion was already imminent. Idempotency on already-terminal tasks is guaranteed.
     </div>
 
+    <div class="callout note">
+      <strong>Implementer's note — the five-state subset.</strong> The reference <code>@emploke/task</code> package today exposes only the five-state subset (<code>not_started → running → success / failure / cancelled</code>); it omits <code>pause</code>, <code>resume</code>, and the <code>paused</code> state. The rationale (see the <a href="https://github.com/LangSensei/emploke/tree/main/packages/task">packages/task README</a>): on Windows there is no <code>SIGSTOP</code>, and many CLI substrates do not handle pause signals well, so a "soft pause" UX is treated as a per-substrate <code>metadata</code> concern instead. A subset implementation is honest — readers of <code>Task.status</code> never observe <code>paused</code> against it. Future implementations targeting the full kernel commitment may add the missing transitions; nothing in the kernel forbids it.
+    </div>
+
     <h2>Failure type</h2>
     <p>When a Task ends in <code>failure</code>, the <code>failure</code> field carries a structured value:</p>
     <pre><code>Failure = (
@@ -1404,6 +1555,10 @@ graph TB
 
     <div class="callout note">
       <strong>控制类动词是 best-effort。</strong> <code>pause</code>、<code>resume</code>、<code>kill</code> 是<em>请求</em>，不是命令。不同 Runtime substrate 对工作的控制力不同——LLM-chat impl 能在轮次之间 pause；一次性 HTTP 调用的 impl 物理上做不到。每一个 impl 都必须<em>接受</em>六个动词；<em>有效率</em>因 substrate 而异。Caller 通过 <code>Task.status</code> 看到真相。<code>pause</code> 可能输给自然完成；<code>kill</code> 可能与即将到达的 <code>success</code>/<code>failure</code> 撞车。对已经处于终态的 task 保证幂等。
+    </div>
+
+    <div class="callout note">
+      <strong>实施者注记——五态子集。</strong>参考实现 <code>@emploke/task</code> 当前只暴露五态子集（<code>not_started → running → success / failure / cancelled</code>），不包含 <code>pause</code>、<code>resume</code> 与 <code>paused</code> 状态。理由（详见 <a href="https://github.com/LangSensei/emploke/tree/main/packages/task">packages/task README</a>）：Windows 没有 <code>SIGSTOP</code>，许多 CLI substrate 也不能良好处理暂停信号，因此 "soft pause" 体验被作为 per-substrate 的 <code>metadata</code> 关切处理。子集实现是诚实的——读 <code>Task.status</code> 永远观察不到 <code>paused</code>。瞄准完整内核承诺的未来实现可以补上缺失的转移；内核没有禁止这件事。
     </div>
 
     <h2>Failure 类型</h2>
