@@ -310,36 +310,35 @@ button {
 }
 
 .sidebar__footer {
-  padding: var(--space-4) var(--space-5);
-  border-top: 1px solid var(--color-sidebar-divider);
-  font-size: 11px;
-  color: var(--color-sidebar-text-muted);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   flex-shrink: 0;
 }
 
 .sidebar__home-link {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  width: 100%;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   color: var(--color-sidebar-text-muted);
   text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.1s ease, color 0.1s ease;
 }
 
 .sidebar__home-link:hover,
 .sidebar__home-link:focus-visible {
-  background: var(--color-sidebar-hover-bg, var(--color-surface));
+  background: var(--color-sidebar-hover-bg);
   color: var(--color-sidebar-text);
+  text-decoration: none;
   outline: none;
 }
 
 .sidebar__home-link-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -1790,6 +1789,55 @@ button {
   cursor: pointer;
   transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
   min-height: 110px;
+  width: 100%;
+}
+
+.landing__card-wrapper {
+  position: relative;
+}
+
+.landing__card-delete {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.landing__card-wrapper:hover .landing__card-delete,
+.landing__card-wrapper:focus-within .landing__card-delete {
+  opacity: 1;
+}
+
+.landing__card-delete:hover:not(:disabled),
+.landing__card-delete:focus-visible {
+  background: #fff5f5;
+  color: #c53030;
+  border-color: #fed7d7;
+  outline: none;
+  opacity: 1;
+}
+
+.landing__card-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.landing__card-delete-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .landing__card:hover:not(:disabled) {

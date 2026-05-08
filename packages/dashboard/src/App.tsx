@@ -7,13 +7,14 @@ import {
   getConfig,
   getServerCurrentWorkspace,
   listWorkspaces,
+  removeWorkspace,
   type ServerConfig,
   setActiveWorkspace,
   setServerCurrentWorkspace,
   updateWorkspaceMetadata,
   type WorkspaceListItem,
 } from "./api";
-import { PlusIcon } from "./components/Icons";
+import { PlusIcon, TrashIcon } from "./components/Icons";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
@@ -140,6 +141,33 @@ function LandingPage() {
     }
   }, [navigate]);
 
+  // Remove from registry only — files on disk (workspace.json, sessions/,
+  // catalog/, .lock, etc.) are intentionally left intact, matching the
+  // server's DELETE semantics. The user can always re-add the same path.
+  const onRemove = useCallback(
+    async (ws: WorkspaceListItem) => {
+      const display = ws.metadata?.name ?? ws.id;
+      const ok = window.confirm(
+        `Remove "${display}" from emploke?\n\n` +
+          `Path: ${ws.path}\n\n` +
+          `The workspace files on disk are kept untouched — only the registry entry ` +
+          `is removed. You can re-add this path later.`,
+      );
+      if (!ok) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await removeWorkspace(ws.id);
+        await refresh();
+      } catch (e) {
+        setError(`remove workspace: ${(e as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
   // Sort: recent first, then ok before broken, then by display name.
   const ordered = (workspaces ?? []).slice().sort((a, b) => {
     if (a.id === recent && b.id !== recent) return -1;
@@ -195,32 +223,43 @@ function LandingPage() {
                 const isRecent = ws.id === recent;
                 const broken = ws.status !== "ok";
                 return (
-                  <button
-                    type="button"
-                    key={ws.id}
-                    className={`landing__card${broken ? " landing__card--broken" : ""}`}
-                    onClick={() => enterWorkspace(ws.id)}
-                    disabled={broken}
-                    title={broken ? (ws.reason ?? ws.status) : `Open ${display}`}
-                  >
-                    <div className="landing__card-row">
-                      <span className="landing__card-name">{display}</span>
-                      {isRecent && !broken && <span className="landing__card-badge">Recent</span>}
-                      {broken && (
-                        <span className="landing__card-badge landing__card-badge--warn">
-                          {ws.status}
-                        </span>
-                      )}
-                    </div>
-                    <div className="landing__card-path" title={ws.path}>
-                      {ws.path}
-                    </div>
-                    {ws.lastOpenedAt && (
-                      <div className="landing__card-meta">
-                        Last opened {formatLastOpened(ws.lastOpenedAt)}
+                  <div className="landing__card-wrapper" key={ws.id}>
+                    <button
+                      type="button"
+                      className={`landing__card${broken ? " landing__card--broken" : ""}`}
+                      onClick={() => enterWorkspace(ws.id)}
+                      disabled={broken}
+                      title={broken ? (ws.reason ?? ws.status) : `Open ${display}`}
+                    >
+                      <div className="landing__card-row">
+                        <span className="landing__card-name">{display}</span>
+                        {isRecent && !broken && <span className="landing__card-badge">Recent</span>}
+                        {broken && (
+                          <span className="landing__card-badge landing__card-badge--warn">
+                            {ws.status}
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </button>
+                      <div className="landing__card-path" title={ws.path}>
+                        {ws.path}
+                      </div>
+                      {ws.lastOpenedAt && (
+                        <div className="landing__card-meta">
+                          Last opened {formatLastOpened(ws.lastOpenedAt)}
+                        </div>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="landing__card-delete"
+                      onClick={() => void onRemove(ws)}
+                      disabled={busy}
+                      title={`Remove "${display}" from registry`}
+                      aria-label={`Remove ${display}`}
+                    >
+                      <TrashIcon className="landing__card-delete-icon" />
+                    </button>
+                  </div>
                 );
               })}
             </div>
