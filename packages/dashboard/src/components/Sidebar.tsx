@@ -251,10 +251,6 @@ export function Sidebar({
           <ArrowLeftIcon className="sidebar__home-link-icon" />
           <span>All workspaces</span>
         </Link>
-        <div className="sidebar__footer-meta">
-          <code>@emploke/dashboard</code>
-          <span>v0.0.1</span>
-        </div>
       </div>
     </aside>
   );
