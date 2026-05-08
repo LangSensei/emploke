@@ -1,47 +1,86 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
-  type CopilotSessionInfo,
   createSession,
   deleteSession,
-  getLaunchCommand,
-  getResumeCommand,
-  type LaunchCommand,
+  listRuntimes,
   listSessions,
+  type ServerConfig,
   type SessionRecord,
+  spawnSession,
 } from "../api";
 import { CopyIcon, PlayIcon, PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
 
 interface SessionsProps {
   agents: AgentEntry[];
+  config: ServerConfig | null;
 }
 
-interface LaunchModalState {
-  session: SessionRecord;
-  command: LaunchCommand;
+interface FallbackInfo {
+  display: string;
+  reason: string;
 }
 
 interface DeleteModalState {
   session: SessionRecord;
-  alsoDeleteCopilotState: boolean;
+  alsoDeleteRuntimeState: boolean;
 }
 
 const ALL_AGENTS = "__all__";
+const ALL_RUNTIMES = "__all__";
+
+const TIME_PRESETS = [
+  { value: "today", label: "Today" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+  { value: "all", label: "All" },
+] as const;
+type TimePreset = (typeof TIME_PRESETS)[number]["value"];
+
+const DEFAULT_TIME_PRESET: TimePreset = "7d";
+
+/** Convert a preset to an ISO 8601 lower bound for `createdAt`. `all` → undefined. */
+function presetToCreatedSince(preset: TimePreset, now: Date = new Date()): string | undefined {
+  switch (preset) {
+    case "today": {
+      // Local-time midnight. The server compares ISO strings, so we send the
+      // resulting UTC moment as Z-suffixed ISO.
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    }
+    case "7d":
+      return new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    case "30d":
+      return new Date(now.getTime() - 30 * 86_400_000).toISOString();
+    case "all":
+      return undefined;
+  }
+}
 
 /**
- * Sessions page — manages emploke session workdirs and shows the matching
- * Copilot sessions discovered for each. The page does NOT spawn copilot;
- * it returns a launch command for the user to copy and run themselves.
+ * Sessions page — lists per-session workdirs managed by the runtime registry
+ * and lets the user create, launch, and delete them. The Launch button asks
+ * the server to spawn the user's terminal directly. If spawning fails (e.g.
+ * no terminal emulator could be detected), we fall back to showing the
+ * incantation in a modal so the user can still copy-paste it.
  */
-export function SessionsPage({ agents }: SessionsProps) {
+export function SessionsPage({ agents, config }: SessionsProps) {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [runtimes, setRuntimes] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>(ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
+  const [timeFilter, setTimeFilter] = useState<TimePreset>(DEFAULT_TIME_PRESET);
+  const [idQuery, setIdQuery] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Distinguishes "haven't loaded yet" from "loaded with zero results" so the
+  // initial mount shows a spinner instead of the misleading "No sessions yet"
+  // empty state for however long the first GET takes.
+  const [loaded, setLoaded] = useState(false);
+  const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [launchModal, setLaunchModal] = useState<LaunchModalState | null>(null);
+  const [fallback, setFallback] = useState<FallbackInfo | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
 
   // Tracks whether the component is still mounted so async handlers can skip
@@ -61,7 +100,10 @@ export function SessionsPage({ agents }: SessionsProps) {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const next = await listSessions(filter === ALL_AGENTS ? undefined : filter);
+      const next = await listSessions({
+        agent: filter === ALL_AGENTS ? undefined : filter,
+        createdSince: presetToCreatedSince(timeFilter),
+      });
       if (!mountedRef.current) return;
       setError(null);
       setSessions(next);
@@ -69,20 +111,40 @@ export function SessionsPage({ agents }: SessionsProps) {
       if (!mountedRef.current) return;
       setError((e as Error).message);
     } finally {
-      if (mountedRef.current) setRefreshing(false);
+      if (mountedRef.current) {
+        setRefreshing(false);
+        setLoaded(true);
+      }
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter/timeFilter change
   useEffect(() => {
     refresh();
-  }, [filter]);
+  }, [filter, timeFilter]);
 
-  const onCreated = async (agent: string) => {
+  // Fetch the registered runtimes once at mount; the registry is static
+  // for a given server process so we don't need to re-poll.
+  useEffect(() => {
+    let cancelled = false;
+    listRuntimes()
+      .then((kinds) => {
+        if (!cancelled) setRuntimes(kinds);
+      })
+      .catch(() => {
+        // Non-fatal: CreateModal falls back to omitting the runtime field,
+        // which makes the server pick its default.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onCreated = async (agent: string, runtime: string | undefined) => {
     setBusy(true);
     setError(null);
     try {
-      await createSession(agent);
+      await createSession(agent, runtime);
       if (!mountedRef.current) return;
       setCreateOpen(false);
       await refresh();
@@ -95,14 +157,27 @@ export function SessionsPage({ agents }: SessionsProps) {
   };
 
   const onLaunch = async (s: SessionRecord) => {
+    if (launchingId !== null) return;
+    setLaunchingId(s.id);
     setError(null);
     try {
-      const cmd = await getLaunchCommand(s.id);
+      // Resume vs fresh is decided by the runtime now: if a runtimeSessionId
+      // is persisted, buildLaunch will produce a `--resume=<id>` form; if not,
+      // it produces a bare launch. Either way the dashboard just asks to spawn.
+      const result = await spawnSession(s.id);
       if (!mountedRef.current) return;
-      setLaunchModal({ session: s, command: cmd });
+      if (!result.ok) {
+        // Server returned 200 but couldn't spawn a terminal — show the
+        // command so the user can paste it into their own shell.
+        setFallback({ display: result.display, reason: result.error });
+      }
+      // Refresh after a successful launch so lastActiveAt/preview update.
+      if (result.ok) await refresh();
     } catch (e) {
       if (!mountedRef.current) return;
       setError((e as Error).message);
+    } finally {
+      if (mountedRef.current) setLaunchingId(null);
     }
   };
 
@@ -111,7 +186,7 @@ export function SessionsPage({ agents }: SessionsProps) {
     setBusy(true);
     setError(null);
     try {
-      await deleteSession(deleteModal.session.id, deleteModal.alsoDeleteCopilotState);
+      await deleteSession(deleteModal.session.id, deleteModal.alsoDeleteRuntimeState);
       if (!mountedRef.current) return;
       setDeleteModal(null);
       await refresh();
@@ -125,6 +200,18 @@ export function SessionsPage({ agents }: SessionsProps) {
 
   const readyAgents = agents.filter((a) => a.status === "ready");
 
+  // Client-side filters layered on top of the server-side agent narrow.
+  // Both are interactive (typing / dropdown change), so doing them in-memory
+  // avoids a round-trip per keystroke and keeps the UI snappy.
+  const visibleSessions = (() => {
+    const q = idQuery.trim().toLowerCase();
+    return sessions.filter((s) => {
+      if (q !== "" && !s.id.toLowerCase().includes(q)) return false;
+      if (runtimeFilter !== ALL_RUNTIMES && s.runtime !== runtimeFilter) return false;
+      return true;
+    });
+  })();
+
   return (
     <>
       <div className="page-toolbar">
@@ -132,6 +219,18 @@ export function SessionsPage({ agents }: SessionsProps) {
           className="page-toolbar__actions"
           style={{ gap: "var(--space-3)", alignItems: "center" }}
         >
+          <label htmlFor="session-id-filter" className="muted" style={{ fontSize: 12 }}>
+            Search
+          </label>
+          <input
+            id="session-id-filter"
+            type="search"
+            value={idQuery}
+            onChange={(e) => setIdQuery(e.target.value)}
+            placeholder="session id…"
+            className="input"
+            style={{ width: 200 }}
+          />
           <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
             Agent
           </label>
@@ -148,6 +247,39 @@ export function SessionsPage({ agents }: SessionsProps) {
               </option>
             ))}
           </select>
+          <label htmlFor="runtime-filter" className="muted" style={{ fontSize: 12 }}>
+            Runtime
+          </label>
+          <select
+            id="runtime-filter"
+            value={runtimeFilter}
+            onChange={(e) => setRuntimeFilter(e.target.value)}
+            className="select"
+            disabled={runtimes.length === 0}
+          >
+            <option value={ALL_RUNTIMES}>All</option>
+            {runtimes.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Created
+          </span>
+          <div className="pills">
+            {TIME_PRESETS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`pills__btn${timeFilter === p.value ? " pills__btn--active" : ""}`}
+                onClick={() => setTimeFilter(p.value)}
+                aria-pressed={timeFilter === p.value}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="page-toolbar__actions">
           <button
@@ -180,13 +312,26 @@ export function SessionsPage({ agents }: SessionsProps) {
 
       {error && <div className="alert alert--error">⚠️ {error}</div>}
 
-      {sessions.length === 0 ? (
+      {!loaded ? (
+        <div className="empty">
+          <div className="empty__icon spin" aria-hidden="true">
+            <RefreshIcon />
+          </div>
+          <p className="empty__title">Loading sessions…</p>
+        </div>
+      ) : visibleSessions.length === 0 ? (
         <div className="empty">
           <div className="empty__icon">📂</div>
-          <p className="empty__title">No sessions yet</p>
+          <p className="empty__title">{sessions.length === 0 ? "No sessions yet" : "No matches"}</p>
           <p className="empty__hint">
-            Create a session to bake an agent into a workdir, then launch <code>copilot -i</code>{" "}
-            there.
+            {sessions.length === 0 ? (
+              <>
+                Create a session to bake an agent into a workdir, then launch <code>copilot</code>{" "}
+                there.
+              </>
+            ) : (
+              <>Adjust the filters above to see more sessions.</>
+            )}
           </p>
         </div>
       ) : (
@@ -195,18 +340,19 @@ export function SessionsPage({ agents }: SessionsProps) {
             <tr>
               <th className="col-session">Session</th>
               <th className="col-agent">Agent</th>
+              <th className="col-runtime">Runtime</th>
               <th>Activity</th>
-              <th className="col-created">Created</th>
               <th className="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <SessionRow
                 key={s.id}
                 session={s}
+                launching={launchingId === s.id}
                 onLaunch={() => onLaunch(s)}
-                onDelete={() => setDeleteModal({ session: s, alsoDeleteCopilotState: false })}
+                onDelete={() => setDeleteModal({ session: s, alsoDeleteRuntimeState: false })}
               />
             ))}
           </tbody>
@@ -216,22 +362,25 @@ export function SessionsPage({ agents }: SessionsProps) {
       <CreateModal
         open={createOpen}
         agents={readyAgents}
+        runtimes={runtimes}
+        sessionsRoot={config?.sessionsRoot ?? null}
+        pathSeparator={config?.pathSeparator ?? "/"}
         busy={busy}
         onClose={() => setCreateOpen(false)}
         onCreate={onCreated}
       />
 
-      {launchModal && (
+      {fallback && (
         <Modal
           open={true}
-          onClose={() => setLaunchModal(null)}
-          title="Launch session"
+          onClose={() => setFallback(null)}
+          title="Couldn't open a terminal"
           size="default"
         >
-          <LaunchModalBody
-            session={launchModal.session}
-            command={launchModal.command}
-            onClose={() => setLaunchModal(null)}
+          <FallbackModalBody
+            display={fallback.display}
+            reason={fallback.reason}
+            onClose={() => setFallback(null)}
           />
         </Modal>
       )}
@@ -245,10 +394,10 @@ export function SessionsPage({ agents }: SessionsProps) {
         >
           <DeleteModalBody
             session={deleteModal.session}
-            alsoDeleteCopilotState={deleteModal.alsoDeleteCopilotState}
+            alsoDeleteRuntimeState={deleteModal.alsoDeleteRuntimeState}
             busy={busy}
             onToggle={(v) =>
-              setDeleteModal((prev) => (prev ? { ...prev, alsoDeleteCopilotState: v } : prev))
+              setDeleteModal((prev) => (prev ? { ...prev, alsoDeleteRuntimeState: v } : prev))
             }
             onCancel={() => setDeleteModal(null)}
             onConfirm={onConfirmDelete}
@@ -263,11 +412,18 @@ export function SessionsPage({ agents }: SessionsProps) {
 
 interface RowProps {
   session: SessionRecord;
+  launching: boolean;
   onLaunch: () => void;
   onDelete: () => void;
 }
 
-function SessionRow({ session, onLaunch, onDelete }: RowProps) {
+function SessionRow({ session, launching, onLaunch, onDelete }: RowProps) {
+  const hasHistory = session.runtimeSessionId !== null && session.lastActiveAt !== null;
+  const launchTitle = launching
+    ? "Opening terminal…"
+    : hasHistory
+      ? "Resume in a new terminal"
+      : "Open in a new terminal";
   return (
     <tr>
       <td className="col-session" title={session.workdir}>
@@ -279,20 +435,24 @@ function SessionRow({ session, onLaunch, onDelete }: RowProps) {
         </span>
       </td>
       <td>
+        <span className="agent-tag" title={`Runtime: ${session.runtime}`}>
+          {session.runtime}
+        </span>
+      </td>
+      <td>
         <ActivityCell session={session} />
       </td>
-      <td className="muted">{formatRelative(session.createdAt)}</td>
       <td>
         <div className="row-actions">
           <button
             type="button"
-            className="btn btn--ghost btn--icon"
-            title={
-              session.copilotSessions.length > 0 ? "Launch (resume option in dialog)" : "Launch"
-            }
+            className="btn btn--primary row-actions__launch"
+            title={launchTitle}
+            disabled={launching}
             onClick={onLaunch}
           >
-            <PlayIcon />
+            {launching ? <RefreshIcon className="spin" /> : <PlayIcon />}
+            <span>{hasHistory ? "Resume" : "Launch"}</span>
           </button>
           <CopyPathButton path={session.workdir} />
           <button
@@ -310,23 +470,25 @@ function SessionRow({ session, onLaunch, onDelete }: RowProps) {
 }
 
 function ActivityCell({ session }: { session: SessionRecord }) {
-  const count = session.copilotSessions.length;
-  if (count === 0) {
-    return <span className="muted">—</span>;
+  if (session.lastActiveAt === null) {
+    return <span className="muted">never run</span>;
   }
-  const latest = session.latestCopilotSession;
   return (
-    <span className="activity-cell" title={latest?.summary ?? undefined}>
-      <span className="activity-cell__count">{count}</span>
-      <span className="activity-cell__label muted">{count === 1 ? "chat" : "chats"}</span>
-      {latest?.updatedAt && (
+    <span className="activity-cell" title={session.preview ?? undefined}>
+      {session.preview && (
         <>
+          <span className="activity-cell__count">{truncate(session.preview, 32)}</span>
           <span className="activity-cell__sep">·</span>
-          <span className="muted">{formatRelative(latest.updatedAt)}</span>
         </>
       )}
+      <span className="muted">{formatRelative(session.lastActiveAt)}</span>
     </span>
   );
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1)}…`;
 }
 
 function CopyPathButton({ path }: { path: string }) {
@@ -369,13 +531,28 @@ function CopyPathButton({ path }: { path: string }) {
 interface CreateModalProps {
   open: boolean;
   agents: AgentEntry[];
+  runtimes: string[];
+  /** Resolved sessions root from server config; null while config is still loading. */
+  sessionsRoot: string | null;
+  /** Native path separator on the server's OS (e.g. `\\` on Windows). */
+  pathSeparator: string;
   busy: boolean;
   onClose: () => void;
-  onCreate: (agent: string) => void;
+  onCreate: (agent: string, runtime: string | undefined) => void;
 }
 
-function CreateModal({ open, agents, busy, onClose, onCreate }: CreateModalProps) {
+function CreateModal({
+  open,
+  agents,
+  runtimes,
+  sessionsRoot,
+  pathSeparator,
+  busy,
+  onClose,
+  onCreate,
+}: CreateModalProps) {
   const [agent, setAgent] = useState<string>("");
+  const [runtime, setRuntime] = useState<string>("");
 
   useEffect(() => {
     if (open && agents.length > 0 && !agents.some((a) => a.agent.name === agent)) {
@@ -383,39 +560,75 @@ function CreateModal({ open, agents, busy, onClose, onCreate }: CreateModalProps
     }
   }, [open, agents, agent]);
 
+  // Default runtime to the first registered kind. If the registry returns
+  // an empty list (server unreachable on mount), we leave it blank and
+  // submit without a runtime field — the server will pick its default.
+  useEffect(() => {
+    if (open && runtimes.length > 0 && !runtimes.includes(runtime)) {
+      setRuntime(runtimes[0] ?? "");
+    }
+  }, [open, runtimes, runtime]);
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!agent) return;
-    onCreate(agent);
+    onCreate(agent, runtime || undefined);
   };
 
   return (
     <Modal open={open} onClose={onClose} title="New session" size="default">
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: "var(--space-3)" }}>
-        <label htmlFor="new-session-agent">
-          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-            Agent
-          </div>
-          <select
-            id="new-session-agent"
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            disabled={busy}
-            required
-            className="select select--full"
-          >
-            {agents.map((a) => (
-              <option key={a.agent.name} value={a.agent.name}>
-                {a.agent.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          A new workdir will be created at <code>~/.emploke/sessions/&lt;id&gt;</code> and the agent
-          will be baked into it.
-        </p>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}>
+      <form onSubmit={onSubmit}>
+        <div className="modal__body">
+          <label htmlFor="new-session-agent">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Agent
+            </div>
+            <select
+              id="new-session-agent"
+              value={agent}
+              onChange={(e) => setAgent(e.target.value)}
+              disabled={busy}
+              required
+              className="select select--full"
+            >
+              {agents.map((a) => (
+                <option key={a.agent.name} value={a.agent.name}>
+                  {a.agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label htmlFor="new-session-runtime">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Runtime
+            </div>
+            <select
+              id="new-session-runtime"
+              value={runtime}
+              onChange={(e) => setRuntime(e.target.value)}
+              disabled={busy || runtimes.length === 0}
+              className="select select--full"
+            >
+              {runtimes.length === 0 ? (
+                <option value="">(server default)</option>
+              ) : (
+                runtimes.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            A new workdir will be created at{" "}
+            <code>
+              {sessionsRoot ? `${sessionsRoot}${pathSeparator}<id>` : "<sessions-root>/<id>"}
+            </code>{" "}
+            and the agent will be baked into it.
+          </p>
+        </div>
+        <div className="modal__footer">
           <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
@@ -428,97 +641,30 @@ function CreateModal({ open, agents, busy, onClose, onCreate }: CreateModalProps
   );
 }
 
-// ─── Launch modal ─────────────────────────────────────────────
+// ─── Fallback modal ───────────────────────────────────────────
 
-interface LaunchModalBodyProps {
-  session: SessionRecord;
-  command: LaunchCommand;
+interface FallbackModalBodyProps {
+  display: string;
+  reason: string;
   onClose: () => void;
 }
 
-function LaunchModalBody({ session, command, onClose }: LaunchModalBodyProps) {
+function FallbackModalBody({ display, reason, onClose }: FallbackModalBodyProps) {
   return (
-    <div style={{ display: "grid", gap: "var(--space-3)" }}>
-      <div>
-        <div className="muted" style={{ fontSize: 12 }}>
-          Session
+    <>
+      <div className="modal__body">
+        <div className="muted" style={{ fontSize: 13 }}>
+          We couldn't open a terminal automatically ({reason}). Run this command in your shell to
+          start the session:
         </div>
-        <div className="mono" style={{ fontSize: 13 }}>
-          {session.id}
-        </div>
+        <CopyRow text={display} />
       </div>
-      <div>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-          Run this in your terminal to start a fresh chat
-        </div>
-        <CopyRow text={command.display} />
-      </div>
-      {session.copilotSessions.length > 0 && <ResumePicker session={session} />}
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div className="modal__footer">
         <button type="button" className="btn btn--primary" onClick={onClose}>
           Done
         </button>
       </div>
-    </div>
-  );
-}
-
-interface ResumePickerProps {
-  session: SessionRecord;
-}
-
-function ResumePicker({ session }: ResumePickerProps) {
-  const [picked, setPicked] = useState<CopilotSessionInfo | null>(null);
-  const [cmd, setCmd] = useState<LaunchCommand | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const onPick = async (info: CopilotSessionInfo) => {
-    setError(null);
-    try {
-      const c = await getResumeCommand(session.id, info.sessionId);
-      if (!mountedRef.current) return;
-      setPicked(info);
-      setCmd(c);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
-    }
-  };
-
-  return (
-    <div>
-      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-        Resume a previous copilot session ({session.copilotSessions.length})
-      </div>
-      <select
-        onChange={(e) => {
-          const info = session.copilotSessions.find((s) => s.sessionId === e.target.value);
-          if (info) onPick(info);
-        }}
-        value={picked?.sessionId ?? ""}
-        className="select select--full"
-        style={{ marginBottom: 8 }}
-      >
-        <option value="" disabled>
-          Choose…
-        </option>
-        {session.copilotSessions.map((s) => (
-          <option key={s.sessionId} value={s.sessionId}>
-            {s.name ?? s.sessionId} {s.updatedAt ? `· ${formatRelative(s.updatedAt)}` : ""}
-          </option>
-        ))}
-      </select>
-      {error && <div className="alert alert--error">⚠️ {error}</div>}
-      {cmd && <CopyRow text={cmd.display} />}
-    </div>
+    </>
   );
 }
 
@@ -526,7 +672,7 @@ function ResumePicker({ session }: ResumePickerProps) {
 
 interface DeleteModalBodyProps {
   session: SessionRecord;
-  alsoDeleteCopilotState: boolean;
+  alsoDeleteRuntimeState: boolean;
   busy: boolean;
   onToggle: (v: boolean) => void;
   onCancel: () => void;
@@ -535,34 +681,36 @@ interface DeleteModalBodyProps {
 
 function DeleteModalBody({
   session,
-  alsoDeleteCopilotState,
+  alsoDeleteRuntimeState,
   busy,
   onToggle,
   onCancel,
   onConfirm,
 }: DeleteModalBodyProps) {
+  const hasRuntimeState = session.runtimeSessionId !== null;
   return (
-    <div style={{ display: "grid", gap: "var(--space-3)" }}>
-      <p>
-        Delete session <code>{session.id}</code> ({session.agent})?
-      </p>
-      <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-        This removes the workdir at <code>{session.workdir}</code>.
-      </p>
-      {session.copilotSessions.length > 0 && (
-        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-          <input
-            type="checkbox"
-            checked={alsoDeleteCopilotState}
-            onChange={(e) => onToggle(e.target.checked)}
-            disabled={busy}
-          />
-          Also delete {session.copilotSessions.length} copilot session
-          {session.copilotSessions.length === 1 ? "" : "s"} from
-          <code>~/.copilot/session-state/</code>
-        </label>
-      )}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}>
+    <>
+      <div className="modal__body">
+        <p>
+          Delete session <code>{session.id}</code> ({session.agent})?
+        </p>
+        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+          This removes the workdir at <code>{session.workdir}</code>.
+        </p>
+        {hasRuntimeState && (
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={alsoDeleteRuntimeState}
+              onChange={(e) => onToggle(e.target.checked)}
+              disabled={busy}
+            />
+            Also delete the {session.runtime} runtime state
+            {session.runtimeSessionId ? ` (${session.runtimeSessionId.slice(0, 8)}…)` : ""}
+          </label>
+        )}
+      </div>
+      <div className="modal__footer">
         <button type="button" className="btn btn--ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
@@ -570,7 +718,7 @@ function DeleteModalBody({
           {busy ? "Deleting…" : "Delete"}
         </button>
       </div>
-    </div>
+    </>
   );
 }
 

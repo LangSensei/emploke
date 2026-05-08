@@ -1,7 +1,11 @@
 /**
- * Errors thrown by the sessions package. All are subclasses of Error with
- * stable `name` strings so callers can branch by `e.name` without instanceof
- * checks across realms.
+ * Errors thrown by the sessions package. All have stable `name` strings so
+ * callers can branch by `e.name` without instanceof checks across realms.
+ *
+ * Runtime-level errors (UnknownRuntimeError, RuntimeRefreshFailed,
+ * RuntimeStateDeletionFailed, RuntimeProvisionFailed) are imported directly
+ * from `@emploke/runtime` — they are not re-wrapped here so callers can
+ * distinguish "runtime adapter failed" from "session-layer logic failed".
  */
 
 export class SessionsError extends Error {
@@ -14,7 +18,7 @@ export class SessionsError extends Error {
 /** A session ID supplied by a caller did not match the canonical format. */
 export class InvalidSessionIdError extends SessionsError {
   constructor(public readonly id: string) {
-    super(`invalid session id: ${JSON.stringify(id)} (expected YYYYMMDD-HHMMSS-xxxxxxxx)`);
+    super(`invalid session id: ${JSON.stringify(id)} (expected YYYYMMDD-xxxxxxxx)`);
     this.name = "InvalidSessionIdError";
   }
 }
@@ -47,35 +51,17 @@ export class AgentNotFoundError extends SessionsError {
   }
 }
 
-/** Caller-supplied Copilot session id failed format/scope validation. */
-export class InvalidCopilotSessionIdError extends SessionsError {
-  constructor(public readonly id: string) {
-    super(`invalid copilot session id: ${JSON.stringify(id)} (expected UUID)`);
-    this.name = "InvalidCopilotSessionIdError";
-  }
-}
-
-/** A Copilot session id was valid but does not belong to the given emploke session. */
-export class CopilotSessionNotFoundError extends SessionsError {
+/**
+ * The workdir exists but its `session.json` is missing, malformed, or
+ * declares an unsupported `schemaVersion`. Surfaced by list()/get() — they
+ * skip and warn — and by delete() — which throws so the user can investigate.
+ */
+export class SessionCorruptedError extends SessionsError {
   constructor(
-    public readonly sessionId: string,
-    public readonly copilotSessionId: string,
+    public readonly id: string,
+    public readonly reason: string,
   ) {
-    super(
-      `copilot session ${copilotSessionId} is not associated with emploke session ${sessionId}`,
-    );
-    this.name = "CopilotSessionNotFoundError";
-  }
-}
-
-/** delete({ deleteCopilotState: true }) failed to remove some Copilot session dirs. */
-export class CopilotStateDeletionFailed extends SessionsError {
-  constructor(
-    public readonly sessionId: string,
-    public readonly failures: ReadonlyArray<{ copilotSessionId: string; reason: string }>,
-  ) {
-    const summary = failures.map((f) => `${f.copilotSessionId}: ${f.reason}`).join("; ");
-    super(`failed to delete copilot state for ${sessionId}: ${summary}`);
-    this.name = "CopilotStateDeletionFailed";
+    super(`session ${id} is corrupted: ${reason}`);
+    this.name = "SessionCorruptedError";
   }
 }

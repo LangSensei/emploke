@@ -74,12 +74,18 @@ importers:
         specifier: ^6.3.5
         version: 6.4.2(@types/node@22.19.17)(tsx@4.21.0)
 
-  packages/provisioner:
+  packages/runtime:
     dependencies:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.1
     devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
@@ -95,12 +101,15 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
-      '@emploke/provisioner':
+      '@emploke/runtime':
         specifier: workspace:*
-        version: link:../provisioner
+        version: link:../runtime
       '@emploke/session':
         specifier: workspace:*
         version: link:../session
+      '@emploke/terminal':
+        specifier: workspace:*
+        version: link:../terminal
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.14(hono@4.12.18)
@@ -126,9 +135,9 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
-      '@emploke/provisioner':
+      '@emploke/runtime':
         specifier: workspace:*
-        version: link:../provisioner
+        version: link:../runtime
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -147,6 +156,22 @@ importers:
         version: 2.1.9(@types/node@22.19.17)
 
   packages/task:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)
+
+  packages/terminal:
+    dependencies:
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

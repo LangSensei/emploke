@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type CatalogData, fetchAll } from "./api";
+import { type CatalogData, fetchAll, getConfig, type ServerConfig } from "./api";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
@@ -33,6 +33,7 @@ export function App() {
     agents: [],
     mcps: [],
   });
+  const [config, setConfig] = useState<ServerConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -44,6 +45,23 @@ export function App() {
       setError((e as Error).message);
     }
   };
+
+  // Server config is static for the lifetime of the server process; one
+  // fetch on mount is enough. Soft-fails to null so the UI degrades to
+  // showing "—" for paths it doesn't yet know.
+  useEffect(() => {
+    let cancelled = false;
+    getConfig()
+      .then((c) => {
+        if (!cancelled) setConfig(c);
+      })
+      .catch(() => {
+        // Non-fatal: pages that need config will render placeholders.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
   useEffect(() => {
@@ -76,7 +94,7 @@ export function App() {
             />
           )}
 
-          {section === "sessions" && <SessionsPage agents={data.agents} />}
+          {section === "sessions" && <SessionsPage agents={data.agents} config={config} />}
 
           {section === "substrates" && (
             <ComingSoonPage
@@ -89,6 +107,7 @@ export function App() {
           {section === "settings" && (
             <SettingsPage
               serverUrl={typeof window !== "undefined" ? window.location.origin : "—"}
+              config={config}
             />
           )}
         </div>

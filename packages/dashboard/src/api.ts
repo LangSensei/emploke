@@ -153,24 +153,20 @@ export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
 
 // ─── Sessions ─────────────────────────────────────────────────────
 
-export interface CopilotSessionInfo {
-  sessionId: string;
-  name?: string;
-  summary?: string;
-  /** ISO 8601 string. */
-  createdAt?: string;
-  /** ISO 8601 string. */
-  updatedAt?: string;
-}
-
 export interface SessionRecord {
   id: string;
   workdir: string;
   agent: string;
+  /** Runtime kind (e.g. "copilot"). */
+  runtime: string;
+  /** Native session ID assigned by the runtime, or null if not yet known. */
+  runtimeSessionId: string | null;
   /** ISO 8601 string. */
   createdAt: string;
-  copilotSessions: CopilotSessionInfo[];
-  latestCopilotSession: CopilotSessionInfo | null;
+  /** ISO 8601 string of the runtime's last observed activity, or null. */
+  lastActiveAt: string | null;
+  /** Short human-readable preview from the runtime, or null. */
+  preview: string | null;
 }
 
 export interface LaunchCommand {
@@ -180,21 +176,47 @@ export interface LaunchCommand {
   display: string;
 }
 
-export const listSessions = (agent?: string): Promise<SessionRecord[]> => {
-  const qs = agent ? `?agent=${encodeURIComponent(agent)}` : "";
-  return fetchJson<SessionRecord[]>(`/api/sessions${qs}`, "sessions");
+export interface ListSessionsOpts {
+  agent?: string;
+  /** ISO 8601 timestamp; sessions created before this are excluded server-side. */
+  createdSince?: string;
+}
+
+export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord[]> => {
+  const params = new URLSearchParams();
+  if (opts.agent) params.set("agent", opts.agent);
+  if (opts.createdSince) params.set("createdSince", opts.createdSince);
+  const qs = params.toString();
+  return fetchJson<SessionRecord[]>(`/api/sessions${qs ? `?${qs}` : ""}`, "sessions");
 };
+
+export const listRuntimes = (): Promise<string[]> =>
+  fetchJson<string[]>("/api/runtimes", "runtimes");
+
+export interface ServerConfig {
+  catalogDir: string;
+  sessionsRoot: string;
+  host: string;
+  port: number;
+  /** Native path separator on the server's OS. */
+  pathSeparator: string;
+}
+
+export const getConfig = (): Promise<ServerConfig> =>
+  fetchJson<ServerConfig>("/api/config", "config");
 
 export const getSession = (id: string): Promise<SessionRecord> =>
   fetchJson<SessionRecord>(`/api/sessions/${encodeURIComponent(id)}`, "session");
 
-export const createSession = async (agent: string): Promise<SessionRecord> => {
-  const r = await fetch("/api/sessions", jsonInit("POST", { agent }));
+export const createSession = async (agent: string, runtime?: string): Promise<SessionRecord> => {
+  const body: Record<string, string> = { agent };
+  if (runtime !== undefined) body.runtime = runtime;
+  const r = await fetch("/api/sessions", jsonInit("POST", body));
   if (!r.ok) {
     let msg = `${r.status}`;
     try {
-      const body = await r.json();
-      if (body && typeof body.error === "string") msg = body.error;
+      const j = await r.json();
+      if (j && typeof j.error === "string") msg = j.error;
     } catch {
       // body not JSON; keep status
     }
@@ -203,19 +225,37 @@ export const createSession = async (agent: string): Promise<SessionRecord> => {
   return (await r.json()) as SessionRecord;
 };
 
-export const deleteSession = (id: string, deleteCopilotState = false) => {
-  const qs = deleteCopilotState ? "?deleteCopilotState=1" : "";
+export const deleteSession = (id: string, deleteRuntimeState = false) => {
+  const qs = deleteRuntimeState ? "?deleteRuntimeState=1" : "";
   return mutate(`/api/sessions/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
 };
 
-export const getLaunchCommand = (id: string): Promise<LaunchCommand> =>
-  fetchJson<LaunchCommand>(
-    `/api/sessions/${encodeURIComponent(id)}/launch-command`,
-    "launch-command",
-  );
+export interface SpawnSuccess {
+  ok: true;
+  launcher: string;
+  display: string;
+}
 
-export const getResumeCommand = (id: string, copilotSessionId: string): Promise<LaunchCommand> =>
-  fetchJson<LaunchCommand>(
-    `/api/sessions/${encodeURIComponent(id)}/resume-command/${encodeURIComponent(copilotSessionId)}`,
-    "resume-command",
-  );
+export interface SpawnFailure {
+  ok: false;
+  error: string;
+  code?: string;
+  display: string;
+}
+
+export type SpawnResult = SpawnSuccess | SpawnFailure;
+
+export const spawnSession = async (id: string): Promise<SpawnResult> => {
+  const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/spawn`, { method: "POST" });
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const j = await r.json();
+      if (j && typeof j.error === "string") msg = j.error;
+    } catch {
+      // not json
+    }
+    throw new Error(msg);
+  }
+  return (await r.json()) as SpawnResult;
+};

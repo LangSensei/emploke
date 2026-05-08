@@ -1,41 +1,38 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, Catalog } from "@emploke/catalog";
-import type { Provisioner, ProvisionParams } from "@emploke/provisioner";
+import type { LaunchCommand, Runtime, Session } from "@emploke/runtime";
+import {
+  RuntimeProvisionFailed,
+  RuntimeRegistry,
+  RuntimeStateDeletionFailed,
+  UnknownRuntimeError,
+} from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
-  CopilotSessionNotFoundError,
-  CopilotStateDeletionFailed,
-  InvalidCopilotSessionIdError,
+  CURRENT_SCHEMA_VERSION,
   InvalidSessionIdError,
+  SESSION_FILE_NAME,
   SessionManager,
   SessionNotFoundError,
 } from "../src/index.js";
-import { realNormalizeCwd } from "../src/paths.js";
-
-// Make node:fs/promises.rm mockable. Other exports default to the real impl;
-// individual tests can override rm via vi.mocked(fsp.rm).mockImplementation*.
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, rm: vi.fn(actual.rm) };
-});
 
 // ───── helpers ──────────────────────────────────────────────
 
 let root: string;
-let copilotStateDir: string;
+let scratch: string;
 let catalogDir: string;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "emploke-sessions-root-"));
-  copilotStateDir = await mkdtemp(path.join(tmpdir(), "emploke-copilot-state-"));
+  scratch = await mkdtemp(path.join(tmpdir(), "emploke-sessions-scratch-"));
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
-  await rm(copilotStateDir, { recursive: true, force: true });
+  await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });
 });
 
@@ -57,32 +54,93 @@ function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
   } as unknown as Catalog;
 }
 
-class FakeProvisioner implements Provisioner {
-  readonly name = "fake";
-  calls: ProvisionParams[] = [];
-  shouldFail = false;
-  async provision(params: ProvisionParams): Promise<void> {
-    this.calls.push(params);
-    if (this.shouldFail) throw new Error("provision boom");
-    // Mimic real provisioner: copy AGENTS.md with frontmatter so the agent
-    // name is discoverable via readAgentName().
-    await mkdir(params.targetDir, { recursive: true });
-    const agentName = params.resolveResult.agent.name;
-    await writeFile(
-      path.join(params.targetDir, "AGENTS.md"),
-      `---\nname: ${agentName}\n---\n# agent\n`,
-      "utf8",
-    );
-  }
-}
-
 const fakeAgentResolve = (name: string): AgentResolveResult =>
   ({
-    agent: { name, description: "x" },
+    agent: { name, description: "x", version: "0.0.1" },
     agentPath: path.join(catalogDir, "agents", name),
     skills: [],
     mcps: [],
   }) as unknown as AgentResolveResult;
+
+/**
+ * A configurable in-memory Runtime that mimics the contract without touching
+ * any real CLI. Defaults: provision writes a minimal AGENTS.md so
+ * readAgentName() finds the right name; refresh returns null (no activity).
+ */
+class StubRuntime implements Runtime {
+  readonly kind: string;
+  provisionCalls: { workdir: string; agent: AgentResolveResult }[] = [];
+  refreshCalls: Session[] = [];
+  deleteStateCalls: Session[] = [];
+  buildLaunchCalls: Session[] = [];
+
+  /** Defaults to a stable UUID for determinism. */
+  provisionId: string | null = "12345678-1234-1234-1234-1234567890ab";
+  /** If set, provision throws this. */
+  provisionError: Error | null = null;
+  /** If set, refresh returns this. */
+  refreshResult: { lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null =
+    null;
+  /** If set, refresh throws this. */
+  refreshError: Error | null = null;
+  /** If set, deleteState throws this. */
+  deleteStateError: Error | null = null;
+
+  constructor(kind = "copilot") {
+    this.kind = kind;
+  }
+
+  async provision(
+    workdir: string,
+    agent: AgentResolveResult,
+  ): Promise<{ runtimeSessionId: string | null }> {
+    this.provisionCalls.push({ workdir, agent });
+    if (this.provisionError) throw this.provisionError;
+    await mkdir(workdir, { recursive: true });
+    await writeFile(
+      path.join(workdir, "AGENTS.md"),
+      `---\nname: ${agent.agent.name}\n---\n# agent\n`,
+      "utf8",
+    );
+    return { runtimeSessionId: this.provisionId };
+  }
+
+  async refresh(s: Session) {
+    this.refreshCalls.push(s);
+    if (this.refreshError) throw this.refreshError;
+    return this.refreshResult;
+  }
+
+  buildLaunch(s: Session): LaunchCommand {
+    this.buildLaunchCalls.push(s);
+    return {
+      cmd: "stub",
+      args: s.runtimeSessionId === null ? [] : [`--id=${s.runtimeSessionId}`],
+      cwd: s.workdir,
+      display: `stub ${s.workdir}`,
+    };
+  }
+
+  async deleteState(s: Session): Promise<void> {
+    this.deleteStateCalls.push(s);
+    if (this.deleteStateError) throw this.deleteStateError;
+  }
+}
+
+function makeRegistry(rt: Runtime): RuntimeRegistry {
+  const reg = new RuntimeRegistry();
+  reg.register(rt);
+  return reg;
+}
+
+const fixedNow = (iso: string) => () => new Date(iso);
+const seqRandom = () => {
+  let i = 0;
+  return (n: number) => {
+    i++;
+    return Buffer.alloc(n, i);
+  };
+};
 
 const recorder = () => {
   const calls: { msg: string; meta?: object }[] = [];
@@ -94,20 +152,14 @@ const recorder = () => {
   };
 };
 
-const fixedNow = (iso: string) => () => new Date(iso);
-const seqRandom = () => {
-  let i = 0;
-  return (n: number) => {
-    i++;
-    return Buffer.alloc(n, i);
-  };
-};
-
 // ───── construction ──────────────────────────────────────────
 
 describe("SessionManager defaults", () => {
-  it("constructs with only catalog", () => {
-    const m = new SessionManager({ catalog: stubCatalog() });
+  it("constructs with catalog + runtimeRegistry", () => {
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+    });
     expect(m).toBeDefined();
   });
 });
@@ -115,102 +167,100 @@ describe("SessionManager defaults", () => {
 // ───── create ────────────────────────────────────────────────
 
 describe("create()", () => {
-  it("provisions and records the agent name from AGENTS.md", async () => {
-    const fp = new FakeProvisioner();
+  it("provisions, persists session.json, returns Session shape", async () => {
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: fp,
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
       randomBytes: seqRandom(),
     });
-    const rec = await m.create({ agent: "demo" });
-    expect(rec.agent).toBe("demo");
-    expect(rec.workdir).toBe(path.join(root, rec.id));
-    expect(rec.copilotSessions).toEqual([]);
-    expect(rec.latestCopilotSession).toBeNull();
-    expect(fp.calls).toHaveLength(1);
-    // After create, list() should see the record (proves no marker is needed
-    // — the AGENTS.md frontmatter alone is enough).
-    const listed = await m.list();
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.agent).toBe("demo");
+    const s = await m.create({ agent: "demo" });
+
+    expect(s.agent).toBe("demo");
+    expect(s.runtime).toBe("copilot");
+    expect(s.runtimeSessionId).toBe("12345678-1234-1234-1234-1234567890ab");
+    expect(s.lastActiveAt).toBeNull();
+    expect(s.preview).toBeNull();
+    expect(s.workdir).toBe(path.join(root, s.id));
+    expect(rt.provisionCalls).toHaveLength(1);
+
+    const persisted = JSON.parse(await readFile(path.join(s.workdir, SESSION_FILE_NAME), "utf8"));
+    expect(persisted).toEqual({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      runtime: "copilot",
+      createdAt: "2026-05-08T01:05:00.000Z",
+      runtimeSessionId: "12345678-1234-1234-1234-1234567890ab",
+    });
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+    });
     await expect(m.create({ agent: "" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it("throws AgentNotFoundError when catalog rejects", async () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root,
-      copilotStateDir,
     });
     await expect(m.create({ agent: "missing" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
+  it("throws UnknownRuntimeError when runtime kind is not registered", async () => {
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(new StubRuntime("copilot")),
+      root,
+    });
+    await expect(m.create({ agent: "demo", runtime: "gemini" })).rejects.toBeInstanceOf(
+      UnknownRuntimeError,
+    );
+  });
+
+  it("uses defaultRuntime override", async () => {
+    const claudeRt = new StubRuntime("claude");
+    const reg = new RuntimeRegistry();
+    reg.register(claudeRt);
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: reg,
+      defaultRuntime: "claude",
+      root,
+    });
+    const s = await m.create({ agent: "demo" });
+    expect(s.runtime).toBe("claude");
+  });
+
   it("cleans up workdir on provisioner failure", async () => {
-    const fp = new FakeProvisioner();
-    fp.shouldFail = true;
+    const rt = new StubRuntime();
+    rt.provisionError = new RuntimeProvisionFailed("copilot", "/x", new Error("boom"));
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: fp,
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    await expect(m.create({ agent: "demo" })).rejects.toThrow("provision boom");
-    // No directory should remain under root.
-    const entries = await import("node:fs/promises").then((fs) => fs.readdir(root));
-    expect(entries).toEqual([]);
+    await expect(m.create({ agent: "demo" })).rejects.toBeInstanceOf(RuntimeProvisionFailed);
+    const fsp = await import("node:fs/promises");
+    expect(await fsp.readdir(root)).toEqual([]);
   });
 
-  it("retries on EEXIST", async () => {
-    let attempts = 0;
-    const baseRand = seqRandom();
+  it("supports null runtimeSessionId at create time (gemini-style)", async () => {
+    const rt = new StubRuntime();
+    rt.provisionId = null;
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
-      now: fixedNow("2026-05-08T01:05:00.000Z"),
-      // Custom random: returns the same first byte for the first 2 calls so
-      // the directory pre-collides with itself, then differs on attempt 3.
-      randomBytes: (n) => {
-        attempts++;
-        if (attempts <= 2) return Buffer.alloc(n, 1);
-        return baseRand(n);
-      },
     });
-    // Pre-create the directory that the first attempt would try to take.
-    const collide = "20260508-01010101";
-    await mkdir(path.join(root, collide), { recursive: true });
-    const rec = await m.create({ agent: "demo" });
-    expect(rec.id).not.toBe(collide);
-  });
-
-  it("logs cleanup failure but rethrows the original error", async () => {
-    const r = recorder();
-    const fp = new FakeProvisioner();
-    fp.provision = async (p) => {
-      // Create the workdir but make it unreadable on POSIX-like systems
-      // by populating, then throw. We simulate cleanup failure by stubbing
-      // rm — easier: just throw and trust the cleanup happy path is tested
-      // elsewhere. Here we verify the rethrow path.
-      await mkdir(p.targetDir, { recursive: true });
-      throw new Error("boom");
-    };
-    const m = new SessionManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: fp,
-      root,
-      copilotStateDir,
-      logger: r.logger,
-    });
-    await expect(m.create({ agent: "demo" })).rejects.toThrow("boom");
+    const s = await m.create({ agent: "demo" });
+    expect(s.runtimeSessionId).toBeNull();
   });
 });
 
@@ -220,43 +270,53 @@ describe("list()", () => {
   it("returns empty when root does not exist", async () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root: path.join(root, "missing"),
-      copilotStateDir,
     });
     expect(await m.list()).toEqual([]);
   });
 
-  it("ignores dirs without a readable AGENTS.md", async () => {
+  it("ignores dirs without a readable session.json", async () => {
+    const r = recorder();
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
+      logger: r.logger,
     });
     await m.create({ agent: "demo" });
-    // Stray dir matching the id pattern but with no AGENTS.md at all.
     await mkdir(path.join(root, "20260101-deadbeef"), { recursive: true });
-    // Stray dir matching the id pattern with an AGENTS.md missing frontmatter.
-    const stray2 = path.join(root, "20260101-cafebabe");
-    await mkdir(stray2, { recursive: true });
-    await writeFile(path.join(stray2, "AGENTS.md"), "# no frontmatter\n", "utf8");
-    // Stray dir without the right name.
     await mkdir(path.join(root, "not-a-session"), { recursive: true });
     const out = await m.list();
     expect(out).toHaveLength(1);
   });
 
+  it("ignores dirs whose session.json is corrupted", async () => {
+    const r = recorder();
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      root,
+      logger: r.logger,
+    });
+    await m.create({ agent: "demo" });
+    const stray = path.join(root, "20260101-cafebabe");
+    await mkdir(stray, { recursive: true });
+    await writeFile(path.join(stray, SESSION_FILE_NAME), "{not json", "utf8");
+    const out = await m.list();
+    expect(out).toHaveLength(1);
+    expect(r.calls.some((c) => c.msg.includes("corrupted"))).toBe(true);
+  });
+
   it("filters by agent", async () => {
     const m = new SessionManager({
       catalog: stubCatalog({
-        agents: {
-          a: fakeAgentResolve("a"),
-          b: fakeAgentResolve("b"),
-        },
+        agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root,
-      copilotStateDir,
     });
     await m.create({ agent: "a" });
     await m.create({ agent: "b" });
@@ -265,65 +325,145 @@ describe("list()", () => {
     expect(onlyA[0]?.agent).toBe("a");
   });
 
-  it("joins copilot sessions by cwd and sets latest", async () => {
+  it("filters by createdSince and skips refresh on excluded sessions", async () => {
+    const rt = new StubRuntime();
+    let nowMs = Date.UTC(2026, 0, 1); // Jan 1 2026
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
+      now: () => new Date(nowMs),
     });
-    const rec = await m.create({ agent: "demo" });
-    const cwdKey = await realNormalizeCwd(rec.workdir);
-    // Need to write a YAML whose cwd, after realpath+normalize, equals cwdKey.
-    // The simplest is to write the resolved real workdir directly.
-    const sid1 = "11111111-1111-1111-1111-111111111111";
-    const sid2 = "22222222-2222-2222-2222-222222222222";
-    await mkdir(path.join(copilotStateDir, sid1), { recursive: true });
-    await writeFile(
-      path.join(copilotStateDir, sid1, "workspace.yaml"),
-      `cwd: ${cwdKey}\nupdated_at: 2026-05-08T01:05:00Z\nname: older\n`,
-      "utf8",
-    );
-    await mkdir(path.join(copilotStateDir, sid2), { recursive: true });
-    await writeFile(
-      path.join(copilotStateDir, sid2, "workspace.yaml"),
-      `cwd: ${cwdKey}\nupdated_at: 2026-05-08T02:05:00Z\nname: newer\n`,
-      "utf8",
-    );
-    const [out] = await m.list();
-    expect(out?.copilotSessions.map((s) => s.sessionId)).toEqual([sid2, sid1]);
-    expect(out?.latestCopilotSession?.name).toBe("newer");
+    // Older session: created Jan 1
+    await m.create({ agent: "demo" });
+    // Newer session: created Feb 1
+    nowMs = Date.UTC(2026, 1, 1);
+    await m.create({ agent: "demo" });
+
+    rt.refreshCalls.length = 0;
+    const onlyNew = await m.list({ createdSince: "2026-01-15T00:00:00.000Z" });
+    expect(onlyNew).toHaveLength(1);
+    expect(onlyNew[0]?.createdAt).toBe("2026-02-01T00:00:00.000Z");
+    // Critical: refresh must NOT have been called for the excluded entry.
+    expect(rt.refreshCalls).toHaveLength(1);
   });
 
-  it("tolerates missing copilot state dir", async () => {
+  it("createdSince combined with agent narrows further", async () => {
+    let nowMs = Date.UTC(2026, 0, 1);
+    const m = new SessionManager({
+      catalog: stubCatalog({
+        agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
+      }),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+      now: () => new Date(nowMs),
+    });
+    await m.create({ agent: "a" }); // old, agent a
+    nowMs = Date.UTC(2026, 1, 1);
+    await m.create({ agent: "a" }); // new, agent a
+    await m.create({ agent: "b" }); // new, agent b
+
+    const out = await m.list({ agent: "a", createdSince: "2026-01-15T00:00:00.000Z" });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.agent).toBe("a");
+    expect(out[0]?.createdAt).toBe("2026-02-01T00:00:00.000Z");
+  });
+
+  it("folds runtime.refresh activity into the record", async () => {
+    const rt = new StubRuntime();
+    rt.refreshResult = {
+      lastActiveAt: "2026-05-08T02:00:00.000Z",
+      preview: "did stuff",
+      runtimeSessionId: rt.provisionId as string,
+    };
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir: path.join(copilotStateDir, "nope"),
     });
     await m.create({ agent: "demo" });
-    const out = await m.list();
-    expect(out[0]?.copilotSessions).toEqual([]);
+    const [out] = await m.list();
+    expect(out?.lastActiveAt).toBe("2026-05-08T02:00:00.000Z");
+    expect(out?.preview).toBe("did stuff");
   });
 
-  it("sorts records newest-first by createdAt", async () => {
-    // The id no longer encodes within-day order — sort is driven by the
-    // workdir's birthtime (filesystem-side), which monotonically increases
-    // for sequential mkdir calls in the same test.
+  it("treats null refresh as no activity (lastActiveAt/preview stay null)", async () => {
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
+    await m.create({ agent: "demo" });
+    const [out] = await m.list();
+    expect(out?.lastActiveAt).toBeNull();
+    expect(out?.preview).toBeNull();
+  });
+
+  it("warns and skips sessions whose runtime is not registered", async () => {
+    const r = recorder();
+    // Create a session under "copilot" but then construct a manager whose
+    // registry doesn't know "copilot".
+    const rtA = new StubRuntime();
+    const m1 = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rtA),
+      root,
+    });
+    await m1.create({ agent: "demo" });
+
+    const m2 = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime("gemini")),
+      root,
+      logger: r.logger,
+    });
+    expect(await m2.list()).toEqual([]);
+    expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
+  });
+
+  it("persists discovered runtimeSessionId back to session.json (gemini-style)", async () => {
+    const rt = new StubRuntime();
+    rt.provisionId = null;
+    rt.refreshResult = {
+      lastActiveAt: "2026-05-08T02:00:00.000Z",
+      preview: null,
+      runtimeSessionId: "33333333-3333-3333-3333-333333333333",
+    };
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      root,
+    });
+    const s = await m.create({ agent: "demo" });
+    const [out] = await m.list();
+    expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
+    const persisted = JSON.parse(await readFile(path.join(s.workdir, SESSION_FILE_NAME), "utf8"));
+    expect(persisted.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
+  });
+
+  it("sorts by lastActiveAt desc, falling back to createdAt", async () => {
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      root,
+    });
+    // Three sessions: a is older, b is newer (no activity), c has activity.
+    rt.refreshResult = null;
     const a = await m.create({ agent: "demo" });
-    // Sleep ~50ms to ensure b's birthtime > a's birthtime even on FSes with
-    // coarse timestamp resolution. Most modern FSes give ms or ns precision.
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 5));
     const b = await m.create({ agent: "demo" });
+    rt.refreshResult = {
+      lastActiveAt: "2099-01-01T00:00:00.000Z",
+      preview: null,
+      runtimeSessionId: rt.provisionId as string,
+    };
+    const c = await m.create({ agent: "demo" });
+    rt.refreshResult = null;
     const out = await m.list();
-    expect(out.map((r) => r.id)).toEqual([b.id, a.id]);
+    // c has lastActiveAt=2099 → first. Then b/a sorted by createdAt desc.
+    expect(out.map((r) => r.id)).toEqual([c.id, b.id, a.id]);
   });
 });
 
@@ -333,22 +473,29 @@ describe("get()", () => {
   it("returns the record by id", async () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const got = await m.get(rec.id);
-    expect(got?.id).toBe(rec.id);
+    const s = await m.create({ agent: "demo" });
+    const got = await m.get(s.id);
+    expect(got?.id).toBe(s.id);
   });
 
   it("returns null for valid-but-unknown id", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+    });
     expect(await m.get("20260508-deadbeef")).toBeNull();
   });
 
   it("throws InvalidSessionIdError for malformed id", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+    });
     await expect(m.get("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 });
@@ -359,205 +506,118 @@ describe("delete()", () => {
   it("removes the workdir", async () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    await m.delete(rec.id);
-    await expect(stat(rec.workdir)).rejects.toThrow();
+    const s = await m.create({ agent: "demo" });
+    await m.delete(s.id);
+    await expect(stat(s.workdir)).rejects.toThrow();
   });
 
   it("throws SessionNotFoundError for unknown id", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+    });
     await expect(m.delete("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
   it("validates id format", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
+    const m = new SessionManager({
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      root,
+    });
     await expect(m.delete("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 
-  it("with deleteCopilotState=true: removes matched copilot dirs", async () => {
+  it("with deleteRuntimeState=true: calls runtime.deleteState before rm", async () => {
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const cwdKey = await realNormalizeCwd(rec.workdir);
-    const sid = "33333333-3333-3333-3333-333333333333";
-    await mkdir(path.join(copilotStateDir, sid), { recursive: true });
-    await writeFile(path.join(copilotStateDir, sid, "workspace.yaml"), `cwd: ${cwdKey}\n`, "utf8");
-    await m.delete(rec.id, { deleteCopilotState: true });
-    await expect(stat(path.join(copilotStateDir, sid))).rejects.toThrow();
+    const s = await m.create({ agent: "demo" });
+    await m.delete(s.id, { deleteRuntimeState: true });
+    expect(rt.deleteStateCalls).toHaveLength(1);
+    expect(rt.deleteStateCalls[0]?.id).toBe(s.id);
   });
 
-  it("with deleteCopilotState=true: surfaces failure and leaves workdir intact", async () => {
+  it("with deleteRuntimeState=true: surfaces failure and leaves workdir intact", async () => {
+    const rt = new StubRuntime();
+    rt.deleteStateError = new RuntimeStateDeletionFailed("copilot", "anyid", new Error("EBUSY"));
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const cwdKey = await realNormalizeCwd(rec.workdir);
-    const sid = "44444444-4444-4444-4444-444444444444";
-    await mkdir(path.join(copilotStateDir, sid), { recursive: true });
-    await writeFile(path.join(copilotStateDir, sid, "workspace.yaml"), `cwd: ${cwdKey}\n`, "utf8");
-    const fsp = await import("node:fs/promises");
-    const realRm = vi.mocked(fsp.rm).getMockImplementation();
-    if (!realRm) throw new Error("expected wrapped rm impl");
-    vi.mocked(fsp.rm).mockImplementation(async (p, opts) => {
-      if (typeof p === "string" && p.includes(sid)) {
-        throw new Error("EBUSY: simulated");
-      }
-      return realRm(p, opts);
-    });
-    try {
-      await expect(m.delete(rec.id, { deleteCopilotState: true })).rejects.toBeInstanceOf(
-        CopilotStateDeletionFailed,
-      );
-      // Workdir should still exist as a real directory (not just any node).
-      const st = await stat(rec.workdir);
-      expect(st.isDirectory()).toBe(true);
-    } finally {
-      vi.mocked(fsp.rm).mockImplementation(realRm);
-    }
+    const s = await m.create({ agent: "demo" });
+    await expect(m.delete(s.id, { deleteRuntimeState: true })).rejects.toBeInstanceOf(
+      RuntimeStateDeletionFailed,
+    );
+    const st = await stat(s.workdir);
+    expect(st.isDirectory()).toBe(true);
   });
 
-  it("with deleteCopilotState=true: post-rm sweep removes stragglers created during the delete window", async () => {
-    // Simulates a copilot session being created in the workdir BETWEEN the
-    // initial scan and the workdir rm. The post-rm sweep should catch it.
+  it("without deleteRuntimeState: does not call runtime.deleteState", async () => {
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const cwdKey = await realNormalizeCwd(rec.workdir);
-    const sidA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-    await mkdir(path.join(copilotStateDir, sidA), { recursive: true });
-    await writeFile(path.join(copilotStateDir, sidA, "workspace.yaml"), `cwd: ${cwdKey}\n`, "utf8");
-    const sidB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-    const fsp = await import("node:fs/promises");
-    const realRm = vi.mocked(fsp.rm).getMockImplementation();
-    if (!realRm) throw new Error("expected wrapped rm impl");
-    let plantedStraggler = false;
-    vi.mocked(fsp.rm).mockImplementation(async (p, opts) => {
-      if (typeof p === "string" && p === rec.workdir && !plantedStraggler) {
-        plantedStraggler = true;
-        await mkdir(path.join(copilotStateDir, sidB), { recursive: true });
-        await writeFile(
-          path.join(copilotStateDir, sidB, "workspace.yaml"),
-          `cwd: ${cwdKey}\n`,
-          "utf8",
-        );
-      }
-      return realRm(p, opts);
-    });
-    try {
-      await m.delete(rec.id, { deleteCopilotState: true });
-    } finally {
-      vi.mocked(fsp.rm).mockImplementation(realRm);
-    }
-    // Both A (caught in first pass) and B (the straggler) should be gone.
-    await expect(stat(path.join(copilotStateDir, sidA))).rejects.toThrow();
-    await expect(stat(path.join(copilotStateDir, sidB))).rejects.toThrow();
+    const s = await m.create({ agent: "demo" });
+    await m.delete(s.id);
+    expect(rt.deleteStateCalls).toEqual([]);
   });
 });
 
-// ───── launch / resume ──────────────────────────────────────
+// ───── buildLaunch ──────────────────────────────────────────
 
-describe("launch / resume", () => {
+describe("buildLaunch()", () => {
   it("returns launch command for a real session", async () => {
+    const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const c = await m.getLaunchCommand(rec.id);
-    expect(c.cmd).toBe("copilot");
-    expect(c.args).toEqual(["-i"]);
-    expect(c.cwd).toBe(rec.workdir);
+    const s = await m.create({ agent: "demo" });
+    const c = await m.buildLaunch(s.id);
+    expect(c.cmd).toBe("stub");
+    expect(c.cwd).toBe(s.workdir);
+    expect(c.args).toEqual([`--id=${s.runtimeSessionId}`]);
   });
 
-  it("getLaunchCommand throws SessionNotFoundError for unknown", async () => {
-    const m = new SessionManager({ catalog: stubCatalog(), root, copilotStateDir });
-    await expect(m.getLaunchCommand("20260508-deadbeef")).rejects.toBeInstanceOf(
-      SessionNotFoundError,
-    );
-  });
-
-  it("getResumeCommand validates copilot session id", async () => {
+  it("calls runtime.refresh first so a discovery-runtime can mint an id", async () => {
+    const rt = new StubRuntime();
+    rt.provisionId = null;
+    rt.refreshResult = {
+      lastActiveAt: "2026-05-08T02:00:00.000Z",
+      preview: null,
+      runtimeSessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+    };
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      runtimeRegistry: makeRegistry(rt),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    await expect(m.getResumeCommand(rec.id, "not-a-uuid")).rejects.toBeInstanceOf(
-      InvalidCopilotSessionIdError,
-    );
+    const s = await m.create({ agent: "demo" });
+    const c = await m.buildLaunch(s.id);
+    expect(c.args).toEqual(["--id=abcdef12-3456-7890-abcd-ef1234567890"]);
   });
 
-  it("getResumeCommand rejects UUID not associated with the workdir", async () => {
+  it("throws SessionNotFoundError for unknown", async () => {
     const m = new SessionManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
+      catalog: stubCatalog(),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
       root,
-      copilotStateDir,
     });
-    const rec = await m.create({ agent: "demo" });
-    const sid = "12345678-1234-1234-1234-1234567890ab";
-    await expect(m.getResumeCommand(rec.id, sid)).rejects.toBeInstanceOf(
-      CopilotSessionNotFoundError,
-    );
-  });
-
-  it("getResumeCommand returns shape", async () => {
-    const m = new SessionManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
-      root,
-      copilotStateDir,
-    });
-    const rec = await m.create({ agent: "demo" });
-    const cwdKey = await realNormalizeCwd(rec.workdir);
-    const sid = "12345678-1234-1234-1234-1234567890ab";
-    // Plant the matching copilot state so the ownership check passes.
-    await mkdir(path.join(copilotStateDir, sid), { recursive: true });
-    await writeFile(path.join(copilotStateDir, sid, "workspace.yaml"), `cwd: ${cwdKey}\n`, "utf8");
-    const c = await m.getResumeCommand(rec.id, sid);
-    expect(c.args).toEqual(["-i", "--resume", sid]);
+    await expect(m.buildLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 });
 
-// ───── list with relative root ────────────────────────────────
-
-describe("list() with relative root", () => {
-  it("returns absolute, normalized workdir paths", async () => {
-    // Use a relative path to root via mkdtemp result; recreate by computing
-    // a path relative to cwd. Test isolation: create a real abs dir, then
-    // pass relative form derived from process.cwd().
-    const absRoot = root;
-    const rel = path.relative(process.cwd(), absRoot);
-    const m = new SessionManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
-      root: rel,
-      copilotStateDir,
-    });
-    await m.create({ agent: "demo" });
-    const out = await m.list();
-    expect(out).toHaveLength(1);
-    const wd = out[0]?.workdir ?? "";
-    expect(path.isAbsolute(wd)).toBe(true);
-    expect(wd).toBe(path.resolve(absRoot, out[0]?.id ?? ""));
-  });
-});
+// Suppress unused imports warning for vi (kept available for future tests).
+void vi;

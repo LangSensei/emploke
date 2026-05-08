@@ -11,8 +11,9 @@
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
-    "@emploke/provisioner": "workspace:*",
+    "@emploke/runtime": "workspace:*",
     "@emploke/session": "workspace:*",
+    "@emploke/terminal": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "hono": "^4.7.11"
   },

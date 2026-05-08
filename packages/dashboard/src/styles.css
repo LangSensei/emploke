@@ -659,6 +659,11 @@ button {
   opacity: 0.6;
 }
 
+.empty__icon svg {
+  width: 1em;
+  height: 1em;
+}
+
 .empty__title {
   font-size: 15px;
   font-weight: 600;
@@ -1331,10 +1336,81 @@ button {
   width: 100%;
 }
 
+/* Standalone input matching .select styling for inline toolbar use. */
+.input {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+.input:hover {
+  border-color: var(--color-border-strong);
+}
+
+.input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+  border-color: var(--color-accent);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--color-surface);
+}
+
+/* ─── Segmented pills (e.g. time-range filter) ──────────────────── */
+
+.pills {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--color-bg);
+}
+
+.pills__btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.pills__btn:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+
+.pills__btn:hover:not(.pills__btn--active) {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.pills__btn--active {
+  background-color: var(--color-accent);
+  color: #fff;
+  cursor: default;
+}
+
+.pills__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ─── Sessions page ─────────────────────────────────────────────── */
 
-/* Sessions has 5 columns and benefits from filling the page width — the
-   default 1100px cap squeezes the activity column. */
+/* Sessions fills the page width so the activity column has room to breathe.
+   Each named column has a fixed width; Activity (the only un-classed column)
+   absorbs the remainder, which on wide screens leaves it generously sized. */
 .table--wide {
   max-width: none;
 }
@@ -1347,12 +1423,12 @@ button {
   width: 180px;
 }
 
-.table .col-created {
-  width: 110px;
+.table .col-runtime {
+  width: 140px;
 }
 
 .table .col-actions {
-  width: 132px;
+  width: 220px;
 }
 
 .session-id {
@@ -1381,14 +1457,23 @@ button {
   white-space: nowrap;
 }
 
+/* The activity cell stays on a single line: long previews truncate with
+   an ellipsis; the relative-time tail never wraps. min-width: 0 on both
+   the cell and the count is required for ellipsis inside a flex child. */
 .activity-cell {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  min-width: 0;
   font-size: 13px;
 }
 
 .activity-cell__count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -1398,12 +1483,24 @@ button {
 }
 
 .activity-cell__sep {
+  flex: 0 0 auto;
   color: var(--color-text-subtle);
+}
+
+.activity-cell .muted {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .row-actions {
   display: inline-flex;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-actions__launch {
+  width: 112px;
+  justify-content: center;
 }
 
 @keyframes spin {

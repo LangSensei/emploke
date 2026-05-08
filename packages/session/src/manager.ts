@@ -1,68 +1,72 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
-import { CopilotProvisioner, type Provisioner } from "@emploke/provisioner";
+import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
-import { indexByCwd, scanCopilotSessions } from "./copilot-state.js";
-import {
-  AgentNotFoundError,
-  CopilotSessionNotFoundError,
-  CopilotStateDeletionFailed,
-  InvalidCopilotSessionIdError,
-  SessionAlreadyExistsError,
-  SessionNotFoundError,
-} from "./errors.js";
+import { AgentNotFoundError, SessionAlreadyExistsError, SessionNotFoundError } from "./errors.js";
 import { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
-import { buildLaunchCommand, buildResumeCommand, isCopilotSessionId } from "./launch.js";
-import { realNormalizeCwd, safeJoinUnderRoot } from "./paths.js";
+import { safeJoinUnderRoot } from "./paths.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  readPersistedSession,
+  writePersistedSession,
+} from "./session-file.js";
 import type {
-  CopilotSessionInfo,
   CreateSessionOpts,
   DeleteSessionOpts,
-  LaunchCommand,
   ListSessionOpts,
   Logger,
+  PersistedSession,
   SessionManagerConfig,
-  SessionRecord,
 } from "./types.js";
 
 const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_ROOT = path.join(homedir(), ".emploke", "sessions");
-const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
+const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
 /**
- * Per-session workdir registry.
+ * Per-session workdir registry, parameterised over a set of CLI runtimes.
  *
- * - Owns the on-disk layout under `root` (default `~/.emploke/sessions`).
- * - Discovers Copilot sessions from `copilotStateDir` and joins them by cwd.
- * - Does not spawn any subprocess; getLaunchCommand returns the incantation.
+ * Owns the on-disk layout under `root` (default `~/.emploke/sessions`).
+ * Each session is one directory, holding:
+ *
+ *   - `AGENTS.md` — written by the runtime's provisioner (source of truth
+ *     for the agent's persona; the agent name is read from its frontmatter)
+ *   - `session.json` — the per-session state we persist (schema below)
+ *   - whatever else the runtime's provisioner deposited
+ *
+ * Session manager itself does not spawn any subprocess; callers receive a
+ * `LaunchCommand` and are responsible for execing it.
+ *
+ * Activity metadata (`lastActiveAt`, `preview`) is NOT persisted — it's
+ * read fresh from the runtime on every list/get call. The cost is one
+ * `runtime.refresh()` per session, which for copilot is a single yaml read.
  */
 export class SessionManager {
   private readonly catalog: Catalog;
-  private readonly provisioner: Provisioner;
+  private readonly runtimeRegistry: RuntimeRegistry;
+  private readonly defaultRuntime: string;
   private readonly root: string;
-  private readonly copilotStateDir: string;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
 
   constructor(config: SessionManagerConfig) {
     this.catalog = config.catalog;
-    this.provisioner = config.provisioner ?? new CopilotProvisioner();
+    this.runtimeRegistry = config.runtimeRegistry;
+    this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.root = config.root ?? DEFAULT_ROOT;
-    this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.logger = config.logger ?? SILENT_LOGGER;
     this.now = config.now ?? (() => new Date());
-    // randomBytes is read lazily from ids.ts default if undefined.
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }
 
   // ─── create ──────────────────────────────────────────────
 
-  async create(opts: CreateSessionOpts): Promise<SessionRecord> {
+  async create(opts: CreateSessionOpts): Promise<Session> {
     const agentName = opts.agent;
     if (typeof agentName !== "string" || agentName.length === 0) {
       throw new AgentNotFoundError(String(agentName));
@@ -77,7 +81,11 @@ export class SessionManager {
       throw new AgentNotFoundError(agentName, err as Error);
     }
 
-    // 2. Reserve a workdir via exclusive mkdir, retrying on EEXIST.
+    // 2. Pick the runtime. Throws UnknownRuntimeError if not registered.
+    const runtimeKind = opts.runtime ?? this.defaultRuntime;
+    const runtime = this.runtimeRegistry.get(runtimeKind);
+
+    // 3. Reserve a workdir via exclusive mkdir, retrying on EEXIST.
     await mkdir(this.root, { recursive: true });
     let id: string | null = null;
     let workdir: string | null = null;
@@ -96,36 +104,42 @@ export class SessionManager {
       }
     }
     if (id === null || workdir === null) {
-      // All retries hit EEXIST — return the last id we tried as the conflict
-      // marker (best-effort; the caller can retry the whole create).
       throw new SessionAlreadyExistsError(generateSessionId(this.now, this.randomBytes));
     }
 
-    // 3. Provision; cleanup on any failure. The provisioner writes AGENTS.md
-    //    (with frontmatter), .copilot/, etc. — there's no separate marker.
+    // 4. Provision and persist session.json. Atomic-ish: if anything fails,
+    //    rmdir the workdir and rethrow.
     try {
-      await this.provisioner.provision({ resolveResult, targetDir: workdir });
+      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult);
+      const createdAt = this.now().toISOString();
+      const persisted: PersistedSession = {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        runtime: runtime.kind,
+        createdAt,
+        runtimeSessionId,
+      };
+      await writePersistedSession(workdir, persisted);
+      // Build the in-memory view. Activity fields start null; the user
+      // hasn't launched yet.
+      return {
+        id,
+        workdir,
+        agent: agentName,
+        runtime: runtime.kind,
+        runtimeSessionId,
+        createdAt,
+        lastActiveAt: null,
+        preview: null,
+      };
     } catch (err) {
       await safeRm(workdir, this.logger);
       throw err;
     }
-
-    // createdAt: read the workdir's birthtime (set when mkdir ran above).
-    const createdAt = await readCreatedAt(workdir);
-
-    return {
-      id,
-      workdir,
-      agent: agentName,
-      createdAt,
-      copilotSessions: [],
-      latestCopilotSession: null,
-    };
   }
 
   // ─── list ────────────────────────────────────────────────
 
-  async list(opts: ListSessionOpts = {}): Promise<SessionRecord[]> {
+  async list(opts: ListSessionOpts = {}): Promise<Session[]> {
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(this.root, { withFileTypes: true });
@@ -133,76 +147,53 @@ export class SessionManager {
       return [];
     }
 
-    // Build copilot cwd -> sessions map ONCE per call.
-    const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
-    const copilotIndex = indexByCwd(copilotEntries);
+    // Two-pass load:
+    //   1. Read session.json + AGENTS.md in parallel for every candidate dir.
+    //      Each "draft" has agent/createdAt populated but lastActiveAt/preview
+    //      still null. This pass is cheap (~2 file reads each).
+    //   2. Apply the cheap filters (agent, createdSince) on the drafts.
+    //   3. Run runtime.refresh() in parallel ONLY on survivors. This is the
+    //      expensive bit (yaml read for copilot), so narrowing first matters
+    //      a lot when the user has a small time window selected.
+    const drafts = await Promise.all(
+      entries
+        .filter((e) => e.isDirectory() && SESSION_ID_RE.test(e.name))
+        .map((e) => {
+          const id = e.name;
+          const workdir = safeJoinUnderRoot(this.root, id);
+          return this.loadPersistent(id, workdir);
+        }),
+    );
 
-    const records: SessionRecord[] = [];
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const id = e.name;
-      // Skip names that don't look like session ids.
-      if (!SESSION_ID_RE.test(id)) continue;
-      // Use safeJoinUnderRoot so workdir is always absolute & validated, even
-      // if the caller configured a relative `root`.
-      const workdir = safeJoinUnderRoot(this.root, id);
-      const agent = await readAgentName(workdir);
-      if (agent === null) {
-        // Half-baked dir (provisioner failed mid-way and cleanup also failed)
-        // or a foreign dir that happens to match the id pattern. Skip + warn.
-        this.logger.warn("sessions: skipping dir without readable AGENTS.md", {
-          sessionId: id,
-        });
-        continue;
-      }
-      if (opts.agent !== undefined && agent !== opts.agent) continue;
-
-      const createdAt = await readCreatedAt(workdir);
-      const cwdKey = await realNormalizeCwd(workdir);
-      const copilotSessions = copilotIndex.get(cwdKey) ?? [];
-      const latestCopilotSession: CopilotSessionInfo | null = copilotSessions[0] ?? null;
-      records.push({
-        id,
-        workdir,
-        agent,
-        createdAt,
-        copilotSessions,
-        latestCopilotSession,
-      });
+    const survivors: Session[] = [];
+    for (const draft of drafts) {
+      if (draft === null) continue;
+      if (opts.agent !== undefined && draft.agent !== opts.agent) continue;
+      // ISO 8601 strings (Z-suffixed) sort lexicographically as dates.
+      if (opts.createdSince !== undefined && draft.createdAt < opts.createdSince) continue;
+      survivors.push(draft);
     }
 
-    // Newest first by createdAt. The id no longer encodes within-day order, so
-    // we cannot rely on lexical sort; fall back to id desc as a tiebreaker.
-    records.sort((a, b) => {
-      const d = b.createdAt.getTime() - a.createdAt.getTime();
+    const refreshed = await Promise.all(survivors.map((s) => this.refreshSession(s)));
+
+    // Sort newest-first by effective activity. lastActiveAt wins; createdAt
+    // is the fallback for sessions that haven't been launched yet. Id is
+    // the deterministic tiebreaker.
+    refreshed.sort((a, b) => {
+      const av = a.lastActiveAt ?? a.createdAt;
+      const bv = b.lastActiveAt ?? b.createdAt;
+      const d = bv.localeCompare(av);
       return d !== 0 ? d : b.id.localeCompare(a.id);
     });
-    return records;
+    return refreshed;
   }
 
   // ─── get ─────────────────────────────────────────────────
 
-  async get(id: string): Promise<SessionRecord | null> {
+  async get(id: string): Promise<Session | null> {
     assertValidSessionId(id);
     const workdir = safeJoinUnderRoot(this.root, id);
-    const agent = await readAgentName(workdir);
-    if (agent === null) return null;
-
-    const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
-    const copilotIndex = indexByCwd(copilotEntries);
-    const cwdKey = await realNormalizeCwd(workdir);
-    const copilotSessions = copilotIndex.get(cwdKey) ?? [];
-    const latestCopilotSession: CopilotSessionInfo | null = copilotSessions[0] ?? null;
-    const createdAt = await readCreatedAt(workdir);
-
-    return {
-      id,
-      workdir,
-      agent,
-      createdAt,
-      copilotSessions,
-      latestCopilotSession,
-    };
+    return this.loadSession(id, workdir);
   }
 
   // ─── delete ──────────────────────────────────────────────
@@ -211,95 +202,167 @@ export class SessionManager {
     assertValidSessionId(id);
     const workdir = safeJoinUnderRoot(this.root, id);
 
-    // Confirm the session exists before doing anything destructive.
-    const agent = await readAgentName(workdir);
-    if (agent === null) {
+    const session = await this.loadSession(id, workdir);
+    if (session === null) {
       throw new SessionNotFoundError(id);
     }
 
-    // Compute cwdKey BEFORE rm-ing the workdir (realpath needs the path to
-    // exist). Used by both the primary cleanup and the post-rm sweep.
-    const cwdKey = opts.deleteCopilotState ? await realNormalizeCwd(workdir) : null;
-
-    if (opts.deleteCopilotState && cwdKey !== null) {
-      const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
-      const matches = copilotEntries.filter((e) => e.cwdKey === cwdKey);
-      const failures: { copilotSessionId: string; reason: string }[] = [];
-      for (const m of matches) {
-        const dir = path.join(this.copilotStateDir, m.info.sessionId);
-        try {
-          await rm(dir, { recursive: true, force: true });
-        } catch (err) {
-          failures.push({
-            copilotSessionId: m.info.sessionId,
-            reason: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      if (failures.length > 0) {
-        // Leave the workdir intact so the user can retry / inspect.
-        throw new CopilotStateDeletionFailed(id, failures);
-      }
+    if (opts.deleteRuntimeState) {
+      const runtime = this.runtimeRegistry.get(session.runtime);
+      // Propagates RuntimeStateDeletionFailed; workdir is left intact so
+      // the user can retry.
+      await runtime.deleteState(session);
     }
 
     await rm(workdir, { recursive: true, force: true });
+  }
 
-    // Post-rm sweep: catch copilot sessions that may have been created in
-    // the workdir during the delete window. Best-effort — workdir is gone,
-    // so we log warnings instead of throwing.
-    if (opts.deleteCopilotState && cwdKey !== null) {
-      const stragglers = (await scanCopilotSessions(this.copilotStateDir, this.logger)).filter(
-        (e) => e.cwdKey === cwdKey,
-      );
-      for (const s of stragglers) {
-        const dir = path.join(this.copilotStateDir, s.info.sessionId);
-        try {
-          await rm(dir, { recursive: true, force: true });
-        } catch (err) {
-          this.logger.warn("sessions: failed to clean up straggler copilot state", {
-            sessionId: id,
-            copilotSessionId: s.info.sessionId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+  // ─── buildLaunch ─────────────────────────────────────────
+
+  /**
+   * Build the shell command that drops the user into the runtime for
+   * `session`. Refreshes activity first so that runtimes which mint ids
+   * lazily (e.g. gemini-style) get a chance to update `runtimeSessionId`
+   * before the launch command is built.
+   */
+  async buildLaunch(id: string): Promise<LaunchCommand> {
+    assertValidSessionId(id);
+    const workdir = safeJoinUnderRoot(this.root, id);
+    const session = await this.loadSession(id, workdir);
+    if (session === null) throw new SessionNotFoundError(id);
+
+    const runtime = this.runtimeRegistry.get(session.runtime);
+    return runtime.buildLaunch(session);
+  }
+
+  // ─── internals ───────────────────────────────────────────
+
+  /**
+   * Read AGENTS.md + session.json and produce a "draft" Session with the
+   * persistent fields populated and activity (`lastActiveAt`, `preview`)
+   * left null. Cheap: 2 file reads, no runtime call.
+   *
+   * Returns null when the workdir is not a recognisable session (no
+   * session.json, no AGENTS.md, no agent name in frontmatter, or the
+   * declared runtime is not registered). Throws nothing — callers tolerate
+   * null.
+   */
+  private async loadPersistent(id: string, workdir: string): Promise<Session | null> {
+    const persistedRes = await readPersistedSession(workdir);
+    if (persistedRes === null) {
+      this.logger.warn("sessions: skipping dir without session.json", { sessionId: id });
+      return null;
+    }
+    if (persistedRes.ok === false) {
+      this.logger.warn("sessions: skipping corrupted session.json", {
+        sessionId: id,
+        reason: persistedRes.reason,
+      });
+      return null;
+    }
+    const persisted = persistedRes.value;
+
+    const agent = await readAgentName(workdir);
+    if (agent === null) {
+      this.logger.warn("sessions: skipping dir without readable AGENTS.md", { sessionId: id });
+      return null;
+    }
+
+    try {
+      this.runtimeRegistry.get(persisted.runtime);
+    } catch (err) {
+      // The session declares a runtime that's not registered. Surface as a
+      // warning and skip — listing should not blow up because of one stale
+      // session.
+      this.logger.warn("sessions: skipping session with unregistered runtime", {
+        sessionId: id,
+        runtime: persisted.runtime,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+
+    return {
+      id,
+      workdir,
+      agent,
+      runtime: persisted.runtime,
+      runtimeSessionId: persisted.runtimeSessionId,
+      createdAt: persisted.createdAt,
+      lastActiveAt: null,
+      preview: null,
+    };
+  }
+
+  /**
+   * Call `runtime.refresh()` on a draft and fold the result in. If the
+   * runtime returns a new `runtimeSessionId` (lazy mint), persist it back.
+   * On refresh failure, returns the draft unchanged (activity stays null).
+   *
+   * Assumes the runtime is registered (loadPersistent already verified).
+   */
+  private async refreshSession(draft: Session): Promise<Session> {
+    const runtime = this.runtimeRegistry.get(draft.runtime);
+
+    let refreshed: Awaited<ReturnType<Runtime["refresh"]>>;
+    try {
+      refreshed = await runtime.refresh(draft);
+    } catch (err) {
+      // RuntimeRefreshFailed (or anything else) — surface as a warning and
+      // return the draft. Activity stays null; the session is still listable.
+      this.logger.warn("sessions: runtime refresh failed", {
+        sessionId: draft.id,
+        runtime: draft.runtime,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return draft;
+    }
+    if (refreshed === null) {
+      return draft;
+    }
+
+    // If the runtime discovered a new id (lazy mint), persist it back so we
+    // don't have to re-discover next time.
+    if (refreshed.runtimeSessionId !== draft.runtimeSessionId) {
+      try {
+        await writePersistedSession(draft.workdir, {
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          runtime: draft.runtime,
+          createdAt: draft.createdAt,
+          runtimeSessionId: refreshed.runtimeSessionId,
+        });
+      } catch (err) {
+        this.logger.warn("sessions: failed to persist discovered runtimeSessionId", {
+          sessionId: draft.id,
+          runtime: draft.runtime,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Soft-fail; in-memory record still reflects the new id.
       }
     }
+
+    return {
+      ...draft,
+      runtimeSessionId: refreshed.runtimeSessionId,
+      lastActiveAt: refreshed.lastActiveAt,
+      preview: refreshed.preview,
+    };
   }
 
-  // ─── launch / resume ─────────────────────────────────────
-
-  async getLaunchCommand(id: string): Promise<LaunchCommand> {
-    assertValidSessionId(id);
-    const workdir = safeJoinUnderRoot(this.root, id);
-    const agent = await readAgentName(workdir);
-    if (agent === null) throw new SessionNotFoundError(id);
-    return buildLaunchCommand(workdir);
-  }
-
-  async getResumeCommand(id: string, copilotSessionId: string): Promise<LaunchCommand> {
-    assertValidSessionId(id);
-    if (!isCopilotSessionId(copilotSessionId)) {
-      throw new InvalidCopilotSessionIdError(copilotSessionId);
-    }
-    const workdir = safeJoinUnderRoot(this.root, id);
-    const agent = await readAgentName(workdir);
-    if (agent === null) throw new SessionNotFoundError(id);
-    // Verify the Copilot session actually belongs to this workdir. Without
-    // this check, /api/sessions/:id/resume-command/:sid would happily return
-    // a command for any UUID-shaped string.
-    const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
-    const cwdKey = await realNormalizeCwd(workdir);
-    const owned = copilotEntries.some(
-      (e) => e.cwdKey === cwdKey && e.info.sessionId === copilotSessionId,
-    );
-    if (!owned) {
-      throw new CopilotSessionNotFoundError(id, copilotSessionId);
-    }
-    return buildResumeCommand(workdir, copilotSessionId);
+  /**
+   * Composite of loadPersistent + refreshSession. Used by `get()`,
+   * `delete()`, and `buildLaunch()` where we want the full activity-folded
+   * record. `list()` calls the two parts separately so it can apply cheap
+   * filters before paying for refresh on excluded entries.
+   */
+  private async loadSession(id: string, workdir: string): Promise<Session | null> {
+    const draft = await this.loadPersistent(id, workdir);
+    if (draft === null) return null;
+    return this.refreshSession(draft);
   }
 }
 
-// ─── internals ────────────────────────────────────────────
+// ─── module-private helpers ────────────────────────────────
 
 /** Best-effort recursive remove. Logs (does not throw) on failure. */
 async function safeRm(p: string, logger: Logger): Promise<void> {
@@ -313,31 +376,17 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
   }
 }
 
-/**
- * Read the workdir's creation timestamp. Prefers `birthtime` (set by mkdir on
- * most modern filesystems); falls back to `mtime` when birthtime is absent or
- * zero (older Linux ext4). Never throws — callers tolerate epoch-zero on the
- * pathological case where neither is available.
- */
-async function readCreatedAt(workdir: string): Promise<Date> {
-  try {
-    const st = await stat(workdir);
-    const ms = st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
-    return new Date(ms);
-  } catch {
-    return new Date(0);
-  }
-}
-
-// Static crypto import — pure ESM, no require() in module-typed packages.
-
 function defaultRandomBytes(n: number): Buffer {
   return cryptoRandomBytes(n);
 }
 
+// Re-export public sub-utilities for callers that want them.
 export { readAgentName } from "./agent-file.js";
-export { indexByCwd, scanCopilotSessions } from "./copilot-state.js";
 export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
-export { buildLaunchCommand, buildResumeCommand, isCopilotSessionId } from "./launch.js";
-// Re-export internals used by tests (avoid duplicating logic in test files).
-export { normalizeCwd, realNormalizeCwd, safeJoinUnderRoot } from "./paths.js";
+export { safeJoinUnderRoot } from "./paths.js";
+export {
+  CURRENT_SCHEMA_VERSION,
+  readPersistedSession,
+  SESSION_FILE_NAME,
+  writePersistedSession,
+} from "./session-file.js";

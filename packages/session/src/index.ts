@@ -2,32 +2,46 @@
  * @emploke/session — per-session workdir registry.
  *
  * Sessions live at `~/.emploke/sessions/<id>/` (configurable). Each is a
- * provisioned workdir for one agent. The agent name is read from the
- * provisioned `AGENTS.md` frontmatter; createdAt comes from `fs.stat`.
- * The package never spawns processes — it returns launch incantations for
- * callers to exec.
- *
- * See the package README for usage and design rationale.
+ * provisioned workdir for one agent under one runtime (e.g. copilot,
+ * gemini). The agent name is read from the provisioned `AGENTS.md`
+ * frontmatter; runtime + createdAt + runtimeSessionId are persisted in
+ * `<workdir>/session.json`. Activity (lastActiveAt, preview) is read fresh
+ * from the runtime on every list/get call. The package never spawns
+ * processes — `buildLaunch()` returns a shell-runnable `LaunchCommand`.
  */
 
+// Re-export runtime errors that callers commonly want to catch alongside
+// session errors.
+export {
+  RuntimeProvisionFailed,
+  RuntimeRefreshFailed,
+  RuntimeStateDeletionFailed,
+  UnknownRuntimeError,
+} from "@emploke/runtime";
 export {
   AgentNotFoundError,
-  CopilotSessionNotFoundError,
-  CopilotStateDeletionFailed,
-  InvalidCopilotSessionIdError,
   InvalidSessionIdError,
   SessionAlreadyExistsError,
+  SessionCorruptedError,
   SessionNotFoundError,
   SessionsError,
 } from "./errors.js";
-export { SessionManager } from "./manager.js";
+export {
+  CURRENT_SCHEMA_VERSION,
+  readPersistedSession,
+  SESSION_FILE_NAME,
+  SessionManager,
+  writePersistedSession,
+} from "./manager.js";
 export type {
-  CopilotSessionInfo,
   CreateSessionOpts,
   DeleteSessionOpts,
   LaunchCommand,
   ListSessionOpts,
   Logger,
+  ManagedSession,
+  PersistedSession,
+  Session,
   SessionManagerConfig,
   SessionRecord,
 } from "./types.js";

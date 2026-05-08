@@ -1,12 +1,14 @@
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { sep as pathSep, resolve } from "node:path";
 import { Catalog } from "@emploke/catalog";
-import { CopilotProvisioner } from "@emploke/provisioner";
+import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import { SessionManager } from "@emploke/session";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { apiRoutes } from "./routes/api.js";
+import { catalogRoutes } from "./routes/catalog/index.js";
+import { configRoutes } from "./routes/config.js";
+import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 
 const catalogDir = process.env.EMPLOKE_CATALOG_DIR ?? resolve(homedir(), ".emploke/catalog");
@@ -25,15 +27,24 @@ const serveStaticFiles = process.argv.includes("--serve-static");
 
 async function main() {
   const catalog = await Catalog.open({ catalogDir });
+
+  const runtimeRegistry = new RuntimeRegistry();
+  runtimeRegistry.register(new CopilotRuntime());
+
   const sessions = new SessionManager({
     catalog,
-    provisioner: new CopilotProvisioner(),
+    runtimeRegistry,
     root: sessionsRoot,
   });
 
   const app = new Hono();
 
-  app.route("/api", apiRoutes(catalog));
+  app.route("/api", catalogRoutes(catalog));
+  app.route(
+    "/api/config",
+    configRoutes({ catalogDir, sessionsRoot, host: hostname, port, pathSeparator: pathSep }),
+  );
+  app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
   app.route("/api/sessions", sessionsRoutes(sessions));
 
   if (serveStaticFiles) {
@@ -44,6 +55,7 @@ async function main() {
   console.log(`emploke server listening on http://${displayHost}:${port}`);
   console.log(`catalog:  ${catalogDir}`);
   console.log(`sessions: ${sessionsRoot}`);
+  console.log(`runtimes: ${runtimeRegistry.kinds().join(", ")}`);
   console.log(serveStaticFiles ? `static:   ${staticDir}` : "static:   disabled (dev mode)");
   if (hostname === "0.0.0.0") {
     console.warn(

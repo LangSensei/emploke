@@ -1,81 +1,88 @@
 import type { Catalog } from "@emploke/catalog";
-import type { Provisioner } from "@emploke/provisioner";
+import type { RuntimeRegistry, Session } from "@emploke/runtime";
 
 /** Optional logger surface. Default implementation is silent. */
 export interface Logger {
   warn(message: string, meta?: object): void;
 }
 
-/** Configuration for SessionManager. All fields are optional except `catalog`. */
+/** Configuration for SessionManager. All fields are optional except `catalog` + `runtimeRegistry`. */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: Catalog;
-  /** Provisioner used to bake agents into the workdir. Defaults to CopilotProvisioner. */
-  readonly provisioner?: Provisioner;
-  /** Root directory for session workdirs. Defaults to ~/.emploke/sessions. */
+  /** Registry of runtime adapters; must contain at least the default runtime. */
+  readonly runtimeRegistry: RuntimeRegistry;
+  /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */
+  readonly defaultRuntime?: string;
+  /** Root directory for session workdirs. Defaults to `~/.emploke/sessions`. */
   readonly root?: string;
-  /** Path to Copilot's session state dir. Defaults to ~/.copilot/session-state. */
-  readonly copilotStateDir?: string;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
-  /** Test seam: clock for ID generation. Defaults to () => new Date(). */
+  /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */
   readonly now?: () => Date;
-  /** Test seam: random byte source for ID generation. Defaults to crypto.randomBytes. */
+  /** Test seam: random byte source for ID generation. Defaults to `crypto.randomBytes`. */
   readonly randomBytes?: (n: number) => Buffer;
 }
 
-/** A session record returned by list/get/create. */
-export interface SessionRecord {
-  /** Canonical id; equals the workdir directory name. */
-  readonly id: string;
-  /** Absolute workdir path, normalized. */
-  readonly workdir: string;
-  /** Agent name, read from AGENTS.md frontmatter. */
-  readonly agent: string;
-  /** Workdir creation time (fs stat birthtime, falls back to mtime). */
-  readonly createdAt: Date;
-  /** Discovered Copilot sessions whose cwd matches the workdir, sorted desc by updatedAt. */
-  readonly copilotSessions: readonly CopilotSessionInfo[];
-  /** First entry of copilotSessions, or null if none. */
-  readonly latestCopilotSession: CopilotSessionInfo | null;
-}
+/** Re-export the runtime view of a session as the canonical session record. */
+export type { LaunchCommand, Session } from "@emploke/runtime";
 
-/** Best-effort summary of a Copilot session discovered for a workdir. */
-export interface CopilotSessionInfo {
-  readonly sessionId: string;
-  readonly name?: string;
-  readonly summary?: string;
-  readonly createdAt?: Date;
-  readonly updatedAt?: Date;
-}
-
-/** Output of getLaunchCommand / getResumeCommand. */
-export interface LaunchCommand {
-  readonly cmd: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  /** Human-readable single-line form for display / clipboard. */
-  readonly display: string;
+/**
+ * The on-disk shape persisted at `<workdir>/session.json`. Narrow on purpose:
+ *
+ *   - `id` is NOT persisted (it equals `path.basename(workdir)`).
+ *   - `agent` is NOT persisted (it lives in `AGENTS.md` frontmatter, which
+ *     the user is expected to be able to hand-edit).
+ *   - `lastActiveAt` and `preview` are NOT persisted; they're refreshed from
+ *     the runtime on every list/get call.
+ *
+ * Bumping `schemaVersion` is the migration path for future schema changes.
+ */
+export interface PersistedSession {
+  readonly schemaVersion: 1;
+  readonly runtime: string;
+  /** ISO 8601 string. */
+  readonly createdAt: string;
+  /** Opaque-to-emploke id minted by the runtime. May be null until first launch. */
+  readonly runtimeSessionId: string | null;
 }
 
 /** Options for SessionManager.create. */
 export interface CreateSessionOpts {
+  /** Catalog agent name. */
   readonly agent: string;
+  /**
+   * Runtime kind to use. Defaults to `SessionManagerConfig.defaultRuntime`,
+   * which itself defaults to `"copilot"`.
+   */
+  readonly runtime?: string;
 }
 
 /** Options for SessionManager.list. */
 export interface ListSessionOpts {
   /** Filter to sessions whose AGENTS.md frontmatter name matches this exact value. */
   readonly agent?: string;
+  /**
+   * Drop sessions whose `createdAt` is strictly before this ISO 8601 timestamp.
+   * Applied AFTER reading session.json + AGENTS.md but BEFORE the (more expensive)
+   * runtime.refresh() call, so excluded entries pay zero refresh cost.
+   */
+  readonly createdSince?: string;
 }
 
 /** Options for SessionManager.delete. */
 export interface DeleteSessionOpts {
   /**
-   * If true, also remove `~/.copilot/session-state/<sid>/` for every Copilot
-   * session whose cwd matches the workdir. Computed *before* removing the
-   * workdir; if any rm fails, throws CopilotStateDeletionFailed and leaves
-   * the workdir intact.
+   * If true, ask the runtime to also remove its own per-session state (e.g.
+   * for copilot, this is `~/.copilot/session-state/<runtimeSessionId>/`).
+   * Performed *before* the workdir is removed; a runtime failure leaves the
+   * workdir intact so the user can retry.
    */
-  readonly deleteCopilotState?: boolean;
+  readonly deleteRuntimeState?: boolean;
 }
+
+/** Re-exported for callers that want to type-narrow. */
+export type { Session as SessionRecord } from "@emploke/runtime";
+
+// Internal helper used by tests and consumers; alias for parity with Runtime.
+export type ManagedSession = Session;
