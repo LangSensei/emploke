@@ -13,7 +13,6 @@
       "**/*.json",
       "!**/dist",
       "!**/node_modules",
-      "!archive",
       "!docs"
     ]
   },
