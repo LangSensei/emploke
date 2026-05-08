@@ -74,6 +74,18 @@ importers:
         specifier: ^6.3.5
         version: 6.4.2(@types/node@22.19.17)(tsx@4.21.0)
 
+  packages/paths:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/runtime:
     dependencies:
       '@emploke/catalog':
@@ -172,6 +184,22 @@ importers:
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)
+
+  packages/workspace:
+    dependencies:
+      '@emploke/paths':
+        specifier: workspace:*
+        version: link:../paths
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
