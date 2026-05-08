@@ -128,7 +128,10 @@ export function SessionsPage({ agents }: SessionsProps) {
   return (
     <>
       <div className="page-toolbar">
-        <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
+        <div
+          className="page-toolbar__actions"
+          style={{ gap: "var(--space-3)", alignItems: "center" }}
+        >
           <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
             Agent
           </label>
@@ -146,7 +149,7 @@ export function SessionsPage({ agents }: SessionsProps) {
             ))}
           </select>
         </div>
-        <div style={{ display: "flex", gap: "var(--space-2)" }}>
+        <div className="page-toolbar__actions">
           <button
             type="button"
             className="btn btn--ghost"
