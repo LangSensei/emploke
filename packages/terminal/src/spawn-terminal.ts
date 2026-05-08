@@ -141,7 +141,7 @@ async function spawnWindows(
   // and watch for an immediate error/exit. If wt fails fast we fall through
   // to the cmd.exe fallback.
   const local = deps.env.LOCALAPPDATA;
-  const wtPath = local ? path.join(local, "Microsoft", "WindowsApps", "wt.exe") : null;
+  const wtPath = local ? path.win32.join(local, "Microsoft", "WindowsApps", "wt.exe") : null;
   if (wtPath && deps.exists(wtPath)) {
     const handle = deps.spawn("wt.exe", ["-d", cmd.cwd, cmd.cmd, ...cmd.args], {});
     const failure = await waitForEarlyFailure(handle, deps.observationMs);
