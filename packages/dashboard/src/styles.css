@@ -1783,9 +1783,6 @@ button {
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-4);
-  /* Reserve space on the right edge for the absolute-positioned delete
-     button so it never overlaps the Recent / status badge. */
-  padding-right: calc(var(--space-4) + 24px + var(--space-2));
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -1795,55 +1792,7 @@ button {
   width: 100%;
 }
 
-.landing__card-wrapper {
-  position: relative;
-}
-
-.landing__card-delete {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease,
-    border-color 0.12s ease;
-}
-
-.landing__card-wrapper:hover .landing__card-delete,
-.landing__card-wrapper:focus-within .landing__card-delete {
-  opacity: 1;
-}
-
-.landing__card-delete:hover:not(:disabled),
-.landing__card-delete:focus-visible {
-  background: #fff5f5;
-  color: #c53030;
-  border-color: #fed7d7;
-  outline: none;
-  opacity: 1;
-}
-
-.landing__card-delete:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.landing__card-delete-icon {
-  width: 13px;
-  height: 13px;
-}
-
-.landing__card:hover:not(:disabled) {
+.landing__card:hover:not([aria-disabled="true"]) {
   border-color: var(--color-accent);
   box-shadow: 0 4px 14px rgba(37, 99, 235, 0.10);
   transform: translateY(-1px);
@@ -1894,12 +1843,6 @@ button {
   background: #fef3c7;
 }
 
-.landing__card-key {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-text-subtle);
-}
-
 .landing__card-path {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1910,11 +1853,54 @@ button {
   margin-top: var(--space-1);
 }
 
+.landing__card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
 .landing__card-meta {
   font-size: 11px;
   color: var(--color-text-subtle);
-  margin-top: auto;
-  padding-top: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing__card-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+  flex-shrink: 0;
+}
+
+.landing__card-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
+.landing__card-remove:hover:not(:disabled) {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.landing__card-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .landing__empty {

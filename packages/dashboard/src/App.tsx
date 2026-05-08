@@ -222,43 +222,58 @@ function LandingPage() {
                 const display = ws.metadata?.name ?? ws.id;
                 const isRecent = ws.id === recent;
                 const broken = ws.status !== "ok";
+                const enter = () => {
+                  if (!broken) enterWorkspace(ws.id);
+                };
                 return (
-                  <div className="landing__card-wrapper" key={ws.id}>
-                    <button
-                      type="button"
-                      className={`landing__card${broken ? " landing__card--broken" : ""}`}
-                      onClick={() => enterWorkspace(ws.id)}
-                      disabled={broken}
-                      title={broken ? (ws.reason ?? ws.status) : `Open ${display}`}
-                    >
-                      <div className="landing__card-row">
-                        <span className="landing__card-name">{display}</span>
-                        {isRecent && !broken && <span className="landing__card-badge">Recent</span>}
-                        {broken && (
-                          <span className="landing__card-badge landing__card-badge--warn">
-                            {ws.status}
-                          </span>
-                        )}
-                      </div>
-                      <div className="landing__card-path" title={ws.path}>
-                        {ws.path}
-                      </div>
-                      {ws.lastOpenedAt && (
-                        <div className="landing__card-meta">
-                          Last opened {formatLastOpened(ws.lastOpenedAt)}
-                        </div>
+                  // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
+                  <div
+                    key={ws.id}
+                    className={`landing__card${broken ? " landing__card--broken" : ""}`}
+                    role="button"
+                    tabIndex={broken ? -1 : 0}
+                    aria-disabled={broken}
+                    onClick={enter}
+                    onKeyDown={(e) => {
+                      if (broken) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        enter();
+                      }
+                    }}
+                    title={broken ? (ws.reason ?? ws.status) : `Open ${display}`}
+                  >
+                    <div className="landing__card-row">
+                      <span className="landing__card-name">{display}</span>
+                      {isRecent && !broken && <span className="landing__card-badge">Recent</span>}
+                      {broken && (
+                        <span className="landing__card-badge landing__card-badge--warn">
+                          {ws.status}
+                        </span>
                       )}
-                    </button>
-                    <button
-                      type="button"
-                      className="landing__card-delete"
-                      onClick={() => void onRemove(ws)}
-                      disabled={busy}
-                      title={`Remove "${display}" from registry`}
-                      aria-label={`Remove ${display}`}
-                    >
-                      <TrashIcon className="landing__card-delete-icon" />
-                    </button>
+                    </div>
+                    <div className="landing__card-path" title={ws.path}>
+                      {ws.path}
+                    </div>
+                    <div className="landing__card-footer">
+                      <span className="landing__card-meta">
+                        {ws.lastOpenedAt ? `Last opened ${formatLastOpened(ws.lastOpenedAt)}` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        className="landing__card-remove"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onRemove(ws);
+                        }}
+                        disabled={busy}
+                        aria-label={`Remove ${display}`}
+                        title={`Remove "${display}" from registry`}
+                      >
+                        <TrashIcon />
+                        <span>Remove</span>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
