@@ -60,15 +60,24 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
   app.get("/", async (c) => {
     const agent = c.req.query("agent");
     const createdSince = c.req.query("createdSince");
+    // The manager compares createdSince against draft.createdAt with a plain
+    // string `<` (which is correct for ISO 8601 with a `Z` suffix because
+    // those strings sort lexicographically as dates). If we accepted any
+    // Date.parse-able form like "Jan 1 2024" and forwarded it raw, the
+    // lexicographic compare would be wrong (e.g. '2' < 'J' makes a 2026
+    // session sort below a "Jan 1 2024" cutoff). So: parse leniently,
+    // then forward the canonical ISO 8601 form.
+    let createdSinceIso: string | undefined;
     if (createdSince !== undefined) {
       const t = Date.parse(createdSince);
       if (Number.isNaN(t)) {
         return c.json({ error: "createdSince must be an ISO 8601 timestamp" }, 400);
       }
+      createdSinceIso = new Date(t).toISOString();
     }
     const opts: { agent?: string; createdSince?: string } = {};
     if (agent !== undefined) opts.agent = agent;
-    if (createdSince !== undefined) opts.createdSince = createdSince;
+    if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
     try {
       const list = await manager.list(opts);
       return c.json(list);

@@ -91,6 +91,18 @@ describe("sessionsRoutes", () => {
     expect(body.error).toMatch(/ISO 8601/);
   });
 
+  it("GET /?createdSince=<non-ISO-but-parseable> normalizes to canonical ISO before passing to manager", async () => {
+    // The manager compares createdAt < createdSince lexicographically, which
+    // is only correct for canonical ISO 8601 strings. If we forwarded
+    // "Jan 1 2024" raw, '2' (ASCII 50) < 'J' (ASCII 74) would silently
+    // exclude valid 2026-... sessions. Validate-then-normalize protects
+    // the manager from any Date.parse-able input format.
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request("/?createdSince=Jan 1 2024 UTC");
+    expect(res.status).toBe(200);
+    expect(m.list).toHaveBeenCalledWith({ createdSince: "2024-01-01T00:00:00.000Z" });
+  });
+
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
     const res = await sessionsRoutes(m).request("/", { method: "POST", body: "not json" });
