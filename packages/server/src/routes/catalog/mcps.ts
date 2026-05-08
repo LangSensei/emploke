@@ -1,5 +1,6 @@
 import type { Catalog } from "@emploke/catalog";
 import { Hono } from "hono";
+import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody } from "./helpers.js";
 
 /**
@@ -17,13 +18,14 @@ export function mcpsRoutes(catalog: Catalog): Hono {
 
   app.get("/:name{.+}", async (c) => {
     const name = c.req.param("name");
-    const path = catalog.getMcpPath(name);
-    if (!path) return c.json({ error: "not found" }, 404);
     try {
+      const path = catalog.getMcpPath(name);
+      if (!path) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getMcpContent(name);
       return c.json({ name, path, content });
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -34,7 +36,8 @@ export function mcpsRoutes(catalog: Catalog): Hono {
       const name = await catalog.installMcp(parsed.sourcePath, parsed.name);
       return c.json({ name, path: catalog.getMcpPath(name) }, 201);
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -46,7 +49,8 @@ export function mcpsRoutes(catalog: Catalog): Hono {
       await catalog.updateMcpContent(name, parsed.content);
       return c.json({ ok: true });
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -55,7 +59,8 @@ export function mcpsRoutes(catalog: Catalog): Hono {
       await catalog.removeMcp(c.req.param("name"));
       return c.json({ ok: true });
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 

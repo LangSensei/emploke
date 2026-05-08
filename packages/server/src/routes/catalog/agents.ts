@@ -1,5 +1,6 @@
 import type { Catalog } from "@emploke/catalog";
 import { Hono } from "hono";
+import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
 
 /**
@@ -12,13 +13,14 @@ export function agentsRoutes(catalog: Catalog): Hono {
 
   app.get("/:name{.+}", async (c) => {
     const name = c.req.param("name");
-    const entry = catalog.getAgentEntry(name);
-    if (!entry) return c.json({ error: "not found" }, 404);
     try {
+      const entry = catalog.getAgentEntry(name);
+      if (!entry) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getAgentContent(name);
       return c.json({ ...entry, content });
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -29,7 +31,8 @@ export function agentsRoutes(catalog: Catalog): Hono {
       const agent = await catalog.installAgent(parsed.sourcePath);
       return c.json(agent, 201);
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -41,7 +44,8 @@ export function agentsRoutes(catalog: Catalog): Hono {
       const agent = await catalog.updateAgentContent(name, parsed.content);
       return c.json(agent);
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -56,7 +60,8 @@ export function agentsRoutes(catalog: Catalog): Hono {
       );
       return c.json(agent);
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
@@ -65,7 +70,8 @@ export function agentsRoutes(catalog: Catalog): Hono {
       await catalog.removeAgent(c.req.param("name"));
       return c.json({ ok: true });
     } catch (e: unknown) {
-      return c.json({ error: (e as Error).message }, 400);
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
     }
   });
 
