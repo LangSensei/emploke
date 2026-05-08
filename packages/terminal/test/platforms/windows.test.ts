@@ -116,11 +116,7 @@ describe("spawnTerminalWith > windows", () => {
     };
     await spawnTerminalWith(evil, deps);
     const args = calls[0]?.args ?? [];
-    expect(args.slice(-3)).toEqual([
-      '"a^|b"',
-      '"c^>d"',
-      '"e^<f"',
-    ]);
+    expect(args.slice(-3)).toEqual(['"a^|b"', '"c^>d"', '"e^<f"']);
   });
 
   it("escapes %VAR% so cmd.exe variable expansion cannot fire", async () => {
@@ -151,7 +147,7 @@ describe("spawnTerminalWith > windows", () => {
     expect(args.at(-1)).toBe('"--note=^!HOMEPATH^!"');
   });
 
-  it("escapes embedded \" so it cannot close the quoted region early", async () => {
+  it('escapes embedded " so it cannot close the quoted region early', async () => {
     const { deps, calls } = makeDeps({
       platform: "win32",
       env: {},

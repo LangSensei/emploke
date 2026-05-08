@@ -82,11 +82,7 @@ export function escapeCmdArg(s: string): string {
  * `error` (e.g. ENOENT) or exits with a non-zero code; otherwise it stays
  * pending forever and the observation timer wins.
  */
-export function realSpawn(
-  file: string,
-  args: readonly string[],
-  opts: SpawnOpts,
-): SpawnHandle {
+export function realSpawn(file: string, args: readonly string[], opts: SpawnOpts): SpawnHandle {
   let child: ChildProcess;
   try {
     child = nodeSpawn(file, args, {
