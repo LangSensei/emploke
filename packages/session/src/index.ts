@@ -21,8 +21,8 @@ export {
 export {
   AgentNotFoundError,
   InvalidSessionIdError,
-  SessionAlreadyExistsError,
   SessionCorruptedError,
+  SessionIdAllocationFailedError,
   SessionNotFoundError,
   SessionsError,
 } from "./errors.js";

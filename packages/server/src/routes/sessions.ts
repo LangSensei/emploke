@@ -3,6 +3,7 @@ import {
   AgentNotFoundError,
   InvalidSessionIdError,
   RuntimeStateDeletionFailed,
+  SessionIdAllocationFailedError,
   type SessionManager,
   SessionNotFoundError,
   UnknownRuntimeError,
@@ -35,6 +36,7 @@ function statusForError(err: unknown): number | null {
   if (err instanceof AgentNotFoundError) return 400;
   if (err instanceof UnknownRuntimeError) return 400;
   if (err instanceof RuntimeStateDeletionFailed) return 409;
+  if (err instanceof SessionIdAllocationFailedError) return 500;
   return null;
 }
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -100,11 +100,47 @@ describe("writePersistedSession", () => {
     expect(r).toEqual({ ok: true, value: sample });
   });
 
-  it("does not leave the .tmp file behind on success", async () => {
+  it("does not leave any .tmp file behind on success", async () => {
+    // The tmp filename uses a random suffix (`session.json.tmp.<pid>.<hex>`),
+    // so glob the directory rather than checking a fixed path.
     await writePersistedSession(workdir, sample);
-    await expect(
-      readFile(path.join(workdir, `${SESSION_FILE_NAME}.tmp`), "utf8"),
-    ).rejects.toThrow();
+    const entries = await readdir(workdir);
+    const tmpEntries = entries.filter((e) => e.startsWith(`${SESSION_FILE_NAME}.tmp`));
+    expect(tmpEntries).toEqual([]);
+  });
+
+  it("concurrent writes do not clobber each other's tmp file", async () => {
+    // Pre-fix, all writers used the same `session.json.tmp` path, so two
+    // concurrent writes could end with writer-A's tmp content being moved
+    // into place by writer-B's rename — and writer-B's rename could ENOENT
+    // because writer-A had already renamed the (shared) tmp away. With
+    // per-call random tmp suffixes, each writer has an isolated staging
+    // path, so:
+    //   - no writer's content is silently substituted with another's
+    //   - no writer's rename ENOENTs because someone else moved its tmp
+    //   - on success, no `.tmp.*` leftovers remain in the workdir
+    // (Note: on Windows, two renames targeting the same destination can
+    // still EPERM at the OS level — that's a separate, pre-existing
+    // limitation, not what this test covers. We use allSettled so the test
+    // passes regardless.)
+    const variants: PersistedSession[] = Array.from({ length: 8 }, (_, i) => ({
+      ...sample,
+      runtimeSessionId: `12345678-1234-1234-1234-12345678900${i}`,
+    }));
+    const results = await Promise.allSettled(
+      variants.map((v) => writePersistedSession(workdir, v)),
+    );
+    // At least one must succeed (otherwise the workdir is in an unusable
+    // state and we have a real bug).
+    expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+    // The final content must be one of the variants — proves no torn
+    // writes and no tmp-clobber substitution.
+    const raw = await readFile(path.join(workdir, SESSION_FILE_NAME), "utf8");
+    const parsed = JSON.parse(raw) as PersistedSession;
+    expect(variants).toContainEqual(parsed);
+    // No tmp leftovers regardless of who won.
+    const entries = await readdir(workdir);
+    expect(entries.filter((e) => e.startsWith(`${SESSION_FILE_NAME}.tmp`))).toEqual([]);
   });
 
   it("subsequent writes overwrite cleanly", async () => {

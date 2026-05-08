@@ -172,7 +172,10 @@ export function SessionsPage({ agents, config }: SessionsProps) {
         setFallback({ display: result.display, reason: result.error });
       }
       // Refresh after a successful launch so lastActiveAt/preview update.
-      if (result.ok) await refresh();
+      if (result.ok) {
+        if (!mountedRef.current) return;
+        await refresh();
+      }
     } catch (e) {
       if (!mountedRef.current) return;
       setError((e as Error).message);

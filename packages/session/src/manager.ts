@@ -5,7 +5,11 @@ import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
-import { AgentNotFoundError, SessionAlreadyExistsError, SessionNotFoundError } from "./errors.js";
+import {
+  AgentNotFoundError,
+  SessionIdAllocationFailedError,
+  SessionNotFoundError,
+} from "./errors.js";
 import { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import {
@@ -104,7 +108,7 @@ export class SessionManager {
       }
     }
     if (id === null || workdir === null) {
-      throw new SessionAlreadyExistsError(generateSessionId(this.now, this.randomBytes));
+      throw new SessionIdAllocationFailedError(MAX_CREATE_RETRIES);
     }
 
     // 4. Provision and persist session.json. Atomic-ish: if anything fails,

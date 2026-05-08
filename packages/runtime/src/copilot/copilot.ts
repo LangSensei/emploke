@@ -8,7 +8,7 @@ import {
   RuntimeStateDeletionFailed,
 } from "../errors.js";
 import type { LaunchCommand, Runtime, Session } from "../types.js";
-import { generateCopilotSessionId } from "./ids.js";
+import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { readCopilotSessionState } from "./state.js";
@@ -34,6 +34,15 @@ export interface CopilotRuntimeConfig {
  * and subsequent launches resume it. This eliminates the cwd-join logic the
  * old implementation needed (where copilot minted ids and we had to scan all
  * sessions and match by cwd).
+ *
+ * SECURITY: every method that would compose `runtimeSessionId` into a
+ * filesystem path or a `--resume=<id>` argument runs it through
+ * `isCopilotSessionId` first. A tampered `session.json` with a malicious id
+ * (e.g. `"../../etc"` for path-traversal, or one with shell metacharacters
+ * for the display string) is treated as if the id were null — refresh
+ * returns "no activity", deleteState is a no-op, and buildLaunch produces a
+ * fresh launch (no --resume). That degrades gracefully for the user and
+ * keeps the surface immune to malformed persisted state.
  */
 export class CopilotRuntime implements Runtime {
   readonly kind = "copilot";
@@ -62,10 +71,10 @@ export class CopilotRuntime implements Runtime {
   async refresh(
     session: Session,
   ): Promise<{ lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null> {
-    const id = session.runtimeSessionId;
+    const id = safeCopilotId(session.runtimeSessionId);
     if (id === null) {
-      // Should never happen for copilot (we always pre-allocate), but the
-      // interface allows it so handle it cleanly.
+      // null id: not yet provisioned (legacy data shape) or the persisted id
+      // is malformed. Either way there's no copilot state to read.
       return null;
     }
     try {
@@ -82,11 +91,14 @@ export class CopilotRuntime implements Runtime {
   }
 
   buildLaunch(session: Session): LaunchCommand {
-    return buildCopilotLaunchCommand(session.workdir, session.runtimeSessionId);
+    // Pass the id through the validator so a tampered session.json can't
+    // smuggle shell metacharacters into the displayed `--resume=<id>` string.
+    const id = safeCopilotId(session.runtimeSessionId);
+    return buildCopilotLaunchCommand(session.workdir, id);
   }
 
   async deleteState(session: Session): Promise<void> {
-    const id = session.runtimeSessionId;
+    const id = safeCopilotId(session.runtimeSessionId);
     if (id === null) return;
     const dir = path.join(this.copilotStateDir, id);
     try {
@@ -95,4 +107,14 @@ export class CopilotRuntime implements Runtime {
       throw new RuntimeStateDeletionFailed(this.kind, session.id, err as Error);
     }
   }
+}
+
+/**
+ * Return the id if it's a syntactically-valid copilot session id, else null.
+ * Centralised so refresh/buildLaunch/deleteState all defend against tampered
+ * persisted state in the same way.
+ */
+function safeCopilotId(id: string | null): string | null {
+  if (id === null) return null;
+  return isCopilotSessionId(id) ? id : null;
 }

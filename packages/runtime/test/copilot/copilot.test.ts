@@ -173,4 +173,56 @@ describe("CopilotRuntime", () => {
       expect((wrapped.cause as Error).message).toBe("EACCES: bad");
     });
   });
+
+  describe("malformed runtimeSessionId (path-traversal hardening)", () => {
+    // Defense-in-depth: a tampered session.json could carry a runtimeSessionId
+    // that escapes the copilot state dir. Each runtime method must treat such
+    // ids as if they were null rather than naively concatenating into a path
+    // or shelling out a `--resume=<garbage>` form.
+
+    const MALICIOUS_IDS = [
+      "../../etc/passwd",
+      "..\\..\\Windows\\System32",
+      "not-a-uuid",
+      "$(rm -rf /)",
+      "12345678-1234-1234-1234-1234567890ab/../../escape",
+    ];
+
+    it("refresh returns null for malformed ids without touching the filesystem", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      // Place a sentinel at the would-be-attacked path so we can assert it's
+      // untouched (and that we don't accidentally read it).
+      const sentinel = path.join(scratch, "passwd");
+      await writeFile(sentinel, "secret\n", "utf8");
+      for (const id of MALICIOUS_IDS) {
+        const r = await rt.refresh(fakeSession({ runtimeSessionId: id }));
+        expect(r).toBeNull();
+      }
+      // Sentinel still present and unread (no observable side effects).
+      expect(await exists(sentinel)).toBe(true);
+    });
+
+    it("deleteState is a no-op for malformed ids (does not delete arbitrary paths)", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      // Create a sentinel directory that a `..`-traversal would target.
+      const sentinelDir = path.join(scratch, "do-not-delete");
+      await mkdir(sentinelDir, { recursive: true });
+      await writeFile(path.join(sentinelDir, "marker"), "x", "utf8");
+      for (const id of MALICIOUS_IDS) {
+        await rt.deleteState(fakeSession({ runtimeSessionId: id }));
+      }
+      expect(await exists(sentinelDir)).toBe(true);
+      expect(await exists(path.join(sentinelDir, "marker"))).toBe(true);
+    });
+
+    it("buildLaunch produces a fresh launch (no --resume) for malformed ids", () => {
+      const rt = new CopilotRuntime();
+      for (const id of MALICIOUS_IDS) {
+        const c = rt.buildLaunch(fakeSession({ runtimeSessionId: id }));
+        expect(c.args).toEqual(["--yolo"]);
+        expect(c.display).not.toContain(id);
+        expect(c.display).not.toContain("--resume");
+      }
+    });
+  });
 });

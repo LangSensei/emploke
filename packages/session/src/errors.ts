@@ -31,11 +31,15 @@ export class SessionNotFoundError extends SessionsError {
   }
 }
 
-/** Repeated id collisions during create() (vanishingly unlikely under normal use). */
-export class SessionAlreadyExistsError extends SessionsError {
-  constructor(public readonly id: string) {
-    super(`session already exists: ${id} (after retries)`);
-    this.name = "SessionAlreadyExistsError";
+/** Repeated id-allocation collisions during create() (vanishingly unlikely
+ * under normal use; usually indicates a stuck clock or broken RNG). */
+export class SessionIdAllocationFailedError extends SessionsError {
+  constructor(public readonly attempts: number) {
+    super(
+      `failed to allocate a unique session id after ${attempts} attempts ` +
+        `(check the system clock and randomness source)`,
+    );
+    this.name = "SessionIdAllocationFailedError";
   }
 }
 
