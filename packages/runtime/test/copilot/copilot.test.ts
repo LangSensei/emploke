@@ -134,9 +134,7 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({ copilotSettingsPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await expect(rt.registerWorkspace(ws)).rejects.toBeInstanceOf(
-        RuntimeRegisterWorkspaceFailed,
-      );
+      await expect(rt.registerWorkspace(ws)).rejects.toBeInstanceOf(RuntimeRegisterWorkspaceFailed);
     });
   });
 

@@ -36,7 +36,7 @@ export {
   WorkspacePathConflictError,
   WorkspaceSchemaMismatchError,
 } from "./errors.js";
-export { WorkspaceManager, type WorkspaceInitOpts } from "./manager.js";
+export { type WorkspaceInitOpts, WorkspaceManager } from "./manager.js";
 export { assertValidWorkspaceName, isValidWorkspaceName } from "./names.js";
 export { type RegistryAddOpts, WorkspaceRegistry } from "./registry.js";
 export type { RegistryEntry, RegistryFile, Workspace, WorkspaceMetadata } from "./types.js";

@@ -122,7 +122,10 @@ describe("WorkspaceRegistry.add", () => {
       r.add({ name: "c", path: "/c" }),
       r.add({ name: "d", path: "/d" }),
     ]);
-    const names = r.list().map((e) => e.name).sort();
+    const names = r
+      .list()
+      .map((e) => e.name)
+      .sort();
     expect(names).toEqual(["a", "b", "c", "d"]);
     const onDisk = JSON.parse(await readFile(registryFile, "utf8"));
     expect(onDisk.entries).toHaveLength(4);

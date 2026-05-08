@@ -25,6 +25,49 @@ export interface CatalogData {
   mcps: McpItem[];
 }
 
+// ─── Workspace identity ───────────────────────────────────────────
+//
+// All session-scoped requests are routed through `/api/workspaces/<name>/...`
+// where <name> is the current workspace's URL identifier. The dashboard
+// remembers the user's selection in localStorage; api helpers below pull
+// the value at call time (not at module load) so a user can switch
+// workspace mid-session via setCurrentWorkspace and the next call uses
+// the new value without a page reload.
+
+const WORKSPACE_LS_KEY = "emploke.currentWorkspace";
+
+export function getCurrentWorkspace(): string | null {
+  try {
+    return typeof window !== "undefined" ? window.localStorage.getItem(WORKSPACE_LS_KEY) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCurrentWorkspace(name: string | null): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (name === null) window.localStorage.removeItem(WORKSPACE_LS_KEY);
+    else window.localStorage.setItem(WORKSPACE_LS_KEY, name);
+  } catch {
+    // localStorage may be disabled (e.g. private mode); ignore — header
+    // calls below will fall back to "no workspace selected".
+  }
+}
+
+/**
+ * Build the URL prefix for workspace-scoped resources. Throws if no
+ * workspace is selected — the caller (Sessions page) should ensure a
+ * workspace is selected before issuing any session call.
+ */
+function workspacePrefix(): string {
+  const name = getCurrentWorkspace();
+  if (!name) {
+    throw new Error("no workspace selected");
+  }
+  return `/api/workspaces/${encodeURIComponent(name)}`;
+}
+
 const fetchJson = async <T>(path: string, label: string): Promise<T> => {
   const r = await fetch(path);
   if (!r.ok) {
@@ -151,7 +194,7 @@ export interface AgentMetadataPatch {
 export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
   mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
-// ─── Sessions ─────────────────────────────────────────────────────
+// ─── Sessions (workspace-scoped) ──────────────────────────────────
 
 export interface SessionRecord {
   id: string;
@@ -187,15 +230,20 @@ export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord
   if (opts.agent) params.set("agent", opts.agent);
   if (opts.createdSince) params.set("createdSince", opts.createdSince);
   const qs = params.toString();
-  return fetchJson<SessionRecord[]>(`/api/sessions${qs ? `?${qs}` : ""}`, "sessions");
+  return fetchJson<SessionRecord[]>(
+    `${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`,
+    "sessions",
+  );
 };
 
 export const listRuntimes = (): Promise<string[]> =>
   fetchJson<string[]>("/api/runtimes", "runtimes");
 
 export interface ServerConfig {
+  emplokeHome: string;
   catalogDir: string;
-  sessionsRoot: string;
+  /** Currently-selected workspace name on the server registry, or null. */
+  currentWorkspace: string | null;
   host: string;
   port: number;
   /** Native path separator on the server's OS. */
@@ -206,12 +254,12 @@ export const getConfig = (): Promise<ServerConfig> =>
   fetchJson<ServerConfig>("/api/config", "config");
 
 export const getSession = (id: string): Promise<SessionRecord> =>
-  fetchJson<SessionRecord>(`/api/sessions/${encodeURIComponent(id)}`, "session");
+  fetchJson<SessionRecord>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
 
 export const createSession = async (agent: string, runtime?: string): Promise<SessionRecord> => {
   const body: Record<string, string> = { agent };
   if (runtime !== undefined) body.runtime = runtime;
-  const r = await fetch("/api/sessions", jsonInit("POST", body));
+  const r = await fetch(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
   if (!r.ok) {
     let msg = `${r.status}`;
     try {
@@ -227,7 +275,9 @@ export const createSession = async (agent: string, runtime?: string): Promise<Se
 
 export const deleteSession = (id: string, deleteRuntimeState = false) => {
   const qs = deleteRuntimeState ? "?deleteRuntimeState=1" : "";
-  return mutate(`/api/sessions/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}${qs}`, {
+    method: "DELETE",
+  });
 };
 
 export interface SpawnSuccess {
@@ -246,7 +296,9 @@ export interface SpawnFailure {
 export type SpawnResult = SpawnSuccess | SpawnFailure;
 
 export const spawnSession = async (id: string): Promise<SpawnResult> => {
-  const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/spawn`, { method: "POST" });
+  const r = await fetch(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}/spawn`, {
+    method: "POST",
+  });
   if (!r.ok) {
     let msg = `${r.status}`;
     try {
@@ -259,3 +311,57 @@ export const spawnSession = async (id: string): Promise<SpawnResult> => {
   }
   return (await r.json()) as SpawnResult;
 };
+
+// ─── Workspaces ───────────────────────────────────────────────────
+
+export interface WorkspaceMetadata {
+  schemaVersion: number;
+  name: string;
+  createdAt: string;
+  defaults?: {
+    runtime?: string;
+    agent?: string;
+  };
+}
+
+export interface WorkspaceListItem {
+  name: string;
+  path: string;
+  lastOpenedAt?: string;
+  status: "ok" | "missing" | "corrupted";
+  metadata?: WorkspaceMetadata;
+  reason?: string;
+}
+
+export const listWorkspaces = (): Promise<WorkspaceListItem[]> =>
+  fetchJson<WorkspaceListItem[]>("/api/workspaces", "workspaces");
+
+export const getServerCurrentWorkspace = (): Promise<{ name: string | null }> =>
+  fetchJson<{ name: string | null }>("/api/workspaces/current", "current-workspace");
+
+export const setServerCurrentWorkspace = (name: string): Promise<void> =>
+  mutate("/api/workspaces/current", jsonInit("PUT", { name }));
+
+export const addWorkspace = async (
+  pathInput: string,
+  opts?: { name?: string; defaults?: WorkspaceMetadata["defaults"] },
+): Promise<{ name: string; path: string }> => {
+  const body: Record<string, unknown> = { path: pathInput };
+  if (opts?.name !== undefined) body.name = opts.name;
+  if (opts?.defaults !== undefined) body.defaults = opts.defaults;
+  const r = await fetch("/api/workspaces", jsonInit("POST", body));
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const j = await r.json();
+      if (j && typeof j.error === "string") msg = j.error;
+    } catch {
+      // not json
+    }
+    throw new Error(msg);
+  }
+  return (await r.json()) as { name: string; path: string };
+};
+
+export const removeWorkspace = (name: string) =>
+  mutate(`/api/workspaces/${encodeURIComponent(name)}`, { method: "DELETE" });

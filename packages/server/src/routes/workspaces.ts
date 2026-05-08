@@ -4,17 +4,17 @@ import {
   WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceManager,
+  type WorkspaceMetadata,
   WorkspaceNameConflictError,
   WorkspaceNameInvalidError,
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  type WorkspaceMetadata,
   type WorkspaceRegistry,
 } from "@emploke/workspace";
 import { Hono } from "hono";
-import { errorBody, parseJsonBody } from "./_shared.js";
 import type { WorkspaceContextCache } from "../workspace-context.js";
+import { errorBody, parseJsonBody } from "./_shared.js";
 
 interface CreateBody {
   path?: unknown;
@@ -111,7 +111,10 @@ export function workspacesRoutes(deps: {
     if (body.name !== undefined && typeof body.name !== "string") {
       return c.json({ error: "name, when present, must be a string" }, 400);
     }
-    if (body.defaults !== undefined && (body.defaults === null || typeof body.defaults !== "object" || Array.isArray(body.defaults))) {
+    if (
+      body.defaults !== undefined &&
+      (body.defaults === null || typeof body.defaults !== "object" || Array.isArray(body.defaults))
+    ) {
       return c.json({ error: "defaults, when present, must be an object" }, 400);
     }
 
@@ -179,7 +182,10 @@ export function workspacesRoutes(deps: {
     const name = c.req.param("name");
     const entry = registry.get(name);
     if (!entry) {
-      return c.json({ error: "workspace not registered", code: "WorkspaceNotRegisteredError" }, 404);
+      return c.json(
+        { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
+        404,
+      );
     }
     try {
       const ws = await WorkspaceManager.open(entry.path);

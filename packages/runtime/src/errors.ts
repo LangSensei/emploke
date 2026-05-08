@@ -70,9 +70,7 @@ export class RuntimeRegisterWorkspaceFailed extends Error {
     public readonly workspaceDir: string,
     cause: Error,
   ) {
-    super(
-      `runtime "${kind}" registerWorkspace failed at ${workspaceDir}: ${cause.message}`,
-    );
+    super(`runtime "${kind}" registerWorkspace failed at ${workspaceDir}: ${cause.message}`);
     this.name = "RuntimeRegisterWorkspaceFailed";
     this.cause = cause;
   }

@@ -222,9 +222,7 @@ describe("isPathCovered", () => {
   });
 
   it("ignores empty/non-string entries", () => {
-    expect(
-      isPathCovered("/foo/bar", ["", "/foo/bar"]),
-    ).toBe(true);
+    expect(isPathCovered("/foo/bar", ["", "/foo/bar"])).toBe(true);
   });
 
   it("normalises both sides via path.resolve", () => {

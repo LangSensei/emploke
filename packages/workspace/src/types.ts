@@ -1,10 +1,5 @@
 import path from "node:path";
-import {
-  LOGS_SUBDIR,
-  SESSIONS_SUBDIR,
-  TASKS_SUBDIR,
-  WORKFLOWS_SUBDIR,
-} from "./constants.js";
+import { LOGS_SUBDIR, SESSIONS_SUBDIR, TASKS_SUBDIR, WORKFLOWS_SUBDIR } from "./constants.js";
 
 /**
  * Self-describing metadata persisted at `<workspace>/workspace.json`.

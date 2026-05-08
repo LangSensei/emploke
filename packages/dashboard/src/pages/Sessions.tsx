@@ -15,6 +15,8 @@ import { Modal } from "../components/Modal";
 interface SessionsProps {
   agents: AgentEntry[];
   config: ServerConfig | null;
+  /** Currently-selected workspace name; null = no workspace, page renders an empty-state. */
+  currentWorkspace: string | null;
 }
 
 interface FallbackInfo {
@@ -64,7 +66,7 @@ function presetToCreatedSince(preset: TimePreset, now: Date = new Date()): strin
  * no terminal emulator could be detected), we fall back to showing the
  * incantation in a modal so the user can still copy-paste it.
  */
-export function SessionsPage({ agents, config }: SessionsProps) {
+export function SessionsPage({ agents, config, currentWorkspace }: SessionsProps) {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>(ALL_AGENTS);
@@ -98,6 +100,11 @@ export function SessionsPage({ agents, config }: SessionsProps) {
   }, []);
 
   const refresh = async () => {
+    if (!currentWorkspace) {
+      setSessions([]);
+      setLoaded(true);
+      return;
+    }
     setRefreshing(true);
     try {
       const next = await listSessions({
@@ -118,10 +125,10 @@ export function SessionsPage({ agents, config }: SessionsProps) {
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter/timeFilter change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter/timeFilter/workspace change
   useEffect(() => {
     refresh();
-  }, [filter, timeFilter]);
+  }, [filter, timeFilter, currentWorkspace]);
 
   // Fetch the registered runtimes once at mount; the registry is static
   // for a given server process so we don't need to re-poll.
@@ -214,6 +221,15 @@ export function SessionsPage({ agents, config }: SessionsProps) {
       return true;
     });
   })();
+
+  if (currentWorkspace === null) {
+    return (
+      <div className="alert alert--error">
+        No workspace is selected. Use the workspace dropdown in the top bar to choose or create one
+        — sessions are scoped to a workspace.
+      </div>
+    );
+  }
 
   return (
     <>
@@ -366,7 +382,7 @@ export function SessionsPage({ agents, config }: SessionsProps) {
         open={createOpen}
         agents={readyAgents}
         runtimes={runtimes}
-        sessionsRoot={config?.sessionsRoot ?? null}
+        workspaceName={currentWorkspace}
         pathSeparator={config?.pathSeparator ?? "/"}
         busy={busy}
         onClose={() => setCreateOpen(false)}
@@ -535,8 +551,8 @@ interface CreateModalProps {
   open: boolean;
   agents: AgentEntry[];
   runtimes: string[];
-  /** Resolved sessions root from server config; null while config is still loading. */
-  sessionsRoot: string | null;
+  /** Currently-selected workspace name, used in the "where will it land" hint. */
+  workspaceName: string | null;
   /** Native path separator on the server's OS (e.g. `\\` on Windows). */
   pathSeparator: string;
   busy: boolean;
@@ -548,7 +564,7 @@ function CreateModal({
   open,
   agents,
   runtimes,
-  sessionsRoot,
+  workspaceName,
   pathSeparator,
   busy,
   onClose,
@@ -624,9 +640,11 @@ function CreateModal({
             </select>
           </label>
           <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            A new workdir will be created at{" "}
+            A new workdir will be created under{" "}
             <code>
-              {sessionsRoot ? `${sessionsRoot}${pathSeparator}<id>` : "<sessions-root>/<id>"}
+              {workspaceName
+                ? `<workspace:${workspaceName}>${pathSeparator}sessions${pathSeparator}<id>`
+                : "<workspace>/sessions/<id>"}
             </code>{" "}
             and the agent will be baked into it.
           </p>

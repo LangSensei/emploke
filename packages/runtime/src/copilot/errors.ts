@@ -52,9 +52,7 @@ export class TrustRegistrationFailed extends Error {
     public readonly workspaceDir: string,
     cause: Error,
   ) {
-    super(
-      `failed to register workspace ${workspaceDir} in ${settingsPath}: ${cause.message}`,
-    );
+    super(`failed to register workspace ${workspaceDir} in ${settingsPath}: ${cause.message}`);
     this.name = "TrustRegistrationFailed";
     this.cause = cause;
   }

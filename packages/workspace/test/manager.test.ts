@@ -121,11 +121,7 @@ describe("WorkspaceManager.open", () => {
   it("throws WorkspaceCorruptedError on missing required fields", async () => {
     const dir = path.join(scratch, "p");
     await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({ schemaVersion: 1 }),
-      "utf8",
-    );
+    await writeFile(path.join(dir, WORKSPACE_FILE), JSON.stringify({ schemaVersion: 1 }), "utf8");
     await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
   });
 

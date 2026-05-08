@@ -2,11 +2,7 @@ import path, { sep as pathSep } from "node:path";
 import { Catalog } from "@emploke/catalog";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import {
-  type Workspace,
-  WorkspaceManager,
-  WorkspaceRegistry,
-} from "@emploke/workspace";
+import { type Workspace, WorkspaceManager, WorkspaceRegistry } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -16,10 +12,7 @@ import { configRoutes } from "./routes/config.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
-import {
-  registerWorkspaceWithRuntimes,
-  WorkspaceContextCache,
-} from "./workspace-context.js";
+import { registerWorkspaceWithRuntimes, WorkspaceContextCache } from "./workspace-context.js";
 
 const paths = resolveEmplokePaths(process.env);
 
@@ -99,7 +92,9 @@ async function main() {
   // Workspace-scoped sessions. The middleware resolves :name → context and
   // stashes the SessionManager on c.var; the route reads it back via the
   // resolver. 404 if name unknown; 5xx if workspace.json missing/corrupted.
-  const sessionsApp = new Hono<{ Variables: { sessionManager: import("@emploke/session").SessionManager } }>();
+  const sessionsApp = new Hono<{
+    Variables: { sessionManager: import("@emploke/session").SessionManager };
+  }>();
   sessionsApp.use("/:name/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
     "/:name/sessions",
@@ -171,7 +166,7 @@ function workspaceContextMiddleware(
   return async (c, next) => {
     const name = c.req.param("name");
     if (!name) return c.json({ error: "missing workspace name" }, 400);
-    let ctx;
+    let ctx: Awaited<ReturnType<WorkspaceContextCache["get"]>>;
     try {
       ctx = await cache.get(name);
     } catch (err) {

@@ -1,12 +1,12 @@
 import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
-import { type Runtime, RuntimeRegisterWorkspaceFailed, type RuntimeRegistry } from "@emploke/runtime";
-import { SessionManager } from "@emploke/session";
 import {
-  type Workspace,
-  WorkspaceManager,
-  type WorkspaceRegistry,
-} from "@emploke/workspace";
+  type Runtime,
+  RuntimeRegisterWorkspaceFailed,
+  type RuntimeRegistry,
+} from "@emploke/runtime";
+import { SessionManager } from "@emploke/session";
+import { type Workspace, WorkspaceManager, type WorkspaceRegistry } from "@emploke/workspace";
 
 /**
  * Per-workspace bundle of long-lived state. The server caches one of these

@@ -282,6 +282,30 @@ button {
   gap: var(--space-2);
 }
 
+.topbar__workspace {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar__workspace-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.topbar__workspace-select {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 160px;
+}
+
 /* ─── Content area ──────────────────────────────────────────────── */
 
 .content {

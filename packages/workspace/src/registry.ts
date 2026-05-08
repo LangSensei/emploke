@@ -143,9 +143,7 @@ export class WorkspaceRegistry {
    * we observe any changes made by other processes between `open()` and
    * this call. After a successful write we update our in-memory snapshot.
    */
-  private async mutate(
-    update: (state: RegistryFile) => RegistryFile,
-  ): Promise<void> {
+  private async mutate(update: (state: RegistryFile) => RegistryFile): Promise<void> {
     const lockPath = `${this.file}.lock`;
     await withFileLock(lockPath, async () => {
       let onDisk: RegistryFile;

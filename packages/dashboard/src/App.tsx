@@ -1,5 +1,17 @@
-import { useEffect, useState } from "react";
-import { type CatalogData, fetchAll, getConfig, type ServerConfig } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import {
+  addWorkspace,
+  type CatalogData,
+  fetchAll,
+  getConfig,
+  getCurrentWorkspace,
+  getServerCurrentWorkspace,
+  listWorkspaces,
+  type ServerConfig,
+  setCurrentWorkspace,
+  setServerCurrentWorkspace,
+  type WorkspaceListItem,
+} from "./api";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
@@ -35,8 +47,10 @@ export function App() {
   });
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
+  const [currentWs, setCurrentWs] = useState<string | null>(getCurrentWorkspace());
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     try {
       setError(null);
       const next = await fetchAll();
@@ -44,7 +58,77 @@ export function App() {
     } catch (e) {
       setError((e as Error).message);
     }
-  };
+  }, []);
+
+  /**
+   * Reconcile the workspace selection between the registry, the server's
+   * "currentName", and our localStorage:
+   *   1. Pull the registry list.
+   *   2. If localStorage already names a registered workspace, keep it.
+   *   3. Otherwise prefer the server's currentName (so a freshly-cleared
+   *      browser still opens the right workspace).
+   *   4. Otherwise fall back to the first registered workspace.
+   *   5. Persist back to localStorage so subsequent api calls have a value.
+   */
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const list = await listWorkspaces();
+      setWorkspaces(list);
+
+      const ls = getCurrentWorkspace();
+      let selected: string | null = null;
+      if (ls && list.some((w) => w.name === ls)) {
+        selected = ls;
+      } else {
+        let serverCurrent: string | null = null;
+        try {
+          serverCurrent = (await getServerCurrentWorkspace()).name;
+        } catch {
+          // server may not yet be ready; defaulting to first entry below
+        }
+        if (serverCurrent && list.some((w) => w.name === serverCurrent)) {
+          selected = serverCurrent;
+        } else if (list.length > 0) {
+          selected = list[0]!.name;
+        }
+        if (selected) setCurrentWorkspace(selected);
+      }
+      setCurrentWs(selected);
+    } catch (e) {
+      // Workspace list is best-effort; the rest of the dashboard can
+      // still function for catalog browsing.
+      setError((e as Error).message);
+    }
+  }, []);
+
+  const handleSelectWorkspace = useCallback(async (name: string) => {
+    setCurrentWorkspace(name);
+    setCurrentWs(name);
+    try {
+      await setServerCurrentWorkspace(name);
+    } catch {
+      // server-side currentName is just a hint; ignore failures
+    }
+  }, []);
+
+  const handleAddWorkspace = useCallback(async () => {
+    const pathInput = window.prompt(
+      "Workspace directory (absolute path). emploke will create workspace.json here if it doesn't exist.",
+    );
+    if (!pathInput || pathInput.trim() === "") return;
+    const nameInput = window.prompt(
+      "Workspace name (kebab-case, used in URLs). Leave blank to use the directory's basename.",
+    );
+    try {
+      const opts: { name?: string } = {};
+      if (nameInput && nameInput.trim() !== "") opts.name = nameInput.trim();
+      const created = await addWorkspace(pathInput.trim(), opts);
+      await refreshWorkspaces();
+      handleSelectWorkspace(created.name);
+    } catch (e) {
+      setError(`add workspace: ${(e as Error).message}`);
+    }
+  }, [refreshWorkspaces, handleSelectWorkspace]);
 
   // Server config is static for the lifetime of the server process; one
   // fetch on mount is enough. Soft-fails to null so the UI degrades to
@@ -66,6 +150,7 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
   useEffect(() => {
     refresh();
+    refreshWorkspaces();
   }, []);
 
   const meta = SECTION_TITLES[section];
@@ -76,7 +161,14 @@ export function App() {
       <Sidebar sections={SECTIONS} active={section} onSelect={setSection} />
 
       <div className="main">
-        <TopBar title={meta.title + titleSuffix} crumb={meta.crumb} />
+        <TopBar
+          title={meta.title + titleSuffix}
+          {...(meta.crumb !== undefined ? { crumb: meta.crumb } : {})}
+          workspaces={workspaces}
+          currentWorkspace={currentWs}
+          onSelectWorkspace={handleSelectWorkspace}
+          onAddWorkspace={handleAddWorkspace}
+        />
 
         <div className="content">
           {error && <div className="alert alert--error">⚠️ {error}</div>}
@@ -94,7 +186,9 @@ export function App() {
             />
           )}
 
-          {section === "sessions" && <SessionsPage agents={data.agents} config={config} />}
+          {section === "sessions" && (
+            <SessionsPage agents={data.agents} config={config} currentWorkspace={currentWs} />
+          )}
 
           {section === "substrates" && (
             <ComingSoonPage
@@ -108,6 +202,8 @@ export function App() {
             <SettingsPage
               serverUrl={typeof window !== "undefined" ? window.location.origin : "—"}
               config={config}
+              currentWorkspace={currentWs}
+              workspaces={workspaces}
             />
           )}
         </div>
