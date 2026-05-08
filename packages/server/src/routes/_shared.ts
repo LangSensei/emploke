@@ -53,7 +53,9 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "RuntimeRefreshFailed",
   "RuntimeStateDeletionFailed",
   "UnknownRuntimeError",
-  "WorkspacePrepFailed",
+  "TrustRegistrationFailed",
+  "RuntimeRegisterWorkspaceFailed",
+  "WorkdirPrepFailed",
   // @emploke/terminal (surface via /:id/spawn)
   "NoTerminalFoundError",
   "TerminalSpawnFailedError",

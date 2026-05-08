@@ -70,8 +70,10 @@ describe("errorBody", () => {
       "RuntimeProvisionFailed",
       "RuntimeRefreshFailed",
       "RuntimeStateDeletionFailed",
+      "RuntimeRegisterWorkspaceFailed",
       "UnknownRuntimeError",
-      "WorkspacePrepFailed",
+      "TrustRegistrationFailed",
+      "WorkdirPrepFailed",
       // terminal
       "NoTerminalFoundError",
       "TerminalSpawnFailedError",

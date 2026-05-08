@@ -12,7 +12,7 @@ import type {
 } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
-import { flattenSkillName, InvalidMcpJson, WorkspacePrepFailed } from "../../src/index.js";
+import { flattenSkillName, InvalidMcpJson, WorkdirPrepFailed } from "../../src/index.js";
 
 const execFile = promisify(execFileCb);
 
@@ -99,17 +99,12 @@ async function buildResolveResult(
 }
 
 const targetDir = (): string => path.join(scratch, "target");
-const settingsPath = (): string => path.join(scratch, "copilot-settings.json");
-
-const provisionOpts = (): { copilotSettingsPath: string } => ({
-  copilotSettingsPath: settingsPath(),
-});
 
 describe("provisionCopilotWorkdir — basics", () => {
   it("creates the target directory if it does not exist", async () => {
     const t = targetDir();
     expect(await exists(t)).toBe(false);
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([], []));
     expect(await exists(t)).toBe(true);
   });
 
@@ -125,12 +120,16 @@ describe("provisionCopilotWorkdir — basics", () => {
       "Be a good reviewer.",
       "",
     ].join("\n");
-    await provisionCopilotWorkdir(
-      t,
-      await buildResolveResult([], [], fakeAgent(), body),
-      provisionOpts(),
-    );
+    await provisionCopilotWorkdir(t, await buildResolveResult([], [], fakeAgent(), body));
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
+  });
+
+  it("does NOT touch any settings file (trust handling moved to registerWorkspace)", async () => {
+    const t = targetDir();
+    const settingsPath = path.join(scratch, "copilot-settings.json");
+    expect(await exists(settingsPath)).toBe(false);
+    await provisionCopilotWorkdir(t, await buildResolveResult([], []));
+    expect(await exists(settingsPath)).toBe(false);
   });
 });
 
@@ -155,11 +154,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     );
     const swat = await makeMcpFixture("swat", JSON.stringify({ command: "swat" }));
 
-    await provisionCopilotWorkdir(
-      t,
-      await buildResolveResult([], [playwright, swat]),
-      provisionOpts(),
-    );
+    await provisionCopilotWorkdir(t, await buildResolveResult([], [playwright, swat]));
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
     expect(written).toEqual({
@@ -172,7 +167,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
 
   it("does not write .mcp.json when there are no MCPs", async () => {
     const t = targetDir();
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([], []));
     expect(await exists(path.join(t, ".mcp.json"))).toBe(false);
   });
 
@@ -180,7 +175,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     const t = targetDir();
     const broken = await makeMcpFixture("broken", "{not-json");
     await expect(
-      provisionCopilotWorkdir(t, await buildResolveResult([], [broken]), provisionOpts()),
+      provisionCopilotWorkdir(t, await buildResolveResult([], [broken])),
     ).rejects.toBeInstanceOf(InvalidMcpJson);
   });
 
@@ -188,7 +183,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     const t = targetDir();
     const broken = await makeMcpFixture("broken", "{not-json");
     try {
-      await provisionCopilotWorkdir(t, await buildResolveResult([], [broken]), provisionOpts());
+      await provisionCopilotWorkdir(t, await buildResolveResult([], [broken]));
       expect.fail("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(InvalidMcpJson);
@@ -204,7 +199,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
   it("copies SKILL.md to .github/skills/<name>/SKILL.md", async () => {
     const t = targetDir();
     const skill = await makeSkillFixture("foo", { skillBody: "# Foo\n" });
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []));
     expect(await readFile(path.join(t, ".github/skills/foo/SKILL.md"), "utf8")).toBe("# Foo\n");
   });
 
@@ -213,7 +208,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
     const skill = await makeSkillFixture("foo", {
       extraFiles: { "assets/logo.png": "PNG", "templates/main.tmpl": "TMPL" },
     });
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []));
     expect(await readFile(path.join(t, ".github/skills/foo/assets/logo.png"), "utf8")).toBe("PNG");
     expect(await readFile(path.join(t, ".github/skills/foo/templates/main.tmpl"), "utf8")).toBe(
       "TMPL",
@@ -225,14 +220,14 @@ describe("provisionCopilotWorkdir — skills copy", () => {
     const skill = await makeSkillFixture("foo", {
       hooks: { copilot: { "h.sh": "#!/bin/sh\n" } },
     });
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []));
     expect(await exists(path.join(t, ".github/skills/foo/hooks"))).toBe(false);
   });
 
   it("flattens scoped skill names", async () => {
     const t = targetDir();
     const skill = await makeSkillFixture("langsensei/weather", { skillBody: "# Weather\n" });
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []));
     expect(
       await readFile(path.join(t, ".github/skills/langsensei__weather/SKILL.md"), "utf8"),
     ).toBe("# Weather\n");
@@ -247,7 +242,7 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
     const b = await makeSkillFixture("b", {
       hooks: { copilot: { "b.sh": "B\n", "shared/cfg.json": '{"x":1}' } },
     });
-    await provisionCopilotWorkdir(t, await buildResolveResult([a, b], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([a, b], []));
     expect(await readFile(path.join(t, ".github/hooks/a.sh"), "utf8")).toBe("A\n");
     expect(await readFile(path.join(t, ".github/hooks/b.sh"), "utf8")).toBe("B\n");
     expect(await readFile(path.join(t, ".github/hooks/shared/cfg.json"), "utf8")).toBe('{"x":1}');
@@ -256,7 +251,7 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
   it("does not create .github/hooks/ when no skill contributes copilot hooks", async () => {
     const t = targetDir();
     const skill = await makeSkillFixture("foo");
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], []));
     expect(await exists(path.join(t, ".github/hooks"))).toBe(false);
   });
 
@@ -268,226 +263,32 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
     const later = await makeSkillFixture("later", {
       hooks: { copilot: { "shared.sh": "second\n" } },
     });
-    await provisionCopilotWorkdir(
-      t,
-      await buildResolveResult([earlier, later], []),
-      provisionOpts(),
-    );
+    await provisionCopilotWorkdir(t, await buildResolveResult([earlier, later], []));
     expect(await readFile(path.join(t, ".github/hooks/shared.sh"), "utf8")).toBe("second\n");
   });
 });
 
-describe("provisionCopilotWorkdir — workspace prep", () => {
+describe("provisionCopilotWorkdir — workdir prep", () => {
   it("runs git init in the target directory", async () => {
     const t = targetDir();
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), provisionOpts());
+    await provisionCopilotWorkdir(t, await buildResolveResult([], []));
     expect(await exists(path.join(t, ".git"))).toBe(true);
     const { stdout } = await execFile("git", ["rev-parse", "--is-inside-work-tree"], { cwd: t });
     expect(stdout.trim()).toBe("true");
   });
 
-  it("WorkspacePrepFailed exposes step + targetDir + cause", () => {
-    const wrapped = new WorkspacePrepFailed(
+  it("WorkdirPrepFailed exposes step + workdir + cause", () => {
+    const wrapped = new WorkdirPrepFailed(
       "git init",
       "/some/dir",
       new Error("ENOENT: git not found"),
     );
-    expect(wrapped).toBeInstanceOf(WorkspacePrepFailed);
+    expect(wrapped).toBeInstanceOf(WorkdirPrepFailed);
     expect(wrapped.step).toBe("git init");
-    expect(wrapped.targetDir).toBe("/some/dir");
+    expect(wrapped.workdir).toBe("/some/dir");
     expect((wrapped.cause as Error).message).toBe("ENOENT: git not found");
     expect(wrapped.message).toContain("git init");
   });
-});
-
-describe("provisionCopilotWorkdir — trusted folders", () => {
-  // The Copilot CLI prompts on every untrusted folder before allowing tool
-  // use; that prompt is fatal for emploke's "open a terminal and start
-  // copilot" UX. So at provision time we must ensure the workdir (or any
-  // ancestor) is listed in `<settings>.trustedFolders`.
-
-  it("creates the settings file with the workdir trusted when it is missing", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    expect(await exists(sp)).toBe(false);
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual([path.resolve(t)]);
-  });
-
-  it("appends the workdir to existing trustedFolders without disturbing other keys", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    const previous = {
-      logLevel: "info",
-      trustedFolders: ["/already/trusted"],
-      lastLoggedInUser: { host: "https://github.com", login: "alice" },
-    };
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, JSON.stringify(previous, null, 2), "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.logLevel).toBe("info");
-    expect(written.lastLoggedInUser).toEqual(previous.lastLoggedInUser);
-    expect(written.trustedFolders).toEqual(["/already/trusted", path.resolve(t)]);
-  });
-
-  it("does not duplicate the entry when the workdir is already trusted", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    const previous = { trustedFolders: [path.resolve(t)] };
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, JSON.stringify(previous, null, 2), "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual([path.resolve(t)]);
-  });
-
-  it("treats a parent of the workdir as covering, leaving settings unchanged", async () => {
-    // Common emploke layout: every session lives under ~/.emploke, so once
-    // ~/.emploke is trusted we should never re-add per-session entries.
-    const ancestor = scratch;
-    const t = path.join(ancestor, "deep", "nested", "session");
-    await mkdir(t, { recursive: true });
-    const sp = settingsPath();
-    const previous = { trustedFolders: [ancestor] };
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, JSON.stringify(previous, null, 2), "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual([ancestor]);
-  });
-
-  it("does NOT confuse a sibling-prefix string for a parent (e.g. /foo vs /foobar)", async () => {
-    const t = path.join(scratch, "foobar", "session");
-    await mkdir(t, { recursive: true });
-    const sp = settingsPath();
-    const sibling = path.join(scratch, "foo");
-    const previous = { trustedFolders: [sibling] };
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, JSON.stringify(previous, null, 2), "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual([sibling, path.resolve(t)]);
-  });
-
-  it("recovers when settings.json is malformed by starting fresh", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, "{not valid json", "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual([path.resolve(t)]);
-  });
-
-  it("ignores non-string entries in an existing trustedFolders array", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    const previous = { trustedFolders: [42, null, "/already", { not: "a string" }] };
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(sp, JSON.stringify(previous), "utf8");
-
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.trustedFolders).toEqual(["/already", path.resolve(t)]);
-  });
-
-  // Concurrency hardening: the read-modify-write cycle on settings.json
-  // is protected by an O_EXCL lock file. Without the lock, two parallel
-  // provisions would both pass `isPathCovered` before either wrote, then
-  // the second `rename()` would clobber the first writer's entries (and
-  // any unrelated keys the user happened to have between the two reads).
-  // These tests pin the lock behavior.
-
-  it("serialises concurrent provisions: every workdir ends up trusted exactly once", async () => {
-    const sp = settingsPath();
-    // 8 distinct workdirs sharing the same settings file. Run all
-    // provisions in parallel — any lost-update race will leave at least
-    // one workdir absent from the final trustedFolders array.
-    const workdirs: string[] = [];
-    for (let i = 0; i < 8; i++) {
-      const w = path.join(scratch, `concurrent-${i}`);
-      workdirs.push(w);
-    }
-    const resolves = await Promise.all(workdirs.map(() => buildResolveResult([], [])));
-    await Promise.all(
-      workdirs.map((w, i) => provisionCopilotWorkdir(w, resolves[i]!, { copilotSettingsPath: sp })),
-    );
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    const trusted: string[] = written.trustedFolders;
-    // Every workdir must appear (no lost updates).
-    for (const w of workdirs) {
-      expect(trusted).toContain(path.resolve(w));
-    }
-    // No duplicates — `isPathCovered` short-circuits inside the lock.
-    const uniq = new Set(trusted);
-    expect(uniq.size).toBe(trusted.length);
-  });
-
-  it("preserves unrelated keys across concurrent provisions (no lost-update on logLevel)", async () => {
-    const sp = settingsPath();
-    // Seed a settings file with a non-trustedFolders key. Concurrent
-    // provisions must not silently drop it on a stale read.
-    await mkdir(path.dirname(sp), { recursive: true });
-    await writeFile(
-      sp,
-      `${JSON.stringify({ logLevel: "info", lastLoggedInUser: { login: "alice" } }, null, 2)}\n`,
-      "utf8",
-    );
-
-    const workdirs = Array.from({ length: 6 }, (_, i) => path.join(scratch, `co-${i}`));
-    const resolves = await Promise.all(workdirs.map(() => buildResolveResult([], [])));
-    await Promise.all(
-      workdirs.map((w, i) => provisionCopilotWorkdir(w, resolves[i]!, { copilotSettingsPath: sp })),
-    );
-
-    const written = JSON.parse(await readFile(sp, "utf8"));
-    expect(written.logLevel).toBe("info");
-    expect(written.lastLoggedInUser).toEqual({ login: "alice" });
-    for (const w of workdirs) {
-      expect(written.trustedFolders).toContain(path.resolve(w));
-    }
-  });
-
-  it("releases the lock file when provision succeeds (no zombie lock)", async () => {
-    const t = targetDir();
-    const sp = settingsPath();
-    await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
-    expect(await exists(`${sp}.lock`)).toBe(false);
-  });
-
-  it("includes holder PID in the timeout error so operators can find the wedged process", async () => {
-    // Simulate a stuck holder: drop a fresh lock file with a known PID
-    // and never release it. A concurrent provision should time out and
-    // surface the PID in its error message.
-    const sp = settingsPath();
-    await mkdir(path.dirname(sp), { recursive: true });
-    const lockPath = `${sp}.lock`;
-    await writeFile(lockPath, "98765\n", "utf8");
-
-    const t = targetDir();
-    // Default 5s timeout would slow the test down; we can't override it
-    // without exporting more knobs. Accept the wait — vitest's default
-    // is 10s and 5s leaves headroom.
-    await expect(
-      provisionCopilotWorkdir(t, await buildResolveResult([], []), {
-        copilotSettingsPath: sp,
-      }),
-    ).rejects.toThrow(/PID 98765/);
-  }, 15000);
 });
 
 describe("provisionCopilotWorkdir — end-to-end shape", () => {
@@ -498,20 +299,14 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
       extraFiles: { "rules.json": "{}" },
       hooks: { copilot: { "post-write.sh": "echo done\n" } },
     });
-    const mcp = await makeMcpFixture("playwright", '{"command":"npx"}');
+    const mcp = await makeMcpFixture("hello", JSON.stringify({ command: "hello" }));
+    await provisionCopilotWorkdir(t, await buildResolveResult([skill], [mcp]));
 
-    await provisionCopilotWorkdir(t, await buildResolveResult([skill], [mcp]), provisionOpts());
-
-    const checks = await Promise.all([
-      exists(path.join(t, "AGENTS.md")),
-      exists(path.join(t, ".mcp.json")),
-      exists(path.join(t, ".github/skills/dev__lint/SKILL.md")),
-      exists(path.join(t, ".github/skills/dev__lint/rules.json")),
-      exists(path.join(t, ".github/hooks/post-write.sh")),
-      exists(path.join(t, ".git")),
-      exists(path.join(t, ".github/skills/dev__lint/hooks")),
-    ]);
-    expect(checks.slice(0, 6).every(Boolean)).toBe(true);
-    expect(checks[6]).toBe(false);
+    expect(await exists(path.join(t, "AGENTS.md"))).toBe(true);
+    expect(await exists(path.join(t, ".mcp.json"))).toBe(true);
+    expect(await exists(path.join(t, ".github/skills/dev__lint/SKILL.md"))).toBe(true);
+    expect(await exists(path.join(t, ".github/skills/dev__lint/rules.json"))).toBe(true);
+    expect(await exists(path.join(t, ".github/hooks/post-write.sh"))).toBe(true);
+    expect(await exists(path.join(t, ".git"))).toBe(true);
   });
 });
