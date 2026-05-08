@@ -268,7 +268,11 @@ async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Prom
 
       // Lock contended. Decide whether to wait or break it as stale.
       if (Date.now() - start > SETTINGS_LOCK_WAIT_MS) {
-        throw new Error(`timed out (${SETTINGS_LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}`);
+        const holder = await readLockHolder(lockPath);
+        const detail = holder !== null ? ` (held by PID ${holder})` : "";
+        throw new Error(
+          `timed out (${SETTINGS_LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}${detail}`,
+        );
       }
       try {
         const st = await stat(lockPath);
@@ -300,6 +304,22 @@ async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Prom
 function readTrustedFolders(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((s): s is string => typeof s === "string");
+}
+
+/**
+ * Best-effort: read the PID written by `withSettingsLock`'s holder when
+ * we time out waiting for the lock. Returns `null` if the file is gone
+ * or unreadable — that's diagnostic colour, not load-bearing logic, so
+ * any failure swallows silently.
+ */
+async function readLockHolder(lockPath: string): Promise<number | null> {
+  try {
+    const raw = (await readFile(lockPath, "utf8")).trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

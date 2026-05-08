@@ -10,10 +10,17 @@ describe("isLoopbackBind", () => {
     ["[::1]", true],
     ["127.5.0.1", true],
     ["0.0.0.0", false],
+    ["::", false], // IPv6 wildcard — bind-all-interfaces, NOT loopback
+    ["0", false], // shorthand for 0.0.0.0
     ["192.168.1.10", false],
     ["10.0.0.5", false],
     ["example.com", false],
     ["", false],
+    ["127.evil.com", true], // KNOWN LIMITATION: literal startsWith match;
+    // a hostname starting with "127." is treated as loopback. We accept
+    // this because (a) admins type literal IPs / "localhost", not weird
+    // hostnames, and (b) the bind happens against this exact string —
+    // OS resolves it at bind time, not us.
   ])("classifies %s as %s", (host, expected) => {
     expect(isLoopbackBind(host)).toBe(expected);
   });

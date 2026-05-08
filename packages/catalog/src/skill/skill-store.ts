@@ -153,6 +153,12 @@ export class SkillStore {
   }
 
   path(name: string): string {
+    // Defense-in-depth: validate before composing a path. `path()` is a
+    // public method on the store; even though no caller in this repo
+    // currently uses it, hardening at the boundary protects future
+    // consumers from inheriting the same path-traversal class of bug
+    // that getContent had before 716edd6.
+    validateName(name);
     return join(this.baseDir, nameToPath(name));
   }
 

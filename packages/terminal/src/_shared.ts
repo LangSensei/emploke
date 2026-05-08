@@ -77,6 +77,20 @@ export function escapeCmdArg(s: string): string {
 }
 
 /**
+ * PowerShell single-quoted-string escape. PowerShell's `'…'` literals have
+ * exactly one escape rule: `''` is a literal `'`. No backslash, no `$`/`"`
+ * interpolation, no command substitution. Anything else is taken verbatim.
+ *
+ * Used to assemble a pwsh `-Command "& 'foo' 'arg1' …"` payload where the
+ * call operator (`&`) invokes a program by name with each subsequent
+ * single-quoted token as a literal argv entry. This is the safe pwsh
+ * equivalent of POSIX `'foo'` quoting.
+ */
+export function pwshQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
+/**
  * Default deps backed by node:child_process and node:fs. The returned
  * SpawnHandle.earlyFailure resolves to a non-null reason if the child emits
  * `error` (e.g. ENOENT) or exits with a non-zero code; otherwise it stays

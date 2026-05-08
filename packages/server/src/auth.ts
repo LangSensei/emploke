@@ -54,11 +54,17 @@ export function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Hono middleware that requires `Authorization: Bearer <key>` (or
- * `?apiKey=<key>` for browsers that can't easily set headers). Compares
- * the presented key with `expected` in constant time. Only mounted by
- * `index.ts` when `EMPLOKE_API_KEY` is set — when unset (loopback-only
- * deployment) requests pass through without this gate.
+ * Hono middleware that requires `Authorization: Bearer <key>`. A
+ * `?apiKey=<key>` query string is also accepted as a fallback for
+ * browsers that can't easily set headers, but **prefer the Bearer
+ * header in production**: query parameters are recorded in HTTP access
+ * logs (nginx, upstream proxies, browser history, Referer headers when
+ * the page links out), so a key sent via query is far more likely to
+ * leak than one sent in the header.
+ *
+ * Compares the presented key with `expected` in constant time. Only
+ * mounted by `index.ts` when `EMPLOKE_API_KEY` is set — when unset
+ * (loopback-only deployment) requests pass through without this gate.
  *
  * Returns a Hono middleware function (async (c, next) => …). Failures
  * respond with 401 + `{ error: "unauthorized", code: "Unauthorized" }`

@@ -468,6 +468,26 @@ describe("provisionCopilotWorkdir — trusted folders", () => {
     await provisionCopilotWorkdir(t, await buildResolveResult([], []), { copilotSettingsPath: sp });
     expect(await exists(`${sp}.lock`)).toBe(false);
   });
+
+  it("includes holder PID in the timeout error so operators can find the wedged process", async () => {
+    // Simulate a stuck holder: drop a fresh lock file with a known PID
+    // and never release it. A concurrent provision should time out and
+    // surface the PID in its error message.
+    const sp = settingsPath();
+    await mkdir(path.dirname(sp), { recursive: true });
+    const lockPath = `${sp}.lock`;
+    await writeFile(lockPath, "98765\n", "utf8");
+
+    const t = targetDir();
+    // Default 5s timeout would slow the test down; we can't override it
+    // without exporting more knobs. Accept the wait — vitest's default
+    // is 10s and 5s leaves headroom.
+    await expect(
+      provisionCopilotWorkdir(t, await buildResolveResult([], []), {
+        copilotSettingsPath: sp,
+      }),
+    ).rejects.toThrow(/PID 98765/);
+  }, 15000);
 });
 
 describe("provisionCopilotWorkdir — end-to-end shape", () => {
