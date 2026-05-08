@@ -480,18 +480,18 @@ function ActivityCell({ session }: { session: SessionRecord }) {
     <span className="activity-cell" title={session.preview ?? undefined}>
       {session.preview && (
         <>
-          <span className="activity-cell__count">{truncate(session.preview, 32)}</span>
+          {/* No JS-side length cap: CSS (overflow: hidden + text-overflow:
+              ellipsis on .activity-cell__count) handles truncation based on
+              the actual column width, so wide screens show more text instead
+              of always cutting at 32 chars. The hover title still shows the
+              full preview. */}
+          <span className="activity-cell__count">{session.preview}</span>
           <span className="activity-cell__sep">·</span>
         </>
       )}
       <span className="muted">{formatRelative(session.lastActiveAt)}</span>
     </span>
   );
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
 }
 
 function CopyPathButton({ path }: { path: string }) {
