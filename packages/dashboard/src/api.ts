@@ -375,10 +375,15 @@ export const updateWorkspaceMetadata = async (
 
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
+/**
+ * Task failure shape — matches the kernel's `TaskFailure` exactly. The
+ * field is `error` (not `reason`) and there are no nested exit fields:
+ * exit code/signal live in `metadata.exitCode` / `metadata.exitSignal`
+ * because they're runtime-specific bookkeeping, not part of the abstract
+ * Task value model.
+ */
 export interface TaskFailure {
-  reason: string;
-  exitCode?: number | null;
-  exitSignal?: string | null;
+  error: string;
 }
 
 export interface TaskResult {

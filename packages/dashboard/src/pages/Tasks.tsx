@@ -1,10 +1,11 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteTask,
   dispatchTask,
   fetchTaskEvents,
   getTask,
+  listRuntimes,
   listTasks,
   type TaskRecord,
   type TaskStatus,
@@ -34,19 +35,52 @@ const STATUS_TONE: Record<TaskStatus, string> = {
   cancelled: "muted",
 };
 
+// Sentinel values for the "All" option in the dropdowns. Plain strings keep
+// the <select value> contract simple (vs `null`, which doesn't round-trip
+// through DOM string serialization).
+const ALL_AGENTS = "__all__";
+const ALL_RUNTIMES = "__all__";
+
+type TimePreset = "today" | "7d" | "30d" | "all";
+
+const TIME_PRESETS: { value: TimePreset; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+  { value: "all", label: "All" },
+];
+
+function presetToSinceMs(preset: TimePreset): number | null {
+  const now = Date.now();
+  switch (preset) {
+    case "today": {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    case "7d":
+      return now - 7 * 24 * 60 * 60 * 1000;
+    case "30d":
+      return now - 30 * 24 * 60 * 60 * 1000;
+    case "all":
+      return null;
+  }
+}
+
 /**
  * Tasks page — fire-and-forget agent dispatch, autonomous run, polling
- * detail view. Lives parallel to Sessions: sessions are interactive
- * workdirs you `copilot` into, tasks are non-interactive runs you read
- * the events.jsonl from afterwards.
+ * detail view. Mirrors Sessions's filter+toolbar UX so users can move
+ * between the two pages without re-learning the layout.
  *
- * The detail view is implemented as a side panel on the same page rather
- * than a new route so we don't have to thread URL parameters through the
- * App.tsx router for the MVP. If we add task deep-linking later it's a
- * mechanical refactor.
+ * Layout uses a true split-pane: the list scrolls independently of the
+ * detail panel (each gets its own `overflow: auto` container with
+ * `align-self: start`), so a long event log on the right doesn't make
+ * left-side rows balloon. Selecting a row binds the detail panel; closing
+ * the detail leaves the list untouched.
  */
 export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +88,13 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TaskRecord | null>(null);
+
+  // Filter state — all client-side, since /tasks returns the full list and
+  // the list is small enough that filtering in JS is cheaper than a round-trip.
+  const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
+  const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
+  const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -93,6 +134,25 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
     void refresh();
   }, [refresh]);
 
+  // Fetch the registered runtimes once at mount. Static for a given server
+  // process so re-polling is wasteful. If the call fails (server unreachable
+  // on mount), we just leave the dropdown disabled / showing "(default)" —
+  // the dispatch path then submits without a `runtime` field and the server
+  // picks its default.
+  useEffect(() => {
+    let cancelled = false;
+    listRuntimes()
+      .then((kinds) => {
+        if (!cancelled) setRuntimes(kinds);
+      })
+      .catch(() => {
+        // Non-fatal.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-refresh while any task is running so the dashboard catches the
   // success/failure transition without the user pressing Refresh. 4s is
   // a tradeoff between snappiness and load — the manager polls task.json
@@ -106,11 +166,11 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
     return () => clearInterval(handle);
   }, [tasks, currentWorkspaceId, refresh]);
 
-  const onDispatched = async (agent: string, instructions: string) => {
+  const onDispatched = async (agent: string, instructions: string, runtime: string | undefined) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await dispatchTask(agent, instructions);
+      const created = await dispatchTask(agent, instructions, runtime);
       if (!mountedRef.current) return;
       setDispatchOpen(false);
       setSelectedId(created.id);
@@ -143,6 +203,45 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
 
   const readyAgents = agents.filter((a) => a.status === "ready");
 
+  // Memoize so re-renders triggered by polling don't re-allocate the array
+  // unless the underlying data actually changed.
+  const visibleTasks = useMemo(() => {
+    const q = idQuery.trim().toLowerCase();
+    const sinceMs = presetToSinceMs(timeFilter);
+    return tasks.filter((t) => {
+      if (q !== "" && !t.id.toLowerCase().includes(q)) return false;
+      if (agentFilter !== ALL_AGENTS && t.agent !== agentFilter) return false;
+      if (runtimeFilter !== ALL_RUNTIMES) {
+        const rt = typeof t.metadata?.runtime === "string" ? t.metadata.runtime : "";
+        if (rt !== runtimeFilter) return false;
+      }
+      if (sinceMs !== null) {
+        const created = Date.parse(t.createdAt);
+        if (Number.isFinite(created) && created < sinceMs) return false;
+      }
+      return true;
+    });
+  }, [tasks, idQuery, agentFilter, runtimeFilter, timeFilter]);
+
+  // Drop the selected task from view if it's no longer in the visible set
+  // (e.g. user typed a filter that excludes it). Keeps the detail pane in
+  // sync with what the user can actually see.
+  useEffect(() => {
+    if (selectedId !== null && !visibleTasks.some((t) => t.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [selectedId, visibleTasks]);
+
+  // Distinct agent / runtime values that actually appear in the task list,
+  // unioned with the catalog list so users can filter to an agent that
+  // doesn't have any tasks yet (giving a "no matches" empty state instead
+  // of hiding the option entirely).
+  const filterAgentNames = useMemo(() => {
+    const set = new Set<string>(agents.map((a) => a.agent.name));
+    for (const t of tasks) set.add(t.agent);
+    return Array.from(set).sort();
+  }, [agents, tasks]);
+
   if (currentWorkspaceId === null) {
     return (
       <div className="alert alert--error">
@@ -155,10 +254,71 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
   return (
     <>
       <div className="page-toolbar">
-        <div className="page-toolbar__actions" style={{ alignItems: "center" }}>
+        <div
+          className="page-toolbar__actions"
+          style={{ gap: "var(--space-3)", alignItems: "center" }}
+        >
+          <label htmlFor="task-id-filter" className="muted" style={{ fontSize: 12 }}>
+            Search
+          </label>
+          <input
+            id="task-id-filter"
+            type="search"
+            value={idQuery}
+            onChange={(e) => setIdQuery(e.target.value)}
+            placeholder="task id…"
+            className="input"
+            style={{ width: 200 }}
+          />
+          <label htmlFor="task-agent-filter" className="muted" style={{ fontSize: 12 }}>
+            Agent
+          </label>
+          <select
+            id="task-agent-filter"
+            value={agentFilter}
+            onChange={(e) => setAgentFilter(e.target.value)}
+            className="select"
+          >
+            <option value={ALL_AGENTS}>All</option>
+            {filterAgentNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="task-runtime-filter" className="muted" style={{ fontSize: 12 }}>
+            Runtime
+          </label>
+          <select
+            id="task-runtime-filter"
+            value={runtimeFilter}
+            onChange={(e) => setRuntimeFilter(e.target.value)}
+            className="select"
+            disabled={runtimes.length === 0}
+          >
+            <option value={ALL_RUNTIMES}>All</option>
+            {runtimes.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
           <span className="muted" style={{ fontSize: 12 }}>
-            {tasks.length} task{tasks.length === 1 ? "" : "s"}
+            Created
           </span>
+          <div className="pills">
+            {TIME_PRESETS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`pills__btn${timeFilter === p.value ? " pills__btn--active" : ""}`}
+                onClick={() => setTimeFilter(p.value)}
+                aria-pressed={timeFilter === p.value}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="page-toolbar__actions">
           <button
@@ -198,29 +358,45 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
           </div>
           <p className="empty__title">Loading tasks…</p>
         </div>
-      ) : tasks.length === 0 ? (
+      ) : visibleTasks.length === 0 ? (
         <div className="empty">
           <div className="empty__icon">📝</div>
-          <p className="empty__title">No tasks yet</p>
+          <p className="empty__title">{tasks.length === 0 ? "No tasks yet" : "No matches"}</p>
           <p className="empty__hint">
-            Dispatch a task to run an agent autonomously and read the result here when it finishes.
+            {tasks.length === 0
+              ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
+              : "Adjust the filters above to see more tasks."}
           </p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 480px", gap: 16 }}>
-          <table className="table table--wide">
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Agent</th>
-                <th>Status</th>
-                <th>Started</th>
-                <th className="col-actions">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => (
-                <TaskRow
+        // Split-pane: independent scroll containers anchored to the top
+        // (`alignItems: start`) so a tall right panel doesn't push the left
+        // list down and vice versa. Each child caps its own height to the
+        // viewport-minus-toolbar so the page itself never grows scrollbars.
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(360px, 520px)",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <div
+            style={{
+              maxHeight: "calc(100vh - 220px)",
+              overflow: "auto",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md, 8px)",
+            }}
+          >
+            <ul
+              className="task-list"
+              // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox pattern requires role on ul
+              role="listbox"
+              aria-label="Tasks"
+            >
+              {visibleTasks.map((t) => (
+                <TaskListItem
                   key={t.id}
                   task={t}
                   selected={selectedId === t.id}
@@ -228,8 +404,8 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
                   onDelete={() => setDeleteTarget(t)}
                 />
               ))}
-            </tbody>
-          </table>
+            </ul>
+          </div>
 
           <TaskDetailPanel
             taskId={selectedId}
@@ -245,6 +421,7 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
       <DispatchModal
         open={dispatchOpen}
         agents={readyAgents}
+        runtimes={runtimes}
         busy={busy}
         onClose={() => setDispatchOpen(false)}
         onDispatch={onDispatched}
@@ -252,11 +429,13 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
 
       {deleteTarget && (
         <Modal open={true} onClose={() => setDeleteTarget(null)} title="Delete task" size="default">
-          <p>
-            Delete task <code>{shortId(deleteTarget.id)}</code>? This kills the subprocess if it's
-            still running and removes the workdir.
-          </p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+          <div className="modal__body">
+            <p>
+              Delete task <code>{shortId(deleteTarget.id)}</code>? This kills the subprocess if it's
+              still running and removes the workdir.
+            </p>
+          </div>
+          <div className="modal__footer">
             <button
               type="button"
               className="btn btn--ghost"
@@ -280,34 +459,55 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
   );
 }
 
-interface TaskRowProps {
+interface TaskListItemProps {
   task: TaskRecord;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
 }
 
-function TaskRow({ task, selected, onSelect, onDelete }: TaskRowProps) {
+/**
+ * One row of the task list. Renders as a card-ish flex row so a tall
+ * detail panel on the right never stretches it (which is what the table
+ * layout was doing — table rows in a grid cell take the cell's height).
+ */
+function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
+  const runtime =
+    typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
+  // Single-line excerpt: collapse whitespace, slice, and trust the CSS
+  // ellipsis to handle the visual cut-off so we don't second-guess the
+  // column width.
+  const excerpt = task.instructions.replace(/\s+/g, " ").trim();
   return (
-    <tr
+    <li
+      className={`task-list__item${selected ? " task-list__item--selected" : ""}`}
       onClick={onSelect}
-      style={{
-        cursor: "pointer",
-        background: selected ? "var(--surface-2, rgba(255,255,255,0.04))" : undefined,
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
       }}
+      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
+      role="option"
+      tabIndex={0}
+      aria-selected={selected}
     >
-      <td>
-        <code title={task.id}>{shortId(task.id)}</code>
-      </td>
-      <td>{task.agent}</td>
-      <td>
+      <div className="task-list__item-head">
+        <code className="task-list__id" title={task.id}>
+          {shortId(task.id)}
+        </code>
         <span className={`badge badge--${tone}`}>{STATUS_LABEL[task.status]}</span>
-      </td>
-      <td className="muted" style={{ fontSize: 12 }}>
-        {task.startedAt ? formatTime(task.startedAt) : "—"}
-      </td>
-      <td className="col-actions">
+        <span className="agent-tag" title={`Agent: ${task.agent}`}>
+          {task.agent}
+        </span>
+        {runtime && (
+          <span className="agent-tag" title={`Runtime: ${runtime}`}>
+            {runtime}
+          </span>
+        )}
+        <span className="task-list__spacer" />
         <button
           type="button"
           className="btn btn--ghost btn--icon"
@@ -320,71 +520,108 @@ function TaskRow({ task, selected, onSelect, onDelete }: TaskRowProps) {
         >
           <TrashIcon />
         </button>
-      </td>
-    </tr>
+      </div>
+      <div className="task-list__item-meta muted" title={excerpt}>
+        {excerpt}
+      </div>
+      <div className="task-list__item-time muted">
+        {task.startedAt ? formatTime(task.startedAt) : `created ${formatTime(task.createdAt)}`}
+      </div>
+    </li>
   );
 }
 
 interface DispatchModalProps {
   open: boolean;
   agents: AgentEntry[];
+  runtimes: string[];
   busy: boolean;
   onClose: () => void;
-  onDispatch: (agent: string, instructions: string) => void;
+  onDispatch: (agent: string, instructions: string, runtime: string | undefined) => void;
 }
 
-function DispatchModal({ open, agents, busy, onClose, onDispatch }: DispatchModalProps) {
+function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: DispatchModalProps) {
   const [agent, setAgent] = useState<string>("");
+  const [runtime, setRuntime] = useState<string>("");
   const [instructions, setInstructions] = useState("");
 
   // Reset form on open so re-opening doesn't replay the previous dispatch.
   useEffect(() => {
     if (open) {
       setAgent(agents[0]?.agent.name ?? "");
+      setRuntime(runtimes[0] ?? "");
       setInstructions("");
     }
-  }, [open, agents]);
+  }, [open, agents, runtimes]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!agent || !instructions.trim()) return;
-    onDispatch(agent, instructions.trim());
+    onDispatch(agent, instructions.trim(), runtime || undefined);
   };
 
   return (
     <Modal open={open} onClose={onClose} title="Dispatch task" size="default">
-      <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <label htmlFor="task-agent" className="muted" style={{ fontSize: 12 }}>
-          Agent
-        </label>
-        <select
-          id="task-agent"
-          className="select"
-          value={agent}
-          onChange={(e) => setAgent(e.target.value)}
-          required
-        >
-          {agents.map((a) => (
-            <option key={a.agent.name} value={a.agent.name}>
-              {a.agent.name}
-            </option>
-          ))}
-        </select>
-
-        <label htmlFor="task-instructions" className="muted" style={{ fontSize: 12 }}>
-          Instructions
-        </label>
-        <textarea
-          id="task-instructions"
-          className="input"
-          value={instructions}
-          onChange={(e) => setInstructions(e.target.value)}
-          placeholder="What should the agent do?"
-          rows={8}
-          required
-        />
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+      <form onSubmit={onSubmit}>
+        <div className="modal__body">
+          <label htmlFor="task-agent">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Agent
+            </div>
+            <select
+              id="task-agent"
+              className="select select--full"
+              value={agent}
+              onChange={(e) => setAgent(e.target.value)}
+              disabled={busy}
+              required
+            >
+              {agents.map((a) => (
+                <option key={a.agent.name} value={a.agent.name}>
+                  {a.agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label htmlFor="task-runtime">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Runtime
+            </div>
+            <select
+              id="task-runtime"
+              className="select select--full"
+              value={runtime}
+              onChange={(e) => setRuntime(e.target.value)}
+              disabled={busy || runtimes.length === 0}
+            >
+              {runtimes.length === 0 ? (
+                <option value="">(server default)</option>
+              ) : (
+                runtimes.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <label htmlFor="task-instructions">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Instructions
+            </div>
+            <textarea
+              id="task-instructions"
+              className="input"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder="What should the agent do?"
+              rows={8}
+              required
+              style={{ width: "100%", resize: "vertical", fontFamily: "inherit" }}
+            />
+          </label>
+        </div>
+        <div className="modal__footer">
           <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
@@ -458,34 +695,46 @@ function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     return () => clearInterval(handle);
   }, [task, refreshDetail]);
 
+  // Common box: anchored at top of the right column with its own scroll
+  // container, capped at viewport-minus-toolbar so the page never grows
+  // scrollbars even with a huge events.jsonl payload.
+  const boxStyle: React.CSSProperties = {
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-md, 8px)",
+    padding: 16,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    maxHeight: "calc(100vh - 220px)",
+    overflow: "hidden",
+    background: "var(--color-bg)",
+  };
+
   if (!taskId) {
     return (
       <aside
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          padding: 16,
-          minHeight: 240,
-        }}
+        style={{ ...boxStyle, justifyContent: "center", alignItems: "center", minHeight: 240 }}
       >
-        <p className="muted">Select a task to view details.</p>
+        <p className="muted" style={{ textAlign: "center", margin: 0 }}>
+          Select a task to view details.
+        </p>
       </aside>
     );
   }
 
+  // Pull the runtime exit fields out of metadata where the kernel keeps
+  // them. `failure.error` is the human-readable reason; the kernel-level
+  // failure type only carries that one field.
+  const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
+  const exitCode =
+    typeof metadata.exitCode === "number" || metadata.exitCode === null
+      ? (metadata.exitCode as number | null)
+      : undefined;
+  const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
+  const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
+
   return (
-    <aside
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        maxHeight: "calc(100vh - 220px)",
-        overflow: "hidden",
-      }}
-    >
+    <aside style={boxStyle}>
       <div
         style={{
           display: "flex",
@@ -516,10 +765,15 @@ function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
       </div>
 
       {task && (
-        <div className="muted" style={{ fontSize: 12 }}>
+        <div className="muted" style={{ fontSize: 12, display: "grid", gap: 4 }}>
           <div>
             <strong>Agent:</strong> {task.agent}
           </div>
+          {runtime && (
+            <div>
+              <strong>Runtime:</strong> {runtime}
+            </div>
+          )}
           {task.startedAt && (
             <div>
               <strong>Started:</strong> {formatTime(task.startedAt)}
@@ -531,11 +785,10 @@ function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
             </div>
           )}
           {task.failure && (
-            <div style={{ marginTop: 8, color: "var(--warn, #d97706)" }}>
-              <strong>Failure:</strong> {task.failure.reason}
-              {task.failure.exitCode !== undefined && task.failure.exitCode !== null && (
-                <> (exit {task.failure.exitCode})</>
-              )}
+            <div style={{ marginTop: 8, color: "var(--color-warn, #d97706)" }}>
+              <strong>Failure:</strong> {task.failure.error}
+              {exitCode !== undefined && exitCode !== null && <> (exit {exitCode})</>}
+              {exitSignal && <> [signal {exitSignal}]</>}
             </div>
           )}
         </div>
