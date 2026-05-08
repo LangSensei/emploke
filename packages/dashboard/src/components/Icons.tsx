@@ -97,3 +97,6 @@ export const PencilIcon = (p: IconProps) =>
   );
 
 export const CheckIcon = (p: IconProps) => SVG(<path d="m4.5 12.75 6 6 9-13.5" />, p);
+
+export const ArrowLeftIcon = (p: IconProps) =>
+  SVG(<path d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />, p);

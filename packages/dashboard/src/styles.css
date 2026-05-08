@@ -315,10 +315,47 @@ button {
   font-size: 11px;
   color: var(--color-sidebar-text-muted);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .sidebar__footer code {
   color: var(--color-sidebar-text);
+}
+
+.sidebar__home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-sidebar-text-muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar__home-link:hover,
+.sidebar__home-link:focus-visible {
+  background: var(--color-sidebar-hover-bg, var(--color-surface));
+  color: var(--color-sidebar-text);
+  outline: none;
+}
+
+.sidebar__home-link-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.sidebar__footer-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  opacity: 0.7;
 }
 
 /* ─── TopBar ────────────────────────────────────────────────────── */
