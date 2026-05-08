@@ -1,15 +1,22 @@
 import path from "node:path";
-import { LOGS_SUBDIR, SESSIONS_SUBDIR, TASKS_SUBDIR, WORKFLOWS_SUBDIR } from "./constants.js";
+import {
+  CATALOG_SUBDIR,
+  LOGS_SUBDIR,
+  SESSIONS_SUBDIR,
+  TASKS_SUBDIR,
+  WORKFLOWS_SUBDIR,
+} from "./constants.js";
 
 /**
  * Self-describing metadata persisted at `<workspace>/workspace.json`.
  *
  * Narrow on purpose:
- *   - `name` is the canonical user-facing name. The `WorkspaceRegistry` uses
- *     this same value (or one chosen at add time) as the URL identifier.
+ *   - `name` is the user-facing **display name** (free-form text). The URL
+ *     identifier is the registry's UUID `id`, not this name. Renaming is
+ *     side-effect free.
  *   - `defaults` are optional UX hints (e.g. dashboard pre-selects a
  *     runtime/agent when creating a session).
- *   - Future fields (`manifest` for version pins, `permissions`, …) bump
+ *   - Future fields (`manifest` for version pins, `permissions`, ) bump
  *     `schemaVersion`; current builds reject mismatched versions on read.
  */
 export interface WorkspaceMetadata {
@@ -30,6 +37,7 @@ export interface Workspace {
   readonly dir: string;
   readonly metadata: WorkspaceMetadata;
   readonly sessionsDir: string;
+  readonly catalogDir: string;
   readonly tasksDir: string;
   readonly workflowsDir: string;
   readonly logsDir: string;
@@ -38,10 +46,11 @@ export interface Workspace {
 /** Compute every fixed-name subdirectory under `dir`. */
 export function workspaceSubdirs(
   dir: string,
-): Pick<Workspace, "sessionsDir" | "tasksDir" | "workflowsDir" | "logsDir"> {
+): Pick<Workspace, "sessionsDir" | "catalogDir" | "tasksDir" | "workflowsDir" | "logsDir"> {
   const root = path.resolve(dir);
   return {
     sessionsDir: path.join(root, SESSIONS_SUBDIR),
+    catalogDir: path.join(root, CATALOG_SUBDIR),
     tasksDir: path.join(root, TASKS_SUBDIR),
     workflowsDir: path.join(root, WORKFLOWS_SUBDIR),
     logsDir: path.join(root, LOGS_SUBDIR),
@@ -49,15 +58,18 @@ export function workspaceSubdirs(
 }
 
 /**
- * One entry in the home-level workspace registry. `name` is the routing
- * identifier (URL segment); `path` is the absolute filesystem location.
+ * One entry in the home-level workspace registry.
  *
- * `lastOpenedAt` is bumped by `WorkspaceRegistry.setCurrent`; it's used by
- * the dashboard to surface "recently opened" workspaces. Optional because
- * an entry may have been added but never selected.
+ *   - `id`: opaque UUID. The URL routing identifier (`/workspaces/:id/...`)
+ *     and the cache key in the server. Stable for the lifetime of the
+ *     workspace. The display name lives in `WorkspaceMetadata.name`.
+ *   - `path`: absolute filesystem location of the workspace directory.
+ *   - `lastOpenedAt`: bumped by `WorkspaceRegistry.setCurrent`; used by
+ *     the dashboard to surface "recently opened" workspaces. Optional
+ *     because an entry may have been added but never selected.
  */
 export interface RegistryEntry {
-  readonly name: string;
+  readonly id: string;
   readonly path: string;
   readonly lastOpenedAt?: string;
 }
@@ -66,6 +78,6 @@ export interface RegistryEntry {
 export interface RegistryFile {
   readonly schemaVersion: 1;
   readonly entries: readonly RegistryEntry[];
-  /** Name of the most-recently-selected workspace, or undefined. */
-  readonly currentName?: string;
+  /** Id of the most-recently-selected workspace, or undefined. */
+  readonly currentId?: string;
 }

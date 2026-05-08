@@ -80,3 +80,20 @@ export const TrashIcon = (p: IconProps) =>
   );
 
 export const CloseIcon = (p: IconProps) => SVG(<path d="M6 18 18 6M6 6l12 12" />, p);
+
+export const InfoIcon = (p: IconProps) =>
+  SVG(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8h.01M11 12h1v5h1" />
+    </>,
+    p,
+  );
+
+export const PencilIcon = (p: IconProps) =>
+  SVG(
+    <path d="M16.862 4.487 18.549 2.8a2.121 2.121 0 1 1 3 3L19.862 7.487m-3-3L6.34 15.01a4.5 4.5 0 0 0-1.13 1.897l-1.07 3.213 3.213-1.07a4.5 4.5 0 0 0 1.897-1.13L19.862 7.487m-3-3 3 3" />,
+    p,
+  );
+
+export const CheckIcon = (p: IconProps) => SVG(<path d="m4.5 12.75 6 6 9-13.5" />, p);

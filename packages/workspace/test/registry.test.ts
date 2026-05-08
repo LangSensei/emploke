@@ -4,15 +4,18 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegistryCorruptedError,
-  WorkspaceNameConflictError,
-  WorkspaceNameInvalidError,
+  WorkspaceIdConflictError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "../src/errors.js";
+import { isValidWorkspaceId } from "../src/names.js";
 import { WorkspaceRegistry } from "../src/registry.js";
 
 let scratch: string;
 let registryFile: string;
+
+const UUID_A = "11111111-1111-4111-8111-111111111111";
+const UUID_B = "22222222-2222-4222-8222-222222222222";
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-ws-reg-"));
@@ -29,19 +32,19 @@ describe("WorkspaceRegistry.open", () => {
     expect(r.current()).toBeNull();
   });
 
-  it("loads an existing registry", async () => {
+  it("loads an existing registry by id", async () => {
     await writeFile(
       registryFile,
       JSON.stringify({
         schemaVersion: 1,
-        entries: [{ name: "a", path: "/abs/a" }],
-        currentName: "a",
+        entries: [{ id: UUID_A, path: "/abs/a" }],
+        currentId: UUID_A,
       }),
       "utf8",
     );
     const r = await WorkspaceRegistry.open(registryFile);
-    expect(r.list()).toEqual([{ name: "a", path: "/abs/a" }]);
-    expect(r.current()).toBe("a");
+    expect(r.list()).toEqual([{ id: UUID_A, path: "/abs/a" }]);
+    expect(r.current()).toBe(UUID_A);
   });
 
   it("rejects malformed registry json", async () => {
@@ -58,7 +61,7 @@ describe("WorkspaceRegistry.open", () => {
     );
   });
 
-  it("rejects an entry without a name", async () => {
+  it("rejects an entry without id and without legacy name", async () => {
     await writeFile(
       registryFile,
       JSON.stringify({ schemaVersion: 1, entries: [{ path: "/x" }] }),
@@ -68,65 +71,113 @@ describe("WorkspaceRegistry.open", () => {
       RegistryCorruptedError,
     );
   });
+
+  it("rejects an entry whose id is not a uuid", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({ schemaVersion: 1, entries: [{ id: "not-a-uuid", path: "/x" }] }),
+      "utf8",
+    );
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
+      RegistryCorruptedError,
+    );
+  });
+
+  it("migrates legacy {name, path} entries by assigning fresh UUIDs and rewriting the file", async () => {
+    await writeFile(
+      registryFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [
+          { name: "alpha", path: "/abs/alpha" },
+          { name: "beta", path: "/abs/beta", lastOpenedAt: "2025-01-01T00:00:00.000Z" },
+        ],
+        currentName: "beta",
+      }),
+      "utf8",
+    );
+    const r = await WorkspaceRegistry.open(registryFile);
+    const list = r.list();
+    expect(list).toHaveLength(2);
+    expect(list.every((e) => isValidWorkspaceId(e.id))).toBe(true);
+    expect(list.map((e) => e.path)).toEqual(["/abs/alpha", "/abs/beta"]);
+    // Find which uuid replaces "beta" and confirm it became currentId.
+    const beta = list[1];
+    expect(beta).toBeDefined();
+    expect(beta?.lastOpenedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(r.current()).toBe(beta?.id);
+
+    // Migration is persisted: re-reading without re-running migration must
+    // see the same id.
+    const persisted = JSON.parse(await readFile(registryFile, "utf8"));
+    expect(persisted.entries[0].name).toBeUndefined();
+    expect(persisted.entries[0].id).toBe(list[0]?.id);
+    expect(persisted.currentName).toBeUndefined();
+    expect(persisted.currentId).toBe(beta?.id);
+  });
 });
 
 describe("WorkspaceRegistry.add", () => {
-  it("appends a new entry", async () => {
+  it("appends a new entry with a generated UUID", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "alpha", path: path.join(scratch, "alpha") });
+    const entry = await r.add({ path: path.join(scratch, "alpha") });
+    expect(isValidWorkspaceId(entry.id)).toBe(true);
     expect(r.list()).toHaveLength(1);
-    expect(r.has("alpha")).toBe(true);
+    expect(r.has(entry.id)).toBe(true);
   });
 
   it("persists the entry to disk", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "alpha", path: path.join(scratch, "alpha") });
+    const entry = await r.add({ path: path.join(scratch, "alpha") });
     const onDisk = JSON.parse(await readFile(registryFile, "utf8"));
-    expect(onDisk.entries[0].name).toBe("alpha");
+    expect(onDisk.entries[0].id).toBe(entry.id);
+    expect(onDisk.entries[0].name).toBeUndefined();
   });
 
   it("resolves the path to absolute", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "rel", path: "relative/path" });
-    expect(r.get("rel")?.path).toBe(path.resolve("relative/path"));
+    const entry = await r.add({ path: "relative/path" });
+    expect(r.get(entry.id)?.path).toBe(path.resolve("relative/path"));
   });
 
-  it("rejects an invalid name", async () => {
+  it("accepts an explicit valid id", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await expect(r.add({ name: "Bad", path: "/x" })).rejects.toBeInstanceOf(
-      WorkspaceNameInvalidError,
+    const entry = await r.add({ id: UUID_A, path: "/x" });
+    expect(entry.id).toBe(UUID_A);
+  });
+
+  it("rejects an explicit non-uuid id", async () => {
+    const r = await WorkspaceRegistry.open(registryFile);
+    await expect(r.add({ id: "not-a-uuid", path: "/x" })).rejects.toBeInstanceOf(
+      WorkspaceIdConflictError,
     );
   });
 
-  it("rejects duplicate name", async () => {
+  it("rejects duplicate id", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "dup", path: "/x" });
-    await expect(r.add({ name: "dup", path: "/y" })).rejects.toBeInstanceOf(
-      WorkspaceNameConflictError,
+    await r.add({ id: UUID_A, path: "/x" });
+    await expect(r.add({ id: UUID_A, path: "/y" })).rejects.toBeInstanceOf(
+      WorkspaceIdConflictError,
     );
   });
 
-  it("rejects duplicate path under different name", async () => {
+  it("rejects duplicate path under different id", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "first", path: "/shared" });
-    await expect(r.add({ name: "second", path: "/shared" })).rejects.toBeInstanceOf(
+    await r.add({ id: UUID_A, path: "/shared" });
+    await expect(r.add({ id: UUID_B, path: "/shared" })).rejects.toBeInstanceOf(
       WorkspacePathConflictError,
     );
   });
 
   it("serialises concurrent adds without losing entries", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await Promise.all([
-      r.add({ name: "a", path: "/a" }),
-      r.add({ name: "b", path: "/b" }),
-      r.add({ name: "c", path: "/c" }),
-      r.add({ name: "d", path: "/d" }),
-    ]);
-    const names = r
+    const paths = ["a", "b", "c", "d"].map((n) => path.join(scratch, n));
+    await Promise.all(paths.map((p) => r.add({ path: p })));
+    const stored = r
       .list()
-      .map((e) => e.name)
+      .map((e) => e.path)
       .sort();
-    expect(names).toEqual(["a", "b", "c", "d"]);
+    expect(stored).toEqual([...paths].sort());
     const onDisk = JSON.parse(await readFile(registryFile, "utf8"));
     expect(onDisk.entries).toHaveLength(4);
   });
@@ -135,46 +186,46 @@ describe("WorkspaceRegistry.add", () => {
 describe("WorkspaceRegistry.remove", () => {
   it("drops the entry", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "a", path: "/a" });
-    await r.remove("a");
-    expect(r.has("a")).toBe(false);
+    const entry = await r.add({ path: "/a" });
+    await r.remove(entry.id);
+    expect(r.has(entry.id)).toBe(false);
   });
 
-  it("clears currentName if it pointed to the removed entry", async () => {
+  it("clears currentId if it pointed to the removed entry", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "a", path: "/a" });
-    await r.setCurrent("a");
-    await r.remove("a");
+    const entry = await r.add({ path: "/a" });
+    await r.setCurrent(entry.id);
+    await r.remove(entry.id);
     expect(r.current()).toBeNull();
   });
 
-  it("leaves currentName alone if it pointed elsewhere", async () => {
+  it("leaves currentId alone if it pointed elsewhere", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "a", path: "/a" });
-    await r.add({ name: "b", path: "/b" });
-    await r.setCurrent("b");
-    await r.remove("a");
-    expect(r.current()).toBe("b");
+    const a = await r.add({ path: "/a" });
+    const b = await r.add({ path: "/b" });
+    await r.setCurrent(b.id);
+    await r.remove(a.id);
+    expect(r.current()).toBe(b.id);
   });
 
-  it("throws when removing a name not present", async () => {
+  it("throws when removing an id not present", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await expect(r.remove("ghost")).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+    await expect(r.remove(UUID_A)).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
   });
 });
 
 describe("WorkspaceRegistry.setCurrent", () => {
-  it("sets currentName and bumps lastOpenedAt", async () => {
+  it("sets currentId and bumps lastOpenedAt", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await r.add({ name: "a", path: "/a" });
+    const entry = await r.add({ path: "/a" });
     const fixed = new Date("2026-01-01T00:00:00.000Z");
-    await r.setCurrent("a", () => fixed);
-    expect(r.current()).toBe("a");
-    expect(r.get("a")?.lastOpenedAt).toBe(fixed.toISOString());
+    await r.setCurrent(entry.id, () => fixed);
+    expect(r.current()).toBe(entry.id);
+    expect(r.get(entry.id)?.lastOpenedAt).toBe(fixed.toISOString());
   });
 
-  it("throws on unknown name", async () => {
+  it("throws on unknown id", async () => {
     const r = await WorkspaceRegistry.open(registryFile);
-    await expect(r.setCurrent("ghost")).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+    await expect(r.setCurrent(UUID_A)).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
   });
 });

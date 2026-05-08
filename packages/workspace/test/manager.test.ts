@@ -31,46 +31,48 @@ const exists = async (p: string): Promise<boolean> => {
 };
 
 describe("WorkspaceManager.init", () => {
-  it("creates workspace.json with name from basename when no name given", async () => {
-    const dir = path.join(scratch, "my-project");
-    const ws = await WorkspaceManager.init(dir);
-    expect(ws.metadata.name).toBe("my-project");
+  it("creates workspace.json with the supplied display name", async () => {
+    const dir = path.join(scratch, "any-folder");
+    const ws = await WorkspaceManager.init(dir, { name: "My Workspace" });
+    expect(ws.metadata.name).toBe("My Workspace");
     expect(ws.metadata.schemaVersion).toBe(1);
     expect(typeof ws.metadata.createdAt).toBe("string");
     const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
-    expect(onDisk.name).toBe("my-project");
+    expect(onDisk.name).toBe("My Workspace");
   });
 
-  it("creates the four standard subdirs", async () => {
+  it("creates the standard subdirs", async () => {
     const dir = path.join(scratch, "p");
-    const ws = await WorkspaceManager.init(dir);
+    const ws = await WorkspaceManager.init(dir, { name: "p" });
     expect(await exists(ws.sessionsDir)).toBe(true);
+    expect(await exists(ws.catalogDir)).toBe(true);
     expect(await exists(ws.tasksDir)).toBe(true);
     expect(await exists(ws.workflowsDir)).toBe(true);
     expect(await exists(ws.logsDir)).toBe(true);
   });
 
-  it("uses an explicit name when provided", async () => {
+  it("accepts unicode display names", async () => {
     const dir = path.join(scratch, "anything");
-    const ws = await WorkspaceManager.init(dir, { name: "explicit-name" });
-    expect(ws.metadata.name).toBe("explicit-name");
+    const ws = await WorkspaceManager.init(dir, { name: "工作区 " });
+    expect(ws.metadata.name).toBe("工作区 ");
   });
 
-  it("rejects an invalid name", async () => {
+  it("requires a display name (no basename fallback)", async () => {
     await expect(
-      WorkspaceManager.init(path.join(scratch, "x"), { name: "Bad Name" }),
+      WorkspaceManager.init(path.join(scratch, "x"), {} as { name?: string }),
     ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
   });
 
-  it("rejects an invalid name derived from basename", async () => {
-    await expect(WorkspaceManager.init(path.join(scratch, "Bad Name"))).rejects.toBeInstanceOf(
-      WorkspaceNameInvalidError,
-    );
+  it("rejects an empty / whitespace-only name", async () => {
+    await expect(
+      WorkspaceManager.init(path.join(scratch, "x"), { name: "   " }),
+    ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
   });
 
   it("persists defaults when given", async () => {
     const dir = path.join(scratch, "p");
     const ws = await WorkspaceManager.init(dir, {
+      name: "p",
       defaults: { runtime: "copilot", agent: "demo" },
     });
     expect(ws.metadata.defaults).toEqual({ runtime: "copilot", agent: "demo" });
@@ -78,13 +80,18 @@ describe("WorkspaceManager.init", () => {
 
   it("throws WorkspaceAlreadyExistsError if workspace.json exists", async () => {
     const dir = path.join(scratch, "p");
-    await WorkspaceManager.init(dir);
-    await expect(WorkspaceManager.init(dir)).rejects.toBeInstanceOf(WorkspaceAlreadyExistsError);
+    await WorkspaceManager.init(dir, { name: "p" });
+    await expect(WorkspaceManager.init(dir, { name: "p" })).rejects.toBeInstanceOf(
+      WorkspaceAlreadyExistsError,
+    );
   });
 
   it("uses the now() seam", async () => {
     const fixed = new Date("2026-01-01T00:00:00.000Z");
-    const ws = await WorkspaceManager.init(path.join(scratch, "p"), { now: () => fixed });
+    const ws = await WorkspaceManager.init(path.join(scratch, "p"), {
+      name: "p",
+      now: () => fixed,
+    });
     expect(ws.metadata.createdAt).toBe(fixed.toISOString());
   });
 });
@@ -140,25 +147,76 @@ describe("WorkspaceManager.open", () => {
 describe("WorkspaceManager.openOrInit", () => {
   it("inits when missing", async () => {
     const dir = path.join(scratch, "fresh");
-    const ws = await WorkspaceManager.openOrInit(dir);
-    expect(ws.metadata.name).toBe("fresh");
+    const ws = await WorkspaceManager.openOrInit(dir, { name: "Fresh One" });
+    expect(ws.metadata.name).toBe("Fresh One");
   });
 
-  it("opens when present", async () => {
+  it("opens when present (ignoring opts.name)", async () => {
     const dir = path.join(scratch, "exists");
-    await WorkspaceManager.init(dir, { name: "exists" });
-    const ws = await WorkspaceManager.openOrInit(dir, { name: "ignored" });
-    // Open won't apply opts.name; it returns the persisted name.
-    expect(ws.metadata.name).toBe("exists");
+    await WorkspaceManager.init(dir, { name: "Original" });
+    const ws = await WorkspaceManager.openOrInit(dir, { name: "Ignored" });
+    expect(ws.metadata.name).toBe("Original");
   });
 
   it("survives concurrent openOrInit on the same dir", async () => {
     const dir = path.join(scratch, "race");
     const results = await Promise.all([
-      WorkspaceManager.openOrInit(dir),
-      WorkspaceManager.openOrInit(dir),
-      WorkspaceManager.openOrInit(dir),
+      WorkspaceManager.openOrInit(dir, { name: "Race" }),
+      WorkspaceManager.openOrInit(dir, { name: "Race" }),
+      WorkspaceManager.openOrInit(dir, { name: "Race" }),
     ]);
-    for (const r of results) expect(r.metadata.name).toBe("race");
+    for (const r of results) expect(r.metadata.name).toBe("Race");
+  });
+});
+
+describe("WorkspaceManager.update", () => {
+  it("renames the workspace and rewrites workspace.json atomically", async () => {
+    const dir = path.join(scratch, "ws-dir");
+    await WorkspaceManager.init(dir, { name: "Old Name" });
+    const updated = await WorkspaceManager.update(dir, { name: "New Name" });
+    expect(updated.metadata.name).toBe("New Name");
+    const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
+    expect(onDisk.name).toBe("New Name");
+    expect(onDisk.schemaVersion).toBe(1);
+    // createdAt must be preserved across updates.
+    expect(onDisk.createdAt).toBe(updated.metadata.createdAt);
+  });
+
+  it("preserves defaults when patch.defaults is undefined", async () => {
+    const dir = path.join(scratch, "with-defaults");
+    await WorkspaceManager.init(dir, {
+      name: "With Defaults",
+      defaults: { runtime: "copilot", agent: "claude" },
+    });
+    const updated = await WorkspaceManager.update(dir, { name: "Renamed" });
+    expect(updated.metadata.defaults).toEqual({ runtime: "copilot", agent: "claude" });
+  });
+
+  it("clears defaults when patch.defaults is null", async () => {
+    const dir = path.join(scratch, "clear-defaults");
+    await WorkspaceManager.init(dir, {
+      name: "Clear",
+      defaults: { runtime: "copilot" },
+    });
+    const updated = await WorkspaceManager.update(dir, { defaults: null });
+    expect(updated.metadata.defaults).toBeUndefined();
+  });
+
+  it("rejects an empty name", async () => {
+    const dir = path.join(scratch, "valid");
+    await WorkspaceManager.init(dir, { name: "Valid" });
+    await expect(WorkspaceManager.update(dir, { name: "" })).rejects.toBeInstanceOf(
+      WorkspaceNameInvalidError,
+    );
+    // workspace.json must not be touched on validation failure.
+    const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
+    expect(onDisk.name).toBe("Valid");
+  });
+
+  it("throws WorkspaceNotFoundError if workspace.json is missing", async () => {
+    const dir = path.join(scratch, "ghost");
+    await expect(WorkspaceManager.update(dir, { name: "Anything" })).rejects.toBeInstanceOf(
+      WorkspaceNotFoundError,
+    );
   });
 });

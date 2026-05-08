@@ -9,14 +9,14 @@
 | Package | Description |
 |---|---|
 | [`@emploke/task`](./packages/task) | Pure value type + state machine for the five-state task lifecycle (`not_started → running → success / failure / cancelled`). Zero I/O. |
-| [`@emploke/paths`](./packages/paths) | Pure resolver from `process.env` to emploke's user-level filesystem layout (`EMPLOKE_HOME`, catalog dir, registry file, default workspace dir). |
-| [`@emploke/catalog`](./packages/catalog) | File-system registry of skills, MCPs and agents with dependency-graph algorithms (topological resolve, cycle detection, reverse-dependency safety on uninstall). |
-| [`@emploke/workspace`](./packages/workspace) | Per-project root holding ephemeral state (sessions / tasks / workflows / logs), plus a `$EMPLOKE_HOME`-level registry mapping kebab-case names to absolute paths. |
+| [`@emploke/paths`](./packages/paths) | Pure resolver from `process.env` to emploke's user-level filesystem layout (`EMPLOKE_HOME`, registry file, default workspace dir). |
+| [`@emploke/catalog`](./packages/catalog) | File-system registry of skills, MCPs and agents with dependency-graph algorithms (topological resolve, cycle detection, reverse-dependency safety on uninstall). One catalog per workspace. |
+| [`@emploke/workspace`](./packages/workspace) | Per-project root holding the workspace's catalog plus ephemeral state (sessions / tasks / workflows / logs), plus a `$EMPLOKE_HOME`-level registry mapping kebab-case names to absolute paths. |
 | [`@emploke/runtime`](./packages/runtime) | Runtime adapter interface (`provision` / `refresh` / `buildLaunch` / `deleteState` / optional `registerWorkspace`) + Copilot CLI implementation. |
 | [`@emploke/session`](./packages/session) | Per-session workdir registry under `<workspace>/sessions/<id>/`, parameterised over a runtime registry. |
 | [`@emploke/terminal`](./packages/terminal) | Cross-platform terminal spawner that hosts a `LaunchCommand`. |
-| [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing catalog (global) and workspace-scoped session routes (`/api/workspaces/<name>/sessions/...`). Loopback-only by default. |
-| [`@emploke/dashboard`](./packages/dashboard) | React + Vite dashboard with a workspace switcher in the top bar; talks to `@emploke/server`. |
+| [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing workspace-scoped catalog and session routes (`/api/workspaces/<name>/{catalog,sessions}/...`). Loopback-only by default. |
+| [`@emploke/dashboard`](./packages/dashboard) | React + Vite dashboard with a workspace switcher in the sidebar; talks to `@emploke/server`. |
 
 All packages are pre-1.0.
 
@@ -24,27 +24,32 @@ All packages are pre-1.0.
 
 ```
 $EMPLOKE_HOME/                       (default ~/.emploke; override with EMPLOKE_HOME)
-├── catalog/                         global, shared by all workspaces
 └── workspaces.json                  registry: kebab-case name -> absolute path
 
 <workspace>/                         absolute path; user-chosen, or auto-created at
                                      $EMPLOKE_HOME/workspaces/default
 ├── workspace.json                   self-describing metadata (name, schemaVersion, defaults)
+├── catalog/                         per-workspace skills, agents, mcps
+│   ├── skills/<name>/SKILL.md
+│   ├── agents/<name>/AGENT.md
+│   └── mcps/<name>.json
 ├── sessions/<id>/                   per-session workdirs
 ├── tasks/<id>/                      placeholder (future)
 ├── workflows/<id>/                  placeholder (future)
 └── logs/                            placeholder (future)
 ```
 
-The HTTP API uses URL-path scoping: workspace-scoped resources live under
-`/api/workspaces/<name>/...` (e.g. `/api/workspaces/emploke/sessions`).
-Catalog endpoints (`/api/skills`, `/api/agents`, `/api/mcps`) are global.
+The HTTP API uses URL-path scoping: every workspace-scoped resource lives
+under `/api/workspaces/<name>/...`. Catalog endpoints are
+`/api/workspaces/<name>/catalog/{skills,agents,mcps,overview}`; sessions
+are `/api/workspaces/<name>/sessions/...`. There is no global catalog
+mount — switching workspace switches the catalog the dashboard sees.
 
 ## Design
 
 The repo is a pnpm monorepo with three layered abstractions on top of a few pure helpers:
 
-- [`@emploke/catalog`](./packages/catalog) owns the **global** marketplace of skills + MCPs and its dependency graph (resolve in topological order, reject cycles, block uninstall when something still depends on you).
+- [`@emploke/catalog`](./packages/catalog) owns each workspace's marketplace of skills + MCPs and its dependency graph (resolve in topological order, reject cycles, block uninstall when something still depends on you). One `Catalog` instance per workspace, rooted at `<workspace>/catalog/`.
 - [`@emploke/workspace`](./packages/workspace) owns the **per-project** root: one `workspace.json` per workspace, one `$EMPLOKE_HOME/workspaces.json` registry mapping URL-routing names to absolute paths.
 - [`@emploke/runtime`](./packages/runtime) adapts third-party CLIs. It provisions per-session workdirs (`provision`) and performs one-time per-workspace setup (`registerWorkspace`, e.g. recording the workspace as trusted with the underlying CLI so spawned sessions don't trigger trust prompts).
 

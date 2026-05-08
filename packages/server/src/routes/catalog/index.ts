@@ -2,14 +2,21 @@ import type { Catalog } from "@emploke/catalog";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
+import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 import { skillsRoutes } from "./skills.js";
 
 /**
- * Routes for /api/* — catalog resources (skills, agents, mcps) plus an
- * aggregate /overview endpoint. Mounted in `index.ts` at "/api".
+ * Workspace-scoped catalog routes. Mounted at
+ * `/api/workspaces/:name/catalog/*` in `index.ts`. The routes pull a
+ * per-workspace `Catalog` instance off the Hono context (set up by the
+ * workspace middleware), so handler logic doesn't need to know which
+ * workspace is in play.
+ *
+ * Tests can pass a `Catalog` instance directly instead of a resolver.
  */
-export function catalogRoutes(catalog: Catalog): Hono {
+export function catalogRoutes(arg: CatalogResolver | Catalog): Hono {
   const app = new Hono();
+  const getCatalog = resolveCatalog(arg);
 
   // Refresh in-memory state from disk if it's older than the throttle
   // window. Mutations always update memory synchronously, so this is a
@@ -19,16 +26,17 @@ export function catalogRoutes(catalog: Catalog): Hono {
   // every catalog endpoint.
   app.use("/*", async (c, next) => {
     if (c.req.method === "GET") {
-      await catalog.rescanIfStale();
+      await getCatalog(c).rescanIfStale();
     }
     await next();
   });
 
-  app.route("/skills", skillsRoutes(catalog));
-  app.route("/agents", agentsRoutes(catalog));
-  app.route("/mcps", mcpsRoutes(catalog));
+  app.route("/skills", skillsRoutes(getCatalog));
+  app.route("/agents", agentsRoutes(getCatalog));
+  app.route("/mcps", mcpsRoutes(getCatalog));
 
   app.get("/overview", (c) => {
+    const catalog = getCatalog(c);
     const skills = catalog.listSkillEntries();
     const agents = catalog.listAgentEntries();
     const mcps = catalog.listMcps();
@@ -47,3 +55,5 @@ export function catalogRoutes(catalog: Catalog): Hono {
 
   return app;
 }
+
+export type { CatalogResolver } from "./resolver.js";

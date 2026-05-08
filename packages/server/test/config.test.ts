@@ -5,7 +5,6 @@ describe("configRoutes", () => {
   it("GET / returns the resolved server config", async () => {
     const res = await configRoutes({
       emplokeHome: "/home/user/.emploke",
-      catalogDir: "/home/user/.emploke/catalog",
       host: "127.0.0.1",
       port: 3000,
       pathSeparator: "/",
@@ -15,7 +14,6 @@ describe("configRoutes", () => {
     const body = (await res.json()) as ServerConfig;
     expect(body).toEqual({
       emplokeHome: "/home/user/.emploke",
-      catalogDir: "/home/user/.emploke/catalog",
       currentWorkspace: "default",
       host: "127.0.0.1",
       port: 3000,
@@ -23,10 +21,21 @@ describe("configRoutes", () => {
     });
   });
 
+  it("does not expose a global catalogDir field (catalog is per-workspace)", async () => {
+    const res = await configRoutes({
+      emplokeHome: "/h",
+      host: "127.0.0.1",
+      port: 3000,
+      pathSeparator: "/",
+      currentWorkspace: () => null,
+    }).request("/");
+    const body = (await res.json()) as ServerConfig & { catalogDir?: unknown };
+    expect(body.catalogDir).toBeUndefined();
+  });
+
   it("preserves Windows-style separator and path", async () => {
     const res = await configRoutes({
       emplokeHome: "C:\\Users\\Lang\\.emploke",
-      catalogDir: "C:\\Users\\Lang\\.emploke\\catalog",
       host: "127.0.0.1",
       port: 3000,
       pathSeparator: "\\",
@@ -43,7 +52,6 @@ describe("configRoutes", () => {
     let current: string | null = "alpha";
     const app = configRoutes({
       emplokeHome: "/h",
-      catalogDir: "/h/catalog",
       host: "127.0.0.1",
       port: 3000,
       pathSeparator: "/",

@@ -7,7 +7,6 @@ describe("resolveEmplokePaths", () => {
   it("falls back to ~/.emploke when no env is set", () => {
     const p = resolveEmplokePaths({});
     expect(p.home).toBe(path.resolve(homedir(), ".emploke"));
-    expect(p.catalogDir).toBe(path.join(p.home, "catalog"));
     expect(p.workspacesDir).toBe(path.join(p.home, "workspaces"));
     expect(p.registryFile).toBe(path.join(p.home, "workspaces.json"));
     expect(p.defaultWorkspaceDir).toBe(path.join(p.home, "workspaces", "default"));
@@ -17,32 +16,28 @@ describe("resolveEmplokePaths", () => {
     expect(resolveEmplokePaths({}).home).toBe(path.resolve(DEFAULT_EMPLOKE_HOME));
   });
 
-  it("EMPLOKE_HOME relocates home and every derived path that wasn't independently overridden", () => {
+  it("EMPLOKE_HOME relocates home and every derived path", () => {
     const p = resolveEmplokePaths({ EMPLOKE_HOME: "/tmp/eh" });
     expect(p.home).toBe(path.resolve("/tmp/eh"));
-    expect(p.catalogDir).toBe(path.resolve("/tmp/eh/catalog"));
     expect(p.workspacesDir).toBe(path.resolve("/tmp/eh/workspaces"));
     expect(p.registryFile).toBe(path.resolve("/tmp/eh/workspaces.json"));
     expect(p.defaultWorkspaceDir).toBe(path.resolve("/tmp/eh/workspaces/default"));
   });
 
-  it("EMPLOKE_CATALOG_DIR overrides catalogDir without affecting home", () => {
-    const p = resolveEmplokePaths({
-      EMPLOKE_HOME: "/tmp/eh",
-      EMPLOKE_CATALOG_DIR: "/srv/shared/catalog",
-    });
-    expect(p.home).toBe(path.resolve("/tmp/eh"));
-    expect(p.catalogDir).toBe(path.resolve("/srv/shared/catalog"));
-    expect(p.workspacesDir).toBe(path.resolve("/tmp/eh/workspaces"));
+  it("does NOT expose a global catalogDir field", () => {
+    const p = resolveEmplokePaths({ EMPLOKE_HOME: "/tmp/eh" }) as unknown as Record<
+      string,
+      unknown
+    >;
+    // Catalog is per-workspace (lives at <workspace>/catalog/) and is not
+    // a global path resolved here. Asserting absence guards against
+    // accidental reintroduction.
+    expect(p.catalogDir).toBeUndefined();
   });
 
-  it("treats empty-string overrides as unset", () => {
-    const p = resolveEmplokePaths({
-      EMPLOKE_HOME: "",
-      EMPLOKE_CATALOG_DIR: "",
-    });
+  it("treats empty-string EMPLOKE_HOME as unset", () => {
+    const p = resolveEmplokePaths({ EMPLOKE_HOME: "" });
     expect(p.home).toBe(path.resolve(homedir(), ".emploke"));
-    expect(p.catalogDir).toBe(path.join(p.home, "catalog"));
   });
 
   it("normalises relative paths against cwd", () => {

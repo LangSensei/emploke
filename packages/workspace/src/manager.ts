@@ -8,15 +8,19 @@ import {
   WorkspaceNotFoundError,
   WorkspaceSchemaMismatchError,
 } from "./errors.js";
-import { assertValidWorkspaceName } from "./names.js";
+import { assertValidDisplayName } from "./names.js";
 import type { Workspace, WorkspaceMetadata } from "./types.js";
 import { workspaceSubdirs } from "./types.js";
 
 /** Options accepted by `WorkspaceManager.init` and `openOrInit`. */
 export interface WorkspaceInitOpts {
   /**
-   * Workspace name. If omitted, defaults to `path.basename(dir)`. Either way
-   * the value must satisfy `assertValidWorkspaceName` (kebab-case, ≤ 64 chars).
+   * Display name written into `workspace.json#name`. Free-form text
+   * (no kebab-case constraint), 1-64 chars after trim, no control chars.
+   * Required when initialising a fresh workspace.
+   *
+   * `openOrInit` accepts a missing `name` only when an existing
+   * `workspace.json` makes init unnecessary.
    */
   readonly name?: string;
   /** Optional UX hints baked into `workspace.json`. */
@@ -26,14 +30,14 @@ export interface WorkspaceInitOpts {
 }
 
 /**
- * Lifecycle operations against a single workspace directory. All static —
+ * Lifecycle operations against a single workspace directory. All static
  * the package never instantiates a `WorkspaceManager`; the type just
- * namespaces the verbs (`open`, `init`, `openOrInit`).
+ * namespaces the verbs (`open`, `init`, `openOrInit`, `update`).
  *
- * Concurrency: `init` and `openOrInit` serialise writes through a per-dir
- * `<dir>/.workspace.lock` file, so two processes racing to create the same
- * workspace cannot end up with half-written `workspace.json` or duplicated
- * subdir creation errors.
+ * Concurrency: `init` and `update` serialise writes through a per-dir
+ * `<dir>/.workspace.lock` file, so two processes racing to create the
+ * same workspace cannot end up with half-written `workspace.json` or
+ * duplicated subdir creation errors.
  */
 export class WorkspaceManager {
   private constructor() {
@@ -44,9 +48,9 @@ export class WorkspaceManager {
    * Read `<dir>/workspace.json` and return a fully-resolved `Workspace`.
    *
    * Throws:
-   *   - `WorkspaceNotFoundError` — file missing
-   *   - `WorkspaceCorruptedError` — file unreadable / unparseable / wrong shape
-   *   - `WorkspaceSchemaMismatchError` — schemaVersion mismatch
+   *   - `WorkspaceNotFoundError`  file missing
+   *   - `WorkspaceCorruptedError`  file unreadable / unparseable / wrong shape
+   *   - `WorkspaceSchemaMismatchError`  schemaVersion mismatch
    */
   static async open(dir: string): Promise<Workspace> {
     const resolvedDir = path.resolve(dir);
@@ -74,11 +78,20 @@ export class WorkspaceManager {
   /**
    * Create `workspace.json` plus the standard subdirs (sessions/, tasks/,
    * workflows/, logs/). Throws `WorkspaceAlreadyExistsError` if
-   * `workspace.json` already exists — use `openOrInit` if you want
+   * `workspace.json` already exists  use `openOrInit` if you want
    * idempotent semantics.
+   *
+   * `opts.name` is required (the display name to persist).
    */
-  static async init(dir: string, opts: WorkspaceInitOpts = {}): Promise<Workspace> {
+  static async init(dir: string, opts: WorkspaceInitOpts): Promise<Workspace> {
     const resolvedDir = path.resolve(dir);
+    if (opts.name === undefined) {
+      // Validate up-front so callers get a clear error before we lock /
+      // mkdir / write anything.
+      assertValidDisplayName(undefined);
+    }
+    assertValidDisplayName(opts.name);
+
     await mkdir(resolvedDir, { recursive: true });
 
     const lockPath = path.join(resolvedDir, ".workspace.lock");
@@ -94,16 +107,15 @@ export class WorkspaceManager {
         ) {
           throw err;
         }
-        // ENOENT — proceed.
+        // ENOENT  proceed.
       }
 
-      const name = opts.name ?? path.basename(resolvedDir);
-      assertValidWorkspaceName(name);
       const now = opts.now ?? (() => new Date());
 
       const metadata: WorkspaceMetadata = {
         schemaVersion: CURRENT_SCHEMA_VERSION,
-        name,
+        // assertValidDisplayName narrows opts.name to string above.
+        name: opts.name as string,
         createdAt: now().toISOString(),
         ...(opts.defaults ? { defaults: opts.defaults } : {}),
       };
@@ -111,6 +123,7 @@ export class WorkspaceManager {
       const subdirs = workspaceSubdirs(resolvedDir);
       await Promise.all([
         mkdir(subdirs.sessionsDir, { recursive: true }),
+        mkdir(subdirs.catalogDir, { recursive: true }),
         mkdir(subdirs.tasksDir, { recursive: true }),
         mkdir(subdirs.workflowsDir, { recursive: true }),
         mkdir(subdirs.logsDir, { recursive: true }),
@@ -127,12 +140,13 @@ export class WorkspaceManager {
   }
 
   /**
-   * Idempotent: if `workspace.json` exists, `open()`; otherwise `init(opts)`.
-   * The race between the existence check and `init`'s subsequent stat is
-   * resolved inside `init`'s lock — at most one caller succeeds; losers see
-   * the file already exists and fall back to `open`.
+   * Idempotent: if `workspace.json` exists, `open()`; otherwise `init(opts)`
+   * (which requires `opts.name`). The race between the existence check and
+   * `init`'s subsequent stat is resolved inside `init`'s lock  at most
+   * one caller succeeds; losers see the file already exists and fall back
+   * to `open`.
    */
-  static async openOrInit(dir: string, opts: WorkspaceInitOpts = {}): Promise<Workspace> {
+  static async openOrInit(dir: string, opts: WorkspaceInitOpts): Promise<Workspace> {
     try {
       return await WorkspaceManager.open(dir);
     } catch (err) {
@@ -147,6 +161,69 @@ export class WorkspaceManager {
       throw err;
     }
   }
+
+  /**
+   * Atomically rewrite `<dir>/workspace.json` with the supplied patch
+   * applied. Only the user-mutable fields (`name`, `defaults`) are
+   * exposed  `schemaVersion` and `createdAt` are immutable from the
+   * outside. The workspace must already exist (no auto-init).
+   *
+   * Concurrency: serialised through the same `.workspace.lock` that
+   * `init` uses, so a concurrent rename and a concurrent `init` cannot
+   * both succeed.
+   */
+  static async update(dir: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
+    const resolvedDir = path.resolve(dir);
+    // Reject up-front when there's nothing to lock  withFileLock would
+    // surface an opaque ENOENT in that case. Validation of `patch.name`
+    // also happens here so callers learn about both classes of error
+    // before we spend the lock.
+    try {
+      await stat(path.join(resolvedDir, WORKSPACE_FILE));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new WorkspaceNotFoundError(resolvedDir);
+      }
+      throw err;
+    }
+    if (patch.name !== undefined) assertValidDisplayName(patch.name);
+
+    const lockPath = path.join(resolvedDir, ".workspace.lock");
+    return withFileLock(lockPath, async () => {
+      const current = await WorkspaceManager.open(resolvedDir);
+
+      const nextName = patch.name ?? current.metadata.name;
+      const nextDefaults =
+        patch.defaults === undefined ? current.metadata.defaults : (patch.defaults ?? undefined);
+
+      const metadata: WorkspaceMetadata = {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        name: nextName,
+        createdAt: current.metadata.createdAt,
+        ...(nextDefaults ? { defaults: nextDefaults } : {}),
+      };
+
+      const metadataPath = path.join(resolvedDir, WORKSPACE_FILE);
+      await writeFileAtomic(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+
+      return {
+        dir: resolvedDir,
+        metadata,
+        ...workspaceSubdirs(resolvedDir),
+      };
+    });
+  }
+}
+
+/** Mutable fields accepted by `WorkspaceManager.update`. */
+export interface WorkspaceUpdatePatch {
+  /** New display name (1-64 trimmed chars, no control chars). Skipped when undefined. */
+  readonly name?: string;
+  /**
+   * New defaults block. Pass `null` to clear; pass an object to overwrite
+   * the existing block in full. Skipped when undefined (no change).
+   */
+  readonly defaults?: WorkspaceMetadata["defaults"] | null;
 }
 
 function parseMetadata(dir: string, raw: string): WorkspaceMetadata {

@@ -38,7 +38,7 @@ The layout is hard-coded:
 ```ts
 import { Catalog } from "@emploke/catalog";
 
-const catalog = await Catalog.open({ catalogDir: "~/.emploke/catalog" });
+const catalog = await Catalog.open({ catalogDir: "/path/to/workspace/catalog" });
 
 // Install
 await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });

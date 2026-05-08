@@ -50,13 +50,13 @@ export class WorkspaceAlreadyExistsError extends WorkspaceError {
   }
 }
 
-/** Workspace name is empty, too long, or not kebab-case. */
+/** Display name (metadata.name) is empty, too long, or contains control chars. */
 export class WorkspaceNameInvalidError extends WorkspaceError {
   constructor(
-    public readonly workspaceName: string,
+    public readonly displayName: string,
     public readonly reason: string,
   ) {
-    super(`invalid workspace name "${workspaceName}": ${reason}`);
+    super(`invalid workspace display name "${displayName}": ${reason}`);
     this.name = "WorkspaceNameInvalidError";
   }
 }
@@ -81,11 +81,16 @@ export class RegistryCorruptedError extends RegistryError {
   }
 }
 
-/** Tried to add a workspace whose name conflicts with an existing entry. */
-export class WorkspaceNameConflictError extends RegistryError {
-  constructor(public readonly workspaceName: string) {
-    super(`a workspace named "${workspaceName}" is already registered`);
-    this.name = "WorkspaceNameConflictError";
+/**
+ * Tried to add a workspace whose id collides with an existing entry. With
+ * UUID generation this is statistically impossible  but the registry
+ * still guards against it because callers may supply explicit ids in
+ * tests or future migrations.
+ */
+export class WorkspaceIdConflictError extends RegistryError {
+  constructor(public readonly workspaceId: string) {
+    super(`a workspace with id "${workspaceId}" is already registered`);
+    this.name = "WorkspaceIdConflictError";
   }
 }
 
@@ -93,17 +98,17 @@ export class WorkspaceNameConflictError extends RegistryError {
 export class WorkspacePathConflictError extends RegistryError {
   constructor(
     public readonly path: string,
-    public readonly existingName: string,
+    public readonly existingId: string,
   ) {
-    super(`path ${path} is already registered as workspace "${existingName}"`);
+    super(`path ${path} is already registered as workspace id "${existingId}"`);
     this.name = "WorkspacePathConflictError";
   }
 }
 
 /** Tried to look up / remove / set-current a workspace not in the registry. */
 export class WorkspaceNotRegisteredError extends RegistryError {
-  constructor(public readonly workspaceName: string) {
-    super(`no workspace named "${workspaceName}" is registered`);
+  constructor(public readonly workspaceId: string) {
+    super(`no workspace with id "${workspaceId}" is registered`);
     this.name = "WorkspaceNotRegisteredError";
   }
 }

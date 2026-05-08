@@ -7,6 +7,9 @@ export const CURRENT_SCHEMA_VERSION = 1;
 /** Subdirectory of a workspace that holds session workdirs. */
 export const SESSIONS_SUBDIR = "sessions";
 
+/** Subdirectory of a workspace that holds the per-workspace catalog (skills, agents, mcps). */
+export const CATALOG_SUBDIR = "catalog";
+
 /** Subdirectory of a workspace that holds task records (placeholder; v1 unused). */
 export const TASKS_SUBDIR = "tasks";
 
@@ -16,5 +19,5 @@ export const WORKFLOWS_SUBDIR = "workflows";
 /** Subdirectory of a workspace for server-written log files (placeholder). */
 export const LOGS_SUBDIR = "logs";
 
-/** Maximum allowed length of a workspace name. */
-export const MAX_NAME_LENGTH = 64;
+/** Maximum allowed length of the display name in `workspace.json`. */
+export const MAX_DISPLAY_NAME_LENGTH = 64;

@@ -32,6 +32,8 @@ interface CatalogProps {
   skills: SkillEntry[];
   agents: AgentEntry[];
   mcps: McpItem[];
+  /** Currently-selected workspace id (UUID); null = no workspace, page renders an empty-state. */
+  currentWorkspaceId: string | null;
   onChanged: () => void;
 }
 
@@ -46,7 +48,15 @@ type EditTarget =
   | { kind: "agent"; name: string }
   | { kind: "mcp"; name: string };
 
-export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged }: CatalogProps) {
+export function CatalogPage({
+  tab,
+  onTabChange,
+  skills,
+  agents,
+  mcps,
+  currentWorkspaceId,
+  onChanged,
+}: CatalogProps) {
   const [installOpen, setInstallOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [edit, setEdit] = useState<EditTarget | null>(null);
@@ -87,139 +97,148 @@ export function CatalogPage({ tab, onTabChange, skills, agents, mcps, onChanged 
 
   return (
     <div>
-      <div className="page-toolbar">
-        <nav className="section-tabs">
-          <button
-            type="button"
-            className={tab === "agents" ? "active" : ""}
-            onClick={() => onTabChange("agents")}
-          >
-            Agents <span className="count">{agents.length}</span>
-          </button>
-          <button
-            type="button"
-            className={tab === "skills" ? "active" : ""}
-            onClick={() => onTabChange("skills")}
-          >
-            Skills <span className="count">{skills.length}</span>
-          </button>
-          <button
-            type="button"
-            className={tab === "mcps" ? "active" : ""}
-            onClick={() => onTabChange("mcps")}
-          >
-            MCPs <span className="count">{mcps.length}</span>
-          </button>
-        </nav>
-        <div className="page-toolbar__actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => {
+      {currentWorkspaceId === null ? (
+        <div className="alert alert--error">
+          No workspace is selected. Use the workspace dropdown in the top bar to choose or create
+          one — the catalog is scoped to a workspace.
+        </div>
+      ) : (
+        <>
+          <div className="page-toolbar">
+            <nav className="section-tabs">
+              <button
+                type="button"
+                className={tab === "agents" ? "active" : ""}
+                onClick={() => onTabChange("agents")}
+              >
+                Agents <span className="count">{agents.length}</span>
+              </button>
+              <button
+                type="button"
+                className={tab === "skills" ? "active" : ""}
+                onClick={() => onTabChange("skills")}
+              >
+                Skills <span className="count">{skills.length}</span>
+              </button>
+              <button
+                type="button"
+                className={tab === "mcps" ? "active" : ""}
+                onClick={() => onTabChange("mcps")}
+              >
+                MCPs <span className="count">{mcps.length}</span>
+              </button>
+            </nav>
+            <div className="page-toolbar__actions">
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => {
+                  setError(null);
+                  setInstallOpen(true);
+                }}
+              >
+                <PlusIcon />
+                Install {KIND_LABEL[tab]}
+              </button>
+            </div>
+          </div>
+
+          {error && !installOpen && !confirmRemove && (
+            <div className="alert alert--error" style={{ marginBottom: 16 }}>
+              ⚠ {error}
+            </div>
+          )}
+
+          {tab === "agents" && (
+            <EntryGrid
+              items={agents.map((a) => ({
+                name: a.agent.name,
+                description: a.agent.description,
+                version: a.agent.version,
+                status: a.status,
+                missingDeps: a.missingDeps,
+                skillsCount: a.agent.dependencies?.skills?.length ?? 0,
+                mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
+              }))}
+              emptyTitle="No agents installed"
+              emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
+              onEdit={(name) => {
+                setError(null);
+                setEdit({ kind: "agent", name });
+              }}
+              onRemove={(name) => setConfirmRemove(name)}
+            />
+          )}
+
+          {tab === "skills" && (
+            <EntryGrid
+              items={skills.map((s) => ({
+                name: s.skill.name,
+                description: s.skill.description,
+                version: s.skill.version,
+                status: s.status,
+                missingDeps: s.missingDeps,
+                skillsCount: s.skill.dependencies?.skills?.length ?? 0,
+                mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
+              }))}
+              emptyTitle="No skills installed"
+              emptyHint={<>A skill is a reusable capability package referenced by agents.</>}
+              onEdit={(name) => {
+                setError(null);
+                setEdit({ kind: "skill", name });
+              }}
+              onRemove={(name) => setConfirmRemove(name)}
+            />
+          )}
+
+          {tab === "mcps" && (
+            <McpGrid
+              mcps={mcps}
+              onEdit={(name) => {
+                setError(null);
+                setEdit({ kind: "mcp", name });
+              }}
+              onRemove={(name) => setConfirmRemove(name)}
+            />
+          )}
+
+          <InstallDialog
+            kind={tab}
+            open={installOpen}
+            busy={busy}
+            error={error}
+            onClose={() => {
+              setInstallOpen(false);
               setError(null);
-              setInstallOpen(true);
             }}
-          >
-            <PlusIcon />
-            Install {KIND_LABEL[tab]}
-          </button>
-        </div>
-      </div>
+            onSubmit={doInstall}
+          />
 
-      {error && !installOpen && !confirmRemove && (
-        <div className="alert alert--error" style={{ marginBottom: 16 }}>
-          ⚠ {error}
-        </div>
-      )}
+          <ConfirmRemoveDialog
+            kind={tab}
+            name={confirmRemove}
+            busy={busy}
+            error={error}
+            onClose={() => {
+              setConfirmRemove(null);
+              setError(null);
+            }}
+            onConfirm={() => confirmRemove && doRemove(confirmRemove)}
+          />
 
-      {tab === "agents" && (
-        <EntryGrid
-          items={agents.map((a) => ({
-            name: a.agent.name,
-            description: a.agent.description,
-            version: a.agent.version,
-            status: a.status,
-            missingDeps: a.missingDeps,
-            skillsCount: a.agent.dependencies?.skills?.length ?? 0,
-            mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
-          }))}
-          emptyTitle="No agents installed"
-          emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
-          onEdit={(name) => {
-            setError(null);
-            setEdit({ kind: "agent", name });
-          }}
-          onRemove={(name) => setConfirmRemove(name)}
-        />
-      )}
-
-      {tab === "skills" && (
-        <EntryGrid
-          items={skills.map((s) => ({
-            name: s.skill.name,
-            description: s.skill.description,
-            version: s.skill.version,
-            status: s.status,
-            missingDeps: s.missingDeps,
-            skillsCount: s.skill.dependencies?.skills?.length ?? 0,
-            mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
-          }))}
-          emptyTitle="No skills installed"
-          emptyHint={<>A skill is a reusable capability package referenced by agents.</>}
-          onEdit={(name) => {
-            setError(null);
-            setEdit({ kind: "skill", name });
-          }}
-          onRemove={(name) => setConfirmRemove(name)}
-        />
-      )}
-
-      {tab === "mcps" && (
-        <McpGrid
-          mcps={mcps}
-          onEdit={(name) => {
-            setError(null);
-            setEdit({ kind: "mcp", name });
-          }}
-          onRemove={(name) => setConfirmRemove(name)}
-        />
-      )}
-
-      <InstallDialog
-        kind={tab}
-        open={installOpen}
-        busy={busy}
-        error={error}
-        onClose={() => {
-          setInstallOpen(false);
-          setError(null);
-        }}
-        onSubmit={doInstall}
-      />
-
-      <ConfirmRemoveDialog
-        kind={tab}
-        name={confirmRemove}
-        busy={busy}
-        error={error}
-        onClose={() => {
-          setConfirmRemove(null);
-          setError(null);
-        }}
-        onConfirm={() => confirmRemove && doRemove(confirmRemove)}
-      />
-
-      {edit !== null && (
-        <EditDialog
-          target={edit}
-          availableSkills={skills.map((s) => s.skill.name)}
-          availableMcps={mcps.map((m) => m.name)}
-          onClose={() => setEdit(null)}
-          onSaved={() => {
-            setEdit(null);
-            onChanged();
-          }}
-        />
+          {edit !== null && (
+            <EditDialog
+              target={edit}
+              availableSkills={skills.map((s) => s.skill.name)}
+              availableMcps={mcps.map((m) => m.name)}
+              onClose={() => setEdit(null)}
+              onSaved={() => {
+                setEdit(null);
+                onChanged();
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

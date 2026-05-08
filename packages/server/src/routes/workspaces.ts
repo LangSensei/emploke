@@ -3,14 +3,15 @@ import {
   RegistryError,
   WorkspaceCorruptedError,
   WorkspaceError,
+  WorkspaceIdConflictError,
   WorkspaceManager,
   type WorkspaceMetadata,
-  WorkspaceNameConflictError,
   WorkspaceNameInvalidError,
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
   type WorkspaceRegistry,
+  type WorkspaceUpdatePatch,
 } from "@emploke/workspace";
 import { Hono } from "hono";
 import type { WorkspaceContextCache } from "../workspace-context.js";
@@ -23,17 +24,26 @@ interface CreateBody {
 }
 
 interface PutCurrentBody {
+  /** UUID of the workspace to mark current. */
+  id?: unknown;
+}
+
+interface PatchBody {
   name?: unknown;
+  defaults?: unknown;
 }
 
 /**
  * Wire shape returned by `GET /api/workspaces`. The dashboard uses this for
  * the workspace selector dropdown. `status` lets the UI render entries
  * whose `workspace.json` has gone missing or corrupt (without removing
- * them — only the user gets to decide that).
+ * them  only the user gets to decide that).
+ *
+ * `id` is the UUID URL key. The user-facing display name lives in
+ * `metadata.name`, which is only present when `status === "ok"`.
  */
 interface WorkspaceListItem {
-  name: string;
+  id: string;
   path: string;
   lastOpenedAt?: string;
   status: "ok" | "missing" | "corrupted";
@@ -45,8 +55,8 @@ interface WorkspaceListItem {
 /**
  * Routes for `/api/workspaces/*` (registry + per-workspace metadata).
  * Workspace-scoped resources (sessions, future tasks/workflows) are NOT
- * mounted here — they live under `/api/workspaces/:name/sessions/*` etc.
- * so the workspace name is part of the resource URL.
+ * mounted here  they live under `/api/workspaces/:id/sessions/*` etc. so
+ * the workspace id is part of the resource URL.
  */
 export function workspacesRoutes(deps: {
   registry: WorkspaceRegistry;
@@ -62,33 +72,20 @@ export function workspacesRoutes(deps: {
   app.get("/", async (c) => {
     const items = await Promise.all(
       registry.list().map(async (entry): Promise<WorkspaceListItem> => {
+        const base: Pick<WorkspaceListItem, "id" | "path" | "lastOpenedAt"> = {
+          id: entry.id,
+          path: entry.path,
+          ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
+        };
         try {
           const ws = await WorkspaceManager.open(entry.path);
-          return {
-            name: entry.name,
-            path: entry.path,
-            ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-            status: "ok",
-            metadata: ws.metadata,
-          };
+          return { ...base, status: "ok", metadata: ws.metadata };
         } catch (err) {
           if (err instanceof WorkspaceNotFoundError) {
-            return {
-              name: entry.name,
-              path: entry.path,
-              ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-              status: "missing",
-              reason: "workspace.json not found",
-            };
+            return { ...base, status: "missing", reason: "workspace.json not found" };
           }
           if (err instanceof WorkspaceCorruptedError) {
-            return {
-              name: entry.name,
-              path: entry.path,
-              ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-              status: "corrupted",
-              reason: err.reason,
-            };
+            return { ...base, status: "corrupted", reason: err.reason };
           }
           throw err;
         }
@@ -97,10 +94,10 @@ export function workspacesRoutes(deps: {
     return c.json(items);
   });
 
-  // Add a workspace: open-or-init the directory at `path`, then register
-  // the (name, path) pair with the registry. POSTing twice with the same
-  // path under the same name is idempotent (openOrInit + add yields a name
-  // conflict on the second call → we surface 409).
+  // Add a workspace: open-or-init the directory at `path` with the
+  // user-provided display `name`, then register the (id, path) pair with
+  // the registry. The id is generated server-side. The display name is
+  // mandatory  there is no auto-default and no basename fallback.
   app.post("/", async (c) => {
     const parsed = await parseJsonBody<CreateBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -108,8 +105,8 @@ export function workspacesRoutes(deps: {
     if (typeof body.path !== "string" || body.path.trim() === "") {
       return c.json({ error: "path is required (string)" }, 400);
     }
-    if (body.name !== undefined && typeof body.name !== "string") {
-      return c.json({ error: "name, when present, must be a string" }, 400);
+    if (typeof body.name !== "string") {
+      return c.json({ error: "name is required (string)" }, 400);
     }
     if (
       body.defaults !== undefined &&
@@ -119,68 +116,72 @@ export function workspacesRoutes(deps: {
     }
 
     const absPath = path.resolve(body.path);
-    const initOpts: { name?: string; defaults?: WorkspaceMetadata["defaults"] } = {};
-    if (typeof body.name === "string") initOpts.name = body.name;
+    const initOpts: { name: string; defaults?: WorkspaceMetadata["defaults"] } = {
+      name: body.name,
+    };
     if (body.defaults && typeof body.defaults === "object") {
       initOpts.defaults = body.defaults as WorkspaceMetadata["defaults"];
     }
 
-    let workspaceName: string;
+    let metadata: WorkspaceMetadata;
     try {
       const ws = await WorkspaceManager.openOrInit(absPath, initOpts);
-      workspaceName = typeof body.name === "string" ? body.name : ws.metadata.name;
+      metadata = ws.metadata;
     } catch (err) {
       const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: Hono c.json status is finite union.
+      // biome-ignore lint/suspicious/noExplicitAny: Hono c.json status is a finite union.
       return c.json(errorBody(err), (status ?? 400) as any);
     }
 
+    let entry: Awaited<ReturnType<WorkspaceRegistry["add"]>>;
     try {
-      await registry.add({ name: workspaceName, path: absPath });
+      entry = await registry.add({ path: absPath });
     } catch (err) {
       const status = workspaceErrorStatus(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), (status ?? 400) as any);
     }
 
-    const entry = registry.get(workspaceName);
     return c.json(
       {
-        name: workspaceName,
-        path: absPath,
-        ...(entry?.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
+        id: entry.id,
+        path: entry.path,
+        ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
+        metadata,
       },
       201,
     );
   });
 
-  // Read the currently-selected workspace name. Returns null when no
-  // workspace has ever been selected (fresh install before first request).
-  app.get("/current", (c) => c.json({ name: registry.current() }));
+  // Read the currently-selected workspace id. Returns null when no
+  // workspace has ever been selected (fresh install before first request,
+  // or when the previously-current workspace was deleted).
+  app.get("/current", (c) => c.json({ id: registry.current() }));
 
-  // Set the currently-selected workspace. Used by the dashboard topbar so
-  // that the next browser session opens with the same workspace selected.
+  // Set the currently-selected workspace by id. Used by the dashboard
+  // topbar so that the next browser session opens with the same workspace
+  // selected.
   app.put("/current", async (c) => {
     const parsed = await parseJsonBody<PutCurrentBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    if (typeof parsed.body.name !== "string" || parsed.body.name === "") {
-      return c.json({ error: "name is required (string)" }, 400);
+    if (typeof parsed.body.id !== "string" || parsed.body.id === "") {
+      return c.json({ error: "id is required (string)" }, 400);
     }
     try {
-      await registry.setCurrent(parsed.body.name);
+      await registry.setCurrent(parsed.body.id);
     } catch (err) {
       const status = workspaceErrorStatus(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), (status ?? 400) as any);
     }
-    return c.json({ name: parsed.body.name });
+    return c.json({ id: parsed.body.id });
   });
 
   // Get a single workspace's metadata. Useful for the dashboard's
   // workspace settings panel.
-  app.get("/:name", async (c) => {
-    const name = c.req.param("name");
-    const entry = registry.get(name);
+  app.get("/:id", async (c) => {
+    const id = c.req.param("id");
+    const entry = registry.get(id);
     if (!entry) {
       return c.json(
         { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
@@ -190,7 +191,7 @@ export function workspacesRoutes(deps: {
     try {
       const ws = await WorkspaceManager.open(entry.path);
       return c.json({
-        name,
+        id,
         path: entry.path,
         ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
         metadata: ws.metadata,
@@ -202,18 +203,76 @@ export function workspacesRoutes(deps: {
     }
   });
 
-  // Remove a workspace from the registry. Does NOT delete files on disk —
-  // the user owns the workspace directory and may want to re-add it later.
-  app.delete("/:name", async (c) => {
-    const name = c.req.param("name");
+  // Update a workspace's metadata in place. Currently exposed: display
+  // name (`metadata.name` in workspace.json) and `defaults`. The id,
+  // on-disk directory, and URL routing are intentionally NOT touched
+  // the id is opaque and stable for the life of the workspace.
+  app.patch("/:id", async (c) => {
+    const id = c.req.param("id");
+    const entry = registry.get(id);
+    if (!entry) {
+      return c.json(
+        { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
+        404,
+      );
+    }
+
+    const parsed = await parseJsonBody<PatchBody>(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const body = parsed.body;
+
+    const patch: { name?: string; defaults?: WorkspaceMetadata["defaults"] | null } = {};
+    if (body.name !== undefined) {
+      if (typeof body.name !== "string") {
+        return c.json({ error: "name, when present, must be a string" }, 400);
+      }
+      patch.name = body.name;
+    }
+    if (body.defaults !== undefined) {
+      if (body.defaults === null) {
+        patch.defaults = null;
+      } else if (typeof body.defaults !== "object" || Array.isArray(body.defaults)) {
+        return c.json({ error: "defaults, when present, must be an object or null" }, 400);
+      } else {
+        patch.defaults = body.defaults as WorkspaceMetadata["defaults"];
+      }
+    }
+    if (patch.name === undefined && patch.defaults === undefined) {
+      return c.json({ error: "patch must include at least one of: name, defaults" }, 400);
+    }
+
+    let updated: WorkspaceMetadata;
     try {
-      await registry.remove(name);
+      const ws = await WorkspaceManager.update(entry.path, patch as WorkspaceUpdatePatch);
+      updated = ws.metadata;
+    } catch (err) {
+      const status = workspaceErrorStatus(err);
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return c.json(errorBody(err), (status ?? 500) as any);
+    }
+    // The cached WorkspaceContext holds a stale metadata snapshot.
+    cache.invalidate(id);
+
+    return c.json({
+      id,
+      path: entry.path,
+      ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
+      metadata: updated,
+    });
+  });
+
+  // Remove a workspace from the registry. Does NOT delete files on disk
+  // the user owns the workspace directory and may want to re-add it later.
+  app.delete("/:id", async (c) => {
+    const id = c.req.param("id");
+    try {
+      await registry.remove(id);
     } catch (err) {
       const status = workspaceErrorStatus(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), (status ?? 400) as any);
     }
-    cache.invalidate(name);
+    cache.invalidate(id);
     return c.body(null, 204);
   });
 
@@ -229,7 +288,7 @@ function workspaceErrorStatus(err: unknown): number | null {
   if (err instanceof WorkspaceNameInvalidError) return 400;
   if (err instanceof WorkspaceNotRegisteredError) return 404;
   if (err instanceof WorkspaceNotFoundError) return 404;
-  if (err instanceof WorkspaceNameConflictError) return 409;
+  if (err instanceof WorkspaceIdConflictError) return 409;
   if (err instanceof WorkspacePathConflictError) return 409;
   if (err instanceof WorkspaceCorruptedError) return 500;
   if (err instanceof RegistryError) return 500;
