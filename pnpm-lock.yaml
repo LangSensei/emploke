@@ -113,6 +113,9 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/paths':
+        specifier: workspace:*
+        version: link:../paths
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
@@ -122,6 +125,9 @@ importers:
       '@emploke/terminal':
         specifier: workspace:*
         version: link:../terminal
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.14(hono@4.12.18)

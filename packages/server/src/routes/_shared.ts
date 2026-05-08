@@ -60,6 +60,18 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "NoTerminalFoundError",
   "TerminalSpawnFailedError",
   "UnsupportedPlatformError",
+  // @emploke/workspace
+  "RegistryCorruptedError",
+  "RegistryError",
+  "WorkspaceAlreadyExistsError",
+  "WorkspaceCorruptedError",
+  "WorkspaceError",
+  "WorkspaceNameConflictError",
+  "WorkspaceNameInvalidError",
+  "WorkspaceNotFoundError",
+  "WorkspaceNotRegisteredError",
+  "WorkspacePathConflictError",
+  "WorkspaceSchemaMismatchError",
 ]);
 
 /**

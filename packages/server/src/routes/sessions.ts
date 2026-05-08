@@ -4,9 +4,9 @@ import {
   InvalidSessionIdError,
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
-  SessionIdAllocationFailedError,
   type SessionManager,
   SessionNotFoundError,
+  SessionIdAllocationFailedError,
   UnknownRuntimeError,
 } from "@emploke/session";
 import {
@@ -28,6 +28,17 @@ interface CreateBody {
 export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
 
 /**
+ * Resolver passed into `sessionsRoutes` so the routes can pull the
+ * workspace-scoped `SessionManager` out of Hono's per-request context.
+ *
+ * In production (`mountWorkspaceSessions` in index.ts) this reads
+ * `c.var.sessionManager` set by the workspace middleware. Tests can pass a
+ * trivial `() => stubManager` for direct route invocation without going
+ * through the middleware chain.
+ */
+export type SessionManagerResolver = (c: import("hono").Context) => SessionManager;
+
+/**
  * Map sessions errors to HTTP status codes. Returns null for unknown errors
  * so the caller can use a default (400 with the message).
  */
@@ -46,15 +57,28 @@ function statusForError(err: unknown): number | null {
 }
 
 /**
- * Routes for /api/sessions/*. The Hono `app.route("/api/sessions", ...)`
- * call in index.ts strips the `/api/sessions` prefix, so paths here are
- * relative ("/", "/:id", etc.).
+ * Routes for `/api/workspaces/:name/sessions/*`. The Hono mount point in
+ * `index.ts` strips the prefix, so paths here are relative ("/", "/:id", …).
+ *
+ * The route doesn't take a `SessionManager` directly: it takes a resolver
+ * that pulls the workspace-scoped manager off the Hono context (set by the
+ * workspace middleware on the parent route). This keeps the route generic
+ * across whatever workspace happens to be in play for a given request.
  *
  * `spawnFn` is injected so tests can stub the terminal launch without
  * touching the host. Production passes the default `spawnTerminal`.
  */
-export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawnTerminal): Hono {
+export function sessionsRoutes(
+  resolveManager: SessionManagerResolver | SessionManager,
+  spawnFn: SpawnFn = spawnTerminal,
+): Hono {
   const app = new Hono();
+
+  // Backward-compat overload: tests still pass a SessionManager directly.
+  const getManager: SessionManagerResolver =
+    typeof resolveManager === "function"
+      ? (resolveManager as SessionManagerResolver)
+      : () => resolveManager;
 
   // List sessions, optionally filtered by agent and/or createdSince timestamp.
   app.get("/", async (c) => {
@@ -79,7 +103,7 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
     if (agent !== undefined) opts.agent = agent;
     if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
     try {
-      const list = await manager.list(opts);
+      const list = await getManager(c).list(opts);
       return c.json(list);
     } catch (err) {
       return c.json(errorBody(err), 400);
@@ -98,7 +122,7 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
       return c.json({ error: "runtime, when present, must be a string" }, 400);
     }
     try {
-      const rec = await manager.create({
+      const rec = await getManager(c).create({
         agent: body.agent,
         ...(typeof body.runtime === "string" ? { runtime: body.runtime } : {}),
       });
@@ -114,7 +138,7 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
     try {
-      const rec = await manager.get(id);
+      const rec = await getManager(c).get(id);
       if (!rec) return c.json({ error: "not found", code: "SessionNotFoundError" }, 404);
       return c.json(rec);
     } catch (err) {
@@ -129,7 +153,7 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
     const id = c.req.param("id");
     const deleteRuntimeState = c.req.query("deleteRuntimeState") === "1";
     try {
-      await manager.delete(id, { deleteRuntimeState });
+      await getManager(c).delete(id, { deleteRuntimeState });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
@@ -147,7 +171,7 @@ export function sessionsRoutes(manager: SessionManager, spawnFn: SpawnFn = spawn
 
     let cmd: LaunchCommand;
     try {
-      cmd = await manager.buildLaunch(id);
+      cmd = await getManager(c).buildLaunch(id);
     } catch (err) {
       const status = statusForError(err) ?? 400;
       // biome-ignore lint/suspicious/noExplicitAny: see above.
