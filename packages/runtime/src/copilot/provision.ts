@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { AgentResolveResult, ResolvedMcp, ResolvedSkill } from "@emploke/catalog";
@@ -9,6 +10,7 @@ const execFileAsync = promisify(execFile);
 
 const DOT_DIR = ".github";
 const MCP_CONFIG_PATH = ".mcp.json";
+const COPILOT_SETTINGS_REL = path.join(".copilot", "settings.json");
 
 /**
  * Separator used to flatten scoped names into single directory segments.
@@ -28,6 +30,20 @@ export function flattenSkillName(name: string): string {
 }
 
 /**
+ * Optional overrides for `provisionCopilotWorkdir`. Production callers
+ * never pass these — they exist so unit tests can redirect side-effects
+ * away from the developer's real home directory.
+ */
+export interface ProvisionCopilotOpts {
+  /**
+   * Absolute path to the Copilot CLI settings file we ensure trusts the
+   * provisioned workdir. Defaults to `<homedir>/.copilot/settings.json`.
+   * Tests pass a scratch path to avoid mutating the host's real settings.
+   */
+  copilotSettingsPath?: string;
+}
+
+/**
  * Bake `agent` into `workdir` so `copilot` can be launched there.
  *
  * Layout produced (relative to `workdir`):
@@ -37,6 +53,11 @@ export function flattenSkillName(name: string): string {
  *   .github/skills/<name>/…         — each skill's content (excluding hooks/)
  *   .github/hooks/…                 — merged from each skill's hooks/copilot/
  *   .git/                           — empty repo (created by `git init`)
+ *
+ * Side-effect outside `workdir`: ensures `<homedir>/.copilot/settings.json`
+ * lists `workdir` (or a parent of it) under `trustedFolders` so the spawned
+ * Copilot CLI does not block on a per-folder trust prompt. See
+ * `ensureWorkdirTrusted` for the merge semantics.
  *
  * Idempotent in the trivial sense (re-running with the same inputs produces
  * the same files), but emploke's session manager always provisions into a
@@ -49,13 +70,14 @@ export function flattenSkillName(name: string): string {
 export async function provisionCopilotWorkdir(
   workdir: string,
   agent: AgentResolveResult,
+  opts: ProvisionCopilotOpts = {},
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
   await copyAgentFile(workdir, agent.agentPath);
   await writeMcpConfig(workdir, agent.mcps);
   await copySkills(workdir, agent.skills);
   await copyHooks(workdir, agent.skills);
-  await prepareWorkspace(workdir);
+  await prepareWorkspace(workdir, opts);
 }
 
 async function copyAgentFile(workdir: string, agentPath: string): Promise<void> {
@@ -119,10 +141,92 @@ async function copyHooks(workdir: string, skills: readonly ResolvedSkill[]): Pro
   }
 }
 
-async function prepareWorkspace(workdir: string): Promise<void> {
+async function prepareWorkspace(workdir: string, opts: ProvisionCopilotOpts): Promise<void> {
   try {
     await execFileAsync("git", ["init", "-q"], { cwd: workdir });
   } catch (cause) {
     throw new WorkspacePrepFailed("git init", workdir, cause as Error);
   }
+  const settingsPath = opts.copilotSettingsPath ?? path.join(homedir(), COPILOT_SETTINGS_REL);
+  await ensureWorkdirTrusted(workdir, settingsPath);
+}
+
+/**
+ * Make sure `workdir` is covered by `<settingsPath>.trustedFolders` so that
+ * the spawned Copilot CLI does not interrupt the user with a per-folder
+ * trust prompt — the session UX assumes the terminal opens straight into
+ * an interactive `copilot` session.
+ *
+ * Coverage rules (see `isPathCovered`):
+ *   - exact match on the resolved absolute path counts as trusted
+ *   - any ancestor directory listed in `trustedFolders` counts as trusted
+ *     (e.g. trusting `~/.emploke` covers every session under it)
+ *
+ * If neither rule applies, the resolved workdir is appended verbatim and
+ * the file is rewritten via temp+rename for atomicity. A missing or
+ * unparseable settings file is treated as "start fresh"; we never refuse
+ * to provision because the user's settings are corrupted, since that
+ * would prevent the very first session on a new install from launching.
+ */
+async function ensureWorkdirTrusted(workdir: string, settingsPath: string): Promise<void> {
+  const resolvedWorkdir = path.resolve(workdir);
+
+  let settings: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(settingsPath, "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      settings = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ENOENT or invalid JSON — fall through with `settings = {}`. We
+    // intentionally do NOT throw: a missing settings file is the normal
+    // case before the user has launched Copilot CLI for the first time.
+  }
+
+  const existing = readTrustedFolders(settings.trustedFolders);
+  if (isPathCovered(resolvedWorkdir, existing)) return;
+
+  const next = [...existing, resolvedWorkdir];
+  settings.trustedFolders = next;
+
+  try {
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    const tmp = `${settingsPath}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    await rename(tmp, settingsPath);
+  } catch (cause) {
+    throw new WorkspacePrepFailed("trust workdir", settingsPath, cause as Error);
+  }
+}
+
+/**
+ * Coerce the raw `trustedFolders` value into a string array, dropping
+ * non-string entries silently. We accept whatever shape the file currently
+ * has (Copilot CLI may evolve the schema), but rewrite as plain `string[]`
+ * since that is the documented and only-ever-observed format.
+ */
+function readTrustedFolders(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((s): s is string => typeof s === "string");
+}
+
+/**
+ * Returns true iff `target` (an absolute path) is the same as, or nested
+ * inside, any directory listed in `trusted`. Comparison happens on
+ * `path.resolve`-d strings to normalise `..`, `.` and trailing separators.
+ *
+ * Boundary check uses `path.sep` so `/foo` does NOT cover `/foobar` (a bug
+ * the naïve `startsWith` check would have).
+ */
+export function isPathCovered(target: string, trusted: readonly string[]): boolean {
+  const normTarget = path.resolve(target);
+  for (const entry of trusted) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    const normEntry = path.resolve(entry);
+    if (normEntry === normTarget) return true;
+    const prefix = normEntry.endsWith(path.sep) ? normEntry : normEntry + path.sep;
+    if (normTarget.startsWith(prefix)) return true;
+  }
+  return false;
 }

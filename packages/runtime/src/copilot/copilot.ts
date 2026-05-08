@@ -10,6 +10,7 @@ import {
 import type { LaunchCommand, Runtime, Session } from "../types.js";
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
+import type { ProvisionCopilotOpts } from "./provision.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { readCopilotSessionState } from "./state.js";
 
@@ -22,6 +23,12 @@ export interface CopilotRuntimeConfig {
    * normally leave this unset.
    */
   readonly copilotStateDir?: string;
+  /**
+   * Override the Copilot CLI settings file we maintain `trustedFolders` in.
+   * Defaults to `~/.copilot/settings.json`. Tests pass a tmp path so the
+   * real user settings file is never mutated.
+   */
+  readonly copilotSettingsPath?: string;
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -48,10 +55,12 @@ export class CopilotRuntime implements Runtime {
   readonly kind = "copilot";
 
   private readonly copilotStateDir: string;
+  private readonly copilotSettingsPath: string | undefined;
   private readonly randomUUID: () => string;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
+    this.copilotSettingsPath = config.copilotSettingsPath;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
   }
 
@@ -59,8 +68,12 @@ export class CopilotRuntime implements Runtime {
     workdir: string,
     agent: AgentResolveResult,
   ): Promise<{ runtimeSessionId: string }> {
+    const opts: ProvisionCopilotOpts =
+      this.copilotSettingsPath !== undefined
+        ? { copilotSettingsPath: this.copilotSettingsPath }
+        : {};
     try {
-      await provisionCopilotWorkdir(workdir, agent);
+      await provisionCopilotWorkdir(workdir, agent, opts);
     } catch (err) {
       throw new RuntimeProvisionFailed(this.kind, workdir, err as Error);
     }

@@ -68,7 +68,10 @@ describe("CopilotRuntime", () => {
 
   describe("provision", () => {
     it("provisions the workdir and returns a generated runtimeSessionId", async () => {
-      const rt = new CopilotRuntime({ randomUUID: () => FIXED_UUID });
+      const rt = new CopilotRuntime({
+        randomUUID: () => FIXED_UUID,
+        copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
+      });
       const r = await rt.provision(workdir, await buildAgent());
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toBe("# demo\n");
@@ -76,7 +79,9 @@ describe("CopilotRuntime", () => {
     });
 
     it("wraps provision failures in RuntimeProvisionFailed", async () => {
-      const rt = new CopilotRuntime();
+      const rt = new CopilotRuntime({
+        copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
+      });
       // Workdir's parent is missing AGENTS.md → cp will fail. Construct a
       // resolve result whose agentPath does not contain AGENTS.md.
       const agentPath = path.join(scratch, "broken-agent");
@@ -88,6 +93,14 @@ describe("CopilotRuntime", () => {
         mcps: [],
       };
       await expect(rt.provision(workdir, broken)).rejects.toBeInstanceOf(RuntimeProvisionFailed);
+    });
+
+    it("trusts the workdir in the configured settings file", async () => {
+      const sp = path.join(scratch, "copilot-settings.json");
+      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+      await rt.provision(workdir, await buildAgent());
+      const written = JSON.parse(await readFile(sp, "utf8"));
+      expect(written.trustedFolders).toContain(path.resolve(workdir));
     });
   });
 
