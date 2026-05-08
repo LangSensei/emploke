@@ -52,8 +52,8 @@ describe("safeJoinUnderRoot", () => {
   const root = path.resolve("/some/root");
 
   it("returns child path for valid id", () => {
-    const out = safeJoinUnderRoot(root, "20260508-010500-9dfbdf05");
-    expect(out).toBe(path.join(root, "20260508-010500-9dfbdf05"));
+    const out = safeJoinUnderRoot(root, "20260508-9dfbdf05");
+    expect(out).toBe(path.join(root, "20260508-9dfbdf05"));
   });
 
   it("rejects ids that escape via ..", () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, Catalog } from "@emploke/catalog";
@@ -64,9 +64,15 @@ class FakeProvisioner implements Provisioner {
   async provision(params: ProvisionParams): Promise<void> {
     this.calls.push(params);
     if (this.shouldFail) throw new Error("provision boom");
-    // Mimic real provisioner: create some files inside.
+    // Mimic real provisioner: copy AGENTS.md with frontmatter so the agent
+    // name is discoverable via readAgentName().
     await mkdir(params.targetDir, { recursive: true });
-    await writeFile(path.join(params.targetDir, "AGENTS.md"), "# agent\n", "utf8");
+    const agentName = params.resolveResult.agent.name;
+    await writeFile(
+      path.join(params.targetDir, "AGENTS.md"),
+      `---\nname: ${agentName}\n---\n# agent\n`,
+      "utf8",
+    );
   }
 }
 
@@ -109,7 +115,7 @@ describe("SessionsManager defaults", () => {
 // ───── create ────────────────────────────────────────────────
 
 describe("create()", () => {
-  it("provisions and writes a marker", async () => {
+  it("provisions and records the agent name from AGENTS.md", async () => {
     const fp = new FakeProvisioner();
     const m = new SessionsManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -125,14 +131,11 @@ describe("create()", () => {
     expect(rec.copilotSessions).toEqual([]);
     expect(rec.latestCopilotSession).toBeNull();
     expect(fp.calls).toHaveLength(1);
-
-    const markerRaw = await readFile(path.join(rec.workdir, ".emploke", "session.json"), "utf8");
-    const marker = JSON.parse(markerRaw);
-    expect(marker.version).toBe(1);
-    expect(marker.agent).toBe("demo");
-    expect(marker.catalogDir).toBe(catalogDir);
-    expect(marker).not.toHaveProperty("id");
-    expect(marker.createdAt).toBe("2026-05-08T01:05:00.000Z");
+    // After create, list() should see the record (proves no marker is needed
+    // — the AGENTS.md frontmatter alone is enough).
+    const listed = await m.list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.agent).toBe("demo");
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
@@ -148,53 +151,6 @@ describe("create()", () => {
       copilotStateDir,
     });
     await expect(m.create({ agent: "missing" })).rejects.toBeInstanceOf(AgentNotFoundError);
-  });
-
-  it("appends .emploke/ to existing .gitignore", async () => {
-    const fp = new FakeProvisioner();
-    fp.provision = async (p) => {
-      await mkdir(p.targetDir, { recursive: true });
-      await writeFile(path.join(p.targetDir, ".gitignore"), "node_modules\n", "utf8");
-    };
-    const m = new SessionsManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: fp,
-      root,
-      copilotStateDir,
-    });
-    const rec = await m.create({ agent: "demo" });
-    const gi = await readFile(path.join(rec.workdir, ".gitignore"), "utf8");
-    expect(gi).toContain("node_modules");
-    expect(gi).toContain(".emploke/");
-  });
-
-  it("creates .gitignore if missing", async () => {
-    const m = new SessionsManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: new FakeProvisioner(),
-      root,
-      copilotStateDir,
-    });
-    const rec = await m.create({ agent: "demo" });
-    const gi = await readFile(path.join(rec.workdir, ".gitignore"), "utf8");
-    expect(gi.trim()).toBe(".emploke/");
-  });
-
-  it("does not duplicate the .emploke/ line on re-write", async () => {
-    const fp = new FakeProvisioner();
-    fp.provision = async (p) => {
-      await mkdir(p.targetDir, { recursive: true });
-      await writeFile(path.join(p.targetDir, ".gitignore"), ".emploke/\n", "utf8");
-    };
-    const m = new SessionsManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      provisioner: fp,
-      root,
-      copilotStateDir,
-    });
-    const rec = await m.create({ agent: "demo" });
-    const gi = await readFile(path.join(rec.workdir, ".gitignore"), "utf8");
-    expect(gi.match(/\.emploke\//g)?.length).toBe(1);
   });
 
   it("cleans up workdir on provisioner failure", async () => {
@@ -230,7 +186,7 @@ describe("create()", () => {
       },
     });
     // Pre-create the directory that the first attempt would try to take.
-    const collide = "20260508-010500-01010101";
+    const collide = "20260508-01010101";
     await mkdir(path.join(root, collide), { recursive: true });
     const rec = await m.create({ agent: "demo" });
     expect(rec.id).not.toBe(collide);
@@ -270,7 +226,7 @@ describe("list()", () => {
     expect(await m.list()).toEqual([]);
   });
 
-  it("ignores dirs without a marker", async () => {
+  it("ignores dirs without a readable AGENTS.md", async () => {
     const m = new SessionsManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
@@ -278,9 +234,13 @@ describe("list()", () => {
       copilotStateDir,
     });
     await m.create({ agent: "demo" });
-    // Create a stray dir with a session-id-shaped name but no marker.
-    await mkdir(path.join(root, "20260101-000000-deadbeef"), { recursive: true });
-    // And one without the right name.
+    // Stray dir matching the id pattern but with no AGENTS.md at all.
+    await mkdir(path.join(root, "20260101-deadbeef"), { recursive: true });
+    // Stray dir matching the id pattern with an AGENTS.md missing frontmatter.
+    const stray2 = path.join(root, "20260101-cafebabe");
+    await mkdir(stray2, { recursive: true });
+    await writeFile(path.join(stray2, "AGENTS.md"), "# no frontmatter\n", "utf8");
+    // Stray dir without the right name.
     await mkdir(path.join(root, "not-a-session"), { recursive: true });
     const out = await m.list();
     expect(out).toHaveLength(1);
@@ -347,20 +307,20 @@ describe("list()", () => {
     expect(out[0]?.copilotSessions).toEqual([]);
   });
 
-  it("sorts records newest-first by id", async () => {
-    let counter = 0;
+  it("sorts records newest-first by createdAt", async () => {
+    // The id no longer encodes within-day order — sort is driven by the
+    // workdir's birthtime (filesystem-side), which monotonically increases
+    // for sequential mkdir calls in the same test.
     const m = new SessionsManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       provisioner: new FakeProvisioner(),
       root,
       copilotStateDir,
-      now: () => {
-        counter++;
-        return new Date(2026, 4, 8, 1, 0, counter);
-      },
-      randomBytes: (n) => Buffer.alloc(n, counter),
     });
     const a = await m.create({ agent: "demo" });
+    // Sleep ~50ms to ensure b's birthtime > a's birthtime even on FSes with
+    // coarse timestamp resolution. Most modern FSes give ms or ns precision.
+    await new Promise((r) => setTimeout(r, 50));
     const b = await m.create({ agent: "demo" });
     const out = await m.list();
     expect(out.map((r) => r.id)).toEqual([b.id, a.id]);
@@ -384,7 +344,7 @@ describe("get()", () => {
 
   it("returns null for valid-but-unknown id", async () => {
     const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
-    expect(await m.get("20260508-010500-deadbeef")).toBeNull();
+    expect(await m.get("20260508-deadbeef")).toBeNull();
   });
 
   it("throws InvalidSessionIdError for malformed id", async () => {
@@ -410,7 +370,7 @@ describe("delete()", () => {
 
   it("throws SessionNotFoundError for unknown id", async () => {
     const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
-    await expect(m.delete("20260508-010500-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
+    await expect(m.delete("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
   it("validates id format", async () => {
@@ -528,7 +488,7 @@ describe("launch / resume", () => {
 
   it("getLaunchCommand throws SessionNotFoundError for unknown", async () => {
     const m = new SessionsManager({ catalog: stubCatalog(), root, copilotStateDir });
-    await expect(m.getLaunchCommand("20260508-010500-deadbeef")).rejects.toBeInstanceOf(
+    await expect(m.getLaunchCommand("20260508-deadbeef")).rejects.toBeInstanceOf(
       SessionNotFoundError,
     );
   });

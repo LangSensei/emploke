@@ -1,8 +1,10 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomBytes as cryptoRandomBytes } from "node:crypto";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
 import { CopilotProvisioner, type Provisioner } from "@emploke/provisioner";
+import { readAgentName } from "./agent-file.js";
 import { indexByCwd, scanCopilotSessions } from "./copilot-state.js";
 import {
   AgentNotFoundError,
@@ -12,9 +14,8 @@ import {
   SessionAlreadyExistsError,
   SessionNotFoundError,
 } from "./errors.js";
-import { assertValidSessionId, generateSessionId } from "./ids.js";
+import { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
 import { buildLaunchCommand, buildResumeCommand, isCopilotSessionId } from "./launch.js";
-import { readMarker, writeMarker } from "./marker.js";
 import { realNormalizeCwd, safeJoinUnderRoot } from "./paths.js";
 import type {
   CopilotSessionInfo,
@@ -23,7 +24,6 @@ import type {
   LaunchCommand,
   ListSessionOpts,
   Logger,
-  SessionMarker,
   SessionRecord,
   SessionsManagerConfig,
 } from "./types.js";
@@ -32,7 +32,6 @@ const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_ROOT = path.join(homedir(), ".emploke", "sessions");
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
 const MAX_CREATE_RETRIES = 5;
-const GITIGNORE_LINE = ".emploke/";
 
 /**
  * Per-session workdir registry.
@@ -102,29 +101,22 @@ export class SessionsManager {
       throw new SessionAlreadyExistsError(generateSessionId(this.now, this.randomBytes));
     }
 
-    // 3. Provision + marker; cleanup on any failure.
-    const createdAt = this.now();
-    const catalogDir = getCatalogDir(this.catalog);
-    const marker: SessionMarker = {
-      version: 1,
-      agent: agentName,
-      createdAt: createdAt.toISOString(),
-      ...(catalogDir !== undefined ? { catalogDir } : {}),
-    };
+    // 3. Provision; cleanup on any failure. The provisioner writes AGENTS.md
+    //    (with frontmatter), .copilot/, etc. — there's no separate marker.
     try {
       await this.provisioner.provision({ resolveResult, targetDir: workdir });
-      await ensureGitignoreLine(workdir, GITIGNORE_LINE);
-      await writeMarker(workdir, marker);
     } catch (err) {
       await safeRm(workdir, this.logger);
       throw err;
     }
 
+    // createdAt: read the workdir's birthtime (set when mkdir ran above).
+    const createdAt = await readCreatedAt(workdir);
+
     return {
       id,
       workdir,
       agent: agentName,
-      ...(marker.catalogDir !== undefined ? { catalogDir: marker.catalogDir } : {}),
       createdAt,
       copilotSessions: [],
       latestCopilotSession: null,
@@ -149,33 +141,42 @@ export class SessionsManager {
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       const id = e.name;
-      // Skip names that don't look like session ids (defensive — also skips
-      // user-created dirs that aren't ours).
-      if (!/^\d{8}-\d{6}-[0-9a-f]{8}$/.test(id)) continue;
+      // Skip names that don't look like session ids.
+      if (!SESSION_ID_RE.test(id)) continue;
       // Use safeJoinUnderRoot so workdir is always absolute & validated, even
       // if the caller configured a relative `root`.
       const workdir = safeJoinUnderRoot(this.root, id);
-      const marker = await readMarker(workdir);
-      if (!marker) continue;
-      if (opts.agent !== undefined && marker.agent !== opts.agent) continue;
+      const agent = await readAgentName(workdir);
+      if (agent === null) {
+        // Half-baked dir (provisioner failed mid-way and cleanup also failed)
+        // or a foreign dir that happens to match the id pattern. Skip + warn.
+        this.logger.warn("sessions: skipping dir without readable AGENTS.md", {
+          sessionId: id,
+        });
+        continue;
+      }
+      if (opts.agent !== undefined && agent !== opts.agent) continue;
 
+      const createdAt = await readCreatedAt(workdir);
       const cwdKey = await realNormalizeCwd(workdir);
       const copilotSessions = copilotIndex.get(cwdKey) ?? [];
       const latestCopilotSession: CopilotSessionInfo | null = copilotSessions[0] ?? null;
       records.push({
         id,
         workdir,
-        agent: marker.agent,
-        ...(marker.catalogDir !== undefined ? { catalogDir: marker.catalogDir } : {}),
-        createdAt: new Date(marker.createdAt),
+        agent,
+        createdAt,
         copilotSessions,
         latestCopilotSession,
       });
     }
 
-    // Newest emploke sessions first — id is timestamp-prefixed so lexical desc
-    // is chronological desc.
-    records.sort((a, b) => b.id.localeCompare(a.id));
+    // Newest first by createdAt. The id no longer encodes within-day order, so
+    // we cannot rely on lexical sort; fall back to id desc as a tiebreaker.
+    records.sort((a, b) => {
+      const d = b.createdAt.getTime() - a.createdAt.getTime();
+      return d !== 0 ? d : b.id.localeCompare(a.id);
+    });
     return records;
   }
 
@@ -184,21 +185,21 @@ export class SessionsManager {
   async get(id: string): Promise<SessionRecord | null> {
     assertValidSessionId(id);
     const workdir = safeJoinUnderRoot(this.root, id);
-    const marker = await readMarker(workdir);
-    if (!marker) return null;
+    const agent = await readAgentName(workdir);
+    if (agent === null) return null;
 
     const copilotEntries = await scanCopilotSessions(this.copilotStateDir, this.logger);
     const copilotIndex = indexByCwd(copilotEntries);
     const cwdKey = await realNormalizeCwd(workdir);
     const copilotSessions = copilotIndex.get(cwdKey) ?? [];
     const latestCopilotSession: CopilotSessionInfo | null = copilotSessions[0] ?? null;
+    const createdAt = await readCreatedAt(workdir);
 
     return {
       id,
       workdir,
-      agent: marker.agent,
-      ...(marker.catalogDir !== undefined ? { catalogDir: marker.catalogDir } : {}),
-      createdAt: new Date(marker.createdAt),
+      agent,
+      createdAt,
       copilotSessions,
       latestCopilotSession,
     };
@@ -211,8 +212,8 @@ export class SessionsManager {
     const workdir = safeJoinUnderRoot(this.root, id);
 
     // Confirm the session exists before doing anything destructive.
-    const exists = await readMarker(workdir);
-    if (!exists) {
+    const agent = await readAgentName(workdir);
+    if (agent === null) {
       throw new SessionNotFoundError(id);
     }
 
@@ -270,8 +271,8 @@ export class SessionsManager {
   async getLaunchCommand(id: string): Promise<LaunchCommand> {
     assertValidSessionId(id);
     const workdir = safeJoinUnderRoot(this.root, id);
-    const marker = await readMarker(workdir);
-    if (!marker) throw new SessionNotFoundError(id);
+    const agent = await readAgentName(workdir);
+    if (agent === null) throw new SessionNotFoundError(id);
     return buildLaunchCommand(workdir);
   }
 
@@ -281,8 +282,8 @@ export class SessionsManager {
       throw new InvalidCopilotSessionIdError(copilotSessionId);
     }
     const workdir = safeJoinUnderRoot(this.root, id);
-    const marker = await readMarker(workdir);
-    if (!marker) throw new SessionNotFoundError(id);
+    const agent = await readAgentName(workdir);
+    if (agent === null) throw new SessionNotFoundError(id);
     // Verify the Copilot session actually belongs to this workdir. Without
     // this check, /api/sessions/:id/resume-command/:sid would happily return
     // a command for any UUID-shaped string.
@@ -313,46 +314,30 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
 }
 
 /**
- * Append `line` to `<workdir>/.gitignore` if not already present. Creates the
- * file if missing. Newline-normalized: ensures the line is on its own line.
+ * Read the workdir's creation timestamp. Prefers `birthtime` (set by mkdir on
+ * most modern filesystems); falls back to `mtime` when birthtime is absent or
+ * zero (older Linux ext4). Never throws — callers tolerate epoch-zero on the
+ * pathological case where neither is available.
  */
-async function ensureGitignoreLine(workdir: string, line: string): Promise<void> {
-  const file = path.join(workdir, ".gitignore");
-  let existing = "";
+async function readCreatedAt(workdir: string): Promise<Date> {
   try {
-    existing = await readFile(file, "utf8");
+    const st = await stat(workdir);
+    const ms = st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
+    return new Date(ms);
   } catch {
-    // File doesn't exist — create with just the line.
-    await writeFile(file, `${line}\n`, "utf8");
-    return;
+    return new Date(0);
   }
-  // Match line exactly (trim CR for CRLF files).
-  const lines = existing.split(/\r?\n/);
-  if (lines.some((l) => l === line)) return;
-  const sep = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  await writeFile(file, `${existing}${sep}${line}\n`, "utf8");
-}
-
-/**
- * Best-effort extraction of the catalog directory for the marker. Catalog
- * doesn't expose a getter, so we read the private field by structural typing.
- * If unavailable, return undefined — the marker field is optional.
- */
-function getCatalogDir(catalog: Catalog): string | undefined {
-  const c = catalog as unknown as { catalogDir?: unknown };
-  return typeof c.catalogDir === "string" ? c.catalogDir : undefined;
 }
 
 // Static crypto import — pure ESM, no require() in module-typed packages.
-import { randomBytes as cryptoRandomBytes } from "node:crypto";
 
 function defaultRandomBytes(n: number): Buffer {
   return cryptoRandomBytes(n);
 }
 
+export { readAgentName } from "./agent-file.js";
 export { indexByCwd, scanCopilotSessions } from "./copilot-state.js";
 export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
 export { buildLaunchCommand, buildResumeCommand, isCopilotSessionId } from "./launch.js";
-export { markerPathFor, readMarker, writeMarker } from "./marker.js";
 // Re-export internals used by tests (avoid duplicating logic in test files).
 export { normalizeCwd, realNormalizeCwd, safeJoinUnderRoot } from "./paths.js";

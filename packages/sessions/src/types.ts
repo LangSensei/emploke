@@ -30,11 +30,9 @@ export interface SessionRecord {
   readonly id: string;
   /** Absolute workdir path, normalized. */
   readonly workdir: string;
-  /** Agent name from the marker. */
+  /** Agent name, read from AGENTS.md frontmatter. */
   readonly agent: string;
-  /** Catalog dir at create time (debugging only; not used for join). */
-  readonly catalogDir?: string;
-  /** When this emploke session was created (from marker). */
+  /** Workdir creation time (fs stat birthtime, falls back to mtime). */
   readonly createdAt: Date;
   /** Discovered Copilot sessions whose cwd matches the workdir, sorted desc by updatedAt. */
   readonly copilotSessions: readonly CopilotSessionInfo[];
@@ -49,14 +47,6 @@ export interface CopilotSessionInfo {
   readonly summary?: string;
   readonly createdAt?: Date;
   readonly updatedAt?: Date;
-}
-
-/** Marker file schema (current version). */
-export interface SessionMarker {
-  readonly version: 1;
-  readonly agent: string;
-  readonly catalogDir?: string;
-  readonly createdAt: string;
 }
 
 /** Output of getLaunchCommand / getResumeCommand. */
@@ -75,7 +65,7 @@ export interface CreateSessionOpts {
 
 /** Options for SessionsManager.list. */
 export interface ListSessionOpts {
-  /** Filter to sessions whose marker.agent matches this exact name. */
+  /** Filter to sessions whose AGENTS.md frontmatter name matches this exact value. */
   readonly agent?: string;
 }
 

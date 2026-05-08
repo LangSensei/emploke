@@ -2,7 +2,8 @@
  * @emploke/sessions — per-session workdir registry.
  *
  * Sessions live at `~/.emploke/sessions/<id>/` (configurable). Each is a
- * provisioned workdir for one agent, plus a `.emploke/session.json` marker.
+ * provisioned workdir for one agent. The agent name is read from the
+ * provisioned `AGENTS.md` frontmatter; createdAt comes from `fs.stat`.
  * The package never spawns processes — it returns launch incantations for
  * callers to exec.
  *
@@ -27,7 +28,6 @@ export type {
   LaunchCommand,
   ListSessionOpts,
   Logger,
-  SessionMarker,
   SessionRecord,
   SessionsManagerConfig,
 } from "./types.js";

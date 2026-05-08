@@ -18,24 +18,21 @@ You launch Copilot yourself.
 
 ## Layout
 
-Each session lives at `~/.emploke/sessions/<id>/` where `<id>` matches the
-[swat](https://github.com/langsensei/swat) operation pattern:
+Each session lives at `~/.emploke/sessions/<id>/` where `<id>` is a short
+date-prefixed identifier:
 
 ```
-YYYYMMDD-HHMMSS-xxxxxxxx
-e.g. 20260508-010500-9dfbdf05
+YYYYMMDD-xxxxxxxx
+e.g. 20260508-9dfbdf05
 ```
 
-Inside the workdir, alongside the provisioned `AGENTS.md` /
-`.github/skills/` / `.mcp.json`, this package writes:
+The 8-hex-char suffix gives ~4 billion values per day, more than enough for
+ad-hoc creation. The directory contains exactly what the provisioner wrote
+(`AGENTS.md` with YAML frontmatter, `.github/skills/`, `.mcp.json`, etc.) —
+**no extra metadata file**. The agent name is parsed from the AGENTS.md
+frontmatter at read time; `createdAt` comes from the workdir's birthtime.
 
-```
-.emploke/session.json    metadata: { version, agent, catalogDir, createdAt }
-.gitignore               appended:  .emploke/
-```
-
-The directory name is the **only source of truth for the session ID**. The
-marker does not duplicate it (avoids drift on rename).
+The directory name is the **only source of truth for the session ID**.
 
 ## Usage
 
@@ -51,7 +48,7 @@ console.log("workdir:", session.workdir);
 
 const cmd = await sessions.getLaunchCommand(session.id);
 console.log("run:", cmd.display);
-// → cd "/Users/.../.emploke/sessions/20260508-010500-9dfbdf05" && copilot -i
+// → cd "/Users/.../.emploke/sessions/20260508-9dfbdf05" && copilot -i
 ```
 
 After the user runs `copilot -i` in the workdir at least once, listing surfaces
@@ -70,7 +67,7 @@ const sid = records[0].latestCopilotSession?.sessionId;
 if (sid) {
   const cmd = await sessions.getResumeCommand(records[0].id, sid);
   console.log(cmd.display);
-  // → cd "/.../20260508-010500-9dfbdf05" && copilot -i --resume <sid>
+  // → cd "/.../20260508-9dfbdf05" && copilot -i --resume <sid>
 }
 ```
 

@@ -2,15 +2,15 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { InvalidSessionIdError } from "./errors.js";
 
 /**
- * Canonical session id format: `YYYYMMDD-HHMMSS-xxxxxxxx`
+ * Canonical session id format: `YYYYMMDD-xxxxxxxx`
  *
- *   - YYYYMMDD-HHMMSS: local-time timestamp with second precision
- *   - xxxxxxxx: 8 hex chars (4 random bytes), making collisions within the
- *     same second vanishingly unlikely (2^32 space)
+ *   - YYYYMMDD: local-date prefix for at-a-glance grouping in `ls`
+ *   - xxxxxxxx: 8 hex chars (4 random bytes), ~4B-id-per-day collision space
  *
- * Matches swat operation ids.
+ * The id is NOT a precise timestamp — within-day ordering comes from the
+ * createdAt derived from the workdir's stat birthtime.
  */
-export const SESSION_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{8}$/;
+export const SESSION_ID_RE = /^\d{8}-[0-9a-f]{8}$/;
 
 /**
  * Validate a caller-provided id. Throws InvalidSessionIdError if it does not
@@ -32,16 +32,9 @@ export function generateSessionId(
   randomBytes: (n: number) => Buffer = cryptoRandomBytes,
 ): string {
   const d = now();
-  const ts =
-    pad4(d.getFullYear()) +
-    pad2(d.getMonth() + 1) +
-    pad2(d.getDate()) +
-    "-" +
-    pad2(d.getHours()) +
-    pad2(d.getMinutes()) +
-    pad2(d.getSeconds());
+  const date = pad4(d.getFullYear()) + pad2(d.getMonth() + 1) + pad2(d.getDate());
   const suffix = randomBytes(4).toString("hex");
-  return `${ts}-${suffix}`;
+  return `${date}-${suffix}`;
 }
 
 function pad2(n: number): string {

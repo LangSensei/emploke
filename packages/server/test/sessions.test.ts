@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 
 const sampleRecord: SessionRecord = {
-  id: "20260508-010500-9dfbdf05",
+  id: "20260508-9dfbdf05",
   workdir: "/tmp/wd",
   agent: "demo",
   createdAt: new Date("2026-05-08T01:05:00.000Z"),
@@ -110,7 +110,7 @@ describe("sessionsRoutes", () => {
 
   it("GET /:id returns 404 when not found", async () => {
     const m = stubManager({ get: vi.fn(async () => null) });
-    const res = await sessionsRoutes(m).request("/20260508-010500-9dfbdf05");
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05");
     expect(res.status).toBe(404);
   });
 
@@ -127,10 +127,10 @@ describe("sessionsRoutes", () => {
   it("DELETE /:id maps SessionNotFoundError to 404", async () => {
     const m = stubManager({
       delete: vi.fn(async () => {
-        throw new SessionNotFoundError("20260508-010500-9dfbdf05");
+        throw new SessionNotFoundError("20260508-9dfbdf05");
       }),
     });
-    const res = await sessionsRoutes(m).request("/20260508-010500-9dfbdf05", {
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05", {
       method: "DELETE",
     });
     expect(res.status).toBe(404);
@@ -139,22 +139,22 @@ describe("sessionsRoutes", () => {
   it("DELETE /:id?deleteCopilotState=1 propagates option", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await sessionsRoutes(m).request("/20260508-010500-9dfbdf05?deleteCopilotState=1", {
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?deleteCopilotState=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith("20260508-010500-9dfbdf05", { deleteCopilotState: true });
+    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", { deleteCopilotState: true });
   });
 
   it("DELETE /:id maps CopilotStateDeletionFailed to 409", async () => {
     const m = stubManager({
       delete: vi.fn(async () => {
-        throw new CopilotStateDeletionFailed("20260508-010500-9dfbdf05", [
+        throw new CopilotStateDeletionFailed("20260508-9dfbdf05", [
           { copilotSessionId: "x", reason: "EBUSY" },
         ]);
       }),
     });
-    const res = await sessionsRoutes(m).request("/20260508-010500-9dfbdf05?deleteCopilotState=1", {
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?deleteCopilotState=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(409);
@@ -162,7 +162,7 @@ describe("sessionsRoutes", () => {
 
   it("GET /:id/launch-command returns the command", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/20260508-010500-9dfbdf05/launch-command");
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05/launch-command");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.cmd).toBe("copilot");
@@ -172,9 +172,9 @@ describe("sessionsRoutes", () => {
   it("GET /:id/resume-command/:sid returns the command", async () => {
     const m = stubManager({});
     const sid = "12345678-1234-1234-1234-1234567890ab";
-    const res = await sessionsRoutes(m).request(`/20260508-010500-9dfbdf05/resume-command/${sid}`);
+    const res = await sessionsRoutes(m).request(`/20260508-9dfbdf05/resume-command/${sid}`);
     expect(res.status).toBe(200);
-    expect(m.getResumeCommand).toHaveBeenCalledWith("20260508-010500-9dfbdf05", sid);
+    expect(m.getResumeCommand).toHaveBeenCalledWith("20260508-9dfbdf05", sid);
   });
 
   it("GET /:id/resume-command/:sid maps InvalidCopilotSessionIdError to 400", async () => {
@@ -183,9 +183,7 @@ describe("sessionsRoutes", () => {
         throw new InvalidCopilotSessionIdError("not-a-uuid");
       }),
     });
-    const res = await sessionsRoutes(m).request(
-      "/20260508-010500-9dfbdf05/resume-command/not-a-uuid",
-    );
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05/resume-command/not-a-uuid");
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("InvalidCopilotSessionIdError");
@@ -195,10 +193,10 @@ describe("sessionsRoutes", () => {
     const sid = "12345678-1234-1234-1234-1234567890ab";
     const m = stubManager({
       getResumeCommand: vi.fn(async () => {
-        throw new CopilotSessionNotFoundError("20260508-010500-9dfbdf05", sid);
+        throw new CopilotSessionNotFoundError("20260508-9dfbdf05", sid);
       }),
     });
-    const res = await sessionsRoutes(m).request(`/20260508-010500-9dfbdf05/resume-command/${sid}`);
+    const res = await sessionsRoutes(m).request(`/20260508-9dfbdf05/resume-command/${sid}`);
     expect(res.status).toBe(404);
   });
 });

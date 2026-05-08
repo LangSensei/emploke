@@ -167,7 +167,6 @@ export interface SessionRecord {
   id: string;
   workdir: string;
   agent: string;
-  catalogDir?: string;
   /** ISO 8601 string. */
   createdAt: string;
   copilotSessions: CopilotSessionInfo[];
