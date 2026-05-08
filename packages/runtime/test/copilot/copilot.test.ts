@@ -92,17 +92,17 @@ describe("CopilotRuntime", () => {
   });
 
   describe("buildLaunch", () => {
-    it("returns bare `copilot` when runtimeSessionId is null", () => {
+    it("returns `copilot --yolo` when runtimeSessionId is null", () => {
       const rt = new CopilotRuntime();
       const c = rt.buildLaunch(fakeSession({ runtimeSessionId: null }));
       expect(c.cmd).toBe("copilot");
-      expect(c.args).toEqual([]);
+      expect(c.args).toEqual(["--yolo"]);
     });
 
-    it("returns `copilot --resume=<id>` when runtimeSessionId is set", () => {
+    it("returns `copilot --resume=<id> --yolo` when runtimeSessionId is set", () => {
       const rt = new CopilotRuntime();
       const c = rt.buildLaunch(fakeSession({ runtimeSessionId: FIXED_UUID }));
-      expect(c.args).toEqual([`--resume=${FIXED_UUID}`]);
+      expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
     });
   });
 
