@@ -14,9 +14,29 @@ import {
   type WorkspaceRegistry,
   type WorkspaceUpdatePatch,
 } from "@emploke/workspace";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import type { WorkspaceContextCache } from "../workspace-context.js";
 import { errorBody, parseJsonBody } from "./_shared.js";
+
+/**
+ * Build a JSON error response for a typed workspace/registry error. Picks
+ * a status via `workspaceErrorStatus`, falling back to `fallback` (chosen
+ * per-route to reflect what was being attempted: 400 for input writes,
+ * 500 for reads / state mutations).
+ *
+ * The `as any` cast is necessary because Hono's `c.json` second argument
+ * is a literal-union of HTTP status codes; we know every value we pass
+ * is in that set (each branch of `workspaceErrorStatus` returns
+ * {400,404,409,500} and so do all callsite fallbacks), but TS can't
+ * narrow a `number` to that union. Centralising the cast here keeps
+ * route handlers free of `// biome-ignore` noise.
+ */
+function wsErrorJson(c: Context, err: unknown, fallback: number) {
+  const status = workspaceErrorStatus(err) ?? fallback;
+  // biome-ignore lint/suspicious/noExplicitAny: see helper docstring above
+  return c.json(errorBody(err), status as any);
+}
 
 interface CreateBody {
   path?: unknown;
@@ -129,18 +149,14 @@ export function workspacesRoutes(deps: {
       const ws = await WorkspaceManager.openOrInit(absPath, initOpts);
       metadata = ws.metadata;
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: Hono c.json status is a finite union.
-      return c.json(errorBody(err), (status ?? 400) as any);
+      return wsErrorJson(c, err, 400);
     }
 
     let entry: Awaited<ReturnType<WorkspaceRegistry["add"]>>;
     try {
       entry = await registry.add({ path: absPath });
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), (status ?? 400) as any);
+      return wsErrorJson(c, err, 400);
     }
 
     return c.json(
@@ -171,9 +187,7 @@ export function workspacesRoutes(deps: {
     try {
       await registry.setCurrent(parsed.body.id);
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), (status ?? 400) as any);
+      return wsErrorJson(c, err, 400);
     }
     return c.json({ id: parsed.body.id });
   });
@@ -198,9 +212,7 @@ export function workspacesRoutes(deps: {
         metadata: ws.metadata,
       });
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), (status ?? 500) as any);
+      return wsErrorJson(c, err, 500);
     }
   });
 
@@ -247,9 +259,7 @@ export function workspacesRoutes(deps: {
       const ws = await WorkspaceManager.update(entry.path, patch as WorkspaceUpdatePatch);
       updated = ws.metadata;
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), (status ?? 500) as any);
+      return wsErrorJson(c, err, 500);
     }
     // The cached WorkspaceContext holds a stale metadata snapshot.
     cache.invalidate(id);
@@ -269,9 +279,7 @@ export function workspacesRoutes(deps: {
     try {
       await registry.remove(id);
     } catch (err) {
-      const status = workspaceErrorStatus(err);
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), (status ?? 400) as any);
+      return wsErrorJson(c, err, 400);
     }
     cache.invalidate(id);
     return c.body(null, 204);

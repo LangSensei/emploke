@@ -64,9 +64,6 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
           <code>{fmt(config?.port)}</code>
         </dd>
 
-        <dt>Dashboard version</dt>
-        <dd>0.0.1</dd>
-
         <dt>Build mode</dt>
         <dd>{import.meta.env.MODE}</dd>
       </dl>
