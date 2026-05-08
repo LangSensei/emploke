@@ -2,21 +2,26 @@ import type { Catalog } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody } from "./helpers.js";
+import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
- * Routes for /api/mcps/*. Mounted by `catalogRoutes` at "/mcps".
+ * Routes for /mcps/* relative to the parent mount. Mounted by
+ * `catalogRoutes` at "/mcps".
  *
  * MCPs do not have a metadata PATCH endpoint — they're config-only blobs
  * with no status/disabled state to flip.
  */
-export function mcpsRoutes(catalog: Catalog): Hono {
+export function mcpsRoutes(arg: CatalogResolver | Catalog): Hono {
   const app = new Hono();
+  const getCatalog = resolveCatalog(arg);
 
-  app.get("/", (c) =>
-    c.json(catalog.listMcps().map((name) => ({ name, path: catalog.getMcpPath(name) }))),
-  );
+  app.get("/", (c) => {
+    const catalog = getCatalog(c);
+    return c.json(catalog.listMcps().map((name) => ({ name, path: catalog.getMcpPath(name) })));
+  });
 
   app.get("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
       const path = catalog.getMcpPath(name);
@@ -30,6 +35,7 @@ export function mcpsRoutes(catalog: Catalog): Hono {
   });
 
   app.post("/", async (c) => {
+    const catalog = getCatalog(c);
     const parsed = await readInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
@@ -42,6 +48,7 @@ export function mcpsRoutes(catalog: Catalog): Hono {
   });
 
   app.put("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     const name = c.req.param("name");
     const parsed = await readContentBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
@@ -55,6 +62,7 @@ export function mcpsRoutes(catalog: Catalog): Hono {
   });
 
   app.delete("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     try {
       await catalog.removeMcp(c.req.param("name"));
       return c.json({ ok: true });

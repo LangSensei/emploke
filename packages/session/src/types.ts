@@ -6,7 +6,7 @@ export interface Logger {
   warn(message: string, meta?: object): void;
 }
 
-/** Configuration for SessionManager. All fields are optional except `catalog` + `runtimeRegistry`. */
+/** Configuration for SessionManager. All fields are optional except `catalog`, `runtimeRegistry`, and `sessionsDir`. */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: Catalog;
@@ -14,8 +14,13 @@ export interface SessionManagerConfig {
   readonly runtimeRegistry: RuntimeRegistry;
   /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */
   readonly defaultRuntime?: string;
-  /** Root directory for session workdirs. Defaults to `~/.emploke/sessions`. */
-  readonly root?: string;
+  /**
+   * Absolute directory under which per-session workdirs are created. Required.
+   * In production this is `<workspace>/sessions/`; the server hands it through
+   * after opening the workspace. SessionManager itself has no notion of a
+   * "workspace" — it only knows about the directory you tell it to manage.
+   */
+  readonly sessionsDir: string;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */

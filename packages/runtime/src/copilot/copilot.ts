@@ -5,16 +5,18 @@ import type { AgentResolveResult } from "@emploke/catalog";
 import {
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
+  RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
 import type { LaunchCommand, Runtime, Session } from "../types.js";
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
-import type { ProvisionCopilotOpts } from "./provision.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { readCopilotSessionState } from "./state.js";
+import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
+const DEFAULT_COPILOT_SETTINGS_PATH = path.join(homedir(), ".copilot", "settings.json");
 
 export interface CopilotRuntimeConfig {
   /**
@@ -27,6 +29,9 @@ export interface CopilotRuntimeConfig {
    * Override the Copilot CLI settings file we maintain `trustedFolders` in.
    * Defaults to `~/.copilot/settings.json`. Tests pass a tmp path so the
    * real user settings file is never mutated.
+   *
+   * Used exclusively by `registerWorkspace`; per-session `provision` no
+   * longer touches this file.
    */
   readonly copilotSettingsPath?: string;
   /**
@@ -42,6 +47,12 @@ export interface CopilotRuntimeConfig {
  * old implementation needed (where copilot minted ids and we had to scan all
  * sessions and match by cwd).
  *
+ * Trust: `registerWorkspace(workspaceDir)` is the sole code path that
+ * touches `~/.copilot/settings.json`. Server bootstrap calls it once per
+ * registered workspace; per-session `provision` no longer interacts with the
+ * settings file. This keeps `trustedFolders` from growing unbounded as
+ * sessions are created.
+ *
  * SECURITY: every method that would compose `runtimeSessionId` into a
  * filesystem path or a `--resume=<id>` argument runs it through
  * `isCopilotSessionId` first. A tampered `session.json` with a malicious id
@@ -55,12 +66,12 @@ export class CopilotRuntime implements Runtime {
   readonly kind = "copilot";
 
   private readonly copilotStateDir: string;
-  private readonly copilotSettingsPath: string | undefined;
+  private readonly copilotSettingsPath: string;
   private readonly randomUUID: () => string;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
-    this.copilotSettingsPath = config.copilotSettingsPath;
+    this.copilotSettingsPath = config.copilotSettingsPath ?? DEFAULT_COPILOT_SETTINGS_PATH;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
   }
 
@@ -68,17 +79,29 @@ export class CopilotRuntime implements Runtime {
     workdir: string,
     agent: AgentResolveResult,
   ): Promise<{ runtimeSessionId: string }> {
-    const opts: ProvisionCopilotOpts =
-      this.copilotSettingsPath !== undefined
-        ? { copilotSettingsPath: this.copilotSettingsPath }
-        : {};
     try {
-      await provisionCopilotWorkdir(workdir, agent, opts);
+      await provisionCopilotWorkdir(workdir, agent);
     } catch (err) {
       throw new RuntimeProvisionFailed(this.kind, workdir, err as Error);
     }
     const runtimeSessionId = generateCopilotSessionId(this.randomUUID);
     return { runtimeSessionId };
+  }
+
+  /**
+   * Idempotent. Records `workspaceDir` in the Copilot CLI's trusted-folders
+   * list so any session subsequently provisioned under it can launch
+   * without a per-folder trust prompt. If the workspace (or one of its
+   * ancestors) is already trusted, this is a no-op write — see
+   * `ensureDirTrusted` for the coverage rules and the concurrent-safe
+   * read-modify-write protocol.
+   */
+  async registerWorkspace(workspaceDir: string): Promise<void> {
+    try {
+      await ensureDirTrusted(workspaceDir, this.copilotSettingsPath);
+    } catch (err) {
+      throw new RuntimeRegisterWorkspaceFailed(this.kind, workspaceDir, err as Error);
+    }
   }
 
   async refresh(

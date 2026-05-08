@@ -57,3 +57,21 @@ export class RuntimeProvisionFailed extends Error {
     this.cause = cause;
   }
 }
+
+/**
+ * Wraps a failure that happened inside `Runtime.registerWorkspace`.
+ * Thrown when the runtime cannot complete its one-time setup against a
+ * workspace root (e.g. cannot persist a trust entry to its CLI's settings
+ * file).
+ */
+export class RuntimeRegisterWorkspaceFailed extends Error {
+  constructor(
+    public readonly kind: string,
+    public readonly workspaceDir: string,
+    cause: Error,
+  ) {
+    super(`runtime "${kind}" registerWorkspace failed at ${workspaceDir}: ${cause.message}`);
+    this.name = "RuntimeRegisterWorkspaceFailed";
+    this.cause = cause;
+  }
+}

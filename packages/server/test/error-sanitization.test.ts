@@ -70,8 +70,10 @@ describe("errorBody", () => {
       "RuntimeProvisionFailed",
       "RuntimeRefreshFailed",
       "RuntimeStateDeletionFailed",
+      "RuntimeRegisterWorkspaceFailed",
       "UnknownRuntimeError",
-      "WorkspacePrepFailed",
+      "TrustRegistrationFailed",
+      "WorkdirPrepFailed",
       // terminal
       "NoTerminalFoundError",
       "TerminalSpawnFailedError",
@@ -85,6 +87,19 @@ describe("errorBody", () => {
       "MissingDependencies",
       "NameInvalid",
       "NotFound",
+      // workspace
+      "RegistryCorruptedError",
+      "RegistryError",
+      "WorkspaceAlreadyExistsError",
+      "WorkspaceCorruptedError",
+      "WorkspaceError",
+      "WorkspaceIdConflictError",
+      "WorkspaceIdInvalidError",
+      "WorkspaceNameInvalidError",
+      "WorkspaceNotFoundError",
+      "WorkspaceNotRegisteredError",
+      "WorkspacePathConflictError",
+      "WorkspaceSchemaMismatchError",
     ];
     for (const name of safeNames) {
       const err = new Error(`canonical message for ${name}`);

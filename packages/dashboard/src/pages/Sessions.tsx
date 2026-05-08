@@ -8,6 +8,7 @@ import {
   type ServerConfig,
   type SessionRecord,
   spawnSession,
+  type WorkspaceListItem,
 } from "../api";
 import { CopyIcon, PlayIcon, PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
@@ -15,6 +16,10 @@ import { Modal } from "../components/Modal";
 interface SessionsProps {
   agents: AgentEntry[];
   config: ServerConfig | null;
+  /** UUID of the workspace currently in scope (from the URL); null = no workspace. */
+  currentWorkspaceId: string | null;
+  /** Full registered-workspace list, used to resolve display name for the workdir hint. */
+  workspaces: WorkspaceListItem[];
 }
 
 interface FallbackInfo {
@@ -64,7 +69,7 @@ function presetToCreatedSince(preset: TimePreset, now: Date = new Date()): strin
  * no terminal emulator could be detected), we fall back to showing the
  * incantation in a modal so the user can still copy-paste it.
  */
-export function SessionsPage({ agents, config }: SessionsProps) {
+export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }: SessionsProps) {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>(ALL_AGENTS);
@@ -98,6 +103,11 @@ export function SessionsPage({ agents, config }: SessionsProps) {
   }, []);
 
   const refresh = async () => {
+    if (!currentWorkspaceId) {
+      setSessions([]);
+      setLoaded(true);
+      return;
+    }
     setRefreshing(true);
     try {
       const next = await listSessions({
@@ -118,10 +128,10 @@ export function SessionsPage({ agents, config }: SessionsProps) {
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter/timeFilter change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh defined inline; runs on filter/timeFilter/workspace change
   useEffect(() => {
     refresh();
-  }, [filter, timeFilter]);
+  }, [filter, timeFilter, currentWorkspaceId]);
 
   // Fetch the registered runtimes once at mount; the registry is static
   // for a given server process so we don't need to re-poll.
@@ -214,6 +224,20 @@ export function SessionsPage({ agents, config }: SessionsProps) {
       return true;
     });
   })();
+
+  if (currentWorkspaceId === null) {
+    return (
+      <div className="alert alert--error">
+        No workspace is selected. Use the workspace dropdown in the top bar to choose or create one
+        — sessions are scoped to a workspace.
+      </div>
+    );
+  }
+
+  // The workdir hint shows the user-facing display name (not the UUID),
+  // falling back to the id only if metadata hasn't loaded yet.
+  const currentDisplayName =
+    workspaces.find((w) => w.id === currentWorkspaceId)?.metadata?.name ?? currentWorkspaceId;
 
   return (
     <>
@@ -366,7 +390,7 @@ export function SessionsPage({ agents, config }: SessionsProps) {
         open={createOpen}
         agents={readyAgents}
         runtimes={runtimes}
-        sessionsRoot={config?.sessionsRoot ?? null}
+        workspaceDisplayName={currentDisplayName}
         pathSeparator={config?.pathSeparator ?? "/"}
         busy={busy}
         onClose={() => setCreateOpen(false)}
@@ -535,8 +559,8 @@ interface CreateModalProps {
   open: boolean;
   agents: AgentEntry[];
   runtimes: string[];
-  /** Resolved sessions root from server config; null while config is still loading. */
-  sessionsRoot: string | null;
+  /** Display name of the active workspace, used in the "where will it land" hint. */
+  workspaceDisplayName: string | null;
   /** Native path separator on the server's OS (e.g. `\\` on Windows). */
   pathSeparator: string;
   busy: boolean;
@@ -548,7 +572,7 @@ function CreateModal({
   open,
   agents,
   runtimes,
-  sessionsRoot,
+  workspaceDisplayName,
   pathSeparator,
   busy,
   onClose,
@@ -624,9 +648,11 @@ function CreateModal({
             </select>
           </label>
           <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            A new workdir will be created at{" "}
+            A new workdir will be created under{" "}
             <code>
-              {sessionsRoot ? `${sessionsRoot}${pathSeparator}<id>` : "<sessions-root>/<id>"}
+              {workspaceDisplayName
+                ? `<workspace:${workspaceDisplayName}>${pathSeparator}sessions${pathSeparator}<id>`
+                : "<workspace>/sessions/<id>"}
             </code>{" "}
             and the agent will be baked into it.
           </p>

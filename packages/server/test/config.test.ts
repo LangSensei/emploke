@@ -1,34 +1,66 @@
 import { describe, expect, it } from "vitest";
 import { configRoutes, type ServerConfig } from "../src/routes/config.js";
 
-const sample: ServerConfig = {
-  catalogDir: "/home/user/.emploke/catalog",
-  sessionsRoot: "/home/user/.emploke/sessions",
-  host: "127.0.0.1",
-  port: 3000,
-  pathSeparator: "/",
-};
-
 describe("configRoutes", () => {
-  it("GET / returns the resolved server config verbatim", async () => {
-    const res = await configRoutes(sample).request("/");
+  it("GET / returns the resolved server config", async () => {
+    const res = await configRoutes({
+      emplokeHome: "/home/user/.emploke",
+      host: "127.0.0.1",
+      port: 3000,
+      pathSeparator: "/",
+      currentWorkspace: () => "default",
+    }).request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as ServerConfig;
-    expect(body).toEqual(sample);
+    expect(body).toEqual({
+      emplokeHome: "/home/user/.emploke",
+      currentWorkspace: "default",
+      host: "127.0.0.1",
+      port: 3000,
+      pathSeparator: "/",
+    });
+  });
+
+  it("does not expose a global catalogDir field (catalog is per-workspace)", async () => {
+    const res = await configRoutes({
+      emplokeHome: "/h",
+      host: "127.0.0.1",
+      port: 3000,
+      pathSeparator: "/",
+      currentWorkspace: () => null,
+    }).request("/");
+    const body = (await res.json()) as ServerConfig & { catalogDir?: unknown };
+    expect(body.catalogDir).toBeUndefined();
   });
 
   it("preserves Windows-style separator and path", async () => {
-    const win: ServerConfig = {
-      catalogDir: "C:\\Users\\Lang\\.emploke\\catalog",
-      sessionsRoot: "C:\\Users\\Lang\\.emploke\\sessions",
+    const res = await configRoutes({
+      emplokeHome: "C:\\Users\\Lang\\.emploke",
       host: "127.0.0.1",
       port: 3000,
       pathSeparator: "\\",
-    };
-    const res = await configRoutes(win).request("/");
+      currentWorkspace: () => null,
+    }).request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as ServerConfig;
     expect(body.pathSeparator).toBe("\\");
-    expect(body.sessionsRoot).toBe("C:\\Users\\Lang\\.emploke\\sessions");
+    expect(body.emplokeHome).toBe("C:\\Users\\Lang\\.emploke");
+    expect(body.currentWorkspace).toBeNull();
+  });
+
+  it("evaluates currentWorkspace per request (registry can change)", async () => {
+    let current: string | null = "alpha";
+    const app = configRoutes({
+      emplokeHome: "/h",
+      host: "127.0.0.1",
+      port: 3000,
+      pathSeparator: "/",
+      currentWorkspace: () => current,
+    });
+    let body = (await (await app.request("/")).json()) as ServerConfig;
+    expect(body.currentWorkspace).toBe("alpha");
+    current = "beta";
+    body = (await (await app.request("/")).json()) as ServerConfig;
+    expect(body.currentWorkspace).toBe("beta");
   });
 });

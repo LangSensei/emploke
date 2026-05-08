@@ -18,8 +18,9 @@ You launch Copilot yourself.
 
 ## Layout
 
-Each session lives at `~/.emploke/sessions/<id>/` where `<id>` is a short
-date-prefixed identifier:
+Each session lives at `<sessionsDir>/<id>/` where `<sessionsDir>` is the
+directory the caller passes to `SessionManager` (the server hands through
+`<workspace>/sessions/`) and `<id>` is a short date-prefixed identifier:
 
 ```
 YYYYMMDD-xxxxxxxx
@@ -40,8 +41,12 @@ The directory name is the **only source of truth for the session ID**.
 import { Catalog } from "@emploke/catalog";
 import { SessionManager } from "@emploke/session";
 
-const catalog = await Catalog.open({ catalogDir: "~/.emploke/catalog" });
-const sessions = new SessionManager({ catalog });
+const catalog = await Catalog.open({ catalogDir: "/path/to/workspace/catalog" });
+const sessions = new SessionManager({
+  catalog,
+  runtimeRegistry,
+  sessionsDir: "/path/to/workspace/sessions",
+});
 
 const session = await sessions.create({ agent: "demo-agent" });
 console.log("workdir:", session.workdir);

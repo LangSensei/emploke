@@ -7,6 +7,7 @@ import type { Session } from "../../src/index.js";
 import {
   CopilotRuntime,
   RuntimeProvisionFailed,
+  RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../../src/index.js";
 
@@ -95,12 +96,45 @@ describe("CopilotRuntime", () => {
       await expect(rt.provision(workdir, broken)).rejects.toBeInstanceOf(RuntimeProvisionFailed);
     });
 
-    it("trusts the workdir in the configured settings file", async () => {
+    it("does NOT touch the settings file (trust handled by registerWorkspace)", async () => {
       const sp = path.join(scratch, "copilot-settings.json");
       const rt = new CopilotRuntime({ copilotSettingsPath: sp });
       await rt.provision(workdir, await buildAgent());
+      expect(await exists(sp)).toBe(false);
+    });
+  });
+
+  describe("registerWorkspace", () => {
+    it("trusts the workspace dir in the configured settings file", async () => {
+      const sp = path.join(scratch, "copilot-settings.json");
+      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      await rt.registerWorkspace(ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
-      expect(written.trustedFolders).toContain(path.resolve(workdir));
+      expect(written.trustedFolders).toContain(path.resolve(ws));
+    });
+
+    it("is idempotent when called twice with the same workspace", async () => {
+      const sp = path.join(scratch, "copilot-settings.json");
+      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      await rt.registerWorkspace(ws);
+      await rt.registerWorkspace(ws);
+      const written = JSON.parse(await readFile(sp, "utf8"));
+      const matches = written.trustedFolders.filter((p: string) => p === path.resolve(ws));
+      expect(matches).toHaveLength(1);
+    });
+
+    it("wraps trust failures in RuntimeRegisterWorkspaceFailed", async () => {
+      // Force a failure by pointing at a settings path whose parent cannot
+      // be created (a path containing a NUL byte fails on every platform).
+      const sp = "/no/such/path\0bad/settings.json";
+      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      await expect(rt.registerWorkspace(ws)).rejects.toBeInstanceOf(RuntimeRegisterWorkspaceFailed);
     });
   });
 

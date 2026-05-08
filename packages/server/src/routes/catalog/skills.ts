@@ -2,16 +2,22 @@ import type { Catalog } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
+import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
- * Routes for /api/skills/*. Mounted by `catalogRoutes` at "/skills".
+ * Routes for /skills/* relative to the parent mount. Mounted by
+ * `catalogRoutes` at "/skills". Takes a per-request catalog resolver so
+ * the same handler can serve multiple workspaces; tests can also pass a
+ * `Catalog` instance directly.
  */
-export function skillsRoutes(catalog: Catalog): Hono {
+export function skillsRoutes(arg: CatalogResolver | Catalog): Hono {
   const app = new Hono();
+  const getCatalog = resolveCatalog(arg);
 
-  app.get("/", (c) => c.json(catalog.listSkillEntries()));
+  app.get("/", (c) => c.json(getCatalog(c).listSkillEntries()));
 
   app.get("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
       const entry = catalog.getSkillEntry(name);
@@ -25,6 +31,7 @@ export function skillsRoutes(catalog: Catalog): Hono {
   });
 
   app.post("/", async (c) => {
+    const catalog = getCatalog(c);
     const parsed = await readInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
@@ -37,6 +44,7 @@ export function skillsRoutes(catalog: Catalog): Hono {
   });
 
   app.put("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     const name = c.req.param("name");
     const parsed = await readContentBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
@@ -50,6 +58,7 @@ export function skillsRoutes(catalog: Catalog): Hono {
   });
 
   app.patch("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     const name = c.req.param("name");
     const parsed = await readMetadataBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
@@ -66,6 +75,7 @@ export function skillsRoutes(catalog: Catalog): Hono {
   });
 
   app.delete("/:name{.+}", async (c) => {
+    const catalog = getCatalog(c);
     try {
       await catalog.removeSkill(c.req.param("name"));
       return c.json({ ok: true });

@@ -1,12 +1,45 @@
-import type { ServerConfig } from "../api";
+import type { ServerConfig, WorkspaceListItem } from "../api";
+import { InfoIcon } from "../components/Icons";
 
 interface SettingsProps {
   serverUrl: string;
   config: ServerConfig | null;
+  /** UUID of the workspace currently in scope (from the URL), or null. */
+  currentWorkspaceId: string | null;
+  workspaces: WorkspaceListItem[];
 }
 
-export function SettingsPage({ serverUrl, config }: SettingsProps) {
+/**
+ * Tiny inline icon + custom CSS tooltip for env-var hints. We render the
+ * hint text as a child bubble (rather than relying on the browser's native
+ * `title`) so it appears immediately on hover / focus instead of after
+ * the platform's ~1s delay, and so we control its styling.
+ */
+function EnvHint({ children }: { children: string }) {
+  return (
+    <span className="env-hint">
+      <button
+        type="button"
+        className="env-hint__trigger"
+        aria-label={children}
+        // Click is a no-op; the element exists purely to surface the
+        // tooltip on hover/focus. Using <button> keeps it natively
+        // focusable so keyboard users can read the hint too.
+        onClick={(e) => e.preventDefault()}
+      >
+        <InfoIcon className="env-hint__icon" />
+      </button>
+      <span className="env-hint__bubble" role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces }: SettingsProps) {
   const fmt = (v: string | number | undefined | null) => (v == null ? "—" : String(v));
+  const currentEntry = workspaces.find((w) => w.id === currentWorkspaceId);
+  const displayName = currentEntry?.metadata?.name ?? null;
 
   return (
     <div className="card">
@@ -17,18 +50,19 @@ export function SettingsPage({ serverUrl, config }: SettingsProps) {
         <dt>Server URL</dt>
         <dd>{serverUrl}</dd>
 
-        <dt>Host</dt>
+        <dt>
+          Host <EnvHint>Override with EMPLOKE_HOST (default 127.0.0.1).</EnvHint>
+        </dt>
         <dd>
           <code>{fmt(config?.host)}</code>
         </dd>
 
-        <dt>Port</dt>
+        <dt>
+          Port <EnvHint>Override with PORT (default 3000).</EnvHint>
+        </dt>
         <dd>
           <code>{fmt(config?.port)}</code>
         </dd>
-
-        <dt>Dashboard version</dt>
-        <dd>0.0.1</dd>
 
         <dt>Build mode</dt>
         <dd>{import.meta.env.MODE}</dd>
@@ -38,36 +72,64 @@ export function SettingsPage({ serverUrl, config }: SettingsProps) {
         <h3 className="card__title">Paths</h3>
       </div>
       <dl className="kv-list">
-        <dt>Catalog directory</dt>
+        <dt>
+          Emploke home <EnvHint>Override with EMPLOKE_HOME (default ~/.emploke).</EnvHint>
+        </dt>
         <dd>
-          <code>{fmt(config?.catalogDir)}</code>
+          <code>{fmt(config?.emplokeHome)}</code>
         </dd>
 
-        <dt>Sessions root</dt>
+        <dt>Workspace catalog</dt>
         <dd>
-          <code>{fmt(config?.sessionsRoot)}</code>
+          {currentEntry ? (
+            <code>
+              {currentEntry.path}
+              {config?.pathSeparator ?? "/"}catalog
+            </code>
+          ) : (
+            <span className="muted">—</span>
+          )}
         </dd>
       </dl>
 
       <div className="card__header" style={{ marginTop: 32 }}>
-        <h3 className="card__title">Environment hints</h3>
+        <h3 className="card__title">Workspace</h3>
       </div>
       <dl className="kv-list">
-        <dt>EMPLOKE_CATALOG_DIR</dt>
-        <dd>overrides the catalog directory shown above</dd>
+        <dt>
+          Display name{" "}
+          <EnvHint>Free-form text from workspace.json. Edit via the sidebar's pencil icon.</EnvHint>
+        </dt>
+        <dd>
+          <code>{fmt(displayName)}</code>
+        </dd>
 
-        <dt>EMPLOKE_SESSIONS_DIR</dt>
-        <dd>overrides the sessions root shown above</dd>
+        <dt>
+          Workspace id{" "}
+          <EnvHint>
+            Opaque UUID assigned at creation; the URL routing key. Stable for the lifetime of the
+            workspace.
+          </EnvHint>
+        </dt>
+        <dd>
+          <code>{fmt(currentWorkspaceId)}</code>
+        </dd>
 
-        <dt>EMPLOKE_HOST</dt>
-        <dd>overrides the bind host shown above</dd>
+        <dt>Workspace path</dt>
+        <dd>
+          <code>{fmt(currentEntry?.path)}</code>
+        </dd>
 
-        <dt>PORT</dt>
-        <dd>overrides the port shown above</dd>
+        <dt>Registered workspaces</dt>
+        <dd>
+          <code>{workspaces.length}</code>
+        </dd>
       </dl>
+
       <p className="topbar__crumb" style={{ marginTop: 16 }}>
         Set <code>EMPLOKE_HOST=0.0.0.0</code> on the server to expose the dashboard on the local
-        network (warning: enables destructive endpoints over LAN).
+        network (warning: enables destructive endpoints over LAN — also set{" "}
+        <code>EMPLOKE_API_KEY</code>).
       </p>
     </div>
   );

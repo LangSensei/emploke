@@ -21,17 +21,17 @@ import {
 
 // ───── helpers ──────────────────────────────────────────────
 
-let root: string;
+let sessionsDir: string;
 let scratch: string;
 let catalogDir: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "emploke-sessions-root-"));
+  sessionsDir = await mkdtemp(path.join(tmpdir(), "emploke-sessions-root-"));
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-sessions-scratch-"));
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });
 });
@@ -160,11 +160,12 @@ const recorder = () => {
 
 // ───── construction ──────────────────────────────────────────
 
-describe("SessionManager defaults", () => {
-  it("constructs with catalog + runtimeRegistry", () => {
+describe("SessionManager construction", () => {
+  it("constructs with catalog + runtimeRegistry + sessionsDir", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
+      sessionsDir,
     });
     expect(m).toBeDefined();
   });
@@ -178,7 +179,7 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
       randomBytes: seqRandom(),
     });
@@ -189,7 +190,7 @@ describe("create()", () => {
     expect(s.runtimeSessionId).toBe("12345678-1234-1234-1234-1234567890ab");
     expect(s.lastActiveAt).toBeNull();
     expect(s.preview).toBeNull();
-    expect(s.workdir).toBe(path.join(root, s.id));
+    expect(s.workdir).toBe(path.join(sessionsDir, s.id));
     expect(rt.provisionCalls).toHaveLength(1);
 
     const persisted = JSON.parse(await readFile(path.join(s.workdir, SESSION_FILE_NAME), "utf8"));
@@ -205,7 +206,7 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.create({ agent: "" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
@@ -214,7 +215,7 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.create({ agent: "missing" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
@@ -223,7 +224,7 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime("copilot")),
-      root,
+      sessionsDir,
     });
     await expect(m.create({ agent: "demo", runtime: "gemini" })).rejects.toBeInstanceOf(
       UnknownRuntimeError,
@@ -238,7 +239,7 @@ describe("create()", () => {
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: reg,
       defaultRuntime: "claude",
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     expect(s.runtime).toBe("claude");
@@ -250,11 +251,11 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     await expect(m.create({ agent: "demo" })).rejects.toBeInstanceOf(RuntimeProvisionFailed);
     const fsp = await import("node:fs/promises");
-    expect(await fsp.readdir(root)).toEqual([]);
+    expect(await fsp.readdir(sessionsDir)).toEqual([]);
   });
 
   it("supports null runtimeSessionId at create time (gemini-style)", async () => {
@@ -263,7 +264,7 @@ describe("create()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     expect(s.runtimeSessionId).toBeNull();
@@ -273,11 +274,11 @@ describe("create()", () => {
 // ───── list ──────────────────────────────────────────────────
 
 describe("list()", () => {
-  it("returns empty when root does not exist", async () => {
+  it("returns empty when sessionsDir does not exist", async () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root: path.join(root, "missing"),
+      sessionsDir: path.join(sessionsDir, "missing"),
     });
     expect(await m.list()).toEqual([]);
   });
@@ -288,12 +289,12 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
       logger: r.logger,
     });
     await m.create({ agent: "demo" });
-    await mkdir(path.join(root, "20260101-deadbeef"), { recursive: true });
-    await mkdir(path.join(root, "not-a-session"), { recursive: true });
+    await mkdir(path.join(sessionsDir, "20260101-deadbeef"), { recursive: true });
+    await mkdir(path.join(sessionsDir, "not-a-session"), { recursive: true });
     const out = await m.list();
     expect(out).toHaveLength(1);
   });
@@ -304,11 +305,11 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
       logger: r.logger,
     });
     await m.create({ agent: "demo" });
-    const stray = path.join(root, "20260101-cafebabe");
+    const stray = path.join(sessionsDir, "20260101-cafebabe");
     await mkdir(stray, { recursive: true });
     await writeFile(path.join(stray, SESSION_FILE_NAME), "{not json", "utf8");
     const out = await m.list();
@@ -322,7 +323,7 @@ describe("list()", () => {
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await m.create({ agent: "a" });
     await m.create({ agent: "b" });
@@ -337,7 +338,7 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
       now: () => new Date(nowMs),
     });
     // Older session: created Jan 1
@@ -361,7 +362,7 @@ describe("list()", () => {
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
       now: () => new Date(nowMs),
     });
     await m.create({ agent: "a" }); // old, agent a
@@ -385,7 +386,7 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     await m.create({ agent: "demo" });
     const [out] = await m.list();
@@ -398,7 +399,7 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     await m.create({ agent: "demo" });
     const [out] = await m.list();
@@ -414,14 +415,14 @@ describe("list()", () => {
     const m1 = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
-      root,
+      sessionsDir,
     });
     await m1.create({ agent: "demo" });
 
     const m2 = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime("gemini")),
-      root,
+      sessionsDir,
       logger: r.logger,
     });
     expect(await m2.list()).toEqual([]);
@@ -439,7 +440,7 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     const [out] = await m.list();
@@ -453,7 +454,7 @@ describe("list()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     // Three sessions: a is older, b is newer (no activity), c has activity.
     // Sleep between each create so createdAt strictly increases — Linux/macOS
@@ -488,7 +489,7 @@ describe("get()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     const got = await m.get(s.id);
@@ -499,7 +500,7 @@ describe("get()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     expect(await m.get("20260508-deadbeef")).toBeNull();
   });
@@ -508,7 +509,7 @@ describe("get()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.get("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
@@ -521,7 +522,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id);
@@ -532,7 +533,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.delete("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
@@ -541,7 +542,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.delete("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
@@ -551,7 +552,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id, { deleteRuntimeState: true });
@@ -565,7 +566,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     await expect(m.delete(s.id, { deleteRuntimeState: true })).rejects.toBeInstanceOf(
@@ -580,7 +581,7 @@ describe("delete()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id);
@@ -596,7 +597,7 @@ describe("buildLaunch()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     const c = await m.buildLaunch(s.id);
@@ -616,7 +617,7 @@ describe("buildLaunch()", () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
-      root,
+      sessionsDir,
     });
     const s = await m.create({ agent: "demo" });
     const c = await m.buildLaunch(s.id);
@@ -627,7 +628,7 @@ describe("buildLaunch()", () => {
     const m = new SessionManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      root,
+      sessionsDir,
     });
     await expect(m.buildLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });

@@ -85,6 +85,23 @@ export interface Runtime {
    * the caller is responsible for surfacing this to the user.
    */
   deleteState(session: Session): Promise<void>;
+
+  /**
+   * Optional one-time setup step performed against a workspace root rather
+   * than a per-session workdir. Called by the server when a workspace is
+   * first opened (and again on subsequent server bootstraps; implementations
+   * MUST be idempotent).
+   *
+   * Use cases:
+   *  - record the workspace as trusted with the CLI so spawned sessions
+   *    don't trigger per-folder trust prompts (Copilot)
+   *  - register a workspace-level config, project token, etc.
+   *
+   * Runtimes with no workspace-level setup omit this method entirely.
+   * Failures should be wrapped in `RuntimeRegisterWorkspaceFailed` by the
+   * caller (the runtime can throw any error; the registry adapter wraps).
+   */
+  registerWorkspace?(workspaceDir: string): Promise<void>;
 }
 
 /**

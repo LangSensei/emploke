@@ -21,17 +21,39 @@ export class InvalidMcpJson extends Error {
 }
 
 /**
- * Thrown when the per-runtime workspace preparation step fails (e.g.
+ * Thrown when the per-session workdir preparation step fails (e.g.
  * `git init`). Wraps the underlying spawn or exit error.
+ *
+ * Renamed from `WorkspacePrepFailed` so the term "workspace" is reserved
+ * for the new project-level concept managed by `@emploke/workspace`. This
+ * error covers per-session workdir prep, not workspace prep.
  */
-export class WorkspacePrepFailed extends Error {
+export class WorkdirPrepFailed extends Error {
   constructor(
     public readonly step: string,
-    public readonly targetDir: string,
+    public readonly workdir: string,
     cause: Error,
   ) {
-    super(`workspace preparation step "${step}" failed in ${targetDir}: ${cause.message}`);
-    this.name = "WorkspacePrepFailed";
+    super(`workdir preparation step "${step}" failed in ${workdir}: ${cause.message}`);
+    this.name = "WorkdirPrepFailed";
+    this.cause = cause;
+  }
+}
+
+/**
+ * Thrown when `CopilotRuntime.registerWorkspace` fails to persist a trust
+ * entry into the Copilot CLI's settings file. This happens before any
+ * sessions can run inside the workspace; without it the spawned `copilot`
+ * CLI would interrupt the user with a per-folder trust prompt.
+ */
+export class TrustRegistrationFailed extends Error {
+  constructor(
+    public readonly settingsPath: string,
+    public readonly workspaceDir: string,
+    cause: Error,
+  ) {
+    super(`failed to register workspace ${workspaceDir} in ${settingsPath}: ${cause.message}`);
+    this.name = "TrustRegistrationFailed";
     this.cause = cause;
   }
 }

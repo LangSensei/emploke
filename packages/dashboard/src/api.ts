@@ -25,6 +25,46 @@ export interface CatalogData {
   mcps: McpItem[];
 }
 
+//  Workspace identity
+//
+// All workspace-scoped requests are routed through `/api/workspaces/<id>/...`
+// where <id> is the UUID of the active workspace. The active workspace is
+// owned by the React Router URL (`/workspaces/:wsId/...`), not localStorage
+//  so opening two browser tabs at different workspaces no longer makes
+// them fight over a shared global. The route layout calls
+// `setActiveWorkspace` on every URL change to keep this module-level slot
+// in sync; api helpers below pull from it at call time so callers don't
+// have to thread a workspace argument through every signature.
+
+let activeWorkspace: string | null = null;
+
+/** Called by the route layout whenever the URL's wsId segment changes. */
+export function setActiveWorkspace(id: string | null): void {
+  activeWorkspace = id;
+}
+
+/** Read the workspace currently in scope for the active route. */
+export function getActiveWorkspace(): string | null {
+  return activeWorkspace;
+}
+
+/**
+ * Build the URL prefix for workspace-scoped resources. Throws if no
+ * workspace is in scope  call sites should ensure the user is on a
+ * `/workspaces/:wsId/...` route before issuing per-workspace requests.
+ */
+function workspacePrefix(): string {
+  if (!activeWorkspace) {
+    throw new Error("no workspace selected");
+  }
+  return `/api/workspaces/${encodeURIComponent(activeWorkspace)}`;
+}
+
+/** URL prefix for the active workspace's catalog endpoints. */
+function catalogPrefix(): string {
+  return `${workspacePrefix()}/catalog`;
+}
+
 const fetchJson = async <T>(path: string, label: string): Promise<T> => {
   const r = await fetch(path);
   if (!r.ok) {
@@ -34,29 +74,45 @@ const fetchJson = async <T>(path: string, label: string): Promise<T> => {
 };
 
 export async function fetchAll(): Promise<CatalogData> {
+  const base = catalogPrefix();
   const [overview, skills, agents, mcps] = await Promise.all([
-    fetchJson<OverviewData>("/api/overview", "overview"),
-    fetchJson<SkillEntry[]>("/api/skills", "skills"),
-    fetchJson<AgentEntry[]>("/api/agents", "agents"),
-    fetchJson<McpItem[]>("/api/mcps", "mcps"),
+    fetchJson<OverviewData>(`${base}/overview`, "overview"),
+    fetchJson<SkillEntry[]>(`${base}/skills`, "skills"),
+    fetchJson<AgentEntry[]>(`${base}/agents`, "agents"),
+    fetchJson<McpItem[]>(`${base}/mcps`, "mcps"),
   ]);
   return { overview, skills, agents, mcps };
 }
 
-// ─── Mutations ────────────────────────────────────────────────────
+//  Mutations
+
+/**
+ * Best-effort extraction of a server-provided error message from a
+ * non-OK fetch response. Falls back to the bare HTTP status if the body
+ * isn't JSON or doesn't carry an `error` field. Used by both `mutate`
+ * (which discards the body) and `mutateJson` (which returns the parsed
+ * success body).
+ */
+async function extractError(r: Response): Promise<string> {
+  let msg = `${r.status}`;
+  try {
+    const body = await r.json();
+    if (body && typeof body.error === "string") msg = body.error;
+  } catch {
+    // body not JSON; keep status
+  }
+  return msg;
+}
 
 const mutate = async (path: string, init: RequestInit): Promise<void> => {
   const r = await fetch(path, init);
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const body = await r.json();
-      if (body && typeof body.error === "string") msg = body.error;
-    } catch {
-      // body not JSON; keep status
-    }
-    throw new Error(msg);
-  }
+  if (!r.ok) throw new Error(await extractError(r));
+};
+
+const mutateJson = async <T>(path: string, init: RequestInit): Promise<T> => {
+  const r = await fetch(path, init);
+  if (!r.ok) throw new Error(await extractError(r));
+  return (await r.json()) as T;
 };
 
 const jsonInit = (method: string, body: object): RequestInit => ({
@@ -66,22 +122,22 @@ const jsonInit = (method: string, body: object): RequestInit => ({
 });
 
 export const installAgent = (sourcePath: string) =>
-  mutate("/api/agents", jsonInit("POST", { sourcePath }));
+  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { sourcePath }));
 
 export const installSkill = (sourcePath: string) =>
-  mutate("/api/skills", jsonInit("POST", { sourcePath }));
+  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { sourcePath }));
 
 export const installMcp = (sourcePath: string, name?: string) =>
-  mutate("/api/mcps", jsonInit("POST", name ? { sourcePath, name } : { sourcePath }));
+  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", name ? { sourcePath, name } : { sourcePath }));
 
 export const removeAgent = (name: string) =>
-  mutate(`/api/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
 
 export const removeSkill = (name: string) =>
-  mutate(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
 
 export const removeMcp = (name: string) =>
-  mutate(`/api/mcps/${encodeURIComponent(name)}`, { method: "DELETE" });
+  mutate(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}`, { method: "DELETE" });
 
 export interface McpDetail {
   name: string;
@@ -91,10 +147,10 @@ export interface McpDetail {
 }
 
 export const getMcp = (name: string): Promise<McpDetail> =>
-  fetchJson<McpDetail>(`/api/mcps/${encodeURIComponent(name)}`, "mcp");
+  fetchJson<McpDetail>(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}`, "mcp");
 
 export const updateMcpContent = (name: string, content: string) =>
-  mutate(`/api/mcps/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+  mutate(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
 
 export interface MarkdownDetail {
   content: string;
@@ -108,13 +164,13 @@ export interface SkillDetail {
 }
 
 export const getSkill = (name: string): Promise<SkillDetail> =>
-  fetchJson<SkillDetail>(`/api/skills/${encodeURIComponent(name)}`, "skill");
+  fetchJson<SkillDetail>(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, "skill");
 
 export const getSkillContent = (name: string): Promise<string> =>
   getSkill(name).then((d) => d.content);
 
 export const updateSkillContent = (name: string, content: string) =>
-  mutate(`/api/skills/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
 
 export interface SkillMetadataPatch {
   description?: string;
@@ -124,7 +180,7 @@ export interface SkillMetadataPatch {
 }
 
 export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
-  mutate(`/api/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
+  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
 export interface AgentDetail {
   agent: import("@emploke/catalog").Agent;
@@ -134,13 +190,13 @@ export interface AgentDetail {
 }
 
 export const getAgent = (name: string): Promise<AgentDetail> =>
-  fetchJson<AgentDetail>(`/api/agents/${encodeURIComponent(name)}`, "agent");
+  fetchJson<AgentDetail>(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, "agent");
 
 export const getAgentContent = (name: string): Promise<string> =>
   getAgent(name).then((d) => d.content);
 
 export const updateAgentContent = (name: string, content: string) =>
-  mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
 
 export interface AgentMetadataPatch {
   description?: string;
@@ -149,9 +205,9 @@ export interface AgentMetadataPatch {
 }
 
 export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
-  mutate(`/api/agents/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
-// ─── Sessions ─────────────────────────────────────────────────────
+//  Sessions (workspace-scoped)
 
 export interface SessionRecord {
   id: string;
@@ -187,15 +243,19 @@ export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord
   if (opts.agent) params.set("agent", opts.agent);
   if (opts.createdSince) params.set("createdSince", opts.createdSince);
   const qs = params.toString();
-  return fetchJson<SessionRecord[]>(`/api/sessions${qs ? `?${qs}` : ""}`, "sessions");
+  return fetchJson<SessionRecord[]>(
+    `${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`,
+    "sessions",
+  );
 };
 
 export const listRuntimes = (): Promise<string[]> =>
   fetchJson<string[]>("/api/runtimes", "runtimes");
 
 export interface ServerConfig {
-  catalogDir: string;
-  sessionsRoot: string;
+  emplokeHome: string;
+  /** Currently-selected workspace id (UUID) on the server registry, or null. */
+  currentWorkspace: string | null;
   host: string;
   port: number;
   /** Native path separator on the server's OS. */
@@ -206,28 +266,19 @@ export const getConfig = (): Promise<ServerConfig> =>
   fetchJson<ServerConfig>("/api/config", "config");
 
 export const getSession = (id: string): Promise<SessionRecord> =>
-  fetchJson<SessionRecord>(`/api/sessions/${encodeURIComponent(id)}`, "session");
+  fetchJson<SessionRecord>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
 
 export const createSession = async (agent: string, runtime?: string): Promise<SessionRecord> => {
   const body: Record<string, string> = { agent };
   if (runtime !== undefined) body.runtime = runtime;
-  const r = await fetch("/api/sessions", jsonInit("POST", body));
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // body not JSON; keep status
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as SessionRecord;
+  return mutateJson<SessionRecord>(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
 };
 
 export const deleteSession = (id: string, deleteRuntimeState = false) => {
   const qs = deleteRuntimeState ? "?deleteRuntimeState=1" : "";
-  return mutate(`/api/sessions/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}${qs}`, {
+    method: "DELETE",
+  });
 };
 
 export interface SpawnSuccess {
@@ -245,17 +296,71 @@ export interface SpawnFailure {
 
 export type SpawnResult = SpawnSuccess | SpawnFailure;
 
-export const spawnSession = async (id: string): Promise<SpawnResult> => {
-  const r = await fetch(`/api/sessions/${encodeURIComponent(id)}/spawn`, { method: "POST" });
-  if (!r.ok) {
-    let msg = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j && typeof j.error === "string") msg = j.error;
-    } catch {
-      // not json
-    }
-    throw new Error(msg);
-  }
-  return (await r.json()) as SpawnResult;
+export const spawnSession = async (id: string): Promise<SpawnResult> =>
+  mutateJson<SpawnResult>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}/spawn`, {
+    method: "POST",
+  });
+
+//  Workspaces ─
+
+export interface WorkspaceMetadata {
+  schemaVersion: number;
+  name: string;
+  createdAt: string;
+  defaults?: {
+    runtime?: string;
+    agent?: string;
+  };
+}
+
+export interface WorkspaceListItem {
+  /** Opaque UUID; the URL routing key. */
+  id: string;
+  path: string;
+  lastOpenedAt?: string;
+  status: "ok" | "missing" | "corrupted";
+  metadata?: WorkspaceMetadata;
+  reason?: string;
+}
+
+export const listWorkspaces = (): Promise<WorkspaceListItem[]> =>
+  fetchJson<WorkspaceListItem[]>("/api/workspaces", "workspaces");
+
+export const getServerCurrentWorkspace = (): Promise<{ id: string | null }> =>
+  fetchJson<{ id: string | null }>("/api/workspaces/current", "current-workspace");
+
+export const setServerCurrentWorkspace = (id: string): Promise<void> =>
+  mutate("/api/workspaces/current", jsonInit("PUT", { id }));
+
+/**
+ * Created workspace as returned by `POST /api/workspaces`. Mirrors the
+ * server's response shape so we can render the new entry without a full
+ * list refresh.
+ */
+export interface CreatedWorkspace {
+  id: string;
+  path: string;
+  lastOpenedAt?: string;
+  metadata: WorkspaceMetadata;
+}
+
+export const addWorkspace = async (
+  pathInput: string,
+  opts: { name: string; defaults?: WorkspaceMetadata["defaults"] },
+): Promise<CreatedWorkspace> => {
+  const body: Record<string, unknown> = { path: pathInput, name: opts.name };
+  if (opts.defaults !== undefined) body.defaults = opts.defaults;
+  return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };
+
+export const removeWorkspace = (id: string) =>
+  mutate(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+export const updateWorkspaceMetadata = async (
+  id: string,
+  patch: { name?: string; defaults?: WorkspaceMetadata["defaults"] | null },
+): Promise<WorkspaceListItem> =>
+  mutateJson<WorkspaceListItem>(
+    `/api/workspaces/${encodeURIComponent(id)}`,
+    jsonInit("PATCH", patch),
+  );

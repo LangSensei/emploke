@@ -1,6 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, readdir, rm } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
@@ -27,15 +26,14 @@ import type {
 } from "./types.js";
 
 const SILENT_LOGGER: Logger = { warn: () => {} };
-const DEFAULT_ROOT = path.join(homedir(), ".emploke", "sessions");
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
 /**
  * Per-session workdir registry, parameterised over a set of CLI runtimes.
  *
- * Owns the on-disk layout under `root` (default `~/.emploke/sessions`).
- * Each session is one directory, holding:
+ * Owns the on-disk layout under `sessionsDir`. Each session is one directory,
+ * holding:
  *
  *   - `AGENTS.md` — written by the runtime's provisioner (source of truth
  *     for the agent's persona; the agent name is read from its frontmatter)
@@ -48,12 +46,16 @@ const MAX_CREATE_RETRIES = 5;
  * Activity metadata (`lastActiveAt`, `preview`) is NOT persisted — it's
  * read fresh from the runtime on every list/get call. The cost is one
  * `runtime.refresh()` per session, which for copilot is a single yaml read.
+ *
+ * SessionManager has no notion of a "workspace". The caller (typically
+ * `@emploke/server`) opens a workspace, then constructs one SessionManager
+ * per workspace pointed at `<workspace>/sessions/`.
  */
 export class SessionManager {
   private readonly catalog: Catalog;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
-  private readonly root: string;
+  private readonly sessionsDir: string;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
@@ -62,7 +64,7 @@ export class SessionManager {
     this.catalog = config.catalog;
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
-    this.root = config.root ?? DEFAULT_ROOT;
+    this.sessionsDir = path.resolve(config.sessionsDir);
     this.logger = config.logger ?? SILENT_LOGGER;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
@@ -90,12 +92,12 @@ export class SessionManager {
     const runtime = this.runtimeRegistry.get(runtimeKind);
 
     // 3. Reserve a workdir via exclusive mkdir, retrying on EEXIST.
-    await mkdir(this.root, { recursive: true });
+    await mkdir(this.sessionsDir, { recursive: true });
     let id: string | null = null;
     let workdir: string | null = null;
     for (let attempt = 0; attempt < MAX_CREATE_RETRIES; attempt++) {
       const candidateId = generateSessionId(this.now, this.randomBytes);
-      const candidateDir = safeJoinUnderRoot(this.root, candidateId);
+      const candidateDir = safeJoinUnderRoot(this.sessionsDir, candidateId);
       try {
         await mkdir(candidateDir, { recursive: false });
         id = candidateId;
@@ -146,7 +148,7 @@ export class SessionManager {
   async list(opts: ListSessionOpts = {}): Promise<Session[]> {
     let entries: import("node:fs").Dirent[];
     try {
-      entries = await readdir(this.root, { withFileTypes: true });
+      entries = await readdir(this.sessionsDir, { withFileTypes: true });
     } catch {
       return [];
     }
@@ -164,7 +166,7 @@ export class SessionManager {
         .filter((e) => e.isDirectory() && SESSION_ID_RE.test(e.name))
         .map((e) => {
           const id = e.name;
-          const workdir = safeJoinUnderRoot(this.root, id);
+          const workdir = safeJoinUnderRoot(this.sessionsDir, id);
           return this.loadPersistent(id, workdir);
         }),
     );
@@ -196,7 +198,7 @@ export class SessionManager {
 
   async get(id: string): Promise<Session | null> {
     assertValidSessionId(id);
-    const workdir = safeJoinUnderRoot(this.root, id);
+    const workdir = safeJoinUnderRoot(this.sessionsDir, id);
     return this.loadSession(id, workdir);
   }
 
@@ -204,7 +206,7 @@ export class SessionManager {
 
   async delete(id: string, opts: DeleteSessionOpts = {}): Promise<void> {
     assertValidSessionId(id);
-    const workdir = safeJoinUnderRoot(this.root, id);
+    const workdir = safeJoinUnderRoot(this.sessionsDir, id);
 
     const session = await this.loadSession(id, workdir);
     if (session === null) {
@@ -231,7 +233,7 @@ export class SessionManager {
    */
   async buildLaunch(id: string): Promise<LaunchCommand> {
     assertValidSessionId(id);
-    const workdir = safeJoinUnderRoot(this.root, id);
+    const workdir = safeJoinUnderRoot(this.sessionsDir, id);
     const session = await this.loadSession(id, workdir);
     if (session === null) throw new SessionNotFoundError(id);
 
