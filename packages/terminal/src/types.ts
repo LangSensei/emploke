@@ -35,8 +35,19 @@ export interface SpawnHandle {
   earlyFailure: Promise<{ reason: string } | null>;
 }
 
+export interface SpawnOpts {
+  cwd?: string;
+  /**
+   * Windows-only: when true, libuv passes `args` to CreateProcessW with NO
+   * MSVCRT-style escaping/quoting — args are joined verbatim with single
+   * spaces. Used by the cmd.exe fallback so that we control cmd.exe's shell
+   * parsing entirely (preventing shell-metachar injection in cwd/args).
+   */
+  windowsVerbatimArguments?: boolean;
+}
+
 export interface SpawnTerminalDeps {
-  spawn: (file: string, args: readonly string[], opts: { cwd?: string }) => SpawnHandle;
+  spawn: (file: string, args: readonly string[], opts: SpawnOpts) => SpawnHandle;
   exists: (p: string) => boolean;
   whichSync: (name: string) => string | null;
   platform: NodeJS.Platform;

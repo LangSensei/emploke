@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { LaunchCommand } from "@emploke/runtime";
-import { waitForEarlyFailure } from "../_shared.js";
+import { escapeCmdArg, waitForEarlyFailure } from "../_shared.js";
 import { TerminalSpawnFailedError } from "../errors.js";
 import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
@@ -37,10 +37,26 @@ export async function spawnWindows(
   // `start "" /D <cwd> cmd.exe /k <cmd> <args...>` — /D is the documented way
   // to set the new console's cwd. The empty "" is start's window-title arg
   // (mandatory since "start" interprets a quoted first token as a title).
+  //
+  // Every value forwarded through `cmd.exe /c` is quoted+escaped via
+  // `escapeCmdArg` and we set `windowsVerbatimArguments: true` so libuv
+  // does not double-escape: the result is that shell metacharacters in
+  // `cmd.cwd` / `cmd.cmd` / `cmd.args` (e.g. `&`, `|`, `>`, `%`) cannot
+  // break out of their argument and execute additional commands.
   const handle = deps.spawn(
     "cmd.exe",
-    ["/c", "start", "", "/D", cmd.cwd, "cmd.exe", "/k", cmd.cmd, ...cmd.args],
-    {},
+    [
+      "/c",
+      "start",
+      '""',
+      "/D",
+      escapeCmdArg(cmd.cwd),
+      "cmd.exe",
+      "/k",
+      escapeCmdArg(cmd.cmd),
+      ...cmd.args.map(escapeCmdArg),
+    ],
+    { windowsVerbatimArguments: true },
   );
   const failure = await waitForEarlyFailure(handle, deps.observationMs);
   if (failure !== null) throw new TerminalSpawnFailedError("cmd", failure.reason);

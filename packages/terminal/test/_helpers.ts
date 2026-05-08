@@ -19,6 +19,7 @@ export interface SpawnCall {
   file: string;
   args: readonly string[];
   cwd: string | undefined;
+  windowsVerbatimArguments: boolean | undefined;
 }
 
 export interface FakeOptions {
@@ -38,7 +39,12 @@ export function makeDeps(opts: FakeOptions): { deps: SpawnTerminalDeps; calls: S
   const deps: SpawnTerminalDeps = {
     spawn: (file, args, options): SpawnHandle => {
       const idx = i++;
-      calls.push({ file, args, cwd: options.cwd });
+      calls.push({
+        file,
+        args,
+        cwd: options.cwd,
+        windowsVerbatimArguments: options.windowsVerbatimArguments,
+      });
       const failure = opts.failures?.[idx];
       return {
         earlyFailure:

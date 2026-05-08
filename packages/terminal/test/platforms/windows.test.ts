@@ -17,6 +17,8 @@ describe("spawnTerminalWith > windows", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe("wt.exe");
     expect(calls[0]?.args).toEqual(["-d", "C:\\work\\session", "copilot"]);
+    // wt.exe parses argv directly; no shell involved, so verbatim is off.
+    expect(calls[0]?.windowsVerbatimArguments).toBeFalsy();
   });
 
   it("falls back to cmd when wt fails immediately", async () => {
@@ -35,13 +37,14 @@ describe("spawnTerminalWith > windows", () => {
     expect(calls[1]?.args).toEqual([
       "/c",
       "start",
-      "",
+      '""',
       "/D",
-      "C:\\work\\session",
+      '"C:\\work\\session"',
       "cmd.exe",
       "/k",
-      "copilot",
+      '"copilot"',
     ]);
+    expect(calls[1]?.windowsVerbatimArguments).toBe(true);
   });
 
   it("uses cmd when wt stub is not present at all", async () => {
@@ -54,6 +57,7 @@ describe("spawnTerminalWith > windows", () => {
     expect(result.launcher).toBe("cmd");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe("cmd.exe");
+    expect(calls[0]?.windowsVerbatimArguments).toBe(true);
   });
 
   it("uses cmd when LOCALAPPDATA is not set", async () => {
@@ -64,6 +68,7 @@ describe("spawnTerminalWith > windows", () => {
     const result = await spawnTerminalWith(sample, deps);
     expect(result.launcher).toBe("cmd");
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.windowsVerbatimArguments).toBe(true);
   });
 
   it("throws TerminalSpawnFailedError when cmd fallback also fails", async () => {
@@ -73,5 +78,104 @@ describe("spawnTerminalWith > windows", () => {
       failures: { 0: "ENOENT cmd.exe" },
     });
     await expect(spawnTerminalWith(sample, deps)).rejects.toThrow(TerminalSpawnFailedError);
+  });
+
+  // --- Shell-injection hardening (regression suite) ---
+  //
+  // These tests assert that values reaching the cmd.exe parser are quoted
+  // and caret-escaped so shell metacharacters cannot break out of their
+  // argument. Each test exercises a different metacharacter class:
+  //   - structural separators (& | < > ^ ( ))
+  //   - variable expansion (% !)
+  //   - quote injection (")
+  // A regression here would re-introduce the Windows shell-injection bug.
+
+  it("escapes & in cwd so it cannot terminate the start command", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      cwd: "C:\\Users\\test & calc.exe\\session",
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    const cwdArg = args[4];
+    expect(cwdArg).toBe('"C:\\Users\\test ^& calc.exe\\session"');
+  });
+
+  it("escapes pipe and redirection metachars in args", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      args: ["a|b", "c>d", "e<f"],
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    expect(args.slice(-3)).toEqual([
+      '"a^|b"',
+      '"c^>d"',
+      '"e^<f"',
+    ]);
+  });
+
+  it("escapes %VAR% so cmd.exe variable expansion cannot fire", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      args: ["--token=%PATH%"],
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    expect(args.at(-1)).toBe('"--token=^%PATH^%"');
+  });
+
+  it("escapes ! so delayed expansion (cmd.exe /v:on) cannot fire", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      args: ["--note=!HOMEPATH!"],
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    expect(args.at(-1)).toBe('"--note=^!HOMEPATH^!"');
+  });
+
+  it("escapes embedded \" so it cannot close the quoted region early", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      args: ['a"b'],
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    expect(args.at(-1)).toBe('"a^"b"');
+  });
+
+  it("escapes parentheses and caret in args (FOR/IF block syntax + escape char)", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {},
+    });
+    const evil: LaunchCommand = {
+      ...sample,
+      args: ["(a)", "x^y"],
+    };
+    await spawnTerminalWith(evil, deps);
+    const args = calls[0]?.args ?? [];
+    expect(args.slice(-2)).toEqual(['"^(a^)"', '"x^^y"']);
   });
 });

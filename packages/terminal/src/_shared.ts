@@ -2,7 +2,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
 import type { LaunchCommand } from "@emploke/runtime";
-import type { SpawnHandle } from "./types.js";
+import type { SpawnHandle, SpawnOpts } from "./types.js";
 
 /** Reject paths with control characters that could break shell/AppleScript quoting. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: detecting control chars is the explicit purpose.
@@ -49,6 +49,34 @@ export function shQuote(s: string): string {
 }
 
 /**
+ * `cmd.exe` shell metacharacters that must not be allowed to reach cmd.exe's
+ * shell parser unescaped. `%` and `!` (with delayed expansion) trigger
+ * variable substitution even inside double-quoted strings; the rest break
+ * out of the intended argument when a value is unquoted on the cmd.exe
+ * command line. `"` is included because we wrap each token in `"…"` and
+ * an embedded `"` would prematurely close the quoted region.
+ */
+const CMD_META_RE = /["%&|<>^!()]/g;
+
+/**
+ * Escape an argument that will be passed inside a `cmd.exe /c …` command
+ * line built with `windowsVerbatimArguments: true`.
+ *
+ * Strategy: wrap the value in double quotes (so spaces, `&`, `|`, `<`, `>`,
+ * `^`, `(`, `)` lose their shell meaning) and prefix every metacharacter —
+ * including the few that remain dangerous inside double quotes (`%`, `!`) —
+ * with `^`. Embedded `"` becomes `^"` so it survives cmd.exe's parser as a
+ * literal quote rather than terminating the quoted region.
+ *
+ * This must be paired with `windowsVerbatimArguments: true` on the spawn
+ * call: that flag tells libuv to skip its own MSVCRT-style escaping, which
+ * would otherwise mangle the carets/quotes we just added.
+ */
+export function escapeCmdArg(s: string): string {
+  return `"${s.replace(CMD_META_RE, "^$&")}"`;
+}
+
+/**
  * Default deps backed by node:child_process and node:fs. The returned
  * SpawnHandle.earlyFailure resolves to a non-null reason if the child emits
  * `error` (e.g. ENOENT) or exits with a non-zero code; otherwise it stays
@@ -57,7 +85,7 @@ export function shQuote(s: string): string {
 export function realSpawn(
   file: string,
   args: readonly string[],
-  opts: { cwd?: string },
+  opts: SpawnOpts,
 ): SpawnHandle {
   let child: ChildProcess;
   try {
@@ -65,6 +93,7 @@ export function realSpawn(
       cwd: opts.cwd,
       detached: true,
       stdio: "ignore",
+      windowsVerbatimArguments: opts.windowsVerbatimArguments,
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
