@@ -650,7 +650,9 @@ function WorkspaceLayout() {
             />
           )}
 
-          {section === "tasks" && <TasksPage agents={data.agents} currentWorkspaceId={wsId} />}
+          {section === "tasks" && (
+            <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />
+          )}
 
           {section === "settings" && (
             <SettingsPage

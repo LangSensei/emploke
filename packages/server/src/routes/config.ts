@@ -4,8 +4,7 @@ import { Hono } from "hono";
  * Resolved server configuration values that the dashboard needs to display
  * accurately. Sourcing these from the server (rather than hardcoding the
  * defaults in dashboard copy) means the UI tells the user the truth even
- * when env overrides like `EMPLOKE_HOME` or `EMPLOKE_WORKSPACE` are in
- * effect.
+ * when an env override like `EMPLOKE_HOME` is in effect.
  *
  * Sensitive values are NOT exposed: the dashboard runs in single-user mode
  * on the same host as the server, so absolute paths are appropriate.
@@ -29,6 +28,17 @@ export interface ServerConfig {
   port: number;
   /** Native path separator on the server's OS (`\\` on Windows, `/` elsewhere). */
   pathSeparator: string;
+  /** Tunables consumed by the dashboard's task list view. */
+  tasks: {
+    /**
+     * How often the dashboard re-fetches the task list while at least one
+     * task is `running` or `not_started`. Stops polling when every task is
+     * terminal. The server owns this value so it can be tuned without
+     * shipping a new dashboard build (and so we don't hard-code a
+     * UX-shaping constant inside React).
+     */
+    pollIntervalMs: number;
+  };
 }
 
 /**
@@ -42,8 +52,18 @@ export function configRoutes(deps: {
   port: number;
   pathSeparator: string;
   currentWorkspace: () => string | null;
+  /**
+   * Optional override for the dashboard task-list poll cadence. Defaults
+   * to 4000 ms — chosen as a tradeoff between snappiness and server load
+   * (TaskManager.list() walks the workspace tasks/ dir and reads each
+   * task.json on every call). Operators can lower this for faster UI
+   * feedback at the cost of more reads, or raise it for very large
+   * workspaces.
+   */
+  taskPollIntervalMs?: number;
 }): Hono {
   const app = new Hono();
+  const taskPollIntervalMs = deps.taskPollIntervalMs ?? 4000;
   app.get("/", (c) =>
     c.json<ServerConfig>({
       emplokeHome: deps.emplokeHome,
@@ -51,6 +71,7 @@ export function configRoutes(deps: {
       host: deps.host,
       port: deps.port,
       pathSeparator: deps.pathSeparator,
+      tasks: { pollIntervalMs: taskPollIntervalMs },
     }),
   );
   return app;

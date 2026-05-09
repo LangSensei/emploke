@@ -6,8 +6,8 @@
  */
 
 export class TaskError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options as ErrorOptions);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }

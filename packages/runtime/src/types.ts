@@ -119,6 +119,35 @@ export interface Runtime {
    * dispatch time when the chosen runtime cannot run tasks.
    */
   dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
+
+  /**
+   * Optional. Locate the runtime-native event log for a task.
+   *
+   * Returns the absolute path to the log file the dashboard (or any
+   * other consumer) should stream when the user opens a task's "Events"
+   * view. Returns `null` when the runtime has no concept of a task event
+   * log, or when the log is not yet available (not provisioned, file
+   * not yet created, ...).
+   *
+   * The contract is intentionally narrow: the runtime says *where* the
+   * log lives, not *what's in it*. Each runtime's log format is its own
+   * concern (Copilot writes NDJSON; future runtimes may use plain text,
+   * a different JSON shape, or a directory). Consumers either treat the
+   * file as opaque bytes (current dashboard behaviour) or branch on
+   * `Task.metadata.runtime` to choose a parser. A typed cross-runtime
+   * `TaskEvent` schema is intentionally out of scope for this iteration.
+   *
+   * `taskWorkdir` is the manager-side workdir for this task (the same
+   * value `dispatchTask` was handed as `taskDir`). The runtime is free
+   * to either resolve a path beneath the workdir (e.g. via a junction
+   * the manager installed) or compute a path elsewhere on its own
+   * private state directory.
+   *
+   * Runtimes with no event log (or that haven't decided on one yet)
+   * simply omit this method; the server treats absent + `null` returns
+   * the same way (404 NoEventsYet on the events route).
+   */
+  taskEventsPath?(taskWorkdir: string): string | null;
 }
 
 /**

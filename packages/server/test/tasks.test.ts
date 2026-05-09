@@ -35,6 +35,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
     delete: vi.fn(async () => undefined),
     recoverOrphaned: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
+    getTaskEventsPath: vi.fn(async () => null),
     ...overrides,
   };
   return stub as unknown as TaskManager;
@@ -205,45 +206,52 @@ describe("tasksRoutes", () => {
       );
     });
 
-    it("404s when task missing", async () => {
-      const m = stubManager({ get: vi.fn(async () => null) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
-      expect(res.status).toBe(404);
-    });
-
-    it("404 NoEventsYet when workdir metadata absent", async () => {
-      const t: Task = { ...sampleTask, metadata: {} };
-      const m = stubManager({ get: vi.fn(async () => t) });
+    it("404 NoEventsYet when manager returns null (task missing or no log)", async () => {
+      // After the Y5 refactor the route delegates path lookup to
+      // `TaskManager.getTaskEventsPath`, which collapses both "task
+      // missing" and "runtime declined to provide a path" into a single
+      // null return. The route surfaces that uniformly as
+      // 404 NoEventsYet; the explicit "task missing" 404 lives on
+      // GET /:tid (covered separately).
+      const m = stubManager({ getTaskEventsPath: vi.fn(async () => null) });
       const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.code).toBe("NoEventsYet");
     });
 
-    it("404 NoEventsYet when events.jsonl not present", async () => {
+    it("404 NoEventsYet when the resolved path doesn't yet exist on disk", async () => {
+      // Manager hands back a path the runtime expects to exist
+      // eventually but the file isn't there yet (agent hasn't written
+      // its first event, or the runtime pre-allocated a parent dir
+      // without the log file).
       const root = path.join(tmpdir(), `tasks-events-${Date.now()}-${Math.random()}`);
       await mkdir(root, { recursive: true });
       tmpRoots.push(root);
-      const t: Task = { ...sampleTask, metadata: { ...sampleTask.metadata, workdir: root } };
-      const m = stubManager({ get: vi.fn(async () => t) });
+      const ghostPath = path.join(root, "definitely-not-here.jsonl");
+      const m = stubManager({ getTaskEventsPath: vi.fn(async () => ghostPath) });
       const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.code).toBe("NoEventsYet");
     });
 
-    it("streams events.jsonl when present", async () => {
+    it("streams the file the manager points us at (runtime-agnostic)", async () => {
+      // The route streams whatever bytes are at the manager-supplied
+      // path — it neither knows nor cares that this happens to be a
+      // Copilot-style NDJSON. A future runtime returning a file with a
+      // different format and extension would hit the same code path
+      // unchanged.
       const root = path.join(tmpdir(), `tasks-events-${Date.now()}-${Math.random()}`);
-      const sessionDir = path.join(root, "session");
-      await mkdir(sessionDir, { recursive: true });
+      await mkdir(root, { recursive: true });
       tmpRoots.push(root);
+      const logPath = path.join(root, "events.jsonl");
       const lines = [
         JSON.stringify({ ts: 1, type: "first" }),
         JSON.stringify({ ts: 2, type: "second" }),
       ].join("\n");
-      await writeFile(path.join(sessionDir, "events.jsonl"), `${lines}\n`, "utf8");
-      const t: Task = { ...sampleTask, metadata: { ...sampleTask.metadata, workdir: root } };
-      const m = stubManager({ get: vi.fn(async () => t) });
+      await writeFile(logPath, `${lines}\n`, "utf8");
+      const m = stubManager({ getTaskEventsPath: vi.fn(async () => logPath) });
       const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toMatch(/x-ndjson/);

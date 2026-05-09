@@ -57,6 +57,26 @@ export interface DispatchCopilotTaskDeps {
    * `resolveCopilotBin`. Most callers should leave this unset.
    */
   readonly resolveBin?: ResolveCopilotBinDeps;
+  /**
+   * Maximum time to wait for the child's `'spawn'` (or `'error'`) event
+   * before giving up and reporting `RuntimeDispatchTaskFailed`. Defaults
+   * to 30000 ms.
+   *
+   * The cap exists purely as a deadlock guard: Node v15+ documents that
+   * `spawn` and `error` are guaranteed to fire one or the other, so in
+   * practice this never trips. We keep it because the failure mode if
+   * it ever did fire-neither (Node bug, OS-level wedge) would be a
+   * task that hangs `running` forever with no exit watcher attached.
+   *
+   * 30s leaves enough headroom for the worst real-world cases observed
+   * on Windows — Defender / EDR can hold a `CreateProcess` for several
+   * seconds while it scans a large unfamiliar `.exe` (Copilot ships as
+   * a tens-of-MB packaged Node binary) — without making true deadlocks
+   * pin the manager indefinitely.
+   *
+   * Tests inject a small value (e.g. 50 ms) to avoid actually waiting.
+   */
+  readonly spawnTimeoutMs?: number;
 }
 
 export interface DispatchCopilotTaskOpts {
@@ -125,8 +145,11 @@ export async function dispatchCopilotTask(
   // and unblocks tool/path/url confirmation prompts. `--no-ask-user`
   // disables the ask_user tool so the agent can't pause waiting for input
   // we'll never deliver. `--output-format json` makes stdout a JSONL of
-  // events (we don't currently consume it but it keeps stdout non-noisy
-  // if a future caller needs to). `-C` is redundant with `cwd` but
+  // events. We don't currently consume that stream — the canonical event
+  // log lives at `<sessionDir>/events.jsonl` and the dashboard reads it
+  // through the runtime's `taskEventsPath` surface — but the flag stays
+  // on so a future progress-streaming UI can attach to stdout without
+  // changing the spawn arguments. `-C` is redundant with `cwd` but
   // belt-and-suspenders for tools that introspect argv.
   const args = [
     "-p",
@@ -163,19 +186,49 @@ export async function dispatchCopilotTask(
   // synchronously to the caller instead of via a never-resolving exit
   // promise. Without this guard a missing `copilot` binary would silently
   // park the task in `running` forever.
+  //
+  // The timeout is a deadlock guard, not a "spawn must finish quickly"
+  // policy — it caps the wait if neither `spawn` nor `error` ever fires
+  // (Node v15+ guarantees one will, but we don't want a Node bug to
+  // wedge a task forever). See `spawnTimeoutMs` deps doc for sizing
+  // rationale.
+  const spawnTimeoutMs = deps.spawnTimeoutMs ?? 30_000;
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    child.once("spawn", () => {
-      if (!settled) {
-        settled = true;
-        resolve();
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // Best-effort kill the maybe-running child so we don't leak a
+      // process behind the rejected promise. If it never spawned this
+      // is a no-op; if it did spawn but missed the event, the kill
+      // tears it down.
+      try {
+        child.kill();
+      } catch {
+        // Already gone or never started.
       }
+      reject(
+        new RuntimeDispatchTaskFailed(
+          "copilot",
+          opts.taskDir,
+          new Error(
+            `timed out after ${spawnTimeoutMs}ms waiting for child 'spawn' or 'error' event`,
+          ),
+        ),
+      );
+    }, spawnTimeoutMs);
+    timer.unref();
+    child.once("spawn", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
     });
     child.once("error", (err) => {
-      if (!settled) {
-        settled = true;
-        reject(new RuntimeDispatchTaskFailed("copilot", opts.taskDir, err));
-      }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new RuntimeDispatchTaskFailed("copilot", opts.taskDir, err));
     });
   });
 

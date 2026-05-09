@@ -1,12 +1,9 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import path from "node:path";
 import {
   AgentNotFoundError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
-  readTaskRuntimeMetadata,
-  type Task,
   type TaskManager,
   TaskNotFoundError,
 } from "@emploke/task";
@@ -116,41 +113,44 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     }
   });
 
-  // Stream the runtime's events log for a task. The TaskManager junctions
-  // the runtime's per-task state dir under `<workdir>/session/`, and the
-  // canonical log inside is `events.jsonl`. We stream the file as-is —
-  // each Copilot event is one line of JSON, so the dashboard parses
-  // line-by-line.
+  // Stream the runtime's events log for a task. The path is resolved
+  // by the runtime via `Runtime.taskEventsPath` (looked up through
+  // `TaskManager.getTaskEventsPath` so this route doesn't depend on
+  // `@emploke/runtime` directly), so each runtime is free to put its
+  // log wherever and call it whatever it wants. We still treat the
+  // file's contents as opaque bytes here — clients parse per-runtime
+  // (today the Copilot adapter writes NDJSON; future runtimes may
+  // differ). The Content-Type stays `application/x-ndjson` because
+  // that's the only format the dashboard knows how to render right now;
+  // a typed cross-runtime event stream is tracked separately.
   //
   // Returns:
-  //   - 404 if the task doesn't exist (via TaskManager.get)
-  //   - 404 with code=NoEventsYet if the junction or events.jsonl
-  //     doesn't exist yet (e.g. agent hasn't written its first event,
-  //     or junction install failed)
-  //   - 200 text/plain otherwise
+  //   - 404 if the task doesn't exist
+  //   - 404 with code=NoEventsYet if the runtime has no event log,
+  //     hasn't created it yet, or doesn't implement the optional
+  //     `taskEventsPath` surface
+  //   - 200 application/x-ndjson otherwise
   app.get("/:tid/events", async (c) => {
     const id = c.req.param("tid");
-    let task: Task | null;
+    let eventsPath: string | null;
     try {
-      task = await getManager(c).get(id);
+      eventsPath = await getManager(c).getTaskEventsPath(id);
     } catch (err) {
       const status = statusForError(err) ?? 400;
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
-    if (!task) return c.json({ error: "not found", code: "TaskNotFoundError" }, 404);
-
-    const meta = readTaskRuntimeMetadata(task);
-    const workdir = meta.workdir;
-    if (typeof workdir !== "string") {
-      return c.json({ error: "task has no workdir metadata", code: "NoEventsYet" }, 404);
+    if (eventsPath === null) {
+      // Either the task is missing or the runtime declined to provide a
+      // path. The dashboard surfaces both as the same NoEventsYet state;
+      // the explicit 404 for a genuinely-missing task is left to GET /:tid.
+      return c.json({ error: "no event log is available for this task", code: "NoEventsYet" }, 404);
     }
-    const eventsPath = path.join(workdir, "session", "events.jsonl");
     try {
       await stat(eventsPath);
     } catch {
       return c.json(
-        { error: "events.jsonl is not yet available for this task", code: "NoEventsYet" },
+        { error: "event log file is not yet present on disk", code: "NoEventsYet" },
         404,
       );
     }

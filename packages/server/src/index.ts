@@ -29,24 +29,6 @@ type WorkspaceVars = {
 
 const paths = resolveEmplokePaths(process.env);
 
-if (process.env.EMPLOKE_SESSIONS_DIR) {
-  console.error(
-    "EMPLOKE_SESSIONS_DIR is no longer supported.\n" +
-      "Sessions now live under <workspace>/sessions; create a workspace from\n" +
-      "the dashboard landing page (no auto-default workspace is created).\n",
-  );
-  process.exit(1);
-}
-
-if (process.env.EMPLOKE_CATALOG_DIR) {
-  console.error(
-    "EMPLOKE_CATALOG_DIR is no longer supported.\n" +
-      "The catalog is now per-workspace at <workspace>/catalog/.\n" +
-      "Create or open a workspace from the dashboard landing page.\n",
-  );
-  process.exit(1);
-}
-
 const port = Number(process.env.PORT ?? 3000);
 // Bind to loopback by default  the server exposes destructive endpoints
 // (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
@@ -76,13 +58,6 @@ async function main() {
   // one explicitly (path + display name). On first launch the registry
   // is simply empty and the landing page reflects that.
   const registry = await WorkspaceRegistry.open(paths.registryFile);
-
-  if (process.env.EMPLOKE_WORKSPACE && process.env.EMPLOKE_WORKSPACE.length > 0) {
-    console.warn(
-      "EMPLOKE_WORKSPACE is deprecated and no longer auto-creates a workspace.\n" +
-        "Create the workspace from the dashboard landing page instead.",
-    );
-  }
 
   const cache = new WorkspaceContextCache({ runtimeRegistry, registry });
 

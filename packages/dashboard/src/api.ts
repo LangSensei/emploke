@@ -260,6 +260,14 @@ export interface ServerConfig {
   port: number;
   /** Native path separator on the server's OS. */
   pathSeparator: string;
+  /** Tunables for the dashboard's task list view. */
+  tasks: {
+    /**
+     * Poll cadence for the running task list (ms). Owned by the server so
+     * the dashboard never hard-codes a UX-shaping constant.
+     */
+    pollIntervalMs: number;
+  };
 }
 
 export const getConfig = (): Promise<ServerConfig> =>

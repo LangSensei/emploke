@@ -60,6 +60,10 @@ export async function readPersistedTask(
   }
   const t = task as Record<string, unknown>;
   if (typeof t.id !== "string" || t.id.length === 0) {
+    // The `length === 0` clause is *not* redundant with `typeof !== "string"`:
+    // an empty string passes the typeof check but cannot name a directory and
+    // would short-circuit downstream path math in subtle ways. Keep the belt
+    // and suspenders.
     return { ok: false, reason: "task.id must be a non-empty string" };
   }
   if (typeof t.agent !== "string") {
@@ -119,6 +123,18 @@ export async function writePersistedTask(taskDir: string, value: PersistedTask):
 }
 
 const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+/**
+ * Total worst-case wait across all attempts is ~127 ms (1 + 2 + 4 + 8 +
+ * 16 + 32 + 32 + 32). Sized to comfortably absorb the dashboard's 4s
+ * task.json poll cadence — the realistic Windows contention window for a
+ * Node `rename(...)` racing the dashboard's `read(...)` is microseconds,
+ * so even 1-2 retries normally suffice. The cap exists so a genuinely
+ * stuck destination (antivirus full-scan holding the file, broken share,
+ * disk going read-only) eventually surfaces as an error rather than
+ * pinning the writer indefinitely. If the dashboard polling cadence
+ * ever drops below ~250 ms or contention sources broaden, revisit both
+ * the cap and the per-attempt backoff curve below together.
+ */
 const RENAME_MAX_ATTEMPTS = 8;
 
 async function renameWithRetry(from: string, to: string): Promise<void> {

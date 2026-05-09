@@ -62,6 +62,15 @@ export function apply(task: Task, event: TaskEvent, now: string = new Date().toI
       // cancel is legal from both not_started and running. (Pre-flight
       // failures — e.g. provisioner can't write to disk — should be
       // reportable without first moving the task to "running".)
+      //
+      // Currently no caller in the emploke runtime/server emits this
+      // event — `TaskManager.delete()` ends up recording `failure`
+      // (typically "terminated by signal SIGTERM" via the exit watcher,
+      // before the workdir is removed), and `shutdown()` records
+      // `failure` with reason "server shutdown". `cancel` is reserved
+      // for a future user-cancel API; the FSM exposes the transition so
+      // that API can be added without changing this file or the
+      // persisted schema. See the note on `TaskStatus` in ./types.ts.
       if (task.status !== "not_started" && task.status !== "running") {
         throw new InvalidTransition(task.status, event.type);
       }

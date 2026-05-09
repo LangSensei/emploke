@@ -135,8 +135,16 @@ export function sessionsRoutes(
   });
 
   // Get a single session by id.
-  app.get("/:id", async (c) => {
-    const id = c.req.param("id");
+  //
+  // The path param is `:sid`, not `:id`, to avoid colliding with the
+  // outer mount's `/:id/sessions/*` workspace param. When two layers
+  // share the same param name, Hono's `c.req.param` lookup returns the
+  // outer match — so a request to `/api/workspaces/<wsId>/sessions/<sid>`
+  // would deliver the workspace UUID into this handler instead of the
+  // session id, and `assertValidSessionId` would reject it. tasks/catalog
+  // already use distinct names (`:tid`, `:name`); sessions follows suit.
+  app.get("/:sid", async (c) => {
+    const id = c.req.param("sid");
     try {
       const rec = await getManager(c).get(id);
       if (!rec) return c.json({ error: "not found", code: "SessionNotFoundError" }, 404);
@@ -149,8 +157,8 @@ export function sessionsRoutes(
   });
 
   // Delete a session.
-  app.delete("/:id", async (c) => {
-    const id = c.req.param("id");
+  app.delete("/:sid", async (c) => {
+    const id = c.req.param("sid");
     const deleteRuntimeState = c.req.query("deleteRuntimeState") === "1";
     try {
       await getManager(c).delete(id, { deleteRuntimeState });
@@ -166,8 +174,8 @@ export function sessionsRoutes(
   // hand it to the terminal spawner. On any spawn failure we return 200
   // with `{ ok: false, display, ... }` so the dashboard can fall back to
   // showing the copy-paste command without needing a second round-trip.
-  app.post("/:id/spawn", async (c) => {
-    const id = c.req.param("id");
+  app.post("/:sid/spawn", async (c) => {
+    const id = c.req.param("sid");
 
     let cmd: LaunchCommand;
     try {

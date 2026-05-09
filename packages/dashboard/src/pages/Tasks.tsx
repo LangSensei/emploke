@@ -7,6 +7,7 @@ import {
   getTask,
   listRuntimes,
   listTasks,
+  type ServerConfig,
   type TaskRecord,
   type TaskStatus,
 } from "../api";
@@ -17,8 +18,21 @@ interface TasksProps {
   agents: AgentEntry[];
   /** UUID of the workspace currently in scope (from the URL); null = no workspace. */
   currentWorkspaceId: string | null;
+  /** Server-supplied config; null while still being fetched. */
+  config: ServerConfig | null;
 }
 
+/**
+ * Fallback poll cadence used while the server config is still loading or
+ * if the server omits the field. Matches the server-side default in
+ * `configRoutes` so behaviour is the same in either path.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 4000;
+
+// `cancelled` is currently unreachable — the kernel exposes the status (see
+// `TaskStatus` in @emploke/task) but no manager API emits a cancel event yet.
+// The label/tone are wired up so a future user-cancel API drops in without
+// UI work; until then users will only ever see the other four statuses.
 const STATUS_LABEL: Record<TaskStatus, string> = {
   not_started: "Not started",
   running: "Running",
@@ -78,7 +92,7 @@ function presetToSinceMs(preset: TimePreset): number | null {
  * left-side rows balloon. Selecting a row binds the detail panel; closing
  * the detail leaves the list untouched.
  */
-export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
+export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -154,17 +168,19 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
   }, []);
 
   // Auto-refresh while any task is running so the dashboard catches the
-  // success/failure transition without the user pressing Refresh. 4s is
-  // a tradeoff between snappiness and load — the manager polls task.json
-  // through the file system, so requests are cheap.
+  // success/failure transition without the user pressing Refresh.
+  // The cadence is server-supplied via /api/config (operators can tune
+  // it for very large workspaces); we fall back to the same default the
+  // server uses when config hasn't loaded yet.
+  const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   useEffect(() => {
     const anyRunning = tasks.some((t) => t.status === "running" || t.status === "not_started");
     if (!anyRunning || !currentWorkspaceId) return;
     const handle = setInterval(() => {
       void refresh();
-    }, 4000);
+    }, pollIntervalMs);
     return () => clearInterval(handle);
-  }, [tasks, currentWorkspaceId, refresh]);
+  }, [tasks, currentWorkspaceId, refresh, pollIntervalMs]);
 
   const onDispatched = async (agent: string, instructions: string, runtime: string | undefined) => {
     setBusy(true);
@@ -414,6 +430,7 @@ export function TasksPage({ agents, currentWorkspaceId }: TasksProps) {
               setSelectedId(null);
               await refresh();
             }}
+            pollIntervalMs={pollIntervalMs}
           />
         </div>
       )}
@@ -642,11 +659,13 @@ interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
   onDeleted: () => void;
+  /** Auto-refresh cadence while the displayed task is running (ms). */
+  pollIntervalMs: number;
 }
 
 type DetailTab = "events" | "metadata";
 
-function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
+function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelProps) {
   const [task, setTask] = useState<TaskRecord | null>(null);
   const [events, setEvents] = useState<string | null>(null);
   const [eventsError, setEventsError] = useState<string | null>(null);
@@ -685,15 +704,16 @@ function TaskDetailPanel({ taskId, onClose }: TaskDetailPanelProps) {
     void refreshDetail();
   }, [taskId, refreshDetail]);
 
-  // Auto-poll while running so events.jsonl + status update without
-  // a manual refresh click.
+  // Auto-poll while running so events.jsonl + status update without a
+  // manual refresh click. Cadence comes from the parent (which sources
+  // it from /api/config) so list view and detail view stay in sync.
   useEffect(() => {
     if (!task || (task.status !== "running" && task.status !== "not_started")) return;
     const handle = setInterval(() => {
       void refreshDetail();
-    }, 4000);
+    }, pollIntervalMs);
     return () => clearInterval(handle);
-  }, [task, refreshDetail]);
+  }, [task, refreshDetail, pollIntervalMs]);
 
   // Common box: anchored at top of the right column with its own scroll
   // container, capped at viewport-minus-toolbar so the page never grows

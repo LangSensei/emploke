@@ -18,6 +18,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   type PersistedTask,
   readPersistedTask,
+  readTaskRuntimeMetadata,
   writePersistedTask,
 } from "./task-file.js";
 import type { DispatchOpts, Logger, Task, TaskManagerConfig } from "./types.js";
@@ -26,7 +27,22 @@ const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
-/** Subdirectory name under each task workdir that points (via junction) at the runtime's per-task log dir. */
+/**
+ * Subdirectory under each task workdir that links to the runtime's per-task
+ * state directory.
+ *
+ * Naming note: kept as the singular `session` rather than the more literal
+ * `runtime-state` (or the plural `sessions`, which would collide visually
+ * with the workspace's `<workspace>/sessions/` directory holding interactive
+ * Session workdirs). The link points at what each Runtime impl already calls
+ * a "session" internally — the CLI's per-id unit of state, exposed as
+ * `Session.runtimeSessionId` and Copilot's `<copilotStateDir>/<id>/`. Mirroring
+ * that vocabulary keeps cross-file reading natural; the singular vs plural
+ * disambiguates from the workspace's interactive-session directory.
+ *
+ * If we ever introduce a second runtime whose native term is not "session",
+ * revisit and consider renaming to a runtime-neutral noun (e.g. `runtime-state`).
+ */
 const SESSION_LINK = "session";
 
 /**
@@ -147,7 +163,7 @@ export class TaskManager {
     //    Task FSM, `fail` is only legal from `running`, so we'd have to
     //    persist a status the kernel doesn't permit anyway).
     const createdAt = this.now().toISOString();
-    let initial = createTask({
+    const initial = createTask({
       id,
       agent: agentName,
       instructions: opts.instructions,
@@ -198,7 +214,6 @@ export class TaskManager {
       { type: "start", metadata: startMetaPatch },
       this.now().toISOString(),
     );
-    initial = running; // refresh local view for any future use
     await this.persist(workdir, running);
 
     // 7. Wire post-spawn background work: junction the runtime's session
@@ -293,6 +308,45 @@ export class TaskManager {
     return this.loadTask(id, workdir);
   }
 
+  // ─── getTaskEventsPath ───────────────────────────────────
+
+  /**
+   * Resolve the absolute path to the runtime-native event log for a
+   * task, or `null` if no log is available (task missing, runtime
+   * doesn't implement the optional surface, or runtime returned `null`
+   * to signal "not yet").
+   *
+   * This is a thin facade over `Runtime.taskEventsPath`: it locates the
+   * task, looks up the runtime by `metadata.runtime`, and forwards the
+   * task's workdir. The route layer can then `stat` + stream the file
+   * without depending on `@emploke/runtime` directly.
+   *
+   * Note: this method does not check whether the file exists on disk;
+   * the runtime path may resolve to a file the agent hasn't written yet.
+   * Callers that want a 404-vs-200 distinction should `stat` the
+   * returned path themselves.
+   */
+  async getTaskEventsPath(id: string): Promise<string | null> {
+    const task = await this.get(id);
+    if (task === null) return null;
+    const meta = readTaskRuntimeMetadata(task);
+    if (typeof meta.workdir !== "string" || typeof meta.runtime !== "string") {
+      return null;
+    }
+    let runtime: import("@emploke/runtime").Runtime;
+    try {
+      runtime = this.runtimeRegistry.get(meta.runtime);
+    } catch {
+      // The recorded runtime is no longer registered. Treat as "no
+      // events available" rather than surfacing a 5xx — the dashboard
+      // will render NoEventsYet, which is the right UX for an
+      // unrecoverable task.
+      return null;
+    }
+    if (typeof runtime.taskEventsPath !== "function") return null;
+    return runtime.taskEventsPath(meta.workdir);
+  }
+
   // ─── delete ──────────────────────────────────────────────
 
   /**
@@ -314,9 +368,16 @@ export class TaskManager {
     const live = this.live.get(id);
     if (live !== undefined) {
       // Drop from live first so the exit watcher's `this.live.delete(id)`
-      // is a no-op and doesn't race with our rm. Then kill + await drain
-      // so we don't `rm -rf` a dir while the subprocess is still writing
-      // into it.
+      // is a no-op and doesn't race with our rm. Then kill + drain.
+      //
+      // We await `settled` rather than `handle.exit` so the exit watcher
+      // has finished its post-exit `applyTerminal()` write before we
+      // start the rm. Otherwise the watcher's `writeFile(task.json)` and
+      // our `rm(workdir, recursive)` race: whichever loses logs a noisy
+      // ENOENT-driven "failed to persist terminal status" warn even
+      // though the task is being deliberately discarded. `settled` never
+      // rejects (the watcher catches everything internally), so the
+      // try/catch is purely defensive.
       this.live.delete(id);
       try {
         live.handle.kill();
@@ -324,12 +385,10 @@ export class TaskManager {
         // Already dead. Continue.
       }
       try {
-        await live.handle.exit;
+        await live.settled;
       } catch {
-        // Same as above — handle.exit shouldn't reject, but defensive.
+        // Defensive — settled is constructed to never reject.
       }
-      // We intentionally don't apply a terminal event here; the workdir
-      // is about to be removed.
     }
 
     await rm(workdir, { recursive: true, force: true });
@@ -338,10 +397,35 @@ export class TaskManager {
   // ─── recoverOrphaned ─────────────────────────────────────
 
   /**
-   * Sweep `tasksDir` and mark any persisted task whose status is still
-   * `running` as `failure`. Called once at server bootstrap so a task
-   * whose owner-process crashed (or was kill -9'd) doesn't show up as
+   * Sweep `tasksDir` and reconcile any persisted task whose status is
+   * still `running`. Called once at server bootstrap so a task whose
+   * owner-process crashed (or was kill -9'd) doesn't show up as
    * forever-running in the dashboard.
+   *
+   * Scope: this method is the **server-crash** safety net only. Normal
+   * stop, `pm2 reload`, and `nodemon` restart all deliver SIGTERM/SIGINT
+   * and run `gracefulShutdown`, which kills every live subprocess and
+   * persists `failure: "server shutdown"` *before* the process exits.
+   * By the time `recoverOrphaned` runs at the next bootstrap, those
+   * tasks are already terminal and skipped here. Only a hard crash —
+   * OOM, segfault, `kill -9`, power loss — can reach this code path
+   * with a `running` task.
+   *
+   * For each `running` task we probe whether the recorded PID is still
+   * alive (`process.kill(pid, 0)`):
+   *
+   *   - **Dead**: the subprocess is gone, the task is genuinely
+   *     orphaned, mark it `failure` with the canonical reason.
+   *   - **Alive**: a child somehow outlived the server crash (PID 1
+   *     adoption, OS quirk, brief race where we boot before the
+   *     OS has reaped). Leave the task at `running` and log a warn —
+   *     no exit watcher will see this subprocess finish, so the task
+   *     will likely sit at `running` until next reconciliation, but
+   *     incorrectly flipping it to `failure` while real work is still
+   *     being written into the workdir is worse than a stale row.
+   *   - **Unknown PID** (no `metadata.pid` recorded): pre-1.0 records
+   *     or third-party producers; treat as dead and mark `failure`,
+   *     matching pre-PID-probe behaviour.
    */
   async recoverOrphaned(): Promise<void> {
     let entries: import("node:fs").Dirent[];
@@ -360,6 +444,16 @@ export class TaskManager {
           const task = await this.loadTask(id, workdir);
           if (task === null) return;
           if (task.status !== "running") return;
+
+          const pid = readTaskRuntimeMetadata(task).pid;
+          if (typeof pid === "number" && isProcessAlive(pid)) {
+            this.logger.warn(
+              "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
+              { taskId: id, pid },
+            );
+            return;
+          }
+
           try {
             const failed = apply(
               task,
@@ -476,6 +570,12 @@ export class TaskManager {
     let next: Task;
     try {
       if (decision.ok) {
+        // `output: ""` is intentional under the runtime-driven completion
+        // model: the kernel records that the agent finished cleanly, but
+        // does not synthesise a "what did it produce" string. The agent's
+        // real artifacts live on disk under `<workdir>/` and the runtime's
+        // event stream sits at `<workdir>/session/`. See the JSDoc on
+        // `TaskResult` in ./types.ts and the long-term design discussion.
         next = apply(
           running,
           { type: "complete", output: "", metadata: metaPatch },
@@ -566,6 +666,41 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
 
 function defaultRandomBytes(n: number): Buffer {
   return cryptoRandomBytes(n);
+}
+
+/**
+ * Probe whether `pid` names a live process this user can signal.
+ *
+ * Uses `process.kill(pid, 0)` — the Node + POSIX + Windows-emulated idiom
+ * for "exists + permitted". Signal `0` performs the existence check
+ * without actually delivering anything. The semantics:
+ *
+ *   - process exists and we can signal it → returns true
+ *   - process is gone (`ESRCH`) → returns false
+ *   - process exists but we lack permission (`EPERM`) → returns true
+ *     (we still know it's alive)
+ *
+ * Any other error is treated as "unknown / probably gone" so the caller
+ * defaults to the safer mark-as-failure path.
+ *
+ * Note on PID reuse: between a server crash and the next bootstrap, the
+ * OS may have recycled the PID we recorded. `isProcessAlive` cannot
+ * detect this — it'll see the new occupant and return true. The
+ * consequence (one task incorrectly stays at `running` instead of being
+ * marked `failure`) is a strictly milder failure mode than the
+ * pre-probe code's symmetric mistake (incorrectly flipping a live
+ * subprocess to `failure`), so the trade is favourable.
+ */
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return true;
+    return false;
+  }
 }
 
 export type { TaskRuntimeMetadata } from "./task-file.js";

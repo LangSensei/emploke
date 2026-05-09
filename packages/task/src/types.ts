@@ -17,12 +17,38 @@
 import type { Catalog } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 
-/** Status lifecycle: `not_started → running → success | failure | cancelled`. */
+/**
+ * Status lifecycle: `not_started → running → success | failure | cancelled`.
+ *
+ * Note on `cancelled`: the kernel FSM accepts a `cancel` event (see `apply()`),
+ * but `TaskManager` does not currently emit one. A subprocess killed during
+ * `delete()` has its workdir removed before any terminal event is applied; a
+ * subprocess killed during `shutdown()` is recorded as `failure` with reason
+ * "server shutdown". The `cancelled` status is therefore reserved for a
+ * future user-cancel API (e.g. `TaskManager.cancel(id)` + a `POST .../cancel`
+ * route) that lets users distinguish "I asked it to stop" from "it crashed".
+ * The dashboard already renders a `Cancelled` label so the UI need not change
+ * when that API arrives.
+ */
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
 /** A status from which no further transitions are legal. */
 export type TerminalStatus = "success" | "failure" | "cancelled";
 
+/**
+ * Result attached when a Task transitions to `success`.
+ *
+ * `output` semantics under the current **runtime-driven completion model**:
+ * the kernel does not interpret what an autonomous agent produced. The
+ * substantive output of an agent run lives on the filesystem under
+ * `Task.metadata.workdir/` — agent-written files, captured `stdout.log`,
+ * and the runtime's per-task event stream junctioned in at `session/`. The
+ * `output` string is intentionally minimal and may be empty: today
+ * `TaskManager` always writes `""` here. A future, agent-driven completion
+ * model (where the agent submits a structured deliverable summary back to
+ * the kernel) would carry that summary in this field; the kernel shape is
+ * pre-positioned for it.
+ */
 export interface TaskResult {
   readonly output: string;
 }

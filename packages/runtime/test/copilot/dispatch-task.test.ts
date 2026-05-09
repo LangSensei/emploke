@@ -286,6 +286,35 @@ describe("dispatchCopilotTask", () => {
     ).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
   });
 
+  // Belt-and-suspenders deadlock guard: if a child process is returned but
+  // the runtime never gets a `spawn` or `error` event (Node v15+ docs say
+  // this can't happen, but we don't trust theory to keep a task from
+  // wedging the manager), the dispatch must reject within the configured
+  // timeout and best-effort kill the lingering child so we don't leak
+  // orphans behind the rejected promise. Tests inject a tiny timeout so
+  // they don't actually wait 30s.
+  it("rejects with RuntimeDispatchTaskFailed when neither 'spawn' nor 'error' fires within the timeout", async () => {
+    const agent = await buildAgent();
+    const child = new FakeChild();
+    const spawn: SpawnFn = (() => {
+      // Intentionally never emit 'spawn' or 'error'.
+      return child as unknown as ReturnType<SpawnFn>;
+    }) as SpawnFn;
+    const promise = dispatchCopilotTask(
+      { taskDir, agent, prompt: "x" },
+      {
+        copilotStateDir: stateDir,
+        randomUUID: () => FIXED_UUID,
+        spawn,
+        spawnTimeoutMs: 50,
+      },
+    );
+    await expect(promise).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
+    await expect(promise).rejects.toThrow(/timed out after 50ms/);
+    // Lingering child should have been killed to prevent leaks.
+    expect(child.killCalls).toBeGreaterThanOrEqual(1);
+  });
+
   it("wraps provision failures as RuntimeProvisionFailed", async () => {
     const badAgent: AgentResolveResult = {
       agent: { name: "missing", description: "x", version: "0.0.1" },

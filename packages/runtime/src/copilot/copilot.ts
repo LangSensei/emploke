@@ -173,6 +173,22 @@ export class CopilotRuntime implements Runtime {
       ...this.dispatchDeps,
     });
   }
+
+  /**
+   * Locate the Copilot per-task event log. `TaskManager` installs a
+   * directory junction at `<taskWorkdir>/session/` pointing at the
+   * runtime's per-task state dir, and Copilot's NDJSON stream lives at
+   * `events.jsonl` inside that. We compose the path from the manager's
+   * convention (the junction name `session`) and Copilot's convention
+   * (`events.jsonl`) here so the server doesn't have to know either.
+   *
+   * Note we do NOT stat the file: the route that consumes this checks
+   * existence and returns `NoEventsYet` itself, so a synchronous,
+   * always-cheap return keeps this method usable from any context.
+   */
+  taskEventsPath(taskWorkdir: string): string {
+    return path.join(taskWorkdir, "session", "events.jsonl");
+  }
 }
 
 /**
