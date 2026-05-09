@@ -97,7 +97,7 @@ SPA is bundled alongside) that can be `npm install -g`-ed and run as
 
 ```sh
 pnpm bundle                     # → bundle/emploke.js + bundle/static/
-node bundle/emploke.js          # boots HTTP on http://127.0.0.1:3000
+node bundle/emploke.js          # boots HTTP on http://127.0.0.1:8787
 ```
 
 Once published, end users get the same in one step:
@@ -115,7 +115,7 @@ Configuration is via env vars (same set as the dev server):
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PORT` | `3000` | Listen port |
+| `PORT` | `8787` | Listen port |
 | `EMPLOKE_HOST` | `127.0.0.1` | Bind address. Non-loopback values **require** `EMPLOKE_API_KEY`. |
 | `EMPLOKE_API_KEY` | — | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. |
 | `EMPLOKE_HOME` | `~/.emploke` | Where the workspace registry (`workspaces.json`) lives. |
