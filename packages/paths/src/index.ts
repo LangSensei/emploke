@@ -31,6 +31,9 @@ export const DEFAULT_EMPLOKE_HOME: string = path.join(homedir(), ".emploke");
 /** Filename (under `<home>`) for the workspace registry. */
 export const WORKSPACES_REGISTRY_FILE = "workspaces.json";
 
+/** Subdirectory (under `<home>`) where the server writes its rotated log files. */
+export const LOGS_SUBDIR = "logs";
+
 /**
  * Resolved emploke paths derived from environment. All paths are absolute
  * (`path.resolve`-d) so callers don't have to worry about cwd-relative input
@@ -41,6 +44,11 @@ export interface EmplokePaths {
   readonly home: string;
   /** Path to the workspace registry file, `<home>/workspaces.json`. */
   readonly registryFile: string;
+  /**
+   * Directory the server writes its rotated log files into,
+   * `<home>/logs`. Created on demand by `@emploke/logger`.
+   */
+  readonly logsDir: string;
 }
 
 /**
@@ -59,6 +67,7 @@ export function resolveEmplokePaths(env: NodeJS.ProcessEnv = {}): EmplokePaths {
   );
 
   const registryFile = path.join(home, WORKSPACES_REGISTRY_FILE);
+  const logsDir = path.join(home, LOGS_SUBDIR);
 
-  return { home, registryFile };
+  return { home, registryFile, logsDir };
 }

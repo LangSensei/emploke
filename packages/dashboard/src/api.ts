@@ -260,10 +260,37 @@ export interface ServerConfig {
   port: number;
   /** Native path separator on the server's OS. */
   pathSeparator: string;
+  /** Tunables for the dashboard's task list view. */
+  tasks: {
+    /**
+     * Poll cadence for the running task list (ms). Owned by the server so
+     * the dashboard never hard-codes a UX-shaping constant.
+     */
+    pollIntervalMs: number;
+  };
 }
 
 export const getConfig = (): Promise<ServerConfig> =>
   fetchJson<ServerConfig>("/api/config", "config");
+
+/**
+ * Mirrors the server's `HealthResponse` (defined in
+ * `@emploke/server/routes/health.ts`). Re-declared here rather than
+ * imported because `@emploke/server` is a Node package and the dashboard
+ * bundle should not depend on it.
+ */
+export interface HealthResponse {
+  status: "ok";
+  name: string;
+  version: string;
+  startedAt: string;
+  uptimeSec: number;
+  /** ISO 8601 UTC timestamp at the moment the server formed the response. */
+  serverNow: string;
+}
+
+export const getHealth = (): Promise<HealthResponse> =>
+  fetchJson<HealthResponse>("/api/health", "health");
 
 export const getSession = (id: string): Promise<SessionRecord> =>
   fetchJson<SessionRecord>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
@@ -364,3 +391,110 @@ export const updateWorkspaceMetadata = async (
     `/api/workspaces/${encodeURIComponent(id)}`,
     jsonInit("PATCH", patch),
   );
+
+// ─ Tasks (workspace-scoped) ─
+//
+// A Task is an autonomous one-shot agent invocation: dispatch a brief +
+// instructions, the runtime spawns the agent, and the dashboard polls for
+// terminal status. Each runtime publishes its own native event log; the
+// server resolves the path via the runtime's `taskEventsPath` surface and
+// streams the bytes opaquely. Filename, format, and on-disk layout are
+// runtime-specific (today the Copilot adapter writes NDJSON; future
+// runtimes may differ).
+
+export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
+
+/**
+ * Task failure shape — matches the kernel's `TaskFailure` exactly. The
+ * field is `error` (not `reason`) and there are no nested exit fields:
+ * exit code/signal live in `metadata.exitCode` / `metadata.exitSignal`
+ * because they're runtime-specific bookkeeping, not part of the abstract
+ * Task value model.
+ */
+export interface TaskFailure {
+  error: string;
+}
+
+export interface TaskResult {
+  output: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  agent: string;
+  instructions: string;
+  status: TaskStatus;
+  /**
+   * Open-shape metadata. Includes runtime bookkeeping fields like
+   * `workdir`, `runtime`, `runtimeSessionId`, `pid`, `exitCode`,
+   * `exitSignal` — the runtime owns the keys, the kernel doesn't inspect.
+   */
+  metadata: Record<string, unknown>;
+  /** ISO 8601 string. */
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  result?: TaskResult;
+  failure?: TaskFailure;
+}
+
+/**
+ * Optional server-side filters for `listTasks`. Mirrors the server's
+ * `ListTaskOpts` (which mirrors `ListSessionOpts` in the sessions
+ * surface). Omitted fields are not sent on the wire and the server
+ * returns the full set.
+ */
+export interface ListTasksOpts {
+  agent?: string;
+  runtime?: string;
+  /** ISO 8601 (the server canonicalises). */
+  createdSince?: string;
+  /** Statuses to include. The server joins with `,` for the query. */
+  statuses?: TaskStatus[];
+}
+
+export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
+  const qs = new URLSearchParams();
+  if (opts.agent) qs.set("agent", opts.agent);
+  if (opts.runtime) qs.set("runtime", opts.runtime);
+  if (opts.createdSince) qs.set("createdSince", opts.createdSince);
+  if (opts.statuses && opts.statuses.length > 0) qs.set("status", opts.statuses.join(","));
+  const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
+  return fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks${suffix}`, "tasks");
+};
+
+export const getTask = (id: string): Promise<TaskRecord> =>
+  fetchJson<TaskRecord>(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, "task");
+
+export const dispatchTask = async (
+  agent: string,
+  instructions: string,
+  runtime?: string,
+): Promise<TaskRecord> => {
+  const body: Record<string, string> = { agent, instructions };
+  if (runtime !== undefined) body.runtime = runtime;
+  return mutateJson<TaskRecord>(`${workspacePrefix()}/tasks`, jsonInit("POST", body));
+};
+
+export const deleteTask = (id: string) =>
+  mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/**
+ * Build the URL to the task event stream. The server resolves the
+ * underlying file via `Runtime.taskEventsPath` and returns its bytes as
+ * `application/x-ndjson` (today, since the only runtime is Copilot's
+ * NDJSON; future runtimes may serve other formats and the dashboard
+ * will need to branch on `task.metadata.runtime` to render them). We
+ * fetch the whole file with `fetch().text()` rather than EventSource
+ * because the route is a one-shot read, not SSE; the polling loop on
+ * the detail page handles "tail" semantics.
+ */
+export const taskEventsUrl = (id: string): string =>
+  `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/events`;
+
+export const fetchTaskEvents = async (id: string): Promise<string | null> => {
+  const r = await fetch(taskEventsUrl(id));
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(await extractError(r));
+  return r.text();
+};

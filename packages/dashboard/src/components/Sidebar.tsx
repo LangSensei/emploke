@@ -10,10 +10,10 @@ import {
   PencilIcon,
   SessionsIcon,
   SettingsIcon,
-  SubstratesIcon,
+  TasksIcon,
 } from "./Icons";
 
-export type SectionId = "overview" | "catalog" | "sessions" | "substrates" | "settings";
+export type SectionId = "overview" | "catalog" | "sessions" | "tasks" | "settings";
 
 export interface SectionDef {
   id: SectionId;
@@ -26,7 +26,7 @@ const ICONS: Record<SectionId, (props: { className?: string }) => ReactElement> 
   overview: HomeIcon,
   catalog: CatalogIcon,
   sessions: SessionsIcon,
-  substrates: SubstratesIcon,
+  tasks: TasksIcon,
   settings: SettingsIcon,
 };
 

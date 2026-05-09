@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
+    "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "js-yaml": "^4.1.0"
   },

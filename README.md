@@ -8,14 +8,14 @@
 
 | Package | Description |
 |---|---|
-| [`@emploke/task`](./packages/task) | Pure value type + state machine for the five-state task lifecycle (`not_started → running → success / failure / cancelled`). Zero I/O. |
+| [`@emploke/task`](./packages/task) | Task value type + state machine (`not_started → running → success / failure / cancelled`) + `TaskManager` for autonomous one-shot agent dispatch (spawn → watch → terminal status, persisted as `task.json`). |
 | [`@emploke/paths`](./packages/paths) | Pure resolver from `process.env` to emploke's user-level filesystem layout (`EMPLOKE_HOME`, registry file). |
 | [`@emploke/catalog`](./packages/catalog) | File-system registry of skills, MCPs and agents with dependency-graph algorithms (topological resolve, cycle detection, reverse-dependency safety on uninstall). One catalog per workspace. |
 | [`@emploke/workspace`](./packages/workspace) | Per-project root holding the workspace's catalog plus ephemeral state (sessions / tasks / workflows / logs), plus a `$EMPLOKE_HOME`-level registry mapping opaque UUIDs to absolute paths. |
-| [`@emploke/runtime`](./packages/runtime) | Runtime adapter interface (`provision` / `refresh` / `buildLaunch` / `deleteState` / optional `registerWorkspace`) + Copilot CLI implementation. |
+| [`@emploke/runtime`](./packages/runtime) | Runtime adapter interface (`provision` / `refresh` / `buildLaunch` / `deleteState` / optional `registerWorkspace` / optional `dispatchTask`) + Copilot CLI implementation. |
 | [`@emploke/session`](./packages/session) | Per-session workdir registry under `<workspace>/sessions/<id>/`, parameterised over a runtime registry. |
 | [`@emploke/terminal`](./packages/terminal) | Cross-platform terminal spawner that hosts a `LaunchCommand`. |
-| [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing workspace-scoped catalog and session routes (`/api/workspaces/<id>/{catalog,sessions}/...`). Loopback-only by default. |
+| [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing workspace-scoped catalog, session, and task routes (`/api/workspaces/<id>/{catalog,sessions,tasks}/...`). Loopback-only by default. Drains running tasks on SIGTERM/SIGINT. |
 | [`@emploke/dashboard`](./packages/dashboard) | React + Vite dashboard with a workspace switcher in the sidebar; talks to `@emploke/server`. |
 
 All packages are pre-1.0.
@@ -40,7 +40,13 @@ $EMPLOKE_HOME/                       (default ~/.emploke; override with EMPLOKE_
 │   ├── agents/<name>/AGENT.md
 │   └── mcps/<name>.json
 ├── sessions/<id>/                   per-session workdirs
-├── tasks/<id>/                      placeholder (future)
+├── tasks/<id>/                      per-task workdirs (autonomous dispatch)
+│   ├── task.json                    Task value + runtime metadata
+│   ├── session/                     junction → runtime's per-task state dir
+│   │   └── <runtime-specific>       runtime-native event log (e.g. events.jsonl
+│   │                                under copilot; format and filename are the
+│   │                                runtime adapter's concern, not the kernel's)
+│   └── stderr.log                   bug-out only (CLI errors before session)
 ├── workflows/<id>/                  placeholder (future)
 └── logs/                            placeholder (future)
 ```
@@ -50,8 +56,13 @@ under `/api/workspaces/<id>/...` where `<id>` is the workspace's opaque
 UUID (stable for the lifetime of the registry entry, so dashboard URLs
 stay valid across renames). Catalog endpoints are
 `/api/workspaces/<id>/catalog/{skills,agents,mcps,overview}`; sessions
-are `/api/workspaces/<id>/sessions/...`. There is no global catalog
-mount — switching workspace switches the catalog the dashboard sees.
+are `/api/workspaces/<id>/sessions/...`; tasks (autonomous one-shot
+agent dispatch) are `/api/workspaces/<id>/tasks/...` with a streaming
+`/tasks/<tid>/events` endpoint that serves whatever event log the
+task's runtime publishes (the runtime adapter resolves the file via
+`Runtime.taskEventsPath`; the server treats the bytes as opaque).
+There is no global catalog mount — switching workspace switches the
+catalog the dashboard sees.
 
 ## Design
 

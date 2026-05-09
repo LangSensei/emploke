@@ -14,12 +14,41 @@
  *    archive — emploke "stores but never reads" runtime metadata.
  */
 
-/** Status lifecycle: `not_started → running → success | failure | cancelled`. */
+import type { Catalog } from "@emploke/catalog";
+import type { RuntimeRegistry } from "@emploke/runtime";
+
+/**
+ * Status lifecycle: `not_started → running → success | failure | cancelled`.
+ *
+ * Note on `cancelled`: the kernel FSM accepts a `cancel` event (see `apply()`),
+ * but `TaskManager` does not currently emit one. A subprocess killed during
+ * `delete()` has its workdir removed before any terminal event is applied; a
+ * subprocess killed during `shutdown()` is recorded as `failure` with reason
+ * "server shutdown". The `cancelled` status is therefore reserved for a
+ * future user-cancel API (e.g. `TaskManager.cancel(id)` + a `POST .../cancel`
+ * route) that lets users distinguish "I asked it to stop" from "it crashed".
+ * The dashboard already renders a `Cancelled` label so the UI need not change
+ * when that API arrives.
+ */
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
 /** A status from which no further transitions are legal. */
 export type TerminalStatus = "success" | "failure" | "cancelled";
 
+/**
+ * Result attached when a Task transitions to `success`.
+ *
+ * `output` semantics under the current **runtime-driven completion model**:
+ * the kernel does not interpret what an autonomous agent produced. The
+ * substantive output of an agent run lives on the filesystem under
+ * `Task.metadata.workdir/` — agent-written files, captured `stdout.log`,
+ * and the runtime's per-task event stream junctioned in at `session/`. The
+ * `output` string is intentionally minimal and may be empty: today
+ * `TaskManager` always writes `""` here. A future, agent-driven completion
+ * model (where the agent submits a structured deliverable summary back to
+ * the kernel) would carry that summary in this field; the kernel shape is
+ * pre-positioned for it.
+ */
 export interface TaskResult {
   readonly output: string;
 }
@@ -81,4 +110,74 @@ export interface FailEvent {
 export interface CancelEvent {
   readonly type: "cancel";
   readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+// ─── TaskManager-side types ───────────────────────────────────
+
+/**
+ * Pluggable logger surface. Re-exported from `@emploke/logger` so we
+ * keep a single canonical definition; this re-export exists for source
+ * compatibility with callers that previously imported `Logger` from
+ * `@emploke/task` directly.
+ */
+export type { Logger } from "@emploke/logger";
+
+import type { Logger as _Logger } from "@emploke/logger";
+
+/** Constructor options for `TaskManager`. */
+export interface TaskManagerConfig {
+  readonly catalog: Catalog;
+  readonly runtimeRegistry: RuntimeRegistry;
+  /** Absolute path to the directory holding per-task workdirs. */
+  readonly tasksDir: string;
+  /** Default runtime kind to use when `dispatch` doesn't override. */
+  readonly defaultRuntime?: string;
+  readonly logger?: _Logger;
+  /** Test seam: clock injection. */
+  readonly now?: () => Date;
+  /** Test seam: random source for id generation. */
+  readonly randomBytes?: (n: number) => Buffer;
+}
+
+/** Inputs to `TaskManager.dispatch`. */
+export interface DispatchOpts {
+  /** Catalog name of the agent to run. Required. */
+  readonly agent: string;
+  /** Free-form prompt / instructions for the agent. */
+  readonly instructions: string;
+  /** Override the configured `defaultRuntime`. */
+  readonly runtime?: string;
+}
+
+/**
+ * Options for `TaskManager.list`. Mirrors the shape of
+ * `@emploke/session`'s `ListSessionOpts` so callers see a consistent
+ * filter API across the two managers.
+ *
+ * Filters are applied AFTER reading `task.json` (cheap) but the
+ * filtered set is still the only thing returned to the caller — server
+ * routes can therefore push their own filter inputs down to the
+ * manager and avoid serialising entries the dashboard would discard.
+ */
+export interface ListTaskOpts {
+  /** Filter to tasks whose `agent` matches this exact value. */
+  readonly agent?: string;
+  /**
+   * Drop tasks whose `createdAt` is strictly before this ISO 8601
+   * timestamp. ISO 8601 strings (Z-suffixed) sort lexicographically as
+   * dates, so the comparison is a plain string `<`.
+   */
+  readonly createdSince?: string;
+  /**
+   * Filter to tasks whose `metadata.runtime` matches this exact value.
+   * Useful for the dashboard's runtime dropdown filter.
+   */
+  readonly runtime?: string;
+  /**
+   * Filter to tasks in one of the listed statuses. The dashboard uses
+   * this for the auto-poll path (`status=running`) so the server can
+   * answer "do I have anything still in flight?" without serialising
+   * every terminal task.
+   */
+  readonly statuses?: readonly TaskStatus[];
 }

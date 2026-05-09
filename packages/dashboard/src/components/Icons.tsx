@@ -38,9 +38,9 @@ export const CatalogIcon = (p: IconProps) =>
 export const SessionsIcon = (p: IconProps) =>
   SVG(<path d="M3.75 13.5 10.5 9l4.5 3 6-4.5M21 7.5h-4.5m4.5 0v4.5" />, p);
 
-export const SubstratesIcon = (p: IconProps) =>
+export const TasksIcon = (p: IconProps) =>
   SVG(
-    <path d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3m-13.5 0v6m13.5-6v6m-9-3v3m4.5-3v3" />,
+    <path d="M9 5H7.2A2.2 2.2 0 0 0 5 7.2v9.6A2.2 2.2 0 0 0 7.2 19h9.6A2.2 2.2 0 0 0 19 16.8V7.2A2.2 2.2 0 0 0 16.8 5H15M9 5a2 2 0 1 0 6 0M9 5a2 2 0 1 1 6 0M9 12l2 2 4-4" />,
     p,
   );
 

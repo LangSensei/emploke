@@ -67,6 +67,7 @@ describe("errorBody", () => {
       "SessionsError",
       // runtime
       "InvalidMcpJson",
+      "RuntimeDispatchTaskFailed",
       "RuntimeProvisionFailed",
       "RuntimeRefreshFailed",
       "RuntimeStateDeletionFailed",

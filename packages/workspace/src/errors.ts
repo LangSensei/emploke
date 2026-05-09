@@ -37,9 +37,26 @@ export class WorkspaceSchemaMismatchError extends WorkspaceError {
     public readonly fromVersion: number,
     public readonly toVersion: number,
   ) {
-    super(`workspace.json at ${dir} has schemaVersion ${fromVersion}; expected ${toVersion}`);
+    super(
+      `workspace.json at ${dir} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
+    );
     this.name = "WorkspaceSchemaMismatchError";
   }
+}
+
+/**
+ * Operator-actionable hint based on the direction of the mismatch.
+ * Newer-on-disk = upgrade the server; older-on-disk = needs a migration
+ * (which is not implemented yet).
+ */
+function schemaDirectionHint(fromVersion: number, toVersion: number): string {
+  if (fromVersion > toVersion) {
+    return "Upgrade the server to read it (downgrading is unsafe).";
+  }
+  if (fromVersion < toVersion) {
+    return "Migration from older versions is not yet implemented.";
+  }
+  return "";
 }
 
 /** `WorkspaceManager.init()` refused to overwrite an existing workspace. */
@@ -78,6 +95,25 @@ export class RegistryCorruptedError extends RegistryError {
   ) {
     super(`workspaces.json at ${file} is corrupted: ${reason}`, options);
     this.name = "RegistryCorruptedError";
+  }
+}
+
+/**
+ * `workspaces.json` declares a schemaVersion this build doesn't understand.
+ * Distinct from `RegistryCorruptedError` so callers can catch the specific
+ * "operator must upgrade or migrate" case separately from generic parse
+ * failures.
+ */
+export class RegistrySchemaMismatchError extends RegistryError {
+  constructor(
+    public readonly file: string,
+    public readonly fromVersion: number,
+    public readonly toVersion: number,
+  ) {
+    super(
+      `workspaces.json at ${file} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
+    );
+    this.name = "RegistrySchemaMismatchError";
   }
 }
 

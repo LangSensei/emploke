@@ -19,34 +19,29 @@ import { Modal } from "./components/Modal";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CatalogPage, type CatalogTab } from "./pages/Catalog";
-import { ComingSoonPage } from "./pages/ComingSoon";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
+import { TasksPage } from "./pages/Tasks";
+import { startClockSync } from "./serverClock";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
   { id: "catalog", label: "Catalog" },
   { id: "sessions", label: "Sessions" },
-  { id: "substrates", label: "Substrates", badge: "soon", disabled: true },
+  { id: "tasks", label: "Tasks" },
   { id: "settings", label: "Settings" },
 ];
 
 const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
   overview: { title: "Overview", crumb: "System health" },
-  catalog: { title: "Catalog", crumb: "Agents  Skills  MCPs" },
+  catalog: { title: "Catalog", crumb: "Agents · Skills · MCPs" },
   sessions: { title: "Sessions", crumb: "Per-agent workdirs" },
-  substrates: { title: "Substrates", crumb: "Compute backends" },
+  tasks: { title: "Tasks", crumb: "Autonomous agent runs" },
   settings: { title: "Settings", crumb: "Server & environment" },
 };
 
-const VALID_SECTIONS = new Set<SectionId>([
-  "overview",
-  "catalog",
-  "sessions",
-  "substrates",
-  "settings",
-]);
+const VALID_SECTIONS = new Set<SectionId>(["overview", "catalog", "sessions", "tasks", "settings"]);
 const VALID_CATALOG_TABS = new Set<CatalogTab>(["agents", "skills", "mcps"]);
 
 /**
@@ -554,6 +549,13 @@ function WorkspaceLayout() {
     };
   }, []);
 
+  // Sync the dashboard's clock skew against the server periodically.
+  // serverNow() is then used by Tasks/Sessions presets ("Today", "7d",
+  // "30d") so the createdSince cutoff matches what the server actually
+  // sees, even if the user's laptop clock has drifted. See
+  // ./serverClock.ts for the rationale.
+  useEffect(() => startClockSync(), []);
+
   const navigateToSection = useCallback(
     (next: SectionId) => {
       navigate(buildWorkspacePath(wsId, next, "agents"));
@@ -656,12 +658,8 @@ function WorkspaceLayout() {
             />
           )}
 
-          {section === "substrates" && (
-            <ComingSoonPage
-              title="Substrates"
-              description="Compute backends that execute resolved skill/agent dependencies."
-              hint="Will host runtime adapters (e.g. Copilot CLI, Claude Code, local subprocess)."
-            />
+          {section === "tasks" && (
+            <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />
           )}
 
           {section === "settings" && (

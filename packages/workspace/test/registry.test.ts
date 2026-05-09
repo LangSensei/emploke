@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegistryCorruptedError,
+  RegistrySchemaMismatchError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
@@ -55,8 +56,28 @@ describe("WorkspaceRegistry.open", () => {
     );
   });
 
-  it("rejects wrong schemaVersion", async () => {
+  it("rejects newer schemaVersion with an upgrade-server hint", async () => {
     await writeFile(registryFile, JSON.stringify({ schemaVersion: 99, entries: [] }), "utf8");
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toMatchObject({
+      constructor: RegistrySchemaMismatchError,
+      fromVersion: 99,
+      toVersion: 1,
+      message: expect.stringContaining("Upgrade the server"),
+    });
+  });
+
+  it("rejects older schemaVersion with a migration-not-implemented hint", async () => {
+    await writeFile(registryFile, JSON.stringify({ schemaVersion: 0, entries: [] }), "utf8");
+    await expect(WorkspaceRegistry.open(registryFile)).rejects.toMatchObject({
+      constructor: RegistrySchemaMismatchError,
+      fromVersion: 0,
+      toVersion: 1,
+      message: expect.stringContaining("Migration from older versions"),
+    });
+  });
+
+  it("rejects non-numeric schemaVersion as generic corruption", async () => {
+    await writeFile(registryFile, JSON.stringify({ schemaVersion: "v1", entries: [] }), "utf8");
     await expect(WorkspaceRegistry.open(registryFile)).rejects.toBeInstanceOf(
       RegistryCorruptedError,
     );

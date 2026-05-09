@@ -324,4 +324,34 @@ describe("sessionsRoutes", () => {
       expect(spawn).not.toHaveBeenCalled();
     });
   });
+
+  // Regression for the param-shadowing bug surfaced in the dashboard:
+  // when sessions used `:id` as its inner path param it collided with the
+  // outer mount's `/:id/sessions/*` workspace param. Hono's
+  // `c.req.param("id")` then returned the workspace UUID instead of the
+  // session id, and `assertValidSessionId` rejected it. We mount sessions
+  // under a parent app the same way `index.ts` does and assert the inner
+  // handler sees the *session* id.
+  describe("nested under /api/workspaces/:wsid/sessions", () => {
+    it("DELETE delivers the session id (not the workspace id) to the manager", async () => {
+      const { Hono } = await import("hono");
+      const del = vi.fn(async () => undefined);
+      const m = stubManager({ delete: del });
+      // Re-import the helper from the runtime package: outer mount uses
+      // the same `:id` Hono lifted into its own scope. We could call this
+      // param `:wsid` instead, but that wouldn't catch a future regression;
+      // the production wiring really does use `:id` on the outer mount.
+      const parent = new Hono();
+      parent.route("/api/workspaces/:id/sessions", sessionsRoutes(m));
+      const wsId = "3e8b2d26-3cac-4d0e-9878-f1abe542e2d0"; // a UUID
+      const sid = "20260508-9dfbdf05";
+      const res = await parent.request(`/api/workspaces/${wsId}/sessions/${sid}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(204);
+      expect(del).toHaveBeenCalledWith(sid, { deleteRuntimeState: false });
+      // Negative assertion: the workspace UUID must never reach the manager.
+      expect(del).not.toHaveBeenCalledWith(wsId, expect.anything());
+    });
+  });
 });

@@ -177,7 +177,7 @@ describe("WorkspaceManager.open", () => {
     await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
   });
 
-  it("throws WorkspaceSchemaMismatchError on wrong schemaVersion", async () => {
+  it("throws WorkspaceSchemaMismatchError on newer schemaVersion with upgrade hint", async () => {
     const dir = path.join(scratch, "p");
     await import("node:fs/promises").then((m) => m.mkdir(dir));
     await writeFile(
@@ -185,7 +185,28 @@ describe("WorkspaceManager.open", () => {
       JSON.stringify({ schemaVersion: 99, name: "p", createdAt: "2026-01-01T00:00:00Z" }),
       "utf8",
     );
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceSchemaMismatchError);
+    await expect(WorkspaceManager.open(dir)).rejects.toMatchObject({
+      constructor: WorkspaceSchemaMismatchError,
+      fromVersion: 99,
+      toVersion: 1,
+      message: expect.stringContaining("Upgrade the server"),
+    });
+  });
+
+  it("throws WorkspaceSchemaMismatchError on older schemaVersion with migration hint", async () => {
+    const dir = path.join(scratch, "p2");
+    await import("node:fs/promises").then((m) => m.mkdir(dir));
+    await writeFile(
+      path.join(dir, WORKSPACE_FILE),
+      JSON.stringify({ schemaVersion: 0, name: "p2", createdAt: "2026-01-01T00:00:00Z" }),
+      "utf8",
+    );
+    await expect(WorkspaceManager.open(dir)).rejects.toMatchObject({
+      constructor: WorkspaceSchemaMismatchError,
+      fromVersion: 0,
+      toVersion: 1,
+      message: expect.stringContaining("Migration from older versions"),
+    });
   });
 });
 

@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import type { Catalog } from "@emploke/catalog";
+import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
+import type { TaskManager } from "@emploke/task";
 import { WorkspaceRegistry } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -10,8 +13,10 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, bearerAuth, isLoopbackBind } from "./auth.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
+import { healthRoutes } from "./routes/health.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
+import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { WorkspaceContextCache } from "./workspace-context.js";
 
@@ -21,28 +26,11 @@ import { WorkspaceContextCache } from "./workspace-context.js";
  */
 type WorkspaceVars = {
   sessionManager: SessionManager;
+  taskManager: TaskManager;
   catalog: Catalog;
 };
 
 const paths = resolveEmplokePaths(process.env);
-
-if (process.env.EMPLOKE_SESSIONS_DIR) {
-  console.error(
-    "EMPLOKE_SESSIONS_DIR is no longer supported.\n" +
-      "Sessions now live under <workspace>/sessions; create a workspace from\n" +
-      "the dashboard landing page (no auto-default workspace is created).\n",
-  );
-  process.exit(1);
-}
-
-if (process.env.EMPLOKE_CATALOG_DIR) {
-  console.error(
-    "EMPLOKE_CATALOG_DIR is no longer supported.\n" +
-      "The catalog is now per-workspace at <workspace>/catalog/.\n" +
-      "Create or open a workspace from the dashboard landing page.\n",
-  );
-  process.exit(1);
-}
 
 const port = Number(process.env.PORT ?? 3000);
 // Bind to loopback by default  the server exposes destructive endpoints
@@ -65,6 +53,15 @@ const serveStaticFiles = process.argv.includes("--serve-static");
 async function main() {
   assertBindIsSafe(hostname, apiKey);
 
+  // Logger: rotated JSON files under <home>/logs (default) plus stdout
+  // for the operator. Level + format honour env so dev can stay pretty
+  // and prod can pin JSON-only without code changes.
+  const logger: Logger = buildLogger({
+    dir: paths.logsDir,
+    level: parseLogLevel(process.env.EMPLOKE_LOG_LEVEL),
+    format: process.env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty",
+  });
+
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(new CopilotRuntime());
 
@@ -74,16 +71,25 @@ async function main() {
   // is simply empty and the landing page reflects that.
   const registry = await WorkspaceRegistry.open(paths.registryFile);
 
-  if (process.env.EMPLOKE_WORKSPACE && process.env.EMPLOKE_WORKSPACE.length > 0) {
-    console.warn(
-      "EMPLOKE_WORKSPACE is deprecated and no longer auto-creates a workspace.\n" +
-        "Create the workspace from the dashboard landing page instead.",
-    );
-  }
-
-  const cache = new WorkspaceContextCache({ runtimeRegistry, registry });
+  const cache = new WorkspaceContextCache({ runtimeRegistry, registry, logger });
 
   const app = new Hono();
+
+  // /api/health is mounted *before* the auth middleware so the dashboard's
+  // backoff probe and external liveness checks can poll without first
+  // acquiring an API key. The endpoint exposes only `name`, `version`,
+  // `startedAt`, and `uptimeSec` — nothing a network observer couldn't
+  // already derive from the running socket.
+  const { name: serverName, version: serverVersion } = await readServerPackageMeta();
+  const startedAtMs = Date.now();
+  app.route(
+    "/api/health",
+    healthRoutes({
+      name: serverName,
+      version: serverVersion,
+      startedAtMs,
+    }),
+  );
 
   if (apiKey && apiKey.trim() !== "") {
     app.use("/api/*", bearerAuth(apiKey.trim()));
@@ -114,6 +120,15 @@ async function main() {
   );
   app.route("/api/workspaces", sessionsApp);
 
+  // Workspace-scoped tasks. Same middleware shape as sessions.
+  const tasksApp = new Hono<{ Variables: WorkspaceVars }>();
+  tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
+  tasksApp.route(
+    "/:id/tasks",
+    tasksRoutes((c) => c.get("taskManager")),
+  );
+  app.route("/api/workspaces", tasksApp);
+
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
   catalogApp.route(
@@ -143,23 +158,79 @@ async function main() {
   }
 
   const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
-  console.log(`emploke server listening on http://${displayHost}:${port}`);
-  console.log(`home:     ${paths.home}`);
-  console.log(`registry: ${paths.registryFile} (${registry.list().length} workspace(s))`);
-  console.log(`runtimes: ${runtimeRegistry.kinds().join(", ")}`);
-  console.log(serveStaticFiles ? `static:   ${staticDir}` : "static:   disabled (dev mode)");
-  if (apiKey && apiKey.trim() !== "") {
-    console.log("auth:     EMPLOKE_API_KEY set  /api/* requires Bearer auth");
-  } else {
-    console.log("auth:     disabled (loopback-only deployment)");
-  }
+  logger.info("emploke server starting", {
+    listen: `http://${displayHost}:${port}`,
+    home: paths.home,
+    registryFile: paths.registryFile,
+    workspaces: registry.list().length,
+    runtimes: runtimeRegistry.kinds(),
+    static: serveStaticFiles ? staticDir : null,
+    auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",
+    logsDir: paths.logsDir,
+  });
   if (!isLoopbackBind(hostname)) {
-    console.warn(
-      `  EMPLOKE_HOST=${hostname}  server is reachable from the network. ` +
-        "API key gating is enforced; rotate EMPLOKE_API_KEY if it leaks.",
-    );
+    logger.warn("server is reachable from the network; rotate EMPLOKE_API_KEY if it leaks", {
+      host: hostname,
+    });
   }
-  serve({ fetch: app.fetch, port, hostname });
+  const server = serve({ fetch: app.fetch, port, hostname });
+
+  // Graceful shutdown: kill every in-flight task subprocess and wait for
+  // the post-exit persistence to finish, so the dashboard sees consistent
+  // failure-reason="server shutdown" rows on next start (rather than
+  // ghost "running" entries waiting for orphan recovery).
+  //
+  // Ordering:
+  //   1. `server.close()` first — stops accepting new connections and
+  //      waits for in-flight HTTP to drain. This prevents two races:
+  //      (a) a `POST /tasks` arriving mid-shutdown spawning a new
+  //      subprocess after we've already taken the snapshot, and (b) the
+  //      first request to a workspace whose context wasn't loaded yet
+  //      lazy-instantiating a fresh TaskManager that wasn't in
+  //      `cache.loaded()` and would never get drained.
+  //   2. `tasks.shutdown()` second — by now no new dispatches can land,
+  //      so the snapshot of cached contexts is authoritative.
+  //
+  // Timeout: 30s. Anything still alive after that gets process.exit(1)
+  // so a wedged subprocess can't pin the deploy host indefinitely.
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info("shutdown initiated", { signal });
+    const deadline = setTimeout(() => {
+      logger.error("shutdown timed out after 30s; forcing exit");
+      process.exit(1);
+    }, 30_000);
+    deadline.unref();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        // @hono/node-server's `serve` returns a node http.Server, which
+        // has a standard `close(cb)`. Stop accepting new connections,
+        // then wait for in-flight ones to drain.
+        (server as unknown as { close: (cb?: (err?: Error) => void) => void }).close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } catch (err) {
+      logger.error("error closing http server", { err: errorToMeta(err) });
+    }
+    try {
+      const ctxs = cache.loaded();
+      await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
+    } catch (err) {
+      logger.error("error during tasks shutdown", { err: errorToMeta(err) });
+    }
+    clearTimeout(deadline);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => {
+    void gracefulShutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void gracefulShutdown("SIGINT");
+  });
 }
 
 /**
@@ -193,12 +264,69 @@ function workspaceContextMiddleware(
       );
     }
     c.set("sessionManager", ctx.sessions);
+    c.set("taskManager", ctx.tasks);
     c.set("catalog", ctx.catalog);
     await next();
   };
 }
 
 main().catch((err) => {
+  // Boot-time failure: logger may not be alive yet, so fall back to
+  // console.error here. Subsequent exits go through the logger.
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
+
+/**
+ * Parse the `EMPLOKE_LOG_LEVEL` env into one of the four supported
+ * levels. Falls back to `"info"` on any unrecognised / unset value so
+ * a misconfigured env never silently disables logging.
+ */
+function parseLogLevel(raw: string | undefined): LogLevel {
+  switch (raw) {
+    case "debug":
+    case "info":
+    case "warn":
+    case "error":
+      return raw;
+    default:
+      return "info";
+  }
+}
+
+/**
+ * Reduce an unknown thrown value to a small structured record suitable
+ * for the logger's `meta`. Avoids the noise of pino auto-serialising a
+ * full Error (stack lines blow up a JSON line) while keeping the bits
+ * that actually help diagnosis.
+ */
+function errorToMeta(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { value: String(err) };
+}
+
+/**
+ * Read this server package's `package.json` to surface its name + version
+ * via `/api/health`. We resolve relative to `import.meta.url` so the
+ * lookup works whether the server runs from `dist/` (production build)
+ * or `src/` (tsx dev mode). Failures degrade gracefully — health stays
+ * up with placeholder strings rather than crashing the boot.
+ */
+async function readServerPackageMeta(): Promise<{ name: string; version: string }> {
+  // dist/index.js → ../package.json; src/index.ts (via tsx) → ../package.json
+  const pkgFile = path.resolve(import.meta.dirname, "..", "package.json");
+  try {
+    const raw = await readFile(pkgFile, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const name = typeof parsed.name === "string" ? parsed.name : "@emploke/server";
+    const version = typeof parsed.version === "string" ? parsed.version : "0.0.0-unknown";
+    return { name, version };
+  } catch {
+    // If we cannot read our own package.json (unusual: bundler stripped
+    // it, fs perms wonky), fall back to placeholders so /api/health still
+    // serves liveness probes.
+    return { name: "@emploke/server", version: "0.0.0-unknown" };
+  }
+}

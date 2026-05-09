@@ -1,11 +1,13 @@
 import path from "node:path";
 import { Catalog } from "@emploke/catalog";
+import { type Logger, silentLogger } from "@emploke/logger";
 import {
   type Runtime,
   RuntimeRegisterWorkspaceFailed,
   type RuntimeRegistry,
 } from "@emploke/runtime";
 import { SessionManager } from "@emploke/session";
+import { TaskManager } from "@emploke/task";
 import { type Workspace, WorkspaceManager, type WorkspaceRegistry } from "@emploke/workspace";
 
 /**
@@ -13,13 +15,14 @@ import { type Workspace, WorkspaceManager, type WorkspaceRegistry } from "@emplo
  * per registered workspace and hands it to route handlers via Hono context.
  *
  * `catalog` is constructed against `<workspace>/catalog/` so each workspace
- * has an isolated agent/skill/mcp set; `sessions` reuses that catalog.
- * Future managers (tasks, workflows) will join this struct as siblings.
+ * has an isolated agent/skill/mcp set; `sessions` and `tasks` reuse that
+ * catalog. Future managers (workflows) will join this struct as siblings.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
   readonly catalog: Catalog;
   readonly sessions: SessionManager;
+  readonly tasks: TaskManager;
 }
 
 /**
@@ -47,6 +50,7 @@ export interface WorkspaceContext {
 export class WorkspaceContextCache {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly registry: WorkspaceRegistry;
+  private readonly logger: Logger;
   private readonly entries = new Map<string, WorkspaceContext>();
   /**
    * Inflight lookups keyed by id, to dedupe concurrent first-request
@@ -58,9 +62,16 @@ export class WorkspaceContextCache {
   constructor(deps: {
     runtimeRegistry: RuntimeRegistry;
     registry: WorkspaceRegistry;
+    /**
+     * Logger threaded down into every `SessionManager` / `TaskManager`
+     * the cache lazy-instantiates. Defaults to `silentLogger` so
+     * non-server callers (tests) don't need to pass one.
+     */
+    logger?: Logger;
   }) {
     this.runtimeRegistry = deps.runtimeRegistry;
     this.registry = deps.registry;
+    this.logger = deps.logger ?? silentLogger;
   }
 
   /**
@@ -91,6 +102,15 @@ export class WorkspaceContextCache {
     this.entries.delete(id);
   }
 
+  /**
+   * Snapshot of every currently-loaded context. Used by the server's
+   * graceful-shutdown hook to drain `TaskManager` subprocesses without
+   * forcing every consumer of the cache to depend on `@emploke/task`.
+   */
+  loaded(): WorkspaceContext[] {
+    return [...this.entries.values()];
+  }
+
   private async load(id: string): Promise<WorkspaceContext | null> {
     const entry = this.registry.get(id);
     if (!entry) return null;
@@ -104,9 +124,22 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: workspace.sessionsDir,
+      logger: this.logger,
     });
 
-    const ctx: WorkspaceContext = { workspace, catalog, sessions };
+    const tasks = new TaskManager({
+      catalog,
+      runtimeRegistry: this.runtimeRegistry,
+      tasksDir: workspace.tasksDir,
+      logger: this.logger,
+    });
+    // Sweep persisted tasks marked `running` from a previous server lifetime
+    // and flip them to `failure`. Cheap (one fs scan + per-orphan rewrite),
+    // and it eliminates ghost-running rows in the dashboard immediately on
+    // first request to this workspace.
+    await tasks.recoverOrphaned();
+
+    const ctx: WorkspaceContext = { workspace, catalog, sessions, tasks };
     this.entries.set(id, ctx);
     return ctx;
   }

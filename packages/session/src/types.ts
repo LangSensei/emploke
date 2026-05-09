@@ -1,10 +1,13 @@
 import type { Catalog } from "@emploke/catalog";
+import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry, Session } from "@emploke/runtime";
 
-/** Optional logger surface. Default implementation is silent. */
-export interface Logger {
-  warn(message: string, meta?: object): void;
-}
+/**
+ * Re-export the canonical `Logger` from `@emploke/logger` for source
+ * compatibility with callers that previously imported it from
+ * `@emploke/session` directly.
+ */
+export type { Logger } from "@emploke/logger";
 
 /** Configuration for SessionManager. All fields are optional except `catalog`, `runtimeRegistry`, and `sessionsDir`. */
 export interface SessionManagerConfig {
