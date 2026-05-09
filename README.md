@@ -77,6 +77,38 @@ pnpm test        # vitest across all packages
 pnpm lint        # biome check
 ```
 
+## Run as a service
+
+`pnpm bundle` produces a single self-contained executable (the dashboard
+SPA is bundled alongside) that can be `npm install -g`-ed and run as
+`emploke`:
+
+```sh
+pnpm bundle                     # → bundle/emploke.js + bundle/static/
+node bundle/emploke.js          # boots HTTP on http://127.0.0.1:3000
+```
+
+Once published, end users get the same in one step:
+
+```sh
+npm install -g @langsensei/emploke
+emploke
+```
+
+The bundled binary defaults to `--serve-static` (the dashboard is in the
+package, single-port deployment is the only thing that makes sense). Pass
+`--no-serve-static` to fall back to API-only mode.
+
+Configuration is via env vars (same set as the dev server):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Listen port |
+| `EMPLOKE_HOST` | `127.0.0.1` | Bind address. Non-loopback values **require** `EMPLOKE_API_KEY`. |
+| `EMPLOKE_API_KEY` | — | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. |
+| `EMPLOKE_HOME` | `~/.emploke` | Where the workspace registry (`workspaces.json`) lives. |
+| `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. |
+
 ## Design book
 
 The architectural rationale — Capability / Agent / Task / Runtime axioms, six-state Task lifecycle, Concurrency Contract, Observability floor — lives in [`docs/index.html`](docs/index.html).

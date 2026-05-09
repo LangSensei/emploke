@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path, { sep as pathSep } from "node:path";
 import type { Catalog } from "@emploke/catalog";
 import { resolveEmplokePaths } from "@emploke/paths";
@@ -55,12 +56,29 @@ const hostname = process.env.EMPLOKE_HOST ?? "127.0.0.1";
 // (or `?apiKey=<key>` for dashboards that can't easily set headers).
 // Empty / unset = no auth (only safe for loopback bind).
 const apiKey = process.env.EMPLOKE_API_KEY;
-const staticDir =
-  process.env.EMPLOKE_STATIC_DIR ?? path.resolve(import.meta.dirname, "../../dashboard/dist");
+const staticDir = process.env.EMPLOKE_STATIC_DIR ?? resolveStaticDir(import.meta.dirname);
 // In dev, the dashboard is served by Vite on its own port (:5173) and the
 // server only provides /api. In production, pass --serve-static so the server
 // serves the dashboard build output too, enabling single-port deployment.
 const serveStaticFiles = process.argv.includes("--serve-static");
+
+/**
+ * Pick the dashboard static directory based on layout.
+ *
+ *   - Bundled binary (`@langsensei/emploke` published to npm): the bundle
+ *     lives at `<pkg>/bundle/emploke.js` with assets at `<pkg>/bundle/static/`.
+ *     Detect by probing `<dirname>/static/index.html` first.
+ *   - Source / monorepo dev: fall back to `packages/dashboard/dist/` two
+ *     levels up from `packages/server/dist/`.
+ *
+ * `EMPLOKE_STATIC_DIR` always wins if set, for ad-hoc deploys that put the
+ * SPA somewhere else.
+ */
+function resolveStaticDir(serverDir: string): string {
+  const beside = path.resolve(serverDir, "static");
+  if (existsSync(path.join(beside, "index.html"))) return beside;
+  return path.resolve(serverDir, "../../dashboard/dist");
+}
 
 async function main() {
   assertBindIsSafe(hostname, apiKey);
