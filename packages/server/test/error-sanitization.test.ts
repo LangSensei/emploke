@@ -73,7 +73,6 @@ describe("errorBody", () => {
       "RuntimeStateDeletionFailed",
       "UnknownRuntimeError",
       "TrustRegistrationFailed",
-      "WorkdirPrepFailed",
       // terminal
       "NoTerminalFoundError",
       "TerminalSpawnFailedError",

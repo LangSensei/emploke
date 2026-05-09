@@ -1,11 +1,7 @@
-import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import { InvalidMcpJson, WorkdirPrepFailed } from "./errors.js";
-
-const execFileAsync = promisify(execFile);
+import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
 const MCP_CONFIG_PATH = ".mcp.json";
@@ -37,7 +33,15 @@ export function flattenSkillName(name: string): string {
  *   .mcp.json                       — `{ "mcpServers": { name: <parsed>, … } }`
  *   .github/skills/<name>/…         — each skill's content (excluding hooks/copilot/)
  *   .github/hooks/…                 — merged from each skill's hooks/copilot/
- *   .git/                           — empty repo (created by `git init`)
+ *
+ * Note: no `git init` is run. Copilot CLI loads hooks from
+ * `<cwd>/.github/hooks/*.json` directly — it does not require a `.git/`
+ * directory and does not walk up to find a git root (per the official
+ * hooks reference at
+ * docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference).
+ * Skipping `git init` removes a hard dependency on the host's `git`
+ * binary and avoids planting `.git/` directories that would otherwise
+ * need cleanup on session/task purge.
  *
  * Source data is pulled from the catalog as `AsyncIterable<{relPath, content}>`
  * streams (see {@link CatalogManager.skillEntries} /
@@ -69,7 +73,6 @@ export async function provisionCopilotWorkdir(
   await materializeAgent(workdir, agent.agent.name, catalog);
   await writeMcpConfig(workdir, agent.mcps, catalog);
   await materializeSkills(workdir, agent.skills, catalog);
-  await initGitRepo(workdir);
 }
 
 /**
@@ -210,12 +213,4 @@ async function writeFileAt(destRoot: string, relPath: string, content: Buffer): 
   }
   if (segments.length > 0) await mkdir(dir, { recursive: true });
   await writeFile(target, content);
-}
-
-async function initGitRepo(workdir: string): Promise<void> {
-  try {
-    await execFileAsync("git", ["init", "-q"], { cwd: workdir });
-  } catch (cause) {
-    throw new WorkdirPrepFailed("git init", workdir, cause as Error);
-  }
 }

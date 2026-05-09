@@ -74,7 +74,10 @@ describe("CopilotRuntime", () => {
       const r = await rt.provision(workdir, agent, catalog);
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
-      expect(await exists(path.join(workdir, ".git"))).toBe(true);
+      // No `.git/` is planted — Copilot CLI loads hooks from
+      // `<cwd>/.github/hooks/*.json` directly, so a git repo is not
+      // needed for any runtime feature. See provision.ts docstring.
+      expect(await exists(path.join(workdir, ".git"))).toBe(false);
     });
 
     it("wraps provision failures in RuntimeProvisionFailed", async () => {

@@ -55,7 +55,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "RuntimeStateDeletionFailed",
   "UnknownRuntimeError",
   "TrustRegistrationFailed",
-  "WorkdirPrepFailed",
   // @emploke/task
   "InvalidTaskIdError",
   "TaskNotFoundError",
