@@ -307,7 +307,11 @@ describe("dispatchCopilotTask", () => {
       },
     );
     await expect(promise).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
-    await expect(promise).rejects.toThrow(/timed out after 50ms/);
+    // Sanitised wrapper message (#24) carries only the runtime kind;
+    // the underlying `timed out after Nms` string lives on `cause`.
+    await expect(promise).rejects.toMatchObject({
+      cause: expect.objectContaining({ message: expect.stringMatching(/timed out after 50ms/) }),
+    });
     // Lingering child should have been killed to prevent leaks.
     expect(child.killCalls).toBeGreaterThanOrEqual(1);
   });

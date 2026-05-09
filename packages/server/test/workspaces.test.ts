@@ -25,7 +25,7 @@ async function makeApp() {
     new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
   );
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
-  return { app: workspacesRoutes({ manager, cache }), manager };
+  return { app: workspacesRoutes({ manager, cache }), manager, cache };
 }
 
 describe("workspacesRoutes — empty registry", () => {
@@ -244,5 +244,66 @@ describe("workspacesRoutes — PATCH /:id", () => {
       body: JSON.stringify({ name: "anything" }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// Issue #30 (slice B): a force-rebuild endpoint for the per-workspace
+// `WorkspaceContext` cache so the dashboard can recover from catalog
+// drift (user added an agent yaml from outside emploke and the cached
+// `CatalogManager` snapshot is stale) without restarting the server.
+describe("workspacesRoutes — POST /:id/reload", () => {
+  it("returns 204 on cold cache (no entry yet)", async () => {
+    const { app, manager } = await makeApp();
+    const ws = await manager.init({ name: "Cold", workdir: path.join(scratch, "cold") });
+    const res = await app.request(`/${ws.id}/reload`, { method: "POST" });
+    expect(res.status).toBe(204);
+  });
+
+  it("returns 204 and rebuilds the cached context after a warm hit", async () => {
+    const { app, manager, cache } = await makeApp();
+    const ws = await manager.init({ name: "Warm", workdir: path.join(scratch, "warm") });
+    const before = await cache.get(ws.id);
+    expect(before).not.toBeNull();
+    const res = await app.request(`/${ws.id}/reload`, { method: "POST" });
+    expect(res.status).toBe(204);
+    const after = await cache.get(ws.id);
+    expect(after).not.toBeNull();
+    // Identity check: the cache entry must have been replaced, not reused.
+    expect(after).not.toBe(before);
+  });
+
+  it("returns 404 for an unknown workspace id", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/00000000-0000-0000-0000-000000000000/reload", {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe("WorkspaceNotRegisteredError");
+  });
+
+  it("returns 409 with WorkspaceHasLiveTasksError when tasks are live", async () => {
+    const { app, manager, cache } = await makeApp();
+    const ws = await manager.init({ name: "Live", workdir: path.join(scratch, "live") });
+    const ctx = await cache.get(ws.id);
+    expect(ctx).not.toBeNull();
+    // Spawning a real subprocess just to flip liveCount > 0 would make
+    // this test slow + platform-dependent. The contract under test is
+    // strictly cache-side ("if the manager reports live > 0, refuse"),
+    // so we stub the public counter directly. The real implementation
+    // contract (counter > 0 mid-dispatch, back to 0 after exit, back
+    // to 0 after rollback) is exercised in
+    // `packages/task/test/manager.test.ts` under the `liveCount` describe.
+    // biome-ignore lint/suspicious/noExplicitAny: test-only stub.
+    (ctx as any).tasks.liveCount = () => 3;
+
+    const res = await app.request(`/${ws.id}/reload`, { method: "POST" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe("WorkspaceHasLiveTasksError");
+    expect(body.error).toContain("3 live task");
+    // Sanity: the original cached context is preserved (not evicted).
+    const stillCached = await cache.get(ws.id);
+    expect(stillCached).toBe(ctx);
   });
 });

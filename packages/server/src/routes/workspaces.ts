@@ -14,12 +14,18 @@ import {
 } from "@emploke/workspace";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import type { WorkspaceContextCache } from "../workspace-context.js";
-import { errorBody, parseJsonBody } from "./_shared.js";
+import { type WorkspaceContextCache, WorkspaceHasLiveTasksError } from "../workspace-context.js";
+import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
 
 /**
  * Build a JSON error response for a typed workspace error. Picks a
  * status via `workspaceErrorStatus`, falling back to `fallback`.
+ *
+ * Server-side errors (status >= 500) are logged to stderr at the boundary
+ * so operators get the full diagnostic before the body is sanitised for
+ * the client. Same contract as the runtime error path in sessions.ts /
+ * tasks.ts (#24) — every 5xx that escapes a route handler must be
+ * observable in logs.
  *
  * The `as any` cast bridges Hono's literal-union of HTTP status codes
  * with our `number` return — every value `workspaceErrorStatus`
@@ -27,6 +33,9 @@ import { errorBody, parseJsonBody } from "./_shared.js";
  */
 function wsErrorJson(c: Context, err: unknown, fallback: number) {
   const status = workspaceErrorStatus(err) ?? fallback;
+  if (status >= 500) {
+    logServerError(err);
+  }
   // biome-ignore lint/suspicious/noExplicitAny: see helper docstring above
   return c.json(errorBody(err), status as any);
 }
@@ -233,6 +242,44 @@ export function workspacesRoutes(deps: {
     }
     cache.invalidate(id);
     return c.body(null, 204);
+  });
+
+  // Force the cached `WorkspaceContext` for this id to be rebuilt on the
+  // next request. Use case: catalog drift — the user added an agent yaml
+  // to `<workspace>/catalog/agents/` from outside emploke (manual edit,
+  // git pull, …) and the cached `CatalogManager` snapshot is stale.
+  //
+  // Returns:
+  //   - 204 on success (the fresh context is also pre-loaded so the next
+  //     request hits cache).
+  //   - 404 if the workspace is no longer registered.
+  //   - 409 with `code=WorkspaceHasLiveTasksError` when there are live
+  //     task subprocesses; reloading would orphan them and race the
+  //     fresh `recoverOrphaned` sweep. Caller cancels the tasks (or
+  //     waits) and retries.
+  //   - 500 for any other load failure (e.g. corrupted workspace.json),
+  //     surfaced as `errorBody(err)` so the dashboard can show why.
+  app.post("/:id/reload", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const ctx = await cache.reload(id);
+      if (!ctx) {
+        return c.json(
+          { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
+          404,
+        );
+      }
+      return c.body(null, 204);
+    } catch (err) {
+      if (err instanceof WorkspaceHasLiveTasksError) {
+        return c.json(errorBody(err), 409);
+      }
+      // Reload failures past the live-task gate are 5xx — the workspace
+      // exists but couldn't be rebuilt (corrupted on-disk state, fs
+      // permissions, …). The 5xx logging happens inside `wsErrorJson`
+      // (#24).
+      return wsErrorJson(c, err, 500);
+    }
   });
 
   return app;

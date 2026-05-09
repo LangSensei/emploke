@@ -13,7 +13,7 @@ import {
 } from "@emploke/task";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { errorBody, parseJsonBody } from "./_shared.js";
+import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
 
 interface DispatchBody {
   agent?: unknown;
@@ -151,6 +151,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
       return c.json(task, 201);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logServerError(err);
       // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
       return c.json(errorBody(err), status as any);
     }

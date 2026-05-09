@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
-import type { RuntimeRegistry, TaskHandle } from "@emploke/runtime";
+import type { Runtime, RuntimeRegistry, TaskHandle } from "@emploke/runtime";
 import { apply } from "./apply.js";
 import { create as createTask } from "./create.js";
 import {
@@ -111,6 +111,35 @@ export class TaskManager {
   /** id → live record for tasks whose subprocess this manager still owns. */
   private readonly live = new Map<string, LiveTask>();
 
+  /**
+   * Ids whose `dispatch()` call is between workdir reservation and the
+   * `live.set` at the end of dispatch. The on-disk task record exists
+   * during this window (`mkdir` + `persist(initial)` + possibly
+   * `persist(running)` have already run), but the `LiveTask` entry is
+   * not yet installed.
+   *
+   * Surfaced via `liveCount()` so callers like `WorkspaceContextCache.reload`
+   * — which uses a non-zero count to refuse to evict the cached
+   * `TaskManager` — see in-flight dispatches as "live" too. Without
+   * this, a reload landing in the window between the workdir mkdir
+   * and `live.set` would evict the manager, the next request would
+   * lazy-build a fresh `TaskManager` whose `recoverOrphaned` sweep
+   * runs against the half-written disk row. (`recoverOrphaned` does
+   * have a PID-alive probe that prevents the worst-case flip to
+   * failure for already-running tasks, but the old manager would
+   * still be a ghost holding the subprocess handle, and the new
+   * manager's first list/refresh would miss the row until terminal.)
+   *
+   * The brief instant where an id appears in BOTH `live` and
+   * `dispatchInProgress` — between `live.set` at the end of the
+   * dispatch body and the surrounding `finally { dispatchInProgress.delete }`
+   * — is sub-tick (synchronous within the same microtask) and double-
+   * counts in `liveCount()`. Deliberate: over-count is fail-safe for
+   * reload (it errs on the side of refusal, never of permitting an
+   * unsafe eviction).
+   */
+  private readonly dispatchInProgress = new Set<string>();
+
   /** True once `shutdown()` has been called; gates exit-watcher's status decision. */
   private shuttingDown = false;
 
@@ -180,6 +209,48 @@ export class TaskManager {
       throw new TaskIdAllocationFailedError(MAX_CREATE_RETRIES);
     }
 
+    // From this point on the workdir exists on disk, so a freshly
+    // constructed sibling `TaskManager` for the same `tasksDir` —
+    // e.g. one built after `WorkspaceContextCache.reload` evicts us —
+    // could see this row. Mark `id` as in-flight so `liveCount()`
+    // refuses such evictions until the `LiveTask` entry below is
+    // installed. Cleared in the `finally` regardless of which exit
+    // path we take (rollback throw vs success return).
+    this.dispatchInProgress.add(id);
+    try {
+      return await this.runDispatch({
+        id,
+        workdir,
+        agentName,
+        instructions: opts.instructions,
+        runtime,
+        resolveResult,
+      });
+    } finally {
+      this.dispatchInProgress.delete(id);
+    }
+  }
+
+  private async runDispatch(args: {
+    id: string;
+    workdir: string;
+    agentName: string;
+    instructions: string;
+    runtime: Runtime;
+    resolveResult: AgentResolveResult;
+  }): Promise<Task> {
+    const { id, workdir, agentName, instructions, runtime, resolveResult } = args;
+    // Re-narrow `runtime.dispatchTask` for TypeScript. The caller
+    // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
+    // before reserving the workdir, so this guard is only here to
+    // restore the type narrow that's lost across the method boundary —
+    // we deliberately do NOT extract `dispatchTask` to a local because
+    // that would break the `this`-binding for runtime impls that read
+    // own state (e.g. the `RealSpawnRuntime` test fixture).
+    if (typeof runtime.dispatchTask !== "function") {
+      throw new RuntimeDoesNotSupportTasksError(runtime.kind);
+    }
+
     // 4. Persist the initial Task in `not_started`. If anything below
     //    fails, we rollback the workdir entirely — pre-spawn failures
     //    should not leave a ghost failure-status task on disk (per the
@@ -189,7 +260,7 @@ export class TaskManager {
     const initial = createTask({
       id,
       agent: agentName,
-      instructions: opts.instructions,
+      instructions,
       createdAt,
       metadata: {
         workdir,
@@ -212,7 +283,7 @@ export class TaskManager {
         taskDir: workdir,
         agent: resolveResult,
         catalog: this.catalog,
-        prompt: opts.instructions,
+        prompt: instructions,
       });
     } catch (err) {
       await safeRm(workdir, this.logger);
@@ -600,6 +671,31 @@ export class TaskManager {
   }
 
   // ─── shutdown ────────────────────────────────────────────
+
+  /**
+   * Number of tasks the manager is currently supervising — both fully
+   * "live" entries (subprocess spawned, exit watcher armed) and
+   * dispatches mid-flight (workdir reserved, on-disk row written, but
+   * not yet registered in `live`). A task is counted from the moment
+   * its workdir is created in `dispatch()` and stays counted until
+   * either the dispatch errors out (rollback) or its exit watcher has
+   * persisted the terminal status (`live.delete(id)` runs).
+   *
+   * Useful for callers that need to refuse / defer destructive operations
+   * — e.g. workspace cache reload, where evicting the cached
+   * `WorkspaceContext` mid-task would orphan the subprocess from this
+   * manager's view and leave the next request's fresh `recoverOrphaned`
+   * sweep racing the original exit watcher to write the terminal row.
+   *
+   * The `+ dispatchInProgress.size` summand closes the window between
+   * `mkdir(workdir)` in `dispatch()` and the final `live.set` — without
+   * it a reload landing in that window would see `liveCount() === 0`
+   * even though an on-disk row already exists. See `dispatchInProgress`
+   * jsdoc for full reasoning.
+   */
+  liveCount(): number {
+    return this.live.size + this.dispatchInProgress.size;
+  }
 
   /**
    * Kill every live subprocess, await their exit + post-exit persistence,
