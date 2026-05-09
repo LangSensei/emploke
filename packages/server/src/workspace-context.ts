@@ -139,6 +139,16 @@ export class WorkspaceContextCache {
    * why eviction-during-live-task is unsafe. The caller is expected to
    * cancel / wait, then retry.
    *
+   * The live-count check + `entries.delete` is a microscopic TOCTOU:
+   * a dispatch landing between the two would slip through the gate.
+   * In practice this is harmless because (a) `liveCount()` includes
+   * `dispatchInProgress` so the window is sub-tick (the dispatch's
+   * first await happens AFTER the id is in `dispatchInProgress`), and
+   * (b) `recoverOrphaned`'s PID-alive probe in the freshly built
+   * TaskManager would skip the still-alive row rather than flip it
+   * to failure. Worth knowing for any future caller that expects
+   * strict ordering.
+   *
    * Note: this surface intentionally does NOT touch any user-driven
    * eviction policy (LRU / TTL / size cap). Those are tracked separately
    * (issue #30) and need product calls about kill-vs-detach semantics

@@ -131,9 +131,12 @@ export class TaskManager {
    * manager's first list/refresh would miss the row until terminal.)
    *
    * The brief instant where an id appears in BOTH `live` and
-   * `dispatchInProgress` (between `live.set` and the surrounding
-   * `finally { dispatchInProgress.delete }`) double-counts in
-   * `liveCount()`. Deliberate: over-count is fail-safe for reload.
+   * `dispatchInProgress` — between `live.set` at the end of the
+   * dispatch body and the surrounding `finally { dispatchInProgress.delete }`
+   * — is sub-tick (synchronous within the same microtask) and double-
+   * counts in `liveCount()`. Deliberate: over-count is fail-safe for
+   * reload (it errs on the side of refusal, never of permitting an
+   * unsafe eviction).
    */
   private readonly dispatchInProgress = new Set<string>();
 

@@ -429,6 +429,56 @@ describe("exit watcher", () => {
   });
 });
 
+describe("liveCount", () => {
+  // These tests pin the contract that `WorkspaceContextCache.reload`
+  // depends on: liveCount must report > 0 for any task whose on-disk
+  // workdir exists but has not yet reached terminal status, including
+  // tasks that are mid-dispatch (workdir reserved, `live.set` not yet
+  // called) and tasks rolling back due to a runtime throw. The route
+  // tests in `packages/server/test/workspaces.test.ts` stub liveCount
+  // directly to keep the cache-side contract isolated; this is where
+  // the implementation contract itself is exercised end-to-end.
+
+  it("returns 0 on a fresh manager with no dispatches", () => {
+    const m = makeManager();
+    expect(m.liveCount()).toBe(0);
+  });
+
+  it("counts a live task between dispatch and exit, drops back to 0 after terminal", async () => {
+    const rt = new StubRuntime();
+    const m = makeManager({ runtime: rt });
+
+    expect(m.liveCount()).toBe(0);
+    const t = await m.dispatch(dispatchOf());
+    // Subprocess is alive and the LiveTask entry is installed; reload
+    // should see the work and refuse.
+    expect(m.liveCount()).toBe(1);
+
+    // Drive the exit watcher to terminal and wait for the post-exit
+    // persistence (which clears the LiveTask entry) to settle.
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+    await rt.handles[0].persisted;
+    expect(m.liveCount()).toBe(0);
+  });
+
+  it("returns to 0 after a dispatch failure rolls back the workdir (pins finally cleanup)", async () => {
+    // This is the regression-bait test: if `dispatchInProgress.delete`
+    // ever escapes the `finally` block in dispatch(), every failed
+    // dispatch leaks an id and every subsequent reload() returns 409
+    // even though no real work is in flight. Build + route tests pass
+    // because the route stubs liveCount; only this assertion catches
+    // the leak.
+    const rt = new StubRuntime();
+    rt.dispatchError = new Error("boom in spawn");
+    const m = makeManager({ runtime: rt });
+
+    expect(m.liveCount()).toBe(0);
+    await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
+    expect(m.liveCount()).toBe(0);
+  });
+});
+
 describe("get / list", () => {
   it("get() returns null for an id whose dir doesn't exist", async () => {
     const m = makeManager();

@@ -290,9 +290,10 @@ describe("workspacesRoutes — POST /:id/reload", () => {
     // Spawning a real subprocess just to flip liveCount > 0 would make
     // this test slow + platform-dependent. The contract under test is
     // strictly cache-side ("if the manager reports live > 0, refuse"),
-    // so we stub the public counter directly. Production code uses the
-    // real implementation in `packages/task/src/manager.ts`, covered by
-    // `manager.test.ts` end-to-end.
+    // so we stub the public counter directly. The real implementation
+    // contract (counter > 0 mid-dispatch, back to 0 after exit, back
+    // to 0 after rollback) is exercised in
+    // `packages/task/test/manager.test.ts` under the `liveCount` describe.
     // biome-ignore lint/suspicious/noExplicitAny: test-only stub.
     (ctx as any).tasks.liveCount = () => 3;
 
