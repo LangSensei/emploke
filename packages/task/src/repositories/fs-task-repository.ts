@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readJson, safeReaddir, writeJsonAtomic } from "@emploke/storage";
+import { mkdirP, readJson, safeReaddir, writeJsonAtomic } from "@emploke/storage";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { assertValidTaskId, TASK_ID_RE } from "../ids.js";
 import { readTaskRuntimeMetadata } from "../task-meta.js";
@@ -9,6 +9,16 @@ import type { TaskRepository } from "./repository.js";
 
 const TASK_FILE_NAME = "task.json";
 const CURRENT_SCHEMA_VERSION = 1;
+
+/** Closed set of valid task statuses; defines the validation contract for
+ * `parseTask`. Kept in sync with the `TaskStatus` union in `../types.ts`. */
+const VALID_STATUSES = new Set<TaskStatus>([
+  "not_started",
+  "running",
+  "success",
+  "failure",
+  "cancelled",
+]);
 
 /**
  * Filesystem implementation of `TaskRepository`. Each task lives at
@@ -45,7 +55,13 @@ export class FsTaskRepository implements TaskRepository {
 
   async save(task: Task): Promise<void> {
     assertValidTaskId(task.id);
-    const file = path.join(this.tasksDir, task.id, TASK_FILE_NAME);
+    const dir = path.join(this.tasksDir, task.id);
+    // Belt-and-braces: TaskManager.dispatch mkdirs the dir up-front, but
+    // applyTerminal runs much later and the dir may have been removed in
+    // the interim (manual rm, sibling process, ...). Without this, the
+    // save fails silently and the task ends up with stale on-disk state.
+    await mkdirP(dir);
+    const file = path.join(dir, TASK_FILE_NAME);
     // Flatten: schemaVersion + task fields all at the top level.
     const wire = { schemaVersion: CURRENT_SCHEMA_VERSION, ...task };
     await writeJsonAtomic(file, wire);
@@ -97,14 +113,27 @@ function parseTask(id: string, raw: unknown): Task {
   if (typeof obj.id !== "string" || obj.id.length === 0) {
     throw new CorruptedTaskError(id, "task.id must be a non-empty string");
   }
+  // The directory name MUST equal the embedded id. A mismatch would
+  // wedge every later read/save/delete (those compose paths from the
+  // logical id; the wrong dir-name would make them point at a non-
+  // existent location). Catch it at the source.
+  if (obj.id !== id) {
+    throw new CorruptedTaskError(
+      id,
+      `task.id mismatch: file at ${id}/ contains id ${JSON.stringify(obj.id)}`,
+    );
+  }
   if (typeof obj.agent !== "string") {
     throw new CorruptedTaskError(id, "task.agent must be a string");
   }
   if (typeof obj.instructions !== "string") {
     throw new CorruptedTaskError(id, "task.instructions must be a string");
   }
-  if (typeof obj.status !== "string") {
-    throw new CorruptedTaskError(id, "task.status must be a string");
+  if (typeof obj.status !== "string" || !VALID_STATUSES.has(obj.status as TaskStatus)) {
+    throw new CorruptedTaskError(
+      id,
+      `task.status must be one of: ${[...VALID_STATUSES].join(", ")}`,
+    );
   }
   if (typeof obj.createdAt !== "string") {
     throw new CorruptedTaskError(id, "task.createdAt must be a string");
@@ -128,7 +157,3 @@ function schemaMismatchReason(onDisk: unknown): string {
   }
   return `unsupported schemaVersion: ${JSON.stringify(onDisk)}`;
 }
-
-// Suppress unused-warning for ListTaskOpts members not directly referenced
-// (statuses uses Set, others use direct property access).
-void (null as unknown as TaskStatus);

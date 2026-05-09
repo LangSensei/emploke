@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJson, safeReaddir, writeJsonAtomic } from "@emploke/storage";
-import { SessionCorruptedError } from "../errors.js";
+import { InvalidSessionIdError, SessionCorruptedError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
 import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";
 
@@ -17,6 +17,12 @@ const CURRENT_SCHEMA_VERSION = 1;
  *
  * The `schemaVersion` is wrapped on save / unwrapped on read; callers
  * see only the domain `SessionState` type.
+ *
+ * Defense-in-depth: every public method validates `id` against
+ * `SESSION_ID_RE` before composing on-disk paths. The session manager
+ * already validates upstream, but `FsSessionRepository` is exported
+ * from `@emploke/session/testing` — direct callers (or future callers)
+ * must not be able to escape `sessionsDir` via a malformed id.
  */
 export class FsSessionRepository implements SessionRepository {
   private readonly sessionsDir: string;
@@ -26,6 +32,7 @@ export class FsSessionRepository implements SessionRepository {
   }
 
   async read(id: string): Promise<SessionState | null> {
+    if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     const file = path.join(this.sessionsDir, id, SESSION_FILE_NAME);
     let raw: unknown;
     try {
@@ -38,6 +45,7 @@ export class FsSessionRepository implements SessionRepository {
   }
 
   async save(id: string, state: SessionState): Promise<void> {
+    if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     const file = path.join(this.sessionsDir, id, SESSION_FILE_NAME);
     const wire: Record<string, unknown> = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -49,6 +57,9 @@ export class FsSessionRepository implements SessionRepository {
   }
 
   async delete(id: string): Promise<void> {
+    // Idempotent: invalid ids cannot match anything on disk anyway.
+    // Returning silently mirrors `FsTaskRepository.delete`.
+    if (!SESSION_ID_RE.test(id)) return;
     const file = path.join(this.sessionsDir, id, SESSION_FILE_NAME);
     await rm(file, { force: true });
   }

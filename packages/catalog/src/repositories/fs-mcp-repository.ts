@@ -1,6 +1,6 @@
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { mkdirP } from "@emploke/storage";
+import { mkdirP, writeFileAtomic } from "@emploke/storage";
 import { pathExists } from "../atomic.js";
 import { nameToPath, validateMcpName } from "../validate.js";
 import type { McpRepoEntry, McpRepository } from "./repository.js";
@@ -27,7 +27,9 @@ export class FsMcpRepository implements McpRepository {
     validateMcpName(name);
     const file = this.fileFor(name);
     await mkdirP(dirname(file));
-    await writeFile(file, content, "utf8");
+    // Atomic write: a partial JSON file would crash every downstream
+    // consumer (resolver, runtime provision, dashboard read).
+    await writeFileAtomic(file, content);
   }
 
   async delete(name: string): Promise<void> {

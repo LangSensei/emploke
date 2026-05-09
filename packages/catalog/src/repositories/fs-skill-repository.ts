@@ -1,6 +1,6 @@
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdirP } from "@emploke/storage";
+import { mkdirP, writeFileAtomic } from "@emploke/storage";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
 import { nameToPath, validateName } from "../validate.js";
 import { walkEntryDir } from "./entries-helpers.js";
@@ -28,7 +28,8 @@ export class FsSkillRepository implements SkillRepository {
     validateName(name);
     const dir = join(this.baseDir, nameToPath(name));
     await mkdirP(dir);
-    await writeFile(join(dir, "SKILL.md"), content, "utf8");
+    // Atomic write: see FsAgentRepository.write for rationale.
+    await writeFileAtomic(join(dir, "SKILL.md"), content);
   }
 
   async installFromDir(name: string, sourceDir: string): Promise<void> {

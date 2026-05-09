@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
-  WorkspaceAlreadyExistsError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
-  WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "./errors.js";
@@ -165,22 +163,26 @@ export class WorkspaceManager {
    * is preserved either way (user-owned). Idempotent for unregistered ids.
    */
   async delete(id: string, opts: WorkspaceDeleteOpts = {}): Promise<void> {
-    let purgeWorkdir: string | null = null;
     if (opts.purge) {
+      // Read first, purge subdirs, THEN drop the registry entry.
+      // Removing the entry first opens a race window where a concurrent
+      // `init({workdir: same})` could succeed (no path conflict in the
+      // index anymore) and start populating sessions/, tasks/, ... —
+      // which the in-flight purge would then nuke. Doing the purge
+      // first keeps the path-conflict guard active throughout.
       const current = await this.repository.read(id);
-      if (current) purgeWorkdir = current.workdir;
+      if (current) {
+        const layout = workspaceLayout(current.workdir);
+        await Promise.all([
+          rm(layout.sessions, { recursive: true, force: true }),
+          rm(layout.tasks, { recursive: true, force: true }),
+          rm(layout.catalog, { recursive: true, force: true }),
+          rm(layout.workflows, { recursive: true, force: true }),
+          rm(layout.logs, { recursive: true, force: true }),
+        ]);
+      }
     }
     await this.repository.delete(id);
-    if (purgeWorkdir) {
-      const layout = workspaceLayout(purgeWorkdir);
-      await Promise.all([
-        rm(layout.sessions, { recursive: true, force: true }),
-        rm(layout.tasks, { recursive: true, force: true }),
-        rm(layout.catalog, { recursive: true, force: true }),
-        rm(layout.workflows, { recursive: true, force: true }),
-        rm(layout.logs, { recursive: true, force: true }),
-      ]);
-    }
   }
 
   /** Id of the most-recently-selected workspace (or `null`). */
@@ -193,8 +195,3 @@ export class WorkspaceManager {
     return this.repository.setCurrent(id);
   }
 }
-
-// Suppress unused-warning in environments where the typed errors are
-// only thrown reflectively via repository implementations.
-void WorkspaceAlreadyExistsError;
-void WorkspaceNotFoundError;

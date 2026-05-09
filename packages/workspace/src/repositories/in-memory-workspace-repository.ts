@@ -70,5 +70,14 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
 }
 
 function freezeCopy(ws: Workspace): Workspace {
-  return Object.freeze({ ...ws });
+  // Deep-freeze the `defaults` sub-object too. Without this, mutating
+  // `ws.defaults.runtime` after save would also mutate the stored copy
+  // (Fs round-trips through JSON so it doesn't share refs; the in-memory
+  // impl must replicate that semantics or tests pass while production
+  // diverges).
+  const cloned: Workspace = {
+    ...ws,
+    ...(ws.defaults ? { defaults: Object.freeze({ ...ws.defaults }) } : {}),
+  };
+  return Object.freeze(cloned);
 }

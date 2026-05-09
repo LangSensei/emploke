@@ -42,7 +42,9 @@ describe("FsSessionRepository", () => {
 
   it("read returns null for missing session.json", async () => {
     const repo = new FsSessionRepository({ sessionsDir });
-    expect(await repo.read("ghost")).toBeNull();
+    // Use a syntactically valid id that simply doesn't exist on disk —
+    // FsSessionRepository now rejects malformed ids with InvalidSessionIdError.
+    expect(await repo.read("20990101-deadbeef")).toBeNull();
   });
 
   it("read throws SessionCorruptedError on malformed JSON", async () => {
@@ -73,7 +75,18 @@ describe("FsSessionRepository", () => {
 
   it("delete is idempotent for missing session", async () => {
     const repo = new FsSessionRepository({ sessionsDir });
-    await repo.delete("ghost");
+    // Valid format id, just absent on disk. Malformed ids are rejected
+    // up-front by InvalidSessionIdError.
+    await repo.delete("20990101-cafebabe");
+  });
+
+  it("read/save/delete reject malformed ids with InvalidSessionIdError", async () => {
+    const { InvalidSessionIdError } = await import("../src/errors.js");
+    const repo = new FsSessionRepository({ sessionsDir });
+    await expect(repo.read("../../etc/passwd")).rejects.toBeInstanceOf(InvalidSessionIdError);
+    await expect(
+      repo.save("../../etc", { runtime: "x", createdAt: "x", runtimeSessionId: null }),
+    ).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 
   it("list returns matching ids paired with state, applying createdSince", async () => {

@@ -399,8 +399,8 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
           Path: <code>{target.workdir}</code>
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          The workspace files on disk are kept untouched — only the registry entry is removed. You
-          can re-add this path later.
+          The workspace files on disk are kept untouched. Only emploke's metadata (the registry
+          entry and <code>workspace.json</code>) is removed. You can re-add this path later.
         </p>
         {error && <div className="alert alert--error">⚠ {error}</div>}
       </div>

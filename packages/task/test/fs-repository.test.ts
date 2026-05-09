@@ -118,4 +118,39 @@ describe("FsTaskRepository", () => {
     const repo = new FsTaskRepository({ tasksDir });
     await repo.delete("20260101-cccccccc");
   });
+
+  it("read throws CorruptedTaskError when task.id mismatches the dir name", async () => {
+    // Catches the storage-key-vs-logical-id drift bug. A task.json
+    // claiming id 'BBB' inside <tasksDir>/AAA/ would otherwise be
+    // returned as a Task with id BBB; subsequent read/save/delete
+    // keyed off BBB would target the (non-existent) BBB/ dir.
+    const repo = new FsTaskRepository({ tasksDir });
+    await writeWire(ID, {
+      schemaVersion: 1,
+      ...sample,
+      id: "20260509-deadbeef", // != ID
+    });
+    await expect(repo.read(ID)).rejects.toMatchObject({
+      constructor: CorruptedTaskError,
+      reason: expect.stringContaining("task.id mismatch"),
+    });
+  });
+
+  it("read throws CorruptedTaskError on out-of-range status enum value", async () => {
+    const repo = new FsTaskRepository({ tasksDir });
+    await writeWire(ID, { schemaVersion: 1, ...sample, status: "weird" });
+    await expect(repo.read(ID)).rejects.toMatchObject({
+      constructor: CorruptedTaskError,
+      reason: expect.stringContaining("task.status must be one of"),
+    });
+  });
+
+  it("save creates the task dir if it was deleted between dispatch and applyTerminal", async () => {
+    // Belt-and-braces: TaskManager.dispatch mkdirs upfront, but the
+    // dir may have been removed in the interim. save() must mkdirP
+    // the parent so the write doesn't fail silently.
+    const repo = new FsTaskRepository({ tasksDir });
+    await repo.save(sample);
+    expect(await repo.read(ID)).toEqual(sample);
+  });
 });

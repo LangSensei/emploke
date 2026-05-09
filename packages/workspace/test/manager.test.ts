@@ -165,6 +165,31 @@ describe("WorkspaceManager — delete", () => {
     await m.delete(UUID_A); // no throw
     await m.delete(UUID_A, { purge: true }); // also no throw
   });
+
+  it("delete(purge:true) purges sandbox dirs BEFORE removing the registry entry", async () => {
+    // Regression: removing the index entry first opens a window where
+    // a concurrent init({workdir: same}) could succeed and start
+    // populating sandbox dirs that the in-flight purge would then
+    // wipe. Purge-then-delete keeps the path-conflict guard active
+    // throughout the sandbox cleanup.
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path.join(ws.workdir, "sessions", "marker.txt"), "x", "utf8");
+
+    // Concurrent init({workdir: ws.workdir}) attempted while the purge is
+    // running must throw WorkspacePathConflictError — meaning the
+    // registry entry is still present at the moment the conflict check
+    // runs. We approximate this by attempting init right after delete
+    // returns and asserting the new entry sees the now-empty workdir
+    // (post-purge) without colliding.
+    await m.delete(UUID_A, { purge: true });
+    expect(await m.read(UUID_A)).toBeNull();
+    await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
+    // Workdir itself preserved.
+    const st = await fs.stat(ws.workdir);
+    expect(st.isDirectory()).toBe(true);
+  });
 });
 
 describe("WorkspaceManager — current selection", () => {

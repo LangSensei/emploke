@@ -82,9 +82,6 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
       throw new WorkspaceIdInvalidError(workspace.id);
     }
     const resolvedWorkdir = path.resolve(workspace.workdir);
-    // Persist the per-workspace metadata first. If this fails we never
-    // touch the index — better to have an unregistered workspace than
-    // a phantom index entry pointing at no metadata.
     const metadataFile = path.join(resolvedWorkdir, WORKSPACE_FILE);
     const persistedMetadata = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -92,15 +89,24 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
       createdAt: workspace.createdAt,
       ...(workspace.defaults ? { defaults: workspace.defaults } : {}),
     };
-    await writeJsonAtomic(metadataFile, persistedMetadata);
 
-    // Then add / refresh the index entry under the lock.
-    await this.mutateIndex((current) => {
+    // Both writes happen inside the registry lock so two concurrent
+    // saves with the same workdir but different ids can't interleave
+    // and leave `<workdir>/workspace.json` matching one id while the
+    // index records the other (silent corruption — `tryHydrate` would
+    // return a Workspace whose id and name disagree).
+    await this.mutateIndex(async (current) => {
       const next: IndexEntry = { id: workspace.id, workdir: resolvedWorkdir };
       const byPath = current.entries.find(
         (e) => e.workdir === resolvedWorkdir && e.id !== workspace.id,
       );
       if (byPath) throw new WorkspacePathConflictError(resolvedWorkdir, byPath.id);
+
+      // Path-conflict check passed — we own the slot. Write the metadata
+      // file now, before mutating the index, so a crash between the two
+      // leaves us with "metadata exists but unregistered" rather than
+      // "index entry pointing at no metadata".
+      await writeJsonAtomic(metadataFile, persistedMetadata);
 
       const replaced = current.entries.map((e) =>
         e.id === workspace.id
@@ -203,7 +209,9 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
     return parsed.state;
   }
 
-  private async mutateIndex(fn: (current: IndexState) => IndexState): Promise<void> {
+  private async mutateIndex(
+    fn: (current: IndexState) => IndexState | Promise<IndexState>,
+  ): Promise<void> {
     // Ensure the parent dir for the lockfile + index exists. Fresh
     // server starts on a system that has never run emploke hit this.
     await mkdirP(path.dirname(this.indexFile));
@@ -224,7 +232,7 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
           { cause: err },
         );
       }
-      const next = fn(current);
+      const next = await fn(current);
       await writeJsonAtomic(this.indexFile, serializeIndex(next));
     });
   }
