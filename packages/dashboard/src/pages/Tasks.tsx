@@ -143,7 +143,17 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     wsTokenRef.current = token;
     setRefreshing(true);
     try {
-      const next = await listTasks();
+      // Push the filter dimensions the server understands down as query
+      // params. `idQuery` (substring on id) stays client-side because
+      // it's a UX-level fuzzy-match the server doesn't model. The
+      // server returns only matching rows, so the wire payload + the
+      // visible-tasks `useMemo` below shrink in lockstep.
+      const sinceMs = presetToSinceMs(timeFilter);
+      const opts: Parameters<typeof listTasks>[0] = {};
+      if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
+      if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
+      if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
+      const next = await listTasks(opts);
       // Bail if (a) component unmounted, (b) workspace changed during
       // the fetch — listTasks() resolved against the old prefix but the
       // user is now looking at a different workspace.
@@ -165,7 +175,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         setLoaded(true);
       }
     }
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter]);
 
   useEffect(() => {
     void refresh();
@@ -243,24 +253,17 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const readyAgents = agents.filter((a) => a.status === "ready");
 
   // Memoize so re-renders triggered by polling don't re-allocate the array
-  // unless the underlying data actually changed.
+  // unless the underlying data actually changed. Note: agent / runtime /
+  // time-preset filters are applied server-side in `refresh()` above —
+  // `tasks` here is already the filtered set. We only re-filter on
+  // `idQuery` here because substring search is a UX-level fuzzy match
+  // the server doesn't model; pushing it down would require an unindexed
+  // contains scan that's no cheaper than what we're doing in JS.
   const visibleTasks = useMemo(() => {
     const q = idQuery.trim().toLowerCase();
-    const sinceMs = presetToSinceMs(timeFilter);
-    return tasks.filter((t) => {
-      if (q !== "" && !t.id.toLowerCase().includes(q)) return false;
-      if (agentFilter !== ALL_AGENTS && t.agent !== agentFilter) return false;
-      if (runtimeFilter !== ALL_RUNTIMES) {
-        const rt = typeof t.metadata?.runtime === "string" ? t.metadata.runtime : "";
-        if (rt !== runtimeFilter) return false;
-      }
-      if (sinceMs !== null) {
-        const created = Date.parse(t.createdAt);
-        if (Number.isFinite(created) && created < sinceMs) return false;
-      }
-      return true;
-    });
-  }, [tasks, idQuery, agentFilter, runtimeFilter, timeFilter]);
+    if (q === "") return tasks;
+    return tasks.filter((t) => t.id.toLowerCase().includes(q));
+  }, [tasks, idQuery]);
 
   // Drop the selected task from view if it's no longer in the visible set
   // (e.g. user typed a filter that excludes it). Keeps the detail pane in

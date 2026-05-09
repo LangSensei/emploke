@@ -21,7 +21,14 @@ import {
   readTaskRuntimeMetadata,
   writePersistedTask,
 } from "./task-file.js";
-import type { DispatchOpts, Logger, Task, TaskManagerConfig } from "./types.js";
+import type {
+  DispatchOpts,
+  ListTaskOpts,
+  Logger,
+  Task,
+  TaskManagerConfig,
+  TaskStatus,
+} from "./types.js";
 
 const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_RUNTIME = "copilot";
@@ -331,11 +338,17 @@ export class TaskManager {
   // ─── list ────────────────────────────────────────────────
 
   /**
-   * List every persisted task in `tasksDir`, newest first. Cheap reads
-   * only — no runtime introspection. Corrupted entries are logged and
-   * skipped.
+   * List persisted tasks in `tasksDir`, newest first. Cheap reads only —
+   * no runtime introspection. Corrupted entries are logged and skipped.
+   *
+   * Filters in `opts` are applied server-side after reading each
+   * `task.json`, so the manager returns only the rows the caller asked
+   * for. This mirrors `@emploke/session`'s `list(ListSessionOpts)`
+   * pattern and lets the dashboard push its filter UI down to the
+   * server (so e.g. an "agent: writer" filter doesn't ship the other
+   * 95% of the workspace's tasks across the wire on every poll).
    */
-  async list(): Promise<Task[]> {
+  async list(opts: ListTaskOpts = {}): Promise<Task[]> {
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(this.tasksDir, { withFileTypes: true });
@@ -353,9 +366,19 @@ export class TaskManager {
         }),
     );
 
+    const statusSet = opts.statuses ? new Set<TaskStatus>(opts.statuses) : null;
     const tasks: Task[] = [];
     for (const t of drafts) {
-      if (t !== null) tasks.push(t);
+      if (t === null) continue;
+      if (opts.agent !== undefined && t.agent !== opts.agent) continue;
+      // ISO 8601 strings (Z-suffixed) sort lexicographically as dates.
+      if (opts.createdSince !== undefined && t.createdAt < opts.createdSince) continue;
+      if (opts.runtime !== undefined) {
+        const runtimeMeta = readTaskRuntimeMetadata(t).runtime;
+        if (runtimeMeta !== opts.runtime) continue;
+      }
+      if (statusSet !== null && !statusSet.has(t.status)) continue;
+      tasks.push(t);
     }
 
     // Newest first. createdAt is ISO 8601 → lexicographic sort. Id is the

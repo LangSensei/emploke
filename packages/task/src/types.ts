@@ -146,3 +146,36 @@ export interface DispatchOpts {
   /** Override the configured `defaultRuntime`. */
   readonly runtime?: string;
 }
+
+/**
+ * Options for `TaskManager.list`. Mirrors the shape of
+ * `@emploke/session`'s `ListSessionOpts` so callers see a consistent
+ * filter API across the two managers.
+ *
+ * Filters are applied AFTER reading `task.json` (cheap) but the
+ * filtered set is still the only thing returned to the caller — server
+ * routes can therefore push their own filter inputs down to the
+ * manager and avoid serialising entries the dashboard would discard.
+ */
+export interface ListTaskOpts {
+  /** Filter to tasks whose `agent` matches this exact value. */
+  readonly agent?: string;
+  /**
+   * Drop tasks whose `createdAt` is strictly before this ISO 8601
+   * timestamp. ISO 8601 strings (Z-suffixed) sort lexicographically as
+   * dates, so the comparison is a plain string `<`.
+   */
+  readonly createdSince?: string;
+  /**
+   * Filter to tasks whose `metadata.runtime` matches this exact value.
+   * Useful for the dashboard's runtime dropdown filter.
+   */
+  readonly runtime?: string;
+  /**
+   * Filter to tasks in one of the listed statuses. The dashboard uses
+   * this for the auto-poll path (`status=running`) so the server can
+   * answer "do I have anything still in flight?" without serialising
+   * every terminal task.
+   */
+  readonly statuses?: readonly TaskStatus[];
+}

@@ -4,10 +4,12 @@ import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   InvalidTaskIdError,
+  type ListTaskOpts,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   type TaskManager,
   TaskNotFoundError,
+  type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
@@ -55,10 +57,69 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
       ? (resolveManager as TaskManagerResolver)
       : () => resolveManager;
 
-  // List every task in this workspace (newest-first per the manager).
+  // List tasks in this workspace, newest-first per the manager.
+  // Optional server-side filters (mirroring the sessions route):
+  //   ?agent=<name>             — exact match on Task.agent
+  //   ?runtime=<kind>           — exact match on metadata.runtime
+  //   ?createdSince=<iso8601>   — drop tasks older than the cutoff
+  //   ?status=running,success   — include only listed statuses (CSV)
+  // Pushing filters to the server keeps the wire payload + dashboard
+  // re-render bounded for workspaces with hundreds of tasks. Filters
+  // not present in the query are passed through unset.
   app.get("/", async (c) => {
+    const agent = c.req.query("agent");
+    const runtime = c.req.query("runtime");
+    const createdSince = c.req.query("createdSince");
+    const status = c.req.query("status");
+
+    // Same canonicalisation discipline sessions.ts uses: parse leniently
+    // (`Date.parse` accepts loose forms), then forward the canonical
+    // ISO 8601 string so the manager's lexicographic compare stays
+    // correct.
+    let createdSinceIso: string | undefined;
+    if (createdSince !== undefined) {
+      const t = Date.parse(createdSince);
+      if (Number.isNaN(t)) {
+        return c.json({ error: "createdSince must be an ISO 8601 timestamp" }, 400);
+      }
+      createdSinceIso = new Date(t).toISOString();
+    }
+
+    let statuses: TaskStatus[] | undefined;
+    if (status !== undefined) {
+      const valid = new Set<TaskStatus>([
+        "not_started",
+        "running",
+        "success",
+        "failure",
+        "cancelled",
+      ]);
+      const parts = status
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const bad = parts.find((s) => !valid.has(s as TaskStatus));
+      if (bad !== undefined) {
+        return c.json(
+          {
+            error: `unknown status: ${JSON.stringify(bad)} (expected not_started, running, success, failure, cancelled)`,
+          },
+          400,
+        );
+      }
+      statuses = parts as TaskStatus[];
+    }
+
+    // Build the opts shape mutably; ListTaskOpts itself is `readonly`
+    // by convention so the manager can safely capture it.
+    const opts: { -readonly [K in keyof ListTaskOpts]: ListTaskOpts[K] } = {};
+    if (agent !== undefined) opts.agent = agent;
+    if (runtime !== undefined) opts.runtime = runtime;
+    if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
+    if (statuses !== undefined) opts.statuses = statuses;
+
     try {
-      const list = await getManager(c).list();
+      const list = await getManager(c).list(opts);
       return c.json(list);
     } catch (err) {
       return c.json(errorBody(err), 400);

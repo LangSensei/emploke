@@ -482,6 +482,101 @@ describe("get / list", () => {
     const all = await m.list();
     expect(all).toHaveLength(1);
   });
+
+  // Server-side filter parity with @emploke/session: callers can push
+  // their UI filter dimensions down so the wire payload + per-poll JSON
+  // parsing scale with the visible set, not the workspace total.
+  describe("list(opts) — server-side filter", () => {
+    it("filters by exact agent match", async () => {
+      const rt = new StubRuntime();
+      const m = makeManager({
+        runtime: rt,
+        catalog: stubCatalog({
+          agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
+        }),
+      });
+      await m.dispatch(dispatchOf({ agent: "writer" }));
+      await m.dispatch(dispatchOf({ agent: "reviewer" }));
+      await m.dispatch(dispatchOf({ agent: "writer" }));
+
+      const writers = await m.list({ agent: "writer" });
+      expect(writers).toHaveLength(2);
+      expect(writers.every((t) => t.agent === "writer")).toBe(true);
+    });
+
+    it("filters by exact runtime match (reads from metadata.runtime)", async () => {
+      const copilot = new StubRuntime("copilot");
+      const gemini = new StubRuntime("gemini");
+      const reg = new RuntimeRegistry();
+      reg.register(copilot);
+      reg.register(gemini);
+      const m = makeManager({ registry: reg, runtime: copilot });
+      await m.dispatch(dispatchOf({ runtime: "copilot" }));
+      await m.dispatch(dispatchOf({ runtime: "gemini" }));
+
+      const onlyGemini = await m.list({ runtime: "gemini" });
+      expect(onlyGemini).toHaveLength(1);
+      expect(readTaskRuntimeMetadata(onlyGemini[0]).runtime).toBe("gemini");
+    });
+
+    it("filters by createdSince (lexicographic on ISO 8601)", async () => {
+      const rt = new StubRuntime();
+      let nowMs = Date.parse("2026-05-08T01:00:00.000Z");
+      const m = makeManager({
+        runtime: rt,
+        now: () => new Date(nowMs),
+        randomBytes: seqRandom(1),
+      });
+      await m.dispatch(dispatchOf({ instructions: "old" }));
+      nowMs += 60_000;
+      const cutoff = new Date(nowMs).toISOString();
+      nowMs += 60_000;
+      await m.dispatch(dispatchOf({ instructions: "new" }));
+
+      const recent = await m.list({ createdSince: cutoff });
+      expect(recent).toHaveLength(1);
+      expect(recent[0].instructions).toBe("new");
+    });
+
+    it("filters by status set (running|success|failure|cancelled|not_started)", async () => {
+      const rt = new StubRuntime();
+      const m = makeManager({ runtime: rt });
+      const a = await m.dispatch(dispatchOf({ instructions: "a" }));
+      void rt.handles[0].exit({ code: 0, signal: null });
+      await awaitTerminal(m, a.id);
+      await m.dispatch(dispatchOf({ instructions: "b" })); // stays running
+
+      const onlyRunning = await m.list({ statuses: ["running"] });
+      expect(onlyRunning).toHaveLength(1);
+      expect(onlyRunning[0].instructions).toBe("b");
+
+      const onlySuccess = await m.list({ statuses: ["success"] });
+      expect(onlySuccess).toHaveLength(1);
+      expect(onlySuccess[0].instructions).toBe("a");
+
+      const both = await m.list({ statuses: ["running", "success"] });
+      expect(both).toHaveLength(2);
+    });
+
+    it("combines multiple filters with AND semantics", async () => {
+      const rt = new StubRuntime();
+      const m = makeManager({
+        runtime: rt,
+        catalog: stubCatalog({
+          agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
+        }),
+      });
+      await m.dispatch(dispatchOf({ agent: "writer", instructions: "w1" }));
+      await m.dispatch(dispatchOf({ agent: "reviewer", instructions: "r1" }));
+      const target = await m.dispatch(dispatchOf({ agent: "writer", instructions: "w2" }));
+      void rt.handles[2].exit({ code: 0, signal: null });
+      await awaitTerminal(m, target.id);
+
+      const writersDone = await m.list({ agent: "writer", statuses: ["success"] });
+      expect(writersDone).toHaveLength(1);
+      expect(writersDone[0].instructions).toBe("w2");
+    });
+  });
 });
 
 describe("delete", () => {

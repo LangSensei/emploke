@@ -419,8 +419,30 @@ export interface TaskRecord {
   failure?: TaskFailure;
 }
 
-export const listTasks = (): Promise<TaskRecord[]> =>
-  fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks`, "tasks");
+/**
+ * Optional server-side filters for `listTasks`. Mirrors the server's
+ * `ListTaskOpts` (which mirrors `ListSessionOpts` in the sessions
+ * surface). Omitted fields are not sent on the wire and the server
+ * returns the full set.
+ */
+export interface ListTasksOpts {
+  agent?: string;
+  runtime?: string;
+  /** ISO 8601 (the server canonicalises). */
+  createdSince?: string;
+  /** Statuses to include. The server joins with `,` for the query. */
+  statuses?: TaskStatus[];
+}
+
+export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
+  const qs = new URLSearchParams();
+  if (opts.agent) qs.set("agent", opts.agent);
+  if (opts.runtime) qs.set("runtime", opts.runtime);
+  if (opts.createdSince) qs.set("createdSince", opts.createdSince);
+  if (opts.statuses && opts.statuses.length > 0) qs.set("status", opts.statuses.join(","));
+  const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
+  return fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks${suffix}`, "tasks");
+};
 
 export const getTask = (id: string): Promise<TaskRecord> =>
   fetchJson<TaskRecord>(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, "task");

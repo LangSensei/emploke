@@ -44,7 +44,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
 }
 
 describe("tasksRoutes", () => {
-  it("GET / lists tasks", async () => {
+  it("GET / lists tasks (no filters)", async () => {
     const m = stubManager({});
     const res = await tasksRoutes(m).request("/");
     expect(res.status).toBe(200);
@@ -53,6 +53,71 @@ describe("tasksRoutes", () => {
     expect(body[0].id).toBe(sampleTask.id);
     expect(body[0].agent).toBe("writer");
     expect(m.list).toHaveBeenCalledTimes(1);
+    expect(m.list).toHaveBeenCalledWith({});
+  });
+
+  it("GET /?agent=X forwards the agent filter to the manager", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(m).request("/?agent=writer");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ agent: "writer" });
+  });
+
+  it("GET /?runtime=copilot forwards the runtime filter", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(m).request("/?runtime=copilot");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ runtime: "copilot" });
+  });
+
+  it("GET /?createdSince=<iso> canonicalises the timestamp before forwarding", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    // Send a non-canonical form (no Z suffix); server must canonicalise
+    // to ISO 8601 UTC so the manager's lexicographic compare stays
+    // correct.
+    const res = await tasksRoutes(m).request("/?createdSince=2026-05-08T01%3A00%3A00.000Z");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ createdSince: "2026-05-08T01:00:00.000Z" });
+  });
+
+  it("GET /?createdSince=garbage returns 400", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(m).request("/?createdSince=not-a-date");
+    expect(res.status).toBe(400);
+    expect(m.list).not.toHaveBeenCalled();
+  });
+
+  it("GET /?status=running,success forwards the status set", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(m).request("/?status=running,success");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ statuses: ["running", "success"] });
+  });
+
+  it("GET /?status=bogus returns 400 (unknown status)", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(m).request("/?status=bogus");
+    expect(res.status).toBe(400);
+    expect(m.list).not.toHaveBeenCalled();
+  });
+
+  it("GET / combines all filters with AND semantics on the manager call", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(m).request(
+      "/?agent=writer&runtime=copilot&createdSince=2026-05-08T01%3A00%3A00.000Z&status=running",
+    );
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({
+      agent: "writer",
+      runtime: "copilot",
+      createdSince: "2026-05-08T01:00:00.000Z",
+      statuses: ["running"],
+    });
   });
 
   it("POST / requires JSON body", async () => {

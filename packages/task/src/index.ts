@@ -60,6 +60,7 @@ export type {
   CompleteEvent,
   DispatchOpts,
   FailEvent,
+  ListTaskOpts,
   Logger,
   StartEvent,
   Task,
