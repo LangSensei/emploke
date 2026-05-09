@@ -425,7 +425,7 @@
 
 <h2>About emploke</h2>
 
-<p><a href="https://github.com/LangSensei/emploke">emploke</a> is our reference implementation of all this. Today it's an Electron app plus a small Node server, with a workspace abstraction, a runtime registry, a capability catalog (skills, MCPs, agents), and a thin task/session model. The code is deliberately small. If we did our jobs right, it should keep shrinking — not growing — as the models get better.</p>
+<p><a href="https://github.com/LangSensei/emploke">emploke</a> is our reference implementation of all this. Today it's a pnpm monorepo of small TypeScript packages running locally, exposing a single HTTP server (Hono) with a bundled React dashboard, with a workspace abstraction, a runtime registry, a capability catalog (skills, MCPs, agents), and a thin task/session model. The code is deliberately small. If we did our jobs right, it should keep shrinking — not growing — as the models get better.</p>
 
 <p>If you want to see how the beliefs map onto code, the <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">architecture guide</a> is the right next read. It's the engineering view of the same picture: where the layers are, what the runtime contract looks like, how the repository pattern keeps the storage backend swappable.</p>
 
@@ -540,7 +540,7 @@
 
 <h2>关于 emploke</h2>
 
-<p><a href="https://github.com/LangSensei/emploke">emploke</a> 是我们对这套思路的参考实现。今天它是一个 Electron 应用加一个小的 Node 服务器，里面有 workspace 抽象、runtime registry、capability catalog（skill、MCP、agent），以及一层很薄的 task/session 模型。代码刻意保持很小。如果我们做对了，它应该会随着模型变强而变得更小，而不是更大。</p>
+<p><a href="https://github.com/LangSensei/emploke">emploke</a> 是我们对这套思路的参考实现。今天它是一个 pnpm monorepo，由若干个小的 TypeScript 包组成，跑在本地，对外暴露一个 HTTP 服务器（Hono）加一个打包好的 React dashboard，里面有 workspace 抽象、runtime registry、capability catalog（skill、MCP、agent），以及一层很薄的 task/session 模型。代码刻意保持很小。如果我们做对了，它应该会随着模型变强而变得更小，而不是更大。</p>
 
 <p>如果你想看这些信念落到代码上是什么样子，下一步推荐读 <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">architecture 文档</a>——那是同一幅图的工程视角：层次怎么分、runtime contract 长什么样、repository 模式怎么让存储后端可替换。</p>
 
