@@ -49,7 +49,18 @@ jobs:
       # npm Trusted Publishing requires npm 11.5.1 or newer; Node 22
       # currently ships npm 10.x. Pin to 11.x latest for OIDC support.
       - name: Upgrade npm
-        run: npm install -g npm@latest
+        run: |
+          npm install -g npm@latest
+          # Sanity check: --provenance silently no-ops on npm < 11.5.1, so
+          # we want a loud failure here rather than publishing a release
+          # without an attestation.
+          installed=$(npm --version)
+          echo "npm version: $installed"
+          major=$(echo "$installed" | cut -d. -f1)
+          if [ "$major" -lt 11 ]; then
+            echo "::error::npm $installed is too old for Trusted Publishing (need 11.5.1+)"
+            exit 1
+          fi
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -67,10 +78,13 @@ jobs:
           fi
           echo "publishing version $pkg_version"
 
-      - name: Bundle
-        run: pnpm bundle
-
       - name: Publish
+        # `prepublishOnly: pnpm bundle` in package.json runs the bundle
+        # step here, so we don't have a separate Bundle job — running it
+        # twice (once in CI, once via prepublishOnly) would just double
+        # the build time and create ambiguity about which artefacts
+        # actually got uploaded.
+        #
         # Prereleases (X.Y.Z-foo) → `next` dist-tag; stable → `latest`.
         # Authentication is OIDC via Trusted Publishing — no token env.
         run: |
