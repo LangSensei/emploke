@@ -103,6 +103,45 @@ describe("sessionsRoutes", () => {
     expect(m.list).toHaveBeenCalledWith({ createdSince: "2024-01-01T00:00:00.000Z" });
   });
 
+  it("GET /?activeSince=ISO passes the timestamp through", async () => {
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request("/?activeSince=2026-05-01T00:00:00.000Z");
+    expect(res.status).toBe(200);
+    expect(m.list).toHaveBeenCalledWith({ activeSince: "2026-05-01T00:00:00.000Z" });
+  });
+
+  it("GET /?activeSince=garbage returns 400", async () => {
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request("/?activeSince=not-a-date");
+    expect(res.status).toBe(400);
+    expect(m.list).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.error).toMatch(/activeSince must be an ISO 8601 timestamp/);
+  });
+
+  it("GET /?createdSince + ?activeSince combine", async () => {
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request(
+      "/?createdSince=2026-01-01T00:00:00.000Z&activeSince=2026-04-01T00:00:00.000Z",
+    );
+    expect(res.status).toBe(200);
+    expect(m.list).toHaveBeenCalledWith({
+      createdSince: "2026-01-01T00:00:00.000Z",
+      activeSince: "2026-04-01T00:00:00.000Z",
+    });
+  });
+
+  it("GET /?activeSince=<non-ISO-but-parseable> normalises to canonical ISO", async () => {
+    // Same canonicalisation rationale as createdSince — the manager's
+    // `lastActiveAt < activeSince` lexicographic compare is only
+    // correct for canonical ISO 8601 strings. Validates symmetry with
+    // the createdSince canonicalisation above.
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request("/?activeSince=Jan 1 2024 UTC");
+    expect(res.status).toBe(200);
+    expect(m.list).toHaveBeenCalledWith({ activeSince: "2024-01-01T00:00:00.000Z" });
+  });
+
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
     const res = await sessionsRoutes(m).request("/", { method: "POST", body: "not json" });

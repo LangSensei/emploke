@@ -540,9 +540,9 @@ function WorkspaceLayout() {
 
   // Sync the dashboard's clock skew against the server periodically.
   // serverNow() is then used by Tasks/Sessions presets ("Today", "7d",
-  // "30d") so the createdSince cutoff matches what the server actually
-  // sees, even if the user's laptop clock has drifted. See
-  // ./serverClock.ts for the rationale.
+  // "30d") so the cutoff (createdSince for tasks, activeSince for
+  // sessions) matches what the server actually sees, even if the user's
+  // laptop clock has drifted. See ./serverClock.ts for the rationale.
   useEffect(() => startClockSync(), []);
 
   const navigateToSection = useCallback(

@@ -64,6 +64,17 @@ export interface ListSessionOpts {
    * runtime.refresh() call, so excluded entries pay zero refresh cost.
    */
   readonly createdSince?: string;
+  /**
+   * Drop sessions whose `lastActiveAt` is strictly before this ISO 8601
+   * timestamp. Applied AFTER `runtime.refresh()` (lastActiveAt only exists
+   * post-refresh). Sessions that have never been launched
+   * (`lastActiveAt === null`) are dropped by this filter — "never active"
+   * fails the "active since X" predicate by definition.
+   *
+   * Use `createdSince` instead if you want a cheaper pre-refresh filter
+   * keyed off creation time.
+   */
+  readonly activeSince?: string;
 }
 
 /** Options for SessionManager.delete. */

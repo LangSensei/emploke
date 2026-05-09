@@ -80,28 +80,39 @@ export function sessionsRoutes(
       ? (resolveManager as SessionManagerResolver)
       : () => resolveManager;
 
-  // List sessions, optionally filtered by agent and/or createdSince timestamp.
+  // List sessions, optionally filtered by agent / createdSince / activeSince.
   app.get("/", async (c) => {
     const agent = c.req.query("agent");
     const createdSince = c.req.query("createdSince");
-    // The manager compares createdSince against draft.createdAt with a plain
-    // string `<` (which is correct for ISO 8601 with a `Z` suffix because
-    // those strings sort lexicographically as dates). If we accepted any
-    // Date.parse-able form like "Jan 1 2024" and forwarded it raw, the
-    // lexicographic compare would be wrong (e.g. '2' < 'J' makes a 2026
-    // session sort below a "Jan 1 2024" cutoff). So: parse leniently,
-    // then forward the canonical ISO 8601 form.
+    const activeSince = c.req.query("activeSince");
+    // The manager compares timestamps with a plain string `<` (which is
+    // correct for ISO 8601 with a `Z` suffix because those strings sort
+    // lexicographically as dates). If we accepted any Date.parse-able form
+    // like "Jan 1 2024" and forwarded it raw, the lexicographic compare
+    // would be wrong (e.g. '2' < 'J' makes a 2026 session sort below a
+    // "Jan 1 2024" cutoff). So: parse leniently, then forward the
+    // canonical ISO 8601 form. Same canonicalisation for both filters.
+    const canonicalise = (raw: string, label: string): string | { error: string } => {
+      const t = Date.parse(raw);
+      if (Number.isNaN(t)) return { error: `${label} must be an ISO 8601 timestamp` };
+      return new Date(t).toISOString();
+    };
     let createdSinceIso: string | undefined;
     if (createdSince !== undefined) {
-      const t = Date.parse(createdSince);
-      if (Number.isNaN(t)) {
-        return c.json({ error: "createdSince must be an ISO 8601 timestamp" }, 400);
-      }
-      createdSinceIso = new Date(t).toISOString();
+      const r = canonicalise(createdSince, "createdSince");
+      if (typeof r !== "string") return c.json(r, 400);
+      createdSinceIso = r;
     }
-    const opts: { agent?: string; createdSince?: string } = {};
+    let activeSinceIso: string | undefined;
+    if (activeSince !== undefined) {
+      const r = canonicalise(activeSince, "activeSince");
+      if (typeof r !== "string") return c.json(r, 400);
+      activeSinceIso = r;
+    }
+    const opts: { agent?: string; createdSince?: string; activeSince?: string } = {};
     if (agent !== undefined) opts.agent = agent;
     if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
+    if (activeSinceIso !== undefined) opts.activeSince = activeSinceIso;
     try {
       const list = await getManager(c).list(opts);
       return c.json(list);

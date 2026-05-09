@@ -1,11 +1,26 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as storage from "@emploke/storage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NameInvalid } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
+
+// Hoisted-by-vitest mock that wraps `writeFileAtomic` with a spyable
+// passthrough. Only the regression test below uses the spy; everything
+// else hits the real implementation. Required because the production
+// code static-imports `writeFileAtomic` from `@emploke/storage`, which
+// binds the function at module load — `vi.spyOn(storage, ...)` after
+// the fact would not affect the production code's local binding.
+vi.mock("@emploke/storage", async () => {
+  const actual = await vi.importActual<typeof import("@emploke/storage")>("@emploke/storage");
+  return {
+    ...actual,
+    writeFileAtomic: vi.fn(actual.writeFileAtomic),
+  };
+});
 
 let catalogDir: string;
 let sourceDir: string;
@@ -202,4 +217,49 @@ describe("FsSkillRepository.entries", () => {
       "hooks/copilot/pre.js": "pre-bytes",
     });
   });
+});
+
+// Parameterised regression for issue #45: every catalog repo's `write()`
+// MUST go through `@emploke/storage.writeFileAtomic`. The original
+// PR #41 review-fix claimed all three were switched but agent was
+// missed; without this test the next mass-rewrite could lose it again
+// silently.
+//
+// We assert directly that `writeFileAtomic` was invoked via the
+// hoisted vi.mock spy at the top of the file. A behavioural test
+// (e.g. "no .tmp.* artifact lingers") doesn't actually catch the bug:
+// `writeFile` doesn't create temp files either, so a regressed
+// implementation would still pass that check. Only "did we go through
+// the atomic seam at all" is unambiguous.
+describe("catalog FS repos: write() goes through writeFileAtomic (regression for #45)", () => {
+  beforeEach(() => {
+    vi.mocked(storage.writeFileAtomic).mockClear();
+  });
+
+  for (const { name: repoName, build, payload, entryName } of [
+    {
+      name: "FsAgentRepository",
+      build: (dir: string) => new FsAgentRepository(dir),
+      entryName: "writer",
+      payload: "---\nname: writer\ndescription: v\nversion: 0.0.1\n---\n# body\n",
+    },
+    {
+      name: "FsSkillRepository",
+      build: (dir: string) => new FsSkillRepository(dir),
+      entryName: "lint",
+      payload: "---\nname: lint\ndescription: v\nversion: 0.0.1\n---\n# body\n",
+    },
+    {
+      name: "FsMcpRepository",
+      build: (dir: string) => new FsMcpRepository(dir),
+      entryName: "github",
+      payload: '{"command":"gh"}',
+    },
+  ]) {
+    it(`${repoName}.write() invokes @emploke/storage.writeFileAtomic`, async () => {
+      const repo = build(catalogDir);
+      await repo.write(entryName, payload);
+      expect(vi.mocked(storage.writeFileAtomic)).toHaveBeenCalled();
+    });
+  }
 });

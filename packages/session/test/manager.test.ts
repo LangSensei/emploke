@@ -456,36 +456,58 @@ describe("list()", () => {
     expect(persisted.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
-  it("sorts by lastActiveAt desc, falling back to createdAt", async () => {
+  it("sorts active sessions by lastActiveAt desc, never-launched ones at the bottom (#43)", async () => {
     const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
     });
-    // Three sessions: a is older, b is newer (no activity), c has activity.
-    // Sleep between each create so createdAt strictly increases — Linux/macOS
-    // can otherwise place two creates in the same millisecond and force the
-    // sort to fall through to its id tiebreaker, which the assertion below
-    // doesn't cover.
+    // Three sessions: a is older but active in 2099, b/c are never launched
+    // (lastActiveAt === null). The new sort puts active first, then null
+    // by createdAt desc — so order is [a, c, b] regardless of c's
+    // createdAt-> Wait: actually b is the second-created, c is third, so
+    // createdAt(c) > createdAt(b). Result must be [a (active), c (newer null), b (older null)].
     rt.refreshResult = null;
     const a = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
     const b = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
     const c = await m.create({ agent: "demo" });
-    // create() doesn't call refresh, so lastActiveAt isn't persisted at create
-    // time. To make c sort by lastActiveAt during list(), we need refresh to
-    // return a non-null result *only for c* — refreshResultBy lets us do that
-    // without affecting a/b (which must fall back to createdAt).
-    rt.refreshResultBy.set(c.id, {
+    rt.refreshResultBy.set(a.id, {
       lastActiveAt: "2099-01-01T00:00:00.000Z",
       preview: null,
       runtimeSessionId: rt.provisionId as string,
     });
     const out = await m.list();
-    // c has lastActiveAt=2099 → first. Then b/a sorted by createdAt desc.
-    expect(out.map((r) => r.id)).toEqual([c.id, b.id, a.id]);
+    expect(out.map((r) => r.id)).toEqual([a.id, c.id, b.id]);
+  });
+
+  it("activeSince filter drops sessions whose lastActiveAt is null or older than the cutoff", async () => {
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+    });
+    rt.refreshResult = null;
+    const old = await m.create({ agent: "demo" });
+    const recent = await m.create({ agent: "demo" });
+    const never = await m.create({ agent: "demo" });
+    rt.refreshResultBy.set(old.id, {
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+      preview: null,
+      runtimeSessionId: rt.provisionId as string,
+    });
+    rt.refreshResultBy.set(recent.id, {
+      lastActiveAt: "2099-12-31T00:00:00.000Z",
+      preview: null,
+      runtimeSessionId: rt.provisionId as string,
+    });
+    // `never` keeps the default null refresh.
+    const cutoff = "2099-01-01T00:00:00.000Z";
+    const out = await m.list({ activeSince: cutoff });
+    expect(out.map((s) => s.id)).toEqual([recent.id]);
   });
 });
 

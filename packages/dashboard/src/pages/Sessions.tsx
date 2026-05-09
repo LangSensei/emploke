@@ -47,15 +47,22 @@ type TimePreset = (typeof TIME_PRESETS)[number]["value"];
 const DEFAULT_TIME_PRESET: TimePreset = "7d";
 
 /**
- * Convert a preset to an ISO 8601 lower bound for `createdAt`.
+ * Convert a preset to an ISO 8601 lower bound for the **lastActiveAt**
+ * filter (was `createdAt` until #43; "most recent activity" matches the
+ * UX of every chat / messaging app and is what users actually mean when
+ * they pick "Today" or "7d" in the time picker).
  *
  * Anchored on `now` (defaults to `serverNow()` from `../serverClock`)
  * so cutoffs are computed against the **server's** clock, not the
  * user's laptop. Without this, a clock-skewed laptop can hide today's
- * tasks behind a future-dated "today" cutoff or include yesterday's
+ * sessions behind a future-dated "today" cutoff or include yesterday's
  * with a stale one.
+ *
+ * Sessions that have never been launched (`lastActiveAt === null`) are
+ * excluded by any non-`all` preset — by definition they have no
+ * activity to be recent.
  */
-function presetToCreatedSince(preset: TimePreset, now: Date = serverNow()): string | undefined {
+function presetToActiveSince(preset: TimePreset, now: Date = serverNow()): string | undefined {
   switch (preset) {
     case "today": {
       // Local-time midnight. The server compares ISO strings, so we send the
@@ -121,7 +128,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
     try {
       const next = await listSessions({
         agent: filter === ALL_AGENTS ? undefined : filter,
-        createdSince: presetToCreatedSince(timeFilter),
+        activeSince: presetToActiveSince(timeFilter),
       });
       if (!mountedRef.current) return;
       setError(null);
@@ -265,7 +272,11 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
             onChange={(e) => setIdQuery(e.target.value)}
             placeholder="session id…"
             className="input"
-            style={{ width: 200 }}
+            // Session ids are fixed-width (`YYYYMMDD-xxxxxxxx`, 17 chars).
+            // 160px is the sweet spot — holds the full id, the search-input
+            // clear-x, and a bit of breathing room. The original 200px was
+            // wasted; 150 was a hair too tight.
+            style={{ width: 160 }}
           />
           <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
             Agent
@@ -301,7 +312,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
             ))}
           </select>
           <span className="muted" style={{ fontSize: 12 }}>
-            Created
+            Active
           </span>
           <div className="pills">
             {TIME_PRESETS.map((p) => (

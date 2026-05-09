@@ -2,9 +2,10 @@
  * Server-clock-anchored "now" for the dashboard.
  *
  * Every preset filter ("Today", "7d", "30d") computes a cutoff and ships
- * it to the server as `?createdSince=<iso>`. The server compares it
- * lexicographically against `task.createdAt` / `session.createdAt`,
- * which were stamped by the **server's** clock at write time.
+ * it to the server as `?createdSince=<iso>` (Tasks) or `?activeSince=<iso>`
+ * (Sessions). The server compares it lexicographically against
+ * `task.createdAt` / `session.lastActiveAt`, which were stamped by the
+ * **server's** clock (or the underlying runtime's) at write time.
  *
  * If the dashboard uses raw `Date.now()` and the user's laptop clock has
  * drifted (NTP off, manual time change, sleep-resume skew, phone-on-LAN
