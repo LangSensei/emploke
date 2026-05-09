@@ -1,15 +1,11 @@
-import { execFile as execFileCb } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
-import { flattenSkillName, InvalidMcpJson, WorkdirPrepFailed } from "../../src/index.js";
+import { flattenSkillName, InvalidMcpJson } from "../../src/index.js";
 import { makeTestCatalog, type TestCatalogFixtures } from "./test-catalog.js";
-
-const execFile = promisify(execFileCb);
 
 let scratch: string;
 
@@ -405,26 +401,16 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
 });
 
 describe("provisionCopilotWorkdir — workdir prep", () => {
-  it("runs git init in the target directory", async () => {
+  // Pin the contract that we do NOT plant a .git/ directory. Copilot CLI
+  // loads hooks from <cwd>/.github/hooks/*.json directly (per the
+  // official hooks reference) — no git repo required. Skipping `git
+  // init` removes a hard dependency on the host's `git` binary and
+  // keeps purge cheap.
+  it("does NOT initialise a git repository in the target directory", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({});
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
-    expect(await exists(path.join(t, ".git"))).toBe(true);
-    const { stdout } = await execFile("git", ["rev-parse", "--is-inside-work-tree"], { cwd: t });
-    expect(stdout.trim()).toBe("true");
-  });
-
-  it("WorkdirPrepFailed exposes step + workdir + cause", () => {
-    const wrapped = new WorkdirPrepFailed(
-      "git init",
-      "/some/dir",
-      new Error("ENOENT: git not found"),
-    );
-    expect(wrapped).toBeInstanceOf(WorkdirPrepFailed);
-    expect(wrapped.step).toBe("git init");
-    expect(wrapped.workdir).toBe("/some/dir");
-    expect((wrapped.cause as Error).message).toBe("ENOENT: git not found");
-    expect(wrapped.message).toContain("git init");
+    expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });
 
@@ -450,6 +436,7 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
     expect(await exists(path.join(t, ".github/skills/dev__lint/SKILL.md"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/rules.json"))).toBe(true);
     expect(await exists(path.join(t, ".github/hooks/post-write.sh"))).toBe(true);
-    expect(await exists(path.join(t, ".git"))).toBe(true);
+    // No .git/ — see the workdir-prep describe block above.
+    expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });

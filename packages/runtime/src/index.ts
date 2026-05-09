@@ -14,7 +14,6 @@ export {
 export {
   InvalidMcpJson,
   TrustRegistrationFailed,
-  WorkdirPrepFailed,
 } from "./copilot/errors.js";
 export {
   COPILOT_SESSION_ID_RE,

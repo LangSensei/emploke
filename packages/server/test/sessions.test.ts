@@ -227,7 +227,7 @@ describe("sessionsRoutes", () => {
   it("POST / maps RuntimeProvisionFailed to 500 (server-side fault, not a bad request)", async () => {
     const m = stubManager({
       create: vi.fn(async () => {
-        throw new RuntimeProvisionFailed("copilot", "/tmp/wd", new Error("git init failed"));
+        throw new RuntimeProvisionFailed("copilot", "/tmp/wd", new Error("mkdir failed"));
       }),
     });
     const res = await sessionsRoutes(m).request("/", {

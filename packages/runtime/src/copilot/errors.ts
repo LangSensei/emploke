@@ -21,26 +21,6 @@ export class InvalidMcpJson extends Error {
 }
 
 /**
- * Thrown when the per-session workdir preparation step fails (e.g.
- * `git init`). Wraps the underlying spawn or exit error.
- *
- * Renamed from `WorkspacePrepFailed` so the term "workspace" is reserved
- * for the new project-level concept managed by `@emploke/workspace`. This
- * error covers per-session workdir prep, not workspace prep.
- */
-export class WorkdirPrepFailed extends Error {
-  constructor(
-    public readonly step: string,
-    public readonly workdir: string,
-    cause: Error,
-  ) {
-    super(`workdir preparation step "${step}" failed in ${workdir}: ${cause.message}`);
-    this.name = "WorkdirPrepFailed";
-    this.cause = cause;
-  }
-}
-
-/**
  * Thrown when ensuring trust on the Copilot CLI's `config.json` (the
  * file the CLI actually reads `trustedFolders` from — see `trust.ts`
  * for why this is `config.json` and not `settings.json`) fails.
