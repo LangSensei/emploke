@@ -1,23 +1,60 @@
 {
-  "name": "emploke-monorepo",
-  "version": "0.0.0",
-  "private": true,
-  "description": "emploke — TypeScript rewrite (workspace root)",
+  "name": "@langsensei/emploke",
+  "version": "0.1.0",
+  "description": "emploke — orchestrate agentic systems built on the MetaAgents format spec",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LangSensei/emploke.git"
+  },
+  "homepage": "https://github.com/LangSensei/emploke#readme",
+  "bugs": {
+    "url": "https://github.com/LangSensei/emploke/issues"
+  },
+  "keywords": [
+    "agents",
+    "ai",
+    "copilot",
+    "metaagents",
+    "mcp",
+    "skills"
+  ],
+  "type": "module",
   "engines": {
     "node": ">=22"
   },
   "packageManager": "pnpm@10.33.4",
+  "bin": {
+    "emploke": "bundle/emploke.js"
+  },
+  "files": [
+    "bundle/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "pnpm -r --filter \"./packages/**\" run build",
     "test": "pnpm -r --filter \"./packages/**\" run test",
     "typecheck": "pnpm -r --filter \"./packages/**\" run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "dev": "pnpm -r --parallel --filter \"./packages/**\" run dev"
+    "dev": "pnpm -r --parallel --filter \"./packages/**\" run dev",
+    "bundle": "pnpm build && pnpm --filter @emploke/dashboard build && node esbuild.config.js && node scripts/copy-dashboard.mjs",
+    "prepublishOnly": "pnpm bundle"
+  },
+  "dependencies": {
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "pino-roll": "^3.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
