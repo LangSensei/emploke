@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
+import { usePollWithBackoff } from "../hooks/usePollWithBackoff";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -204,16 +205,16 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   // success/failure transition without the user pressing Refresh.
   // The cadence is server-supplied via /api/config (operators can tune
   // it for very large workspaces); we fall back to the same default the
-  // server uses when config hasn't loaded yet.
+  // server uses when config hasn't loaded yet. `usePollWithBackoff`
+  // chains polls via setTimeout and exponentially backs off when the
+  // server is unreachable, so a sleeping laptop or restarted server no
+  // longer floods the network panel with red ECONNREFUSED rows.
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  useEffect(() => {
-    const anyRunning = tasks.some((t) => t.status === "running" || t.status === "not_started");
-    if (!anyRunning || !currentWorkspaceId) return;
-    const handle = setInterval(() => {
-      void refresh();
-    }, pollIntervalMs);
-    return () => clearInterval(handle);
-  }, [tasks, currentWorkspaceId, refresh, pollIntervalMs]);
+  const anyRunning = useMemo(
+    () => tasks.some((t) => t.status === "running" || t.status === "not_started"),
+    [tasks],
+  );
+  usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
   const onDispatched = async (agent: string, instructions: string, runtime: string | undefined) => {
     setBusy(true);
@@ -758,14 +759,9 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   // Auto-poll while running so the runtime's event log + status update
   // without a manual refresh click. Cadence comes from the parent (which
   // sources it from /api/config) so list view and detail view stay in
-  // sync.
-  useEffect(() => {
-    if (!task || (task.status !== "running" && task.status !== "not_started")) return;
-    const handle = setInterval(() => {
-      void refreshDetail();
-    }, pollIntervalMs);
-    return () => clearInterval(handle);
-  }, [task, refreshDetail, pollIntervalMs]);
+  // sync. Backoff matches the list-view loop above.
+  const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
+  usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
 
   // Common box: anchored at top of the right column with its own scroll
   // container, capped at viewport-minus-toolbar so the page never grows
