@@ -10,10 +10,12 @@ name: Release
 # `next` on npm so they don't override `latest`. Stable releases get the
 # default `latest` dist-tag.
 #
-# Requires repo secret `NPM_TOKEN` set to an npm automation token with
-# publish rights on `@langsensei/emploke`. The `id-token: write`
-# permission below enables npm provenance attestation, which records the
-# build's source commit + workflow on the npm package page.
+# Authentication: npm Trusted Publishing via GitHub OIDC. No npm token
+# is stored anywhere; the registry verifies this workflow's identity via
+# the short-lived ID token requested by `id-token: write` and issues a
+# 10-minute publish credential. Maintainer prerequisite (one-time): on
+# the npm package page, configure a trusted publisher pointing at this
+# repo + workflow file. See README "Releasing" section.
 
 on:
   push:
@@ -43,6 +45,11 @@ jobs:
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
+      # npm Trusted Publishing requires npm 11.5.1 or newer; Node 22
+      # currently ships npm 10.x. Pin to 11.x latest for OIDC support.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
@@ -64,6 +71,7 @@ jobs:
 
       - name: Publish
         # Prereleases (X.Y.Z-foo) → `next` dist-tag; stable → `latest`.
+        # Authentication is OIDC via Trusted Publishing — no token env.
         run: |
           version=$(node -p "require('./package.json').version")
           case "$version" in
@@ -72,5 +80,3 @@ jobs:
           esac
           echo "publishing with --tag $tag"
           npm publish --provenance --access public --tag "$tag"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -106,9 +106,24 @@ The workflow refuses to publish if the git tag's version doesn't match
 so the package page links back to the exact commit + workflow run that
 built each release.
 
-Repo prerequisite (one-time): an `NPM_TOKEN` secret with publish rights
-on `@langsensei/emploke`. Use an [automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
-so 2FA isn't a problem in CI.
+Repo prerequisite (one-time): configure
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishing/overview)
+on the package so the GitHub Actions workflow can publish via OIDC
+without storing a long-lived token. On the npm package settings page
+("Publishing access" → "Trusted Publishers"), add a GitHub Actions
+trusted publisher with:
+
+| Field | Value |
+|---|---|
+| Organization or user | `LangSensei` |
+| Repository | `emploke` |
+| Workflow filename | `release.yml` |
+| Environment | *(leave blank)* |
+
+Trusted Publishing replaces classic automation tokens, which since
+October 2025 cap out at 90-day expiry and have to be rotated manually.
+The OIDC token is short-lived, scoped to one workflow run, and managed
+entirely by npm + GitHub  no `NPM_TOKEN` repo secret to maintain.
 
 ## Design book
 
