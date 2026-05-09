@@ -77,6 +77,39 @@ pnpm test        # vitest across all packages
 pnpm lint        # biome check
 ```
 
+## Releasing
+
+The `@langsensei/emploke` npm package is published by a tag-triggered
+GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
+The maintainer workflow is:
+
+```sh
+npm version patch        # bumps package.json + creates v<X.Y.Z> tag + commit
+git push --follow-tags   # pushes commit + tag → workflow runs → npm publish
+```
+
+Use `minor` / `major` instead of `patch` per [semver](https://semver.org/) as appropriate.
+
+Prereleases:
+
+```sh
+npm version prerelease --preid=rc   # 0.2.0 → 0.2.1-rc.0
+git push --follow-tags
+```
+
+Versions containing a `-` (e.g. `0.2.1-rc.0`) are published with the
+`next` npm dist-tag rather than `latest`, so `npm install -g @langsensei/emploke`
+keeps installing the stable line.
+
+The workflow refuses to publish if the git tag's version doesn't match
+`package.json`. It also enables [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
+so the package page links back to the exact commit + workflow run that
+built each release.
+
+Repo prerequisite (one-time): an `NPM_TOKEN` secret with publish rights
+on `@langsensei/emploke`. Use an [automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens)
+so 2FA isn't a problem in CI.
+
 ## Design book
 
 The architectural rationale — Capability / Agent / Task / Runtime axioms, six-state Task lifecycle, Concurrency Contract, Observability floor — lives in [`docs/index.html`](docs/index.html).

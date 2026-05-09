@@ -1,0 +1,76 @@
+name: Release
+
+# Push a tag matching `v*` (e.g. `v0.2.0`, `v0.2.0-rc.1`) to publish
+# `@langsensei/emploke` to npm. The recommended flow is:
+#
+#   npm version <patch|minor|major>   # bumps package.json + creates v<X> tag
+#   git push --follow-tags             # pushes the tag, this workflow runs
+#
+# Prereleases (versions containing a `-`, e.g. `0.2.0-rc.1`) get tagged
+# `next` on npm so they don't override `latest`. Stable releases get the
+# default `latest` dist-tag.
+#
+# Requires repo secret `NPM_TOKEN` set to an npm automation token with
+# publish rights on `@langsensei/emploke`. The `id-token: write`
+# permission below enables npm provenance attestation, which records the
+# build's source commit + workflow on the npm package page.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches package.json version
+        # Guards against accidentally tagging `v0.3.0` while package.json
+        # still says `0.2.0` — npm publish would happily push the wrong
+        # version. Strip the leading `v` and compare.
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg_version"
+            exit 1
+          fi
+          echo "publishing version $pkg_version"
+
+      - name: Bundle
+        run: pnpm bundle
+
+      - name: Publish
+        # Prereleases (X.Y.Z-foo) → `next` dist-tag; stable → `latest`.
+        run: |
+          version=$(node -p "require('./package.json').version")
+          case "$version" in
+            *-*) tag=next ;;
+            *)   tag=latest ;;
+          esac
+          echo "publishing with --tag $tag"
+          npm publish --provenance --access public --tag "$tag"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
