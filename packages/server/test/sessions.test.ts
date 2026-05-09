@@ -131,6 +131,17 @@ describe("sessionsRoutes", () => {
     });
   });
 
+  it("GET /?activeSince=<non-ISO-but-parseable> normalises to canonical ISO", async () => {
+    // Same canonicalisation rationale as createdSince — the manager's
+    // `lastActiveAt < activeSince` lexicographic compare is only
+    // correct for canonical ISO 8601 strings. Validates symmetry with
+    // the createdSince canonicalisation above.
+    const m = stubManager({});
+    const res = await sessionsRoutes(m).request("/?activeSince=Jan 1 2024 UTC");
+    expect(res.status).toBe(200);
+    expect(m.list).toHaveBeenCalledWith({ activeSince: "2024-01-01T00:00:00.000Z" });
+  });
+
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
     const res = await sessionsRoutes(m).request("/", { method: "POST", body: "not json" });

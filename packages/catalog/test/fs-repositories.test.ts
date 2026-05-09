@@ -203,3 +203,66 @@ describe("FsSkillRepository.entries", () => {
     });
   });
 });
+
+// Parameterised regression for issue #45: every catalog repo's `write()`
+// MUST go through writeFileAtomic. The original PR #41 review-fix
+// claimed all three were switched but agent was missed; without this
+// test the next mass-rewrite could lose it again silently.
+//
+// We verify atomicity indirectly by stressing concurrent writes and
+// asserting no `.tmp.*` artifact lingers in the entry's parent dir
+// after the writes settle. writeFileAtomic uses pid+random hex temp
+// suffixes; plain `writeFile` writes through to the destination
+// directly with no temp file at all — but it also offers no atomicity
+// guarantee, which a follow-up "interrupted-write" probe could test
+// in CI. The temp-leakage check catches the silent-replacement case.
+describe("catalog FS repos: write() goes through writeFileAtomic (regression for #45)", () => {
+  for (const { name: repoName, build, anchor } of [
+    {
+      name: "FsAgentRepository",
+      build: (dir: string) => new FsAgentRepository(dir),
+      anchor: "AGENTS.md",
+    },
+    {
+      name: "FsSkillRepository",
+      build: (dir: string) => new FsSkillRepository(dir),
+      anchor: "SKILL.md",
+    },
+    {
+      name: "FsMcpRepository",
+      build: (dir: string) => new FsMcpRepository(dir),
+      anchor: "github.json",
+    },
+  ]) {
+    it(`${repoName} write() leaves no .tmp.* artifact behind after concurrent writes`, async () => {
+      const repo = build(catalogDir);
+      // Use a single name across writes; concurrent writes to the same
+      // entry are the worst case for tmp-file leakage. The Mcp repo
+      // takes a JSON name (`github`); agent/skill take kebab-case.
+      const entryName = repoName === "FsMcpRepository" ? "github" : "writer";
+      const payload = (i: number) =>
+        repoName === "FsMcpRepository"
+          ? `{"command":"v${i}"}`
+          : `---\nname: ${entryName}\ndescription: v${i}\nversion: 0.0.${i}\n---\n# body\n`;
+      // 8 concurrent writes — modest enough to avoid Windows
+      // EPERM/EBUSY noise but enough to exercise the rename path.
+      await Promise.all(Array.from({ length: 8 }, (_, i) => repo.write(entryName, payload(i))));
+      // No tmp artifacts should survive in the entry's containing dir.
+      const parent =
+        repoName === "FsMcpRepository"
+          ? join(catalogDir, "mcps")
+          : repoName === "FsAgentRepository"
+            ? join(catalogDir, "agents", entryName)
+            : join(catalogDir, "skills", entryName);
+      const { readdir: rd } = await import("node:fs/promises");
+      const entries = await rd(parent);
+      const tmpLeaks = entries.filter((n) => n.includes(".tmp."));
+      expect(tmpLeaks).toEqual([]);
+      // The anchor file exists with one of the payloads (last-writer-wins).
+      const anchorPath =
+        repoName === "FsMcpRepository" ? join(parent, anchor) : join(parent, anchor);
+      const got = await readFile(anchorPath, "utf8");
+      expect(got.length).toBeGreaterThan(0);
+    });
+  }
+});

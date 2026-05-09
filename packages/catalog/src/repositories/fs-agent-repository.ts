@@ -1,6 +1,6 @@
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdirP } from "@emploke/storage";
+import { mkdirP, writeFileAtomic } from "@emploke/storage";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
 import { nameToPath, validateName } from "../validate.js";
 import { walkEntryDir } from "./entries-helpers.js";
@@ -28,7 +28,11 @@ export class FsAgentRepository implements AgentRepository {
     validateName(name);
     const dir = join(this.baseDir, nameToPath(name));
     await mkdirP(dir);
-    await writeFile(join(dir, "AGENTS.md"), content, "utf8");
+    // Atomic write: a crash mid-update must not leave a partial AGENTS.md
+    // (corrupt frontmatter would break every subsequent scan). Mirrors
+    // the same fix applied to FsSkillRepository / FsMcpRepository in
+    // PR #41's review-fix commit; agent was missed.
+    await writeFileAtomic(join(dir, "AGENTS.md"), content);
   }
 
   async installFromDir(name: string, sourceDir: string): Promise<void> {
