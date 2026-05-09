@@ -1,5 +1,5 @@
-import { type CatalogManager, deepInstall } from "@emploke/catalog";
-import type { FetcherRegistry } from "@emploke/catalog-fetcher";
+import type { CatalogManager } from "@emploke/catalog";
+import type { EntryFile, FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody } from "./helpers.js";
@@ -9,13 +9,11 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * Routes for /mcps/* relative to the parent mount. Mounted by
  * `catalogRoutes` at "/mcps".
  *
- * MCPs do not have a metadata PATCH endpoint — they're config-only blobs
- * with no status/disabled state to flip.
- *
- * `POST /` body: `{ origin: string, name: string, scope?: string }`.
- * Unlike skills/agents, the install is non-recursive (MCPs cannot declare
- * dependencies); we still go through `deepInstall` for consistency so the
- * caller always gets a manifest-shaped response.
+ * `POST /` body: `{ origin: string, name: string }`. The `name` is the
+ * full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`). MCPs
+ * have no deps, so the install is a single fetch + write — we
+ * deliberately bypass the resolve/apply orchestration the skill/agent
+ * routes use.
  */
 export function mcpsRoutes(
   arg: CatalogResolver | CatalogManager,
@@ -46,20 +44,13 @@ export function mcpsRoutes(
     const parsed = await readMcpInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const input: Parameters<typeof deepInstall>[0] = {
-        catalog,
-        fetchers: fetcherRegistry,
-        rootKind: "mcp",
-        rootOrigin: parsed.origin,
-        rootMcpName: parsed.name,
-      };
-      if (parsed.scope !== undefined) {
-        (input as { rootScope?: string }).rootScope = parsed.scope;
-      }
-      const manifest = await deepInstall(input);
-      const status = manifest.failed.length > 0 ? 207 : 201;
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(manifest, status as any);
+      const stream = fetcherRegistry.dispatch(parsed.origin);
+      const content = await readSingleFile(stream);
+      const fqn = await catalog.installMcp(content, {
+        name: parsed.name,
+        origin: parsed.origin,
+      });
+      return c.json({ name: fqn, origin: parsed.origin }, 201);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
@@ -92,4 +83,13 @@ export function mcpsRoutes(
   });
 
   return app;
+}
+
+async function readSingleFile(stream: AsyncIterable<EntryFile>): Promise<string> {
+  let result: Buffer | null = null;
+  for await (const file of stream) {
+    if (result === null) result = file.content;
+  }
+  if (result === null) throw new Error("stream yielded no files (expected one for mcp install)");
+  return result.toString("utf8");
 }

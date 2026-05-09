@@ -1,113 +1,85 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
-import { parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
 import { HasDependents, NotFound } from "../errors.js";
-import { synthesizeOriginFromPath } from "../frontmatter.js";
 import type { McpRepository } from "../repositories/repository.js";
 import type { McpMetadata } from "../types.js";
-import { makeFqn, splitFqn, validateFqn, validateScope, validateShortName } from "../validate.js";
+import { splitMcpName, validateMcpName } from "../validate.js";
+import { type McpMeta, parseMcpFile, writeMcpMeta } from "./mcp-frontmatter.js";
 
 /** Per-call options for {@link McpCatalog.install}. */
 export interface InstallMcpOpts {
   /**
-   * Override the auto-derived MCP short name. Required when the source
-   * file's basename is not a valid kebab-case short name (e.g. when the
-   * caller wants `playwright` from a file called `mcp.json`).
+   * The MCP spec name (`<namespace>/<short>`) to install under. Required
+   * — there is no name-derivation from filenames anymore (MCP spec names
+   * carry `/` which can't survive a basename round-trip).
    */
-  readonly mcpName?: string;
-  /**
-   * Origin URI to attach to the installed MCP. Defaults to
-   * `file:<sourceFile>` when omitted; the route layer / fetchers pass
-   * an explicit origin for clean provenance.
-   */
-  readonly origin?: string;
-  /**
-   * Override the auto-derived scope. Default is
-   * `scopeFromOrigin(parseOrigin(origin))`. Allowed only when `origin`
-   * is also a parseable URI; throws otherwise.
-   */
-  readonly scope?: string;
+  readonly name: string;
+  /** Origin URI to record in the inline `_meta.origin`. */
+  readonly origin: string;
 }
 
 /**
  * Business-logic facade over a {@link McpRepository}.
  *
- * Catalog identity rules (post-#39):
- *  - Every installed MCP is keyed by its FQN (`<scope>/<short-name>`).
- *  - The short name defaults to the source file's basename (sans `.json`),
- *    overridable via `opts.mcpName`. It must satisfy the kebab-case
- *    short-name grammar — slashes inside the short name are rejected.
- *  - The scope is derived from the install origin (which defaults to
- *    `file:<sourceFile>`, yielding scope `local`).
- *
- * Origin metadata is persisted by the repository implementation (FS uses
- * a `<name>.origin.json` sidecar; in-memory keeps it on a parallel map).
+ * Catalog identity rules (Phase 2):
+ *  - Every installed MCP is keyed by its full MCP-spec name
+ *    (`<namespace>/<short>`, e.g. `azure/mcp`,
+ *    `io.github.user/weather`). The spec name IS the catalog FQN.
+ *  - Identity does NOT pass through emploke's scope-mapping system
+ *    (L1/L2/L3) — MCP spec names are globally unique by community
+ *    convention and need no further namespacing.
+ *  - Origin and identity are persisted INSIDE the JSON content as the
+ *    inline `_meta: { name, origin }` block — see `mcp-frontmatter.ts`.
+ *    No sidecar files.
+ *  - On install, emploke shallow-merges its `_meta.{name, origin}` keys
+ *    into any existing `_meta` block so reverse-DNS namespaced
+ *    sub-objects (e.g. `_meta.io.modelcontextprotocol.registry/...`)
+ *    survive untouched.
  */
 export class McpCatalog {
   private readonly mcps = new Map<string, McpMetadata>();
 
   constructor(private readonly repository: McpRepository) {}
 
-  async install(sourceFile: string, opts: InstallMcpOpts = {}): Promise<string> {
+  async install(sourceFile: string, opts: InstallMcpOpts): Promise<string> {
     const content = await readFile(sourceFile, "utf8");
-    JSON.parse(content);
-
-    const shortName = opts.mcpName ?? basename(sourceFile, ".json");
-    validateShortName(shortName);
-
-    const origin = opts.origin ?? synthesizeOriginFromPath(sourceFile);
-    let scope: string;
-    if (opts.scope !== undefined) {
-      validateScope(opts.scope);
-      scope = opts.scope;
-    } else {
-      scope = scopeFromOrigin(parseOrigin(origin));
-    }
-
-    const fqn = makeFqn(scope, shortName);
-    await this.repository.write(fqn, content, { origin });
-    this.mcps.set(fqn, { name: fqn, shortName, scope, origin });
-    return fqn;
+    return this.installFromContent(content, opts);
   }
 
   /**
-   * Install from raw JSON content (no on-disk source). Used by the
-   * pluggable-fetcher path: the fetcher streams a single JSON file from
-   * the remote, the route reads it into memory, and we install without
-   * round-tripping to disk. `opts.mcpName` is required (no source file
-   * to derive a basename from).
+   * Install from raw JSON content. The content's existing structure
+   * (client shape: `command`/`args`/`env`/...) is preserved; emploke
+   * only injects/overwrites the inline `_meta: { name, origin }` keys
+   * via {@link writeMcpMeta}.
    */
-  async installFromContent(content: string, opts: InstallMcpOpts = {}): Promise<string> {
-    JSON.parse(content);
-    if (!opts.mcpName) {
-      throw new Error("installFromContent requires opts.mcpName (no source file to infer from)");
+  async installFromContent(content: string, opts: InstallMcpOpts): Promise<string> {
+    validateMcpName(opts.name);
+    if (typeof opts.origin !== "string" || opts.origin.length === 0) {
+      throw new Error("install requires opts.origin (non-empty string)");
     }
-    validateShortName(opts.mcpName);
-    if (!opts.origin) {
-      throw new Error("installFromContent requires opts.origin");
-    }
-
-    let scope: string;
-    if (opts.scope !== undefined) {
-      validateScope(opts.scope);
-      scope = opts.scope;
-    } else {
-      scope = scopeFromOrigin(parseOrigin(opts.origin));
-    }
-
-    const fqn = makeFqn(scope, opts.mcpName);
-    await this.repository.write(fqn, content, { origin: opts.origin });
-    this.mcps.set(fqn, { name: fqn, shortName: opts.mcpName, scope, origin: opts.origin });
-    return fqn;
+    const meta: McpMeta = { name: opts.name, origin: opts.origin };
+    const sourcePath = `mcps:${opts.name}`;
+    const merged = writeMcpMeta(content, meta, sourcePath);
+    // Defensive parse to confirm the merged result is still valid JSON
+    // before we land it on disk.
+    parseMcpFile(merged, sourcePath);
+    await this.repository.write(opts.name, merged);
+    const { namespace, shortName } = splitMcpName(opts.name);
+    this.mcps.set(opts.name, {
+      name: opts.name,
+      namespace,
+      shortName,
+      origin: opts.origin,
+    });
+    return opts.name;
   }
 
   /**
    * Read the on-disk JSON content of an installed MCP as a raw string.
-   * The server returns the bytes verbatim; the client gets to display whatever
-   * formatting the user wrote, not a re-serialized canonical form.
+   * Includes the inline `_meta` block — strip via {@link stripMcpMeta}
+   * before handing to Copilot CLI.
    */
   async getContent(name: string): Promise<string> {
-    validateFqn(name);
+    validateMcpName(name);
     if (!this.mcps.has(name)) throw new NotFound("mcp", name);
     const content = await this.repository.read(name);
     if (content === null) throw new NotFound("mcp", name);
@@ -115,26 +87,24 @@ export class McpCatalog {
   }
 
   /**
-   * Replace the JSON content of an existing MCP. The new content must be valid
-   * JSON; we validate by attempting to parse but write the original string so
-   * user formatting is preserved. Origin is preserved as-is.
+   * Replace the JSON content of an existing MCP. The new content's
+   * `_meta.{name,origin}` is overwritten with the existing entry's
+   * meta (caller can't change identity via update; that requires
+   * uninstall + reinstall). User-authored client shape and other
+   * `_meta.*` keys are preserved.
    */
   async updateContent(name: string, content: string): Promise<void> {
-    validateFqn(name);
+    validateMcpName(name);
     const existing = this.mcps.get(name);
     if (!existing) throw new NotFound("mcp", name);
-
-    try {
-      JSON.parse(content);
-    } catch (cause) {
-      throw new Error(`invalid JSON: ${(cause as Error).message}`);
-    }
-
-    await this.repository.write(name, content, { origin: existing.origin });
+    const sourcePath = `mcps:${name}`;
+    const merged = writeMcpMeta(content, { name, origin: existing.origin }, sourcePath);
+    parseMcpFile(merged, sourcePath);
+    await this.repository.write(name, merged);
   }
 
   async remove(name: string, getDependents: (name: string) => string[]): Promise<void> {
-    validateFqn(name);
+    validateMcpName(name);
     if (!this.mcps.has(name)) throw new NotFound("mcp", name);
 
     const dependents = getDependents(name);
@@ -162,15 +132,28 @@ export class McpCatalog {
     const issues: { path: string; reason: string }[] = [];
     const entries = await this.repository.scan();
     for (const entry of entries) {
-      const { name: fqn, content, sourcePath } = entry;
+      const { name: pathFqn, content, sourcePath } = entry;
       try {
-        JSON.parse(content);
-        // Repos that can't persist origin per-entry (in-memory legacy) report
-        // it as undefined; synthesise from sourcePath so every catalogue
-        // entry carries an origin.
-        const origin = entry.origin ?? synthesizeOriginFromPath(sourcePath);
-        const { scope, name } = splitFqn(fqn);
-        this.mcps.set(fqn, { name: fqn, shortName: name, scope, origin });
+        const { meta } = parseMcpFile(content, sourcePath);
+        // Self-consistency: the path-derived name must match the
+        // inline `_meta.name`. Mismatch is operator-visible config
+        // drift (someone moved the file without updating meta);
+        // surface as an issue rather than silently picking one.
+        if (meta.name !== pathFqn) {
+          issues.push({
+            path: sourcePath,
+            reason: `inline _meta.name "${meta.name}" doesn't match path-derived name "${pathFqn}"`,
+          });
+          continue;
+        }
+        validateMcpName(meta.name);
+        const { namespace, shortName } = splitMcpName(meta.name);
+        this.mcps.set(meta.name, {
+          name: meta.name,
+          namespace,
+          shortName,
+          origin: meta.origin,
+        });
       } catch (e) {
         issues.push({ path: sourcePath, reason: (e as Error).message });
       }

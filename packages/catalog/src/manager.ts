@@ -1,6 +1,6 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
-import { basename, join } from "node:path";
-import { normalizeOrigin, parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
+import { join } from "node:path";
+import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
 import { safeStat } from "@emploke/fs";
 import { AgentCatalog, type AgentMetadataPatch } from "./agent/agent-catalog.js";
 import { CatalogStateError, OriginConflictError } from "./errors.js";
@@ -9,13 +9,16 @@ import {
   frontmatterToAgent,
   frontmatterToSkill,
   parseFrontmatter,
+  type ProjectionOpts,
   projectionOpts,
 } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpCatalog } from "./mcp/mcp-catalog.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
+import { FsCatalogRepository } from "./repositories/fs-catalog-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
+import type { CatalogRepository } from "./repositories/catalog-repository.js";
 import type {
   AgentRepository,
   CatalogEntryFile,
@@ -23,6 +26,7 @@ import type {
   SkillRepository,
 } from "./repositories/repository.js";
 import { Resolver } from "./resolver.js";
+import { ScopeResolver } from "./scope-resolver.js";
 import { SkillCatalog, type SkillMetadataPatch } from "./skill/skill-catalog.js";
 import type {
   Agent,
@@ -34,13 +38,6 @@ import type {
   SkillEntry,
   SkillResolveResult,
 } from "./types.js";
-
-/** Strip the trailing `.json` (or any other) extension. */
-function basenameWithoutExt(file: string): string {
-  const b = basename(file);
-  const dot = b.lastIndexOf(".");
-  return dot > 0 ? b.slice(0, dot) : b;
-}
 
 export type { AgentMetadataPatch, SkillMetadataPatch };
 
@@ -56,29 +53,45 @@ export interface CatalogOptions {
     readonly agents?: AgentRepository;
     readonly skills?: SkillRepository;
     readonly mcps?: McpRepository;
+    /** Catalog-level metadata repo (catalog.json). Defaults to {@link FsCatalogRepository}. */
+    readonly catalog?: CatalogRepository;
   };
 }
 
 /**
- * Per-call options for `installSkill` / `installAgent` / `installMcp`.
- * `origin` is the URI the caller wants to associate with the new entry.
- * Defaults to `file:<sourcePath>` (synthesised by the per-store install
- * impls). Routes pass `file:<absoluteSourceDir>` for local installs and the
+ * Per-call options for `installSkill` / `installAgent`. `origin` is the
+ * URI the caller wants to associate with the new entry. Defaults to
+ * `file:<sourcePath>` (synthesised by the per-store install impls).
+ * Routes pass `file:<absoluteSourceDir>` for local installs and the
  * remote URI for fetched installs.
+ *
+ * `scopeOverride` is an explicit scope chosen by the caller (e.g. the
+ * dashboard's resolve→apply flow when the user edits a node's scope).
+ * It bypasses the L1/L2/L3 resolver — when set, the entry is installed
+ * under exactly this scope.
  */
 export interface InstallEntryOpts {
   readonly origin?: string;
-}
-
-export interface InstallMcpOpts extends InstallEntryOpts {
-  /** Override the auto-derived MCP short name (basename of source file). */
-  readonly mcpName?: string;
-  /** Override the auto-derived scope (origin scheme → scope). */
-  readonly scope?: string;
+  readonly scopeOverride?: string;
 }
 
 /**
- * Catalog — facade over SkillCatalog, AgentCatalog, McpCatalog, and Resolver.
+ * Per-call options for `installMcp`. Both fields are required:
+ *  - `name` — full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`)
+ *  - `origin` — install-source URI (recorded in `_meta.origin`)
+ *
+ * MCPs do NOT participate in scope-mapping; the spec name IS the
+ * catalog identity, no derivation, no override.
+ */
+export interface InstallMcpOpts {
+  readonly name: string;
+  readonly origin: string;
+}
+
+/**
+ * Catalog — facade over SkillCatalog, AgentCatalog, McpCatalog, Resolver,
+ * and ScopeResolver. Holds the catalog write-lock; coordinates scope
+ * resolution + install across the per-kind stores.
  */
 export class CatalogManager {
   private readonly catalogDir: string;
@@ -86,32 +99,43 @@ export class CatalogManager {
   private readonly agentStore: AgentCatalog;
   private readonly mcpStore: McpCatalog;
   private readonly resolver: Resolver;
+  private readonly catalogRepo: CatalogRepository;
+  private readonly scopeResolver: ScopeResolver;
   private _issues: ScanIssue[] = [];
   private _skillEntries = new Map<string, SkillEntry>();
   private _agentEntries = new Map<string, AgentEntry>();
   private _lastScanAt = 0;
   private _pendingScan: Promise<void> | null = null;
 
-  private constructor(opts: CatalogOptions) {
+  private constructor(opts: CatalogOptions, scopeResolver: ScopeResolver) {
     this.catalogDir = opts.catalogDir;
     const skillRepo = opts.repositories?.skills ?? new FsSkillRepository(opts.catalogDir);
     const agentRepo = opts.repositories?.agents ?? new FsAgentRepository(opts.catalogDir);
     const mcpRepo = opts.repositories?.mcps ?? new FsMcpRepository(opts.catalogDir);
+    this.catalogRepo = opts.repositories?.catalog ?? new FsCatalogRepository(opts.catalogDir);
     this.skillStore = new SkillCatalog(skillRepo);
     this.agentStore = new AgentCatalog(agentRepo);
     this.mcpStore = new McpCatalog(mcpRepo);
     this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore);
+    this.scopeResolver = scopeResolver;
   }
 
   static async open(opts: CatalogOptions): Promise<CatalogManager> {
-    const c = new CatalogManager(opts);
-    // Ensure catalog dir exists so subsequent writes (incl. .lock acquisition)
-    // don't fail with ENOENT on a fresh install.
+    // Ensure catalog dir exists before constructing the repositories so
+    // FsCatalogRepository.read() can return null (ENOENT) cleanly.
     await mkdirFs(opts.catalogDir, { recursive: true });
+    const catalogRepo = opts.repositories?.catalog ?? new FsCatalogRepository(opts.catalogDir);
+    const scopeResolver = await ScopeResolver.load(catalogRepo);
+    const c = new CatalogManager({ ...opts, repositories: { ...opts.repositories, catalog: catalogRepo } }, scopeResolver);
     // Remove stale lock from previous crash. Safe under single-owner constraint.
     await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
     await c.scan();
     return c;
+  }
+
+  /** Read-only access to the resolver for routes that preview without committing. */
+  get scopes(): ScopeResolver {
+    return this.scopeResolver;
   }
 
   get scanIssues(): readonly ScanIssue[] {
@@ -121,12 +145,13 @@ export class CatalogManager {
   // ─── Skill ──────────────────────────────────────────────
 
   async installSkill(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill> {
+    const projOpts = await this.buildProjectionOpts(opts);
     const skill = await this.withWriteLock(async () => {
       // Pre-flight origin-conflict check: parse the would-be FQN+origin
       // before doing any IO so a conflict fails fast and predictably.
       // Re-uses the same defaultOrigin chain as install().
-      await this.assertNoOriginConflict("skill", sourceDir, "SKILL.md", opts.origin);
-      return this.skillStore.install(sourceDir, opts);
+      await this.assertNoOriginConflict("skill", sourceDir, "SKILL.md", projOpts);
+      return this.skillStore.install(sourceDir, { ...opts, ...projOpts });
     });
     this.recomputeStatus();
     return skill;
@@ -144,15 +169,16 @@ export class CatalogManager {
     sourceLabel?: string,
   ): Promise<Skill> {
     const buffered = await bufferStream(stream);
+    const projOpts = await this.buildProjectionOpts(opts);
     await this.assertNoOriginConflictFromBuffer(
       "skill",
       buffered,
       "SKILL.md",
       sourceLabel ?? "<stream>",
-      opts.origin,
+      projOpts,
     );
     const skill = await this.withWriteLock(() =>
-      this.skillStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+      this.skillStore.installFromStream(asyncIterableOf(buffered), { ...opts, ...projOpts }, sourceLabel),
     );
     this.recomputeStatus();
     return skill;
@@ -198,9 +224,10 @@ export class CatalogManager {
   // ─── Agent ──────────────────────────────────────────────
 
   async installAgent(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Agent> {
+    const projOpts = await this.buildProjectionOpts(opts);
     const agent = await this.withWriteLock(async () => {
-      await this.assertNoOriginConflict("agent", sourceDir, "AGENTS.md", opts.origin);
-      return this.agentStore.install(sourceDir, opts);
+      await this.assertNoOriginConflict("agent", sourceDir, "AGENTS.md", projOpts);
+      return this.agentStore.install(sourceDir, { ...opts, ...projOpts });
     });
     this.recomputeStatus();
     return agent;
@@ -213,15 +240,16 @@ export class CatalogManager {
     sourceLabel?: string,
   ): Promise<Agent> {
     const buffered = await bufferStream(stream);
+    const projOpts = await this.buildProjectionOpts(opts);
     await this.assertNoOriginConflictFromBuffer(
       "agent",
       buffered,
       "AGENTS.md",
       sourceLabel ?? "<stream>",
-      opts.origin,
+      projOpts,
     );
     const agent = await this.withWriteLock(() =>
-      this.agentStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+      this.agentStore.installFromStream(asyncIterableOf(buffered), { ...opts, ...projOpts }, sourceLabel),
     );
     this.recomputeStatus();
     return agent;
@@ -266,64 +294,27 @@ export class CatalogManager {
 
   // ─── MCP ────────────────────────────────────────────────
 
-  async installMcp(sourceFile: string, opts: InstallMcpOpts = {}): Promise<string> {
-    const name = await this.withWriteLock(async () => {
-      // Pre-flight origin-conflict check. We can't reuse the skill/agent
-      // helper because MCPs don't have frontmatter — we need to compute the
-      // would-be FQN ourselves from the install opts before letting
-      // mcpStore.install do the work.
-      const previewName =
-        opts.mcpName ?? basenameWithoutExt(sourceFile);
-      const previewOrigin = opts.origin ?? `file:${sourceFile}`;
-      const previewScope =
-        opts.scope ?? scopeFromOrigin(parseOrigin(previewOrigin));
-      const previewFqn = `${previewScope}/${previewName}`;
-      const existing = this.mcpStore.get(previewFqn);
-      if (existing) {
-        const a = normalizeOrigin(parseOrigin(existing.origin));
-        const b = normalizeOrigin(parseOrigin(previewOrigin));
-        if (a !== b) {
-          throw new OriginConflictError(previewFqn, existing.origin, previewOrigin);
-        }
-      }
-      return this.mcpStore.install(sourceFile, opts);
-    });
-    this.recomputeStatus();
-    return name;
-  }
-
   /**
-   * Content-based install used by the pluggable-fetcher route. The
-   * fetcher streams a single `<name>.json` file from the remote, the
-   * route reads it into memory, and we install directly. `opts.mcpName`
-   * MUST be provided by the caller (request body) — there is no
-   * `sourceFile` to infer a basename from, and inferring one from the
-   * URL path is too fragile (`mcp.json`, `config.json` are common
-   * placeholder filenames in upstream repos).
+   * Install an MCP from raw JSON content. The spec name (`opts.name`,
+   * with `/`) IS the catalog identity — no scope-mapping, no derivation.
+   * The caller (route layer) is expected to have validated `opts.name`
+   * via {@link validateMcpName} already; this method validates again
+   * defensively.
    */
-  async installMcpFromContent(content: string, opts: InstallMcpOpts): Promise<string> {
-    if (!opts.mcpName) {
-      throw new Error("installMcpFromContent requires opts.mcpName");
-    }
-    if (!opts.origin) {
-      throw new Error("installMcpFromContent requires opts.origin");
-    }
-    const name = await this.withWriteLock(async () => {
-      const previewScope =
-        opts.scope ?? scopeFromOrigin(parseOrigin(opts.origin as string));
-      const previewFqn = `${previewScope}/${opts.mcpName}`;
-      const existing = this.mcpStore.get(previewFqn);
+  async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
+    const fqn = await this.withWriteLock(async () => {
+      const existing = this.mcpStore.get(opts.name);
       if (existing) {
         const a = normalizeOrigin(parseOrigin(existing.origin));
-        const b = normalizeOrigin(parseOrigin(opts.origin as string));
+        const b = normalizeOrigin(parseOrigin(opts.origin));
         if (a !== b) {
-          throw new OriginConflictError(previewFqn, existing.origin, opts.origin as string);
+          throw new OriginConflictError(opts.name, existing.origin, opts.origin);
         }
       }
       return this.mcpStore.installFromContent(content, opts);
     });
     this.recomputeStatus();
-    return name;
+    return fqn;
   }
 
   async updateMcpContent(name: string, content: string): Promise<void> {
@@ -342,6 +333,11 @@ export class CatalogManager {
 
   listMcps(): string[] {
     return this.mcpStore.list();
+  }
+
+  /** Look up the full metadata record for an installed MCP. */
+  getMcp(name: string) {
+    return this.mcpStore.get(name);
   }
 
   // ─── Entry-content streams ──────────────────────────────
@@ -403,21 +399,50 @@ export class CatalogManager {
   async inspectSource(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill | Agent> {
     const skillPath = join(sourceDir, "SKILL.md");
     const agentPath = join(sourceDir, "AGENTS.md");
+    const projOpts = await this.buildProjectionOpts(opts, /*previewOnly*/ true);
 
     if ((await safeStat(skillPath)) !== null) {
       const content = await readFile(skillPath, "utf8");
       const { data } = parseFrontmatter(content, skillPath);
-      return frontmatterToSkill(data, skillPath, projectionOpts(opts.origin));
+      return frontmatterToSkill(data, skillPath, projOpts);
     }
     if ((await safeStat(agentPath)) !== null) {
       const content = await readFile(agentPath, "utf8");
       const { data } = parseFrontmatter(content, agentPath);
-      return frontmatterToAgent(data, agentPath, projectionOpts(opts.origin));
+      return frontmatterToAgent(data, agentPath, projOpts);
     }
     throw new Error(`Source directory has neither SKILL.md nor AGENTS.md: ${sourceDir}`);
   }
 
   // ─── Internal ───────────────────────────────────────────
+
+  /**
+   * Resolve the projection options for an install: collapse `opts.origin`
+   * + `opts.scopeOverride` into a {@link ProjectionOpts} that frontmatter
+   * parsing will honour, asking the {@link ScopeResolver} for the
+   * L2/L3 default when no override is set.
+   *
+   * `previewOnly` (used by {@link inspectSource}) skips the auto-write
+   * side-effect of the resolver — preview must never mutate
+   * `catalog.json`.
+   */
+  private async buildProjectionOpts(
+    opts: InstallEntryOpts,
+    previewOnly = false,
+  ): Promise<ProjectionOpts> {
+    if (opts.scopeOverride !== undefined) {
+      return projectionOpts(opts.origin, { scopeOverride: opts.scopeOverride });
+    }
+    if (opts.origin === undefined) {
+      // No origin → fall back to per-sourcePath synthesis. Defer scope
+      // computation to projection (legacy code path).
+      return projectionOpts(undefined);
+    }
+    const resolved = previewOnly
+      ? this.scopeResolver.preview(opts.origin)
+      : await this.scopeResolver.resolve(opts.origin);
+    return projectionOpts(opts.origin, { defaultScope: resolved.scope });
+  }
 
   private getDependents(name: string): string[] {
     const allNodes = [...this.skillStore.graphNodes(), ...this.agentStore.graphNodes()];
@@ -434,15 +459,15 @@ export class CatalogManager {
     kind: "skill" | "agent",
     sourceDir: string,
     fileName: string,
-    defaultOrigin?: string,
+    projOpts: ProjectionOpts,
   ): Promise<void> {
     const sourcePath = join(sourceDir, fileName);
     const content = await readFile(sourcePath, "utf8");
     const { data } = parseFrontmatter(content, sourcePath);
     const incoming =
       kind === "skill"
-        ? frontmatterToSkill(data, sourcePath, projectionOpts(defaultOrigin))
-        : frontmatterToAgent(data, sourcePath, projectionOpts(defaultOrigin));
+        ? frontmatterToSkill(data, sourcePath, projOpts)
+        : frontmatterToAgent(data, sourcePath, projOpts);
 
     const existing =
       kind === "skill" ? this.skillStore.get(incoming.name) : this.agentStore.get(incoming.name);
@@ -459,7 +484,7 @@ export class CatalogManager {
     buffered: readonly CatalogEntryFile[],
     fileName: string,
     sourceLabel: string,
-    defaultOrigin?: string,
+    projOpts: ProjectionOpts,
   ): Promise<void> {
     const anchor = buffered.find((f) => f.relPath === fileName);
     if (!anchor) {
@@ -470,8 +495,8 @@ export class CatalogManager {
     const { data } = parseFrontmatter(content, sourcePath);
     const incoming =
       kind === "skill"
-        ? frontmatterToSkill(data, sourcePath, projectionOpts(defaultOrigin))
-        : frontmatterToAgent(data, sourcePath, projectionOpts(defaultOrigin));
+        ? frontmatterToSkill(data, sourcePath, projOpts)
+        : frontmatterToAgent(data, sourcePath, projOpts);
 
     const existing =
       kind === "skill" ? this.skillStore.get(incoming.name) : this.agentStore.get(incoming.name);
@@ -526,11 +551,11 @@ export class CatalogManager {
     if (!dependencies) return [];
     const missing: MissingDep[] = [];
     for (const ref of dependencies.skills ?? []) {
-      const fqn = depRefToFqn(ref);
+      const fqn = depRefToFqn(ref, "skill");
       if (!this.skillStore.has(fqn)) missing.push({ kind: "skill", name: fqn });
     }
     for (const ref of dependencies.mcps ?? []) {
-      const fqn = depRefToFqn(ref);
+      const fqn = depRefToFqn(ref, "mcp");
       if (!this.mcpStore.has(fqn)) missing.push({ kind: "mcp", name: fqn });
     }
     return missing;

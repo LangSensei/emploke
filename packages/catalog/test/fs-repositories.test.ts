@@ -108,36 +108,26 @@ describe("FsSkillRepository", () => {
 });
 
 describe("FsMcpRepository", () => {
-  it("scan derives FQNs from filenames (incl. one-level scope dirs)", async () => {
+  it("scan derives names from two-level layout (<namespace>/<short>.json)", async () => {
     const repo = new FsMcpRepository(catalogDir);
-    await repo.write("local/github", '{"command":"gh"}');
+    await repo.write("github/cli", '{"command":"gh"}');
     await repo.write("io.playwright/mcp", '{"command":"pw"}');
     const entries = await repo.scan();
     const names = entries.map((e) => e.name).sort();
-    expect(names).toEqual(["io.playwright/mcp", "local/github"]);
-  });
-
-  it("persists origin via sidecar and returns it on scan", async () => {
-    const repo = new FsMcpRepository(catalogDir);
-    await repo.write("local/github", '{"command":"gh"}', {
-      origin: "https://github.com/example/repo/tree/main/github.json",
-    });
-    const entries = await repo.scan();
-    const entry = entries.find((e) => e.name === "local/github");
-    expect(entry?.origin).toBe("https://github.com/example/repo/tree/main/github.json");
+    expect(names).toEqual(["github/cli", "io.playwright/mcp"]);
   });
 
   it("delete is a no-op for missing entries", async () => {
     const repo = new FsMcpRepository(catalogDir);
-    await expect(repo.delete("local/absent")).resolves.toBeUndefined();
+    await expect(repo.delete("ns/absent")).resolves.toBeUndefined();
   });
 
-  it("delete also removes the origin sidecar", async () => {
+  it("delete cleans up empty namespace dir", async () => {
     const repo = new FsMcpRepository(catalogDir);
-    await repo.write("local/x", "{}", { origin: "file:/foo" });
-    await repo.delete("local/x");
+    await repo.write("ns/x", '{"command":"x"}');
+    await repo.delete("ns/x");
     const entries = await repo.scan();
-    expect(entries.find((e) => e.name === "local/x")).toBeUndefined();
+    expect(entries.find((e) => e.name === "ns/x")).toBeUndefined();
   });
 });
 

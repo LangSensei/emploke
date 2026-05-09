@@ -6,6 +6,7 @@
  */
 
 export { InMemoryAgentRepository } from "./src/repositories/in-memory-agent-repository.js";
+export { InMemoryCatalogRepository } from "./src/repositories/in-memory-catalog-repository.js";
 export { InMemoryMcpRepository } from "./src/repositories/in-memory-mcp-repository.js";
 export { InMemorySkillRepository } from "./src/repositories/in-memory-skill-repository.js";
 export type {

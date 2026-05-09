@@ -1,4 +1,4 @@
-import { NameInvalid } from "./errors.js";
+import { McpNameInvalidError, NameInvalid } from "./errors.js";
 
 /**
  * Name validation, split by role (#39 phase 1 — clean break).
@@ -128,4 +128,62 @@ export function splitFqn(fqn: string): { scope: string; name: string } {
  */
 export function nameToPath(name: string): string {
   return name;
+}
+
+/**
+ * Validate an MCP name per the MCP spec shape (`<namespace>/<short>`,
+ * exactly one `/`, both halves non-empty, no whitespace, no path
+ * traversal). Looser than {@link validateFqn} because the MCP spec
+ * permits uppercase letters, dots and underscores (`io.github.User/my_server`)
+ * and we trust publishers / community for global uniqueness rather than
+ * enforce the spec regex.
+ *
+ * Filesystem path safety:
+ *  - reject `..` segments so storage paths can't escape the mcps/ root
+ *  - reject `\` (Windows path separator) and control chars
+ *  - reject empty halves
+ *
+ * Throws {@link McpNameInvalidError} so the route layer maps it to 400.
+ */
+export function validateMcpName(name: unknown): asserts name is string {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new McpNameInvalidError(String(name), "must be a non-empty string");
+  }
+  if (name.length > 200) {
+    throw new McpNameInvalidError(name, "must be at most 200 characters");
+  }
+  if (/\s/.test(name)) {
+    throw new McpNameInvalidError(name, "must not contain whitespace");
+  }
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control chars is the point
+  if (/[\x00-\x1f\\]/.test(name)) {
+    throw new McpNameInvalidError(name, "must not contain control characters or backslashes");
+  }
+  const slashIdx = name.indexOf("/");
+  if (slashIdx === -1) {
+    throw new McpNameInvalidError(
+      name,
+      "must contain exactly one '/' separating namespace from short name (e.g. 'azure/mcp')",
+    );
+  }
+  if (name.indexOf("/", slashIdx + 1) !== -1) {
+    throw new McpNameInvalidError(name, "must contain exactly one '/'");
+  }
+  const namespace = name.slice(0, slashIdx);
+  const shortName = name.slice(slashIdx + 1);
+  if (namespace.length === 0 || shortName.length === 0) {
+    throw new McpNameInvalidError(name, "namespace and short name must both be non-empty");
+  }
+  for (const segment of [namespace, shortName]) {
+    if (segment === "." || segment === "..") {
+      throw new McpNameInvalidError(name, `'${segment}' is not allowed as a path segment`);
+    }
+  }
+}
+
+/** Split a validated MCP spec name into its `{ namespace, shortName }` parts. */
+export function splitMcpName(name: string): { namespace: string; shortName: string } {
+  validateMcpName(name);
+  const idx = name.indexOf("/");
+  return { namespace: name.slice(0, idx), shortName: name.slice(idx + 1) };
 }

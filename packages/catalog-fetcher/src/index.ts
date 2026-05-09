@@ -26,3 +26,4 @@ export {
   scopeFromOrigin,
 } from "./origin.js";
 export { defaultFetcherRegistry, FetcherRegistry } from "./registry.js";
+export { defaultMapping, type ScopeMappingDefault } from "./scope-defaults.js";

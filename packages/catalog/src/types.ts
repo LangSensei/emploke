@@ -19,22 +19,25 @@ export type DependencyKind = "skill" | "mcp";
 
 /**
  * One declared dependency in a SKILL.md / AGENTS.md frontmatter
- * `dependencies.{skills,mcps}` array. Replaces the pre-#39 plain
- * `string[]` form (clean break — `parseDependencies` rejects strings with
- * a `FrontmatterError`).
+ * `dependencies.{skills,mcps}` array.
  *
- * Fields:
- *  - `name`  — short name (kebab-case, no `/`). Same convention as the
- *    target entry's frontmatter `name` field.
- *  - `origin` — required URI; the recursive installer fetches from here if
- *    the dep isn't already resolved in the catalog.
- *  - `scope` — optional override. Default scope is derived from `origin`
- *    via {@link scopeFromOrigin}; setting `scope` explicitly is rare,
- *    typically only when forking an upstream entry under a custom org name.
+ * Two flavours, distinguished by the `kind` of the array containing
+ * them (skill deps live under `dependencies.skills`, MCP deps under
+ * `dependencies.mcps`):
  *
- * The combination `(scope ?? scopeFromOrigin(origin)) + "/" + name` is the
- * resolution key — looked up in the catalog at install time, fetched from
- * `origin` and installed if missing.
+ *  - **Skill deps** (and agent deps where applicable): `name` is the
+ *    SHORT kebab-case name; FQN is composed at install time as
+ *    `(scope ?? scopeFromOrigin(origin)) + "/" + name`. Optional
+ *    `scope:` overrides the origin-derived default.
+ *
+ *  - **MCP deps**: `name` is the FULL MCP-spec FQN
+ *    (`<namespace>/<short>`, with the slash). MCPs don't participate
+ *    in emploke's scope-mapping system; the spec name IS the catalog
+ *    identity. The `scope:` field is ignored for MCP deps.
+ *
+ * Origin is required in both cases so the recursive installer
+ * (`resolveInstall` / `applyInstall`) can fetch missing deps without
+ * additional metadata lookups.
  */
 export interface DependencyRef {
   readonly name: string;
@@ -98,14 +101,24 @@ export interface Agent {
 }
 
 /**
- * Stored side-channel metadata for an MCP. MCPs are JSON files (no
- * frontmatter), so origin is persisted in a `<name>.origin.json` sidecar
- * next to the JSON content rather than inside the file itself.
+ * Stored metadata for an installed MCP. MCPs are JSON files; their
+ * identity is the MCP-spec FQN (`<namespace>/<short>`) which lives at
+ * the top of the JSON content as `_meta.name`. The `_meta.origin` key
+ * carries the install-source URI in the same block.
+ *
+ * Unlike skills/agents, MCPs do NOT participate in emploke's
+ * scope-mapping system — the spec name IS the catalog identity, no
+ * derivation. `namespace` and `shortName` are decompositions of the
+ * spec name, exposed for UI grouping.
  */
 export interface McpMetadata {
+  /** Full MCP spec FQN (`<namespace>/<short>`). */
   readonly name: string;
+  /** First half of the spec name (everything before the `/`). */
+  readonly namespace: string;
+  /** Second half of the spec name (everything after the `/`). */
   readonly shortName: string;
-  readonly scope: string;
+  /** Origin URI the MCP was installed from. */
   readonly origin: string;
 }
 

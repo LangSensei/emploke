@@ -1,22 +1,23 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { mkdirP, safeStat, writeFileAtomic } from "@emploke/fs";
-import { nameToPath, validateFqn } from "../validate.js";
-import type { McpRepoEntry, McpRepository, McpWriteOpts } from "./repository.js";
-
-const ORIGIN_SIDECAR_SUFFIX = ".origin.json";
+import { splitMcpName, validateMcpName } from "../validate.js";
+import type { McpRepoEntry, McpRepository } from "./repository.js";
 
 /**
  * Filesystem-backed `McpRepository`.
  *
- * Layout (per FQN `<scope>/<short>`):
- *   `<catalogDir>/mcps/<scope>/<short>.json`           — JSON content
- *   `<catalogDir>/mcps/<scope>/<short>.origin.json`    — `{ "origin": "..." }`
+ * Layout (per MCP spec FQN `<namespace>/<short>`):
+ *   `<catalogDir>/mcps/<namespace>/<short>.json`
  *
- * The `.origin.json` sidecar is the only place MCP origin lives — MCPs are
- * pure JSON without frontmatter, so we can't piggyback on the content
- * itself. The sidecar is plain `{ "origin": <uri> }` and is missing-tolerant
- * (catalog layer synthesises `file:<sourcePath>` when absent).
+ * The full MCP spec name is the on-disk identity — `azure/mcp` lives at
+ * `mcps/azure/mcp.json`, `io.github.user/weather` at
+ * `mcps/io.github.user/weather.json`. Two-level layout matches skills /
+ * agents and gives visual grouping per namespace.
+ *
+ * No origin sidecar — origin is persisted inside the JSON body as
+ * `_meta.origin` (see `mcp-frontmatter.ts`). Backends only need to
+ * persist one blob per MCP.
  */
 export class FsMcpRepository implements McpRepository {
   private readonly baseDir: string;
@@ -26,7 +27,7 @@ export class FsMcpRepository implements McpRepository {
   }
 
   async read(name: string): Promise<string | null> {
-    validateFqn(name);
+    validateMcpName(name);
     const file = this.fileFor(name);
     try {
       return await readFile(file, "utf8");
@@ -36,74 +37,62 @@ export class FsMcpRepository implements McpRepository {
     }
   }
 
-  async write(name: string, content: string, opts: McpWriteOpts = {}): Promise<void> {
-    validateFqn(name);
+  async write(name: string, content: string): Promise<void> {
+    validateMcpName(name);
     const file = this.fileFor(name);
     await mkdirP(dirname(file));
     // Atomic write: a partial JSON file would crash every downstream
     // consumer (resolver, runtime provision, dashboard read).
     await writeFileAtomic(file, content);
-    if (opts.origin !== undefined) {
-      const sidecar = this.sidecarFor(name);
-      await writeFileAtomic(sidecar, `${JSON.stringify({ origin: opts.origin }, null, 2)}\n`);
-    }
   }
 
   async delete(name: string): Promise<void> {
-    validateFqn(name);
+    validateMcpName(name);
     await rm(this.fileFor(name), { force: true });
-    await rm(this.sidecarFor(name), { force: true });
+    // Best-effort: clean up the namespace dir if empty after delete so
+    // future scans don't trip over empty <ns>/ stubs.
+    const nsDir = dirname(this.fileFor(name));
+    try {
+      await rm(nsDir, { recursive: false });
+    } catch {
+      // Non-empty dir — keep it. Other ENOENT / EACCES — ignore.
+    }
   }
 
   async scan(): Promise<McpRepoEntry[]> {
     const out: McpRepoEntry[] = [];
     if ((await safeStat(this.baseDir)) === null) return out;
-    await this.scanDir(this.baseDir, /*scope*/ null, out);
+    await this.scanDir(this.baseDir, /*namespace*/ null, out);
     return out;
   }
 
-  /** Path-composition for the on-disk JSON file. Internal — not part of the
-   * `McpRepository` contract; never leak to higher layers (consumers must
-   * use `read(name)` to get the content directly). */
   private fileFor(name: string): string {
-    return join(this.baseDir, `${nameToPath(name)}.json`);
+    const { namespace, shortName } = splitMcpName(name);
+    return join(this.baseDir, namespace, `${shortName}.json`);
   }
 
-  private sidecarFor(name: string): string {
-    return join(this.baseDir, `${nameToPath(name)}${ORIGIN_SIDECAR_SUFFIX}`);
-  }
-
-  private async scanDir(dir: string, scope: string | null, out: McpRepoEntry[]): Promise<void> {
+  private async scanDir(
+    dir: string,
+    namespace: string | null,
+    out: McpRepoEntry[],
+  ): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith(".json")) {
-        // Skip sidecar files; they're surfaced inline with their main entry.
-        if (entry.name.endsWith(ORIGIN_SIDECAR_SUFFIX)) continue;
-        const baseName = entry.name.replace(/\.json$/, "");
-        // After #39, MCPs are FQN-keyed. Scoped paths produce
-        // `<scope>/<short>`; legacy unscoped JSON files at the top of
-        // `mcps/` get an implicit `local` scope so they remain readable
-        // without a one-shot migration.
-        const fullName = scope ? `${scope}/${baseName}` : `local/${baseName}`;
+        if (namespace === null) {
+          // Top-level *.json files don't fit the two-level layout;
+          // skip them quietly. The catalog layer surfaces malformed
+          // entries via its own scan-issues mechanism if needed.
+          continue;
+        }
+        const shortName = entry.name.replace(/\.json$/, "");
+        const fullName = `${namespace}/${shortName}`;
         const sourcePath = join(dir, entry.name);
         const content = await readFile(sourcePath, "utf8");
-        const origin = await this.readSidecar(join(dir, `${baseName}${ORIGIN_SIDECAR_SUFFIX}`));
-        out.push(origin === null ? { name: fullName, content, sourcePath } : { name: fullName, content, sourcePath, origin });
-      } else if (entry.isDirectory() && scope === null) {
+        out.push({ name: fullName, content, sourcePath });
+      } else if (entry.isDirectory() && namespace === null) {
         await this.scanDir(join(dir, entry.name), entry.name, out);
       }
-    }
-  }
-
-  private async readSidecar(path: string): Promise<string | null> {
-    try {
-      const raw = await readFile(path, "utf8");
-      const parsed = JSON.parse(raw) as { origin?: unknown };
-      return typeof parsed.origin === "string" ? parsed.origin : null;
-    } catch {
-      // Missing or malformed sidecar — treat as "no origin recorded";
-      // the catalog layer will synthesise from sourcePath.
-      return null;
     }
   }
 }

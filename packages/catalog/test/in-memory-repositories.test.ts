@@ -66,16 +66,19 @@ describe("Stores wired to InMemory repositories", () => {
   it("McpCatalog install + remove updates the repository", async () => {
     const repo = new InMemoryMcpRepository();
     const store = new McpCatalog(repo);
-    const file = join(sourceDir, "github.json");
-    await writeFile(file, '{"command":"gh"}');
 
-    const fqn = await store.install(file);
-    expect(fqn).toBe("local/github");
-    expect(store.has("local/github")).toBe(true);
-    expect(await repo.read("local/github")).toBe('{"command":"gh"}');
+    const fqn = await store.installFromContent('{"command":"gh"}', {
+      name: "github/cli",
+      origin: "file:/x",
+    });
+    expect(fqn).toBe("github/cli");
+    expect(store.has("github/cli")).toBe(true);
+    const stored = await repo.read("github/cli");
+    expect(stored).toContain("\"name\": \"github/cli\"");
+    expect(stored).toContain("\"origin\": \"file:/x\"");
 
-    await store.remove("local/github", () => []);
-    expect(store.has("local/github")).toBe(false);
-    expect(await repo.read("local/github")).toBeNull();
+    await store.remove("github/cli", () => []);
+    expect(store.has("github/cli")).toBe(false);
+    expect(await repo.read("github/cli")).toBeNull();
   });
 });

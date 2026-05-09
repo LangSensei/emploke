@@ -44,11 +44,14 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "FetchError",
   "FrontmatterError",
   "HasDependents",
+  "InvalidMcpJsonError",
+  "McpNameInvalidError",
   "MissingDependencies",
   "NameInvalid",
   "NotFound",
   "OriginConflictError",
   "OriginParseError",
+  "UnsupportedCatalogVersionError",
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",
@@ -164,7 +167,9 @@ export function statusForCatalogError(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
   switch (err.name) {
     case "NameInvalid":
+    case "McpNameInvalidError":
     case "FrontmatterError":
+    case "InvalidMcpJsonError":
     case "MissingDependencies":
     case "CycleDetected":
     case "OriginParseError":
@@ -176,6 +181,8 @@ export function statusForCatalogError(err: unknown): number | null {
       return 409;
     case "FetchError":
       return 502;
+    case "UnsupportedCatalogVersionError":
+      return 500;
     default:
       return null;
   }

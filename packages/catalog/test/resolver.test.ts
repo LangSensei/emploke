@@ -8,7 +8,7 @@ import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { Resolver } from "../src/resolver.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
-import { dep, makeAgentSource, makeBase, makeMcpSource, makeSkillSource } from "./helpers.js";
+import { dep, makeAgentSource, makeBase, makeMcpSource, makeSkillSource, mcpDep } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -33,28 +33,33 @@ afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
+async function installMcp(specName: string): Promise<void> {
+  const file = await makeMcpSource(sourceDir, specName.replace("/", "_"));
+  await mcps.install(file, { name: specName, origin: `file:${file}` });
+}
+
 describe("Resolver", () => {
   it("resolveAgent: agent with direct deps", async () => {
-    await mcps.install(await makeMcpSource(sourceDir, "github"));
+    await installMcp("github/cli");
     await skills.install(await makeSkillSource(sourceDir, "lint"));
     await agents.install(
       await makeAgentSource(sourceDir, "reviewer", {
-        deps: { skills: [dep("lint")], mcps: [dep("github")] },
+        deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
       }),
     );
 
     const result = resolver.resolveAgent("local/reviewer");
     expect(result.agent.name).toBe("local/reviewer");
     expect(result.skills.map((s) => s.skill.name)).toEqual(["local/lint"]);
-    expect(result.mcps.map((m) => m.name)).toEqual(["local/github"]);
+    expect(result.mcps.map((m) => m.name)).toEqual(["github/cli"]);
   });
 
   it("resolveSkill: skill with direct deps; entry skill is included in skills[]", async () => {
-    await mcps.install(await makeMcpSource(sourceDir, "semgrep"));
+    await installMcp("semgrep/cli");
     await skills.install(await makeSkillSource(sourceDir, "cve-db"));
     await skills.install(
       await makeSkillSource(sourceDir, "security-audit", {
-        deps: { skills: [dep("cve-db")], mcps: [dep("semgrep")] },
+        deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       }),
     );
 
@@ -64,15 +69,15 @@ describe("Resolver", () => {
     expect(names).toContain("local/cve-db");
     expect(names).toContain("local/security-audit");
     expect(names.indexOf("local/cve-db")).toBeLessThan(names.indexOf("local/security-audit"));
-    expect(result.mcps.map((m) => m.name)).toContain("local/semgrep");
+    expect(result.mcps.map((m) => m.name)).toContain("semgrep/cli");
   });
 
   it("resolveAgent: transitive dependencies in topological order", async () => {
-    await mcps.install(await makeMcpSource(sourceDir, "db"));
+    await installMcp("postgres/db");
     await skills.install(await makeSkillSource(sourceDir, "leaf"));
     await skills.install(
       await makeSkillSource(sourceDir, "mid", {
-        deps: { skills: [dep("leaf")], mcps: [dep("db")] },
+        deps: { skills: [dep("leaf")], mcps: [mcpDep("postgres/db")] },
       }),
     );
     await agents.install(
@@ -84,7 +89,7 @@ describe("Resolver", () => {
     expect(names).toContain("local/leaf");
     expect(names).toContain("local/mid");
     expect(names.indexOf("local/leaf")).toBeLessThan(names.indexOf("local/mid"));
-    expect(result.mcps.map((m) => m.name)).toContain("local/db");
+    expect(result.mcps.map((m) => m.name)).toContain("postgres/db");
   });
 
   it("resolveAgent: throws for unknown name", () => {

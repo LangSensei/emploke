@@ -101,46 +101,34 @@ export interface SkillRepository {
 
 /** A file-style catalog entry whose name derives from its filename. */
 export interface McpRepoEntry {
-  /** Resolved FQN (`scope/name`), derived from the on-disk path. */
+  /** Full MCP spec name (`<namespace>/<short>`) — derived from on-disk path. */
   readonly name: string;
-  /** Raw file content (JSON string, written verbatim — never re-serialized). */
+  /** Raw file content (JSON string, includes inline `_meta` block). */
   readonly content: string;
   /** Diagnostic identifier (path or synthetic label). */
   readonly sourcePath: string;
-  /**
-   * Origin URI for the MCP, when the repository can persist it (e.g. via a
-   * `<name>.origin.json` sidecar in the FS impl). Undefined for backends
-   * that can't carry side-channel metadata; the catalog layer synthesises
-   * one from `sourcePath` in that case.
-   */
-  readonly origin?: string;
-}
-
-/** Per-write options for {@link McpRepository.write}. */
-export interface McpWriteOpts {
-  /**
-   * Origin URI to persist alongside the JSON content. Repositories that
-   * can't store metadata SHOULD ignore this field; the catalog re-derives
-   * origin from `sourcePath` on scan.
-   */
-  readonly origin?: string;
 }
 
 /**
- * Repository of MCP definitions (`<name>.json` per entry).
+ * Repository of MCP definitions (`<name>.json` per entry, where `<name>`
+ * is the full spec FQN `<namespace>/<short>`).
  *
- * MCPs are single-file, so the read/write byte API is sufficient — no
- * `entries()` stream needed; consumers call `read(name)` to get the JSON
- * content directly. Origin metadata is carried via `McpWriteOpts.origin`
- * on writes and `McpRepoEntry.origin` on scans.
+ * MCPs are single-file: read/write byte API is sufficient — no
+ * `entries()` stream needed; consumers call `read(name)` to get the
+ * JSON content directly. Origin metadata lives INSIDE the JSON body
+ * as the `_meta.origin` key (parsed/written by `mcp-frontmatter.ts`),
+ * not via a sidecar — backends only have to persist one blob per MCP.
  */
 export interface McpRepository {
   read(name: string): Promise<string | null>;
   /**
-   * Write JSON content for `name`, optionally persisting origin metadata.
-   * Creates parent dirs (for scoped names) as needed.
+   * Write JSON content for `name`. Creates parent dirs (for namespaced
+   * names) as needed. The content MUST already include the inline
+   * `_meta: { name, origin }` block — repositories don't synthesize it;
+   * callers (typically {@link McpCatalog.installFromContent}) write the
+   * meta into the body via `writeMcpMeta` first.
    */
-  write(name: string, content: string, opts?: McpWriteOpts): Promise<void>;
+  write(name: string, content: string): Promise<void>;
   delete(name: string): Promise<void>;
   scan(): Promise<McpRepoEntry[]>;
 }

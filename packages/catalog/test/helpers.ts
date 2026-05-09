@@ -25,12 +25,21 @@ export function localFqn(shortName: string): string {
   return `local/${shortName}`;
 }
 
-/** Build a {@link DependencyRef} for a dep installed as `local/<short>`. */
+/** Build a {@link DependencyRef} for a SKILL dep installed as `local/<short>`. */
 export function dep(shortName: string, scope = "local"): DependencyRef {
   // Use a synthetic file: URI; parseOrigin accepts any non-empty path.
   // Distinct per-call so the URI uniquely identifies the dep target
   // (the recursive installer wouldn't actually fetch anything in tests).
   return { name: shortName, origin: `file:/test/${scope}/${shortName}`, scope };
+}
+
+/**
+ * Build a {@link DependencyRef} for an MCP dep. The `name` is the full
+ * MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`); MCPs don't
+ * participate in scope-mapping.
+ */
+export function mcpDep(specName: string): DependencyRef {
+  return { name: specName, origin: `file:/test/mcps/${specName.replace("/", "_")}.json` };
 }
 
 export interface MakeSourceOpts {

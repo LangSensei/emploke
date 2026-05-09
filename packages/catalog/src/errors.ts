@@ -22,6 +22,22 @@ export class NameInvalid extends CatalogError {
   }
 }
 
+/**
+ * MCP-specific name validation failure. Distinct from {@link NameInvalid}
+ * (which enforces the strict skill/agent kebab grammar) because MCP
+ * names follow the looser MCP-spec shape (`<namespace>/<short>`,
+ * one slash, non-empty halves) — a publisher's `azure/mcp` would fail
+ * the kebab check but is a perfectly valid MCP identifier per spec.
+ */
+export class McpNameInvalidError extends CatalogError {
+  constructor(
+    public readonly invalidName: string,
+    public readonly reason: string,
+  ) {
+    super(`invalid MCP name "${invalidName}": ${reason}`);
+  }
+}
+
 export class CycleDetected extends CatalogError {
   constructor(public readonly cycle: readonly string[]) {
     super(`dependency cycle detected: ${cycle.join(" → ")}`);
@@ -84,5 +100,39 @@ export class OriginConflictError extends CatalogError {
     super(
       `origin conflict for "${fqn}": already installed from "${existingOrigin}", refused install from "${incomingOrigin}". Uninstall the existing entry to swap origins.`,
     );
+  }
+}
+
+/**
+ * Loaded `catalog.json` carries a `version` field that this build of
+ * emploke doesn't recognise. Refused at boot rather than continuing
+ * with potentially incompatible data — losing scope mappings or
+ * silently corrupting catalog config would be much worse than a loud
+ * crash.
+ */
+export class UnsupportedCatalogVersionError extends CatalogError {
+  constructor(
+    public readonly path: string,
+    public readonly foundVersion: unknown,
+    public readonly expectedVersion: number,
+  ) {
+    super(
+      `unsupported catalog.json version ${JSON.stringify(foundVersion)} at ${path}; this build expects version ${expectedVersion}`,
+    );
+  }
+}
+
+/**
+ * Invalid MCP file content (raw JSON parse failure or missing required
+ * keys). Distinct from {@link FrontmatterError} so the route layer can
+ * map it to a more specific 400 message.
+ */
+export class InvalidMcpJsonError extends CatalogError {
+  constructor(
+    public readonly path: string,
+    reason: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`invalid MCP JSON at ${path}: ${reason}`, options);
   }
 }

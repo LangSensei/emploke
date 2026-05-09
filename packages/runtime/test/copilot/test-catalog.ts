@@ -17,13 +17,13 @@ import {
  * Each fixture is a map of relative paths to file contents. AGENTS.md /
  * SKILL.md must be present in the agent / skill fixtures respectively.
  *
- * Fixture keys MAY be either short names (auto-prefixed with `local/`)
- * or full FQNs (`scope/name`). The scan-time origin synthesis runs
- * `scopeFromOrigin(file:memory:…)` → `local`, so the in-memory repo
- * MUST be seeded under the FQN that scan will compute — otherwise the
- * catalog sees `local/<name>` in its in-memory cache but the repo's
- * storage map is keyed by the raw `<name>`, breaking every subsequent
- * read/write through the FQN.
+ * Skill / Agent fixture keys MAY be either short names (auto-prefixed
+ * with `local/`) or full FQNs (`scope/name`).
+ *
+ * MCP fixture keys MUST be full MCP-spec FQNs (`<namespace>/<short>`) —
+ * MCP identity in Phase 2 is the spec name, no scope-derivation. The
+ * inline `_meta: { name, origin }` block is auto-injected by the helper
+ * if absent so callers can pass plain client-shape JSON.
  */
 export interface TestCatalogFixtures {
   agents?: Record<string, Record<string, string>>;
@@ -33,6 +33,23 @@ export interface TestCatalogFixtures {
 
 function toFqn(name: string): string {
   return name.includes("/") ? name : `local/${name}`;
+}
+
+function ensureMcpMeta(content: string, fqn: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content; // tests that intentionally seed broken MCPs (provision corruption test)
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return content;
+  const obj = parsed as Record<string, unknown>;
+  const existing =
+    obj._meta !== null && typeof obj._meta === "object" && !Array.isArray(obj._meta)
+      ? (obj._meta as Record<string, unknown>)
+      : {};
+  obj._meta = { ...existing, name: fqn, origin: existing.origin ?? `memory:${fqn}` };
+  return JSON.stringify(obj);
 }
 
 export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promise<{
@@ -100,8 +117,13 @@ export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promi
     }
   }
 
-  for (const [shortOrFqn, content] of Object.entries(fixtures.mcps ?? {})) {
-    await mcpRepo.write(toFqn(shortOrFqn), content);
+  for (const [fqn, content] of Object.entries(fixtures.mcps ?? {})) {
+    if (!fqn.includes("/")) {
+      throw new Error(
+        `MCP fixture "${fqn}" must use spec FQN <namespace>/<short> (e.g. "github/cli")`,
+      );
+    }
+    await mcpRepo.write(fqn, ensureMcpMeta(content, fqn));
   }
 
   // CatalogManager.open() needs a catalogDir for its stale-lock cleanup.

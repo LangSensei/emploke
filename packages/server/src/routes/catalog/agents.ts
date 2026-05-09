@@ -1,4 +1,4 @@
-import { type CatalogManager, deepInstall } from "@emploke/catalog";
+import { applyInstall, type CatalogManager, resolveInstall } from "@emploke/catalog";
 import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
@@ -7,14 +7,12 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /agents/* relative to the parent mount. Mounted by
- * `catalogRoutes` at "/agents". Takes a per-request catalog resolver so
- * the same handler can serve multiple workspaces; tests can also pass a
- * `CatalogManager` instance directly.
+ * `catalogRoutes` at "/agents". Mirrors {@link skillsRoutes}: takes a
+ * body `{ origin, scopeHints? }`, performs `resolveInstall` →
+ * `applyInstall`, returns an `InstallManifest`.
  *
- * The `POST /` install handler mirrors {@link skillsRoutes}: takes a body
- * `{ origin: string }`, fetches via the registry, recursively installs
- * declared frontmatter dependencies (skills + mcps; agents never appear
- * as a dep), and returns a `{installed, skipped, failed}` manifest.
+ * `POST /resolve` returns the read-only `ResolveManifest` for the
+ * dashboard's two-phase install flow.
  */
 export function agentsRoutes(
   arg: CatalogResolver | CatalogManager,
@@ -24,6 +22,24 @@ export function agentsRoutes(
   const getCatalog = resolveCatalog(arg);
 
   app.get("/", (c) => c.json(getCatalog(c).listAgentEntries()));
+
+  app.post("/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const parsed = await readAgentInstallBody(c);
+    if ("error" in parsed) return c.json(parsed, 400);
+    try {
+      const manifest = await resolveInstall({
+        catalog,
+        fetchers: fetcherRegistry,
+        rootKind: "agent",
+        rootOrigin: parsed.origin,
+      });
+      return c.json(manifest);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
@@ -44,11 +60,17 @@ export function agentsRoutes(
     const parsed = await readAgentInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const manifest = await deepInstall({
+      const resolved = await resolveInstall({
         catalog,
         fetchers: fetcherRegistry,
         rootKind: "agent",
         rootOrigin: parsed.origin,
+      });
+      const manifest = await applyInstall({
+        catalog,
+        fetchers: fetcherRegistry,
+        manifest: resolved,
+        ...(parsed.scopeHints !== undefined ? { scopeHints: parsed.scopeHints } : {}),
       });
       const status = manifest.failed.length > 0 ? 207 : 201;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.

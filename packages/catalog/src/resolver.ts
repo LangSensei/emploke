@@ -40,8 +40,8 @@ export class Resolver {
     }
 
     const rootDeps = [
-      ...(agent.dependencies?.skills ?? []).map(depRefToFqn),
-      ...(agent.dependencies?.mcps ?? []).map(depRefToFqn),
+      ...(agent.dependencies?.skills ?? []).map((r) => depRefToFqn(r, "skill")),
+      ...(agent.dependencies?.mcps ?? []).map((r) => depRefToFqn(r, "mcp")),
     ];
     const { skills, mcps } = this.#resolveDeps(rootDeps);
 
@@ -58,8 +58,8 @@ export class Resolver {
     }
 
     const rootDeps = [
-      ...(skill.dependencies?.skills ?? []).map(depRefToFqn),
-      ...(skill.dependencies?.mcps ?? []).map(depRefToFqn),
+      ...(skill.dependencies?.skills ?? []).map((r) => depRefToFqn(r, "skill")),
+      ...(skill.dependencies?.mcps ?? []).map((r) => depRefToFqn(r, "mcp")),
     ];
     const { skills: depSkills, mcps } = this.#resolveDeps(rootDeps);
 
@@ -84,8 +84,8 @@ export class Resolver {
         return {
           name: n,
           dependencies: [
-            ...(skill.dependencies?.skills ?? []).map(depRefToFqn),
-            ...(skill.dependencies?.mcps ?? []).map(depRefToFqn),
+            ...(skill.dependencies?.skills ?? []).map((r) => depRefToFqn(r, "skill")),
+            ...(skill.dependencies?.mcps ?? []).map((r) => depRefToFqn(r, "mcp")),
           ],
         };
       }

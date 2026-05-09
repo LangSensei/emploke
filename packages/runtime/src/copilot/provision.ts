@@ -1,6 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { applyFrontmatterPatch, type AgentResolveResult, type CatalogManager } from "@emploke/catalog";
+import {
+  applyFrontmatterPatch,
+  type AgentResolveResult,
+  type CatalogManager,
+  stripMcpMeta,
+} from "@emploke/catalog";
 import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
@@ -148,12 +153,13 @@ async function materializeAgent(
 /**
  * For each MCP referenced by the agent's dependency graph, fetch its JSON
  * content from the catalog and merge into a single `<workdir>/.mcp.json`
- * keyed by MCP name. We don't reformat — the user's whitespace inside each
- * MCP's JSON is preserved.
+ * keyed by MCP name. We strip the inline `_meta` block from each MCP body
+ * before writing — Copilot CLI shouldn't see emploke's metadata.
  *
- * Keys in `.mcp.json` use the flattened FQN (`<scope>__<name>`) so two
- * MCPs sharing a short name across scopes don't collide on the
- * `mcpServers` object key.
+ * Keys in `.mcp.json` use the FULL MCP-spec name (e.g. `azure/mcp`, with
+ * `/`). Copilot CLI accepts `/` in mcpServers keys (verified empirically),
+ * so we don't need to flatten — keeping the spec name verbatim is the
+ * cleaner contract for users who recognize MCPs by their spec FQN.
  */
 async function writeMcpConfig(
   workdir: string,
@@ -166,7 +172,8 @@ async function writeMcpConfig(
   for (const mcp of mcps) {
     const raw = await catalog.getMcpContent(mcp.name);
     try {
-      mcpServers[flattenSkillName(mcp.name)] = JSON.parse(raw);
+      const stripped = stripMcpMeta(raw, `mcps:${mcp.name}`);
+      mcpServers[mcp.name] = stripped;
     } catch (cause) {
       throw new InvalidMcpJson(mcp.name, cause as Error);
     }

@@ -1,21 +1,23 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
+import {
+  HasDependents,
+  InvalidMcpJsonError,
+  McpNameInvalidError,
+  NotFound,
+} from "../src/errors.js";
 import { McpCatalog } from "../src/mcp/mcp-catalog.js";
 import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
-import { makeBase, makeMcpSource } from "./helpers.js";
+import { makeBase } from "./helpers.js";
 
 let catalogDir: string;
-let sourceDir: string;
 let store: McpCatalog;
 
 beforeEach(async () => {
   const base = makeBase("mcp-store");
   catalogDir = join(base, "catalog");
-  sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
-  await mkdir(sourceDir, { recursive: true });
   store = new McpCatalog(new FsMcpRepository(catalogDir));
 });
 
@@ -23,130 +25,162 @@ afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
+const sampleClient = JSON.stringify({ command: "npx", args: ["-y", "@example/mcp"] });
+
 describe("McpCatalog", () => {
   describe("install", () => {
-    it("installs unscoped mcp under local/ scope", async () => {
-      const src = await makeMcpSource(sourceDir, "github");
-      const fqn = await store.install(src);
-      expect(fqn).toBe("local/github");
-      expect(store.has("local/github")).toBe(true);
+    it("installs an MCP under its spec FQN", async () => {
+      const fqn = await store.installFromContent(sampleClient, {
+        name: "azure/mcp",
+        origin: "https://github.com/Azure/azure-mcp/tree/main/.mcp",
+      });
+      expect(fqn).toBe("azure/mcp");
+      expect(store.has("azure/mcp")).toBe(true);
+      const meta = store.get("azure/mcp");
+      expect(meta?.namespace).toBe("azure");
+      expect(meta?.shortName).toBe("mcp");
     });
 
-    it("installs scoped mcp via opts.scope override", async () => {
-      const src = await makeMcpSource(sourceDir, "mcp");
-      const fqn = await store.install(src, { scope: "io.playwright" });
-      expect(fqn).toBe("io.playwright/mcp");
-      expect(store.has("io.playwright/mcp")).toBe(true);
+    it("installs an MCP with reverse-DNS namespace", async () => {
+      const fqn = await store.installFromContent(sampleClient, {
+        name: "io.github.user/weather",
+        origin: "https://github.com/user/weather-mcp/tree/main/server.json",
+      });
+      expect(fqn).toBe("io.github.user/weather");
     });
 
-    it("installs with explicit short name override", async () => {
-      const src = await makeMcpSource(sourceDir, "raw");
-      const fqn = await store.install(src, { mcpName: "playwright" });
-      expect(fqn).toBe("local/playwright");
-      expect(store.has("local/playwright")).toBe(true);
-    });
-
-    it("upserts on re-install", async () => {
-      const src = await makeMcpSource(sourceDir, "github");
-      await store.install(src);
-      await store.install(src);
+    it("upserts on re-install with same origin", async () => {
+      const opts = {
+        name: "azure/mcp",
+        origin: "https://github.com/Azure/azure-mcp/tree/main",
+      };
+      await store.installFromContent(sampleClient, opts);
+      await store.installFromContent(sampleClient, opts);
       expect(store.list()).toHaveLength(1);
     });
 
-    it("rejects invalid name (uppercase basename)", async () => {
-      const file = join(sourceDir, "BAD.json");
-      await writeFile(file, '{"type":"stdio"}');
-      await expect(store.install(file)).rejects.toThrow(NameInvalid);
+    it("rejects invalid name (no slash)", async () => {
+      await expect(
+        store.installFromContent(sampleClient, { name: "noslash", origin: "file:/x" }),
+      ).rejects.toBeInstanceOf(McpNameInvalidError);
     });
 
-    it("rejects invalid JSON", async () => {
-      const file = join(sourceDir, "broken.json");
-      await writeFile(file, "not json{");
-      await expect(store.install(file)).rejects.toThrow(SyntaxError);
+    it("rejects invalid name (multiple slashes)", async () => {
+      await expect(
+        store.installFromContent(sampleClient, { name: "a/b/c", origin: "file:/x" }),
+      ).rejects.toBeInstanceOf(McpNameInvalidError);
     });
 
-    it("persists origin metadata on disk via sidecar", async () => {
-      const src = await makeMcpSource(sourceDir, "github");
-      await store.install(src, { origin: "https://github.com/example/repo/tree/main/github.json" });
-      const meta = store.get("example/github");
-      expect(meta?.origin).toBe("https://github.com/example/repo/tree/main/github.json");
-      expect(meta?.scope).toBe("example");
+    it("rejects invalid JSON content", async () => {
+      await expect(
+        store.installFromContent("not json", { name: "azure/mcp", origin: "file:/x" }),
+      ).rejects.toBeInstanceOf(InvalidMcpJsonError);
+    });
+
+    it("persists _meta.{name, origin} inline in the JSON content", async () => {
+      const origin = "https://github.com/Azure/azure-mcp/tree/main";
+      await store.installFromContent(sampleClient, { name: "azure/mcp", origin });
+      const onDisk = await readFile(join(catalogDir, "mcps", "azure", "mcp.json"), "utf8");
+      const parsed = JSON.parse(onDisk);
+      expect(parsed._meta).toEqual({ name: "azure/mcp", origin });
+      // Original client shape preserved.
+      expect(parsed.command).toBe("npx");
+    });
+
+    it("merge-preserves existing _meta keys (e.g. registry namespaced)", async () => {
+      const input = JSON.stringify({
+        command: "npx",
+        args: ["-y", "@example/mcp"],
+        _meta: {
+          "io.modelcontextprotocol.registry/version": "1.2.3",
+          "io.modelcontextprotocol.registry/published": "2025-01-01",
+        },
+      });
+      await store.installFromContent(input, { name: "example/mcp", origin: "file:/x" });
+      const onDisk = await readFile(join(catalogDir, "mcps", "example", "mcp.json"), "utf8");
+      const parsed = JSON.parse(onDisk);
+      expect(parsed._meta.name).toBe("example/mcp");
+      expect(parsed._meta.origin).toBe("file:/x");
+      expect(parsed._meta["io.modelcontextprotocol.registry/version"]).toBe("1.2.3");
     });
   });
 
   describe("remove", () => {
-    it("removes installed mcp", async () => {
-      await store.install(await makeMcpSource(sourceDir, "github"));
-      await store.remove("local/github", () => []);
-      expect(store.has("local/github")).toBe(false);
-    });
-
-    it("removes scoped mcp", async () => {
-      const src = await makeMcpSource(sourceDir, "mcp");
-      await store.install(src, { scope: "io.playwright" });
-      await store.remove("io.playwright/mcp", () => []);
-      expect(store.has("io.playwright/mcp")).toBe(false);
+    it("removes an installed MCP", async () => {
+      await store.installFromContent(sampleClient, {
+        name: "azure/mcp",
+        origin: "file:/x",
+      });
+      await store.remove("azure/mcp", () => []);
+      expect(store.has("azure/mcp")).toBe(false);
     });
 
     it("throws NotFound for unknown", async () => {
-      await expect(store.remove("local/nope", () => [])).rejects.toThrow(NotFound);
+      await expect(store.remove("nope/mcp", () => [])).rejects.toThrow(NotFound);
     });
 
     it("blocks removal with dependents", async () => {
-      await store.install(await makeMcpSource(sourceDir, "github"));
-      await expect(store.remove("local/github", () => ["local/reviewer"])).rejects.toThrow(
+      await store.installFromContent(sampleClient, {
+        name: "azure/mcp",
+        origin: "file:/x",
+      });
+      await expect(store.remove("azure/mcp", () => ["local/reviewer"])).rejects.toThrow(
         HasDependents,
       );
     });
   });
 
   describe("scan", () => {
-    it("scans legacy unscoped flat mcps (auto-scoped to local)", async () => {
-      const mcpDir = join(catalogDir, "mcps");
-      await mkdir(mcpDir, { recursive: true });
-      await writeFile(join(mcpDir, "github.json"), '{"type":"stdio"}');
+    it("scans MCPs from two-level layout", async () => {
+      const dir = join(catalogDir, "mcps", "azure");
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "mcp.json"),
+        JSON.stringify({
+          command: "npx",
+          _meta: { name: "azure/mcp", origin: "file:/x" },
+        }),
+      );
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
-      expect(store.has("local/github")).toBe(true);
+      expect(store.has("azure/mcp")).toBe(true);
     });
 
-    it("scans scoped mcps", async () => {
-      const mcpDir = join(catalogDir, "mcps", "io.playwright");
-      await mkdir(mcpDir, { recursive: true });
-      await writeFile(join(mcpDir, "mcp.json"), '{"type":"stdio"}');
-      const issues = await store.scan();
-      expect(issues).toHaveLength(0);
-      expect(store.has("io.playwright/mcp")).toBe(true);
-    });
-
-    it("records issues for bad JSON", async () => {
-      const mcpDir = join(catalogDir, "mcps");
-      await mkdir(mcpDir, { recursive: true });
-      await writeFile(join(mcpDir, "bad.json"), "not json");
+    it("records issue when path-derived name doesn't match _meta.name", async () => {
+      const dir = join(catalogDir, "mcps", "azure");
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "mcp.json"),
+        JSON.stringify({
+          command: "npx",
+          _meta: { name: "wrong/name", origin: "file:/x" },
+        }),
+      );
       const issues = await store.scan();
       expect(issues).toHaveLength(1);
+      expect(issues[0]?.reason).toContain("wrong/name");
     });
 
-    it("picks up externally added mcps on rescan", async () => {
-      await store.scan();
-      expect(store.list()).toHaveLength(0);
-      const mcpDir = join(catalogDir, "mcps");
-      await mkdir(mcpDir, { recursive: true });
-      await writeFile(join(mcpDir, "new-mcp.json"), '{"type":"stdio"}');
-      await store.scan();
-      expect(store.has("local/new-mcp")).toBe(true);
+    it("records issue when _meta is missing", async () => {
+      const dir = join(catalogDir, "mcps", "azure");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "mcp.json"), JSON.stringify({ command: "npx" }));
+      const issues = await store.scan();
+      expect(issues).toHaveLength(1);
     });
   });
 
   describe("getContent path-traversal hardening", () => {
     it("rejects names with `..` segments", async () => {
-      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
+      await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(
+        McpNameInvalidError,
+      );
     });
     it("rejects names with multiple slashes", async () => {
-      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(NameInvalid);
+      await expect(store.getContent("a/b/c")).rejects.toBeInstanceOf(McpNameInvalidError);
     });
     it("rejects names with backslashes", async () => {
-      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
+      await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(McpNameInvalidError);
     });
   });
 });

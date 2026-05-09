@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentCatalog } from "../src/agent/agent-catalog.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
-import { dep, makeAgentSource, makeBase } from "./helpers.js";
+import { dep, makeAgentSource, makeBase, mcpDep } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -53,12 +53,12 @@ describe("AgentCatalog", () => {
 
     it("preserves dependencies", async () => {
       const src = await makeAgentSource(sourceDir, "reviewer", {
-        deps: { skills: [dep("lint")], mcps: [dep("gh")] },
+        deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
       });
       const agent = await store.install(src);
       expect(agent.dependencies).toEqual({
         skills: [{ name: "lint", origin: "file:/test/local/lint", scope: "local" }],
-        mcps: [{ name: "gh", origin: "file:/test/local/gh", scope: "local" }],
+        mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
       });
     });
   });
@@ -109,11 +109,11 @@ describe("AgentCatalog", () => {
     it("returns dependency graph (FQNs from refs)", async () => {
       await store.install(
         await makeAgentSource(sourceDir, "reviewer", {
-          deps: { skills: [dep("lint")], mcps: [dep("gh")] },
+          deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
         }),
       );
       const nodes = store.graphNodes();
-      expect(nodes[0]!.dependencies.sort()).toEqual(["local/gh", "local/lint"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "local/lint"]);
     });
   });
 

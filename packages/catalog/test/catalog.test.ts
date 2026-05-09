@@ -10,6 +10,7 @@ import {
   makeMcpSource,
   makeSkillSource,
   type MakeSourceOpts,
+  mcpDep,
 } from "./helpers.js";
 
 let catalogDir: string;
@@ -21,8 +22,17 @@ async function makeSkill(name: string, opts: MakeSourceOpts = {}): Promise<strin
 async function makeAgent(name: string, opts: MakeSourceOpts = {}): Promise<string> {
   return makeAgentSource(sourceDir, name, opts);
 }
-async function makeMcp(name: string): Promise<string> {
-  return makeMcpSource(sourceDir, name);
+async function makeMcp(specName: string): Promise<{ content: string; origin: string }> {
+  const file = await makeMcpSource(sourceDir, specName.replace("/", "_"));
+  const content = await readFile(file, "utf8");
+  return { content, origin: `file:${file}` };
+}
+async function installMcp(
+  c: CatalogManager,
+  specName: string,
+): Promise<string> {
+  const { content, origin } = await makeMcp(specName);
+  return c.installMcp(content, { name: specName, origin });
 }
 
 beforeEach(async () => {
@@ -84,13 +94,19 @@ describe("CatalogManager", () => {
       expect(c.getAgent("local/reviewer")!.name).toBe("local/reviewer");
     });
 
-    it("scans existing mcps (legacy unscoped → local/)", async () => {
-      const mcpDir = join(catalogDir, "mcps");
+    it("scans existing MCPs from two-level layout with inline _meta", async () => {
+      const mcpDir = join(catalogDir, "mcps", "github");
       await mkdir(mcpDir, { recursive: true });
-      await writeFile(join(mcpDir, "github.json"), '{"type":"stdio","command":"npx"}');
+      await writeFile(
+        join(mcpDir, "cli.json"),
+        JSON.stringify({
+          command: "gh",
+          _meta: { name: "github/cli", origin: "file:/seeded/github/cli.json" },
+        }),
+      );
 
       const c = await CatalogManager.open({ catalogDir });
-      expect(c.listMcps()).toEqual(["local/github"]);
+      expect(c.listMcps()).toEqual(["github/cli"]);
     });
   });
 
@@ -158,8 +174,7 @@ describe("CatalogManager", () => {
 
     it("blocks removal if another skill depends on it", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const mcpSrc = await makeMcp("github");
-      await c.installMcp(mcpSrc);
+      await installMcp(c, "github/cli");
       const leafSrc = await makeSkill("leaf", { description: "Leaf" });
       await c.installSkill(leafSrc);
       const parentSrc = await makeSkill("parent", { deps: { skills: [dep("leaf")] } });
@@ -196,50 +211,44 @@ describe("CatalogManager", () => {
   });
 
   describe("installMcp", () => {
-    it("installs an mcp", async () => {
+    it("installs an mcp under its spec FQN", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const src = await makeMcp("github");
-      const fqn = await c.installMcp(src);
-      expect(fqn).toBe("local/github");
-      expect(c.listMcps()).toContain("local/github");
+      const fqn = await installMcp(c, "github/cli");
+      expect(fqn).toBe("github/cli");
+      expect(c.listMcps()).toContain("github/cli");
     });
 
-    it("installs an mcp from a path that contains a directory segment", async () => {
+    it("installs an MCP with reverse-DNS namespace", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const file = join(sourceDir, "langsensei/github.json");
-      await mkdir(join(sourceDir, "langsensei"), { recursive: true });
-      await writeFile(file, '{"type":"stdio"}');
-      const fqn = await c.installMcp(file);
-      expect(fqn).toBe("local/github");
+      const fqn = await installMcp(c, "io.github.user/weather");
+      expect(fqn).toBe("io.github.user/weather");
     });
   });
 
   describe("resolveAgent / resolveSkill", () => {
     it("resolveAgent: returns agent + transitive deps", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const mcpSrc = await makeMcp("github");
-      await c.installMcp(mcpSrc);
+      await installMcp(c, "github/cli");
       const skillSrc = await makeSkill("security-audit");
       await c.installSkill(skillSrc);
       const agentSrc = await makeAgent("reviewer", {
-        deps: { skills: [dep("security-audit")], mcps: [dep("github")] },
+        deps: { skills: [dep("security-audit")], mcps: [mcpDep("github/cli")] },
       });
       await c.installAgent(agentSrc);
 
       const result = c.resolveAgent("local/reviewer");
       expect(result.agent.name).toBe("local/reviewer");
       expect(result.skills.map((s) => s.skill.name)).toContain("local/security-audit");
-      expect(result.mcps.map((m) => m.name)).toContain("local/github");
+      expect(result.mcps.map((m) => m.name)).toContain("github/cli");
     });
 
     it("resolveAgent: transitive skill dependencies in topological order", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const mcpSrc = await makeMcp("semgrep");
-      await c.installMcp(mcpSrc);
+      await installMcp(c, "semgrep/cli");
       const leafSrc = await makeSkill("cve-db");
       await c.installSkill(leafSrc);
       const midSrc = await makeSkill("security-audit", {
-        deps: { skills: [dep("cve-db")], mcps: [dep("semgrep")] },
+        deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       });
       await c.installSkill(midSrc);
       const agentSrc = await makeAgent("reviewer", {
@@ -252,17 +261,16 @@ describe("CatalogManager", () => {
       expect(names).toContain("local/cve-db");
       expect(names).toContain("local/security-audit");
       expect(names.indexOf("local/cve-db")).toBeLessThan(names.indexOf("local/security-audit"));
-      expect(result.mcps.map((m) => m.name)).toContain("local/semgrep");
+      expect(result.mcps.map((m) => m.name)).toContain("semgrep/cli");
     });
 
     it("resolveSkill: includes the entry skill itself in skills[]", async () => {
       const c = await CatalogManager.open({ catalogDir });
-      const mcpSrc = await makeMcp("semgrep");
-      await c.installMcp(mcpSrc);
+      await installMcp(c, "semgrep/cli");
       const leafSrc = await makeSkill("cve-db");
       await c.installSkill(leafSrc);
       const midSrc = await makeSkill("security-audit", {
-        deps: { skills: [dep("cve-db")], mcps: [dep("semgrep")] },
+        deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       });
       await c.installSkill(midSrc);
 
@@ -270,7 +278,7 @@ describe("CatalogManager", () => {
       expect(result.skill.name).toBe("local/security-audit");
       const names = result.skills.map((s) => s.skill.name);
       expect(names).toEqual(["local/cve-db", "local/security-audit"]);
-      expect(result.mcps.map((m) => m.name)).toContain("local/semgrep");
+      expect(result.mcps.map((m) => m.name)).toContain("semgrep/cli");
     });
 
     it("throws for unknown name", async () => {
@@ -332,9 +340,8 @@ describe("CatalogManager", () => {
 describe("entry status", () => {
   it("skill is ready when all deps present", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    const mcpSrc = await makeMcp("github");
-    await c.installMcp(mcpSrc);
-    const skillSrc = await makeSkill("lint", { deps: { mcps: [dep("github")] } });
+    await installMcp(c, "github/cli");
+    const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
     await c.installSkill(skillSrc);
 
     const entry = c.getSkillEntry("local/lint");
@@ -344,36 +351,34 @@ describe("entry status", () => {
 
   it("skill is disabled when dep missing", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    const skillSrc = await makeSkill("lint", { deps: { mcps: [dep("github")] } });
+    const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
     await c.installSkill(skillSrc);
 
     const entry = c.getSkillEntry("local/lint");
     expect(entry!.status).toBe("disabled");
-    expect(entry!.missingDeps?.map((d) => d.name)).toContain("local/github");
-    expect(entry!.missingDeps?.find((d) => d.name === "local/github")?.kind).toBe("mcp");
+    expect(entry!.missingDeps?.map((d) => d.name)).toContain("github/cli");
+    expect(entry!.missingDeps?.find((d) => d.name === "github/cli")?.kind).toBe("mcp");
   });
 
   it("skill becomes ready after dep installed", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    const skillSrc = await makeSkill("lint", { deps: { mcps: [dep("github")] } });
+    const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
     await c.installSkill(skillSrc);
     expect(c.getSkillEntry("local/lint")!.status).toBe("disabled");
 
-    const mcpSrc = await makeMcp("github");
-    await c.installMcp(mcpSrc);
+    await installMcp(c, "github/cli");
     expect(c.getSkillEntry("local/lint")!.status).toBe("ready");
   });
 
   it("skill becomes disabled after dep removed", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    const mcpSrc = await makeMcp("github");
-    await c.installMcp(mcpSrc);
-    const skillSrc = await makeSkill("lint", { deps: { mcps: [dep("github")] } });
+    await installMcp(c, "github/cli");
+    const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
     await c.installSkill(skillSrc);
     expect(c.getSkillEntry("local/lint")!.status).toBe("ready");
 
     // Remove dep — but lint depends on it, so should be blocked
-    await expect(c.removeMcp("local/github")).rejects.toThrow();
+    await expect(c.removeMcp("github/cli")).rejects.toThrow();
   });
 
   it("agent is disabled when skill dep missing", async () => {
@@ -419,13 +424,20 @@ describe("entry status", () => {
 
   it("rescan recomputes status", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    await c.installSkill(await makeSkill("lint", { deps: { mcps: [dep("github")] } }));
+    await c.installSkill(await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } }));
     expect(c.getSkillEntry("local/lint")!.status).toBe("disabled");
 
-    // Manually write MCP file to disk under local/ scope then rescan
-    const mcpDir = join(catalogDir, "mcps", "local");
+    // Manually write MCP file to disk under the github/ namespace
+    // (two-level layout) with the inline `_meta` block then rescan.
+    const mcpDir = join(catalogDir, "mcps", "github");
     await mkdir(mcpDir, { recursive: true });
-    await writeFile(join(mcpDir, "github.json"), JSON.stringify({ type: "stdio", command: "gh" }));
+    await writeFile(
+      join(mcpDir, "cli.json"),
+      JSON.stringify({
+        command: "gh",
+        _meta: { name: "github/cli", origin: "file:/seeded/github/cli.json" },
+      }),
+    );
     await c.rescan();
     expect(c.getSkillEntry("local/lint")!.status).toBe("ready");
   });

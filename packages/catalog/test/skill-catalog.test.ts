@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
-import { dep, makeBase, makeSkillSource } from "./helpers.js";
+import { dep, makeBase, makeSkillSource, mcpDep } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -64,12 +64,12 @@ describe("SkillCatalog", () => {
 
     it("preserves dependencies", async () => {
       const src = await makeSkillSource(sourceDir, "parent", {
-        deps: { skills: [dep("child")], mcps: [dep("gh")] },
+        deps: { skills: [dep("child")], mcps: [mcpDep("github/cli")] },
       });
       const skill = await store.install(src);
       expect(skill.dependencies).toEqual({
         skills: [{ name: "child", origin: "file:/test/local/child", scope: "local" }],
-        mcps: [{ name: "gh", origin: "file:/test/local/gh", scope: "local" }],
+        mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
       });
     });
   });
@@ -162,12 +162,12 @@ describe("SkillCatalog", () => {
     it("returns dependency graph (FQNs from DependencyRef origins)", async () => {
       await store.install(
         await makeSkillSource(sourceDir, "parent", {
-          deps: { skills: [dep("child")], mcps: [dep("gh")] },
+          deps: { skills: [dep("child")], mcps: [mcpDep("github/cli")] },
         }),
       );
       const nodes = store.graphNodes();
       expect(nodes).toHaveLength(1);
-      expect(nodes[0]!.dependencies.sort()).toEqual(["local/child", "local/gh"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "local/child"]);
     });
   });
 

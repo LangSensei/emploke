@@ -55,7 +55,7 @@ async function setup(opts: {
     skills: Object.keys(opts.skills ?? {}),
     mcps: Object.keys(opts.mcps ?? {}),
   };
-  // Render dependencies in the post-#39 DependencyRef shape:
+  // Render skill dependencies in the post-#39 DependencyRef shape:
   //   - { name, origin: "file:test/<scope>/<name>" [, scope] }
   // Fixture keys may carry a `<scope>/<short>` form to test scoped FQNs;
   // when that happens we split into name+scope on the dep ref so the
@@ -71,6 +71,16 @@ async function setup(opts: {
     }
     return `    - { name: "${key}", origin: "file:test/local/${key}" }`;
   };
+  // MCP dep refs in Phase 2: `name` is the full spec FQN with `/`. The
+  // fixture key MUST already be in `<namespace>/<short>` form.
+  const renderMcpDepRef = (key: string): string => {
+    if (!key.includes("/")) {
+      throw new Error(
+        `MCP fixture key "${key}" must use spec FQN <namespace>/<short> (e.g. "github/cli")`,
+      );
+    }
+    return `    - { name: "${key}", origin: "file:test/mcps/${key.replace("/", "_")}.json" }`;
+  };
   const agentBody =
     opts.agent?.body ??
     [
@@ -85,7 +95,7 @@ async function setup(opts: {
               ? ["  skills:", ...agentDeps.skills.map(renderDepRef)]
               : []),
             ...(agentDeps.mcps.length
-              ? ["  mcps:", ...agentDeps.mcps.map(renderDepRef)]
+              ? ["  mcps:", ...agentDeps.mcps.map(renderMcpDepRef)]
               : []),
           ]
         : []),
@@ -115,7 +125,7 @@ async function setup(opts: {
                 ? ["  skills:", ...sk.deps.skills.map(renderDepRef)]
                 : []),
               ...(sk.deps.mcps?.length
-                ? ["  mcps:", ...sk.deps.mcps.map(renderDepRef)]
+                ? ["  mcps:", ...sk.deps.mcps.map(renderMcpDepRef)]
                 : []),
             ]
           : []),
@@ -138,9 +148,10 @@ async function setup(opts: {
  * Mirrors a real "scan validated, then file got corrupted out of band"
  * scenario.
  */
-async function makeTestCatalogWithBrokenMcp(mcpName: string): Promise<{
+async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
   catalog: CatalogManager;
   agentName: string;
+  mcpName: string;
 }> {
   const agentShortName = "demo-agent";
   const agentBody = [
@@ -150,19 +161,18 @@ async function makeTestCatalogWithBrokenMcp(mcpName: string): Promise<{
     "version: 0.0.1",
     "dependencies:",
     "  mcps:",
-    `    - { name: "${mcpName}", origin: "file:test/local/${mcpName}" }`,
+    `    - { name: "${specName}", origin: "file:test/mcps/${specName.replace("/", "_")}.json" }`,
     "---",
     "",
   ].join("\n");
   const { catalog, repos } = await makeTestCatalog({
     agents: { [agentShortName]: { "AGENTS.md": agentBody } },
-    mcps: { [mcpName]: '{"command":"ok"}' },
+    mcps: { [specName]: '{"command":"ok"}' },
   });
   // Now corrupt the MCP's bytes via the repo seam — the catalog still
-  // believes it exists (it was valid at scan time). Repo storage key is
-  // FQN, so write with the scoped name.
-  await repos.mcps.write(`local/${mcpName}`, "{not-json");
-  return { catalog, agentName: `local/${agentShortName}` };
+  // believes it exists (it was valid at scan time).
+  await repos.mcps.write(specName, "{not-json");
+  return { catalog, agentName: `local/${agentShortName}`, mcpName: specName };
 }
 
 describe("provisionCopilotWorkdir — basics", () => {
@@ -279,24 +289,25 @@ describe("provisionCopilotWorkdir — path-traversal hardening", () => {
 });
 
 describe("provisionCopilotWorkdir — MCP config", () => {
-  it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers", async () => {
+  it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers (spec FQN keys, _meta stripped)", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({
       mcps: {
         "io.playwright/mcp": JSON.stringify({ command: "npx", args: ["@playwright/mcp"] }),
-        swat: JSON.stringify({ command: "swat" }),
+        "swat/cli": JSON.stringify({ command: "swat" }),
       },
     });
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
-    // Keys are the flattened FQN — the implicit `local/` scope is stripped
-    // (so `swat` stays `swat`), real scopes become `<scope>__<name>` so
-    // two MCPs sharing a short name across scopes can't collide.
+    // Phase 2: keys are the FULL MCP-spec FQN with `/` (Copilot CLI
+    // accepts `/` — verified empirically). The `_meta` block is stripped
+    // from each MCP body before writing — Copilot CLI shouldn't see
+    // emploke's metadata.
     expect(written).toEqual({
       mcpServers: {
-        "io.playwright__mcp": { command: "npx", args: ["@playwright/mcp"] },
-        swat: { command: "swat" },
+        "io.playwright/mcp": { command: "npx", args: ["@playwright/mcp"] },
+        "swat/cli": { command: "swat" },
       },
     });
   });
@@ -310,7 +321,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
 
   it("throws InvalidMcpJson when an MCP is corrupted between scan and provision", async () => {
     const t = targetDir();
-    const dirty = await makeTestCatalogWithBrokenMcp("broken");
+    const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
     await expect(
       provisionCopilotWorkdir(t, dirty.catalog.resolveAgent(dirty.agentName), dirty.catalog),
     ).rejects.toBeInstanceOf(InvalidMcpJson);
@@ -318,14 +329,14 @@ describe("provisionCopilotWorkdir — MCP config", () => {
 
   it("InvalidMcpJson exposes mcpName and cause", async () => {
     const t = targetDir();
-    const dirty = await makeTestCatalogWithBrokenMcp("broken");
+    const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
     try {
       await provisionCopilotWorkdir(t, dirty.catalog.resolveAgent(dirty.agentName), dirty.catalog);
       expect.fail("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(InvalidMcpJson);
       const err = e as InvalidMcpJson;
-      expect(err.mcpName).toBe("local/broken");
+      expect(err.mcpName).toBe("broken/mcp");
       expect(err.cause).toBeInstanceOf(Error);
     }
   });
@@ -464,7 +475,7 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
           hooks: { "post-write.sh": "echo done\n" },
         },
       },
-      mcps: { hello: JSON.stringify({ command: "hello" }) },
+      mcps: { "hello/world": JSON.stringify({ command: "hello" }) },
     });
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
 

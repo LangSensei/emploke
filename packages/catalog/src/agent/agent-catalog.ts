@@ -6,6 +6,7 @@ import {
   depRefToFqn,
   frontmatterToAgent,
   parseFrontmatter,
+  type ProjectionOpts,
   projectionOpts,
 } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
@@ -22,6 +23,8 @@ export type AgentMetadataPatch = Partial<{
 /** Per-call options for {@link AgentCatalog.install}; see {@link InstallSkillOpts}. */
 export interface InstallAgentOpts {
   readonly origin?: string;
+  readonly scopeOverride?: string;
+  readonly defaultScope?: string;
 }
 
 /**
@@ -41,13 +44,17 @@ export class AgentCatalog {
     const sourcePath = join(sourceDir, "AGENTS.md");
     const original = await readFile(sourcePath, "utf8");
     const { data } = parseFrontmatter(original, sourcePath);
-    const agent = frontmatterToAgent(data, sourcePath, projectionOpts(opts.origin));
+    const agent = frontmatterToAgent(data, sourcePath, optsToProjection(opts));
 
     // See SkillCatalog.install for rationale: stage the dir copy first, then
-    // inject `origin` into the catalog COPY only if the source omitted it.
+    // inject `origin` / `scope` into the catalog COPY only if the source omitted
+    // them. Persist `scope` only when caller-overridden (P2-19).
     await this.repository.installFromDir(agent.name, sourceDir);
-    if (data.origin === undefined) {
-      const rewritten = applyFrontmatterPatch(original, { origin: agent.origin });
+    const patch: Record<string, unknown> = {};
+    if (data.origin === undefined) patch.origin = agent.origin;
+    if (data.scope === undefined && opts.scopeOverride !== undefined) patch.scope = agent.scope;
+    if (Object.keys(patch).length > 0) {
+      const rewritten = applyFrontmatterPatch(original, patch);
       await this.repository.write(agent.name, rewritten);
     }
     this.agents.set(agent.name, agent);
@@ -75,11 +82,14 @@ export class AgentCatalog {
       throw new FrontmatterError(sourceLabel, "stream did not contain a top-level AGENTS.md");
     }
     const { data } = parseFrontmatter(anchor.content, anchor.sourcePath);
-    const agent = frontmatterToAgent(data, anchor.sourcePath, projectionOpts(opts.origin));
+    const agent = frontmatterToAgent(data, anchor.sourcePath, optsToProjection(opts));
 
     let toInstall: CatalogEntryFile[] = buffered;
-    if (data.origin === undefined) {
-      const rewritten = applyFrontmatterPatch(anchor.content, { origin: agent.origin });
+    const patch: Record<string, unknown> = {};
+    if (data.origin === undefined) patch.origin = agent.origin;
+    if (data.scope === undefined && opts.scopeOverride !== undefined) patch.scope = agent.scope;
+    if (Object.keys(patch).length > 0) {
+      const rewritten = applyFrontmatterPatch(anchor.content, patch);
       toInstall = buffered.map((f) =>
         f.relPath === "AGENTS.md" ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") } : f,
       );
@@ -198,8 +208,8 @@ export class AgentCatalog {
     return [...this.agents].map(([name, agent]) => ({
       name,
       dependencies: [
-        ...(agent.dependencies?.skills ?? []).map(depRefToFqn),
-        ...(agent.dependencies?.mcps ?? []).map(depRefToFqn),
+        ...(agent.dependencies?.skills ?? []).map((r) => depRefToFqn(r, "skill")),
+        ...(agent.dependencies?.mcps ?? []).map((r) => depRefToFqn(r, "mcp")),
       ],
     }));
   }
@@ -230,4 +240,11 @@ export class AgentCatalog {
 
 async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
   for (const item of items) yield item;
+}
+
+function optsToProjection(opts: InstallAgentOpts): ProjectionOpts {
+  const extra: { scopeOverride?: string; defaultScope?: string } = {};
+  if (opts.scopeOverride !== undefined) extra.scopeOverride = opts.scopeOverride;
+  if (opts.defaultScope !== undefined) extra.defaultScope = opts.defaultScope;
+  return projectionOpts(opts.origin, extra);
 }

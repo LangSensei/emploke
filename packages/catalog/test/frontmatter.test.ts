@@ -52,7 +52,7 @@ describe("frontmatterToSkill", () => {
         license: "MIT", // ignored
         dependencies: {
           skills: [{ name: "sop", origin: "file:/test/local/sop" }],
-          mcps: [{ name: "swat", origin: "file:/test/local/swat" }],
+          mcps: [{ name: "swat/cli", origin: "file:/test/swat/cli" }],
         },
         prereqs: "Run setup.sh first",
       },
@@ -67,7 +67,7 @@ describe("frontmatterToSkill", () => {
       version: "1.2.3",
       dependencies: {
         skills: [{ name: "sop", origin: "file:/test/local/sop" }],
-        mcps: [{ name: "swat", origin: "file:/test/local/swat" }],
+        mcps: [{ name: "swat/cli", origin: "file:/test/swat/cli" }],
       },
       prereqs: "Run setup.sh first",
     });
@@ -176,12 +176,12 @@ describe("frontmatterToSkill", () => {
       {
         name: "a",
         description: "x",
-        dependencies: { mcps: [{ name: "m", origin: "file:/test/local/m" }] },
+        dependencies: { mcps: [{ name: "ns/m", origin: "file:/test/local/m" }] },
       },
       "x.md",
     );
     expect(b.dependencies).toEqual({
-      mcps: [{ name: "m", origin: "file:/test/local/m" }],
+      mcps: [{ name: "ns/m", origin: "file:/test/local/m" }],
     });
   });
 });
@@ -197,7 +197,7 @@ describe("frontmatterToAgent", () => {
         version: "1.0.0",
         dependencies: {
           skills: [{ name: "security-audit", origin: "file:/test/local/security-audit" }],
-          mcps: [{ name: "github", origin: "file:/test/local/github" }],
+          mcps: [{ name: "github/cli", origin: "file:/test/github/cli" }],
         },
       },
       "AGENTS.md",
@@ -211,7 +211,7 @@ describe("frontmatterToAgent", () => {
       version: "1.0.0",
       dependencies: {
         skills: [{ name: "security-audit", origin: "file:/test/local/security-audit" }],
-        mcps: [{ name: "github", origin: "file:/test/local/github" }],
+        mcps: [{ name: "github/cli", origin: "file:/test/github/cli" }],
       },
     });
   });
