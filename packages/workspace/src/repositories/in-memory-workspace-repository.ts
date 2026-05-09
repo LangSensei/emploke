@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
@@ -47,6 +48,21 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     const conflict = [...this.entries.values()].find(
       (e) => e.workdir === resolvedWorkdir && e.id !== workspace.id,
     );
+    if (conflict) {
+      throw new WorkspacePathConflictError(resolvedWorkdir, conflict.id);
+    }
+    this.entries.set(workspace.id, freezeCopy({ ...workspace, workdir: resolvedWorkdir }));
+  }
+
+  async create(workspace: Workspace): Promise<void> {
+    if (!isValidWorkspaceId(workspace.id)) {
+      throw new WorkspaceIdInvalidError(workspace.id);
+    }
+    if (this.entries.has(workspace.id)) {
+      throw new WorkspaceIdConflictError(workspace.id);
+    }
+    const resolvedWorkdir = path.resolve(workspace.workdir);
+    const conflict = [...this.entries.values()].find((e) => e.workdir === resolvedWorkdir);
     if (conflict) {
       throw new WorkspacePathConflictError(resolvedWorkdir, conflict.id);
     }

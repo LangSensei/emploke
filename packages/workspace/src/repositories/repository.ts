@@ -39,8 +39,28 @@ export interface WorkspaceRepository {
    * one, never partial. Implementations must register the workspace's
    * id in the root index AND persist its metadata as one logical unit
    * (or do both then unwind on failure).
+   *
+   * Use {@link create} when the caller's intent is "register a new
+   * workspace and surface a typed error if the id is already taken";
+   * `save` is upsert (last-writer-wins), which silently overwrites a
+   * concurrent same-id init attempt.
    */
   save(workspace: Workspace): Promise<void>;
+
+  /**
+   * Atomically register a brand-new workspace, throwing
+   * {@link WorkspaceIdConflictError} if the id is already taken in the
+   * index. Distinct from `save` because the create-or-fail semantics
+   * have to live inside the same critical section that does the
+   * insert — a manager-side `read` + `save` race-condition check would
+   * lose the race against a concurrent `init` with the same id.
+   *
+   * `WorkspaceManager.init` is the canonical caller; it surfaces the
+   * conflict to the user. Repository implementations decide how the
+   * "atomic" guarantee is delivered (FS uses the same advisory lock
+   * `save` does; SQLite would use `INSERT OR FAIL`).
+   */
+  create(workspace: Workspace): Promise<void>;
 
   /**
    * Remove the workspace's metadata. Idempotent (deleting a missing id
