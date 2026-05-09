@@ -1,87 +1,121 @@
 # Emploke
 
-> *From εμπλοκή (emplokí) — entanglement.*
->
-> A TypeScript toolkit for managing and orchestrating agentic systems built on the [MetaAgents](https://github.com/metaagents-ai/metaagents) format spec — composing [Agent Skills](https://www.claude.com/news/agent-skills) (`SKILL.md`) and [Model Context Protocol](https://modelcontextprotocol.io) servers into reusable Agents.
+[![npm version](https://img.shields.io/npm/v/@langsensei/emploke.svg)](https://www.npmjs.com/package/@langsensei/emploke)
+[![CI](https://github.com/LangSensei/emploke/actions/workflows/ci.yml/badge.svg)](https://github.com/LangSensei/emploke/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## Packages
+**A local-first control plane for agentic systems.** Emploke composes
+[Agent Skills](https://www.claude.com/news/agent-skills) (`SKILL.md`) and
+[Model Context Protocol](https://modelcontextprotocol.io/) servers into reusable
+agents on the [MetaAgents](https://github.com/metaagents-ai/metaagents) format
+spec, then orchestrates them across per-project workspaces — interactive sessions
+or autonomous one-shot tasks. The name comes from Greek *εμπλοκή (emplokí) —
+entanglement*: the deliberate weaving of skills, MCPs, and agents into something
+greater than each part. One process, one terminal, one dashboard.
 
-| Package | Description |
-|---|---|
-| [`@emploke/task`](./packages/task) | Task value type + state machine (`not_started → running → success / failure / cancelled`) + `TaskManager` for autonomous one-shot agent dispatch (spawn → watch → terminal status, persisted as `task.json`). |
-| [`@emploke/paths`](./packages/paths) | Pure resolver from `process.env` to emploke's user-level filesystem layout (`EMPLOKE_HOME`, registry file). |
-| [`@emploke/catalog`](./packages/catalog) | File-system registry of skills, MCPs and agents with dependency-graph algorithms (topological resolve, cycle detection, reverse-dependency safety on uninstall). One catalog per workspace. |
-| [`@emploke/workspace`](./packages/workspace) | Per-project root holding the workspace's catalog plus ephemeral state (sessions / tasks / workflows / logs), plus a `$EMPLOKE_HOME`-level registry mapping opaque UUIDs to absolute paths. |
-| [`@emploke/runtime`](./packages/runtime) | Runtime adapter interface (`provision` / `refresh` / `buildLaunch` / `deleteState` / optional `dispatchTask`) + Copilot CLI implementation. Per-runtime preconditions (e.g. Copilot's per-launch trust write to `~/.copilot/config.json`) are owned inside the adapter, not lifted into the cross-runtime interface. |
-| [`@emploke/session`](./packages/session) | Per-session workdir registry under `<workspace>/sessions/<id>/`, parameterised over a runtime registry. |
-| [`@emploke/terminal`](./packages/terminal) | Cross-platform terminal spawner that hosts a `LaunchCommand`. |
-| [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing workspace-scoped catalog, session, and task routes (`/api/workspaces/<id>/{catalog,sessions,tasks}/...`). Loopback-only by default. Drains running tasks on SIGTERM/SIGINT. |
-| [`@emploke/logger`](./packages/logger) | Structured logger (pino under the hood) with rotating file destination. Threaded through the server into every per-workspace manager. |
-| [`@emploke/dashboard`](./packages/dashboard) | React + Vite dashboard with a workspace switcher in the sidebar; talks to `@emploke/server`. |
+> **Pre-1.0 — APIs may change.** Targeted at solo developers and small teams
+> running emploke against their own machine; multi-user deployment is not yet
+> a goal.
 
-All packages are pre-1.0.
+## Quickstart
 
-## Layout
-
-```
-$EMPLOKE_HOME/                       (default ~/.emploke; override with EMPLOKE_HOME)
-└── workspaces.json                  registry: opaque UUID -> absolute path
-
-<workspace>/                         absolute path; user-chosen at registration
-                                     time (no auto-default; the server starts
-                                     with an empty registry until the user
-                                     adds the first workspace)
-├── workspace.json                   self-describing metadata (display name,
-│                                    schemaVersion, optional defaults). The
-│                                    display name is free-form and editable;
-│                                    the workspace's URL routing key is the
-│                                    UUID in workspaces.json, not the name.
-├── catalog/                         per-workspace skills, agents, mcps
-│   ├── skills/<name>/SKILL.md
-│   ├── agents/<name>/AGENT.md
-│   └── mcps/<name>.json
-├── sessions/<id>/                   per-session workdirs
-├── tasks/<id>/                      per-task workdirs (autonomous dispatch)
-│   ├── task.json                    Task value + runtime metadata
-│   ├── session/                     junction → runtime's per-task state dir
-│   │   └── <runtime-specific>       runtime-native event log (e.g. events.jsonl
-│   │                                under copilot; format and filename are the
-│   │                                runtime adapter's concern, not the kernel's)
-│   └── stderr.log                   bug-out only (CLI errors before session)
-├── workflows/<id>/                  placeholder (future)
-└── logs/                            placeholder (future)
+```sh
+npm install -g @langsensei/emploke
+emploke
 ```
 
-The HTTP API uses URL-path scoping: every workspace-scoped resource lives
-under `/api/workspaces/<id>/...` where `<id>` is the workspace's opaque
-UUID (stable for the lifetime of the registry entry, so dashboard URLs
-stay valid across renames). Catalog endpoints are
-`/api/workspaces/<id>/catalog/{skills,agents,mcps,overview}`; sessions
-are `/api/workspaces/<id>/sessions/...`; tasks (autonomous one-shot
-agent dispatch) are `/api/workspaces/<id>/tasks/...` with a streaming
-`/tasks/<tid>/events` endpoint that serves whatever event log the
-task's runtime publishes (the runtime adapter resolves the file via
-`Runtime.taskEventsPath`; the server treats the bytes as opaque).
-There is no global catalog mount — switching workspace switches the
-catalog the dashboard sees.
+Then open <http://127.0.0.1:8787> in your browser.
 
-## Design
+The first time you run `emploke`, the dashboard's landing page is empty.
+Walk through:
 
-The repo is a pnpm monorepo with three layered abstractions on top of a few pure helpers:
+1. **Add a workspace** — pick any directory on disk; emploke creates
+   `workspace.json` plus standard subdirs (`sessions/`, `tasks/`, `catalog/`)
+   inside it. Existing files in that directory are left alone.
+2. **Install an agent** in the Catalog tab — point at any directory containing
+   an `AGENTS.md` (a [Claude-style agent](https://www.claude.com/news/agent-skills);
+   any directory with valid frontmatter works). Skills + MCPs the agent
+   depends on go in the same way.
+3. **Dispatch a task** in the Tasks tab — pick the agent, type instructions,
+   click *Dispatch*. The agent runs unattended in a new sandbox under
+   `tasks/<id>/`; the dashboard shows the live event stream and folds the
+   exit into a final `success` / `failure` / `cancelled` status.
+4. **Or open a session** in the Sessions tab — interactive workdir; emploke
+   bakes the agent into it and gives you the exact `copilot` invocation to
+   run yourself.
 
-- [`@emploke/catalog`](./packages/catalog) owns each workspace's marketplace of skills + MCPs and its dependency graph (resolve in topological order, reject cycles, block uninstall when something still depends on you). One `Catalog` instance per workspace, rooted at `<workspace>/catalog/`.
-- [`@emploke/workspace`](./packages/workspace) owns the **per-project** root: one `workspace.json` per workspace, one `$EMPLOKE_HOME/workspaces.json` registry mapping opaque UUIDs to absolute paths. The UUID is the URL routing key; the user-facing display name lives in `workspace.json` and may change at any time without breaking links.
-- [`@emploke/runtime`](./packages/runtime) adapts third-party CLIs. It provisions per-session workdirs (`provision`) and runs any per-launch preconditions inside the adapter itself (e.g. Copilot's `buildLaunch` registers the workspace as trusted in `~/.copilot/config.json` so the spawned interactive session does not stall on a folder-trust prompt). The cross-runtime interface stays small — different CLIs have wildly different gating rules and we deliberately don't try to abstract them.
+## Configuration
 
-[`@emploke/task`](./packages/task) is the pure five-state lifecycle. [`@emploke/session`](./packages/session) maps each session to a workdir under the active workspace's `sessions/`. [`@emploke/server`](./packages/server) + [`@emploke/dashboard`](./packages/dashboard) expose everything as a single-user local control plane; one server process can host multiple workspaces, deciding which one a request targets from the URL path. [`@emploke/terminal`](./packages/terminal) hosts the launched CLI in a real terminal window.
+All configuration is via environment variables; no config file. Defaults
+work for single-machine use; only set what you need to override.
 
-See the [design book](https://langsensei.github.io/emploke/) for the language-neutral Layer 1 axioms (Capability / Agent / Task / Runtime), the Concurrency Contract, and the Observability floor these packages aim to honour. The book's *Positioning* chapter spells out where each package sits relative to MetaAgents (Layer 0) and to emploke's L1–L4 evolution roadmap.
+| Env var              | Default        | Purpose                                                                                                  |
+| -------------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
+| `PORT`               | `8787`         | HTTP listen port.                                                                                        |
+| `EMPLOKE_HOST`       | `127.0.0.1`    | Bind address. **Non-loopback values require `EMPLOKE_API_KEY`** — emploke refuses to start otherwise.    |
+| `EMPLOKE_API_KEY`    | —              | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. Required for non-loopback.    |
+| `EMPLOKE_HOME`       | `~/.emploke`   | Where the workspace registry (`workspaces.json`) lives.                                                  |
+| `EMPLOKE_LOG_LEVEL`  | `info`         | `debug` / `info` / `warn` / `error`.                                                                     |
+| `EMPLOKE_LOG_FORMAT` | `pretty`       | `pretty` (dev terminal) or `json` (log aggregators).                                                     |
+| `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. Useful when running from a non-bundle layout.                       |
+
+Pass `--no-serve-static` to run API-only (the dashboard SPA is bundled in
+the npm package by default; serving it from the same port is the only
+deployment mode that makes sense for the local-first model).
+
+## Where this sits
+
+Emploke does not invent a new agent format — it adopts the
+[MetaAgents](https://github.com/metaagents-ai/metaagents) Layer-0 spec where
+agents are markdown files (`AGENTS.md`) with YAML frontmatter, skills are
+markdown files (`SKILL.md`) with YAML frontmatter, and MCPs are JSON config
+blobs. What emploke adds:
+
+- **A dependency-aware catalog** — agents declare which skills + MCPs they
+  need; emploke topologically resolves them, blocks cycles, refuses to
+  uninstall something another entry depends on.
+- **A workspace abstraction** — multiple isolated projects on one machine;
+  each picks its own agent set without polluting the others.
+- **Runtime adapters** — first-class support for the
+  [GitHub Copilot CLI](https://github.com/github/gh-copilot) today; the same
+  surface lets future runtimes (Gemini, Claude Code, …) drop in.
+- **Autonomous tasks alongside interactive sessions** — one-shot dispatch
+  with a structured `not_started → running → success/failure/cancelled`
+  lifecycle, persisted across server restarts.
+
+## Architecture
+
+The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 11 small
+TypeScript packages with a strict layering: pure value types at the bottom,
+file-system primitives next, entity managers above (workspace / catalog /
+session / task), then the runtime adapter, then the HTTP server, then the
+React dashboard. See [`docs/architecture.md`](./docs/architecture.md) for
+the design contract — repository pattern, atomic-write seam, REST URL
+scheme, and the rationale behind the package boundaries.
+
+The conceptual model — how we think about agentic systems and why
+emploke is shaped the way it is — lives in the **paper
+[*What we believe about agentic systems*](https://langsensei.github.io/emploke/)**.
+It's a short read; if its premises resonate with you, the rest of the
+codebase will make sense more quickly.
+
+Each package's own README documents its public API surface; the most
+important ones for downstream consumers are
+[`@emploke/catalog`](./packages/catalog),
+[`@emploke/workspace`](./packages/workspace),
+[`@emploke/task`](./packages/task),
+[`@emploke/session`](./packages/session),
+[`@emploke/runtime`](./packages/runtime),
+[`@emploke/server`](./packages/server), and
+[`@emploke/storage`](./packages/storage).
 
 ## Development
 
-This repo is a [pnpm workspace](https://pnpm.io/workspaces). Requires Node ≥ 22, pnpm ≥ 10.
+Requires Node ≥ 22, pnpm ≥ 10.
 
 ```sh
+git clone https://github.com/LangSensei/emploke.git
+cd emploke
 pnpm install
 pnpm build       # tsc emit (run first; downstream packages import upstream .d.ts)
 pnpm typecheck   # tsc --noEmit across all packages
@@ -89,102 +123,19 @@ pnpm test        # vitest across all packages
 pnpm lint        # biome check
 ```
 
-## Run as a service
-
-`pnpm bundle` produces a single self-contained executable (the dashboard
-SPA is bundled alongside) that can be `npm install -g`-ed and run as
-`emploke`:
+Run the dev server (hot-reloading API + Vite-served dashboard):
 
 ```sh
-pnpm bundle                     # → bundle/emploke.js + bundle/static/
-node bundle/emploke.js          # boots HTTP on http://127.0.0.1:8787
+pnpm dev
+# API on http://127.0.0.1:8787
+# Dashboard dev server on http://127.0.0.1:41817 (proxies /api → 8787)
 ```
 
-Once published, end users get the same in one step:
-
-```sh
-npm install -g @langsensei/emploke
-emploke
-```
-
-The bundled binary defaults to `--serve-static` (the dashboard is in the
-package, single-port deployment is the only thing that makes sense). Pass
-`--no-serve-static` to fall back to API-only mode.
-
-Configuration is via env vars (same set as the dev server):
-
-| Var | Default | Purpose |
-|---|---|---|
-| `PORT` | `8787` | Listen port |
-| `EMPLOKE_HOST` | `127.0.0.1` | Bind address. Non-loopback values **require** `EMPLOKE_API_KEY`. |
-| `EMPLOKE_API_KEY` | — | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. |
-| `EMPLOKE_HOME` | `~/.emploke` | Where the workspace registry (`workspaces.json`) lives. |
-| `EMPLOKE_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
-| `EMPLOKE_LOG_FORMAT` | `pretty` | `pretty` (dev) or `json` (prod / log aggregators). |
-| `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. |
-
-Bundle layout: `bundle/emploke.js` inlines server + every workspace
-package + `hono` / `js-yaml` / etc. The pino logger family
-(`pino`, `pino-pretty`, `pino-roll`) is intentionally **not** inlined —
-pino loads transports through `worker_threads` with runtime-resolved
-paths, which can't survive bundling. Those three packages are declared
-as runtime `dependencies` and pulled by `npm install -g`.
-
-## Releasing
-
-The `@langsensei/emploke` npm package is published by a tag-triggered
-GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
-The maintainer workflow is:
-
-```sh
-npm version patch        # bumps package.json + creates v<X.Y.Z> tag + commit
-git push --follow-tags   # pushes commit + tag → workflow runs → npm publish
-```
-
-Use `minor` / `major` instead of `patch` per [semver](https://semver.org/) as appropriate.
-
-Prereleases:
-
-```sh
-npm version prerelease --preid=rc   # 0.2.0 → 0.2.1-rc.0
-git push --follow-tags
-```
-
-Versions containing a `-` (e.g. `0.2.1-rc.0`) are published with the
-`next` npm dist-tag rather than `latest`, so `npm install -g @langsensei/emploke`
-keeps installing the stable line.
-
-The workflow refuses to publish if the git tag's version doesn't match
-`package.json`. It also enables [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
-so the package page links back to the exact commit + workflow run that
-built each release.
-
-Repo prerequisite (one-time): configure
-[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers)
-on the package so the workflow can publish via OIDC without a long-lived
-token. On the npm package settings page (Publishing access → Trusted
-Publishers), add a GitHub Actions trusted publisher with:
-
-| Field | Value |
-|---|---|
-| Organization or user | `LangSensei` |
-| Repository | `emploke` |
-| Workflow filename | `release.yml` |
-| Environment | *(leave blank)* |
-
-Trusted Publishing replaces classic automation tokens, which since
-October 2025 cap out at 90-day expiry. The OIDC token is short-lived,
-scoped to one workflow run, and managed entirely by npm + GitHub — no
-`NPM_TOKEN` repo secret to maintain.
-
-## Design book
-
-The architectural rationale — Capability / Agent / Task / Runtime axioms, six-state Task lifecycle, Concurrency Contract, Observability floor — lives in [`docs/index.html`](docs/index.html).
-
-Read online: **<https://langsensei.github.io/emploke/>**
-
-The book is bilingual (English + 中文).
+For everything beyond the basics — repository pattern, atomic-write
+guarantees, how to add a new runtime adapter — see
+[`docs/architecture.md`](./docs/architecture.md). Release procedure
+lives in [`docs/RELEASING.md`](./docs/RELEASING.md).
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).

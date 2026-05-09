@@ -1,2428 +1,599 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Emploke — A Minimal Kernel for Agentic Systems · 面向智能体系统的极简内核</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>What we believe about agentic systems — emploke</title>
+<meta name="description" content="A short essay on how we think agent systems should be built — and why we keep emploke small on purpose." />
+<meta name="theme-color" content="#0f172a" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --bg: #fafaf7;
-    --bg-card: #ffffff;
-    --text: #1f2937;
-    --text-muted: #6b7280;
-    --text-soft: #4b5563;
-    --accent: #115e59;
-    --accent-soft: #ccfbf1;
-    --border: #e5e7eb;
-    --border-soft: #f1f5f4;
-    --code-bg: #f1f5f4;
-    --sidebar-bg: #f4f3ee;
-    --cat: #14b8a6;
-    --cat-soft: #ccfbf1;
-    --exe: #a855f7;
-    --exe-soft: #f3e8ff;
-    --warn-soft: #fffbeb;
-    --warn: #d97706;
-    --note-soft: #eff6ff;
-    --note: #2563eb;
+  :root{
+    --ink:#1f2328;
+    --ink-soft:#475569;
+    --muted:#64748b;
+    --line:#e5e7eb;
+    --line-soft:#f1f5f9;
+    --paper:#fdfcf9;
+    --accent:#0f766e;
+    --accent-soft:#ccfbf1;
+    --code-bg:#f6f8fa;
+    --max:680px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Source Serif 4", Charter, "Iowan Old Style", Georgia, serif;
+    font-size:19px;
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  html[lang="zh"] body{
+    font-family:"Noto Serif SC","Source Han Serif SC","Songti SC", serif;
+    font-size:18px;
+    line-height:1.85;
   }
 
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; scroll-padding-top: 24px; }
-  body {
-    font-family: 'Charter', 'Iowan Old Style', 'Georgia', 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', 'Source Serif Pro', serif;
-    font-size: 17px;
-    line-height: 1.75;
-    background: var(--bg);
-    color: var(--text);
-    margin: 0;
-    padding: 0;
-    -webkit-font-smoothing: antialiased;
+  /* lang switching */
+  html[lang="en"] [data-lang="zh"]{display:none}
+  html[lang="zh"] [data-lang="en"]{display:none}
+
+  /* top bar */
+  .topbar{
+    position:sticky;
+    top:0;
+    z-index:10;
+    background:rgba(253,252,249,0.85);
+    backdrop-filter:saturate(180%) blur(12px);
+    -webkit-backdrop-filter:saturate(180%) blur(12px);
+    border-bottom:1px solid var(--line-soft);
   }
-  html[lang^="zh"] body {
-    font-family: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', 'Charter', 'Georgia', serif;
-    font-size: 16.5px;
-    line-height: 1.85;
+  .topbar-inner{
+    max-width:880px;
+    margin:0 auto;
+    padding:14px 28px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+  }
+  .brand{
+    font-family:"Inter", system-ui, sans-serif;
+    font-weight:600;
+    font-size:14px;
+    letter-spacing:0.02em;
+    color:var(--ink);
+    text-decoration:none;
+  }
+  .brand .dot{color:var(--accent)}
+  .lang-toggle{
+    display:inline-flex;
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:2px;
+    background:#fff;
+    font-family:"Inter", system-ui, sans-serif;
+    font-size:12px;
+  }
+  .lang-toggle button{
+    border:0;
+    background:transparent;
+    padding:5px 11px;
+    border-radius:999px;
+    cursor:pointer;
+    color:var(--muted);
+    font:inherit;
+    letter-spacing:0.04em;
+  }
+  .lang-toggle button.active{
+    background:var(--ink);
+    color:#fff;
   }
 
-  /* ─── Bilingual visibility (default zh-cn) ─────────────── */
-  html[lang="en"] [data-lang="zh"] { display: none !important; }
-  html[lang^="zh"] [data-lang="en"] { display: none !important; }
-
-  .layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    min-height: 100vh;
+  /* article container */
+  article{
+    max-width:var(--max);
+    margin:0 auto;
+    padding:64px 28px 96px;
   }
 
-  /* ─── Sidebar ─────────────────────────────────────────── */
-  aside.sidebar {
-    position: sticky;
-    top: 0;
-    align-self: start;
-    height: 100vh;
-    overflow-y: auto;
-    padding: 24px 24px 60px;
-    background: var(--sidebar-bg);
-    border-right: 1px solid var(--border);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    font-size: 13.5px;
+  /* header */
+  header.post{
+    margin-bottom:56px;
   }
-  .brand {
-    margin-bottom: 18px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
+  .kicker{
+    font-family:"Inter", system-ui, sans-serif;
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin-bottom:18px;
   }
-  .brand-name {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--accent);
+  h1{
+    font-family:"Source Serif 4", Charter, Georgia, serif;
+    font-weight:600;
+    font-size:42px;
+    line-height:1.18;
+    letter-spacing:-0.015em;
+    margin:0 0 22px;
+    color:var(--ink);
   }
-  .brand-sub {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-    margin-top: 2px;
+  html[lang="zh"] h1{
+    font-family:"Noto Serif SC","Source Han Serif SC", serif;
+    font-size:34px;
+    line-height:1.35;
+    letter-spacing:0;
+  }
+  .lede{
+    font-size:21px;
+    line-height:1.55;
+    color:var(--ink-soft);
+    margin:0 0 28px;
+    font-style:italic;
+  }
+  html[lang="zh"] .lede{
+    font-size:18px;
+    line-height:1.75;
+    font-style:normal;
+  }
+  .byline{
+    font-family:"Inter", system-ui, sans-serif;
+    font-size:13px;
+    color:var(--muted);
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:10px;
+    padding-top:18px;
+    border-top:1px solid var(--line-soft);
+  }
+  .byline .sep{color:var(--line)}
+  .byline a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--line)}
+  .byline a:hover{color:var(--accent);border-color:var(--accent)}
+
+  /* body */
+  article p{
+    margin:0 0 22px;
+  }
+  article h2{
+    font-family:"Source Serif 4", Charter, Georgia, serif;
+    font-weight:600;
+    font-size:26px;
+    line-height:1.3;
+    letter-spacing:-0.005em;
+    margin:56px 0 20px;
+    color:var(--ink);
+  }
+  html[lang="zh"] article h2{
+    font-family:"Noto Serif SC","Source Han Serif SC", serif;
+    font-size:22px;
+    line-height:1.45;
+  }
+  article h3{
+    font-family:"Source Serif 4", Charter, Georgia, serif;
+    font-weight:600;
+    font-size:18px;
+    line-height:1.4;
+    margin:36px 0 12px;
+    color:var(--ink);
+  }
+  html[lang="zh"] article h3{
+    font-family:"Noto Serif SC","Source Han Serif SC", serif;
+    font-size:17px;
+  }
+  article a{
+    color:var(--ink);
+    text-decoration:none;
+    border-bottom:1px solid var(--accent);
+    padding-bottom:1px;
+    transition:color 0.15s;
+  }
+  article a:hover{color:var(--accent)}
+  article strong{font-weight:600;color:var(--ink)}
+  article em{font-style:italic}
+
+  /* pull quote */
+  .pull{
+    margin:36px 0;
+    padding:0 0 0 22px;
+    border-left:3px solid var(--accent);
+    font-size:20px;
+    line-height:1.55;
+    color:var(--ink);
+    font-style:italic;
+  }
+  html[lang="zh"] .pull{
+    font-style:normal;
+    font-size:18px;
+    line-height:1.75;
   }
 
-  /* ─── Language toggle ──────────────────────────────────── */
-  .lang-toggle {
-    display: inline-flex;
-    margin: 0 0 22px 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 3px;
-    font-family: 'Inter', sans-serif;
-    font-size: 12px;
-    user-select: none;
+  /* code & inline */
+  code{
+    font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size:0.86em;
+    background:var(--code-bg);
+    padding:2px 6px;
+    border-radius:4px;
+    color:#0f172a;
   }
-  .lang-toggle button {
-    appearance: none;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    padding: 5px 14px;
-    border-radius: 999px;
-    cursor: pointer;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    transition: all 0.15s;
-    font-family: inherit;
-    font-size: inherit;
+  pre{
+    background:var(--code-bg);
+    border:1px solid var(--line-soft);
+    border-radius:8px;
+    padding:16px 18px;
+    overflow-x:auto;
+    margin:24px 0;
   }
-  .lang-toggle button:hover { color: var(--text); }
-  .lang-toggle button.active {
-    background: var(--accent);
-    color: white;
+  pre code{
+    background:transparent;
+    padding:0;
+    font-size:13.5px;
+    line-height:1.6;
+    color:#1f2328;
   }
 
-  aside.sidebar nav h3 {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-    margin: 22px 0 6px 0;
-    font-weight: 700;
+  /* lists */
+  article ul, article ol{
+    margin:0 0 22px;
+    padding-left:24px;
   }
-  aside.sidebar nav a {
-    display: block;
-    padding: 5px 10px;
-    color: var(--text-soft);
-    text-decoration: none;
-    border-radius: 4px;
-    border-left: 2px solid transparent;
-    transition: all 0.12s;
-    line-height: 1.4;
+  article li{margin-bottom:8px}
+
+  /* numbered emphasis */
+  .belief{
+    margin:32px 0;
+    padding:24px 26px;
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:10px;
+    position:relative;
   }
-  aside.sidebar nav a:hover {
-    background: var(--bg-card);
-    color: var(--text);
+  .belief .num{
+    font-family:"Inter", system-ui, sans-serif;
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.16em;
+    color:var(--accent);
+    text-transform:uppercase;
+    margin-bottom:10px;
   }
-  aside.sidebar nav a.active {
-    background: var(--bg-card);
-    color: var(--accent);
-    font-weight: 600;
-    border-left-color: var(--accent);
+  .belief h3{
+    margin:0 0 10px;
+    font-size:19px;
+  }
+  .belief p:last-child{margin-bottom:0}
+
+  /* section divider */
+  .rule{
+    border:0;
+    border-top:1px solid var(--line);
+    margin:64px auto;
+    width:80px;
   }
 
-  /* ─── Main content ─────────────────────────────────────── */
-  main.content {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 40px 56px 160px;
+  /* footer */
+  footer.post{
+    margin-top:80px;
+    padding-top:32px;
+    border-top:1px solid var(--line-soft);
+    font-family:"Inter", system-ui, sans-serif;
+    font-size:13px;
+    color:var(--muted);
+    line-height:1.7;
+  }
+  footer.post a{
+    color:var(--muted);
+    border-bottom:1px solid var(--line);
+    text-decoration:none;
+  }
+  footer.post a:hover{color:var(--accent);border-color:var(--accent)}
+
+  /* tighter on phones */
+  @media (max-width:640px){
+    body{font-size:18px}
+    article{padding:40px 22px 72px}
+    h1{font-size:32px}
+    html[lang="zh"] h1{font-size:26px}
+    .lede{font-size:18px}
+    article h2{font-size:22px;margin:44px 0 16px}
+    .pull{font-size:18px}
+    .topbar-inner{padding:12px 22px}
   }
 
-  section.chapter {
-    padding-top: 60px;
-    margin-bottom: 40px;
-  }
-
-  .chapter-number {
-    font-family: 'Inter', -apple-system, sans-serif;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-    font-weight: 700;
-    margin: 0 0 8px 0;
-  }
-  .chapter-title {
-    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    font-size: 42px;
-    font-weight: 800;
-    line-height: 1.15;
-    margin: 0 0 12px 0;
-    letter-spacing: -0.025em;
-    color: #111827;
-  }
-  .chapter-subtitle {
-    color: var(--text-muted);
-    font-size: 18px;
-    font-style: italic;
-    margin: 0 0 36px 0;
-    line-height: 1.5;
-  }
-  html[lang^="zh"] .chapter-subtitle { font-style: normal; }
-
-  main.content h2 {
-    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    font-size: 24px;
-    font-weight: 700;
-    margin-top: 48px;
-    margin-bottom: 14px;
-    letter-spacing: -0.012em;
-    line-height: 1.3;
-    color: #111827;
-  }
-  main.content h3 {
-    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    font-size: 17px;
-    font-weight: 600;
-    margin-top: 28px;
-    margin-bottom: 8px;
-    letter-spacing: -0.005em;
-    color: #1f2937;
-  }
-  main.content p {
-    margin: 14px 0;
-    color: var(--text);
-  }
-  main.content ul, main.content ol {
-    padding-left: 24px;
-    margin: 14px 0;
-  }
-  main.content li {
-    margin: 6px 0;
-  }
-  main.content code {
-    font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
-    background: var(--code-bg);
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 0.88em;
-    color: var(--accent);
-  }
-  main.content pre {
-    background: #1e293b;
-    color: #f1f5f9;
-    padding: 18px 22px;
-    border-radius: 8px;
-    overflow-x: auto;
-    font-size: 13.5px;
-    line-height: 1.65;
-    margin: 22px 0;
-  }
-  main.content pre code {
-    background: none;
-    padding: 0;
-    color: inherit;
-    font-size: inherit;
-  }
-  main.content em { font-style: italic; }
-  html[lang^="zh"] main.content em { font-style: normal; font-weight: 600; color: #111827; }
-  main.content strong { font-weight: 600; color: #111827; }
-  main.content a {
-    color: var(--accent);
-    text-decoration: none;
-    border-bottom: 1px solid var(--accent-soft);
-  }
-  main.content a:hover { border-bottom-color: var(--accent); }
-
-  /* ─── Callouts ─────────────────────────────────────────── */
-  .callout {
-    background: var(--bg-card);
-    border-left: 3px solid var(--accent);
-    padding: 16px 22px;
-    margin: 24px 0;
-    border-radius: 0 6px 6px 0;
-    font-size: 15.5px;
-    line-height: 1.65;
-  }
-  .callout.note {
-    border-left-color: var(--note);
-    background: var(--note-soft);
-  }
-  .callout.note::before {
-    content: "Note";
-    display: block;
-    font-family: 'Inter', sans-serif;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--note);
-    margin-bottom: 6px;
-  }
-  html[lang^="zh"] .callout.note::before { content: "提示"; letter-spacing: 0.05em; }
-  .callout.why-not {
-    border-left-color: var(--warn);
-    background: var(--warn-soft);
-  }
-  .callout.why-not::before {
-    content: "Why not...";
-    display: block;
-    font-family: 'Inter', sans-serif;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--warn);
-    margin-bottom: 6px;
-  }
-  html[lang^="zh"] .callout.why-not::before { content: "为什么不……"; letter-spacing: 0.05em; }
-
-  /* ─── Tag badges ───────────────────────────────────────── */
-  .tag {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-family: 'Inter', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    vertical-align: middle;
-    margin-left: 10px;
-    line-height: 1.4;
-  }
-  .tag.cat { background: var(--cat-soft); color: #0f766e; }
-  .tag.exe { background: var(--exe-soft); color: #7c3aed; }
-
-  /* ─── Tables ───────────────────────────────────────────── */
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 24px 0;
-    font-size: 14.5px;
-    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: var(--bg-card);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  th {
-    text-align: left;
-    padding: 10px 14px;
-    background: #f9fafb;
-    border-bottom: 1px solid var(--border);
-    font-weight: 600;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-  }
-  html[lang^="zh"] th { text-transform: none; letter-spacing: 0.02em; font-size: 12.5px; }
-  td {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-soft);
-    vertical-align: top;
-    color: var(--text);
-  }
-  td:first-child { font-weight: 500; }
-  tr:last-child td { border-bottom: none; }
-
-  /* ─── Cover ────────────────────────────────────────────── */
-  .cover {
-    min-height: calc(100vh - 80px);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    padding: 0 0 80px;
-    border-bottom: 1px solid var(--border);
-  }
-  .cover .label {
-    font-family: 'Inter', sans-serif;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.2em;
-    color: var(--text-muted);
-    margin-bottom: 16px;
-  }
-  .cover h1 {
-    font-family: 'Inter', -apple-system, sans-serif;
-    font-size: 84px;
-    font-weight: 800;
-    margin: 0 0 12px 0;
-    letter-spacing: -0.04em;
-    line-height: 1;
-    color: #0f766e;
-  }
-  .cover .subtitle {
-    font-size: 24px;
-    color: var(--text-muted);
-    font-style: italic;
-    margin-bottom: 36px;
-    max-width: 600px;
-    line-height: 1.4;
-  }
-  html[lang^="zh"] .cover .subtitle { font-style: normal; }
-  .cover .tagline {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    color: var(--accent);
-    letter-spacing: 0.06em;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 28px;
-    margin: 0 auto 36px;
-    background: var(--bg-card);
-  }
-  .cover .abstract {
-    max-width: 580px;
-    font-size: 16px;
-    line-height: 1.75;
-    color: var(--text-soft);
-    margin: 0 auto 28px;
-    text-align: left;
-  }
-  .cover .reading-guide {
-    max-width: 580px;
-    font-size: 14px;
-    color: var(--text-muted);
-    font-family: 'Inter', 'PingFang SC', sans-serif;
-    line-height: 1.7;
-    margin: 12px auto 0;
-    padding-top: 24px;
-    border-top: 1px dashed var(--border);
-  }
-
-  /* ─── Glossary list ────────────────────────────────────── */
-  dl { margin: 24px 0; }
-  dt {
-    font-weight: 600;
-    color: #111827;
-    margin-top: 18px;
-    font-size: 16px;
-  }
-  dd {
-    margin-left: 0;
-    margin-top: 4px;
-    color: var(--text-soft);
-    font-size: 15.5px;
-    line-height: 1.65;
-  }
-
-  /* ─── Mermaid wrapper ──────────────────────────────────── */
-  .mermaid {
-    background: var(--bg-card);
-    padding: 24px;
-    border-radius: 8px;
-    margin: 28px 0;
-    border: 1px solid var(--border);
-    text-align: center;
-  }
-
-  /* ─── Footer ───────────────────────────────────────────── */
-  .book-footer {
-    margin-top: 80px;
-    padding-top: 24px;
-    border-top: 1px solid var(--border);
-    font-family: 'Inter', 'PingFang SC', sans-serif;
-    font-size: 13px;
-    color: var(--text-muted);
-    text-align: center;
-  }
-
-  @media (max-width: 1000px) {
-    .layout { grid-template-columns: 1fr; }
-    aside.sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-    main.content { padding: 32px 24px 80px; }
-    .cover h1 { font-size: 56px; }
+  /* print: just the prose */
+  @media print{
+    .topbar{display:none}
+    body{background:#fff;font-size:11pt;color:#000}
+    article{padding:0;max-width:none}
+    .belief{break-inside:avoid;border-color:#999}
+    article a{color:#000;border-bottom:1px solid #999}
   }
 </style>
 </head>
 <body>
 
-<div class="layout">
-
-<aside class="sidebar">
-  <div class="brand">
-    <div class="brand-name">Emploke</div>
-    <div class="brand-sub">
-      <span data-lang="en">Design Book · Layer 1</span>
-      <span data-lang="zh">设计文档 · Layer 1</span>
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="https://github.com/LangSensei/emploke">emploke<span class="dot">.</span></a>
+    <div class="lang-toggle" role="group" aria-label="Language">
+      <button type="button" data-set-lang="en" class="active">EN</button>
+      <button type="button" data-set-lang="zh">中文</button>
     </div>
   </div>
-
-  <div class="lang-toggle" role="tablist" aria-label="Language">
-    <button data-set-lang="en" class="active" type="button">EN</button>
-    <button data-set-lang="zh-cn" type="button">中文</button>
-  </div>
-
-  <nav>
-    <a href="#cover">
-      <span data-lang="en">Cover</span>
-      <span data-lang="zh">封面</span>
-    </a>
-    <a href="#foreword">
-      <span data-lang="en">Foreword</span>
-      <span data-lang="zh">前言</span>
-    </a>
-
-    <a href="#positioning">
-      <span data-lang="en">Positioning</span>
-      <span data-lang="zh">定位</span>
-    </a>
-
-    <h3>
-      <span data-lang="en">Part I — Mental Model</span>
-      <span data-lang="zh">第一部分 · 心智模型</span>
-    </h3>
-    <a href="#ch1"><span data-lang="en">1. The Core Idea</span><span data-lang="zh">1. 核心思想</span></a>
-    <a href="#ch2"><span data-lang="en">2. The Two Sub-Contexts</span><span data-lang="zh">2. 两个子上下文</span></a>
-    <a href="#ch3"><span data-lang="en">3. Boundaries</span><span data-lang="zh">3. 边界</span></a>
-    <a href="#ch4"><span data-lang="en">4. Conventions</span><span data-lang="zh">4. 约定</span></a>
-
-    <h3>
-      <span data-lang="en">Part II — The Concepts</span>
-      <span data-lang="zh">第二部分 · 概念</span>
-    </h3>
-    <a href="#ch5"><span data-lang="en">5. Capability</span><span data-lang="zh">5. Capability（能力）</span></a>
-    <a href="#ch6"><span data-lang="en">6. Agent</span><span data-lang="zh">6. Agent（智能体）</span></a>
-    <a href="#ch7"><span data-lang="en">7. Task</span><span data-lang="zh">7. Task（任务）</span></a>
-    <a href="#ch8"><span data-lang="en">8. Runtime</span><span data-lang="zh">8. Runtime（运行时）</span></a>
-    <a href="#ch9"><span data-lang="en">9. Execution</span><span data-lang="zh">9. Execution（执行）</span></a>
-
-    <h3>
-      <span data-lang="en">Part III — Invariants</span>
-      <span data-lang="zh">第三部分 · 不变量</span>
-    </h3>
-    <a href="#ch10"><span data-lang="en">10. Invariants</span><span data-lang="zh">10. 不变量</span></a>
-
-    <h3>
-      <span data-lang="en">Appendix</span>
-      <span data-lang="zh">附录</span>
-    </h3>
-    <a href="#glossary"><span data-lang="en">A. Glossary</span><span data-lang="zh">A. 术语表</span></a>
-    <a href="#ddd-lens"><span data-lang="en">B. The DDD Lens</span><span data-lang="zh">B. DDD 视角</span></a>
-    <a href="#decisions"><span data-lang="en">C. Design Decisions</span><span data-lang="zh">C. 设计决策</span></a>
-  </nav>
-</aside>
-
-<main class="content">
-
-<!-- ═══════════ COVER ═══════════ -->
-<section class="cover" id="cover">
-  <div class="label">
-    <span data-lang="en">Design Book</span>
-    <span data-lang="zh">设计文档</span>
-  </div>
-  <h1>Emploke</h1>
-  <p class="subtitle">
-    <span data-lang="en">A Minimal Kernel for Agentic Systems</span>
-    <span data-lang="zh">面向智能体系统的极简内核</span>
-  </p>
-  <p style="text-align:center; font-size:0.9rem; color:#666; margin-top:-0.5rem;">
-    <span data-lang="en"><em>From εμπλοκή (emplokí) — entanglement. Agents interweave; the kernel is where they meet.</em></span>
-    <span data-lang="zh"><em>源自希腊语 εμπλοκή（emplokí）——纠缠。Agent 之间交织协作，内核是它们相遇的地方。</em></span>
-  </p>
-  <div class="tagline">
-    <span data-lang="en">4 axioms · 2 invariants · 2 interfaces · zero theme</span>
-    <span data-lang="zh">4 公理 · 2 不变量 · 2 接口 · 零主题</span>
-  </div>
-
-  <div data-lang="en" class="abstract">
-    Emploke is the bedrock of an agentic system. It defines what an agent is, what a task is, where things execute, and what can be loaded — and nothing else. No graph. No scheduler. No vocabulary. No persistence. This book is a complete account of Layer 1.
-  </div>
-  <div data-lang="zh" class="abstract">
-    Emploke 是智能体系统的基石。它定义了什么是 Agent、什么是 Task、在哪里执行、可加载什么——仅此而已。没有图（graph），没有调度器，没有词汇表，没有持久化。本书是 Layer 1 的完整阐述。
-  </div>
-
-  <p class="reading-guide" data-lang="en">
-    Read it linearly if you are new — even if you skip ahead, the short <a href="#positioning">Positioning</a> chapter is worth reading first. Jump to <a href="#ch5">Part II</a> for the concept chapters (four axioms + Execution). Jump to <a href="#decisions">Appendix C</a> for the design decisions behind every choice.
-  </p>
-  <p class="reading-guide" data-lang="zh">
-    初读者建议线性通读——即便要跳读，<a href="#positioning">"定位"</a>章节短小、值得先看。想直接看概念章节（四条公理 + Execution），请翻到<a href="#ch5">第二部分</a>。想了解每个选择背后的"为什么"，请翻到<a href="#decisions">附录 C</a>。
-  </p>
-</section>
-
-<!-- ═══════════ FOREWORD ═══════════ -->
-<section class="chapter" id="foreword">
-  <p class="chapter-number">
-    <span data-lang="en">Foreword</span>
-    <span data-lang="zh">前言</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">A Self-Contained Layer</span>
-    <span data-lang="zh">一个自洽的层</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">What this book is, and what it is not.</span>
-    <span data-lang="zh">本书是什么，不是什么。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>This book defines <strong>Layer 1 only</strong>. Everything else — orchestration, persistence implementations, role vocabularies, UI conventions — lives above. We do not refer to those layers by name in this book. Where we must point upward, we say "the layer above the kernel".</p>
-
-    <p>The reader we have in mind is a developer building on top of Emploke, an architect designing a sibling product on the same kernel, or a reviewer asking "did they get the fundamentals right?". For the first reader, the concept chapters in Part II are the contract. For the second, Part III's invariants and Appendix C's design decisions matter most. For the third, this whole book is a self-justification.</p>
-
-    <p>We use a mixed voice throughout. <em>Definitions and invariants are stated declaratively</em> — "Capability is a name", "Task is the only Aggregate Root" — because they are commitments, not opinions. <em>Rationale is stated as "we"</em> — "we kept it that small because" — because it is choice, and choice has authors.</p>
-
-    <p>The single takeaway from this foreword: <strong>Emploke is a self-contained, theme-neutral kernel with four axioms, two invariants, and two interfaces (Runtime + Query).</strong> Everything in this book justifies that sentence.</p>
-  </div>
-
-  <div data-lang="zh">
-    <p>本书只定义 <strong>Layer 1</strong>。所有其他内容——编排、持久化实现、角色词汇、UI 约定——都在内核之上。书中不点名引用那些上层。当必须向上指代时，我们说"内核之上的层"。</p>
-
-    <p>本书的目标读者有三类：在 Emploke 之上构建产品的开发者；基于同一内核设计兄弟产品的架构师；以及审视"基础是否扎实"的评审者。第一类读者，第二部分的概念章节就是契约；第二类读者，第三部分的不变量与附录 C 的设计决策最为关键；第三类读者，整本书都是一次自我论证。</p>
-
-    <p>全书使用混合语气。<em>定义与不变量采用陈述式</em>——"Capability 就是一个 name"、"Task 是唯一的 Aggregate Root"——因为它们是承诺，而非观点。<em>论证与权衡采用"我们"</em>——"我们之所以把它压缩到这么小是因为……"——因为这是选择，而选择有作者。</p>
-
-    <p>本前言的唯一要点：<strong>Emploke 是一个自洽、主题中立的内核，包含 4 条公理、2 条不变量、以及 2 个接口（Runtime + Query）。</strong>本书余下的全部内容，都是在论证这一句话。</p>
-  </div>
-</section>
-
-<!-- ═══════════ POSITIONING ═══════════ -->
-<section class="chapter" id="positioning">
-  <p class="chapter-number">
-    <span data-lang="en">Positioning</span>
-    <span data-lang="zh">定位</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">emploke as a Layered System</span>
-    <span data-lang="zh">emploke 是一个分层系统</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Where this kernel sits between an upstream format spec and a downstream evolution roadmap.</span>
-    <span data-lang="zh">本内核在上游格式规范与下游演化路线之间的位置。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>emploke sits at the intersection of two complementary concerns.</p>
-
-    <h2>Layer 0 — Format</h2>
-    <p>Where on disk a Skill lives, how an MCP server is configured, how an Agent declares its dependencies, what the directory layout looks like. emploke does not invent any of this — it adopts the <a href="https://github.com/metaagents-ai/metaagents"><strong>MetaAgents</strong></a> specification verbatim:</p>
-    <ul>
-      <li>Agents (<code>AGENTS.md</code>), Skills (<code>SKILL.md</code>) and MCP servers (<code>&lt;name&gt;.json</code>) live under <code>agents/</code>, <code>skills/</code>, <code>mcps/</code>.</li>
-      <li>Frontmatter declares <code>dependencies.skills</code> and <code>dependencies.mcps</code>.</li>
-      <li>Names follow <code>scope/name</code>; MCPs additionally accept the <a href="https://registry.modelcontextprotocol.io">official MCP registry</a>'s scoped form.</li>
-      <li>Resolution is topological, cycle-free, missing-dependency-strict.</li>
-    </ul>
-    <p><strong>If your <code>AGENTS.md</code> or <code>SKILL.md</code> works with MetaAgents, it works with emploke.</strong></p>
-
-    <h2>Layer 1 — Kernel (this book)</h2>
-    <p>Above the format, emploke commits to four axioms (Capability, Agent, Task, Runtime), a six-state Task lifecycle, the Concurrency Contract (G2), and the Observability floor (G1). <strong>Capability</strong> is the kernel-level abstraction over what MetaAgents distinguishes as Skill and MCP; the kernel treats it as a reference and never inspects its content. Everything else in this book either elaborates or constrains those four axioms.</p>
-
-    <h2>Above the kernel — what emploke wants to be</h2>
-    <p>The kernel is the smallest set of concepts that lets human–AI collaboration evolve through four levels. The framing comes from emploke's own product narrative ("the bottleneck migrates upward"):</p>
-    <table>
-      <thead>
-        <tr><th>Level</th><th>Solves</th><th>Status in emploke</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><strong>L1 MetaAgent</strong> — give AI a domain identity</td>
-          <td>AI doesn't know your domain</td>
-          <td>Layer 0 (MetaAgents) + the kernel's Agent / Capability axioms · <strong>shipping</strong></td>
-        </tr>
-        <tr>
-          <td><strong>L2 Session</strong> — keep the MetaAgent on duty with persistent context</td>
-          <td>Every chat re-loads from zero</td>
-          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>shipping</strong></td>
-        </tr>
-        <tr>
-          <td><strong>L3 Task</strong> — encapsulate a multi-step intent so AI runs end-to-end; the human intervenes only at brief and at deliverable</td>
-          <td>Real-time babysitting</td>
-          <td><code>@emploke/task</code> + the runtime layer · <strong>shipping</strong>; the Task axiom and lifecycle in this book are <em>exactly</em> what makes L3 possible</td>
-        </tr>
-        <tr>
-          <td><strong>L4 Workflow</strong> — multiple agents hand off via an explicit protocol; the human only sets direction</td>
-          <td>Stitching tasks back together</td>
-          <td><strong>roadmap</strong> — out of scope for this book</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>This book defines the kernel — what L2/L3 are built on, and what L4 will eventually rest on. It deliberately does <em>not</em> specify L4 (the DAG / captain / hand-off-protocol vocabulary) yet; that belongs to a future companion specification.</p>
-
-    <h2>What this book is not</h2>
-    <ul>
-      <li>Not a substrate manual. Concrete Runtime impls live in sibling packages (today: the Copilot adapter inside <code>@emploke/runtime</code>; planned: Gemini, Claude Code, …).</li>
-      <li>Not a multi-agent / workflow specification. L4 is acknowledged here as the next layer above the kernel; its semantics are out of scope for this revision.</li>
-      <li>Not a package manager. Per MetaAgents Layer 0, fetch / publish / execute / spawn are all explicitly out of scope.</li>
-    </ul>
-  </div>
-
-  <div data-lang="zh">
-    <p>emploke 处在两个互补关切的交汇处。</p>
-
-    <h2>Layer 0 — 格式</h2>
-    <p>Skill 在磁盘上长什么样、MCP server 怎么配、Agent 如何声明依赖、目录如何布局——这些 emploke 都不发明，而是直接采用 <a href="https://github.com/metaagents-ai/metaagents"><strong>MetaAgents</strong></a> 规范：</p>
-    <ul>
-      <li>Agent（<code>AGENTS.md</code>）、Skill（<code>SKILL.md</code>）、MCP server（<code>&lt;name&gt;.json</code>）分别住在 <code>agents/</code>、<code>skills/</code>、<code>mcps/</code> 下。</li>
-      <li>frontmatter 声明 <code>dependencies.skills</code> 与 <code>dependencies.mcps</code>。</li>
-      <li>名字遵循 <code>scope/name</code>；MCP 额外接受 <a href="https://registry.modelcontextprotocol.io">MCP 官方注册表</a>的 scoped 形式。</li>
-      <li>依赖解析：拓扑、无环、缺失即失败。</li>
-    </ul>
-    <p><strong>只要你的 <code>AGENTS.md</code> 或 <code>SKILL.md</code> 在 MetaAgents 下能跑，在 emploke 下就能跑。</strong></p>
-
-    <h2>Layer 1 — Kernel（本书）</h2>
-    <p>在格式之上，emploke 承诺四条公理（Capability、Agent、Task、Runtime）、六态 Task 生命周期、Concurrency Contract (G2) 与 Observability floor (G1)。<strong>Capability</strong> 是内核层对 MetaAgents 中 Skill 与 MCP 的统一抽象；内核只把它当 reference，不解释内容。本书余下的全部内容，要么阐述、要么约束这四条公理。</p>
-
-    <h2>内核之上 —— emploke 想要做到的</h2>
-    <p>内核是让 人/AI 协作演化所需的最小一组概念。这一路线来自 emploke 自己的产品叙事（"瓶颈一路向上爬"）：</p>
-    <table>
-      <thead>
-        <tr><th>级别</th><th>解决什么</th><th>emploke 当前状态</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><strong>L1 MetaAgent</strong>——给 AI 一个领域身份</td>
-          <td>AI 不懂你的领域</td>
-          <td>Layer 0 (MetaAgents) + 内核的 Agent / Capability 公理 · <strong>已落地</strong></td>
-        </tr>
-        <tr>
-          <td><strong>L2 Session</strong>——让 MetaAgent 一直在岗，带持续上下文</td>
-          <td>每次对话从零 load</td>
-          <td><code>@emploke/session</code> + <code>@emploke/runtime</code> · <strong>已落地</strong></td>
-        </tr>
-        <tr>
-          <td><strong>L3 Task</strong>——把多步意图封装成 SOP 端到端跑；人只在派发时与拿 deliverable 时介入</td>
-          <td>实时盯梢</td>
-          <td><code>@emploke/task</code> + runtime 层 · <strong>已落地</strong>；本书的 Task 公理和六态生命周期<em>正是</em> L3 之所以成立的根</td>
-        </tr>
-        <tr>
-          <td><strong>L4 Workflow</strong>——多个 Agent 通过明确协议互相交接；人只设方向</td>
-          <td>多 task 之间还要人串</td>
-          <td><strong>roadmap</strong> —— 本书暂不覆盖</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>本书定义的是<strong>内核</strong>——它支撑 L2/L3，也将是 L4 的基础。本书<em>故意不规定 L4</em>（DAG / captain / hand-off 协议这套词汇），那属于未来的伴生规范。</p>
-
-    <h2>本书不是什么</h2>
-    <ul>
-      <li>不是 substrate 手册。具体 Runtime impl 住在 sibling 包里（今天：<code>@emploke/runtime</code> 内的 Copilot adapter；计划中：Gemini、Claude Code 等）。</li>
-      <li>不是多智能体 / workflow 规范。L4 在此被点名为"内核之上的下一层"，但其语义不在本次修订范围。</li>
-      <li>不是包管理器。按 MetaAgents Layer 0 的纪律，fetch / publish / execute / spawn 都是显式 out of scope。</li>
-    </ul>
-  </div>
-</section>
-
-<!-- ═══════════ PART I — MENTAL MODEL ═══════════ -->
-
-<!-- Chapter 1 -->
-<section class="chapter" id="ch1">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 1 · Part I</span>
-    <span data-lang="zh">第 1 章 · 第一部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">The Core Idea</span>
-    <span data-lang="zh">核心思想</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">A microkernel for agentic systems — and why "micro" really means micro.</span>
-    <span data-lang="zh">面向智能体系统的微内核——以及为什么"微"真的就是"微"。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>An agentic system needs a place to <em>start</em>. Before you choose how agents collaborate, before you choose where state lives, before you pick UI conventions or task-graph shapes — you need a small, stable answer to four questions:</p>
-    <ol>
-      <li><strong>What is an agent?</strong></li>
-      <li><strong>What is a task?</strong></li>
-      <li><strong>Where does work execute?</strong></li>
-      <li><strong>What can be loaded into the system?</strong></li>
-    </ol>
-    <p>Emploke is that small, stable answer. It is the <strong>Layer 1</strong> of the architecture: a microkernel in the literal sense — the smallest set of concepts that <em>any</em> agentic product can reuse, regardless of what kind of work it does.</p>
-
-    <p>Every higher layer (orchestration, role definitions, persistence implementations, UIs) is built <strong>on top of</strong> these four concepts. The kernel itself does not know they exist.</p>
-
-    <h2>Two sub-contexts</h2>
-    <p>Inside the kernel, the four concepts split into two natural groupings:</p>
-    <ul>
-      <li><strong>Catalog</strong> — what can exist: <em>Capability</em> and <em>Agent</em>. These are <em>Loadable</em>: they describe possibility.</li>
-      <li><strong>Execution</strong> — what is happening: <em>Task</em> and <em>Runtime</em>. These are <em>Active</em>: they describe a particular run.</li>
-    </ul>
-    <p>That's the entire mental picture. The diagram below is the only diagram you strictly need to remember.</p>
-  </div>
-
-  <div data-lang="zh">
-    <p>智能体系统需要一个<em>起点</em>。在你决定 agent 如何协作之前，在你决定状态存在哪里之前，在你选择 UI 约定或任务图形态之前——你需要对四个问题给出一个稳定的小答案：</p>
-    <ol>
-      <li><strong>什么是 Agent？</strong></li>
-      <li><strong>什么是 Task？</strong></li>
-      <li><strong>工作在哪里执行？</strong></li>
-      <li><strong>什么可以被加载进系统？</strong></li>
-    </ol>
-    <p>Emploke 就是这个稳定的小答案。它是整个架构的 <strong>Layer 1</strong>：字面意义上的微内核——所有智能体产品都能复用的最小概念集合，无论这些产品具体做什么样的工作。</p>
-
-    <p>所有更高的层（编排、角色定义、持久化实现、各种 UI）都建立在这四个概念<strong>之上</strong>。内核自己并不知道它们的存在。</p>
-
-    <h2>两个子上下文</h2>
-    <p>在内核内部，这四个概念自然地分成两组：</p>
-    <ul>
-      <li><strong>Catalog（目录）</strong>——可以存在什么：<em>Capability</em> 和 <em>Agent</em>。它们是<em>可加载的</em>，描述"可能性"。</li>
-      <li><strong>Execution（执行）</strong>——正在发生什么：<em>Task</em> 和 <em>Runtime</em>。它们是<em>激活的</em>，描述"某一次具体的运行"。</li>
-    </ul>
-    <p>这就是整张心智地图。下图是你唯一需要严格记住的图。</p>
-  </div>
-
-  <div class="mermaid" data-lang="en">
-graph TB
-  subgraph Kernel["Emploke · Layer 1"]
-    direction TB
-    subgraph Catalog["Catalog · Loadable"]
-      C[Capability<br/>name only — opaque]
-      A[Agent<br/>name, capabilities list]
-      C -.listed in.-> A
-    end
-    subgraph Execution["Execution · Active"]
-      T[Task<br/>instructions to result<br/>+ runtime_kind, status, agent_name]
-      R[Runtime<br/>interface · stateless]
-      T -.dispatched via.-> R
-    end
-    A -.referenced by agent_name.-> T
-  end
-  classDef cat fill:#ccfbf1,stroke:#0f766e,color:#115e59
-  classDef exe fill:#f3e8ff,stroke:#7c3aed,color:#6b21a8
-  class C,A cat
-  class T,R exe
-  </div>
-  <div class="mermaid" data-lang="zh">
-graph TB
-  subgraph Kernel["Emploke · Layer 1"]
-    direction TB
-    subgraph Catalog["Catalog · 可加载"]
-      C[Capability<br/>仅 name — 不透明]
-      A[Agent<br/>name, capabilities 列表]
-      C -.被列入.-> A
-    end
-    subgraph Execution["Execution · 激活"]
-      T[Task<br/>instructions to result<br/>+ runtime_kind, status, agent_name]
-      R[Runtime<br/>接口 · 无状态]
-      T -.通过 dispatch.-> R
-    end
-    A -.通过 agent_name 被引用.-> T
-  end
-  classDef cat fill:#ccfbf1,stroke:#0f766e,color:#115e59
-  classDef exe fill:#f3e8ff,stroke:#7c3aed,color:#6b21a8
-  class C,A cat
-  class T,R exe
-  </div>
-
-  <div data-lang="en">
-    <div class="callout note">
-      Read the diagram top-down: a <em>Capability</em> is listed in an <em>Agent</em>; a <em>Task</em> references that Agent by <code>agent_name</code> and is dispatched through a <em>Runtime</em> implementation chosen by Task's <code>runtime_kind</code>. That arrow chain is the entire kernel.
-    </div>
-  </div>
-  <div data-lang="zh">
-    <div class="callout note">
-      自上而下阅读：<em>Capability</em> 被列入 <em>Agent</em>；<em>Task</em> 通过 <code>agent_name</code> 引用该 Agent，并通过 Task 的 <code>runtime_kind</code> 所选定的 <em>Runtime</em> 实现来派发。这条箭头链就是整个内核。
-    </div>
-  </div>
-</section>
-
-<!-- Chapter 2 -->
-<section class="chapter" id="ch2">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 2 · Part I</span>
-    <span data-lang="zh">第 2 章 · 第一部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">The Two Sub-Contexts</span>
-    <span data-lang="zh">两个子上下文</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Catalog and Execution — the only partition the kernel knows.</span>
-    <span data-lang="zh">Catalog 与 Execution——内核知道的唯一分区。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>The Layer 1 bounded context is "the kernel itself". Inside it we recognise two sub-contexts. They are not separate services or modules; they are <em>conceptual</em> groupings that make the four axioms easier to reason about.</p>
-
-    <h2>Catalog — what can exist</h2>
-    <p>Catalog answers the question "what is possible to run?". It is the <em>register</em> of building blocks. Two concepts live here:</p>
-    <ul>
-      <li><strong>Capability</strong> — a named instruction. Pure data.</li>
-      <li><strong>Agent</strong> — a named bundle of capabilities. Pure data. (The runtime substrate is <em>not</em> bound here — see <code>runtime_kind</code> on Task.)</li>
-    </ul>
-    <p>Both are <em>Loadable</em>. The kernel itself is empty until something on the layer above loads them in. Loading is not part of the kernel — only the <em>shapes</em> are.</p>
-
-    <h2>Execution — what is happening</h2>
-    <p>Execution answers the question "what work is in flight?". It is the <em>life</em> of the system. Two concepts live here:</p>
-    <ul>
-      <li><strong>Task</strong> — a unit of work, optionally bound to an Agent. The only Aggregate Root, with its own state machine and its own behaviour.</li>
-      <li><strong>Runtime</strong> — the contract under which a Task's work happens. A Domain Service Interface; <em>not</em> 1:1 with any Task and <em>not</em> a data entity.</li>
-    </ul>
-    <p>Tasks are created by the layer above the kernel, dispatched onto a Runtime impl chosen by <code>runtime_kind</code>, and observed via their own status, result, and other fields.</p>
-
-    <h2>Why these two, and only these two</h2>
-    <p>We tried collapsing them into one ("just have agents do things") and we tried splitting them further (separate "scheduler", "planner", "memory" sub-contexts). Both failed.</p>
-    <ul>
-      <li>Collapsing loses the Loadable / Active distinction — you cannot describe an agent without inventing it on the spot.</li>
-      <li>Splitting further introduces orchestration concerns into the kernel, which immediately violates Layer 1's neutrality.</li>
-    </ul>
-    <p>Catalog + Execution is the smallest split that makes the kernel both useful <em>and</em> theme-neutral.</p>
-  </div>
-
-  <div data-lang="zh">
-    <p>Layer 1 的限界上下文就是"内核本身"。在它内部我们识别出两个子上下文。它们不是独立的服务或模块，而是<em>概念上的</em>分组，目的是让四条公理更容易推理。</p>
-
-    <h2>Catalog——可以存在什么</h2>
-    <p>Catalog 回答"什么是可以被运行的？"。它是构件的<em>登记簿</em>。两个概念住在这里：</p>
-    <ul>
-      <li><strong>Capability</strong>——具名的 instruction。纯数据。</li>
-      <li><strong>Agent</strong>——具名的 capabilities bundle。纯数据。（运行时基底<em>不</em>绑定在这里——见 Task 上的 <code>runtime_kind</code>。）</li>
-    </ul>
-    <p>两者都是<em>可加载的</em>。内核自身是空的，直到内核之上的层把它们加载进来。"加载"本身不属于内核——只有"形状"属于内核。</p>
-
-    <h2>Execution——正在发生什么</h2>
-    <p>Execution 回答"哪些工作正在进行？"。它是系统的<em>生命</em>。两个概念住在这里：</p>
-    <ul>
-      <li><strong>Task</strong>——一个工作单元，可选地绑定到某个 Agent。唯一的聚合根，有自己的状态机，也有自己的行为。</li>
-      <li><strong>Runtime</strong>——Task 工作发生的契约。一个领域服务接口；与任何 Task 都<em>不</em>是 1:1，<em>不</em>是数据实体。</li>
-    </ul>
-    <p>Task 由内核之上的层创建，按 <code>runtime_kind</code> 派发到某个 Runtime impl，并通过它自身的 status、result 与其它字段来观察。</p>
-
-    <h2>为什么是这两个，且只有这两个</h2>
-    <p>我们尝试过把它们合并（"让 agent 直接做事就行了"），也尝试过进一步拆分（独立的 scheduler、planner、memory 子上下文）。两种都失败了。</p>
-    <ul>
-      <li>合并会丢失"可加载 / 激活"的区分——你无法在不当场发明的情况下描述一个 agent。</li>
-      <li>进一步拆分会把编排关注点带入内核，这立刻违反了 Layer 1 的中立性。</li>
-    </ul>
-    <p>Catalog + Execution 是让内核既<em>有用</em>又<em>主题中立</em>的最小拆分。</p>
-  </div>
-</section>
-
-<!-- Chapter 3 -->
-<section class="chapter" id="ch3">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 3 · Part I</span>
-    <span data-lang="zh">第 3 章 · 第一部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Boundaries</span>
-    <span data-lang="zh">边界</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Everything the kernel deliberately does <em>not</em> own.</span>
-    <span data-lang="zh">内核刻意<em>不</em>拥有的所有东西。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>The hardest part of Layer 1 is not what is in it — it is what is <em>kept out</em>. A kernel earns its name by refusing concerns that would couple it to a particular product, methodology, or runtime implementation.</p>
-
-    <h2>What is kept out, and where it goes</h2>
-
-    <table>
-      <thead>
-        <tr><th>Concern</th><th>Not in kernel because…</th><th>Lives on…</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Orchestration / task graph</td>
-          <td>Different products want different shapes (linear, DAG, swarm). Picking one rules out others.</td>
-          <td>The layer above the kernel</td>
-        </tr>
-        <tr>
-          <td>Role vocabulary (e.g. coordinator, executor, reviewer, researcher)</td>
-          <td>Roles are <em>methodology choices</em>, not kernel facts. Two products on the same kernel may use different vocabularies.</td>
-          <td>The layer above the kernel</td>
-        </tr>
-        <tr>
-          <td>Concrete persistence (DB, files, in-memory)</td>
-          <td>The kernel does not impose where state lives. Persistence is an implementation choice.</td>
-          <td>The layer above the kernel</td>
-        </tr>
-        <tr>
-          <td>Concrete runtime implementation (CLI, container, cloud, browser)</td>
-          <td>The kernel only defines the <em>interface</em>. The shape of the actual process is up to the implementer.</td>
-          <td>Implementations of the Runtime interface</td>
-        </tr>
-        <tr>
-          <td>Tooling, prompt templates, model selection</td>
-          <td>These are concerns of <em>capability authors</em>, not of the kernel.</td>
-          <td>Inside Capability instructions / on the layer above</td>
-        </tr>
-        <tr>
-          <td>UI, CLI shape, IPC protocols</td>
-          <td>The kernel is invisible to humans. Anything human-facing is product-level.</td>
-          <td>The layer above the kernel</td>
-        </tr>
-        <tr>
-          <td>Domain events, message queues, observability backends</td>
-          <td>How tasks are made observable is a workflow concern, not a kernel concern.</td>
-          <td>The layer above the kernel</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <h2>The "is it kernel?" rule</h2>
-    <p>When in doubt, ask:</p>
-    <p><em>"Could a different agentic product, with a totally different theme, still need this exact concept?"</em></p>
-    <p>If yes, it might belong in the kernel. If no, it belongs above. The four axioms pass this test. Everything else fails it.</p>
-
-    <h2>The kernel ships no implementations</h2>
-    <p>One consequence of this discipline deserves to be stated outright: the emploke package itself contains <em>only</em> the four axioms, the two invariants, and the Runtime/Query interfaces. It ships no concrete Runtime impl, no persistence, no notification transport, no UI, no vendor SDK. It does not even maintain a registry of <code>runtime_kind</code> values.</p>
-    <p>Concrete implementations live in <strong>sibling extension libraries</strong>, named by the convention <code>emploke/&lt;substrate&gt;</code>. For example:</p>
-    <ul>
-      <li><code>emploke/copilot</code> — a Runtime impl backed by the Copilot CLI.</li>
-      <li><code>emploke/openai</code> — a Runtime impl backed by the OpenAI Responses / Assistants API.</li>
-      <li><code>emploke/claude</code> — a Runtime impl backed by the Anthropic Messages API.</li>
-      <li><code>emploke/local</code> — a Runtime impl backed by a local llama.cpp / Ollama process.</li>
-    </ul>
-    <p>Each sibling depends on <code>emploke</code>; none depends on another; <code>emploke</code> never depends on (or even names) any of them. The product layer picks which siblings to take as dependencies and registers them under its chosen <code>runtime_kind</code> values. The same discipline applies to every other port a higher layer may define (e.g. an <code>emploke/sqlite</code> for a Persistence impl).</p>
-    <p>The rule is uncompromising: if a piece of code names a concrete substrate, it does not live in the kernel package — it lives in a sibling library or above.</p>
-
-    <div class="callout note">
-      <strong>Today's monorepo layout.</strong> The <code>LangSensei/emploke</code> reference monorepo currently consolidates all runtime adapters into a single <code>@emploke/runtime</code> package (today: a Copilot adapter; planned: Gemini, Claude Code, …). The "sibling library per substrate" pattern above remains the <em>design intent</em> for any future split — useful when a runtime grows enough to warrant its own dependency surface, or when third parties publish substrate adapters out-of-tree.
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <p>Layer 1 最难的部分不是它包含什么，而是它<em>挡在外面</em>的是什么。内核之所以配得上"内核"这个名字，是因为它拒绝那些会让它绑死到具体产品、方法论或运行时实现的关注点。</p>
-
-    <h2>被挡在外面的东西，以及它们的归宿</h2>
-
-    <table>
-      <thead>
-        <tr><th>关注点</th><th>不在内核中，是因为……</th><th>它住在……</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>编排 / 任务图</td>
-          <td>不同产品想要不同的形态（线性、DAG、群集）。选一个就排除了其他。</td>
-          <td>内核之上的层</td>
-        </tr>
-        <tr>
-          <td>角色词汇（例如 coordinator、executor、reviewer、researcher）</td>
-          <td>角色是<em>方法论选择</em>，不是内核事实。同一个内核上的两个产品可以用完全不同的词汇。</td>
-          <td>内核之上的层</td>
-        </tr>
-        <tr>
-          <td>具体持久化（DB、文件、内存）</td>
-          <td>内核不规定状态存在哪里。持久化是实现选择。</td>
-          <td>内核之上的层</td>
-        </tr>
-        <tr>
-          <td>具体 Runtime 实现（CLI、容器、云、浏览器）</td>
-          <td>内核只定义<em>接口</em>。实际进程的形态由实现者决定。</td>
-          <td>Runtime 接口的具体实现</td>
-        </tr>
-        <tr>
-          <td>工具、prompt 模板、模型选择</td>
-          <td>这些是<em>capability 作者</em>的关注点，不是内核的关注点。</td>
-          <td>Capability 的 instructions 内部 / 内核之上的层</td>
-        </tr>
-        <tr>
-          <td>UI、CLI 形态、IPC 协议</td>
-          <td>内核对人类是不可见的。任何面向人的东西都是产品层的。</td>
-          <td>内核之上的层</td>
-        </tr>
-        <tr>
-          <td>Domain event、消息队列、可观测后端</td>
-          <td>"如何让 task 可观测"是 workflow 的关注点，不是内核的关注点。</td>
-          <td>内核之上的层</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <h2>"它属于内核吗？"判定法则</h2>
-    <p>拿不准时，问自己：</p>
-    <p><em>"另一个完全不同主题的智能体产品，会不会仍然需要这个完全相同的概念？"</em></p>
-    <p>是 → 它可能属于内核。否 → 它属于上面。四条公理都通过了这一测试，其他东西都通不过。</p>
-
-    <h2>内核不附带任何实现</h2>
-    <p>这条纪律有一个直接推论值得点明：<code>emploke</code> 包本身<em>只</em>包含四条公理、两条不变量与 Runtime/Query 接口。它不附带任何具体 Runtime impl、不附带持久化、不附带通知传输、不附带 UI、不附带任何 vendor SDK。它甚至不维护一个 <code>runtime_kind</code> 值的注册表。</p>
-    <p>具体实现走<strong>同级扩展库</strong>，命名约定是 <code>emploke/&lt;substrate&gt;</code>。例如：</p>
-    <ul>
-      <li><code>emploke/copilot</code>——基于 Copilot CLI 的 Runtime impl。</li>
-      <li><code>emploke/openai</code>——基于 OpenAI Responses / Assistants API 的 Runtime impl。</li>
-      <li><code>emploke/claude</code>——基于 Anthropic Messages API 的 Runtime impl。</li>
-      <li><code>emploke/local</code>——基于本地 llama.cpp / Ollama 进程的 Runtime impl。</li>
-    </ul>
-    <p>每个 sibling 都依赖 <code>emploke</code>；它们之间互不依赖；<code>emploke</code> 永远不会依赖（甚至命名）任何一个 sibling。产品层挑选所需 sibling 作为依赖，并把它们注册到自己选定的 <code>runtime_kind</code> 值之下。同样的纪律也适用于更高层可能定义的任何 port（如 Persistence impl 走 <code>emploke/sqlite</code>）。</p>
-    <p>规则不容讨价还价：任何点名具体 substrate 的代码都不能住在 kernel 包里——只能住在某个 sibling 库或更上层。</p>
-
-    <div class="callout note">
-      <strong>今天的 monorepo 布局。</strong>参考 monorepo <code>LangSensei/emploke</code> 当前把所有 runtime adapter 合并在一个 <code>@emploke/runtime</code> 包内（今天是 Copilot adapter；计划中：Gemini、Claude Code 等）。上面"按 substrate 拆 sibling 库"的纪律仍然是<em>设计意图</em>，留给未来拆分用——当某个 runtime 大到值得拥有自己独立的依赖面，或者第三方要发布树外的 substrate adapter 时。
-    </div>
-  </div>
-</section>
-
-<!-- Chapter 4 -->
-<section class="chapter" id="ch4">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 4 · Part I</span>
-    <span data-lang="zh">第 4 章 · 第一部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Conventions</span>
-    <span data-lang="zh">约定</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Notation, voice, and how to read the rest of the book.</span>
-    <span data-lang="zh">符号、语气，以及如何阅读本书余下的内容。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>Type tags</h2>
-    <p>Each axiom is tagged with its DDD type and its sub-context:</p>
-    <p>
-      <span class="tag cat">Catalog · Value Object</span>
-      <span class="tag exe">Execution · Aggregate Root</span>
-    </p>
-    <p>Teal indicates Catalog, purple indicates Execution. The DDD vocabulary (Aggregate Root, Value Object, Domain Service Interface) is precise — see <a href="#ddd-lens">Appendix B</a> if you need a refresher.</p>
-
-    <h2>Field notation</h2>
-    <p>Field names are written in <code>snake_case</code> and quoted as code: <code>agent_name</code>, <code>runtime_kind</code>, <code>instructions</code>, <code>result</code>. The kernel does not prescribe a serialization format — these names are <em>conceptual</em>. An implementation may use camelCase or PascalCase as long as the meaning is preserved.</p>
-
-    <h2>Voice</h2>
-    <p><em>Definitions and invariants are declarative.</em> They state what is, in unconditional terms.</p>
-    <p><em>Rationale uses "we".</em> Where the book defends a choice or compares it against alternatives, it does so in the first-person plural.</p>
-
-    <h2>Callouts</h2>
-    <div class="callout note">
-      Boxes labelled <strong>Note</strong> highlight a clarification that aids reading but is not part of the contract.
-    </div>
-    <div class="callout why-not">
-      Boxes labelled <strong>Why not…</strong> answer a tempting alternative we explicitly rejected.
-    </div>
-
-    <h2>Dependencies</h2>
-    <p>Read Part I in order. Part II's chapters can be read in any order, though Capability → Agent → Task → Runtime → Execution is the order in which one concept naturally needs the previous. Part III and the appendices are reference material.</p>
-  </div>
-
-  <div data-lang="zh">
-    <h2>类型标签</h2>
-    <p>每条公理都带有 DDD 类型和所属子上下文的标签：</p>
-    <p>
-      <span class="tag cat">Catalog · Value Object</span>
-      <span class="tag exe">Execution · Aggregate Root</span>
-    </p>
-    <p>青绿色表示 Catalog，紫色表示 Execution。DDD 词汇（聚合根、值对象、领域服务接口）是精确的——若需复习，请翻到<a href="#ddd-lens">附录 B</a>。</p>
-
-    <h2>字段记法</h2>
-    <p>字段名采用 <code>snake_case</code> 并以代码格式标注：<code>agent_name</code>、<code>runtime_kind</code>、<code>instructions</code>、<code>result</code>。内核不规定序列化格式——这些名字是<em>概念性的</em>。具体实现可以用 camelCase 或 PascalCase，只要语义被保留。</p>
-
-    <h2>语气</h2>
-    <p><em>定义与不变量是陈述式的。</em>它们以无条件的方式陈述"是什么"。</p>
-    <p><em>论证使用"我们"。</em>当本书在为某个选择辩护或与备选方案做对比时，使用第一人称复数。</p>
-
-    <h2>边栏标注</h2>
-    <div class="callout note">
-      标记为 <strong>提示</strong> 的方框给出帮助阅读的澄清，但不是契约的一部分。
-    </div>
-    <div class="callout why-not">
-      标记为 <strong>为什么不……</strong> 的方框回答一个我们明确拒绝的诱人备选方案。
-    </div>
-
-    <h2>阅读依赖</h2>
-    <p>第一部分请按顺序阅读。第二部分各章可任意顺序阅读，不过 Capability → Agent → Task → Runtime → Execution 是一种概念自然依赖前一项的顺序。第三部分和附录是参考材料。</p>
-  </div>
-</section>
-<!-- ═══════════ PART II — THE FOUR AXIOMS ═══════════ -->
-
-<!-- Chapter 5 -->
-<section class="chapter" id="ch5">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 5 · Part II</span>
-    <span data-lang="zh">第 5 章 · 第二部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Capability</span>
-    <span data-lang="zh">Capability（能力）</span>
-    <span class="tag cat" data-lang="en">Catalog · Value Object</span>
-    <span class="tag cat" data-lang="zh">Catalog · 值对象</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">A scoped name. Kernel-opaque. That's the whole concept.</span>
-    <span data-lang="zh">一个 scoped 名字。Kernel 完全不透明。这就是它的全部。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>Definition</h2>
-    <p>A <strong>Capability</strong> is a loadable, reusable primitive that extends an Agent's repertoire. <strong>On the kernel side it is structurally fully opaque.</strong></p>
-    <pre><code>Capability = name</code></pre>
-    <p>That is the entire kernel-side structure. The <code>name</code> is shaped like <code>&lt;scope&gt;/&lt;name&gt;</code> (Docker / npm style). The kernel only treats Capability as a reference; it never inspects the inside.</p>
-
-    <h2>Why Capability is an axiom even though it is structurally trivial</h2>
-    <ul>
-      <li><strong>Semantic anchor</strong> — every product on Emploke agrees that the loadable units of an Agent are called Capabilities; the kernel is the registrar of that agreement.</li>
-      <li><strong>Evolution-safe</strong> — future kernel interfaces (e.g. <code>deployAgent</code> / <code>deployCapability</code>) need a typed handle for capability-shaped arguments. Naming the concept <code>Capability</code> lets us add optional fields later without breaking consumers.</li>
-      <li><strong>Documentation anchor</strong> — gives "what loaders must be able to resolve" a single home.</li>
-      <li><strong>Cross-product API</strong> — interface signatures use <code>Capability</code> instead of bare <code>string</code>, making contracts self-describing.</li>
-    </ul>
-
-    <h2>Out of kernel scope (all delegated to product / loader layer)</h2>
-    <ul>
-      <li><code>kind</code> (Skill / MCP / …) — the kernel does not dispatch by kind; that is the loader's job. In a MetaAgents-aligned implementation, every Capability is exactly one of two file shapes: a Skill (<code>SKILL.md</code>) or an MCP server (<code>&lt;name&gt;.json</code>) — see the callout below.</li>
-      <li><code>payload</code> / actual content — the loader fetches by name and deploys to the Runtime.</li>
-      <li>Dependencies between capabilities.</li>
-      <li>Capability nesting.</li>
-      <li>Expansion from a "root capability" to a flat list.</li>
-      <li>Manifest fields beyond <code>name</code> — <code>version</code> / <code>description</code> / <code>type</code> / <code>dependencies</code> all live above the kernel.</li>
-    </ul>
-
-    <div class="callout note">
-      <strong>The kernel only ever sees the resolved, flat <code>capabilities</code> list on an Agent (a list of names).</strong> How that list is assembled — manual enumeration, dependency-graph traversal, single-root expansion — is the loader's responsibility, defined per product. What each name resolves to is also the loader's concern.
-    </div>
-
-    <div class="callout note">
-      <strong>How Capability materialises in MetaAgents.</strong> emploke's reference catalog (<code>@emploke/catalog</code>) is aligned with the <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> spec. There, every Capability is exactly one of two file shapes: a <strong>Skill</strong> (<code>SKILL.md</code> with frontmatter + Markdown body) or an <strong>MCP server</strong> (a <code>&lt;name&gt;.json</code> file whose contents the kernel never reads). From the kernel's point of view both register under the same <code>capabilities</code> namespace; the catalog distinguishes their types so loaders know whether to install instructions or to spawn a server.
-    </div>
-
-    <div class="callout why-not">
-      <p><strong>Why not let Capability hold its own instructions, tools, or model in the kernel?</strong></p>
-      <p>Because then every product on top of the kernel would inherit an opinion. A product that uses no LLM at all would still have a <code>model</code> field staring at it. The kernel keeps it down to the bare reference; everything else is the loader's job.</p>
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <h2>定义</h2>
-    <p><strong>Capability</strong> 是一个可加载、可复用的能力原语，扩展 Agent 的能力。<strong>kernel 侧结构上完全不透明。</strong></p>
-    <pre><code>Capability = name</code></pre>
-    <p>这就是 kernel 端的全部结构。<code>name</code> 形如 <code>&lt;scope&gt;/&lt;name&gt;</code>（Docker / npm 风格）。Kernel 只把 Capability 看作引用，从不检查内部结构。</p>
-
-    <h2>为什么 Capability 即使结构平凡也要作为公理</h2>
-    <ul>
-      <li><strong>语义锚点</strong>——所有基于 Emploke 的产品都同意"Agent 的可加载单元叫 Capability"；kernel 是这一约定的注册中心。</li>
-      <li><strong>Evolution-safe</strong>——未来的 kernel 接口（如 <code>deployAgent</code> / <code>deployCapability</code>）需要 capability-shaped 参数的类型化句柄；以 <code>Capability</code> 作为命名概念，可以在不破坏 consumer 的前提下追加可选字段。</li>
-      <li><strong>文档锚点</strong>——给"loader 必须能解析什么"一个单一去处。</li>
-      <li><strong>跨产品 API</strong>——接口签名用 <code>Capability</code> 而非裸 <code>string</code>，使契约自描述。</li>
-    </ul>
-
-    <h2>Kernel 范围之外（全部下放到产品 / loader 层）</h2>
-    <ul>
-      <li><code>kind</code>（Skill / MCP / …）—— kernel 不按 kind 分派，那是 loader 的事。在 MetaAgents 实现里，每个 Capability 必然是两种文件形态之一：Skill（<code>SKILL.md</code>）或 MCP server（<code>&lt;name&gt;.json</code>）—— 详见下方 callout。</li>
-      <li><code>payload</code> / 实际内容—— loader 按 name 取，部署到 Runtime。</li>
-      <li>Capability 之间的依赖。</li>
-      <li>Capability 嵌套。</li>
-      <li>从某个"根 capability"展开成扁平列表。</li>
-      <li><code>name</code> 之外的 manifest 字段—— <code>version</code> / <code>description</code> / <code>type</code> / <code>dependencies</code> 等都活在更上层。</li>
-    </ul>
-
-    <div class="callout note">
-      <strong>Kernel 只看到 Agent 上已解析的扁平 <code>capabilities</code> 列表（一组 name）。</strong>这个列表如何被组装——手动列举、依赖图遍历、单根展开——是 loader 的职责，由产品定义。每个 name 解析成什么，也是 loader 的职责。
-    </div>
-
-    <div class="callout note">
-      <strong>Capability 在 MetaAgents 中如何落地。</strong>emploke 的参考 catalog（<code>@emploke/catalog</code>）对齐 <a href="https://github.com/metaagents-ai/metaagents">MetaAgents</a> 规范。在那里，每个 Capability 必然是两种文件形态之一：<strong>Skill</strong>（<code>SKILL.md</code> + frontmatter + Markdown 正文）或 <strong>MCP server</strong>（<code>&lt;name&gt;.json</code>，内核永不读取其内容）。从内核角度看两者注册在同一个 <code>capabilities</code> 命名空间下；catalog 对类型加以区分，以便 loader 知道是装载 instructions 还是拉起一个 server。
-    </div>
-
-    <div class="callout why-not">
-      <p><strong>为什么不让 Capability 在 kernel 里自带 instructions、tools 或 model？</strong></p>
-      <p>因为那样的话，内核之上的每一个产品都会继承一个观点。一个完全不用 LLM 的产品仍然会被一个 <code>model</code> 字段盯着。Kernel 把它压到只剩纯粹的引用；其余一切都是 loader 的事。</p>
-    </div>
-  </div>
-</section>
-
-<!-- Chapter 6 -->
-<section class="chapter" id="ch6">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 6 · Part II</span>
-    <span data-lang="zh">第 6 章 · 第二部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Agent</span>
-    <span data-lang="zh">Agent（智能体）</span>
-    <span class="tag cat" data-lang="en">Catalog · Value Object</span>
-    <span class="tag cat" data-lang="zh">Catalog · 值对象</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">A static configuration: a named bundle of capabilities. Not a running thing.</span>
-    <span data-lang="zh">一份静态配置：一组 capabilities 的具名 bundle。不是运行中的东西。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>Definition</h2>
-    <p>An <strong>Agent</strong> is a static configuration: a named bundle of capabilities. It is not a running thing. It is serialisable, and reusable across many Task executions.</p>
-    <pre><code>Agent = (
-  name:         &lt;scope&gt;/&lt;name&gt;,        // human-authored, scoped, persistent
-  capabilities: [capability_name],     // flat, already-resolved list
-  metadata?:    map&lt;string, any&gt;,      // optional; kernel does not interpret
-)</code></pre>
-
-    <p>There is no <code>id</code> — an Agent is a definition, not an instance. The <code>name</code> is the unique handle.</p>
-
-    <h2><code>metadata</code> examples (kernel never interprets)</h2>
-    <ul>
-      <li><code>&lt;product&gt;/owner_team</code> — who owns this Agent.</li>
-      <li><code>&lt;product&gt;/version_tag</code> — semantic version.</li>
-      <li><code>&lt;product&gt;/deprecated</code> — deprecation flag.</li>
-    </ul>
-
-    <h2>What Agent does not do</h2>
-    <ul>
-      <li>Does not manage process lifecycle (that is the Runtime impl).</li>
-      <li>Does not hold execution state (that is Task).</li>
-      <li>Does not provide isolation (that is the Runtime impl).</li>
-      <li>Does not prescribe how the <code>capabilities</code> list is assembled (that is the loader, living in the product / methodology layer above the kernel).</li>
-    </ul>
-
-    <h2>What Agent does do</h2>
-    <ul>
-      <li>Declares which capabilities to load.</li>
-      <li>Defines identity through its capability bundle (e.g. an "identity"-typed Skill acting as a persona prefix).</li>
-      <li>Is addressable, replayable, shareable.</li>
-    </ul>
-
-    <div class="callout note">
-      Agent does <em>not</em> carry <code>runtime_kind</code>. The same Agent can be executed on different runtime kinds; the choice is made per-Task on Task's <code>runtime_kind</code> field (Chapter 7). This keeps Agent purely a Catalog-side definition, not a dispatch decision.
-    </div>
-
-    <div class="callout why-not">
-      <p><strong>Why no separate <code>id</code> on Agent?</strong></p>
-      <p>An Agent is a <em>definition</em>, not an instance. A separate id would invent an instance-vs-definition distinction we do not need. The scoped <code>name</code> already carries identity, ownership, and uniqueness in one field.</p>
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <h2>定义</h2>
-    <p><strong>Agent</strong> 是一份<strong>静态配置</strong>：一组 capabilities 的具名 bundle。不是运行中的东西。可序列化，可跨多次 Task 执行复用。</p>
-    <pre><code>Agent = (
-  name:         &lt;scope&gt;/&lt;name&gt;,        // 人类编写、scoped、持久
-  capabilities: [capability_name],     // 扁平、已解析的列表
-  metadata?:    map&lt;string, any&gt;,      // 可选；kernel 不解释
-)</code></pre>
-
-    <p>没有 <code>id</code>—— Agent 是定义而非实例。<code>name</code> 就是唯一句柄。</p>
-
-    <h2><code>metadata</code> 示例（kernel 都不解释）</h2>
-    <ul>
-      <li><code>&lt;product&gt;/owner_team</code>——谁拥有这个 Agent。</li>
-      <li><code>&lt;product&gt;/version_tag</code>——语义版本。</li>
-      <li><code>&lt;product&gt;/deprecated</code>——弃用标记。</li>
-    </ul>
-
-    <h2>Agent 不做</h2>
-    <ul>
-      <li>不管理进程生命周期（这是 Runtime impl）。</li>
-      <li>不持有执行状态（这是 Task）。</li>
-      <li>不提供隔离（这是 Runtime impl）。</li>
-      <li>不规定 <code>capabilities</code> 列表如何被组装（这是 loader 的事，活在 Kernel 之上的产品 / 方法论层）。</li>
-    </ul>
-
-    <h2>Agent 做</h2>
-    <ul>
-      <li>声明加载哪些 capabilities。</li>
-      <li>定义身份（通过 capability bundle ——例如某个 "identity" 类型的 Skill 充当 persona 前缀）。</li>
-      <li>可寻址 / 可复盘 / 可分享。</li>
-    </ul>
-
-    <div class="callout note">
-      Agent <em>不</em>携带 <code>runtime_kind</code>。同一个 Agent 可以在不同的 runtime kind 上执行；这一选择按 Task 上的 <code>runtime_kind</code> 字段（第 7 章）逐 Task 决定。这让 Agent 保持为纯粹的 Catalog 侧定义，而不是派发决策。
-    </div>
-
-    <div class="callout why-not">
-      <p><strong>为什么 Agent 上没有独立的 <code>id</code>？</strong></p>
-      <p>Agent 是<em>定义</em>，不是实例。多加一个 id 等于发明了一组我们不需要的"实例 vs 定义"区分。Scoped 的 <code>name</code> 一个字段就同时承载了身份、归属和唯一性。</p>
-    </div>
-  </div>
-</section>
-
-<!-- Chapter 7 -->
-<section class="chapter" id="ch7">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 7 · Part II</span>
-    <span data-lang="zh">第 7 章 · 第二部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Task</span>
-    <span data-lang="zh">Task（任务）</span>
-    <span class="tag exe" data-lang="en">Execution · Aggregate Root</span>
-    <span class="tag exe" data-lang="zh">Execution · 聚合根</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">The only Aggregate Root. Instructions in, result out — state transitions driven by the pure Apply function.</span>
-    <span data-lang="zh">一个充血的聚合根。Instructions 进，result 出——但它自己管自己的状态机。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>External contract</h2>
-    <p>From the layer above the kernel, a Task is a single black-box function:</p>
-    <pre><code>Task : instructions → result</code></pre>
-    <p>That is the entire contract. Everything else on Task exists to make this contract observable, controllable, auditable, and re-executable via clone-and-redispatch.</p>
-
-    <h2>Internal schema</h2>
-    <pre><code>Task = (
-  // identity
-  id:           string,                     // kernel-issued, unique
-
-  // input (set on dispatch, immutable)
-  summary:      string,                     // short title for catalog / UI
-  instructions: string,                     // free-form input — the contract
-  runtime_kind: string,                     // chooses Runtime impl
-  agent_name?:  string,                     // optional binding to Agent in catalog
-  metadata?:    map&lt;string, any&gt;,           // open key/value bag; kernel never interprets
-
-  // execution facts (kernel-managed, atomic per Concurrency Contract)
-  status:       not_started | running | paused | success | failure | cancelled,
-  result?:      any,                        // present iff status == success
-  failure?:     Failure,                    // present iff status == failure (see "Failure type" below)
-  supplements?: [string],                   // append-only audit trail; one entry per resume(extra)
-  created_at:   timestamp,
-  started_at?:  timestamp,                  // present iff status has reached running at least once
-  ended_at?:    timestamp,                  // present iff status ∈ {success, failure, cancelled}
-)</code></pre>
-
-    <h2>State machine — six states</h2>
-    <p>Task evolves through a six-state machine. Three are <em>active</em>; three are <em>terminal</em>.</p>
-    <pre><code>not_started ──dispatch──▶ running ──complete──▶ success     (terminal)
-                            │   ▲          ──fail──────▶ failure     (terminal)
-                            │   │          ──kill──────▶ cancelled   (terminal)
-                          pause resume(extra?)
-                            ▼   │
-                          paused ──kill──▶ cancelled   (terminal)
-</code></pre>
-    <ul>
-      <li><strong>not_started</strong> — Task has been constructed but not yet dispatched.</li>
-      <li><strong>running</strong> — work is in flight on a Runtime impl.</li>
-      <li><strong>paused</strong> — work is suspended; the impl will not advance until <code>resume</code> is called.</li>
-      <li><strong>success</strong> — terminal; <code>result</code> is set.</li>
-      <li><strong>failure</strong> — terminal; <code>failure</code> is set.</li>
-      <li><strong>cancelled</strong> — terminal; reached via <code>kill</code> from any non-terminal state.</li>
-    </ul>
-    <p>Terminal states are forever frozen. There is no <code>reset</code>, no <code>retry</code>, no transition that leaves a terminal state. "Re-executing" a Task is not a kernel operation — see the Re-execution doctrine below.</p>
-
-    <h2>Field roles</h2>
-    <ul>
-      <li><strong>Identity</strong> — <code>id</code>: the only handle the kernel uses to address the Task after dispatch.</li>
-      <li><strong>Input</strong> — <code>summary</code>, <code>instructions</code>, <code>runtime_kind</code>, optional <code>agent_name</code>, optional <code>metadata</code>: set once on dispatch, then immutable.</li>
-      <li><strong>Execution facts</strong> — <code>status</code>, <code>result?</code>, <code>failure?</code>, <code>supplements?</code>, timestamps: written by the aggregate's own transitions, atomically per the Concurrency Contract (Chapter 10).</li>
-    </ul>
-
-    <h2>Field invariants</h2>
-    <ul>
-      <li><code>status</code> follows the six-state machine above. Terminal states never transition out.</li>
-      <li><code>result</code> is present iff <code>status == success</code>.</li>
-      <li><code>failure</code> is present iff <code>status == failure</code>. (Cancellation produces no <code>Failure</code>; partial output, if any, lands under an impl-prefixed key in <code>metadata</code>.)</li>
-      <li><code>supplements</code> grows only as a side effect of <code>resume(extra)</code>, atomically with the <code>paused → running</code> transition.</li>
-      <li><code>started_at</code> is present iff <code>status</code> has reached <code>running</code> at least once.</li>
-      <li><code>ended_at</code> is present iff <code>status ∈ {success, failure, cancelled}</code>.</li>
-      <li>Input fields are immutable post-dispatch.</li>
-    </ul>
-
-    <h2>Aggregate methods</h2>
-    <p>Task is a pure data type whose state transitions are driven by the <code>Apply</code> function. Six transitions cover the full lifecycle:</p>
-    <ul>
-      <li><code>dispatch(task)</code> — construct and start: <code>not_started → running</code>.</li>
-      <li><code>pause(task_id)</code> — request a pause: <code>running → paused</code> at the next safe checkpoint.</li>
-      <li><code>resume(task_id, extra?)</code> — request resumption: <code>paused → running</code>; if <code>extra</code> is provided, append it to <code>supplements</code> atomically as part of the same transition.</li>
-      <li><code>kill(task_id)</code> — request termination: any non-terminal state → <code>cancelled</code>.</li>
-      <li><code>complete(task_id, result)</code> — natural success: <code>running → success</code>; sets <code>result</code> and <code>ended_at</code> in one atomic step.</li>
-      <li><code>fail(task_id, failure)</code> — natural failure: <code>running → failure</code>; sets <code>failure</code> and <code>ended_at</code> in one atomic step.</li>
-    </ul>
-    <p>All six are addressed through the Runtime interface (<code>dispatch</code> takes the whole Task; the others take only <code>task_id</code> — see Chapter 8). "Who has the right to call which verb" (e.g. only the agent calls <code>complete</code>; only the orchestrator calls <code>kill</code>) is a policy/auth concern at the layer above, not an interface-level split.</p>
-
-    <div class="callout note">
-      <strong>Best-effort control verbs.</strong> <code>pause</code>, <code>resume</code>, and <code>kill</code> are <em>requests</em>, not commands. Different Runtime substrates have different control over their work — an LLM-chat impl can pause between turns; a one-shot HTTP-call impl physically cannot. Every impl must <em>accept</em> all six verbs; the <em>effectiveness</em> varies by substrate. Callers see the truth via <code>Task.status</code>. <code>pause</code> may lose to natural completion; <code>kill</code> may race to <code>success</code>/<code>failure</code> if completion was already imminent. Idempotency on already-terminal tasks is guaranteed.
-    </div>
-
-    <div class="callout note">
-      <strong>Implementer's note — the five-state subset.</strong> The reference <code>@emploke/task</code> package today exposes only the five-state subset (<code>not_started → running → success / failure / cancelled</code>); it omits <code>pause</code>, <code>resume</code>, and the <code>paused</code> state. The rationale (see the <a href="https://github.com/LangSensei/emploke/tree/main/packages/task">packages/task README</a>): on Windows there is no <code>SIGSTOP</code>, and many CLI substrates do not handle pause signals well, so a "soft pause" UX is treated as a per-substrate <code>metadata</code> concern instead. A subset implementation is honest — readers of <code>Task.status</code> never observe <code>paused</code> against it. Future implementations targeting the full kernel commitment may add the missing transitions; nothing in the kernel forbids it.
-    </div>
-
-    <h2>Failure type</h2>
-    <p>When a Task ends in <code>failure</code>, the <code>failure</code> field carries a structured value:</p>
-    <pre><code>Failure = (
-  code:      string,                        // impl-defined, suggested namespace &lt;impl&gt;/&lt;code&gt;
-  message:   string,                        // human-readable; both code and message are required
-  metadata?: map&lt;string, any&gt;,              // optional details: stack, raw_response, partial_output, cause, retry_after_ms, ...
-)</code></pre>
-    <ul>
-      <li><strong><code>code</code></strong> separates fact from words. It is an open string (e.g. <code>cli_runtime/timeout</code>, <code>openai/rate_limit</code>) that the layer above can pattern-match on without parsing prose.</li>
-      <li><strong><code>message</code></strong> is for humans and logs.</li>
-      <li><strong><code>metadata</code></strong> carries impl-specific detail; the kernel never interprets it.</li>
-    </ul>
-    <p>The kernel deliberately does <em>not</em> include a <code>retriable: bool</code> field. Whether a given <code>code</code> is retriable depends on the workflow's tolerance, budget, and context — not on the failure itself. A <code>429 rate_limit</code> may be retriable for one workflow (with backoff budget) and not for another (cost-capped). Retry policy lives at the layer above, encoded as <code>code → action</code>; the <code>Failure</code> stays opinion-free.</p>
-    <p>Cancellation produces no <code>Failure</code>. A cancelled Task has <code>status == cancelled</code> and no <code>failure</code> field. Partial output observed before cancellation, if any, is preserved under an impl-prefixed key inside <code>metadata</code> (e.g. <code>cli_runtime/partial_output</code>).</p>
-
-    <h2>Re-execution doctrine</h2>
-    <p>Terminal Tasks are forever frozen. The kernel exposes no operation that takes a terminal Task back to a non-terminal state. To "re-execute" a piece of work, the caller constructs a <em>new</em> Task with a fresh <code>id</code>, copying whatever fields are still desired (<code>instructions</code>, <code>runtime_kind</code>, …), and dispatches it.</p>
-    <p>Lineage between the original and the new Task is recorded in <code>metadata</code>, by convention under a scoped key:</p>
-    <pre><code>new_task.metadata["&lt;scope&gt;/lineage_of"] = original_task.id</code></pre>
-    <p>This keeps Task immutable, keeps the state machine simple, and keeps audit clean: every attempt is its own Task, with its own timestamps, its own outcome, and its own audit trail. The kernel does not police the lineage convention; the layer above adopts whatever scope it likes.</p>
-
-    <h2>Observability — what the kernel guarantees, and what it does not</h2>
-    <p>Task is the kernel's only observation surface. By the Concurrency Contract (Chapter 10), every read returns a per-Task atomic snapshot. Five rules pin down the kernel-level observability floor:</p>
-    <ol>
-      <li><strong>Pull is the universal lower bound.</strong> Reading any field of a Task is always possible and always returns a consistent snapshot. <code>status</code> is the canonical channel; the field invariants above make every other field's meaning deterministic given <code>status</code>.</li>
-      <li><strong>State transitions are well-defined moments, but the kernel mandates no notification mechanism.</strong> Polling <code>status</code>, subscribing to push events, or registering callbacks are all legal observation strategies — the choice belongs to the layer above.</li>
-      <li><strong>Push is not a kernel axiom.</strong> Subscription, callback, and event-bus mechanisms are engineering choices, not axiom-level conclusions.</li>
-      <li><strong>Liveness is not a kernel concern.</strong> "Task shows <code>running</code>, but is the substrate actually making progress?" — the kernel cannot know. Impls may write heartbeat hints into <code>metadata</code> (e.g. <code>&lt;impl&gt;/last_heartbeat_at</code>); observers interpret these by their own conventions.</li>
-      <li><strong>Mid-execution events are not first-class.</strong> Token streams, tool invocations, internal reasoning steps, partial outputs in flight — all impl-internal. Valuable for tracing, debugging, billing; never axiom-level. Impls surface them through <code>metadata</code> updates or their own trace channels, not through kernel concepts.</li>
-    </ol>
-    <p>The summary: pull works; everything else is optional. This minimum is enough to build any pull-driven workflow on. Push, notification, liveness, and tracing are layered on top — at the layer above, or by individual impls — without changing any axiom.</p>
-
-    <div class="callout why-not">
-      <p><strong>Why is <code>agent_name</code> optional?</strong></p>
-      <p>Because not every Task originates from a catalog Agent. The layer above can dispatch ad-hoc tasks (e.g. from a one-off prompt) by providing only <code>instructions</code> and <code>runtime_kind</code>. The kernel does not require an Agent to be in the loop.</p>
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <h2>对外契约</h2>
-    <p>从内核之上的层来看，Task 就是一个黑箱函数：</p>
-    <pre><code>Task : instructions → result</code></pre>
-    <p>这就是全部契约。Task 上其它字段的存在，都是为了让这一契约可观察、可控、可审计，并且能够通过 clone-and-redispatch 重跑。</p>
-
-    <h2>内部 schema</h2>
-    <pre><code>Task = (
-  // 身份
-  id:           string,                     // kernel 颁发，唯一
-
-  // 输入（dispatch 时一次性设定，之后不可变）
-  summary:      string,                     // catalog / UI 用的短标题
-  instructions: string,                     // 自由文本输入——即契约
-  runtime_kind: string,                     // 选择 Runtime impl
-  agent_name?:  string,                     // 可选，绑定 catalog 中的某个 Agent
-  metadata?:    map&lt;string, any&gt;,           // 开放 key/value 包；kernel 从不解释
-
-  // 执行事实（kernel 管理，按并发契约原子写入）
-  status:       not_started | running | paused | success | failure | cancelled,
-  result?:      any,                        // 仅当 status == success 时存在
-  failure?:     Failure,                    // 仅当 status == failure 时存在（见下文 "Failure 类型"）
-  supplements?: [string],                   // 仅追加的审计轨迹；resume(extra) 一次产生一条
-  created_at:   timestamp,
-  started_at?:  timestamp,                  // 仅当 status 至少进入过 running 时存在
-  ended_at?:    timestamp,                  // 仅当 status ∈ {success, failure, cancelled} 时存在
-)</code></pre>
-
-    <h2>状态机——六个状态</h2>
-    <p>Task 在六态状态机内演化。三个<em>活跃态</em>；三个<em>终态</em>。</p>
-    <pre><code>not_started ──dispatch──▶ running ──complete──▶ success     (终态)
-                            │   ▲          ──fail──────▶ failure     (终态)
-                            │   │          ──kill──────▶ cancelled   (终态)
-                          pause resume(extra?)
-                            ▼   │
-                          paused ──kill──▶ cancelled   (终态)
-</code></pre>
-    <ul>
-      <li><strong>not_started</strong>——Task 已构造但尚未 dispatch。</li>
-      <li><strong>running</strong>——工作正在某个 Runtime impl 上进行。</li>
-      <li><strong>paused</strong>——工作已挂起；在 <code>resume</code> 被调用之前 impl 不会前进。</li>
-      <li><strong>success</strong>——终态；<code>result</code> 已写入。</li>
-      <li><strong>failure</strong>——终态；<code>failure</code> 已写入。</li>
-      <li><strong>cancelled</strong>——终态；从任意非终态经由 <code>kill</code> 到达。</li>
-    </ul>
-    <p>终态永久冻结。没有 <code>reset</code>，没有 <code>retry</code>，没有任何离开终态的转换。"重跑"一个 Task 不是 kernel 操作——见下文 Re-execution doctrine。</p>
-
-    <h2>字段角色</h2>
-    <ul>
-      <li><strong>身份</strong>—— <code>id</code>：dispatch 之后 kernel 寻址 Task 的唯一句柄。</li>
-      <li><strong>输入</strong>—— <code>summary</code>、<code>instructions</code>、<code>runtime_kind</code>、可选 <code>agent_name</code>、可选 <code>metadata</code>：dispatch 时一次性设定，此后不可变。</li>
-      <li><strong>执行事实</strong>—— <code>status</code>、<code>result?</code>、<code>failure?</code>、<code>supplements?</code>、时间戳：由聚合自身的转换写入，按并发契约（第 10 章）保持原子。</li>
-    </ul>
-
-    <h2>字段不变量</h2>
-    <ul>
-      <li><code>status</code> 遵循上述六态状态机。终态永不转出。</li>
-      <li><code>result</code> 仅当 <code>status == success</code> 时存在。</li>
-      <li><code>failure</code> 仅当 <code>status == failure</code> 时存在。（取消不产生 <code>Failure</code>；如果有 partial output，写入 <code>metadata</code> 中带 impl 前缀的 key。）</li>
-      <li><code>supplements</code> 仅作为 <code>resume(extra)</code> 的副作用增长，与 <code>paused → running</code> 转换原子绑定。</li>
-      <li><code>started_at</code> 仅当 <code>status</code> 至少进入过 <code>running</code> 时存在。</li>
-      <li><code>ended_at</code> 仅当 <code>status ∈ {success, failure, cancelled}</code> 时存在。</li>
-      <li>输入字段 dispatch 后不可变。</li>
-    </ul>
-
-    <h2>聚合方法</h2>
-    <p>Task 是纯数据类型，所有状态转换都通过 <code>Apply</code> 函数驱动。六个转换覆盖完整生命周期：</p>
-    <ul>
-      <li><code>dispatch(task)</code>——构造并启动：<code>not_started → running</code>。</li>
-      <li><code>pause(task_id)</code>——请求暂停：<code>running → paused</code>，在下一个安全 checkpoint 生效。</li>
-      <li><code>resume(task_id, extra?)</code>——请求恢复：<code>paused → running</code>；若提供 <code>extra</code>，则在同一原子转换中追加到 <code>supplements</code>。</li>
-      <li><code>kill(task_id)</code>——请求终止：任意非终态 → <code>cancelled</code>。</li>
-      <li><code>complete(task_id, result)</code>——自然成功：<code>running → success</code>；在一个原子步骤中写入 <code>result</code> 与 <code>ended_at</code>。</li>
-      <li><code>fail(task_id, failure)</code>——自然失败：<code>running → failure</code>；在一个原子步骤中写入 <code>failure</code> 与 <code>ended_at</code>。</li>
-    </ul>
-    <p>六个动词全部通过 Runtime 接口寻址（<code>dispatch</code> 收整个 Task；其余只收 <code>task_id</code>——见第 8 章）。"谁有权调哪个动词"（如只有 agent 调 <code>complete</code>，只有编排层调 <code>kill</code>）是上层的策略/权限问题，不是接口层面的划分。</p>
-
-    <div class="callout note">
-      <strong>控制类动词是 best-effort。</strong> <code>pause</code>、<code>resume</code>、<code>kill</code> 是<em>请求</em>，不是命令。不同 Runtime substrate 对工作的控制力不同——LLM-chat impl 能在轮次之间 pause；一次性 HTTP 调用的 impl 物理上做不到。每一个 impl 都必须<em>接受</em>六个动词；<em>有效率</em>因 substrate 而异。Caller 通过 <code>Task.status</code> 看到真相。<code>pause</code> 可能输给自然完成；<code>kill</code> 可能与即将到达的 <code>success</code>/<code>failure</code> 撞车。对已经处于终态的 task 保证幂等。
-    </div>
-
-    <div class="callout note">
-      <strong>实施者注记——五态子集。</strong>参考实现 <code>@emploke/task</code> 当前只暴露五态子集（<code>not_started → running → success / failure / cancelled</code>），不包含 <code>pause</code>、<code>resume</code> 与 <code>paused</code> 状态。理由（详见 <a href="https://github.com/LangSensei/emploke/tree/main/packages/task">packages/task README</a>）：Windows 没有 <code>SIGSTOP</code>，许多 CLI substrate 也不能良好处理暂停信号，因此 "soft pause" 体验被作为 per-substrate 的 <code>metadata</code> 关切处理。子集实现是诚实的——读 <code>Task.status</code> 永远观察不到 <code>paused</code>。瞄准完整内核承诺的未来实现可以补上缺失的转移；内核没有禁止这件事。
-    </div>
-
-    <h2>Failure 类型</h2>
-    <p>当 Task 以 <code>failure</code> 结束时，<code>failure</code> 字段携带一份结构化数据：</p>
-    <pre><code>Failure = (
-  code:      string,                        // impl 自定，建议命名空间 &lt;impl&gt;/&lt;code&gt;
-  message:   string,                        // 人读；code 与 message 都必填
-  metadata?: map&lt;string, any&gt;,              // 可选细节：stack、raw_response、partial_output、cause、retry_after_ms…
-)</code></pre>
-    <ul>
-      <li><strong><code>code</code></strong> 把"事实"和"措辞"分开。开放字符串（如 <code>cli_runtime/timeout</code>、<code>openai/rate_limit</code>），上层可以基于它做模式匹配，而不是去 parse 散文。</li>
-      <li><strong><code>message</code></strong> 给人和日志看。</li>
-      <li><strong><code>metadata</code></strong> 携带 impl 特定的细节；kernel 永远不解释。</li>
-    </ul>
-    <p>Kernel 刻意<em>不</em>包含 <code>retriable: bool</code> 字段。同一个 <code>code</code> 是否该重试，取决于 workflow 的容忍度、预算与上下文——不取决于失败本身。<code>429 rate_limit</code> 对一个有 backoff 预算的 workflow 可重试，对一个 cost-cap 严格的 workflow 不可重试。Retry policy 活在内核之上的层，编码为 <code>code → action</code>；<code>Failure</code> 不带任何意见。</p>
-    <p>取消不产生 <code>Failure</code>。Cancelled Task 的 <code>status == cancelled</code> 且没有 <code>failure</code> 字段。取消之前观察到的 partial output（如果有）按 impl 前缀写入 <code>metadata</code>（如 <code>cli_runtime/partial_output</code>）。</p>
-
-    <h2>Re-execution doctrine</h2>
-    <p>终态 Task 永久冻结。Kernel 不暴露任何能让终态 Task 回到非终态的操作。要"重跑"一段工作，调用方需新建一个<em>新的</em> Task（新 <code>id</code>），按需拷贝原字段（<code>instructions</code>、<code>runtime_kind</code>…），然后 dispatch。</p>
-    <p>原 Task 与新 Task 之间的世系信息记在 <code>metadata</code> 里，按约定的 scoped key：</p>
-    <pre><code>new_task.metadata["&lt;scope&gt;/lineage_of"] = original_task.id</code></pre>
-    <p>这样 Task 保持不可变，状态机保持简单，审计保持干净：每一次尝试都是它自己的 Task，有自己的时间戳、自己的结果、自己的审计轨迹。Kernel 不强制世系约定；上层用什么 scope 都行。</p>
-
-    <h2>可观测性——内核保证什么、不保证什么</h2>
-    <p>Task 是内核唯一的观察面。按并发契约（第 10 章），每次 read 返回 per-Task 原子 snapshot。五条规则钉死内核级 observability 地板：</p>
-    <ol>
-      <li><strong>Pull 是 universal lower bound。</strong>读 Task 任意字段任时可行，永远返回一致 snapshot。<code>status</code> 是标准信道；上述字段不变量让其它字段在给定 <code>status</code> 时语义确定。</li>
-      <li><strong>状态转换是 well-defined moment，但内核不规定通知机制。</strong>Polling <code>status</code>、订阅 push 事件、注册 callback 都是合法策略——选择属于内核之上的层。</li>
-      <li><strong>Push 不是 kernel 公理。</strong>订阅、callback、event-bus 是工程选择，不是公理结论。</li>
-      <li><strong>Liveness 不是 kernel 责任。</strong>"Task 显示 running，但 substrate 是不是真在干活" ——内核无法知道。Impl 可往 <code>metadata</code> 写心跳（如 <code>&lt;impl&gt;/last_heartbeat_at</code>）；observer 自行约定解释。</li>
-      <li><strong>中间执行事件不是一等概念。</strong>Token 流、tool 调用、内部 reasoning 步骤、in-flight partial output——都是 impl-internal。对 trace / debug / 计费有价值；不属于公理层。Impl 通过 <code>metadata</code> 更新或自己的 trace channel surface，不通过 kernel 概念。</li>
-    </ol>
-    <p>一句话总结：pull works；其它一切 optional。这个最小集足以构建任何 pull-driven workflow。Push、notification、liveness、tracing 都在它之上叠（在内核之上的层，或个别 impl）——不需要改任何公理。</p>
-
-    <div class="callout why-not">
-      <p><strong>为什么 <code>agent_name</code> 是可选的？</strong></p>
-      <p>因为不是每个 Task 都来源于 catalog 中的 Agent。内核之上的层可以派发 ad-hoc 任务（例如一次性 prompt），只提供 <code>instructions</code> 和 <code>runtime_kind</code> 即可。Kernel 并不强制必须有 Agent 介入。</p>
-    </div>
-  </div>
-</section>
-
-<!-- Chapter 8 -->
-<section class="chapter" id="ch8">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 8 · Part II</span>
-    <span data-lang="zh">第 8 章 · 第二部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Runtime</span>
-    <span data-lang="zh">Runtime（运行时）</span>
-    <span class="tag exe" data-lang="en">Execution · Domain Service Interface</span>
-    <span class="tag exe" data-lang="zh">Execution · 领域服务接口</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">A contract — not a data entity. The kernel's only interface, dispatched per Task by <code>runtime_kind</code>.</span>
-    <span data-lang="zh">命令侧契约——不是数据实体。按 Task 上的 <code>runtime_kind</code> 派发。与 Query（读侧）接口共同构成内核的两个接口。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>What Runtime <em>is</em></h2>
-    <p>An <strong>interface</strong> for executing a Task. Carries no data, no fields, no lifecycle of its own. It is a Domain Service Interface (DDD), nothing more.</p>
-
-    <pre><code>// Conceptual signature — kernel does not provide implementations
-interface Runtime {
-  dispatch(task)                  → ()    // hand the whole Task to the runtime
-  pause(task_id)                  → ()    // request a halt; effective at the next safe checkpoint
-  resume(task_id, extra?)         → ()    // request resumption; if extra given, append to supplements atomically
-  kill(task_id)                   → ()    // request termination; non-terminal → cancelled
-  complete(task_id, result)       → ()    // report successful completion
-  fail(task_id, failure)          → ()    // report failure
-}</code></pre>
-
-    <p>Six verbs covering the full Task lifecycle. The signatures are deliberately asymmetric: <code>dispatch(task)</code> takes the whole Task (the materialisation moment); the other five take only <code>task_id</code> (the Task is already materialised). "Who has the right to call Complete vs Kill" is a policy/auth concern at the layer above, not an interface-level split.</p>
-
-    <h2>Asymmetric signatures — why</h2>
-    <ul>
-      <li><code>dispatch(task)</code> takes the <strong>whole Task object</strong>. This is the materialisation moment: the Runtime impl needs every input field (<code>instructions</code>, <code>agent_name</code>, <code>metadata</code>, …) to actually start work, and the Task may not yet exist anywhere the Runtime can look it up by id.</li>
-      <li><code>pause / resume / kill / complete / fail</code> take only <code>task_id</code> (with <code>resume</code> taking an optional <code>extra</code> payload, <code>complete</code> taking a <code>result</code>, and <code>fail</code> taking a <code>failure</code>). After dispatch, the Task is materialised; the Runtime impl already has everything it needs, and the kernel-side caller only needs to address it.</li>
-    </ul>
-    <p>Symmetry would have been pretty, but it would have forced either an extra "register the task with the runtime" call before dispatch, or required all three control ops to re-pass the immutable input. Neither buys anything.</p>
-
-    <h2>Best-effort control verbs</h2>
-    <p>Different Runtime substrates have different control over their work. An LLM-chat impl can pause between turns; a one-shot HTTP-call impl physically cannot. Every impl must <em>accept</em> all six verbs; the <em>effective rate</em> of pause / resume varies, and that variation is fine — the truth is always in <code>Task.status</code>.</p>
-    <p>Concretely:</p>
-    <ul>
-      <li><code>dispatch</code> is synchronous to the point of state entry: it returns once the Task has entered <code>running</code>, or raises if the Runtime cannot start (Task stays <code>not_started</code>).</li>
-      <li><code>pause</code> is a request: the Task transitions to <code>paused</code> at the next safe checkpoint, <em>or</em> completes naturally before the checkpoint is reached (in which case the request had no effect). Idempotent on already-paused / terminal Tasks.</li>
-      <li><code>resume(extra?)</code> is atomic: if <code>extra</code> is provided, append to <code>supplements</code> first, then transition <code>paused → running</code>. No-op (and <code>extra</code> dropped) on non-paused Tasks.</li>
-      <li><code>kill</code> is a request: the Task reaches a terminal state (typically <code>cancelled</code>, but may race to <code>success</code>/<code>failure</code> if completion was already imminent) in finite time. Idempotent on already-terminal Tasks.</li>
-    </ul>
-
-    <h2><code>runtime_kind</code> on Task — not on Agent</h2>
-    <p>Task carries the <code>runtime_kind</code> field (Chapter 7). The kernel's caller picks an implementation per Task. The kernel itself does not enumerate the kinds; the layer above maintains a registry mapping <code>runtime_kind</code> → impl. Putting <code>runtime_kind</code> on Task (not Agent) means the same Agent definition can be executed on different runtime kinds depending on context — useful for migration, A/B, fallback, and local-vs-remote choice.</p>
-
-    <h2>Why an interface, not a 1:1 entity</h2>
-    <p>An earlier draft framed Runtime as an entity with 1:1 lifetime to a Task and no-arg methods. We rejected it because:</p>
-    <ul>
-      <li><strong>State duplication.</strong> A Runtime entity would need to mirror Task fields (id, status) for any external observer to read them — but Task already carries those, denormalised by design.</li>
-      <li><strong>Implementation lock-in.</strong> 1:1 forces every impl to allocate per-Task state structures, ruling out stateless or pooled implementations even when they are the natural fit.</li>
-      <li><strong>The kernel asks too much.</strong> The kernel only needs to <em>name the operations</em>; how an impl maps those onto processes / containers / sandboxes / threads / coroutines is the impl's freedom.</li>
-    </ul>
-
-    <div class="callout note">
-      Concurrency, ordering, and crash semantics are <em>not</em> defined by the Runtime interface. They are governed by the Concurrency Contract (Chapter 10, Invariant 1), which is a property of the kernel as a whole.
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <h2>Runtime <em>是</em>什么</h2>
-    <p>是一个执行 Task 的<strong>接口</strong>。本身不携带数据、不带字段、不带自己的生命周期。一个领域服务接口（DDD），仅此而已。</p>
-
-    <pre><code>// 概念签名——内核不提供任何实现
-interface Runtime {
-  dispatch(task)                  → ()    // 把整个 Task 对象交给 runtime
-  pause(task_id)                  → ()    // 请求挂起；在下一个安全 checkpoint 生效
-  resume(task_id, extra?)         → ()    // 请求恢复；若提供 extra，原子追加到 supplements
-  kill(task_id)                   → ()    // 请求终止；非终态 → cancelled
-  complete(task_id, result)       → ()    // 报告成功完成
-  fail(task_id, failure)          → ()    // 报告失败
-}</code></pre>
-
-    <p>六个动词，覆盖完整的 Task 生命周期。签名刻意不对称：<code>dispatch(task)</code> 接收整个 Task（物化时刻）；其余五个只接收 <code>task_id</code>。"谁有权调 Complete vs Kill"是上层的策略/权限问题，不是接口层面的划分。</p>
-
-    <h2>为什么签名不对称</h2>
-    <ul>
-      <li><code>dispatch(task)</code> 接收<strong>整个 Task 对象</strong>。这是"物化"的时刻：Runtime impl 需要 Task 的全部输入字段（<code>instructions</code>、<code>agent_name</code>、<code>metadata</code>…）来真正启动工作，而此时 Task 可能还不存在于 Runtime 能用 id 查到的地方。</li>
-      <li><code>pause / resume / kill / complete / fail</code> 只接收 <code>task_id</code>（其中 <code>resume</code> 多收一个可选 <code>extra</code>，<code>complete</code> 收一个 <code>result</code>，<code>fail</code> 收一个 <code>failure</code>）。dispatch 之后 Task 已经被物化；Runtime impl 早就拿到了所有需要的东西，kernel 侧的调用方只需要寻址即可。</li>
-    </ul>
-    <p>对称当然好看，但那要么强制在 dispatch 前多一次"向 runtime 注册 task"调用，要么强制其余三个控制操作重复传递不可变输入。两者都没有任何收益。</p>
-
-    <h2>控制类动词是 best-effort</h2>
-    <p>不同 Runtime substrate 对工作的控制力不同。LLM-chat impl 能在轮次之间 pause；一次性 HTTP 调用的 impl 物理上做不到。每一个 impl 都必须<em>接受</em>六个动词；pause / resume 的<em>有效率</em>因 substrate 而异，这种差异是 OK 的——真相永远在 <code>Task.status</code>。</p>
-    <p>具体而言：</p>
-    <ul>
-      <li><code>dispatch</code> 同步到状态入口：在 Task 进入 <code>running</code> 后返回，或在 Runtime 无法启动时抛错（Task 保持 <code>not_started</code>）。</li>
-      <li><code>pause</code> 是请求：Task 在下一个安全 checkpoint 转为 <code>paused</code>，<em>或</em>在 checkpoint 之前自然完成（这时请求无效）。对已 paused / 终态 Task 幂等。</li>
-      <li><code>resume(extra?)</code> 原子：若提供 <code>extra</code>，先追加到 <code>supplements</code>，再做 <code>paused → running</code> 转换。对非 paused Task 是 no-op（<code>extra</code> 被丢弃）。</li>
-      <li><code>kill</code> 是请求：Task 在有限时间内到达终态（通常 <code>cancelled</code>，但若完成已迫在眉睫，可能撞到 <code>success</code>/<code>failure</code>）。对已终态 Task 幂等。</li>
-    </ul>
-
-    <h2><code>runtime_kind</code> 在 Task 上——不在 Agent 上</h2>
-    <p>Task 携带 <code>runtime_kind</code> 字段（第 7 章）。Kernel 调用方按 Task 选择实现。Kernel 本身不枚举具体种类；内核之上的层维护一个 <code>runtime_kind</code> → impl 的注册表。把 <code>runtime_kind</code> 放在 Task 上（而不是 Agent 上）意味着：同一个 Agent 定义可以根据上下文在不同 runtime kind 上执行——便于迁移、A/B、降级、本地 vs 远程之类的选择。</p>
-
-    <h2>为什么是接口，而不是 1:1 的实体</h2>
-    <p>早先的草稿曾把 Runtime 框架成一个"与 Task 1:1、方法不带参数"的实体。我们拒绝了它，因为：</p>
-    <ul>
-      <li><strong>状态重复。</strong>Runtime 实体不得不镜像 Task 字段（id、status）才能让外部观察者读到它们——但 Task 已经按设计反范式化地携带了这些。</li>
-      <li><strong>实现锁定。</strong>1:1 强迫每一个 impl 都为每个 Task 分配状态结构，把"无状态"或"池化"实现自然适合的场景都堵死。</li>
-      <li><strong>Kernel 要求过度。</strong>Kernel 只需要<em>命名操作</em>；至于 impl 把这些操作映射成进程 / 容器 / 沙箱 / 线程 / 协程，那是 impl 的自由。</li>
-    </ul>
-
-    <div class="callout note">
-      并发、顺序与崩溃语义<em>不</em>由 Runtime 接口定义。它们由"并发契约"（第 10 章，不变量 1）统辖，而那是内核作为整体的属性。
-    </div>
-  </div>
-</section>
-<!-- Chapter 9 -->
-<section class="chapter" id="ch9">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 9 · Part II</span>
-    <span data-lang="zh">第 9 章 · 第二部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Execution</span>
-    <span data-lang="zh">Execution（执行）</span>
-    <span class="tag exe" data-lang="en">Named Concept · Not an Entity</span>
-    <span class="tag exe" data-lang="zh">命名概念 · 非实体</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">The act of running a Task. A name we give to a behaviour — there is no separate object.</span>
-    <span data-lang="zh">"运行一个 Task"这件事本身。我们给这一行为起的名字——没有独立对象。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>Definition</h2>
-    <p>An <strong>Execution</strong> is the act of running a Task. It is named so the rest of the kernel — and the documentation — has a noun for "the thing happening between dispatch and a terminal status". It is <strong>not</strong> a separate entity, table, record, or object.</p>
-
-    <pre><code>Execution ≡ "this Task is running, on some Runtime"
-  ↳ no id of its own         (the Task's id IS the execution's id)
-  ↳ no separate fields       (status, started_at, ended_at all live on Task)
-  ↳ 1:1 with the Task        (start/end == Task's running ↔ terminal transitions)</code></pre>
-
-    <h2>Why name it at all</h2>
-    <ul>
-      <li>To group Task + Runtime under "Execution" as the second sub-context (alongside Catalog).</li>
-      <li>To give documentation, hooks, and observability a noun: "an execution failed", "execution ended", "execution duration".</li>
-      <li>To avoid false promotion: the alternative is to model Execution as a record with its own id and fields, which would split execution facts across two places (Task + Execution) and break the "Task is the only Aggregate Root" invariant.</li>
-    </ul>
-
-    <h2>What Execution is <em>not</em></h2>
-    <ul>
-      <li>Not an entity with its own id.</li>
-      <li>Not a table or record alongside Task.</li>
-      <li>Not a wrapper around Task — Task already is the wrapper.</li>
-      <li>Not a place to store retry counts, attempt numbers, or step indices (those are workflow / scheduler concerns above the kernel).</li>
-    </ul>
-
-    <div class="callout note">
-      All execution facts (<code>status</code>, <code>started_at</code>, <code>ended_at</code>, <code>result</code>, <code>failure</code>) live <strong>on the Task</strong>, denormalised. This is what lets a single Task object answer every question an external observer might ask, without joins.
-    </div>
-  </div>
-
-  <div data-lang="zh">
-    <h2>定义</h2>
-    <p><strong>Execution</strong> 就是"运行一个 Task"这一行为。我们给它命名，是为了让内核的其它部分——以及文档——有一个名词指代"在 dispatch 与终态之间正在发生的那件事"。它<strong>不是</strong>一个独立实体、表、记录或对象。</p>
-
-    <pre><code>Execution ≡ "这个 Task 正在某个 Runtime 上运行"
-  ↳ 没有自己的 id           （Task 的 id 就是 execution 的 id）
-  ↳ 没有独立字段           （status、started_at、ended_at 都在 Task 上）
-  ↳ 与 Task 1:1            （起止 == Task 的 running ↔ 终态跳转）</code></pre>
-
-    <h2>为什么要命名</h2>
-    <ul>
-      <li>为了把 Task + Runtime 一起归到 "Execution" 这个第二子上下文（与 Catalog 并列）。</li>
-      <li>为了给文档、hook、可观测性一个名词："an execution failed"、"execution ended"、"execution duration"。</li>
-      <li>为了避免错误地把它"提升"成实体：替代方案是把 Execution 建模为带自身 id 与字段的记录，那样就会把执行事实拆分到两个地方（Task + Execution），并破坏"Task 是唯一聚合根"的不变量。</li>
-    </ul>
-
-    <h2>Execution <em>不是</em>什么</h2>
-    <ul>
-      <li>不是带自身 id 的实体。</li>
-      <li>不是与 Task 并列的表或记录。</li>
-      <li>不是 Task 的 wrapper—— Task 自己就是 wrapper。</li>
-      <li>不是存放重试次数、尝试编号、step 序号的地方（那些是 kernel 之上的 workflow / scheduler 关注点）。</li>
-    </ul>
-
-    <div class="callout note">
-      所有执行事实（<code>status</code>、<code>started_at</code>、<code>ended_at</code>、<code>result</code>、<code>failure</code>）都<strong>在 Task 上</strong>反范式化存放。这正是让"一个 Task 对象就能回答外部观察者的所有问题、无需 join"成为可能的原因。
-    </div>
-  </div>
-</section>
-<!-- ═══════════ PART III — INVARIANTS ═══════════ -->
-
-<!-- Chapter 10 -->
-<section class="chapter" id="ch10">
-  <p class="chapter-number">
-    <span data-lang="en">Chapter 10 · Part III</span>
-    <span data-lang="zh">第 10 章 · 第三部分</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Invariants</span>
-    <span data-lang="zh">不变量</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">The two properties that hold across the whole kernel.</span>
-    <span data-lang="zh">贯穿整个内核的两条性质。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>The four axioms tell you what the kernel <em>has</em>. The two invariants tell you what the kernel <em>guarantees</em>. They are not concepts; they are commitments that any implementation of the kernel must honour.</p>
-
-    <h2>Invariant 1 — The Concurrency Contract</h2>
-    <p>The Concurrency Contract has <strong>two clauses</strong>. Both must hold.</p>
-
-    <div class="callout">
-      <strong>Clause 1 — Inter-Task parallelism.</strong> Different Tasks may execute concurrently, in any order, on any combination of Runtimes. The state transitions of one Task are not affected by the existence or absence of other Tasks.
-    </div>
-
-    <div class="callout">
-      <strong>Clause 2 — Intra-Task serialisation.</strong> Mutating operations on the <em>same</em> Task must be serialised. Task is the consistency boundary; concurrent mutations to one Task are not permitted.
-    </div>
-
-    <p>Together, the two clauses say: between Tasks, anything goes; within a Task, one operation at a time. This is why Task is the only Aggregate Root: the boundary of consistency is the boundary of the aggregate.</p>
-
-    <h3>Precise semantics — seven rules</h3>
-    <p>The two clauses are short. The contract they imply is more precise. The kernel guarantees seven rules; impls choose the mechanism.</p>
-    <ol>
-      <li><strong>The mutator set is closed and named.</strong> The mutators are exactly: <code>dispatch</code>, <code>pause</code>, <code>resume</code>, <code>kill</code>, <code>complete</code>, <code>fail</code>. The atomic append to <code>supplements</code> happens <em>inside</em> <code>resume(extra)</code> — it is not a separate mutator. All other operations on Task (reading any field, snapshotting the Task, computing derived views) are <strong>readers</strong>.</li>
-      <li><strong>Same-Task mutators serialise.</strong> At any moment, at most one mutator is in flight per Task. Impl chooses mechanism (per-task lock, single-consumer actor, MQ partition by <code>task_id</code>, optimistic locking with version field, …). The kernel does not prescribe.</li>
-      <li><strong>Mutations are atomic from observer perspective.</strong> A reader sees either the pre-state or the <em>complete</em> post-state — never an intermediate / torn state. Readers can never observe <code>status == success</code> with <code>result</code> unset, or <code>status == paused</code> with <code>supplements</code> partially appended.</li>
-      <li><strong>Readers do not serialise</strong> — neither with each other, nor with mutators (MVCC-style semantics). Multiple readers may run concurrently. Readers may run concurrently with a mutator; the reader sees the latest committed snapshot. Readers do not block mutators; mutators do not block readers.</li>
-      <li><strong>Cross-Task batch reads have no global snapshot guarantee.</strong> A workflow asking "give me the status of these N Tasks" receives N independently per-Task-atomic snapshots; their relative timing is <em>not</em> guaranteed (no SERIALIZABLE-level isolation). Agentic systems rarely need cross-Task atomicity, and providing it has prohibitive cost.</li>
-      <li><strong>Read-your-writes within the same caller context.</strong> When a caller's mutator returns successfully, that same caller's subsequent read on the same Task observes the post-state. Across distinct callers, propagation is "as soon as possible" but not strictly synchronous (impl-specific).</li>
-      <li><strong>Same-Task mutation order preserves happens-before.</strong> State-machine causality is an axiom guarantee: <code>dispatch</code> happens-before <code>complete</code>/<code>fail</code>; <code>pause</code> happens-before its corresponding <code>resume</code>; <code>kill</code> happens-before the resulting <code>cancelled</code> snapshot. Observers never see the post-state of a later mutation without also seeing the post-state of all earlier same-Task mutations.</li>
-    </ol>
-
-    <p>Three edge cases follow directly:</p>
-    <ul>
-      <li><strong>A failed mutator</strong> (e.g. <code>dispatch</code> raising before any state change) still occupies the same-Task serialisation slot for its duration; on return (success or error) the slot is released. State unchanged ⇒ observers see the pre-state throughout.</li>
-      <li><strong>A no-op mutator</strong> (e.g. <code>kill</code> on an already-terminal Task) is API-classified as a mutator — it occupies the slot, returns harmlessly. State unchanged ⇒ observers see the unchanged terminal state.</li>
-      <li><strong>Transition-related timestamps</strong> (<code>started_at</code>, <code>ended_at</code>) are part of the atomic mutation envelope (Rule 3). Observers see them appear together with the transition that sets them, not later.</li>
-    </ul>
-
-    <p>What this implies, practically:</p>
-    <ul>
-      <li>The kernel does not need (and does not have) a global lock or single dispatcher.</li>
-      <li>Each Task implementation needs <em>some</em> per-Task ordering mechanism — but the choice is the impl's, not the kernel's.</li>
-      <li>Cross-task coordination — domain events, message queues, shared workspaces — is a workflow concern. The kernel exposes no primitive for it.</li>
-      <li>The kernel-level observability floor (Chapter 7, Observability) is a direct consequence of these rules: pull always works precisely because readers do not serialise and snapshots are atomic.</li>
-    </ul>
-
-    <div class="callout why-not">
-      <p><strong>Why not promise stronger guarantees, like exactly-once or causal ordering across Tasks?</strong></p>
-      <p>Both are <em>valuable</em> and both are <em>expensive</em>. Different products need different tradeoffs. Encoding either into the kernel forces every product to pay for it. We push these guarantees to the layer above, which can choose what it needs.</p>
-    </div>
-
-    <h2>Invariant 2 — Architectural Equivalence</h2>
-    <p>This invariant is what makes the kernel a <em>kernel</em>, not a particular product's foundation:</p>
-    <div class="callout">
-      <strong>Architectural Equivalence</strong> — Two completely different agentic products, with different methodologies, vocabularies, runtime substrates, and persistence backends, can be built on top of the same Emploke. The kernel does not encode anything that distinguishes one product from another.
-    </div>
-    <p>This invariant is what we mean by "theme-neutral". It is also what every chapter of Part I (Boundaries, Conventions, the "is it kernel?" rule) was preparing you to enforce.</p>
-    <p>An implementation of Emploke that ships with built-in roles, built-in runtime kinds, or built-in persistence is, by this invariant, not an implementation of Emploke — it is a product on top of one.</p>
-
-    <h2>Why exactly two invariants</h2>
-    <p>Every additional invariant in a kernel is a constraint that all consumers must accept. Two felt like the floor: anything fewer and the kernel would not be useful (concurrency would be undefined; portability would be unstated). Anything more and the kernel would start dictating product choices.</p>
-    <p>If you find yourself wanting to add a third invariant, the first question to ask is: "is this a property of the kernel, or a property of a particular product on top of it?" In our experience, every candidate has been the latter.</p>
-  </div>
-
-  <div data-lang="zh">
-    <p>四条公理告诉你内核<em>有什么</em>。两条不变量告诉你内核<em>保证什么</em>。它们不是概念，而是承诺——任何对内核的实现都必须兑现。</p>
-
-    <h2>不变量 1 — 并发契约</h2>
-    <p>并发契约有<strong>两条子句</strong>。两者都必须成立。</p>
-
-    <div class="callout">
-      <strong>子句 1 —— Task 之间的并行。</strong>不同的 Task 可以并发执行，以任意顺序，跑在任意 Runtime 组合上。一个 Task 的状态转换不受其它 Task 存在与否的影响。
-    </div>
-
-    <div class="callout">
-      <strong>子句 2 —— Task 内部的串行。</strong>对<em>同一个</em> Task 的变更类操作必须串行化。Task 是一致性边界；不允许对同一个 Task 做并发变更。
-    </div>
-
-    <p>合起来：Task 之间，怎么并发都行；Task 内部，一次只能一个操作。这正是 Task 为什么是唯一聚合根的原因：一致性的边界就是聚合的边界。</p>
-
-    <h3>精确语义——七条规则</h3>
-    <p>两条子句很短，它们蕴含的契约更精确。Kernel 承诺七条规则；机制由 impl 自定。</p>
-    <ol>
-      <li><strong>Mutator 集合明确闭合。</strong>Mutators 只有：<code>dispatch</code>、<code>pause</code>、<code>resume</code>、<code>kill</code>、<code>complete</code>、<code>fail</code>。<code>supplements</code> 的原子追加发生在 <code>resume(extra)</code> <em>内部</em>，不是独立 mutator。Task 上的其它操作（读字段、snapshot、计算派生视图）都是<strong>readers</strong>。</li>
-      <li><strong>同 Task mutators 串行。</strong>任一时刻每个 Task 上至多一个 mutator 在执行中。Impl 自由选机制（per-task lock、单消费者 actor、按 <code>task_id</code> 分区的 MQ、optimistic locking with version field…）。Kernel 不规定。</li>
-      <li><strong>Mutation 对 observer 是原子的。</strong>Reader 只能看到 pre-state 或<em>完整</em> post-state——永远看不到中间撕裂状态。Reader 永远不会观察到 <code>status == success</code> 而 <code>result</code> 未填，或 <code>status == paused</code> 而 <code>supplements</code> 半截被写入。</li>
-      <li><strong>Readers 不串行</strong>——不与彼此串行，也不与 mutators 串行（MVCC 语义）。多个 reader 可同时跑。Reader 与 mutator 可并发；reader 看到最新已 commit snapshot。Reader 不阻塞 mutator；mutator 也不阻塞 reader。</li>
-      <li><strong>跨 Task 批量读无全局 snapshot 保证。</strong>Workflow 询问"给我 N 个 Task 的 status"，收到 N 个各自原子的 per-Task snapshot；它们之间<em>无</em>相对时序保证（不要求 SERIALIZABLE 级别）。Agentic 系统几乎用不到跨 Task 原子性，代价过高。</li>
-      <li><strong>Read-your-writes（同 caller 上下文内）。</strong>同一 caller 调用 mutator 成功返回后，该 caller 立即 read 同一 Task 看到的是 mutation 后的状态。跨 caller 的传播是"尽快"但不严格同步（impl 决定）。</li>
-      <li><strong>同 Task mutation 序保留 happens-before。</strong>状态机因果性是公理保证：<code>dispatch</code> happens-before <code>complete</code>/<code>fail</code>；<code>pause</code> happens-before 配对的 <code>resume</code>；<code>kill</code> happens-before 其产生的 <code>cancelled</code> snapshot。Observer 永远不会看到后一次 mutation 的 post-state 而看不到同 Task 所有更早 mutation 的 post-state。</li>
-    </ol>
-
-    <p>由此直接得出三条边界：</p>
-    <ul>
-      <li><strong>失败的 mutator</strong>（如 <code>dispatch</code> 在状态变更前抛错）：仍占同 Task 的串行槽位直到返回（成功或失败）；状态未变 ⇒ observer 全程看到 pre-state。</li>
-      <li><strong>No-op mutator</strong>（如 <code>kill</code> 在已终态 Task 上）：API 上仍归 mutator（占槽，无害返回）；状态不变 ⇒ observer 看到不变的终态。</li>
-      <li><strong>转换相关时间戳</strong>（<code>started_at</code>、<code>ended_at</code>）是原子 mutation envelope 的一部分（Rule 3）；observer 看到它们与设置它们的转换<em>一起</em>出现，不会延后。</li>
-    </ul>
-
-    <p>实际含义：</p>
-    <ul>
-      <li>内核不需要（也没有）全局锁或单一派发器。</li>
-      <li>每一个 Task 实现都需要<em>某种</em>按 Task 的顺序化机制，但具体选择是 impl 的事，不是 kernel 的事。</li>
-      <li>跨 task 的协调—— domain event、消息队列、共享 workspace ——属于 workflow 关注点。内核不为此提供任何原语。</li>
-      <li>内核级 observability 地板（第 7 章 · 可观测性）正是这些规则的直接推论：pull 永远 work，恰恰因为 readers 不串行、snapshot 是原子的。</li>
-    </ul>
-
-    <div class="callout why-not">
-      <p><strong>为什么不承诺更强的保证，比如跨 Task 的 exactly-once 或因果顺序？</strong></p>
-      <p>这两者都<em>有价值</em>，也都<em>有代价</em>。不同产品需要不同的取舍。把任何一种编码进内核，都会强迫所有产品为此买单。我们把这些保证推到内核之上的层，让它根据需要选择。</p>
-    </div>
-
-    <h2>不变量 2 — 架构等价性</h2>
-    <p>这一条是让内核成为<em>内核</em>而不是某个具体产品根基的关键：</p>
-    <div class="callout">
-      <strong>架构等价性</strong>——两个完全不同的智能体产品，使用不同的方法论、不同的词汇、不同的 runtime 基底、不同的持久化后端，都可以建立在同一个 Emploke 之上。内核不编码任何能区分一个产品与另一个产品的东西。
-    </div>
-    <p>这就是我们说的"主题中立"。也是第一部分每一章（边界、约定、"它属于内核吗？"法则）所做铺垫的目的——让你能去执行这一条。</p>
-    <p>一个出厂自带角色、自带 runtime 种类或自带持久化的 Emploke 实现，按这一不变量来说，并不是 emploke 的实现——而是建在它之上的某个产品。</p>
-
-    <h2>为什么恰好是两条不变量</h2>
-    <p>内核中的每一条额外不变量都是所有消费者必须接受的约束。两条像是底线：再少，内核就不够有用（并发未定义、可移植性未声明）；再多，内核就开始替产品做选择了。</p>
-    <p>当你发现自己想加第三条不变量时，第一个该问的问题是："这是内核的性质，还是建在它之上的某个产品的性质？"按我们的经验，每一个候选都属于后者。</p>
-  </div>
-</section>
-<!-- ═══════════ APPENDIX A — GLOSSARY ═══════════ -->
-<section class="chapter" id="glossary">
-  <p class="chapter-number">
-    <span data-lang="en">Appendix A</span>
-    <span data-lang="zh">附录 A</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Glossary</span>
-    <span data-lang="zh">术语表</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Every term used by the kernel, with a one-line definition.</span>
-    <span data-lang="zh">内核所使用的每一个术语，附一行定义。</span>
-  </p>
-
-  <div data-lang="en">
-    <dl>
-      <dt>Emploke</dt>
-      <dd>The Layer 1 microkernel defined by this book: 4 axioms, 2 invariants, 2 interfaces (Runtime + Query).</dd>
-
-      <dt>Layer 1</dt>
-      <dd>The kernel itself. The lowest layer in the architecture, on which all higher layers depend.</dd>
-
-      <dt>Catalog (sub-context)</dt>
-      <dd>The conceptual grouping of Loadable concepts: Capability and Agent. "What can exist."</dd>
-
-      <dt>Execution (sub-context)</dt>
-      <dd>The conceptual grouping of Active concepts: Task and Runtime. "What is happening."</dd>
-
-      <dt>Capability</dt>
-      <dd>A scoped name (<code>&lt;scope&gt;/&lt;name&gt;</code>). Value Object. Kernel-opaque — only the name; no instructions, model, or other fields at the kernel level.</dd>
-
-      <dt>Agent</dt>
-      <dd>A static, named bundle of capabilities (<code>name</code>, <code>capabilities[]</code>, optional <code>metadata</code>). Value Object. No <code>id</code>; no <code>runtime_kind</code> (that lives on Task).</dd>
-
-      <dt>Task</dt>
-      <dd>The whole-system contract: <code>instructions → result</code>. Rich Aggregate Root with a six-state machine (<code>not_started · running · paused · success · failure · cancelled</code>). Carries <code>id</code>, <code>summary</code>, <code>instructions</code>, <code>runtime_kind</code>, <code>status</code>, optional <code>result</code>/<code>failure</code>/<code>supplements</code>, timestamps, optional <code>agent_name</code>, optional <code>metadata</code>. The only Aggregate Root.</dd>
-
-      <dt>Runtime</dt>
-      <dd>A contract — Domain Service Interface for executing a Task. Carries no data of its own. Six verbs, asymmetric: <code>dispatch(task)</code> takes the whole Task; <code>pause / resume(extra?) / kill / complete(result) / fail(failure)</code> take only <code>task_id</code>.</dd>
-
-      <dt>Failure</dt>
-      <dd>The structured value carried in <code>Task.failure</code> when a Task ends in <code>failure</code>. Shape: <code>{ code: string, message: string, metadata?: map }</code>. <code>code</code> is impl-defined (suggested namespace <code>&lt;impl&gt;/&lt;code&gt;</code>); both <code>code</code> and <code>message</code> are required. The kernel does not encode a <code>retriable</code> flag — that is policy, not fact.</dd>
-
-      <dt>supplements</dt>
-      <dd>Append-only audit list on Task. Grows only as a side effect of <code>resume(extra)</code>, atomically with the <code>paused → running</code> transition. Audit-only at the kernel level; cross-impl semantic interpretation of historical entries is explicitly not a kernel goal.</dd>
-
-      <dt>Re-execution doctrine</dt>
-      <dd>Terminal Tasks are forever frozen. To re-execute, construct a new Task with a fresh <code>id</code> (copying desired fields) and dispatch it. Lineage is recorded by convention in <code>metadata</code> as <code>&lt;scope&gt;/lineage_of: &lt;original_task_id&gt;</code>. The kernel exposes no <code>reset</code> or <code>retry</code> verb.</dd>
-
-      <dt>Sibling extension library</dt>
-      <dd>A library that depends on <code>emploke</code> and provides a concrete impl of one of its interfaces (typically Runtime). Naming convention: <code>emploke/&lt;substrate&gt;</code> (e.g. <code>emploke/copilot</code>, <code>emploke/openai</code>). The kernel package itself ships zero impls and never depends on any sibling.</dd>
-
-      <dt>Execution</dt>
-      <dd>Named concept · not an entity. The act of running a Task. 1:1 with Task; all execution facts are denormalised onto the Task itself.</dd>
-
-      <dt>runtime_kind</dt>
-      <dd>A field on <strong>Task</strong> (not Agent) that names the runtime implementation to use. The kernel does not enumerate the kinds; the layer above does.</dd>
-
-      <dt>Loadable</dt>
-      <dd>A concept whose instances are populated by the layer above the kernel, not built into the kernel itself. Capability and Agent are loadable.</dd>
-
-      <dt>Aggregate Root (DDD)</dt>
-      <dd>An entity through which all changes to a cluster of objects must pass. In the kernel, only Task is an Aggregate Root.</dd>
-
-      <dt>Value Object (DDD)</dt>
-      <dd>An object defined entirely by its attributes, with no independent identity or lifecycle. Capability and Agent are value objects.</dd>
-
-      <dt>Domain Service Interface (DDD)</dt>
-      <dd>An interface for behavior that does not naturally belong to any single entity. Runtime is a domain service interface.</dd>
-
-      <dt>Concurrency Contract</dt>
-      <dd>Invariant 1. <strong>Two clauses</strong>: (1) different Tasks may run concurrently, in any order; (2) mutating operations on the same Task must be serialised (Task is the consistency boundary). Unfolds into seven precise rules — see Chapter 10.</dd>
-
-      <dt>Observability floor (G1)</dt>
-      <dd>The kernel-level minimum, defined in Chapter 7: pull always works · transitions are deterministic moments but no notification mechanism is mandated · push is not an axiom · liveness is not the kernel's concern · mid-execution events are not first-class.</dd>
-
-      <dt>Architectural Equivalence</dt>
-      <dd>Invariant 2. The same kernel can underpin completely different agentic products without modification.</dd>
-
-      <dt>Theme-neutral</dt>
-      <dd>Containing no concept, vocabulary, or default that ties the kernel to a specific product or methodology.</dd>
-
-      <dt>The layer above the kernel</dt>
-      <dd>How this book refers to anything outside Layer 1. The book deliberately avoids naming higher layers.</dd>
-    </dl>
-  </div>
-
-  <div data-lang="zh">
-    <dl>
-      <dt>Emploke</dt>
-      <dd>本书所定义的 Layer 1 微内核：4 公理、2 不变量、2 接口（Runtime + Query）。</dd>
-
-      <dt>Layer 1</dt>
-      <dd>内核本身。架构中最底层，所有更高层都依赖于它。</dd>
-
-      <dt>Catalog（子上下文）</dt>
-      <dd>"可加载"概念的概念性分组：Capability 与 Agent。回答"可以存在什么"。</dd>
-
-      <dt>Execution（子上下文）</dt>
-      <dd>"激活"概念的概念性分组：Task 与 Runtime。回答"正在发生什么"。</dd>
-
-      <dt>Capability</dt>
-      <dd>一个 scoped 名字（<code>&lt;scope&gt;/&lt;name&gt;</code>）。值对象。Kernel 完全不透明——只有 name；kernel 层面不带 instructions、model 或其它字段。</dd>
-
-      <dt>Agent</dt>
-      <dd>一份静态、具名的 capabilities bundle（<code>name</code>、<code>capabilities[]</code>、可选 <code>metadata</code>）。值对象。没有 <code>id</code>；没有 <code>runtime_kind</code>（那活在 Task 上）。</dd>
-
-      <dt>Task</dt>
-      <dd>整套系统的契约：<code>instructions → result</code>。充血聚合根，六态状态机（<code>not_started · running · paused · success · failure · cancelled</code>）。携带 <code>id</code>、<code>summary</code>、<code>instructions</code>、<code>runtime_kind</code>、<code>status</code>、可选 <code>result</code>/<code>failure</code>/<code>supplements</code>、时间戳、可选 <code>agent_name</code>、可选 <code>metadata</code>。唯一的聚合根。</dd>
-
-      <dt>Runtime</dt>
-      <dd>一份契约——执行 Task 的领域服务接口。本身不携带任何数据。六个动词，签名不对称：<code>dispatch(task)</code> 接收整个 Task；<code>pause / resume(extra?) / kill / complete(result) / fail(failure)</code> 只接收 <code>task_id</code>。</dd>
-
-      <dt>Failure</dt>
-      <dd>Task 以 <code>failure</code> 结束时 <code>Task.failure</code> 携带的结构化值。形状：<code>{ code: string, message: string, metadata?: map }</code>。<code>code</code> 是 impl 自定（建议命名空间 <code>&lt;impl&gt;/&lt;code&gt;</code>）；<code>code</code> 与 <code>message</code> 都必填。Kernel 不编码 <code>retriable</code> 标志——那是 policy，不是 fact。</dd>
-
-      <dt>supplements</dt>
-      <dd>Task 上的仅追加审计列表。仅作为 <code>resume(extra)</code> 的副作用增长，与 <code>paused → running</code> 转换原子绑定。在 kernel 层面只用于审计；跨 impl 对历史条目的语义解读明确不是 kernel 目标。</dd>
-
-      <dt>Re-execution doctrine</dt>
-      <dd>终态 Task 永久冻结。要重跑，构造一个新的 Task（新 <code>id</code>，按需拷贝字段）并 dispatch。世系按约定记在 <code>metadata</code>，形如 <code>&lt;scope&gt;/lineage_of: &lt;original_task_id&gt;</code>。Kernel 不暴露 <code>reset</code> 或 <code>retry</code> 动词。</dd>
-
-      <dt>同级扩展库（Sibling extension library）</dt>
-      <dd>依赖 <code>emploke</code> 并提供某个接口（通常是 Runtime）具体实现的库。命名约定：<code>emploke/&lt;substrate&gt;</code>（如 <code>emploke/copilot</code>、<code>emploke/openai</code>）。Kernel 包本身不附带任何 impl，也永远不依赖任何 sibling。</dd>
-
-      <dt>Execution</dt>
-      <dd>命名概念 · 非实体。"运行一个 Task"这件事本身。与 Task 1:1；所有执行事实都反范式化在 Task 自身。</dd>
-
-      <dt>runtime_kind</dt>
-      <dd><strong>Task</strong>（不是 Agent）上的字段，指定要使用的 runtime 实现。内核不枚举具体种类，由内核之上的层来决定。</dd>
-
-      <dt>Loadable（可加载）</dt>
-      <dd>实例由内核之上的层填充进来的概念，而不是内置于内核本身。Capability 和 Agent 都是可加载的。</dd>
-
-      <dt>聚合根（DDD）</dt>
-      <dd>所有对一组对象的变更必须经过的实体。在内核中，只有 Task 是聚合根。</dd>
-
-      <dt>值对象（DDD）</dt>
-      <dd>完全由其属性所定义、不具独立身份与生命周期的对象。Capability 与 Agent 都是值对象。</dd>
-
-      <dt>领域服务接口（DDD）</dt>
-      <dd>用来承载"不自然归属于任何单一实体"的行为的接口。Runtime 是一个领域服务接口。</dd>
-
-      <dt>并发契约</dt>
-      <dd>不变量 1。<strong>两条子句</strong>：(1) 不同 Task 可以以任意顺序并发运行；(2) 对同一个 Task 的变更类操作必须串行化（Task 是一致性边界）。展开为七条精确规则——见第 10 章。</dd>
-
-      <dt>可观测性地板（G1）</dt>
-      <dd>Kernel 级最小集，定义于第 7 章：pull 永远 work · 转换是确定时刻但不规定通知机制 · push 不是公理 · liveness 不归 kernel · 中间执行事件不是一等概念。</dd>
-
-      <dt>架构等价性</dt>
-      <dd>不变量 2。同一个内核可以无修改地支撑完全不同的智能体产品。</dd>
-
-      <dt>主题中立</dt>
-      <dd>不包含任何把内核绑定到具体产品或方法论的概念、词汇或默认值。</dd>
-
-      <dt>内核之上的层</dt>
-      <dd>本书对任何 Layer 1 之外的事物的统一称呼。本书刻意不点名任何更高层。</dd>
-    </dl>
-  </div>
-</section>
-
-<!-- ═══════════ APPENDIX B — DDD LENS ═══════════ -->
-<section class="chapter" id="ddd-lens">
-  <p class="chapter-number">
-    <span data-lang="en">Appendix B</span>
-    <span data-lang="zh">附录 B</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">The DDD Lens</span>
-    <span data-lang="zh">DDD 视角</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Why every kernel concept maps to exactly one DDD pattern.</span>
-    <span data-lang="zh">为什么内核中的每个概念都恰好映射到一个 DDD 模式。</span>
-  </p>
-
-  <div data-lang="en">
-    <p>The kernel is small enough that every one of its concepts has a single, unambiguous DDD type. This is not a coincidence — it is a consequence of using DDD as the design lens from the start.</p>
-
-    <table>
-      <thead>
-        <tr><th>Concept</th><th>Sub-context</th><th>DDD type</th><th>Has lifecycle?</th><th>Has identity?</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Capability</td><td>Catalog</td><td>Value Object</td><td>No</td><td>By name only</td></tr>
-        <tr><td>Agent</td><td>Catalog</td><td>Value Object</td><td>No</td><td>By name only (no id)</td></tr>
-        <tr><td>Task</td><td>Execution</td><td>Aggregate Root (rich)</td><td>Yes (6 states + timestamps)</td><td>Yes (kernel-issued id)</td></tr>
-        <tr><td>Runtime</td><td>Execution</td><td>Domain Service Interface</td><td>None of its own</td><td>None — it's a contract</td></tr>
-        <tr><td>Execution</td><td>Execution</td><td>Named concept · not an entity</td><td>Same as its Task</td><td>Borrows Task's id</td></tr>
-      </tbody>
-    </table>
-
-    <h2>Ubiquitous language</h2>
-    <p>The terms <em>Capability</em>, <em>Agent</em>, <em>Task</em>, <em>Runtime</em> are the entire ubiquitous language of Layer 1. We use them everywhere in this book, and we expect any conforming implementation to use them in code, in documentation, and in operator-facing tooling.</p>
-    <p>Higher layers are free to introduce additional vocabulary (for roles, workflows, methodologies). Those vocabularies must not <em>replace</em> the kernel terms; they layer above them.</p>
-
-    <h2>Bounded context</h2>
-    <p>"Emploke" is the bounded context for Layer 1. The two sub-contexts (Catalog, Execution) are <em>inside</em> that single context, not outside it. This is why an implementation may freely place all four concepts in one module — the boundaries are conceptual, not deployment.</p>
-
-    <h2>What is deliberately absent from the DDD picture</h2>
-    <p>The kernel has no Repositories, no Domain Events, no Application Services, no Factories at the kernel level. Every one of these patterns is a fine choice <em>above</em> the kernel, but each would impose a particular implementation style on every consumer. We left them out for the same reason we left out tools, persistence, and orchestration: optionality.</p>
-  </div>
-
-  <div data-lang="zh">
-    <p>内核已经小到每个概念都有一个单一、明确的 DDD 类型。这不是巧合——而是从一开始就用 DDD 作为设计透镜的结果。</p>
-
-    <table>
-      <thead>
-        <tr><th>概念</th><th>子上下文</th><th>DDD 类型</th><th>有生命周期？</th><th>有身份？</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Capability</td><td>Catalog</td><td>值对象</td><td>否</td><td>仅按 name</td></tr>
-        <tr><td>Agent</td><td>Catalog</td><td>值对象</td><td>否</td><td>仅按 name（无 id）</td></tr>
-        <tr><td>Task</td><td>Execution</td><td>聚合根（充血）</td><td>有（6 态 + 时间戳）</td><td>有（kernel 颁发的 id）</td></tr>
-        <tr><td>Runtime</td><td>Execution</td><td>领域服务接口</td><td>自身没有</td><td>没有——它是契约</td></tr>
-        <tr><td>Execution</td><td>Execution</td><td>命名概念 · 非实体</td><td>跟随它的 Task</td><td>借用 Task 的 id</td></tr>
-      </tbody>
-    </table>
-
-    <h2>统一语言</h2>
-    <p><em>Capability</em>、<em>Agent</em>、<em>Task</em>、<em>Runtime</em> 这四个术语就是 Layer 1 的全部统一语言。本书中处处使用它们，并期望任何符合规范的实现也在代码、文档和面向操作者的工具中使用它们。</p>
-    <p>更高的层可以自由引入额外词汇（用于角色、workflow、方法论）。这些词汇不得<em>替换</em>内核术语，而是在其之上叠加。</p>
-
-    <h2>限界上下文</h2>
-    <p>"Emploke" 是 Layer 1 的限界上下文。两个子上下文（Catalog、Execution）位于这个单一上下文之<em>内</em>，而不是之外。这就是为什么具体实现可以把四个概念都放进同一个模块——边界是概念性的，不是部署性的。</p>
-
-    <h2>DDD 图景中刻意缺席的东西</h2>
-    <p>内核里没有 Repository，没有 Domain Event，没有 Application Service，内核层面也没有 Factory。这些模式中的每一个，<em>在内核之上</em>都是不错的选择，但任何一个都会把某种特定的实现风格强加给所有消费者。我们把它们排除在外，原因和把工具、持久化、编排排除在外是一样的：可选性。</p>
-  </div>
-</section>
-
-<!-- ═══════════ APPENDIX C — DESIGN DECISIONS ═══════════ -->
-<section class="chapter" id="decisions">
-  <p class="chapter-number">
-    <span data-lang="en">Appendix C</span>
-    <span data-lang="zh">附录 C</span>
-  </p>
-  <h1 class="chapter-title">
-    <span data-lang="en">Design Decisions</span>
-    <span data-lang="zh">设计决策</span>
-  </h1>
-  <p class="chapter-subtitle">
-    <span data-lang="en">Eighteen decisions that shaped the kernel — each with the alternative we rejected.</span>
-    <span data-lang="zh">塑造了内核的十八个决策——每条都附上我们拒绝的备选方案。</span>
-  </p>
-
-  <div data-lang="en">
-    <h2>C.1 — Why "kernel" rather than "framework"</h2>
-    <p><strong>Decision:</strong> The Layer 1 component is a kernel — small, neutral, providing only the smallest stable surface.</p>
-    <p><strong>Rejected alternative:</strong> A framework that ships orchestration, role conventions, and persistence in the box. We rejected it because it would couple every product to one set of choices.</p>
-
-    <h2>C.2 — Why exactly four axioms</h2>
-    <p><strong>Decision:</strong> Capability, Agent, Task, Runtime — and nothing else.</p>
-    <p><strong>Rejected alternative:</strong> Adding a separate "Tool", "Memory", or "Plan" axiom. We rejected each because they failed the "is it kernel?" test from Chapter 3.</p>
-
-    <h2>C.3 — Why two sub-contexts (Catalog, Execution)</h2>
-    <p><strong>Decision:</strong> Inside Layer 1, group the four concepts into Catalog and Execution.</p>
-    <p><strong>Rejected alternative:</strong> Either no sub-contexts (a flat list) or further sub-contexts (separate Scheduler, Planner, Memory). Neither preserved both <em>useful</em> and <em>theme-neutral</em> simultaneously.</p>
-
-    <h2>C.4 — Why Capability has only <code>name</code></h2>
-    <p><strong>Decision:</strong> One field. Capability is structurally fully kernel-opaque; <code>name</code> is its only shape at the kernel level (formatted as <code>&lt;scope&gt;/&lt;name&gt;</code>).</p>
-    <p><strong>Rejected alternative:</strong> Adding instructions, tools, model, version, or tags inside the kernel. Each would force a particular execution style (LLM, prompt-shape, tooling) on every product. Those concerns belong to the loader and to the layer above the kernel.</p>
-
-    <h2>C.5 — Why Agent is <code>name + capabilities[] + metadata?</code> — no id, no runtime_kind</h2>
-    <p><strong>Decision:</strong> Agent is a static, scoped-named bundle of capability names. Its scoped <code>name</code> is the unique handle (no separate <code>id</code>). <code>runtime_kind</code> lives on Task — not on Agent.</p>
-    <p><strong>Rejected alternative A (id on Agent):</strong> would invent an instance-vs-definition distinction we do not need; the scoped name already carries identity.</p>
-    <p><strong>Rejected alternative B (runtime_kind on Agent):</strong> would lock each Agent to one runtime kind. Putting it on Task lets the same Agent run on different kinds across migrations, A/B, fallback, and local-vs-remote.</p>
-
-    <h2>C.6 — Why Task is the only Aggregate Root</h2>
-    <p><strong>Decision:</strong> Only Task has state evolution; therefore only Task is an Aggregate Root.</p>
-    <p><strong>Rejected alternative:</strong> Promoting Agent or Runtime to Aggregate Root. We rejected this because neither has any independent state — promoting them would invent a lifecycle we do not need.</p>
-
-    <h2>C.7 — Why Task has six states (not four)</h2>
-    <p><strong>Decision:</strong> not_started, running, paused, success, failure, cancelled.</p>
-    <p><strong>Rejected alternative A — four states (no <code>paused</code>, no <code>cancelled</code>):</strong> would have forced cancellation to be encoded as a special <code>failure</code> code, conflating "the work failed" with "we stopped the work". And it would have left "supplement mid-execution" without a clean home — every impl would invent its own ad-hoc protocol. Adding <code>paused</code> + <code>cancelled</code> made the supplement story trivial (<code>pause + resume(extra)</code>) and the cancellation story honest (terminal, but not <code>failure</code>).</p>
-    <p><strong>Rejected alternative B — adding even more states (<code>blocked</code>, <code>queued</code>):</strong> Each was either redundant (a <code>blocked</code> Task is a <code>paused</code> Task whose pause reason is in <code>metadata</code>) or above-kernel (<code>queued</code> belongs to a scheduler at the layer above).</p>
-
-    <h2>C.8 — Why Task carries no parent / child references</h2>
-    <p><strong>Decision:</strong> Tasks are flat at the kernel level.</p>
-    <p><strong>Rejected alternative:</strong> Encoding hierarchy or DAG edges in the Task aggregate. We rejected it because task-graph shape is precisely what differs between products. Encoding any one shape rules out others.</p>
-
-    <h2>C.9 — Why Runtime is an interface, not a concrete type</h2>
-    <p><strong>Decision:</strong> Runtime is a Domain Service Interface; the kernel ships no implementation.</p>
-    <p><strong>Rejected alternative:</strong> Picking a default (e.g. local CLI) and shipping it with the kernel. We rejected this because the default would dictate the deployment surface for every product.</p>
-
-    <h2>C.10 — Why Runtime is an interface, not a 1:1 entity</h2>
-    <p><strong>Decision:</strong> Runtime is a contract. The kernel does not model Runtime as an entity with its own id, fields, or 1:1 lifetime alongside a Task.</p>
-    <p><strong>Rejected alternative:</strong> Modelling Runtime as an entity 1:1 with Task. We rejected this because (a) it duplicates execution facts already denormalised on Task, (b) it forces every impl to allocate per-Task state structures (ruling out stateless / pooled impls), and (c) it makes the kernel ask more than it needs — the kernel only needs to <em>name the operations</em>.</p>
-
-    <h2>C.11 — Why Runtime has six verbs and asymmetric signatures</h2>
-    <p><strong>Decision:</strong> The Runtime interface has six verbs: <code>dispatch(task)</code>, <code>pause(task_id)</code>, <code>resume(task_id, extra?)</code>, <code>kill(task_id)</code>, <code>complete(task_id, result)</code>, <code>fail(task_id, failure)</code>. <code>dispatch</code> takes the whole Task; the other five take only <code>task_id</code>.</p>
-    <p><strong>Rejected alternative A — symmetric, all take whole task:</strong> would force the three control ops to redundantly re-pass the immutable input on every call.</p>
-    <p><strong>Rejected alternative B — symmetric, all take only task_id:</strong> would force a separate "register the task with the runtime" call before dispatch — adding a step with no semantic gain. Asymmetry is a feature: it reflects the materialisation moment.</p>
-    <p><strong>Rejected alternative C — keeping a separate <code>supplement</code> verb (the older design):</strong> created two mutation paths to <code>supplements</code> and a race window between "appended" and "resumed". Folding the append into <code>resume(extra)</code> gives a single atomic mutation per supplement. The supplement story is now <code>pause + resume(extra)</code>, with no axiom-level <code>supplement</code> verb.</p>
-
-    <h2>C.12 — Why concurrency is a contract, not a mechanism</h2>
-    <p><strong>Decision:</strong> The Concurrency Contract describes what holds, not how it is implemented.</p>
-    <p><strong>Rejected alternative:</strong> Specifying locks, queues, or specific schedulers in the kernel. We rejected this because mechanism choice is precisely what implementations should be free to vary.</p>
-
-    <h2>C.13 — Why "the layer above the kernel" appears throughout this book</h2>
-    <p><strong>Decision:</strong> When the book must point upward, it uses a generic phrase.</p>
-    <p><strong>Rejected alternative:</strong> Naming a specific higher-layer architecture (e.g. a particular workflow, a particular product). We rejected this because the kernel must be describable without referring to anything above it. Layer 1 is self-contained <em>by writing</em>, not just by structure.</p>
-
-    <h2>C.14 — Why <code>Failure</code> is <code>{ code, message, metadata? }</code> with no <code>retriable</code></h2>
-    <p><strong>Decision:</strong> <code>Failure = { code: string, message: string, metadata?: map }</code>. <code>code</code> is impl-defined (suggested namespace <code>&lt;impl&gt;/&lt;code&gt;</code>); both <code>code</code> and <code>message</code> are required. The kernel does <em>not</em> carry a <code>retriable: bool</code>.</p>
-    <p><strong>Rejected alternative A — a single <code>reason</code> string:</strong> forced upstream code to parse prose to make decisions. <code>code</code> separates fact from words.</p>
-    <p><strong>Rejected alternative B — adding <code>retriable: bool</code>:</strong> conflates fact (what failed) with policy (should we retry). Whether <code>429 rate_limit</code> is retriable depends on the workflow's tolerance, budget, and context — not on the failure itself. Retry policy lives at the layer above as <code>code → action</code>; the <code>Failure</code> stays opinion-free.</p>
-
-    <h2>C.15 — Why "re-execution" is not a kernel verb</h2>
-    <p><strong>Decision:</strong> Terminal Tasks are forever frozen. To re-execute, the caller constructs a new Task (fresh <code>id</code>) copying desired fields and dispatches it. Lineage is recorded by convention in <code>metadata</code> as <code>&lt;scope&gt;/lineage_of: &lt;original_task_id&gt;</code>.</p>
-    <p><strong>Rejected alternative A — a <code>reset</code> verb that returns a terminal Task to <code>not_started</code>:</strong> would break the Aggregate Root's monotonic state machine, complicate every observer, and force impls to define what "reset" means for partial result, partial supplements, partial metadata. Cloning is unambiguous.</p>
-    <p><strong>Rejected alternative B — an <code>attempts: [Attempt]</code> array on Task:</strong> turns the Aggregate Root into a meta-aggregate of attempts, doubles the schema, and still needs lineage to relate attempts. The clone-and-redispatch approach achieves the same semantics with a single immutable Task per attempt.</p>
-
-    <h2>C.16 — Why the Concurrency Contract is two clauses unfolded into seven rules</h2>
-    <p><strong>Decision:</strong> The two top-level clauses (inter-Task parallelism, intra-Task serialisation) remain the headline; precise semantics are captured as seven rules (closed mutator set, same-Task serialise, atomic mutations, MVCC reads, no cross-Task global snapshot, read-your-writes per caller, happens-before per Task) plus three edge cases (failed mutator, no-op kill, atomic timestamps). See Chapter 10.</p>
-    <p><strong>Rejected alternative A — leaving the contract at two clauses only:</strong> left every impl to invent its own answer to "do readers serialise with mutators?", "is there a global snapshot?", "what does <code>kill</code> on a terminal Task do?". The seven rules are the tightest formulation that admits all reasonable impl strategies (per-Task lock, actor, MQ partition, MVCC store) without admitting incompatible observable behaviour.</p>
-    <p><strong>Rejected alternative B — going further to dictate a mechanism:</strong> would couple the kernel to a particular concurrency primitive. Mechanism choice is exactly what impls should be free to vary.</p>
-
-    <h2>C.17 — Why concrete impls live in sibling extension libraries</h2>
-    <p><strong>Decision:</strong> The <code>emploke</code> package ships only axioms, invariants, and the Runtime/Query interfaces. Concrete impls live in sibling libraries named <code>emploke/&lt;substrate&gt;</code> (e.g. <code>emploke/copilot</code>, <code>emploke/openai</code>, <code>emploke/claude</code>, <code>emploke/local</code>). Each sibling depends on the kernel; the kernel depends on no sibling.</p>
-    <p><strong>Rejected alternative A — bundling default impls in the kernel package:</strong> would couple every consumer to the bundled vendor SDKs and force a versioning treadmill. Sibling packages let consumers depend only on what they use.</p>
-    <p><strong>Rejected alternative B — putting impls inside a single product package (e.g. SWAT):</strong> works for one product but blocks reuse. Sibling libraries make impls available to any consumer of the kernel — a research product, a different SWAT, a benchmark harness.</p>
-
-    <h2>C.18 — Why the kernel-level observability floor is "pull works"</h2>
-    <p><strong>Decision:</strong> The kernel commits only to a pull floor (Chapter 7, Observability): pull always works · transitions are deterministic moments but no notification mechanism is mandated · push is not an axiom · liveness is not the kernel's concern · mid-execution events are not first-class.</p>
-    <p><strong>Rejected alternative A — committing to push notifications in the kernel:</strong> different impls natively support different push transports (websocket, SSE, in-process callback, Erlang process). Mandating one would pollute the kernel surface; mandating an abstract one would push every impl into adapter overhead. Push belongs above.</p>
-    <p><strong>Rejected alternative B — kernel-level liveness / heartbeat:</strong> "is the substrate making progress?" is impl-substrate-specific. The kernel cannot meaningfully define it. Impls write heartbeat hints to <code>metadata</code> by convention; observers interpret as they wish.</p>
-  </div>
-
-  <div data-lang="zh">
-    <h2>C.1 — 为什么是"内核"而不是"框架"</h2>
-    <p><strong>决策：</strong>Layer 1 的组件是内核——小、中立、只提供最小且稳定的表面。</p>
-    <p><strong>被拒绝的备选：</strong>一个出厂自带编排、角色约定和持久化的框架。我们拒绝它，因为那会把每个产品都绑定到同一套选择上。</p>
-
-    <h2>C.2 — 为什么恰好是四条公理</h2>
-    <p><strong>决策：</strong>Capability、Agent、Task、Runtime——别无他物。</p>
-    <p><strong>被拒绝的备选：</strong>另加一条独立的 "Tool"、"Memory" 或 "Plan" 公理。每一条都没通过第 3 章的"它属于内核吗？"测试。</p>
-
-    <h2>C.3 — 为什么是两个子上下文（Catalog、Execution）</h2>
-    <p><strong>决策：</strong>在 Layer 1 内部，把四个概念分组为 Catalog 与 Execution。</p>
-    <p><strong>被拒绝的备选：</strong>要么不分子上下文（一个扁平列表），要么进一步细分（独立的 Scheduler、Planner、Memory）。两者都不能同时保住"有用"和"主题中立"。</p>
-
-    <h2>C.4 — 为什么 Capability 只有 <code>name</code></h2>
-    <p><strong>决策：</strong>一个字段。Capability 在结构上对内核完全不透明；<code>name</code> 是它在 kernel 层面的唯一形态（形如 <code>&lt;scope&gt;/&lt;name&gt;</code>）。</p>
-    <p><strong>被拒绝的备选：</strong>在内核里加入 instructions、tools、model、version 或 tags。每一项都会把某种特定的执行风格（LLM、prompt 形态、工具栈）强加给所有产品。这些关注点属于 loader 与内核之上的层。</p>
-
-    <h2>C.5 — 为什么 Agent 是 <code>name + capabilities[] + metadata?</code>—— 无 id、无 runtime_kind</h2>
-    <p><strong>决策：</strong>Agent 是一份静态、scoped 命名的 capability 名字 bundle。Scoped 的 <code>name</code> 就是唯一句柄（不再单独设 <code>id</code>）。<code>runtime_kind</code> 活在 Task 上——不在 Agent 上。</p>
-    <p><strong>被拒绝的备选 A（在 Agent 上加 id）：</strong>会发明一组我们不需要的"实例 vs 定义"区分；scoped name 已经承载了身份。</p>
-    <p><strong>被拒绝的备选 B（runtime_kind 放在 Agent 上）：</strong>会把每个 Agent 锁死到单一 runtime kind。放在 Task 上则允许同一个 Agent 在迁移、A/B、降级、本地 vs 远程之间跨 kind 执行。</p>
-
-    <h2>C.6 — 为什么 Task 是唯一的聚合根</h2>
-    <p><strong>决策：</strong>只有 Task 有状态演化，因此只有 Task 是聚合根。</p>
-    <p><strong>被拒绝的备选：</strong>把 Agent 或 Runtime 提升为聚合根。我们拒绝这一点，因为两者都没有任何独立状态——把它们提升上来等于发明了一个我们不需要的生命周期。</p>
-
-    <h2>C.7 — 为什么 Task 有六个状态（不是四个）</h2>
-    <p><strong>决策：</strong>not_started、running、paused、success、failure、cancelled。</p>
-    <p><strong>被拒绝的备选 A —— 四态（无 <code>paused</code>、无 <code>cancelled</code>）：</strong>会强迫把"取消"编码为某个特殊的 <code>failure</code> code，把"工作失败"和"我们停掉了它"混在一起。也会让"执行中追加补充"无家可归——每个 impl 都得发明自己的临时协议。加上 <code>paused</code> + <code>cancelled</code> 让 supplement 故事变得简单（<code>pause + resume(extra)</code>），让 cancellation 故事变得诚实（终态，但不是 <code>failure</code>）。</p>
-    <p><strong>被拒绝的备选 B —— 加更多状态（<code>blocked</code>、<code>queued</code>）：</strong>每一个要么是冗余的（<code>blocked</code> 就是 <code>paused</code>，pause 原因写在 <code>metadata</code>），要么属于内核之上（<code>queued</code> 属于上层 scheduler）。</p>
-
-    <h2>C.8 — 为什么 Task 不携带 parent / child 引用</h2>
-    <p><strong>决策：</strong>Task 在内核层面是扁平的。</p>
-    <p><strong>被拒绝的备选：</strong>在 Task 聚合中编码层级或 DAG 边。我们拒绝它，因为任务图形态恰恰是不同产品差异最大的地方。编码任何一种形态就排除了其他。</p>
-
-    <h2>C.9 — 为什么 Runtime 是接口而不是具体类型</h2>
-    <p><strong>决策：</strong>Runtime 是一个领域服务接口；内核不附带任何实现。</p>
-    <p><strong>被拒绝的备选：</strong>挑一个默认（例如本地 CLI）并随内核出厂。我们拒绝它，因为那个默认会替每个产品决定部署面貌。</p>
-
-    <h2>C.10 — 为什么 Runtime 是接口，而不是 1:1 的实体</h2>
-    <p><strong>决策：</strong>Runtime 是一份契约。内核不把 Runtime 建模成"带自身 id、字段、与 Task 1:1 生命周期"的实体。</p>
-    <p><strong>被拒绝的备选：</strong>把 Runtime 建模为与 Task 1:1 的实体。我们拒绝这一点，因为：(a) 这会重复 Task 上已经反范式化的执行事实；(b) 强迫每一个 impl 都为每个 Task 分配状态结构（把"无状态" / "池化"实现都堵死）；(c) 让 kernel 要求过度——内核只需要<em>命名操作</em>。</p>
-
-    <h2>C.11 — 为什么 Runtime 有六个动词且签名不对称</h2>
-    <p><strong>决策：</strong>Runtime 接口有六个动词：<code>dispatch(task)</code>、<code>pause(task_id)</code>、<code>resume(task_id, extra?)</code>、<code>kill(task_id)</code>、<code>complete(task_id, result)</code>、<code>fail(task_id, failure)</code>。<code>dispatch</code> 收整个 Task；其余五个只收 <code>task_id</code>。</p>
-    <p><strong>被拒绝的备选 A（全对称，都收整个 task）：</strong>强迫三个控制操作每次重复传递不可变输入。</p>
-    <p><strong>被拒绝的备选 B（全对称，都收 <code>task_id</code>）：</strong>强迫在 dispatch 之前多一次"向 runtime 注册 task"调用——多一步，无语义收益。不对称是一种特性：它正好反映了"物化时刻"。</p>
-    <p><strong>被拒绝的备选 C（保留独立的 <code>supplement</code> 动词，旧设计）：</strong>会让 <code>supplements</code> 有两条 mutation 路径，并在"已追加"和"已 resume"之间留下竞态窗口。把追加折进 <code>resume(extra)</code> 后，每条 supplement 一次原子 mutation。Supplement 故事现在就是 <code>pause + resume(extra)</code>，没有公理级 <code>supplement</code> 动词。</p>
-
-    <h2>C.12 — 为什么并发是契约而不是机制</h2>
-    <p><strong>决策：</strong>并发契约描述"什么成立"，而不是"如何实现"。</p>
-    <p><strong>被拒绝的备选：</strong>在内核里指定锁、队列或具体调度器。我们拒绝它，因为机制选择恰恰是各种实现应该可以自由变化的部分。</p>
-
-    <h2>C.13 — 为什么本书通篇使用"内核之上的层"</h2>
-    <p><strong>决策：</strong>当本书必须向上指代时，使用通用短语。</p>
-    <p><strong>被拒绝的备选：</strong>点名某个具体的更高层架构（例如某个 workflow、某个产品）。我们拒绝它，因为内核必须能够在不引用任何上层的前提下被完整描述。Layer 1 的自洽不仅是结构上的，更是<em>书写上</em>的。</p>
-
-    <h2>C.14 — 为什么 <code>Failure</code> 是 <code>{ code, message, metadata? }</code> 且不带 <code>retriable</code></h2>
-    <p><strong>决策：</strong><code>Failure = { code: string, message: string, metadata?: map }</code>。<code>code</code> 由 impl 自定（建议命名空间 <code>&lt;impl&gt;/&lt;code&gt;</code>）；<code>code</code> 与 <code>message</code> 都必填。Kernel <em>不</em>带 <code>retriable: bool</code>。</p>
-    <p><strong>被拒绝的备选 A —— 单一 <code>reason</code> 字符串：</strong>逼着上层 parse 散文来做决策。<code>code</code> 把"事实"和"措辞"分开。</p>
-    <p><strong>被拒绝的备选 B —— 加 <code>retriable: bool</code>：</strong>把"事实"（出了什么错）和"策略"（要不要重试）混在一起。同一个 <code>429 rate_limit</code> 是否该重试，取决于 workflow 的容忍度、预算与上下文——不取决于失败本身。Retry policy 活在内核之上的层，编码为 <code>code → action</code>；<code>Failure</code> 不带任何意见。</p>
-
-    <h2>C.15 — 为什么"重跑"不是 kernel 动词</h2>
-    <p><strong>决策：</strong>终态 Task 永久冻结。要重跑，调用方构造一个新 Task（新 <code>id</code>，按需拷贝字段）并 dispatch。世系按约定记在 <code>metadata</code>，形如 <code>&lt;scope&gt;/lineage_of: &lt;original_task_id&gt;</code>。</p>
-    <p><strong>被拒绝的备选 A —— 提供 <code>reset</code> 动词把终态 Task 拉回 <code>not_started</code>：</strong>会破坏聚合根的单调状态机，让每个 observer 都更复杂，并强迫 impl 定义 "reset" 对 partial result / partial supplements / partial metadata 的语义。Clone 没有歧义。</p>
-    <p><strong>被拒绝的备选 B —— 在 Task 上加 <code>attempts: [Attempt]</code> 数组：</strong>把聚合根变成"尝试的元聚合"，schema 翻倍，且仍然需要 lineage 关联各次尝试。Clone-and-redispatch 用一个 immutable Task 一次尝试，达到同样的语义。</p>
-
-    <h2>C.16 — 为什么并发契约是"两条子句展开为七条规则"</h2>
-    <p><strong>决策：</strong>顶层两条子句（Task 间并行、Task 内串行）保持为标题；精确语义用七条规则（mutator 集闭合、同 Task mutators 串行、mutation 原子、MVCC 读、无跨 Task 全局 snapshot、同 caller read-your-writes、同 Task 保留 happens-before）+ 三条边界（失败 mutator、no-op kill、原子时间戳）描述。详见第 10 章。</p>
-    <p><strong>被拒绝的备选 A —— 只保留两条子句：</strong>会让每个 impl 自行回答"reader 与 mutator 串行吗？"、"是否有全局 snapshot？"、"<code>kill</code> 在终态 Task 上做什么？"。这七条是允许所有合理 impl 策略（per-Task lock、actor、MQ 分区、MVCC 存储）但又不允许互不兼容的可观察行为的最紧表述。</p>
-    <p><strong>被拒绝的备选 B —— 进一步规定机制：</strong>会把内核绑定到某种并发原语。机制选择恰恰是 impl 应自由变化的部分。</p>
-
-    <h2>C.17 — 为什么具体实现走同级扩展库</h2>
-    <p><strong>决策：</strong><code>emploke</code> 包只附带公理、不变量与 Runtime/Query 接口。具体实现走 sibling 库，命名约定 <code>emploke/&lt;substrate&gt;</code>（如 <code>emploke/copilot</code>、<code>emploke/openai</code>、<code>emploke/claude</code>、<code>emploke/local</code>）。每个 sibling 依赖 kernel；kernel 不依赖任何 sibling。</p>
-    <p><strong>被拒绝的备选 A —— 在 kernel 包里捎带默认 impl：</strong>把每个消费者都耦合到捎带的 vendor SDK 上，并强加版本升级压力。Sibling 包让消费者只依赖自己用的那个。</p>
-    <p><strong>被拒绝的备选 B —— 把 impl 放进单一产品包（如 SWAT）：</strong>对一个产品 OK，但阻断复用。Sibling 库让 impl 可被任何 kernel 消费者使用——研究产品、另一个 SWAT、benchmark harness。</p>
-
-    <h2>C.18 — 为什么内核级可观测性地板是"pull works"</h2>
-    <p><strong>决策：</strong>Kernel 只承诺一个 pull 地板（第 7 章 · 可观测性）：pull 永远 work · 转换是确定时刻但不规定通知机制 · push 不是公理 · liveness 不归 kernel · 中间执行事件不是一等概念。</p>
-    <p><strong>被拒绝的备选 A —— 在 kernel 里承诺 push 通知：</strong>不同 impl 原生支持不同 push transport（websocket、SSE、in-process callback、Erlang process）。强加一种会污染 kernel 表面；强加一个抽象的会让每个 impl 背上 adapter 开销。Push 属于上层。</p>
-    <p><strong>被拒绝的备选 B —— Kernel 级 liveness / 心跳：</strong>"substrate 是不是真在前进"是 impl-substrate 特定的。Kernel 无法有意义地定义。Impl 按约定往 <code>metadata</code> 写心跳；observer 自行解释。</p>
-  </div>
-</section>
-
-<div class="book-footer">
-  <span data-lang="en">Emploke · Design Book · Layer 1 — A Self-Contained Kernel</span>
-  <span data-lang="zh">Emploke · 设计文档 · Layer 1 — 一个自洽的内核</span>
 </div>
 
-</main>
+<article>
+
+<!-- =============== ENGLISH =============== -->
+<div data-lang="en">
+
+<header class="post">
+  <div class="kicker">Essay · emploke</div>
+  <h1>What we believe about agentic systems</h1>
+  <p class="lede">The harness should shrink as the model grows. The one part that should grow is the AI's own ability to extend it.</p>
+  <div class="byline">
+    <span>The emploke team</span>
+    <span class="sep">·</span>
+    <span>2026</span>
+    <span class="sep">·</span>
+    <span>~7 min read</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/LangSensei/emploke">github.com/LangSensei/emploke</a>
+  </div>
+</header>
+
+<p>We've spent the last while building <a href="https://github.com/LangSensei/emploke">emploke</a> — a small system for running AI agents on real work. While building it, our taste for what an agentic system <em>is</em> has slowly drifted away from the mainstream. This is a short post about where it's drifted to, and why.</p>
+
+<p>It's not a manifesto. It's the way we've come to think after enough cycles of writing code, throwing it out, and writing simpler code in its place.</p>
+
+<h2>What we've been noticing</h2>
+
+<p>Most agent frameworks are getting bigger. More node types, more graph primitives, more orchestration languages, more handlers for cases the model didn't quite get right. There's a quiet assumption running through all of this: <em>the framework is what makes the agent capable</em>. If the model is the engine, the framework is the chassis, the suspension, the steering, the seatbelts, and most of the dashboard.</p>
+
+<p>We don't think that's how it's going to age.</p>
+
+<p>The models keep getting better. Not in a smooth line, but in lurches that quietly retire whole categories of scaffolding. The clever planner you wrote last year is what the model now does in one sampling. The state machine you built around tool use is what the model now handles in its head. Each lurch makes a particular shape of harness embarrassing.</p>
+
+<p>If you squint at the trend long enough, a question becomes hard to avoid: <strong>what part of the harness is actually durable?</strong></p>
+
+<h2>A bet on the model curve</h2>
+
+<p>Our bet is straightforward. The model is going to absorb more and more of what frameworks currently do — planning, decomposition, recovery from mistakes, choosing when to use a tool, choosing what shape of answer to give. The boundary between "what the framework does" and "what the model does" will keep moving toward the model.</p>
+
+<p>If you believe that, the design problem flips. You stop asking <em>"what should the framework do for the model?"</em> and start asking <em>"what's the smallest scaffold the model needs to do real work?"</em></p>
+
+<p class="pull">A good harness in 2026 is not the one that does the most. It's the one that does the least, while still letting the model reach further every quarter.</p>
+
+<h2>Three things we keep coming back to</h2>
+
+<p>Underneath the day-to-day code we write, three convictions keep showing up. They're the lens behind most decisions in emploke.</p>
+
+<div class="belief">
+  <div class="num">One</div>
+  <h3>Agents are data, not code.</h3>
+  <p>An agent is a markdown file with a name and instructions. Not a class, not a node in a graph, not a subclass of <code>BaseAgent</code>. The model knows how to read prose; it doesn't need a typed wrapper around it. Treating agents as data means the AI itself can author them — read them, edit them, version them, recombine them — without round-tripping through a programmer.</p>
+</div>
+
+<div class="belief">
+  <div class="num">Two</div>
+  <h3>The harness should shrink as the model grows.</h3>
+  <p>Every line of orchestration code we write is a bet that the model won't get good enough to do this itself. Most of those bets lose, on a long enough timeline. So the rule we try to hold ourselves to is: don't add structure unless the model genuinely cannot do it; and when the model gets good enough, take that structure out.</p>
+</div>
+
+<div class="belief">
+  <div class="num">Three</div>
+  <h3>What the harness <em>does</em> grow is the AI's ability to extend itself.</h3>
+  <p>We don't shrink the harness toward zero. We shrink it toward one shape: a clean surface where the model can add new capabilities — skills, tools, sub-agents — as data, on its own, without us. The harness's job is to make that surface safe, observable, and composable. Everything else is negotiable.</p>
+</div>
+
+<h2>The parts that stay small</h2>
+
+<p>Three things stay in the harness, on purpose, because they're structurally outside what a language model can solve from inside its own context window:</p>
+
+<p><strong>A sandbox.</strong> The model needs somewhere to run that isn't your laptop. Filesystems, processes, network — bounded, observable, recoverable. This is engineering, not intelligence. No model upgrade removes the need for it.</p>
+
+<p><strong>Scheduling.</strong> Multiple agents, multiple tasks, shared state, human interrupts. Deciding what runs, when, with which inputs. This is also engineering. We try to make it as boring and reliable as possible.</p>
+
+<p><strong>Observability.</strong> If the AI is going to extend itself, somebody — eventually the AI itself — needs to be able to see what happened and why. Logs, traces, replay, diffs. Without this, every other belief on this list collapses into wishful thinking.</p>
+
+<p>That's the whole list. Sandbox, scheduling, observability. Everything else we've been tempted to put in the harness, we've eventually pulled back out.</p>
+
+<h2>The one part that grows</h2>
+
+<p>The shape we keep wide open is <strong>capability</strong>: the surface where new powers enter the system. In emploke today, that surface has three flavors and one rule.</p>
+
+<p>The flavors are <strong>skills</strong> (a markdown file teaching the model how to do something), <strong>MCPs</strong> (an external tool the model can call), and <strong>agents</strong> (a markdown file describing a role the model can play). All three are data. All three live in a folder. All three can be authored by a human or by the AI.</p>
+
+<p>The rule is: <em>anything the AI can do, the AI can also extend.</em> If the AI can write code, it can write a skill. If it can call a tool, it can install one. If it can act as an agent, it can describe a new agent. The harness doesn't gate that; it just makes it observable and undoable.</p>
+
+<p class="pull">The harness's job is not to be smart. It's to make the AI's own intelligence accumulate.</p>
+
+<h2>What this lets us do</h2>
+
+<p>If you accept the three beliefs, a lot of design questions stop being interesting.</p>
+
+<p>You don't argue about graph DSLs vs. chains vs. event buses, because there isn't supposed to be one — the model picks the shape of its own work. You don't argue about whether agents should be classes or functions, because they're files. You don't build a planner, because the model plans. You don't build a router, because the model routes. You don't build a memory subsystem, because memory is just files in the workspace.</p>
+
+<p>What you <em>do</em> spend your energy on is the boring stuff: the sandbox not leaking, the scheduler not deadlocking, the trace being actually readable, the capability surface being actually safe to extend at runtime. Unglamorous work. But it's the work that compounds, because none of it has to be redone when the model gets stronger. It just gets more leverage.</p>
+
+<h2>About emploke</h2>
+
+<p><a href="https://github.com/LangSensei/emploke">emploke</a> is our reference implementation of all this. Today it's an Electron app plus a small Node server, with a workspace abstraction, a runtime registry, a capability catalog (skills, MCPs, agents), and a thin task/session model. The code is deliberately small. If we did our jobs right, it should keep shrinking — not growing — as the models get better.</p>
+
+<p>If you want to see how the beliefs map onto code, the <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">architecture guide</a> is the right next read. It's the engineering view of the same picture: where the layers are, what the runtime contract looks like, how the repository pattern keeps the storage backend swappable.</p>
+
+<p>The engineering will change. The runtime might consolidate to a single backend; the storage layer might collapse into something simpler; the catalog might absorb new flavors of capability we haven't thought of yet. None of that changes what's in this post. The beliefs are the slow-moving part. The code is just where they currently land.</p>
+
+<h2>If you're nodding along</h2>
+
+<p>This post is mostly here to find the people who already think this way and don't quite have words for it yet. If you've been quietly suspicious that your framework is doing too much, or that the next model release is going to make a third of your codebase pointless — you're not alone, and you're probably right.</p>
+
+<p>We'd love to compare notes. Open an issue on <a href="https://github.com/LangSensei/emploke">the repo</a>, or just read the code and tell us where we're wrong. The whole point of keeping the harness small is that being wrong is cheap; we'd rather find out fast.</p>
+
+<hr class="rule" />
+
+<footer class="post">
+  <p>Published 2026 by the emploke team. Source on <a href="https://github.com/LangSensei/emploke">GitHub</a>. The companion architecture guide is <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">here</a>.</p>
+</footer>
 
 </div>
+
+
+<!-- =============== 中文 =============== -->
+<div data-lang="zh">
+
+<header class="post">
+  <div class="kicker">随笔 · emploke</div>
+  <h1>我们对 agentic system 的一些看法</h1>
+  <p class="lede">harness 应该随着模型变强而变薄。harness 里唯一应该变厚的部分，是 AI 自己扩展自己的能力。</p>
+  <div class="byline">
+    <span>emploke 团队</span>
+    <span class="sep">·</span>
+    <span>2026</span>
+    <span class="sep">·</span>
+    <span>约 8 分钟</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/LangSensei/emploke">github.com/LangSensei/emploke</a>
+  </div>
+</header>
+
+<p>过去一段时间我们在做 <a href="https://github.com/LangSensei/emploke">emploke</a>——一个用来跑 AI agent 干真活的小系统。一边做一边发现，我们对一个 agentic system <em>应该是什么样</em> 的看法，慢慢和主流分道扬镳了。这篇文章就是想把这个分歧讲出来，以及为什么我们这么想。</p>
+
+<p>这不是宣言。只是写过一些代码、扔掉一些代码、又用更简单的代码替换它们之后，自然形成的某种 taste。</p>
+
+<h2>我们看到的现象</h2>
+
+<p>大部分 agent 框架在变大。更多种 node、更多 graph primitive、更多 orchestration 语法、更多用来兜底"模型没做对"的 handler。这些设计背后有一个不说出口的假设：<em>是框架让 agent 变能干的</em>。如果模型是引擎，那框架就是底盘、悬挂、方向、安全带，再加上仪表盘的大部分。</p>
+
+<p>我们觉得这个范式经不起时间。</p>
+
+<p>模型一直在变强。不是平滑地变，而是一阵一阵地把整类脚手架直接淘汰掉。你去年写的那个聪明 planner，模型现在一次采样就做了。你为 tool use 搭起来的状态机，模型现在在脑子里就处理了。每一次跳跃，都让某种形态的 harness 显得有点尴尬。</p>
+
+<p>看久了这个趋势，一个问题就很难绕开：<strong>harness 里到底什么是耐用的？</strong></p>
+
+<h2>对模型曲线的押注</h2>
+
+<p>我们的押注很直白：模型会越来越多地吸收掉今天框架在做的事——planning、任务拆分、错误恢复、判断什么时候用工具、判断答案的结构。"框架在做"和"模型在做"之间的边界，会持续向模型那一侧移动。</p>
+
+<p>如果你接受这一点，设计问题就反过来了。你不再问 <em>"框架应该替模型做什么？"</em>，而开始问 <em>"模型干真活，最小需要的脚手架是什么？"</em></p>
+
+<p class="pull">2026 年的好 harness，不是做得最多的那个。是做得最少、同时仍能让模型每个季度都伸得更远一点的那个。</p>
+
+<h2>我们反复回到的三件事</h2>
+
+<p>在每天写的代码底下，有三个判断一直反复出现。它们基本上就是 emploke 大部分决策背后的那副镜片。</p>
+
+<div class="belief">
+  <div class="num">其一</div>
+  <h3>Agent 是数据，不是代码。</h3>
+  <p>一个 agent 就是一个 markdown 文件，有个名字，写着指令。不是类，不是 graph 里的节点，不是 <code>BaseAgent</code> 的子类。模型本来就会读散文，根本不需要一层带类型的封装。把 agent 当作数据，意味着 AI 自己就可以创作 agent——读、改、版本管理、组合——不需要绕一圈让程序员介入。</p>
+</div>
+
+<div class="belief">
+  <div class="num">其二</div>
+  <h3>harness 应该随着模型变强而变薄。</h3>
+  <p>每一行 orchestration 代码，都是一个赌注：赌模型不会进步到能自己做这件事。时间线拉长，这种赌注大部分会输。所以我们试着守住一个规矩：除非模型真的搞不定，否则不要加结构；一旦模型搞得定了，就把那段结构拆出去。</p>
+</div>
+
+<div class="belief">
+  <div class="num">其三</div>
+  <h3>harness 里 <em>该</em> 变厚的，是 AI 自己扩展自己的能力。</h3>
+  <p>我们不是要把 harness 缩到零。我们要把它缩到一种形状：一个干净的扩展面，让模型可以自己往上加新能力——skill、工具、子 agent——以数据的形式，自主完成，不需要我们插手。harness 的工作是让这个面安全、可观测、可组合。其它都可以谈。</p>
+</div>
+
+<h2>那些有意保持小的部分</h2>
+
+<p>三样东西我们刻意留在 harness 里，因为它们结构上就在语言模型自己的 context window 之外，模型靠自己解决不了：</p>
+
+<p><strong>沙箱。</strong>模型需要一个不在你笔记本上的地方运行。文件系统、进程、网络——有边界、可观察、可恢复。这是工程问题，不是智力问题。模型再升级也消除不掉这个需求。</p>
+
+<p><strong>调度。</strong>多 agent、多任务、共享状态、人类中断。决定什么时候跑什么、用什么输入。也是工程问题。我们尽量把它做得无聊、可靠。</p>
+
+<p><strong>可观测性。</strong>如果 AI 要扩展自己，那总得有人——最终是 AI 自己——能看到发生了什么、为什么发生。日志、trace、回放、diff。没有这一层，上面所有信念都会塌成一厢情愿。</p>
+
+<p>就这三样。沙箱、调度、可观测性。除此以外那些我们曾经想塞进 harness 的东西，最后都被我们拆出来了。</p>
+
+<h2>那个我们留得很大的部分</h2>
+
+<p>我们坚决留宽的那个面，是 <strong>capability</strong>——新能力进入系统的接口。今天在 emploke 里，这个面有三种形态、一条规矩。</p>
+
+<p>三种形态分别是：<strong>skill</strong>（一个 markdown 文件，教模型做某件事）、<strong>MCP</strong>（一个模型可以调用的外部工具）、<strong>agent</strong>（一个 markdown 文件，描述模型可以扮演的某个角色）。三者都是数据。三者都住在文件夹里。三者都可以由人写，也可以由 AI 写。</p>
+
+<p>那条规矩是：<em>AI 能做的事，AI 也能扩展。</em>如果 AI 能写代码，那它就能写 skill。如果它能调用工具，那它就能装新工具。如果它能扮演 agent，那它就能描述新 agent。harness 不去把守这件事；它只负责让这件事可观测、可撤回。</p>
+
+<p class="pull">harness 的工作不是变聪明。是让 AI 自己的智能能积累下来。</p>
+
+<h2>这让我们能做什么</h2>
+
+<p>如果你接受这三个信念，很多设计问题就不再有趣了。</p>
+
+<p>你不会再纠结 graph DSL 还是 chain 还是 event bus，因为本来就不该有一个固定的形——模型自己选它工作的形状。你不会再纠结 agent 是类还是函数，因为它是文件。你不会再去搭 planner，因为模型会 plan。你不会再去搭 router，因为模型会 route。你不会再去搭 memory 子系统，因为 memory 就是 workspace 里的文件。</p>
+
+<p>你<em>真正</em>把精力投进去的是那些无聊的部分：沙箱不要漏、调度器不要死锁、trace 真的可读、capability 这个扩展面在运行时真的安全。一点都不光鲜的工作。但这些工作会复利，因为模型变强的时候，这些代码一行都不用重写，只是被赋予了更大的杠杆。</p>
+
+<h2>关于 emploke</h2>
+
+<p><a href="https://github.com/LangSensei/emploke">emploke</a> 是我们对这套思路的参考实现。今天它是一个 Electron 应用加一个小的 Node 服务器，里面有 workspace 抽象、runtime registry、capability catalog（skill、MCP、agent），以及一层很薄的 task/session 模型。代码刻意保持很小。如果我们做对了，它应该会随着模型变强而变得更小，而不是更大。</p>
+
+<p>如果你想看这些信念落到代码上是什么样子，下一步推荐读 <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">architecture 文档</a>——那是同一幅图的工程视角：层次怎么分、runtime contract 长什么样、repository 模式怎么让存储后端可替换。</p>
+
+<p>工程会变。runtime 也许有一天会收敛到单一后端；存储层也许会塌成更简单的东西；catalog 也许会吸收掉我们今天还没想到的新形态的能力。这些都不影响这篇文章里写的东西。信念是慢变量。代码只是它们当前的落脚点。</p>
+
+<h2>如果你也这么想</h2>
+
+<p>写这篇文章主要是想找到那些已经这么想、但还没找到合适的话讲出来的人。如果你心里一直有点怀疑——觉得自己用的框架做得太多了，或者觉得下一次模型升级会让自己 codebase 里三分之一变得没意义——你不是一个人，你大概率也是对的。</p>
+
+<p>我们很想跟你交换看法。可以去 <a href="https://github.com/LangSensei/emploke">repo</a> 里开 issue，或者直接读代码、告诉我们哪里想错了。harness 保持小的好处之一就是：错的成本很低，我们更愿意快点知道自己错在哪。</p>
+
+<hr class="rule" />
+
+<footer class="post">
+  <p>2026 年由 emploke 团队发布。源码在 <a href="https://github.com/LangSensei/emploke">GitHub</a>。配套的 architecture 文档在 <a href="https://github.com/LangSensei/emploke/blob/main/docs/architecture.md">这里</a>。</p>
+</footer>
+
+</div>
+
+</article>
 
 <script>
-  /* ─── Language toggle ─────────────────────────────────── */
-  const STORAGE_KEY = 'akbook-lang';
-  function setLang(lang) {
-    document.documentElement.lang = lang;
-    try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) {}
-    document.querySelectorAll('.lang-toggle button').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.setLang === lang);
+(function(){
+  var KEY = "emploke-paradigm-lang";
+  var html = document.documentElement;
+  var buttons = document.querySelectorAll("[data-set-lang]");
+
+  function apply(lang){
+    html.setAttribute("lang", lang);
+    buttons.forEach(function(b){
+      b.classList.toggle("active", b.getAttribute("data-set-lang") === lang);
     });
-    if (typeof updateActive === 'function') updateActive();
-    renderVisibleMermaid();
+    try { localStorage.setItem(KEY, lang); } catch(e){}
+    document.title = (lang === "zh"
+      ? "我们对 agentic system 的一些看法 — emploke"
+      : "What we believe about agentic systems — emploke");
   }
-  document.querySelectorAll('.lang-toggle button').forEach(btn => {
-    btn.addEventListener('click', () => setLang(btn.dataset.setLang));
+
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch(e){}
+  if (saved === "en" || saved === "zh") {
+    apply(saved);
+  } else {
+    var nav = (navigator.language || "en").toLowerCase();
+    apply(nav.indexOf("zh") === 0 ? "zh" : "en");
+  }
+
+  buttons.forEach(function(b){
+    b.addEventListener("click", function(){
+      apply(b.getAttribute("data-set-lang"));
+    });
   });
-
-  /* ─── Mermaid ─────────────────────────────────────────── */
-  /* Initialise BEFORE restoring lang from localStorage, otherwise the
-     restore path triggers renderVisibleMermaid() before our themeVariables
-     are applied, and returning visitors see default-themed diagrams. */
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    themeVariables: {
-      primaryColor: '#ccfbf1',
-      primaryTextColor: '#115e59',
-      primaryBorderColor: '#0d9488',
-      lineColor: '#94a3b8',
-      secondaryColor: '#f3e8ff',
-      tertiaryColor: '#fafaf7',
-      fontFamily: 'Inter, PingFang SC, Microsoft YaHei, sans-serif',
-      fontSize: '14px',
-    }
-  });
-
-  /* Render only visible mermaid diagrams (respects language toggle) */
-  function renderVisibleMermaid() {
-    const nodes = document.querySelectorAll('.mermaid:not([data-processed])');
-    const visible = Array.from(nodes).filter(el => el.offsetParent !== null);
-    if (visible.length) mermaid.run({ nodes: visible });
-  }
-
-  /* Restore language preference (will call renderVisibleMermaid via setLang) */
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'en' || stored === 'zh-cn') setLang(stored);
-  } catch (e) {}
-
-  /* First render for the no-stored-preference case (no-op if stored path
-     already rendered everything visible). */
-  renderVisibleMermaid();
-
-  /* ─── Active section highlight on scroll ─────────────── */
-  const links = document.querySelectorAll('aside.sidebar nav a');
-  const sectionMap = Array.from(links).map(a => ({
-    link: a,
-    target: document.getElementById(a.getAttribute('href').slice(1))
-  })).filter(x => x.target);
-
-  function updateActive() {
-    const scrollY = window.scrollY + 120;
-    let activeIdx = 0;
-    for (let i = 0; i < sectionMap.length; i++) {
-      if (sectionMap[i].target.offsetTop <= scrollY) activeIdx = i;
-      else break;
-    }
-    sectionMap.forEach((s, i) => s.link.classList.toggle('active', i === activeIdx));
-  }
-  window.addEventListener('scroll', updateActive, { passive: true });
-  window.addEventListener('load', updateActive);
-  updateActive();
+})();
 </script>
 
 </body>
