@@ -5,13 +5,11 @@ import {
   WorkspaceError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
-  WorkspaceManager,
-  type WorkspaceMetadata,
+  type WorkspaceManager,
   WorkspaceNameInvalidError,
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  type WorkspaceRegistry,
   type WorkspaceUpdatePatch,
 } from "@emploke/workspace";
 import type { Context } from "hono";
@@ -20,17 +18,12 @@ import type { WorkspaceContextCache } from "../workspace-context.js";
 import { errorBody, parseJsonBody } from "./_shared.js";
 
 /**
- * Build a JSON error response for a typed workspace/registry error. Picks
- * a status via `workspaceErrorStatus`, falling back to `fallback` (chosen
- * per-route to reflect what was being attempted: 400 for input writes,
- * 500 for reads / state mutations).
+ * Build a JSON error response for a typed workspace error. Picks a
+ * status via `workspaceErrorStatus`, falling back to `fallback`.
  *
- * The `as any` cast is necessary because Hono's `c.json` second argument
- * is a literal-union of HTTP status codes; we know every value we pass
- * is in that set (each branch of `workspaceErrorStatus` returns
- * {400,404,409,500} and so do all callsite fallbacks), but TS can't
- * narrow a `number` to that union. Centralising the cast here keeps
- * route handlers free of `// biome-ignore` noise.
+ * The `as any` cast bridges Hono's literal-union of HTTP status codes
+ * with our `number` return — every value `workspaceErrorStatus`
+ * returns (and every fallback) is in {400,404,409,500}.
  */
 function wsErrorJson(c: Context, err: unknown, fallback: number) {
   const status = workspaceErrorStatus(err) ?? fallback;
@@ -39,7 +32,7 @@ function wsErrorJson(c: Context, err: unknown, fallback: number) {
 }
 
 interface CreateBody {
-  path?: unknown;
+  workdir?: unknown;
   name?: unknown;
   defaults?: unknown;
 }
@@ -55,76 +48,45 @@ interface PatchBody {
 }
 
 /**
- * Wire shape returned by `GET /api/workspaces`. The dashboard uses this for
- * the workspace selector dropdown. `status` lets the UI render entries
- * whose `workspace.json` has gone missing or corrupt (without removing
- * them  only the user gets to decide that).
- *
- * `id` is the UUID URL key. The user-facing display name lives in
- * `metadata.name`, which is only present when `status === "ok"`.
- */
-interface WorkspaceListItem {
-  id: string;
-  path: string;
-  lastOpenedAt?: string;
-  status: "ok" | "missing" | "corrupted";
-  metadata?: WorkspaceMetadata;
-  /** When status !== 'ok', a short human-readable explanation. */
-  reason?: string;
-}
-
-/**
- * Routes for `/api/workspaces/*` (registry + per-workspace metadata).
- * Workspace-scoped resources (sessions, future tasks/workflows) are NOT
- * mounted here  they live under `/api/workspaces/:id/sessions/*` etc. so
- * the workspace id is part of the resource URL.
+ * Routes for `/api/workspaces/*`. Workspace-scoped resources (sessions,
+ * tasks, catalog) live under `/api/workspaces/:id/...` and are mounted
+ * separately so the workspace id is part of the resource URL.
  */
 export function workspacesRoutes(deps: {
-  registry: WorkspaceRegistry;
+  manager: WorkspaceManager;
   cache: WorkspaceContextCache;
 }): Hono {
   const app = new Hono();
-  const { registry, cache } = deps;
+  const { manager, cache } = deps;
 
-  // List all registered workspaces, joined with their workspace.json
-  // metadata. Reads are issued in parallel; per-entry failures are
-  // captured into status fields so a single corrupted workspace does not
-  // hide the rest of the list.
+  // List all registered workspaces.
   app.get("/", async (c) => {
-    const items = await Promise.all(
-      registry.list().map(async (entry): Promise<WorkspaceListItem> => {
-        const base: Pick<WorkspaceListItem, "id" | "path" | "lastOpenedAt"> = {
-          id: entry.id,
-          path: entry.path,
-          ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-        };
-        try {
-          const ws = await WorkspaceManager.open(entry.path);
-          return { ...base, status: "ok", metadata: ws.metadata };
-        } catch (err) {
-          if (err instanceof WorkspaceNotFoundError) {
-            return { ...base, status: "missing", reason: "workspace.json not found" };
-          }
-          if (err instanceof WorkspaceCorruptedError) {
-            return { ...base, status: "corrupted", reason: err.reason };
-          }
-          throw err;
-        }
-      }),
+    let workspaces: Awaited<ReturnType<WorkspaceManager["list"]>>;
+    try {
+      workspaces = await manager.list();
+    } catch (err) {
+      return wsErrorJson(c, err, 500);
+    }
+    return c.json(
+      workspaces.map((ws) => ({
+        id: ws.id,
+        name: ws.name,
+        createdAt: ws.createdAt,
+        workdir: ws.workdir,
+        ...(ws.defaults ? { defaults: ws.defaults } : {}),
+      })),
     );
-    return c.json(items);
   });
 
-  // Add a workspace: open-or-init the directory at `path` with the
-  // user-provided display `name`, then register the (id, path) pair with
-  // the registry. The id is generated server-side. The display name is
-  // mandatory  there is no auto-default and no basename fallback.
+  // Add a workspace: init the directory + register it. The id is
+  // generated server-side. The display name is mandatory — there is no
+  // auto-default and no basename fallback.
   app.post("/", async (c) => {
     const parsed = await parseJsonBody<CreateBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
-    if (typeof body.path !== "string" || body.path.trim() === "") {
-      return c.json({ error: "path is required (string)" }, 400);
+    if (typeof body.workdir !== "string" || body.workdir.trim() === "") {
+      return c.json({ error: "workdir is required (string)" }, 400);
     }
     if (typeof body.name !== "string") {
       return c.json({ error: "name is required (string)" }, 400);
@@ -136,48 +98,46 @@ export function workspacesRoutes(deps: {
       return c.json({ error: "defaults, when present, must be an object" }, 400);
     }
 
-    const absPath = path.resolve(body.path);
-    const initOpts: { name: string; defaults?: WorkspaceMetadata["defaults"] } = {
+    const initOpts: {
+      -readonly [K in keyof Parameters<WorkspaceManager["init"]>[0]]: Parameters<
+        WorkspaceManager["init"]
+      >[0][K];
+    } = {
       name: body.name,
+      workdir: path.resolve(body.workdir),
     };
     if (body.defaults && typeof body.defaults === "object") {
-      initOpts.defaults = body.defaults as WorkspaceMetadata["defaults"];
+      initOpts.defaults = body.defaults as Parameters<WorkspaceManager["init"]>[0]["defaults"];
     }
 
-    let metadata: WorkspaceMetadata;
     try {
-      const ws = await WorkspaceManager.openOrInit(absPath, initOpts);
-      metadata = ws.metadata;
+      const ws = await manager.init(initOpts);
+      return c.json(
+        {
+          id: ws.id,
+          name: ws.name,
+          createdAt: ws.createdAt,
+          workdir: ws.workdir,
+          ...(ws.defaults ? { defaults: ws.defaults } : {}),
+        },
+        201,
+      );
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
-
-    let entry: Awaited<ReturnType<WorkspaceRegistry["add"]>>;
-    try {
-      entry = await registry.add({ path: absPath });
-    } catch (err) {
-      return wsErrorJson(c, err, 400);
-    }
-
-    return c.json(
-      {
-        id: entry.id,
-        path: entry.path,
-        ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-        metadata,
-      },
-      201,
-    );
   });
 
-  // Read the currently-selected workspace id. Returns null when no
-  // workspace has ever been selected (fresh install before first request,
-  // or when the previously-current workspace was deleted).
-  app.get("/current", (c) => c.json({ id: registry.current() }));
+  // Read the currently-selected workspace id.
+  app.get("/current", async (c) => {
+    try {
+      const id = await manager.getCurrent();
+      return c.json({ id });
+    } catch (err) {
+      return wsErrorJson(c, err, 500);
+    }
+  });
 
-  // Set the currently-selected workspace by id. Used by the dashboard
-  // topbar so that the next browser session opens with the same workspace
-  // selected.
+  // Set the currently-selected workspace by id.
   app.put("/current", async (c) => {
     const parsed = await parseJsonBody<PutCurrentBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -185,56 +145,45 @@ export function workspacesRoutes(deps: {
       return c.json({ error: "id is required (string)" }, 400);
     }
     try {
-      await registry.setCurrent(parsed.body.id);
+      await manager.setCurrent(parsed.body.id);
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
     return c.json({ id: parsed.body.id });
   });
 
-  // Get a single workspace's metadata. Useful for the dashboard's
-  // workspace settings panel.
+  // Get a single workspace.
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
-    const entry = registry.get(id);
-    if (!entry) {
-      return c.json(
-        { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
-        404,
-      );
-    }
+    let ws: Awaited<ReturnType<WorkspaceManager["read"]>>;
     try {
-      const ws = await WorkspaceManager.open(entry.path);
-      return c.json({
-        id,
-        path: entry.path,
-        ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-        metadata: ws.metadata,
-      });
+      ws = await manager.read(id);
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
-  });
-
-  // Update a workspace's metadata in place. Currently exposed: display
-  // name (`metadata.name` in workspace.json) and `defaults`. The id,
-  // on-disk directory, and URL routing are intentionally NOT touched
-  // the id is opaque and stable for the life of the workspace.
-  app.patch("/:id", async (c) => {
-    const id = c.req.param("id");
-    const entry = registry.get(id);
-    if (!entry) {
+    if (!ws) {
       return c.json(
         { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
         404,
       );
     }
+    return c.json({
+      id: ws.id,
+      name: ws.name,
+      createdAt: ws.createdAt,
+      workdir: ws.workdir,
+      ...(ws.defaults ? { defaults: ws.defaults } : {}),
+    });
+  });
 
+  // Update a workspace's mutable fields (name, defaults).
+  app.patch("/:id", async (c) => {
+    const id = c.req.param("id");
     const parsed = await parseJsonBody<PatchBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
 
-    const patch: { name?: string; defaults?: WorkspaceMetadata["defaults"] | null } = {};
+    const patch: { -readonly [K in keyof WorkspaceUpdatePatch]: WorkspaceUpdatePatch[K] } = {};
     if (body.name !== undefined) {
       if (typeof body.name !== "string") {
         return c.json({ error: "name, when present, must be a string" }, 400);
@@ -247,37 +196,38 @@ export function workspacesRoutes(deps: {
       } else if (typeof body.defaults !== "object" || Array.isArray(body.defaults)) {
         return c.json({ error: "defaults, when present, must be an object or null" }, 400);
       } else {
-        patch.defaults = body.defaults as WorkspaceMetadata["defaults"];
+        patch.defaults = body.defaults as WorkspaceUpdatePatch["defaults"];
       }
     }
     if (patch.name === undefined && patch.defaults === undefined) {
       return c.json({ error: "patch must include at least one of: name, defaults" }, 400);
     }
 
-    let updated: WorkspaceMetadata;
     try {
-      const ws = await WorkspaceManager.update(entry.path, patch as WorkspaceUpdatePatch);
-      updated = ws.metadata;
+      const updated = await manager.update(id, patch);
+      cache.invalidate(id);
+      return c.json({
+        id: updated.id,
+        name: updated.name,
+        createdAt: updated.createdAt,
+        workdir: updated.workdir,
+        ...(updated.defaults ? { defaults: updated.defaults } : {}),
+      });
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
-    // The cached WorkspaceContext holds a stale metadata snapshot.
-    cache.invalidate(id);
-
-    return c.json({
-      id,
-      path: entry.path,
-      ...(entry.lastOpenedAt !== undefined ? { lastOpenedAt: entry.lastOpenedAt } : {}),
-      metadata: updated,
-    });
   });
 
-  // Remove a workspace from the registry. Does NOT delete files on disk
-  // the user owns the workspace directory and may want to re-add it later.
+  // Remove a workspace. Default behaviour removes only the metadata
+  // (workspace.json + index entry); user files preserved. Pass
+  // `?purge=1` to also rm every emploke-owned subdirectory under the
+  // workspace's workdir (sessions/, tasks/, catalog/, workflows/,
+  // logs/). The workdir itself is never removed.
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
+    const purge = c.req.query("purge") === "1";
     try {
-      await registry.remove(id);
+      await manager.delete(id, { purge });
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
@@ -289,9 +239,9 @@ export function workspacesRoutes(deps: {
 }
 
 /**
- * Map workspace/registry errors to HTTP status codes. Generic 5xx for
- * unrecognised errors; the body is sanitized by `errorBody` so internals
- * never leak.
+ * Map workspace errors to HTTP status codes. Generic 5xx for
+ * unrecognised errors; the body is sanitised by `errorBody` so
+ * internals never leak.
  */
 function workspaceErrorStatus(err: unknown): number | null {
   if (err instanceof WorkspaceNameInvalidError) return 400;

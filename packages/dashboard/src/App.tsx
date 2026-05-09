@@ -119,11 +119,8 @@ function LandingPage() {
   const ordered = (workspaces ?? []).slice().sort((a, b) => {
     if (a.id === recent && b.id !== recent) return -1;
     if (b.id === recent && a.id !== recent) return 1;
-    const aBad = a.status !== "ok";
-    const bBad = b.status !== "ok";
-    if (aBad !== bBad) return aBad ? 1 : -1;
-    const aDisplay = a.metadata?.name ?? a.id;
-    const bDisplay = b.metadata?.name ?? b.id;
+    const aDisplay = a.name ?? a.id;
+    const bDisplay = b.name ?? b.id;
     return aDisplay.localeCompare(bDisplay);
   });
 
@@ -173,45 +170,37 @@ function LandingPage() {
           ) : (
             <div className="landing__grid">
               {ordered.map((ws) => {
-                const display = ws.metadata?.name ?? ws.id;
+                const display = ws.name ?? ws.id;
                 const isRecent = ws.id === recent;
-                const broken = ws.status !== "ok";
                 const enter = () => {
-                  if (!broken) enterWorkspace(ws.id);
+                  enterWorkspace(ws.id);
                 };
                 return (
                   // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
                   <div
                     key={ws.id}
-                    className={`landing__card${broken ? " landing__card--broken" : ""}`}
+                    className="landing__card"
                     role="button"
-                    tabIndex={broken ? -1 : 0}
-                    aria-disabled={broken}
+                    tabIndex={0}
                     onClick={enter}
                     onKeyDown={(e) => {
-                      if (broken) return;
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         enter();
                       }
                     }}
-                    title={broken ? (ws.reason ?? ws.status) : `Open ${display}`}
+                    title={`Open ${display}`}
                   >
                     <div className="landing__card-row">
                       <span className="landing__card-name">{display}</span>
-                      {isRecent && !broken && <span className="landing__card-badge">Recent</span>}
-                      {broken && (
-                        <span className="landing__card-badge landing__card-badge--warn">
-                          {ws.status}
-                        </span>
-                      )}
+                      {isRecent && <span className="landing__card-badge">Recent</span>}
                     </div>
-                    <div className="landing__card-path" title={ws.path}>
-                      {ws.path}
+                    <div className="landing__card-path" title={ws.workdir}>
+                      {ws.workdir}
                     </div>
                     <div className="landing__card-footer">
                       <span className="landing__card-meta">
-                        {ws.lastOpenedAt ? `Last opened ${formatLastOpened(ws.lastOpenedAt)}` : ""}
+                        {`Created ${formatLastOpened(ws.createdAt)}`}
                       </span>
                       <button
                         type="button"
@@ -386,7 +375,7 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
   }, [target]);
 
   if (!target) return null;
-  const display = target.metadata?.name ?? target.id;
+  const display = target.name ?? target.id;
 
   const onConfirm = async () => {
     setBusy(true);
@@ -407,11 +396,11 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
           Remove <code>{display}</code> from emploke?
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          Path: <code>{target.path}</code>
+          Path: <code>{target.workdir}</code>
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          The workspace files on disk are kept untouched — only the registry entry is removed. You
-          can re-add this path later.
+          The workspace files on disk are kept untouched. Only emploke's metadata (the registry
+          entry and <code>workspace.json</code>) is removed. You can re-add this path later.
         </p>
         {error && <div className="alert alert--error">⚠ {error}</div>}
       </div>

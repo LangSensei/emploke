@@ -1,10 +1,3 @@
-export type {
-  AgentMetadataPatch,
-  CatalogOptions,
-  ScanIssue,
-  SkillMetadataPatch,
-} from "./catalog.js";
-export { Catalog } from "./catalog.js";
 export {
   CatalogError,
   CatalogStateError,
@@ -15,6 +8,14 @@ export {
   NameInvalid,
   NotFound,
 } from "./errors.js";
+export type {
+  AgentMetadataPatch,
+  CatalogOptions,
+  ScanIssue,
+  SkillMetadataPatch,
+} from "./manager.js";
+export { CatalogManager } from "./manager.js";
+export type { CatalogEntryFile } from "./repositories/repository.js";
 export type {
   Agent,
   AgentEntry,

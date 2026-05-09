@@ -14,7 +14,7 @@
  *    archive — emploke "stores but never reads" runtime metadata.
  */
 
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 
 /**
@@ -123,15 +123,23 @@ export interface CancelEvent {
 export type { Logger } from "@emploke/logger";
 
 import type { Logger as _Logger } from "@emploke/logger";
+import type { TaskRepository } from "./repositories/repository.js";
 
 /** Constructor options for `TaskManager`. */
 export interface TaskManagerConfig {
-  readonly catalog: Catalog;
+  readonly catalog: CatalogManager;
   readonly runtimeRegistry: RuntimeRegistry;
   /** Absolute path to the directory holding per-task workdirs. */
   readonly tasksDir: string;
   /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
+  /**
+   * Persistence backend for task state. When omitted, the manager
+   * constructs a `FsTaskRepository({ tasksDir })` automatically; tests
+   * can inject an `InMemoryTaskRepository` (from `@emploke/task/testing`)
+   * to skip filesystem orchestration.
+   */
+  readonly repository?: TaskRepository;
   readonly logger?: _Logger;
   /** Test seam: clock injection. */
   readonly now?: () => Date;

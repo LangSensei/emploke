@@ -1,291 +1,197 @@
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { withFileLock, writeFileAtomic } from "./atomic.js";
-import { CURRENT_SCHEMA_VERSION, WORKSPACE_FILE, WORKSPACE_LOCK_FILE } from "./constants.js";
 import {
-  WorkspaceAlreadyExistsError,
-  WorkspaceCorruptedError,
-  WorkspaceNotFoundError,
-  WorkspaceSchemaMismatchError,
+  WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
+  WorkspaceNotRegisteredError,
+  WorkspacePathConflictError,
 } from "./errors.js";
-import { assertValidDisplayName, isValidDisplayName } from "./names.js";
-import type { Workspace, WorkspaceMetadata } from "./types.js";
-import { workspaceSubdirs } from "./types.js";
+import { assertValidDisplayName, isValidWorkspaceId } from "./names.js";
+import type { WorkspaceRepository } from "./repositories/repository.js";
+import { type Workspace, workspaceLayout } from "./types.js";
 
-/** Options accepted by `WorkspaceManager.init` and `openOrInit`. */
+/** Options accepted by `WorkspaceManager.init`. */
 export interface WorkspaceInitOpts {
+  /** Display name for the new workspace. Required. 1–64 trimmed chars, no control chars. */
+  readonly name: string;
+  /** Absolute path the user picked for the workspace. emploke will mkdir this if it does not exist. */
+  readonly workdir: string;
+  /** Optional UX defaults baked into the workspace metadata. */
+  readonly defaults?: Workspace["defaults"];
   /**
-   * Display name written into `workspace.json#name`. Free-form text
-   * (no kebab-case constraint), 1-64 chars after trim, no control chars.
-   * Required when initialising a fresh workspace.
-   *
-   * `openOrInit` accepts a missing `name` only when an existing
-   * `workspace.json` makes init unnecessary.
+   * Pin the workspace id (tests / migrations only). Production callers
+   * always omit this to let the manager mint a fresh UUID.
    */
-  readonly name?: string;
-  /** Optional UX hints baked into `workspace.json`. */
-  readonly defaults?: WorkspaceMetadata["defaults"];
+  readonly id?: string;
   /** Test seam for `createdAt`. Defaults to `() => new Date()`. */
   readonly now?: () => Date;
 }
 
-/**
- * Lifecycle operations against a single workspace directory. All static
- * the package never instantiates a `WorkspaceManager`; the type just
- * namespaces the verbs (`open`, `init`, `openOrInit`, `update`).
- *
- * Concurrency: `init` and `update` serialise writes through a per-dir
- * `<dir>/.workspace.lock` file, so two processes racing to create the
- * same workspace cannot end up with half-written `workspace.json` or
- * duplicated subdir creation errors.
- */
-export class WorkspaceManager {
-  private constructor() {
-    // Static-only.
-  }
-
-  /**
-   * Read `<dir>/workspace.json` and return a fully-resolved `Workspace`.
-   *
-   * Throws:
-   *   - `WorkspaceNotFoundError`  file missing
-   *   - `WorkspaceCorruptedError`  file unreadable / unparseable / wrong shape
-   *   - `WorkspaceSchemaMismatchError`  schemaVersion mismatch
-   */
-  static async open(dir: string): Promise<Workspace> {
-    const resolvedDir = path.resolve(dir);
-    const metadataPath = path.join(resolvedDir, WORKSPACE_FILE);
-
-    let raw: string;
-    try {
-      raw = await readFile(metadataPath, "utf8");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") throw new WorkspaceNotFoundError(resolvedDir);
-      throw new WorkspaceCorruptedError(resolvedDir, `unreadable: ${(err as Error).message}`, {
-        cause: err,
-      });
-    }
-
-    const metadata = parseMetadata(resolvedDir, raw);
-    return {
-      dir: resolvedDir,
-      metadata,
-      ...workspaceSubdirs(resolvedDir),
-    };
-  }
-
-  /**
-   * Create `workspace.json` plus the standard subdirs (sessions/, tasks/,
-   * workflows/, logs/). Throws `WorkspaceAlreadyExistsError` if
-   * `workspace.json` already exists  use `openOrInit` if you want
-   * idempotent semantics.
-   *
-   * `opts.name` is required (the display name to persist).
-   */
-  static async init(dir: string, opts: WorkspaceInitOpts): Promise<Workspace> {
-    const resolvedDir = path.resolve(dir);
-    // Validate up-front so callers get a clear error before we lock,
-    // mkdir, or write anything. assertValidDisplayName treats undefined
-    // as a non-string and rejects with WorkspaceNameInvalidError.
-    assertValidDisplayName(opts.name);
-
-    await mkdir(resolvedDir, { recursive: true });
-
-    const lockPath = path.join(resolvedDir, WORKSPACE_LOCK_FILE);
-    return withFileLock(lockPath, async () => {
-      const metadataPath = path.join(resolvedDir, WORKSPACE_FILE);
-      try {
-        await stat(metadataPath);
-        throw new WorkspaceAlreadyExistsError(resolvedDir);
-      } catch (err) {
-        if (
-          err instanceof WorkspaceAlreadyExistsError ||
-          (err as NodeJS.ErrnoException).code !== "ENOENT"
-        ) {
-          throw err;
-        }
-        // ENOENT  proceed.
-      }
-
-      const now = opts.now ?? (() => new Date());
-
-      const metadata: WorkspaceMetadata = {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
-        // assertValidDisplayName narrows opts.name to string above.
-        name: opts.name as string,
-        createdAt: now().toISOString(),
-        ...(opts.defaults ? { defaults: opts.defaults } : {}),
-      };
-
-      const subdirs = workspaceSubdirs(resolvedDir);
-      await Promise.all([
-        mkdir(subdirs.sessionsDir, { recursive: true }),
-        mkdir(subdirs.catalogDir, { recursive: true }),
-        mkdir(subdirs.tasksDir, { recursive: true }),
-        mkdir(subdirs.workflowsDir, { recursive: true }),
-        mkdir(subdirs.logsDir, { recursive: true }),
-      ]);
-
-      await writeFileAtomic(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-
-      return {
-        dir: resolvedDir,
-        metadata,
-        ...subdirs,
-      };
-    });
-  }
-
-  /**
-   * Idempotent: if `workspace.json` exists, `open()`; otherwise `init(opts)`
-   * (which requires `opts.name`). The race between the existence check and
-   * `init`'s subsequent stat is resolved inside `init`'s lock  at most
-   * one caller succeeds; losers see the file already exists and fall back
-   * to `open`.
-   */
-  static async openOrInit(dir: string, opts: WorkspaceInitOpts): Promise<Workspace> {
-    try {
-      return await WorkspaceManager.open(dir);
-    } catch (err) {
-      if (!(err instanceof WorkspaceNotFoundError)) throw err;
-    }
-    try {
-      return await WorkspaceManager.init(dir, opts);
-    } catch (err) {
-      if (err instanceof WorkspaceAlreadyExistsError) {
-        return WorkspaceManager.open(dir);
-      }
-      throw err;
-    }
-  }
-
-  /**
-   * Atomically rewrite `<dir>/workspace.json` with the supplied patch
-   * applied. Only the user-mutable fields (`name`, `defaults`) are
-   * exposed  `schemaVersion` and `createdAt` are immutable from the
-   * outside. The workspace must already exist (no auto-init).
-   *
-   * Concurrency: serialised through the same `.workspace.lock` that
-   * `init` uses, so a concurrent rename and a concurrent `init` cannot
-   * both succeed.
-   */
-  static async update(dir: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
-    const resolvedDir = path.resolve(dir);
-    // Reject up-front when there's nothing to lock  withFileLock would
-    // surface an opaque ENOENT in that case. Validation of `patch.name`
-    // also happens here so callers learn about both classes of error
-    // before we spend the lock.
-    try {
-      await stat(path.join(resolvedDir, WORKSPACE_FILE));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new WorkspaceNotFoundError(resolvedDir);
-      }
-      throw err;
-    }
-    if (patch.name !== undefined) assertValidDisplayName(patch.name);
-
-    const lockPath = path.join(resolvedDir, WORKSPACE_LOCK_FILE);
-    return withFileLock(lockPath, async () => {
-      const current = await WorkspaceManager.open(resolvedDir);
-
-      const nextName = patch.name ?? current.metadata.name;
-      const nextDefaults =
-        patch.defaults === undefined ? current.metadata.defaults : (patch.defaults ?? undefined);
-
-      const metadata: WorkspaceMetadata = {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
-        name: nextName,
-        createdAt: current.metadata.createdAt,
-        ...(nextDefaults ? { defaults: nextDefaults } : {}),
-      };
-
-      const metadataPath = path.join(resolvedDir, WORKSPACE_FILE);
-      await writeFileAtomic(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-
-      return {
-        dir: resolvedDir,
-        metadata,
-        ...workspaceSubdirs(resolvedDir),
-      };
-    });
-  }
-}
-
 /** Mutable fields accepted by `WorkspaceManager.update`. */
 export interface WorkspaceUpdatePatch {
-  /** New display name (1-64 trimmed chars, no control chars). Skipped when undefined. */
+  /** New display name. Skipped when `undefined`. */
   readonly name?: string;
   /**
    * New defaults block. Pass `null` to clear; pass an object to overwrite
-   * the existing block in full. Skipped when undefined (no change).
+   * the existing block in full. Skipped when `undefined`.
    */
-  readonly defaults?: WorkspaceMetadata["defaults"] | null;
+  readonly defaults?: Workspace["defaults"] | null;
 }
 
-function parseMetadata(dir: string, raw: string): WorkspaceMetadata {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new WorkspaceCorruptedError(dir, `json parse failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new WorkspaceCorruptedError(dir, "expected an object");
-  }
-  const obj = parsed as Record<string, unknown>;
+/** Options accepted by `WorkspaceManager.delete`. */
+export interface WorkspaceDeleteOpts {
+  /**
+   * When `true`, also remove every emploke-owned subdirectory under the
+   * workspace's `workdir` (`tasks/`, `sessions/`, `catalog/`,
+   * `workflows/`, `logs/`). The `workdir` itself is **never** removed —
+   * it is user-owned and may contain files emploke does not know about.
+   *
+   * Default `false`: only the workspace metadata is removed; agent
+   * artifacts, catalog definitions, etc. survive deletion. The
+   * dashboard surfaces the choice as an explicit checkbox.
+   */
+  readonly purge?: boolean;
+}
 
-  const schemaVersion = obj.schemaVersion;
-  if (typeof schemaVersion !== "number") {
-    throw new WorkspaceCorruptedError(dir, "missing or non-numeric 'schemaVersion'");
-  }
-  if (schemaVersion !== CURRENT_SCHEMA_VERSION) {
-    throw new WorkspaceSchemaMismatchError(dir, schemaVersion, CURRENT_SCHEMA_VERSION);
-  }
+/**
+ * Workspace lifecycle façade. All persistence flows through the
+ * supplied `WorkspaceRepository` (defaults to `FsWorkspaceRepository`
+ * when constructed via the static factory below). The manager owns
+ * filesystem side-effects that are NOT persistence — creating the
+ * workspace directory and standard subdirs at init time, and the
+ * optional `purge`-mode cleanup at delete time.
+ *
+ * Concurrency: cross-process serialisation lives in the repository
+ * (see `FsWorkspaceRepository`'s advisory lock). The manager itself is
+ * stateless beyond the injected repository reference, so two
+ * `WorkspaceManager` instances pointing at the same repository are
+ * safe to use concurrently.
+ */
+export class WorkspaceManager {
+  constructor(private readonly repository: WorkspaceRepository) {}
 
-  if (typeof obj.name !== "string") {
-    throw new WorkspaceCorruptedError(dir, "missing or non-string 'name'");
-  }
-  // Apply the same display-name rules we use on writes (assertValidDisplayName)
-  // when reading too. This means a workspace.json that was hand-edited to
-  // contain an empty/whitespace-only/64+-char/control-char name surfaces a
-  // corruption error at read time rather than ghost-loading and failing
-  // later inside `update()` with a confusing validation error.
-  if (!isValidDisplayName(obj.name)) {
-    throw new WorkspaceCorruptedError(
-      dir,
-      "'name' is not a valid display name (empty/whitespace/too long/contains control chars)",
-    );
-  }
-  if (typeof obj.createdAt !== "string" || obj.createdAt.length === 0) {
-    throw new WorkspaceCorruptedError(dir, "missing or invalid 'createdAt'");
+  /** All registered workspaces. */
+  list(): Promise<Workspace[]> {
+    return this.repository.list();
   }
 
-  let defaults: WorkspaceMetadata["defaults"];
-  if (obj.defaults !== undefined) {
-    if (!obj.defaults || typeof obj.defaults !== "object" || Array.isArray(obj.defaults)) {
-      throw new WorkspaceCorruptedError(dir, "'defaults' must be an object if present");
+  /** Look up a registered workspace by id; `null` when unregistered. */
+  read(id: string): Promise<Workspace | null> {
+    return this.repository.read(id);
+  }
+
+  /**
+   * Register a new workspace. Creates the `workdir` (and standard
+   * subdirs) on disk if they do not already exist, then persists the
+   * workspace metadata + index entry. Throws when the workspace is
+   * already registered (use `update` for renames / defaults changes).
+   */
+  async init(opts: WorkspaceInitOpts): Promise<Workspace> {
+    assertValidDisplayName(opts.name);
+    if (opts.id !== undefined && !isValidWorkspaceId(opts.id)) {
+      throw new WorkspaceIdInvalidError(opts.id);
     }
-    const d = obj.defaults as Record<string, unknown>;
-    if (d.runtime !== undefined && typeof d.runtime !== "string") {
-      throw new WorkspaceCorruptedError(dir, "'defaults.runtime' must be a string if present");
-    }
-    if (d.agent !== undefined && typeof d.agent !== "string") {
-      throw new WorkspaceCorruptedError(dir, "'defaults.agent' must be a string if present");
-    }
-    defaults = {
-      ...(typeof d.runtime === "string" ? { runtime: d.runtime } : {}),
-      ...(typeof d.agent === "string" ? { agent: d.agent } : {}),
+
+    const id = opts.id ?? randomUUID();
+    const resolvedWorkdir = path.resolve(opts.workdir);
+
+    // Refuse to silently shadow an existing registration. Callers who
+    // want idempotent semantics should call `read` first and skip
+    // `init` if the id already exists.
+    const existingById = await this.repository.read(id);
+    if (existingById) throw new WorkspaceIdConflictError(id);
+    const sameDir = (await this.repository.list()).find((e) => e.workdir === resolvedWorkdir);
+    if (sameDir) throw new WorkspacePathConflictError(resolvedWorkdir, sameDir.id);
+
+    // Create the workspace directory + standard subdirs. The user
+    // pre-existing files inside `workdir` are preserved; we only touch
+    // the named subdirs.
+    await mkdir(resolvedWorkdir, { recursive: true });
+    const layout = workspaceLayout(resolvedWorkdir);
+    await Promise.all([
+      mkdir(layout.sessions, { recursive: true }),
+      mkdir(layout.tasks, { recursive: true }),
+      mkdir(layout.catalog, { recursive: true }),
+      mkdir(layout.workflows, { recursive: true }),
+      mkdir(layout.logs, { recursive: true }),
+    ]);
+
+    const now = opts.now ?? (() => new Date());
+    const workspace: Workspace = {
+      id,
+      name: opts.name,
+      createdAt: now().toISOString(),
+      workdir: resolvedWorkdir,
+      ...(opts.defaults ? { defaults: opts.defaults } : {}),
     };
+    await this.repository.save(workspace);
+    return workspace;
   }
 
-  return {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    name: obj.name,
-    createdAt: obj.createdAt,
-    ...(defaults ? { defaults } : {}),
-  };
+  /**
+   * Update mutable fields (`name`, `defaults`) on a registered
+   * workspace. Throws `WorkspaceNotRegisteredError` when no workspace
+   * with the given id exists. Cannot be used to change `id` or
+   * `workdir` — those are immutable for the lifetime of the workspace.
+   */
+  async update(id: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
+    const current = await this.repository.read(id);
+    if (!current) throw new WorkspaceNotRegisteredError(id);
+    if (patch.name !== undefined) assertValidDisplayName(patch.name);
+
+    const nextName = patch.name ?? current.name;
+    const nextDefaults =
+      patch.defaults === undefined ? current.defaults : (patch.defaults ?? undefined);
+
+    const updated: Workspace = {
+      id: current.id,
+      workdir: current.workdir,
+      createdAt: current.createdAt,
+      name: nextName,
+      ...(nextDefaults ? { defaults: nextDefaults } : {}),
+    };
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  /**
+   * Remove a registered workspace. Default behaviour removes only the
+   * emploke metadata (the registry entry + `workspace.json`). Pass
+   * `{ purge: true }` to additionally rm every emploke-owned
+   * subdirectory under the workspace's `workdir`; the `workdir` itself
+   * is preserved either way (user-owned). Idempotent for unregistered ids.
+   */
+  async delete(id: string, opts: WorkspaceDeleteOpts = {}): Promise<void> {
+    if (opts.purge) {
+      // Read first, purge subdirs, THEN drop the registry entry.
+      // Removing the entry first opens a race window where a concurrent
+      // `init({workdir: same})` could succeed (no path conflict in the
+      // index anymore) and start populating sessions/, tasks/, ... —
+      // which the in-flight purge would then nuke. Doing the purge
+      // first keeps the path-conflict guard active throughout.
+      const current = await this.repository.read(id);
+      if (current) {
+        const layout = workspaceLayout(current.workdir);
+        await Promise.all([
+          rm(layout.sessions, { recursive: true, force: true }),
+          rm(layout.tasks, { recursive: true, force: true }),
+          rm(layout.catalog, { recursive: true, force: true }),
+          rm(layout.workflows, { recursive: true, force: true }),
+          rm(layout.logs, { recursive: true, force: true }),
+        ]);
+      }
+    }
+    await this.repository.delete(id);
+  }
+
+  /** Id of the most-recently-selected workspace (or `null`). */
+  getCurrent(): Promise<string | null> {
+    return this.repository.getCurrent();
+  }
+
+  /** Mark `id` as current. Throws if `id` is not registered. */
+  setCurrent(id: string): Promise<void> {
+    return this.repository.setCurrent(id);
+  }
 }

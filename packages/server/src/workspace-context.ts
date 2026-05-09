@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Catalog } from "@emploke/catalog";
+import { CatalogManager } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
 import {
   type Runtime,
@@ -8,19 +8,20 @@ import {
 } from "@emploke/runtime";
 import { SessionManager } from "@emploke/session";
 import { TaskManager } from "@emploke/task";
-import { type Workspace, WorkspaceManager, type WorkspaceRegistry } from "@emploke/workspace";
+import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke/workspace";
 
 /**
  * Per-workspace bundle of long-lived state. The server caches one of these
  * per registered workspace and hands it to route handlers via Hono context.
  *
- * `catalog` is constructed against `<workspace>/catalog/` so each workspace
- * has an isolated agent/skill/mcp set; `sessions` and `tasks` reuse that
- * catalog. Future managers (workflows) will join this struct as siblings.
+ * `catalog` is constructed against `<workspace.workdir>/catalog/` so each
+ * workspace has an isolated agent/skill/mcp set; `sessions` and `tasks`
+ * reuse that catalog. Future managers (workflows) join this struct as
+ * siblings.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
-  readonly catalog: Catalog;
+  readonly catalog: CatalogManager;
   readonly sessions: SessionManager;
   readonly tasks: TaskManager;
 }
@@ -30,38 +31,36 @@ export interface WorkspaceContext {
  * `WorkspaceContext`.
  *
  * Lookup flow on a cache miss:
- *   1. Validate that `id` is in the home-level `WorkspaceRegistry`. If
- *      not, return null  the route handler will respond 404.
- *   2. `WorkspaceManager.open()` the registered path. Throws on missing /
- *      corrupted `workspace.json`; the route handler converts to 5xx.
- *   3. Open a per-workspace `Catalog` rooted at `<workspace>/catalog/`.
- *      Lazy-creates the directory if missing.
- *   4. Call `Runtime.registerWorkspace?` on every registered runtime so
+ *   1. Look up the workspace via the injected `WorkspaceManager`. If
+ *      not registered, return null — the route handler will respond 404.
+ *   2. Call `Runtime.registerWorkspace?` on every registered runtime so
  *      one-time setup (e.g. trust) happens before any session actually
- *      runs in this workspace. Failures wrap as `RuntimeRegisterWorkspaceFailed`.
- *   5. Build a `SessionManager` pointed at `<workspace>/sessions/` and
- *      bound to the per-workspace catalog.
- *   6. Cache the bundle keyed by id.
+ *      runs in this workspace. Failures wrap as
+ *      `RuntimeRegisterWorkspaceFailed`.
+ *   3. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
+ *   4. Build `SessionManager` and `TaskManager` pointed at the
+ *      per-workspace state directories.
+ *   5. Cache the bundle keyed by id.
  *
  * We cache by id (URL identifier) rather than by absolute path so a stale
- * cache entry can be expired with `invalidate(id)` when the registry
+ * cache entry can be expired with `invalidate(id)` when the workspace
  * mutates (delete, metadata rename).
  */
 export class WorkspaceContextCache {
   private readonly runtimeRegistry: RuntimeRegistry;
-  private readonly registry: WorkspaceRegistry;
+  private readonly workspaces: WorkspaceManager;
   private readonly logger: Logger;
   private readonly entries = new Map<string, WorkspaceContext>();
   /**
    * Inflight lookups keyed by id, to dedupe concurrent first-request
    * stampedes (the `registerWorkspace` calls each runtime makes can be
-   * expensive  we don't want N parallel calls for one workspace).
+   * expensive — we don't want N parallel calls for one workspace).
    */
   private readonly inflight = new Map<string, Promise<WorkspaceContext | null>>();
 
   constructor(deps: {
     runtimeRegistry: RuntimeRegistry;
-    registry: WorkspaceRegistry;
+    workspaces: WorkspaceManager;
     /**
      * Logger threaded down into every `SessionManager` / `TaskManager`
      * the cache lazy-instantiates. Defaults to `silentLogger` so
@@ -70,14 +69,14 @@ export class WorkspaceContextCache {
     logger?: Logger;
   }) {
     this.runtimeRegistry = deps.runtimeRegistry;
-    this.registry = deps.registry;
+    this.workspaces = deps.workspaces;
     this.logger = deps.logger ?? silentLogger;
   }
 
   /**
-   * Resolve a registered workspace by id. Returns null if no entry exists
-   * with that id. Throws on workspace.json read failures or runtime setup
-   * failures (the route handler maps to 5xx).
+   * Resolve a registered workspace by id. Returns null if no workspace
+   * with that id exists. Throws on workspace metadata read failures or
+   * runtime setup failures (the route handler maps to 5xx).
    */
   async get(id: string): Promise<WorkspaceContext | null> {
     const cached = this.entries.get(id);
@@ -95,7 +94,7 @@ export class WorkspaceContextCache {
 
   /**
    * Drop the cached context for `id`. Safe to call when no entry exists.
-   * Invoked by routes that mutate registry/metadata state (rename, remove)
+   * Invoked by routes that mutate workspace metadata (rename, remove)
    * so the next request sees a fresh world.
    */
   invalidate(id: string): void {
@@ -112,25 +111,25 @@ export class WorkspaceContextCache {
   }
 
   private async load(id: string): Promise<WorkspaceContext | null> {
-    const entry = this.registry.get(id);
-    if (!entry) return null;
+    const workspace = await this.workspaces.read(id);
+    if (!workspace) return null;
 
-    const workspace = await WorkspaceManager.open(entry.path);
-    await registerWorkspaceWithRuntimes(this.runtimeRegistry, workspace.dir);
+    await registerWorkspaceWithRuntimes(this.runtimeRegistry, workspace.workdir);
 
-    const catalog = await Catalog.open({ catalogDir: workspace.catalogDir });
+    const layout = workspaceLayout(workspace.workdir);
+    const catalog = await CatalogManager.open({ catalogDir: layout.catalog });
 
     const sessions = new SessionManager({
       catalog,
       runtimeRegistry: this.runtimeRegistry,
-      sessionsDir: workspace.sessionsDir,
+      sessionsDir: layout.sessions,
       logger: this.logger,
     });
 
     const tasks = new TaskManager({
       catalog,
       runtimeRegistry: this.runtimeRegistry,
-      tasksDir: workspace.tasksDir,
+      tasksDir: layout.tasks,
       logger: this.logger,
     });
     // Sweep persisted tasks marked `running` from a previous server lifetime

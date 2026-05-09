@@ -2,12 +2,13 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentStore } from "../src/agent/agent-store.js";
+import { AgentCatalog } from "../src/agent/agent-catalog.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
+import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let store: AgentStore;
+let store: AgentCatalog;
 
 async function makeAgent(
   name: string,
@@ -39,14 +40,14 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new AgentStore(catalogDir);
+  store = new AgentCatalog(new FsAgentRepository(catalogDir));
 });
 
 afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
-describe("AgentStore", () => {
+describe("AgentCatalog", () => {
   describe("install", () => {
     it("installs and returns agent", async () => {
       const src = await makeAgent("reviewer");
@@ -133,7 +134,7 @@ describe("AgentStore", () => {
     });
   });
 
-  // See SkillStore equivalent for rationale.
+  // See SkillCatalog equivalent for rationale.
   describe("getContent path-traversal hardening", () => {
     it("rejects names with `..` segments", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);

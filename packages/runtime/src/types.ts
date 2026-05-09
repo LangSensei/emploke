@@ -1,4 +1,4 @@
-import type { AgentResolveResult } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
@@ -43,10 +43,17 @@ export interface Runtime {
    * `workdir` is guaranteed to exist and be empty. Provision is *not* required
    * to be idempotent; the caller arranges atomicity (rolling back the workdir
    * on failure).
+   *
+   * `catalog` is the source of agent / skill / mcp file content — the runtime
+   * pulls them via streams (`catalog.agentEntries`, `catalog.skillEntries`,
+   * `catalog.getMcpContent`) instead of resolving on-disk catalog paths. This
+   * keeps the runtime backend-agnostic so a future SQLite-backed catalog
+   * works without code changes here.
    */
   provision(
     workdir: string,
     agent: AgentResolveResult,
+    catalog: CatalogManager,
   ): Promise<{
     runtimeSessionId: string | null;
   }>;
@@ -155,10 +162,14 @@ export interface Runtime {
  * doubles as the subprocess `cwd`; the caller is responsible for laying
  * down whatever the agent needs there before invoking dispatch (typically
  * by calling `Runtime.provision` on the same dir first).
+ *
+ * `catalog` carries the byte-source for skill / agent / mcp content, see
+ * the docstring on {@link Runtime.provision} for rationale.
  */
 export interface DispatchTaskOpts {
   readonly taskDir: string;
   readonly agent: AgentResolveResult;
+  readonly catalog: CatalogManager;
   readonly prompt: string;
 }
 

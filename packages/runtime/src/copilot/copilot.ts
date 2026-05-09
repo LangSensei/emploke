@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import {
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
@@ -92,9 +92,10 @@ export class CopilotRuntime implements Runtime {
   async provision(
     workdir: string,
     agent: AgentResolveResult,
+    catalog: CatalogManager,
   ): Promise<{ runtimeSessionId: string }> {
     try {
-      await provisionCopilotWorkdir(workdir, agent);
+      await provisionCopilotWorkdir(workdir, agent, catalog);
     } catch (err) {
       throw new RuntimeProvisionFailed(this.kind, workdir, err as Error);
     }

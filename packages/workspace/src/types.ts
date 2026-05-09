@@ -8,76 +8,77 @@ import {
 } from "./constants.js";
 
 /**
- * Self-describing metadata persisted at `<workspace>/workspace.json`.
+ * The workspace domain object — an emploke working unit identified by a
+ * stable UUID, sitting inside a user-chosen working directory.
  *
- * Narrow on purpose:
- *   - `name` is the user-facing **display name** (free-form text). The URL
- *     identifier is the registry's UUID `id`, not this name. Renaming is
- *     side-effect free.
- *   - `defaults` are optional UX hints (e.g. dashboard pre-selects a
- *     runtime/agent when creating a session).
- *   - Future fields (`manifest` for version pins, `permissions`, ) bump
- *     `schemaVersion`; current builds reject mismatched versions on read.
+ * `workdir` is the **only** filesystem field on the type. Everything
+ * else is pure metadata that survives a backend swap (fs, sqlite,
+ * remote service): `id` / `name` / `createdAt` / `defaults` are domain
+ * data; `workdir` is the contract with the agents that emploke spawns
+ * inside this workspace ("agent's working root").
+ *
+ * Notes:
+ *   - The "metadata file" (`workspace.json`) and the directory layout
+ *     (`tasks/`, `sessions/`, `catalog/` ...) are **implementation
+ *     details of the FS repository**. Sqlite repositories would store
+ *     the same `Workspace` shape as a row.
+ *   - There is no `dir` / `sessionsDir` / `tasksDir` field — those were
+ *     leaky abstractions over the previous "WorkspaceManager.open
+ *     returns a path bag" design. Use `workspaceLayout(workdir)` (below)
+ *     when you need the conventional sub-paths.
+ *   - There is no `schemaVersion` field — it lives only inside the FS
+ *     repository's wire format.
  */
-export interface WorkspaceMetadata {
-  readonly schemaVersion: 1;
+export interface Workspace {
+  /** Stable UUID assigned at creation. URL routing key. */
+  readonly id: string;
+  /** Display name (free-form text, 1-64 trimmed chars, no control chars). */
   readonly name: string;
+  /** ISO 8601 UTC timestamp at creation. */
   readonly createdAt: string;
+  /** Optional UX defaults for sessions/tasks dispatched in this workspace. */
   readonly defaults?: {
     readonly runtime?: string;
     readonly agent?: string;
   };
+  /**
+   * Absolute filesystem path the agents work under. User-provided at
+   * `init`-time; never re-derived. The conventional sub-paths
+   * (`<workdir>/tasks/<id>/`, `<workdir>/sessions/<id>/`, etc.) are
+   * computed by `workspaceLayout` for downstream consumers — they are
+   * NOT part of the domain type.
+   */
+  readonly workdir: string;
 }
 
 /**
- * Resolved view of a workspace on disk. Every directory path is absolute
- * (`path.resolve`-d) and computed deterministically from `dir`.
- */
-export interface Workspace {
-  readonly dir: string;
-  readonly metadata: WorkspaceMetadata;
-  readonly sessionsDir: string;
-  readonly catalogDir: string;
-  readonly tasksDir: string;
-  readonly workflowsDir: string;
-  readonly logsDir: string;
-}
-
-/** Compute every fixed-name subdirectory under `dir`. */
-export function workspaceSubdirs(
-  dir: string,
-): Pick<Workspace, "sessionsDir" | "catalogDir" | "tasksDir" | "workflowsDir" | "logsDir"> {
-  const root = path.resolve(dir);
-  return {
-    sessionsDir: path.join(root, SESSIONS_SUBDIR),
-    catalogDir: path.join(root, CATALOG_SUBDIR),
-    tasksDir: path.join(root, TASKS_SUBDIR),
-    workflowsDir: path.join(root, WORKFLOWS_SUBDIR),
-    logsDir: path.join(root, LOGS_SUBDIR),
-  };
-}
-
-/**
- * One entry in the home-level workspace registry.
+ * Conventional sub-path layout under a workspace's `workdir`. Pure
+ * function; no fs side effects. Used by WorkspaceManager + the
+ * downstream package managers (TaskManager, SessionManager, Catalog)
+ * to compute the directories agents and runtimes use.
  *
- *   - `id`: opaque UUID. The URL routing identifier (`/workspaces/:id/...`)
- *     and the cache key in the server. Stable for the lifetime of the
- *     workspace. The display name lives in `WorkspaceMetadata.name`.
- *   - `path`: absolute filesystem location of the workspace directory.
- *   - `lastOpenedAt`: bumped by `WorkspaceRegistry.setCurrent`; used by
- *     the dashboard to surface "recently opened" workspaces. Optional
- *     because an entry may have been added but never selected.
+ * Keeping this as a **standalone helper** rather than baking the paths
+ * into `Workspace` itself preserves the "domain type stays clean"
+ * invariant: the `Workspace` type has no fs-knowledge fields beyond
+ * `workdir`, so SQLite-backed callers can mint `Workspace` rows
+ * without ever touching this helper.
  */
-export interface RegistryEntry {
-  readonly id: string;
-  readonly path: string;
-  readonly lastOpenedAt?: string;
+export interface WorkspaceLayout {
+  readonly sessions: string;
+  readonly tasks: string;
+  readonly catalog: string;
+  readonly workflows: string;
+  readonly logs: string;
 }
 
-/** Wire shape of `$EMPLOKE_HOME/workspaces.json`. */
-export interface RegistryFile {
-  readonly schemaVersion: 1;
-  readonly entries: readonly RegistryEntry[];
-  /** Id of the most-recently-selected workspace, or undefined. */
-  readonly currentId?: string;
+/** Compute every fixed-name subdirectory under `workdir`. */
+export function workspaceLayout(workdir: string): WorkspaceLayout {
+  const root = path.resolve(workdir);
+  return {
+    sessions: path.join(root, SESSIONS_SUBDIR),
+    tasks: path.join(root, TASKS_SUBDIR),
+    catalog: path.join(root, CATALOG_SUBDIR),
+    workflows: path.join(root, WORKFLOWS_SUBDIR),
+    logs: path.join(root, LOGS_SUBDIR),
+  };
 }

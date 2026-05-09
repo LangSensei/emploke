@@ -32,6 +32,7 @@ export { apply } from "./apply.js";
 export { type CreateParams, create } from "./create.js";
 export {
   AgentNotFoundError,
+  CorruptedTaskError,
   InvalidTaskIdError,
   InvalidTransition,
   RuntimeDoesNotSupportTasksError,
@@ -45,16 +46,11 @@ export {
   TASK_ID_RE,
 } from "./ids.js";
 export { createDirJunction } from "./junction.js";
-export type { TaskRuntimeMetadata } from "./manager.js";
-export { readTaskRuntimeMetadata, TaskManager } from "./manager.js";
+export { TaskManager } from "./manager.js";
 export { safeJoinUnderRoot } from "./paths.js";
-export {
-  CURRENT_SCHEMA_VERSION,
-  type PersistedTask,
-  readPersistedTask,
-  TASK_FILE_NAME,
-  writePersistedTask,
-} from "./task-file.js";
+export { FsTaskRepository } from "./repositories/fs-task-repository.js";
+export type { TaskRepository } from "./repositories/repository.js";
+export { readTaskRuntimeMetadata, type TaskRuntimeMetadata } from "./task-meta.js";
 export type {
   CancelEvent,
   CompleteEvent,

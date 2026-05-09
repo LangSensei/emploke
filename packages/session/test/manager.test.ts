@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
@@ -12,12 +12,17 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
-  CURRENT_SCHEMA_VERSION,
   InvalidSessionIdError,
-  SESSION_FILE_NAME,
   SessionManager,
   SessionNotFoundError,
 } from "../src/index.js";
+
+// session.json wire format constants — these used to be exported from
+// @emploke/session but are now FsSessionRepository implementation
+// details. The tests still verify on-disk shape so they redeclare the
+// constants locally.
+const SESSION_FILE_NAME = "session.json";
+const CURRENT_SCHEMA_VERSION = 1;
 
 // ───── helpers ──────────────────────────────────────────────
 
@@ -41,7 +46,7 @@ interface StubCatalogOpts {
   resolveError?: Error;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
   const agents = opts.agents ?? {};
   return {
     catalogDir,
@@ -51,7 +56,7 @@ function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-  } as unknown as Catalog;
+  } as unknown as CatalogManager;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>
@@ -314,7 +319,9 @@ describe("list()", () => {
     await writeFile(path.join(stray, SESSION_FILE_NAME), "{not json", "utf8");
     const out = await m.list();
     expect(out).toHaveLength(1);
-    expect(r.calls.some((c) => c.msg.includes("corrupted"))).toBe(true);
+    // Corruption is logged via FsSessionRepository's list-time drop (no
+    // explicit warn from the manager — the repository swallows the
+    // typed error so the listing keeps working).
   });
 
   it("filters by agent", async () => {
@@ -518,7 +525,7 @@ describe("get()", () => {
 // ───── delete ────────────────────────────────────────────────
 
 describe("delete()", () => {
-  it("removes the workdir", async () => {
+  it("removes the metadata; workdir is preserved by default", async () => {
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
@@ -526,6 +533,21 @@ describe("delete()", () => {
     });
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id);
+    // Metadata gone (the session is no longer get-able).
+    expect(await m.get(s.id)).toBeNull();
+    // Workdir contents preserved (consistent with workspace/task purge=false default).
+    const st = await stat(s.workdir);
+    expect(st.isDirectory()).toBe(true);
+  });
+
+  it("removes the workdir when purge=true", async () => {
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      sessionsDir,
+    });
+    const s = await m.create({ agent: "demo" });
+    await m.delete(s.id, { purge: true });
     await expect(stat(s.workdir)).rejects.toThrow();
   });
 

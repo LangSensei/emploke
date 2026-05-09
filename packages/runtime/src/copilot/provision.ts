@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { AgentResolveResult, ResolvedMcp, ResolvedSkill } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { InvalidMcpJson, WorkdirPrepFailed } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
@@ -33,10 +33,17 @@ export function flattenSkillName(name: string): string {
  * Layout produced (relative to `workdir`):
  *
  *   AGENTS.md                       — copied verbatim from the resolved agent
+ *   <agent siblings...>             — every other file the agent installed
  *   .mcp.json                       — `{ "mcpServers": { name: <parsed>, … } }`
- *   .github/skills/<name>/…         — each skill's content (excluding hooks/)
+ *   .github/skills/<name>/…         — each skill's content (excluding hooks/copilot/)
  *   .github/hooks/…                 — merged from each skill's hooks/copilot/
  *   .git/                           — empty repo (created by `git init`)
+ *
+ * Source data is pulled from the catalog as `AsyncIterable<{relPath, content}>`
+ * streams (see {@link CatalogManager.skillEntries} /
+ * {@link CatalogManager.agentEntries}). The runtime never resolves on-disk
+ * catalog paths; a future SQLite-backed catalog implementation works the same
+ * way.
  *
  * **Trust handling moved out**: previous versions of this function also
  * appended `workdir` to `~/.copilot/settings.json.trustedFolders`. That
@@ -55,31 +62,66 @@ export function flattenSkillName(name: string): string {
 export async function provisionCopilotWorkdir(
   workdir: string,
   agent: AgentResolveResult,
+  catalog: CatalogManager,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
-  await copyAgentFile(workdir, agent.agentPath);
-  await writeMcpConfig(workdir, agent.mcps);
-  await copySkills(workdir, agent.skills);
-  await copyHooks(workdir, agent.skills);
+  await materializeAgent(workdir, agent.agent.name, catalog);
+  await writeMcpConfig(workdir, agent.mcps, catalog);
+  await materializeSkills(workdir, agent.skills, catalog);
   await initGitRepo(workdir);
 }
 
-async function copyAgentFile(workdir: string, agentPath: string): Promise<void> {
-  const src = path.join(agentPath, "AGENTS.md");
-  const dest = path.join(workdir, "AGENTS.md");
-  await cp(src, dest, { force: true });
+/**
+ * Copy every file the agent installed (AGENTS.md plus any sibling
+ * templates / scripts) verbatim into `workdir`. The runtime treats agents
+ * as multi-file entries — this is how operators bundle prompt fragments
+ * or helper scripts alongside AGENTS.md.
+ *
+ * Hooks under the agent's own `hooks/copilot/` are merged into
+ * `<workdir>/.github/hooks/` (same convention as skills) so an agent can
+ * ship its own pretooluse / postresponse hooks.
+ */
+async function materializeAgent(
+  workdir: string,
+  agentName: string,
+  catalog: CatalogManager,
+): Promise<void> {
+  const hooksDest = path.join(workdir, DOT_DIR, "hooks");
+  let hooksDestReady = false;
+  for await (const { relPath, content } of catalog.agentEntries(agentName)) {
+    const hookRel = stripHooksPrefix(relPath);
+    if (hookRel !== null) {
+      if (!hooksDestReady) {
+        await mkdir(hooksDest, { recursive: true });
+        hooksDestReady = true;
+      }
+      await writeFileAt(hooksDest, hookRel, content);
+    } else {
+      await writeFileAt(workdir, relPath, content);
+    }
+  }
 }
 
-async function writeMcpConfig(workdir: string, mcps: readonly ResolvedMcp[]): Promise<void> {
+/**
+ * For each MCP referenced by the agent's dependency graph, fetch its JSON
+ * content from the catalog and merge into a single `<workdir>/.mcp.json`
+ * keyed by MCP name. We don't reformat — the user's whitespace inside each
+ * MCP's JSON is preserved.
+ */
+async function writeMcpConfig(
+  workdir: string,
+  mcps: readonly { readonly name: string }[],
+  catalog: CatalogManager,
+): Promise<void> {
   if (mcps.length === 0) return;
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
-    const raw = await readFile(mcp.path, "utf8");
+    const raw = await catalog.getMcpContent(mcp.name);
     try {
       mcpServers[mcp.name] = JSON.parse(raw);
     } catch (cause) {
-      throw new InvalidMcpJson(mcp.name, mcp.path, cause as Error);
+      throw new InvalidMcpJson(mcp.name, cause as Error);
     }
   }
 
@@ -88,41 +130,85 @@ async function writeMcpConfig(workdir: string, mcps: readonly ResolvedMcp[]): Pr
   await writeFile(dest, json, "utf8");
 }
 
-async function copySkills(workdir: string, skills: readonly ResolvedSkill[]): Promise<void> {
+/**
+ * For each resolved skill, pull its file stream from the catalog and write
+ * into `<workdir>/.github/skills/<flattenedName>/`. Skill-internal
+ * `hooks/copilot/` files are diverted to `<workdir>/.github/hooks/`
+ * (Copilot's hook discovery only looks there).
+ */
+async function materializeSkills(
+  workdir: string,
+  skills: readonly { readonly skill: { readonly name: string } }[],
+  catalog: CatalogManager,
+): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
+  const hooksDest = path.join(workdir, DOT_DIR, "hooks");
+  let hooksDestReady = false;
+
   for (const s of skills) {
-    const dest = path.join(skillsRoot, flattenSkillName(s.skill.name));
-    const hooksPath = path.join(s.path, "hooks");
-    await mkdir(dest, { recursive: true });
-    await cp(s.path, dest, {
-      recursive: true,
-      force: true,
-      // Exclude only the top-level `hooks/` subdir of THIS skill. Anything
-      // else (SKILL.md, nested assets, deep dirs called "hooks" inside other
-      // subtrees) is preserved.
-      filter: (src) => src !== hooksPath && !src.startsWith(hooksPath + path.sep),
-    });
+    const skillDest = path.join(skillsRoot, flattenSkillName(s.skill.name));
+    await mkdir(skillDest, { recursive: true });
+    for await (const { relPath, content } of catalog.skillEntries(s.skill.name)) {
+      const hookRel = stripHooksPrefix(relPath);
+      if (hookRel !== null) {
+        if (!hooksDestReady) {
+          await mkdir(hooksDest, { recursive: true });
+          hooksDestReady = true;
+        }
+        await writeFileAt(hooksDest, hookRel, content);
+      } else {
+        await writeFileAt(skillDest, relPath, content);
+      }
+    }
   }
 }
 
-async function copyHooks(workdir: string, skills: readonly ResolvedSkill[]): Promise<void> {
-  const hooksDest = path.join(workdir, DOT_DIR, "hooks");
-  let destReady = false;
+/**
+ * If `relPath` begins with `hooks/copilot/`, return the path relative to
+ * that prefix (so `hooks/copilot/preToolUse.js` -> `preToolUse.js`). The
+ * catalog yields posix-style separators; we match accordingly.
+ *
+ * Returns `null` for any path that doesn't belong under hooks — those go
+ * to the entry root.
+ */
+function stripHooksPrefix(relPath: string): string | null {
+  const PREFIX = "hooks/copilot/";
+  if (!relPath.startsWith(PREFIX)) return null;
+  const rest = relPath.slice(PREFIX.length);
+  return rest === "" ? null : rest;
+}
 
-  for (const s of skills) {
-    const src = path.join(s.path, "hooks", "copilot");
-    try {
-      const info = await stat(src);
-      if (!info.isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    if (!destReady) {
-      await mkdir(hooksDest, { recursive: true });
-      destReady = true;
-    }
-    await cp(src, hooksDest, { recursive: true, force: true });
+/**
+ * Write `content` to `<destRoot>/<relPath>`, creating intermediate
+ * directories. `relPath` is POSIX-style (the catalog contract); we split
+ * on `/` and re-join via `path.join` so it materializes correctly on
+ * Windows too.
+ *
+ * **Defense-in-depth**: validate the resolved final path stays inside
+ * `destRoot`. The catalog walker already rejects symlinks and the names
+ * it yields are individual `readdir` segments (no `..` possible), so this
+ * check is belt-and-braces — but a corrupted SQLite-backed catalog row
+ * that returned `relPath: "../foo"`, or an entry filename containing a
+ * literal Windows-style backslash that survived `toPosix`, would
+ * otherwise let writes escape the destination. Refusing is cheap.
+ */
+async function writeFileAt(destRoot: string, relPath: string, content: Buffer): Promise<void> {
+  const segments = relPath.split("/");
+  const fileName = segments.pop();
+  if (!fileName) return;
+  const dir = segments.length > 0 ? path.join(destRoot, ...segments) : destRoot;
+  const target = path.join(dir, fileName);
+  // Resolve both sides so symlink-free comparisons work consistently
+  // across Windows / POSIX.
+  const resolvedDest = path.resolve(target);
+  const resolvedRoot = path.resolve(destRoot);
+  if (resolvedDest !== resolvedRoot && !resolvedDest.startsWith(resolvedRoot + path.sep)) {
+    throw new Error(
+      `refusing to write catalog entry outside workdir: relPath ${JSON.stringify(relPath)} resolves to ${resolvedDest}`,
+    );
   }
+  if (segments.length > 0) await mkdir(dir, { recursive: true });
+  await writeFile(target, content);
 }
 
 async function initGitRepo(workdir: string): Promise<void> {

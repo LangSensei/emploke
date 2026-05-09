@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import { SkillStore } from "../src/skill/skill-store.js";
+import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
+import { SkillCatalog } from "../src/skill/skill-catalog.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let store: SkillStore;
+let store: SkillCatalog;
 
 async function makeSkill(
   name: string,
@@ -40,14 +41,14 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new SkillStore(catalogDir);
+  store = new SkillCatalog(new FsSkillRepository(catalogDir));
 });
 
 afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
-describe("SkillStore", () => {
+describe("SkillCatalog", () => {
   describe("install", () => {
     it("installs and returns skill", async () => {
       const src = await makeSkill("weather");
@@ -184,7 +185,7 @@ describe("SkillStore", () => {
   });
 
   // Defense-in-depth: getContent / path / getPath validate names before
-  // composing on-disk paths. See SkillStore equivalent for rationale.
+  // composing on-disk paths. See SkillCatalog equivalent for rationale.
   describe("getContent path-traversal hardening", () => {
     it("rejects names with `..` segments before reading the filesystem", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
@@ -206,18 +207,7 @@ describe("SkillStore", () => {
   // path() is a public method with no current caller in-repo, but as a
   // public surface it must not hand back a traversed filesystem path
   // either — otherwise a future caller inherits the same hole.
-  describe("path() path-traversal hardening", () => {
-    it("rejects malformed names before joining to baseDir", () => {
-      expect(() => store.path("../../etc")).toThrow(NameInvalid);
-      expect(() => store.path("a/b/c")).toThrow(NameInvalid);
-      expect(() => store.path("..\\evil")).toThrow(NameInvalid);
-    });
-    it("returns a valid path for well-formed names (smoke check)", () => {
-      // No assertion on the exact path — just that it doesn't throw and
-      // contains the name. The store doesn't need to have the skill
-      // installed; path() is purely structural.
-      const p = store.path("ok-name");
-      expect(p).toContain("ok-name");
-    });
-  });
+  // The Repository pattern moved path-composition into FsSkillRepository,
+  // which validates names at every public method. The SkillCatalog.path()
+  // surface was retired with no callers.
 });

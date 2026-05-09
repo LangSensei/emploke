@@ -170,18 +170,18 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     }
   });
 
-  // Delete a task: kills the subprocess if live, then rm -rf the workdir.
-  // `?force=1` skips the load-and-validate step and removes the directory
-  // whenever it exists on disk — useful for cleaning up tasks whose
-  // task.json is corrupted or schema-mismatched (e.g. across an emploke
-  // upgrade). Without `force`, a corrupt task.json would leave the
-  // directory undeletable through this endpoint (the dashboard would see
-  // 404 even though the row appears in the list).
+  // Delete a task. Default behaviour removes only the task's metadata
+  // (the repository row / task.json); the workdir contents — including
+  // the runtime's session junction and any agent-produced files — are
+  // preserved for archival. Pass `?purge=1` to additionally rm the
+  // entire workdir AND skip metadata validation (mirrors `rm -rf`,
+  // useful for cleaning up tasks whose task.json is corrupted or
+  // schema-mismatched across an emploke upgrade).
   app.delete("/:tid", async (c) => {
     const id = c.req.param("tid");
-    const force = c.req.query("force") === "1";
+    const purge = c.req.query("purge") === "1";
     try {
-      await getManager(c).delete(id, { force });
+      await getManager(c).delete(id, { purge });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;

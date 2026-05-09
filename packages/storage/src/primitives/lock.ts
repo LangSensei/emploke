@@ -1,25 +1,44 @@
-import { open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { open, readFile, stat, unlink } from "node:fs/promises";
 
 /**
- * Cross-platform file lock + atomic write helpers, identical in spirit to
- * the routine `provisionCopilotWorkdir` uses for `~/.copilot/settings.json`.
- *
- * Kept inside this package (rather than shared with `@emploke/runtime`) so
- * `@emploke/workspace` has zero non-paths dependencies. If a third site
- * needs the same logic later, factor out into `@emploke/fs-utils`.
+ * Default time to wait for a contended lock before failing. Callers can
+ * override via the `waitMs` option for long-running critical sections.
  */
+const DEFAULT_WAIT_MS = 5000;
 
-/** Default time to wait for a contended lock before failing. */
-const LOCK_WAIT_MS = 5000;
 /**
  * Time after which an existing lock file is *eligible* for stale-recovery
  * via mtime alone. Even past this threshold we still try a PID liveness
  * check first; the mtime threshold is the fallback for the case where the
  * holder PID could not be parsed.
  */
-const LOCK_STALE_MS = 30000;
+const DEFAULT_STALE_MS = 30000;
+
 /** Poll interval while waiting on a contended lock. */
-const LOCK_POLL_MS = 50;
+const POLL_INTERVAL_MS = 50;
+
+/** Thrown when `withFileLock` cannot acquire a contended lock within `waitMs`. */
+export class StorageLockTimeoutError extends Error {
+  constructor(
+    public readonly lockPath: string,
+    public readonly waitedMs: number,
+    public readonly holderPid: number | null,
+  ) {
+    const detail = holderPid !== null ? ` (held by PID ${holderPid})` : "";
+    super(`timed out (${waitedMs}ms) acquiring lock on ${lockPath}${detail}`);
+    this.name = "StorageLockTimeoutError";
+  }
+}
+
+export interface WithFileLockOpts {
+  /** Time to wait for a contended lock before failing. Default 5000ms. */
+  readonly waitMs?: number;
+  /**
+   * Time after which a lock file with an unparseable / dead holder is
+   * treated as stale. Default 30000ms.
+   */
+  readonly staleMs?: number;
+}
 
 /**
  * Acquire an advisory lock on `lockPath`, run `fn`, then release.
@@ -27,68 +46,71 @@ const LOCK_POLL_MS = 50;
  * caller wins the race.
  *
  * If acquisition fails because the lock already exists, polls for up to
- * `LOCK_WAIT_MS`; each poll re-checks staleness. Stale-recovery is
- * conservative:
+ * `waitMs`; each poll re-checks staleness. Stale-recovery is conservative:
  *   - If we can read a PID from the lock file and that PID is still alive
  *     (`process.kill(pid, 0)` does not throw), we treat the lock as held
  *     no matter how old it is (long-running fn() must not be evicted).
  *   - Only when the PID is dead, unparseable, or absent AND the file is
- *     older than `LOCK_STALE_MS` do we steal the lock.
+ *     older than `staleMs` do we steal the lock.
  *
  * On release we only `unlink` the file if its contents still match our
  * own PID — guarding against the (now very narrow) race where another
  * waiter stole the lock from underneath a long-running fn().
  *
- * The lock is released in `finally`, so a thrown `fn` cannot wedge subsequent
- * calls.
+ * The lock is released in `finally`, so a thrown `fn` cannot wedge
+ * subsequent calls.
  */
-export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  opts: WithFileLockOpts = {},
+): Promise<T> {
+  const waitMs = opts.waitMs ?? DEFAULT_WAIT_MS;
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const start = Date.now();
   const myPid = process.pid;
   const myMarker = `${myPid}\n`;
   while (true) {
+    let fh: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      const fh = await open(lockPath, "wx");
+      fh = await open(lockPath, "wx");
       try {
         await fh.write(myMarker);
       } catch {
         // Diagnostic write failure is non-fatal; the lock itself is held.
       }
       await fh.close();
+      fh = null;
       try {
         return await fn();
       } finally {
         await releaseIfMine(lockPath, myMarker);
       }
     } catch (err) {
+      // Make sure we don't leak a still-open handle (close() above may
+      // have thrown after `open` succeeded). Also release the on-disk
+      // lock file we just created if we never reached the fn() critical
+      // section — otherwise stale-recovery would have to wait `staleMs`
+      // before another caller could proceed.
+      if (fh) {
+        await fh.close().catch(() => {});
+        await releaseIfMine(lockPath, myMarker);
+      }
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") throw err;
 
-      if (Date.now() - start > LOCK_WAIT_MS) {
+      if (Date.now() - start > waitMs) {
         const holder = await readLockHolder(lockPath);
-        const detail = holder !== null ? ` (held by PID ${holder})` : "";
-        throw new Error(`timed out (${LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}${detail}`);
+        throw new StorageLockTimeoutError(lockPath, waitMs, holder);
       }
 
-      if (await tryStealStaleLock(lockPath)) continue;
-      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+      if (await tryStealStaleLock(lockPath, staleMs)) continue;
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
   }
 }
 
-/**
- * Inspect the lock file and `unlink` it iff it is safely stealable.
- * Returns true if the caller should immediately retry acquisition.
- *
- * Order of checks:
- *   1. If we can read a PID and `process.kill(pid, 0)` succeeds, the holder
- *      is alive — never steal, regardless of mtime.
- *   2. If the holder PID is dead (ESRCH), steal.
- *   3. If the PID is unparseable or unreadable AND mtime is older than
- *      `LOCK_STALE_MS`, steal as a last resort.
- *   4. Otherwise leave it alone and let the poll loop wait.
- */
-async function tryStealStaleLock(lockPath: string): Promise<boolean> {
+async function tryStealStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
   let st: Awaited<ReturnType<typeof stat>>;
   try {
     st = await stat(lockPath);
@@ -106,18 +128,13 @@ async function tryStealStaleLock(lockPath: string): Promise<boolean> {
   }
 
   // Couldn't read PID — fall back to mtime-only stale check.
-  if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+  if (Date.now() - st.mtimeMs > staleMs) {
     await unlinkIgnoreMissing(lockPath);
     return true;
   }
   return false;
 }
 
-/**
- * Release the lock only if the file still contains our PID. Protects
- * against accidentally deleting a lock that another process legitimately
- * stole from us during a long-running fn().
- */
 async function releaseIfMine(lockPath: string, expectedMarker: string): Promise<void> {
   let raw: string;
   try {
@@ -140,7 +157,6 @@ async function unlinkIgnoreMissing(p: string): Promise<void> {
   }
 }
 
-/** Best-effort read of the PID written by the current lock holder. */
 async function readLockHolder(lockPath: string): Promise<number | null> {
   try {
     const raw = (await readFile(lockPath, "utf8")).trim();
@@ -152,9 +168,9 @@ async function readLockHolder(lockPath: string): Promise<number | null> {
 }
 
 /**
- * `process.kill(pid, 0)` returns nothing on success and throws ESRCH if the
- * pid is dead. EPERM means "exists but I don't own it" — treat as alive.
- * Any other error: be conservative and assume alive (don't steal).
+ * `process.kill(pid, 0)` returns nothing on success and throws ESRCH if
+ * the pid is dead. EPERM means "exists but I don't own it" — treat as
+ * alive. Any other error: be conservative and assume alive (don't steal).
  */
 function isProcessAlive(pid: number): boolean {
   try {
@@ -164,23 +180,5 @@ function isProcessAlive(pid: number): boolean {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ESRCH") return false;
     return true;
-  }
-}
-
-/**
- * Write `content` to `targetPath` atomically: pid-suffixed tmp file + rename.
- * Readers see either the previous file or the new one, never partial bytes
- * (POSIX rename + Windows >= Node 18).
- */
-export async function writeFileAtomic(targetPath: string, content: string): Promise<void> {
-  const tmp = `${targetPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-  await writeFile(tmp, content, "utf8");
-  try {
-    await rename(tmp, targetPath);
-  } catch (err) {
-    try {
-      await unlink(tmp);
-    } catch {}
-    throw err;
   }
 }

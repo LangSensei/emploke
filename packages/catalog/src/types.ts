@@ -49,23 +49,27 @@ export interface Agent {
   };
 }
 
+/**
+ * A skill resolved by the catalog. The runtime obtains the actual file
+ * contents via {@link CatalogManager.skillEntries} — paths are an
+ * implementation detail of the FS repository, never exposed here.
+ */
 export interface ResolvedSkill {
   readonly skill: Skill;
-  /** Absolute path to the skill directory. */
-  readonly path: string;
 }
 
+/**
+ * An MCP resolved by the catalog. The runtime obtains the JSON content
+ * via {@link CatalogManager.getMcpContent} — there is no on-disk path
+ * to expose because future SQLite-backed repositories don't have one.
+ */
 export interface ResolvedMcp {
   readonly name: string;
-  /** Absolute path to the MCP JSON file. */
-  readonly path: string;
 }
 
 export interface AgentResolveResult {
   /** The resolved agent definition. */
   readonly agent: Agent;
-  /** Absolute path to the agent's directory (contains AGENTS.md). */
-  readonly agentPath: string;
   /** Transitive skill dependencies in topological order. */
   readonly skills: readonly ResolvedSkill[];
   /** All referenced MCPs (transitive). */
@@ -75,8 +79,6 @@ export interface AgentResolveResult {
 export interface SkillResolveResult {
   /** The resolved skill definition (the entry itself). */
   readonly skill: Skill;
-  /** Absolute path to the skill's directory (contains SKILL.md). */
-  readonly skillPath: string;
   /**
    * Transitive closure of skills, INCLUDING the entry skill itself, in
    * topological order (deps before dependents). Useful for tooling that

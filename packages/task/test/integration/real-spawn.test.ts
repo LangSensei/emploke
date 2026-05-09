@@ -23,17 +23,14 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type DispatchOpts,
-  type PersistedTask,
-  TASK_FILE_NAME,
-  type Task,
-  TaskManager,
-} from "../../src/index.js";
+import { type DispatchOpts, type Task, TaskManager } from "../../src/index.js";
+
+const TASK_FILE_NAME = "task.json";
+type PersistedTaskWire = { schemaVersion: number } & Task;
 
 // ───────── fixture lifecycle ─────────────────────────────────
 
@@ -110,14 +107,14 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
     mcps: [],
   }) as unknown as AgentResolveResult;
 
-const stubCatalog = (agentNames: readonly string[]): Catalog =>
+const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
   ({
     catalogDir: "/tmp/catalog",
     resolveAgent(name: string): AgentResolveResult {
       if (!agentNames.includes(name)) throw new Error(`unknown agent: ${name}`);
       return fakeAgentResolve(name);
     },
-  }) as unknown as Catalog;
+  }) as unknown as CatalogManager;
 
 // ───────── helpers ────────────────────────────────────────────
 
@@ -138,7 +135,7 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
   throw new Error(`awaitTerminal: task ${id} did not reach terminal status within ${timeoutMs}ms`);
 }
 
-const makeManager = (catalog: Catalog, runtime: Runtime): TaskManager => {
+const makeManager = (catalog: CatalogManager, runtime: Runtime): TaskManager => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
   return new TaskManager({
@@ -160,10 +157,10 @@ describe("real-spawn smoke", () => {
 
     expect(final.status).toBe("success");
 
-    const persisted: PersistedTask = JSON.parse(
+    const persisted: PersistedTaskWire = JSON.parse(
       await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
     );
-    expect(persisted.task.status).toBe("success");
+    expect(persisted.status).toBe("success");
   });
 
   it("dispatch → real child exits non-zero → status persists as 'failure'", async () => {
@@ -175,9 +172,9 @@ describe("real-spawn smoke", () => {
 
     expect(final.status).toBe("failure");
 
-    const persisted: PersistedTask = JSON.parse(
+    const persisted: PersistedTaskWire = JSON.parse(
       await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
     );
-    expect(persisted.task.status).toBe("failure");
+    expect(persisted.status).toBe("failure");
   });
 });

@@ -1,13 +1,14 @@
 /**
- * @emploke/session — per-session workdir registry.
+ * @emploke/session — per-session workdir manager.
  *
- * Sessions live at `~/.emploke/sessions/<id>/` (configurable). Each is a
- * provisioned workdir for one agent under one runtime (e.g. copilot,
- * gemini). The agent name is read from the provisioned `AGENTS.md`
- * frontmatter; runtime + createdAt + runtimeSessionId are persisted in
- * `<workdir>/session.json`. Activity (lastActiveAt, preview) is read fresh
- * from the runtime on every list/get call. The package never spawns
- * processes — `buildLaunch()` returns a shell-runnable `LaunchCommand`.
+ * Each session is a provisioned workdir for one agent under one runtime
+ * (e.g. copilot, gemini). The agent name is read from the provisioned
+ * `AGENTS.md` frontmatter; runtime + createdAt + runtimeSessionId are
+ * persisted via the configured `SessionRepository` (defaults to
+ * `FsSessionRepository`, which writes `<workdir>/session.json`).
+ * Activity (lastActiveAt, preview) is read fresh from the runtime on
+ * every list/get call. The package never spawns processes —
+ * `buildLaunch()` returns a shell-runnable `LaunchCommand`.
  */
 
 // Re-export runtime errors that callers commonly want to catch alongside
@@ -26,13 +27,13 @@ export {
   SessionNotFoundError,
   SessionsError,
 } from "./errors.js";
-export {
-  CURRENT_SCHEMA_VERSION,
-  readPersistedSession,
-  SESSION_FILE_NAME,
-  SessionManager,
-  writePersistedSession,
-} from "./manager.js";
+export { SessionManager } from "./manager.js";
+export { FsSessionRepository } from "./repositories/fs-session-repository.js";
+export type {
+  ListSessionStateOpts,
+  SessionRepository,
+  SessionState,
+} from "./repositories/repository.js";
 export type {
   CreateSessionOpts,
   DeleteSessionOpts,
@@ -40,7 +41,6 @@ export type {
   ListSessionOpts,
   Logger,
   ManagedSession,
-  PersistedSession,
   Session,
   SessionManagerConfig,
   SessionRecord,

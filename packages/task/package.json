@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
@@ -29,7 +33,8 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/logger": "workspace:*",
-    "@emploke/runtime": "workspace:*"
+    "@emploke/runtime": "workspace:*",
+    "@emploke/storage": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

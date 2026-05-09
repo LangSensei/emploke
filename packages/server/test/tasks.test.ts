@@ -251,15 +251,15 @@ describe("tasksRoutes", () => {
     const m = stubManager({});
     const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(204);
-    expect(m.delete).toHaveBeenCalledWith(sampleTask.id, { force: false });
+    expect(m.delete).toHaveBeenCalledWith(sampleTask.id, { purge: false });
   });
 
-  it("DELETE /:tid?force=1 propagates the force flag to the manager", async () => {
+  it("DELETE /:tid?purge=1 propagates the purge flag to the manager", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}?force=1`, { method: "DELETE" });
+    const res = await tasksRoutes(m).request(`/${sampleTask.id}?purge=1`, { method: "DELETE" });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith(sampleTask.id, { force: true });
+    expect(del).toHaveBeenCalledWith(sampleTask.id, { purge: true });
   });
 
   it("DELETE /:tid maps TaskNotFoundError to 404", async () => {

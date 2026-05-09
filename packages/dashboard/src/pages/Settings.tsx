@@ -39,7 +39,7 @@ function EnvHint({ children }: { children: string }) {
 export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces }: SettingsProps) {
   const fmt = (v: string | number | undefined | null) => (v == null ? "—" : String(v));
   const currentEntry = workspaces.find((w) => w.id === currentWorkspaceId);
-  const displayName = currentEntry?.metadata?.name ?? null;
+  const displayName = currentEntry?.name ?? null;
 
   return (
     <div className="card">
@@ -83,7 +83,7 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
         <dd>
           {currentEntry ? (
             <code>
-              {currentEntry.path}
+              {currentEntry.workdir}
               {config?.pathSeparator ?? "/"}catalog
             </code>
           ) : (
@@ -117,7 +117,7 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
 
         <dt>Workspace path</dt>
         <dd>
-          <code>{fmt(currentEntry?.path)}</code>
+          <code>{fmt(currentEntry?.workdir)}</code>
         </dd>
 
         <dt>Registered workspaces</dt>

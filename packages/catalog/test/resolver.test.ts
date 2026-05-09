@@ -2,16 +2,19 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentStore } from "../src/agent/agent-store.js";
-import { McpStore } from "../src/mcp/mcp-store.js";
+import { AgentCatalog } from "../src/agent/agent-catalog.js";
+import { McpCatalog } from "../src/mcp/mcp-catalog.js";
+import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
+import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
+import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { Resolver } from "../src/resolver.js";
-import { SkillStore } from "../src/skill/skill-store.js";
+import { SkillCatalog } from "../src/skill/skill-catalog.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let skills: SkillStore;
-let agents: AgentStore;
-let mcps: McpStore;
+let skills: SkillCatalog;
+let agents: AgentCatalog;
+let mcps: McpCatalog;
 let resolver: Resolver;
 
 async function makeSkill(
@@ -72,10 +75,10 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  skills = new SkillStore(catalogDir);
-  agents = new AgentStore(catalogDir);
-  mcps = new McpStore(catalogDir);
-  resolver = new Resolver(skills, agents, mcps, catalogDir);
+  skills = new SkillCatalog(new FsSkillRepository(catalogDir));
+  agents = new AgentCatalog(new FsAgentRepository(catalogDir));
+  mcps = new McpCatalog(new FsMcpRepository(catalogDir));
+  resolver = new Resolver(skills, agents, mcps);
 });
 
 afterEach(async () => {
@@ -90,7 +93,6 @@ describe("Resolver", () => {
 
     const result = resolver.resolveAgent("reviewer");
     expect(result.agent.name).toBe("reviewer");
-    expect(result.agentPath).toContain(join("agents", "reviewer"));
     expect(result.skills.map((s) => s.skill.name)).toEqual(["lint"]);
     expect(result.mcps.map((m) => m.name)).toEqual(["github"]);
   });
@@ -104,7 +106,6 @@ describe("Resolver", () => {
 
     const result = resolver.resolveSkill("security-audit");
     expect(result.skill.name).toBe("security-audit");
-    expect(result.skillPath).toContain(join("skills", "security-audit"));
     const names = result.skills.map((s) => s.skill.name);
     expect(names).toContain("cve-db");
     expect(names).toContain("security-audit");
