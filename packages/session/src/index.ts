@@ -17,6 +17,7 @@ export {
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
+  TrustRegistrationFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
 export {

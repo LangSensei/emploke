@@ -41,6 +41,7 @@ export class SessionManager {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
+  private readonly workspaceDir: string;
   private readonly repository: SessionRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -51,6 +52,7 @@ export class SessionManager {
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.sessionsDir = path.resolve(config.sessionsDir);
+    this.workspaceDir = path.resolve(config.workspaceDir);
     this.repository =
       config.repository ?? new FsSessionRepository({ sessionsDir: this.sessionsDir });
     this.logger = config.logger ?? silentLogger;
@@ -217,7 +219,7 @@ export class SessionManager {
     if (session === null) throw new SessionNotFoundError(id);
 
     const runtime = this.runtimeRegistry.get(session.runtime);
-    return runtime.buildLaunch(session);
+    return runtime.buildLaunch(session, this.workspaceDir);
   }
 
   // ─── internals ───────────────────────────────────────────

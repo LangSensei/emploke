@@ -18,7 +18,7 @@ const DEFAULT_STALE_MS = 30000;
 const POLL_INTERVAL_MS = 50;
 
 /** Thrown when `withFileLock` cannot acquire a contended lock within `waitMs`. */
-export class StorageLockTimeoutError extends Error {
+export class FsLockTimeoutError extends Error {
   constructor(
     public readonly lockPath: string,
     public readonly waitedMs: number,
@@ -26,7 +26,7 @@ export class StorageLockTimeoutError extends Error {
   ) {
     const detail = holderPid !== null ? ` (held by PID ${holderPid})` : "";
     super(`timed out (${waitedMs}ms) acquiring lock on ${lockPath}${detail}`);
-    this.name = "StorageLockTimeoutError";
+    this.name = "FsLockTimeoutError";
   }
 }
 
@@ -101,7 +101,7 @@ export async function withFileLock<T>(
 
       if (Date.now() - start > waitMs) {
         const holder = await readLockHolder(lockPath);
-        throw new StorageLockTimeoutError(lockPath, waitMs, holder);
+        throw new FsLockTimeoutError(lockPath, waitMs, holder);
       }
 
       if (await tryStealStaleLock(lockPath, staleMs)) continue;

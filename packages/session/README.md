@@ -46,12 +46,13 @@ const sessions = new SessionManager({
   catalog,
   runtimeRegistry,
   sessionsDir: "/path/to/workspace/sessions",
+  workspaceDir: "/path/to/workspace",
 });
 
 const session = await sessions.create({ agent: "demo-agent" });
 console.log("workdir:", session.workdir);
 
-const cmd = await sessions.getLaunchCommand(session.id);
+const cmd = await sessions.buildLaunch(session.id);
 console.log("run:", cmd.display);
 // → cd "/Users/.../.emploke/sessions/20260508-9dfbdf05" && copilot -i
 ```

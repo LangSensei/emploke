@@ -1,6 +1,6 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { mkdirP, writeFileAtomic } from "@emploke/storage";
+import { mkdirP, writeFileAtomic } from "@emploke/fs";
 import { pathExists } from "../atomic.js";
 import { nameToPath, validateMcpName } from "../validate.js";
 import type { McpRepoEntry, McpRepository } from "./repository.js";

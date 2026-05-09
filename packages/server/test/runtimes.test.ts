@@ -19,7 +19,7 @@ function stubRuntime(kind: string) {
     kind,
     provision: async () => "x",
     refresh: async () => null,
-    buildLaunch: () => ({ cmd: "x", args: [], cwd: "/", display: "x" }),
+    buildLaunch: async () => ({ cmd: "x", args: [], cwd: "/", display: "x" }),
     deleteState: async () => undefined,
   };
 }

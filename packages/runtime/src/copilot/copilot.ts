@@ -5,7 +5,6 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import {
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
-  RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "../types.js";
@@ -21,7 +20,7 @@ import { readCopilotSessionState } from "./state.js";
 import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
-const DEFAULT_COPILOT_SETTINGS_PATH = path.join(homedir(), ".copilot", "settings.json");
+const DEFAULT_COPILOT_CONFIG_PATH = path.join(homedir(), ".copilot", "config.json");
 
 export interface CopilotRuntimeConfig {
   /**
@@ -31,14 +30,20 @@ export interface CopilotRuntimeConfig {
    */
   readonly copilotStateDir?: string;
   /**
-   * Override the Copilot CLI settings file we maintain `trustedFolders` in.
-   * Defaults to `~/.copilot/settings.json`. Tests pass a tmp path so the
-   * real user settings file is never mutated.
+   * Override the Copilot CLI config file we maintain `trustedFolders` in.
+   * Defaults to `~/.copilot/config.json` — NOT `settings.json`. The Copilot
+   * CLI (verified against 1.0.44) only reads trust state from
+   * `config.json`; entries written to `settings.json.trustedFolders` are
+   * silently ignored, even though the leading comment in `config.json`
+   * misleadingly says "User settings belong in settings.json".
    *
-   * Used exclusively by `registerWorkspace`; per-session `provision` no
-   * longer touches this file.
+   * Tests pass a tmp path so the real user config file is never mutated.
+   *
+   * Used exclusively by `buildLaunch` (interactive mode preflight); per-
+   * session `provision` and per-task `dispatchTask` do NOT touch this
+   * file (see class jsdoc for the per-mode trust matrix).
    */
-  readonly copilotSettingsPath?: string;
+  readonly copilotConfigPath?: string;
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -59,11 +64,55 @@ export interface CopilotRuntimeConfig {
  * old implementation needed (where copilot minted ids and we had to scan all
  * sessions and match by cwd).
  *
- * Trust: `registerWorkspace(workspaceDir)` is the sole code path that
- * touches `~/.copilot/settings.json`. Server bootstrap calls it once per
- * registered workspace; per-session `provision` no longer interacts with the
- * settings file. This keeps `trustedFolders` from growing unbounded as
- * sessions are created.
+ * # Trust handling — per-mode (Copilot-specific, intentionally NOT abstracted)
+ *
+ * Trust resolution differs between Copilot's two execution modes; this is
+ * a property of the Copilot CLI itself and is intentionally NOT lifted
+ * into the cross-runtime `Runtime` interface. Each runtime adapter owns
+ * its own preconditions and decides where in its lifecycle to enforce
+ * them. There is no `registerWorkspace`-style hook on `Runtime`.
+ *
+ * Empirically verified against Copilot CLI 1.0.44:
+ *
+ *   | mode                | folder-trust gate?           | how to satisfy                |
+ *   |---------------------|------------------------------|-------------------------------|
+ *   | `-i` (interactive)  | yes — `cwd` (or an ancestor) | write `cwd` (or an ancestor)  |
+ *   |  i.e. `buildLaunch` |   must be in                 |   to `~/.copilot/config.json` |
+ *   |                     |   `config.json.trustedFolders` |  `trustedFolders`           |
+ *   |                     |   else CLI shows blocking    |                               |
+ *   |                     |   "Confirm folder trust"     |                               |
+ *   |                     |   prompt                     |                               |
+ *   |---------------------|------------------------------|-------------------------------|
+ *   | `-p --yolo`         | none                         | nothing — `--yolo` (which     |
+ *   |  i.e. `dispatchTask`|   (verified: even cross-     |   includes `--allow-all-paths`)|
+ *   |                     |    drive absolute paths      |   bypasses the gate entirely  |
+ *   |                     |    work with empty           |                               |
+ *   |                     |    `trustedFolders`)         |                               |
+ *
+ * Two notes on the table:
+ *
+ * - The trust file is `config.json`, NOT `settings.json`. The leading
+ *   comment in `config.json` says "User settings belong in settings.json.
+ *   This file is managed automatically." — that comment is misleading for
+ *   `trustedFolders` specifically: the CLI only reads trust from
+ *   `config.json`, regardless of where the user writes it. Verified by
+ *   placing identical entries in both files and observing that only the
+ *   `config.json` entry suppresses the prompt.
+ *
+ * - `--add-dir` is NOT an alternative for `-i` mode (it's a file-access
+ *   allowlist for `--allow-all-paths`-style flows; it does not pre-trust
+ *   the folder for the interactive trust gate). So per-session
+ *   `--add-dir` shims do not work as a transient. The only working knob
+ *   for `-i` is the persistent `config.json` entry.
+ *
+ * Concretely, `buildLaunch(session, workspaceDir)` ensures `workspaceDir`
+ * is covered by `config.json.trustedFolders` immediately before returning
+ * the launch spec — so trust I/O happens at the moment the user actually
+ * launches an interactive session, not eagerly when the workspace is
+ * registered. The write is idempotent and ancestor-aware: the first
+ * launch in a workspace pays one read+write; every subsequent launch
+ * passes `isPathCovered` and short-circuits without writing. `dispatchTask`
+ * never touches the file because `-p --yolo` does not need trust.
  *
  * SECURITY: every method that would compose `runtimeSessionId` into a
  * filesystem path or a `--resume=<id>` argument runs it through
@@ -78,13 +127,13 @@ export class CopilotRuntime implements Runtime {
   readonly kind = "copilot";
 
   private readonly copilotStateDir: string;
-  private readonly copilotSettingsPath: string;
+  private readonly copilotConfigPath: string;
   private readonly randomUUID: () => string;
   private readonly dispatchDeps: Partial<DispatchCopilotTaskDeps>;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
-    this.copilotSettingsPath = config.copilotSettingsPath ?? DEFAULT_COPILOT_SETTINGS_PATH;
+    this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
     this.dispatchDeps = config.dispatchDeps ?? {};
   }
@@ -104,19 +153,35 @@ export class CopilotRuntime implements Runtime {
   }
 
   /**
-   * Idempotent. Records `workspaceDir` in the Copilot CLI's trusted-folders
-   * list so any session subsequently provisioned under it can launch
-   * without a per-folder trust prompt. If the workspace (or one of its
-   * ancestors) is already trusted, this is a no-op write — see
-   * `ensureDirTrusted` for the coverage rules and the concurrent-safe
-   * read-modify-write protocol.
+   * Build the launch incantation for an interactive Copilot session.
+   *
+   * Preflight side-effect: writes `workspaceDir` (idempotently, with
+   * ancestor coverage) into `~/.copilot/config.json` `trustedFolders`
+   * via `ensureDirTrusted`. This is the per-mode trust handling the
+   * class jsdoc describes — it is intentionally NOT exposed as a
+   * cross-runtime `Runtime` method, because trust shape varies across
+   * CLIs. The first launch in a workspace pays one read+write; every
+   * subsequent launch hits the "already covered" early return and
+   * performs only a cheap read.
+   *
+   * If the trust write fails, the launch fails (`TrustRegistrationFailed`
+   * propagates). That is the right behaviour: spawning Copilot anyway
+   * would just stall on the blocking "Confirm folder trust" prompt
+   * inside the freshly-spawned terminal, which is much worse UX than a
+   * surfaced error in the dashboard.
+   *
+   * Pure (no I/O) on the runtimeSessionId branch: a tampered or absent
+   * id falls through to `buildCopilotLaunchCommand` with a `null` id,
+   * producing a fresh-launch form (no `--resume`). The trust write
+   * still runs; that is not a security concern because workspaceDir is
+   * controlled by the caller (server, not user input).
    */
-  async registerWorkspace(workspaceDir: string): Promise<void> {
-    try {
-      await ensureDirTrusted(workspaceDir, this.copilotSettingsPath);
-    } catch (err) {
-      throw new RuntimeRegisterWorkspaceFailed(this.kind, workspaceDir, err as Error);
-    }
+  async buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand> {
+    await ensureDirTrusted(workspaceDir, this.copilotConfigPath);
+    // Pass the id through the validator so a tampered session.json can't
+    // smuggle shell metacharacters into the displayed `--resume=<id>` string.
+    const id = safeCopilotId(session.runtimeSessionId);
+    return buildCopilotLaunchCommand(session.workdir, id);
   }
 
   async refresh(
@@ -139,13 +204,6 @@ export class CopilotRuntime implements Runtime {
     } catch (err) {
       throw new RuntimeRefreshFailed(this.kind, session.id, err as Error);
     }
-  }
-
-  buildLaunch(session: Session): LaunchCommand {
-    // Pass the id through the validator so a tampered session.json can't
-    // smuggle shell metacharacters into the displayed `--resume=<id>` string.
-    const id = safeCopilotId(session.runtimeSessionId);
-    return buildCopilotLaunchCommand(session.workdir, id);
   }
 
   async deleteState(session: Session): Promise<void> {

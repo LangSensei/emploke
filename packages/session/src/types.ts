@@ -26,6 +26,20 @@ export interface SessionManagerConfig {
    */
   readonly sessionsDir: string;
   /**
+   * Absolute path of the workspace this manager belongs to. Required.
+   *
+   * Threaded through `buildLaunch` to the runtime so runtimes whose
+   * interactive launch needs a workspace-rooted preflight (e.g. Copilot
+   * needs to ensure `workspaceDir` is in `~/.copilot/config.json`
+   * `trustedFolders` to suppress its trust prompt) can run that
+   * preflight at the moment of launch. Pure runtimes ignore the value.
+   *
+   * This is intentionally a peer of `sessionsDir` rather than derived
+   * from it: the manager's lifetime is per-workspace by construction
+   * and the server already knows both paths from `workspaceLayout()`.
+   */
+  readonly workspaceDir: string;
+  /**
    * Persistence backend for session state. When omitted, the manager
    * constructs a `FsSessionRepository({ sessionsDir })` automatically;
    * tests can inject an `InMemorySessionRepository` (from

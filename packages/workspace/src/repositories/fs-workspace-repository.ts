@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/storage";
+import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/fs";
 import { CURRENT_SCHEMA_VERSION, WORKSPACE_FILE } from "../constants.js";
 import {
   RegistryCorruptedError,

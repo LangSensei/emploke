@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
+    "@emploke/fs": "workspace:*",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {

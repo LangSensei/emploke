@@ -11,7 +11,7 @@ function fakeRuntime(kind: string): Runtime {
     async refresh() {
       return null;
     },
-    buildLaunch(s: Session): LaunchCommand {
+    async buildLaunch(s: Session): Promise<LaunchCommand> {
       return { cmd: "noop", args: [], cwd: s.workdir, display: "noop" };
     },
     async deleteState() {},

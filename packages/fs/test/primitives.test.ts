@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  FsLockTimeoutError,
   mkdirP,
   readJson,
-  StorageLockTimeoutError,
   safeReaddir,
   safeStat,
   withFileLock,
@@ -15,7 +15,7 @@ import {
 
 let scratch: string;
 beforeEach(async () => {
-  scratch = await mkdtemp(path.join(tmpdir(), "emploke-storage-"));
+  scratch = await mkdtemp(path.join(tmpdir(), "emploke-fs-"));
 });
 afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
@@ -156,7 +156,7 @@ describe("withFileLock", () => {
     expect(ran).toBe(true);
   });
 
-  it("throws StorageLockTimeoutError on contention beyond waitMs", async () => {
+  it("throws FsLockTimeoutError on contention beyond waitMs", async () => {
     const lockPath = path.join(scratch, "x.lock");
     // Hold the lock for longer than the second caller's waitMs.
     const release = (() => {
@@ -174,7 +174,7 @@ describe("withFileLock", () => {
     try {
       await expect(
         withFileLock(lockPath, async () => undefined, { waitMs: 50 }),
-      ).rejects.toBeInstanceOf(StorageLockTimeoutError);
+      ).rejects.toBeInstanceOf(FsLockTimeoutError);
     } finally {
       release();
     }

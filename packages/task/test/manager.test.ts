@@ -120,7 +120,7 @@ class StubRuntime implements Runtime {
   } | null> {
     return null;
   }
-  buildLaunch(s: Session): LaunchCommand {
+  async buildLaunch(s: Session): Promise<LaunchCommand> {
     return { cmd: "stub", args: [], cwd: s.workdir, display: "stub" };
   }
   async deleteState(): Promise<void> {}

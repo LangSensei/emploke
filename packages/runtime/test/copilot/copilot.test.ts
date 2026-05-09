@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
 import type { Session } from "../../src/index.js";
 import {
   CopilotRuntime,
   RuntimeProvisionFailed,
-  RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../../src/index.js";
 import { makeTestCatalog } from "./test-catalog.js";
@@ -68,7 +68,7 @@ describe("CopilotRuntime", () => {
     it("provisions the workdir and returns a generated runtimeSessionId", async () => {
       const rt = new CopilotRuntime({
         randomUUID: () => FIXED_UUID,
-        copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       const { agent, catalog } = await buildAgent();
       const r = await rt.provision(workdir, agent, catalog);
@@ -79,7 +79,7 @@ describe("CopilotRuntime", () => {
 
     it("wraps provision failures in RuntimeProvisionFailed", async () => {
       const rt = new CopilotRuntime({
-        copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       // Force a provision failure by handing the runtime a fabricated
       // `AgentResolveResult` whose agent name doesn't exist in the catalog —
@@ -96,61 +96,81 @@ describe("CopilotRuntime", () => {
       );
     });
 
-    it("does NOT touch the settings file (trust handled by registerWorkspace)", async () => {
-      const sp = path.join(scratch, "copilot-settings.json");
-      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+    it("does NOT touch the Copilot config file (trust handled by buildLaunch preflight)", async () => {
+      const sp = path.join(scratch, "copilot-config.json");
+      const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const { agent, catalog } = await buildAgent();
       await rt.provision(workdir, agent, catalog);
       expect(await exists(sp)).toBe(false);
     });
   });
 
-  describe("registerWorkspace", () => {
-    it("trusts the workspace dir in the configured settings file", async () => {
-      const sp = path.join(scratch, "copilot-settings.json");
-      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+  describe("registerWorkspace (no longer exists; trust now lives in buildLaunch)", () => {
+    it("does not expose a registerWorkspace method on Runtime", () => {
+      const rt = new CopilotRuntime();
+      // The method was removed in favour of per-launch preflight inside
+      // buildLaunch (see class jsdoc: per-mode trust matrix). Verifying
+      // the absence here pins the design choice — anyone re-adding it
+      // should think twice and update both this test and the jsdoc.
+      expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
+    });
+  });
+
+  describe("buildLaunch", () => {
+    it("returns `copilot --yolo` when runtimeSessionId is null", async () => {
+      const rt = new CopilotRuntime({
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
+      });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await rt.registerWorkspace(ws);
+      const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
+      expect(c.cmd).toBe("copilot");
+      expect(c.args).toEqual(["--yolo"]);
+    });
+
+    it("returns `copilot --resume=<id> --yolo` when runtimeSessionId is set", async () => {
+      const rt = new CopilotRuntime({
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
+      });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: FIXED_UUID }), ws);
+      expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
+    });
+
+    it("trusts the workspace dir in the configured config.json as a launch preflight", async () => {
+      const sp = path.join(scratch, "copilot-config.json");
+      const rt = new CopilotRuntime({ copilotConfigPath: sp });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      expect(await exists(sp)).toBe(false);
+      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       expect(written.trustedFolders).toContain(path.resolve(ws));
     });
 
-    it("is idempotent when called twice with the same workspace", async () => {
-      const sp = path.join(scratch, "copilot-settings.json");
-      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+    it("is idempotent across multiple launches in the same workspace", async () => {
+      const sp = path.join(scratch, "copilot-config.json");
+      const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await rt.registerWorkspace(ws);
-      await rt.registerWorkspace(ws);
+      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
+      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       const matches = written.trustedFolders.filter((p: string) => p === path.resolve(ws));
       expect(matches).toHaveLength(1);
     });
 
-    it("wraps trust failures in RuntimeRegisterWorkspaceFailed", async () => {
-      // Force a failure by pointing at a settings path whose parent cannot
+    it("propagates trust failures as TrustRegistrationFailed (so the launch fails fast)", async () => {
+      // Force a failure by pointing at a config path whose parent cannot
       // be created (a path containing a NUL byte fails on every platform).
-      const sp = "/no/such/path\0bad/settings.json";
-      const rt = new CopilotRuntime({ copilotSettingsPath: sp });
+      const sp = "/no/such/path\0bad/config.json";
+      const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await expect(rt.registerWorkspace(ws)).rejects.toBeInstanceOf(RuntimeRegisterWorkspaceFailed);
-    });
-  });
-
-  describe("buildLaunch", () => {
-    it("returns `copilot --yolo` when runtimeSessionId is null", () => {
-      const rt = new CopilotRuntime();
-      const c = rt.buildLaunch(fakeSession({ runtimeSessionId: null }));
-      expect(c.cmd).toBe("copilot");
-      expect(c.args).toEqual(["--yolo"]);
-    });
-
-    it("returns `copilot --resume=<id> --yolo` when runtimeSessionId is set", () => {
-      const rt = new CopilotRuntime();
-      const c = rt.buildLaunch(fakeSession({ runtimeSessionId: FIXED_UUID }));
-      expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
+      await expect(
+        rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws),
+      ).rejects.toBeInstanceOf(TrustRegistrationFailed);
     });
   });
 
@@ -263,10 +283,14 @@ describe("CopilotRuntime", () => {
       expect(await exists(path.join(sentinelDir, "marker"))).toBe(true);
     });
 
-    it("buildLaunch produces a fresh launch (no --resume) for malformed ids", () => {
-      const rt = new CopilotRuntime();
+    it("buildLaunch produces a fresh launch (no --resume) for malformed ids", async () => {
+      const rt = new CopilotRuntime({
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
+      });
+      const ws = path.join(scratch, "ws-mal");
+      await mkdir(ws, { recursive: true });
       for (const id of MALICIOUS_IDS) {
-        const c = rt.buildLaunch(fakeSession({ runtimeSessionId: id }));
+        const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: id }), ws);
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
         expect(c.display).not.toContain("--resume");
