@@ -153,6 +153,35 @@ describe("FsAgentRepository.entries", () => {
       }
     }).rejects.toMatchObject({ name: "NotFound" });
   });
+
+  it("silently skips symlinks (file and directory) instead of following them", async () => {
+    // Symlinks let an installed entry escape its own directory and
+    // exfiltrate host files (e.g. `evil -> /etc/passwd`). The walker
+    // must skip them entirely, not follow them.
+    const repo = new FsAgentRepository(catalogDir);
+    const src = join(sourceDir, "agent-with-symlink");
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, "AGENTS.md"), "agents-md");
+    // Create a target outside the entry, then symlink to it.
+    const outsideDir = join(sourceDir, "outside");
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(join(outsideDir, "secret.txt"), "should-not-leak");
+    const { symlink } = await import("node:fs/promises");
+    try {
+      await symlink(join(outsideDir, "secret.txt"), join(src, "leak-file"));
+      await symlink(outsideDir, join(src, "leak-dir"));
+    } catch (e) {
+      // Windows requires elevated perms or developer mode for symlinks.
+      // If we can't create them the test is moot — skip it explicitly.
+      if ((e as NodeJS.ErrnoException).code === "EPERM") return;
+      throw e;
+    }
+    await repo.installFromDir("symlinky", src);
+
+    const seen = new Set<string>();
+    for await (const { relPath } of repo.entries("symlinky")) seen.add(relPath);
+    expect(seen).toEqual(new Set(["AGENTS.md"]));
+  });
 });
 
 describe("FsSkillRepository.entries", () => {

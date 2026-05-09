@@ -119,6 +119,24 @@ describe("FsTaskRepository", () => {
     await repo.delete("20260101-cccccccc");
   });
 
+  it("list() silently drops id-mismatched tasks (parseTask throws, list catches)", async () => {
+    // Companion to the read() id-mismatch test above. list() catches
+    // CorruptedTaskError per-entry; a single bad task.json must not
+    // remove healthy tasks from the result.
+    const repo = new FsTaskRepository({ tasksDir });
+    const goodId = "20260101-aaaaaaaa";
+    await repo.save({ ...sample, id: goodId });
+    // Bad: dir name "20260101-bbbbbbbb" but payload claims a different id.
+    await writeWire("20260101-bbbbbbbb", {
+      schemaVersion: 1,
+      ...sample,
+      id: "20260101-cccccccc",
+    });
+    const all = await repo.list();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.id).toBe(goodId);
+  });
+
   it("read throws CorruptedTaskError when task.id mismatches the dir name", async () => {
     // Catches the storage-key-vs-logical-id drift bug. A task.json
     // claiming id 'BBB' inside <tasksDir>/AAA/ would otherwise be

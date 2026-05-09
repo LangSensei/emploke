@@ -183,14 +183,32 @@ function stripHooksPrefix(relPath: string): string | null {
  * directories. `relPath` is POSIX-style (the catalog contract); we split
  * on `/` and re-join via `path.join` so it materializes correctly on
  * Windows too.
+ *
+ * **Defense-in-depth**: validate the resolved final path stays inside
+ * `destRoot`. The catalog walker already rejects symlinks and the names
+ * it yields are individual `readdir` segments (no `..` possible), so this
+ * check is belt-and-braces — but a corrupted SQLite-backed catalog row
+ * that returned `relPath: "../foo"`, or an entry filename containing a
+ * literal Windows-style backslash that survived `toPosix`, would
+ * otherwise let writes escape the destination. Refusing is cheap.
  */
 async function writeFileAt(destRoot: string, relPath: string, content: Buffer): Promise<void> {
   const segments = relPath.split("/");
   const fileName = segments.pop();
   if (!fileName) return;
   const dir = segments.length > 0 ? path.join(destRoot, ...segments) : destRoot;
+  const target = path.join(dir, fileName);
+  // Resolve both sides so symlink-free comparisons work consistently
+  // across Windows / POSIX.
+  const resolvedDest = path.resolve(target);
+  const resolvedRoot = path.resolve(destRoot);
+  if (resolvedDest !== resolvedRoot && !resolvedDest.startsWith(resolvedRoot + path.sep)) {
+    throw new Error(
+      `refusing to write catalog entry outside workdir: relPath ${JSON.stringify(relPath)} resolves to ${resolvedDest}`,
+    );
+  }
   if (segments.length > 0) await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, fileName), content);
+  await writeFile(target, content);
 }
 
 async function initGitRepo(workdir: string): Promise<void> {

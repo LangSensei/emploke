@@ -59,7 +59,10 @@ export class InMemorySkillRepository implements SkillRepository {
         await this.copyTree(rootDir, childRel, files);
       } else if (e.isFile()) {
         const s = await stat(abs);
-        if (s.size > 1_048_576) continue;
+        // Same 50 MB cap as the FS walker (`entries-helpers.ts`). Tests
+        // that pass with InMemory must behave identically with FS in
+        // production — diverging caps let large-file regressions hide.
+        if (s.size > 50 * 1024 * 1024) continue;
         files.set(childRel, await readFile(abs));
       }
     }

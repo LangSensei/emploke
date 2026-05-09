@@ -10,6 +10,14 @@ import type { CatalogEntryFile } from "./repository.js";
  * OS, so consumers (especially the runtime that bakes skills into a
  * session workdir) can safely string-prefix without re-normalising.
  *
+ * **Symlinks are silently skipped** (both file and directory symlinks).
+ * Following them would let a malicious or accidentally-installed catalog
+ * entry escape its own directory and leak host files (e.g. an installed
+ * skill containing `evil -> /etc/passwd` or `loop -> .`). We don't
+ * complicate the surface with realpath-based whitelisting; the strict
+ * "no symlinks at all" rule matches what a SQLite-backed repository
+ * would naturally enforce (rows have no symlink concept).
+ *
  * `kind`/`name` are used only to build a {@link NotFound} error when the
  * root dir is missing; the rest of the walk is silent.
  */
@@ -26,6 +34,11 @@ async function* walkInner(absRoot: string, relParent: string): AsyncIterable<Cat
   const here = relParent ? join(absRoot, ...relParent.split("/")) : absRoot;
   const entries = await readdir(here, { withFileTypes: true });
   for (const ent of entries) {
+    // Skip symlinks before doing anything else. On Windows
+    // `Dirent.isDirectory()` returns true for symlinks pointing at dirs,
+    // which would otherwise let the recursive walk descend through a
+    // symlinked-out target and yield arbitrary host files.
+    if (ent.isSymbolicLink()) continue;
     const childRel = relParent ? `${relParent}/${ent.name}` : ent.name;
     const abs = join(here, ent.name);
     if (ent.isDirectory()) {

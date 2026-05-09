@@ -235,6 +235,36 @@ describe("flattenSkillName", () => {
   });
 });
 
+describe("provisionCopilotWorkdir — path-traversal hardening", () => {
+  it("refuses to write a catalog entry whose relPath escapes the workdir", async () => {
+    // Catalog walker rejects symlinks and only yields readdir-segment
+    // names (no `..` possible), so this is defense-in-depth — but a
+    // malicious / corrupted SQLite-backed catalog row could still
+    // hand back `relPath: "../escape"`. provision must refuse.
+    const t = targetDir();
+    const fakeAgent = { name: "demo", description: "d", version: "0.0.1" };
+    const malicious = {
+      resolveAgent: (_n: string) => ({ agent: fakeAgent, skills: [], mcps: [] }),
+      agentEntries: async function* (_n: string) {
+        yield { relPath: "AGENTS.md", content: Buffer.from("ok") };
+        yield { relPath: "../escape.txt", content: Buffer.from("PWNED") };
+      },
+      skillEntries: async function* (_n: string) {
+        // empty
+      },
+      getMcpContent: async (_n: string) => {
+        throw new Error("not used");
+      },
+    };
+    await expect(
+      // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogManager surface
+      provisionCopilotWorkdir(t, malicious.resolveAgent("x") as any, malicious as any),
+    ).rejects.toMatchObject({ message: expect.stringContaining("outside workdir") });
+    // No file written outside the workdir.
+    expect(await exists(path.join(scratch, "escape.txt"))).toBe(false);
+  });
+});
+
 describe("provisionCopilotWorkdir — MCP config", () => {
   it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers", async () => {
     const t = targetDir();
