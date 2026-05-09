@@ -2,6 +2,7 @@
   "name": "@emploke/server",
   "version": "0.0.1",
   "type": "module",
+  "_devPortNote": "The PORT=41817 in scripts.dev MUST stay in lock-step with the proxy target in packages/dashboard/vite.config.ts. If they drift, dev /api/* requests silently ECONNREFUSED.",
   "scripts": {
     "dev": "cross-env PORT=41817 node --watch --import tsx src/index.ts",
     "build": "tsc",

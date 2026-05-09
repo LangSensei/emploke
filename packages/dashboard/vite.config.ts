@@ -11,6 +11,11 @@ import { defineConfig } from "vite";
 // Both ports are deliberately picked away from 3000 / 5173 to dodge the
 // extremely common JS-tooling collisions (Next.js, CRA, Express, plain
 // Vite defaults all default to those).
+//
+// ⚠️  The 41817 literal below MUST stay in lock-step with the
+//     `cross-env PORT=41817` in packages/server/package.json's `dev`
+//     script. If they drift, dev `/api/*` requests will silently
+//     ECONNREFUSED with no useful error.
 export default defineConfig({
   plugins: [react()],
   server: {

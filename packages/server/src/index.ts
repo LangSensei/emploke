@@ -33,7 +33,11 @@ type WorkspaceVars = {
 
 const paths = resolveEmplokePaths(process.env);
 
-const port = Number(process.env.PORT ?? 8787);
+// `||` instead of `??` so `PORT=""` (common in CI / .env templates with
+// empty values) falls back to the default rather than coercing to 0,
+// which Node treats as "bind to a random ephemeral port"  surprising
+// and almost never what the operator wanted.
+const port = Number(process.env.PORT || 8787);
 // Bind to loopback by default  the server exposes destructive endpoints
 // (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
 // as a single-user local dashboard. To intentionally expose on the LAN, set
