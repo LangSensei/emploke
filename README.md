@@ -16,6 +16,7 @@
 | [`@emploke/session`](./packages/session) | Per-session workdir registry under `<workspace>/sessions/<id>/`, parameterised over a runtime registry. |
 | [`@emploke/terminal`](./packages/terminal) | Cross-platform terminal spawner that hosts a `LaunchCommand`. |
 | [`@emploke/server`](./packages/server) | Hono-based HTTP API exposing workspace-scoped catalog, session, and task routes (`/api/workspaces/<id>/{catalog,sessions,tasks}/...`). Loopback-only by default. Drains running tasks on SIGTERM/SIGINT. |
+| [`@emploke/logger`](./packages/logger) | Structured logger (pino under the hood) with rotating file destination. Threaded through the server into every per-workspace manager. |
 | [`@emploke/dashboard`](./packages/dashboard) | React + Vite dashboard with a workspace switcher in the sidebar; talks to `@emploke/server`. |
 
 All packages are pre-1.0.
@@ -87,6 +88,94 @@ pnpm typecheck   # tsc --noEmit across all packages
 pnpm test        # vitest across all packages
 pnpm lint        # biome check
 ```
+
+## Run as a service
+
+`pnpm bundle` produces a single self-contained executable (the dashboard
+SPA is bundled alongside) that can be `npm install -g`-ed and run as
+`emploke`:
+
+```sh
+pnpm bundle                     # → bundle/emploke.js + bundle/static/
+node bundle/emploke.js          # boots HTTP on http://127.0.0.1:3000
+```
+
+Once published, end users get the same in one step:
+
+```sh
+npm install -g @langsensei/emploke
+emploke
+```
+
+The bundled binary defaults to `--serve-static` (the dashboard is in the
+package, single-port deployment is the only thing that makes sense). Pass
+`--no-serve-static` to fall back to API-only mode.
+
+Configuration is via env vars (same set as the dev server):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Listen port |
+| `EMPLOKE_HOST` | `127.0.0.1` | Bind address. Non-loopback values **require** `EMPLOKE_API_KEY`. |
+| `EMPLOKE_API_KEY` | — | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. |
+| `EMPLOKE_HOME` | `~/.emploke` | Where the workspace registry (`workspaces.json`) lives. |
+| `EMPLOKE_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
+| `EMPLOKE_LOG_FORMAT` | `pretty` | `pretty` (dev) or `json` (prod / log aggregators). |
+| `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. |
+
+Bundle layout: `bundle/emploke.js` inlines server + every workspace
+package + `hono` / `js-yaml` / etc. The pino logger family
+(`pino`, `pino-pretty`, `pino-roll`) is intentionally **not** inlined —
+pino loads transports through `worker_threads` with runtime-resolved
+paths, which can't survive bundling. Those three packages are declared
+as runtime `dependencies` and pulled by `npm install -g`.
+
+## Releasing
+
+The `@langsensei/emploke` npm package is published by a tag-triggered
+GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
+The maintainer workflow is:
+
+```sh
+npm version patch        # bumps package.json + creates v<X.Y.Z> tag + commit
+git push --follow-tags   # pushes commit + tag → workflow runs → npm publish
+```
+
+Use `minor` / `major` instead of `patch` per [semver](https://semver.org/) as appropriate.
+
+Prereleases:
+
+```sh
+npm version prerelease --preid=rc   # 0.2.0 → 0.2.1-rc.0
+git push --follow-tags
+```
+
+Versions containing a `-` (e.g. `0.2.1-rc.0`) are published with the
+`next` npm dist-tag rather than `latest`, so `npm install -g @langsensei/emploke`
+keeps installing the stable line.
+
+The workflow refuses to publish if the git tag's version doesn't match
+`package.json`. It also enables [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
+so the package page links back to the exact commit + workflow run that
+built each release.
+
+Repo prerequisite (one-time): configure
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers)
+on the package so the workflow can publish via OIDC without a long-lived
+token. On the npm package settings page (Publishing access → Trusted
+Publishers), add a GitHub Actions trusted publisher with:
+
+| Field | Value |
+|---|---|
+| Organization or user | `LangSensei` |
+| Repository | `emploke` |
+| Workflow filename | `release.yml` |
+| Environment | *(leave blank)* |
+
+Trusted Publishing replaces classic automation tokens, which since
+October 2025 cap out at 90-day expiry. The OIDC token is short-lived,
+scoped to one workflow run, and managed entirely by npm + GitHub — no
+`NPM_TOKEN` repo secret to maintain.
 
 ## Design book
 
