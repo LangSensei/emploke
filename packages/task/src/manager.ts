@@ -602,6 +602,22 @@ export class TaskManager {
   // ─── shutdown ────────────────────────────────────────────
 
   /**
+   * Number of subprocesses this manager is currently supervising. A task
+   * counts as "live" from the moment dispatch's spawn callback fires
+   * until its exit watcher has finished persisting the terminal status
+   * (i.e. `live.delete(id)` runs).
+   *
+   * Useful for callers that need to refuse / defer destructive operations
+   * — e.g. workspace cache reload, where evicting the cached
+   * `WorkspaceContext` mid-task would orphan the subprocess from this
+   * manager's view and leave the next request's fresh `recoverOrphaned`
+   * sweep racing the original exit watcher to write the terminal row.
+   */
+  liveCount(): number {
+    return this.live.size;
+  }
+
+  /**
    * Kill every live subprocess, await their exit + post-exit persistence,
    * and stop accepting new dispatches. Idempotent — calling twice is a
    * no-op the second time.

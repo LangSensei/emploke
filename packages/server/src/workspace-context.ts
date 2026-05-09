@@ -6,6 +6,33 @@ import { TaskManager } from "@emploke/task";
 import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke/workspace";
 
 /**
+ * Thrown by `WorkspaceContextCache.reload` when the cached context for
+ * the requested workspace still has live task subprocesses being
+ * supervised by its `TaskManager`.
+ *
+ * Reload would `entries.delete(id)` and let the next request lazy-build
+ * a fresh context. The fresh `TaskManager`'s `recoverOrphaned` sweep
+ * would see the on-disk `task.json` rows still flipped to `running`
+ * (because the OLD manager's exit watcher hasn't fired yet) and race
+ * to reclassify them as `failure`, even though the subprocess itself
+ * is alive and well. To keep that race off the table we refuse the
+ * reload and surface this typed error to the caller (the route maps
+ * it to HTTP 409).
+ *
+ * The user resolves it the same way as any other in-flight conflict:
+ * cancel the running tasks (or wait for them to finish), then retry.
+ */
+export class WorkspaceHasLiveTasksError extends Error {
+  constructor(
+    public readonly workspaceId: string,
+    public readonly liveCount: number,
+  ) {
+    super(`workspace has ${liveCount} live task(s); reload would orphan them`);
+    this.name = "WorkspaceHasLiveTasksError";
+  }
+}
+
+/**
  * Per-workspace bundle of long-lived state. The server caches one of these
  * per registered workspace and hands it to route handlers via Hono context.
  *
@@ -94,6 +121,39 @@ export class WorkspaceContextCache {
    */
   invalidate(id: string): void {
     this.entries.delete(id);
+  }
+
+  /**
+   * Drop the cached context for `id` and eagerly rebuild it. Returns
+   * the fresh context, or null if the workspace is no longer registered.
+   *
+   * Use case: catalog drift. The dashboard's `CatalogManager` is an
+   * in-memory snapshot taken at first-touch time; if a user adds an
+   * agent yaml under `<workspace>/catalog/agents/` from outside emploke
+   * (manual edit, `git pull`, …), the cached catalog won't see it.
+   * Reload rebuilds the catalog index and re-runs `recoverOrphaned` so
+   * the next request sees the on-disk truth.
+   *
+   * Refuses (`WorkspaceHasLiveTasksError`) when the existing cached
+   * context still has live task subprocesses — see the class jsdoc for
+   * why eviction-during-live-task is unsafe. The caller is expected to
+   * cancel / wait, then retry.
+   *
+   * Note: this surface intentionally does NOT touch any user-driven
+   * eviction policy (LRU / TTL / size cap). Those are tracked separately
+   * (issue #30) and need product calls about kill-vs-detach semantics
+   * that this slice deliberately sidesteps.
+   */
+  async reload(id: string): Promise<WorkspaceContext | null> {
+    const cached = this.entries.get(id);
+    if (cached) {
+      const live = cached.tasks.liveCount();
+      if (live > 0) {
+        throw new WorkspaceHasLiveTasksError(id, live);
+      }
+    }
+    this.entries.delete(id);
+    return this.get(id);
   }
 
   /**

@@ -18,7 +18,7 @@ import {
   UnsupportedPlatformError,
 } from "@emploke/terminal";
 import { Hono } from "hono";
-import { errorBody, parseJsonBody } from "./_shared.js";
+import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
 
 interface CreateBody {
   agent?: unknown;
@@ -146,6 +146,7 @@ export function sessionsRoutes(
       return c.json(rec, 201);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logServerError(err);
       // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
       return c.json(errorBody(err), status as any);
     }
@@ -168,6 +169,7 @@ export function sessionsRoutes(
       return c.json(rec);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logServerError(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
@@ -187,6 +189,7 @@ export function sessionsRoutes(
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logServerError(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
@@ -204,6 +207,7 @@ export function sessionsRoutes(
       cmd = await getManager(c).buildLaunch(id);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logServerError(err);
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
