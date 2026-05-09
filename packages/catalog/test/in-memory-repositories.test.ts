@@ -74,8 +74,8 @@ describe("Stores wired to InMemory repositories", () => {
     expect(fqn).toBe("github/cli");
     expect(store.has("github/cli")).toBe(true);
     const stored = await repo.read("github/cli");
-    expect(stored).toContain("\"name\": \"github/cli\"");
-    expect(stored).toContain("\"origin\": \"file:/x\"");
+    expect(stored).toContain('"name": "github/cli"');
+    expect(stored).toContain('"origin": "file:/x"');
 
     await store.remove("github/cli", () => []);
     expect(store.has("github/cli")).toBe(false);

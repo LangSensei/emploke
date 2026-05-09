@@ -259,10 +259,7 @@ async function resolveSkillOrAgentNode(
   return { node, children };
 }
 
-function pickDepRefs(
-  raw: unknown,
-  field: "skills" | "mcps",
-): readonly DependencyRef[] {
+function pickDepRefs(raw: unknown, field: "skills" | "mcps"): readonly DependencyRef[] {
   if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) return [];
   const arr = (raw as Record<string, unknown>)[field];
   if (!Array.isArray(arr)) return [];

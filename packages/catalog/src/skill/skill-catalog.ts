@@ -5,8 +5,8 @@ import {
   applyFrontmatterPatch,
   depRefToFqn,
   frontmatterToSkill,
-  parseFrontmatter,
   type ProjectionOpts,
+  parseFrontmatter,
   projectionOpts,
 } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
@@ -117,7 +117,9 @@ export class SkillCatalog {
     if (Object.keys(patch).length > 0) {
       const rewritten = applyFrontmatterPatch(anchor.content, patch);
       toInstall = buffered.map((f) =>
-        f.relPath === "SKILL.md" ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") } : f,
+        f.relPath === "SKILL.md"
+          ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") }
+          : f,
       );
     }
     await this.repository.install(skill.name, asyncIterableOf(toInstall));
@@ -142,11 +144,7 @@ export class SkillCatalog {
     const existingSkill = this.skills.get(name);
     // Preserve the existing entry's origin when the patch omits one — the
     // user shouldn't have to retype it on every metadata edit.
-    const skill = frontmatterToSkill(
-      data,
-      sourcePath,
-      projectionOpts(existingSkill?.origin),
-    );
+    const skill = frontmatterToSkill(data, sourcePath, projectionOpts(existingSkill?.origin));
     if (skill.name !== name) {
       throw new FrontmatterError(
         sourcePath,
@@ -191,11 +189,7 @@ export class SkillCatalog {
     const newContent = applyFrontmatterPatch(existing, merge);
 
     const { data } = parseFrontmatter(newContent, sourcePath);
-    const skill = frontmatterToSkill(
-      data,
-      sourcePath,
-      projectionOpts(existingSkill?.origin),
-    );
+    const skill = frontmatterToSkill(data, sourcePath, projectionOpts(existingSkill?.origin));
     if (skill.name !== name) {
       throw new FrontmatterError(
         sourcePath,

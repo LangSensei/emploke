@@ -15,7 +15,7 @@
  * {@link InstallManifest} listing per-FQN outcomes (`installed`,
  * `skipped`, `failed`) — same shape `deepInstall` used to produce.
  */
-import { type FetcherRegistry, type EntryFile } from "@emploke/catalog-fetcher";
+import type { EntryFile, FetcherRegistry } from "@emploke/catalog-fetcher";
 import type { CatalogManager } from "./manager.js";
 import type { ResolveManifest, ResolveNode } from "./resolve.js";
 

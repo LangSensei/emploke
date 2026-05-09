@@ -94,9 +94,7 @@ async function setup(opts: {
             ...(agentDeps.skills.length
               ? ["  skills:", ...agentDeps.skills.map(renderDepRef)]
               : []),
-            ...(agentDeps.mcps.length
-              ? ["  mcps:", ...agentDeps.mcps.map(renderMcpDepRef)]
-              : []),
+            ...(agentDeps.mcps.length ? ["  mcps:", ...agentDeps.mcps.map(renderMcpDepRef)] : []),
           ]
         : []),
       "---",
@@ -121,12 +119,8 @@ async function setup(opts: {
         ...(sk.deps
           ? [
               "dependencies:",
-              ...(sk.deps.skills?.length
-                ? ["  skills:", ...sk.deps.skills.map(renderDepRef)]
-                : []),
-              ...(sk.deps.mcps?.length
-                ? ["  mcps:", ...sk.deps.mcps.map(renderMcpDepRef)]
-                : []),
+              ...(sk.deps.skills?.length ? ["  skills:", ...sk.deps.skills.map(renderDepRef)] : []),
+              ...(sk.deps.mcps?.length ? ["  mcps:", ...sk.deps.mcps.map(renderMcpDepRef)] : []),
             ]
           : []),
         "---",
@@ -443,9 +437,7 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
     expect(await readFile(path.join(t, ".github/hooks/earlier__shared.sh"), "utf8")).toBe(
       "first\n",
     );
-    expect(await readFile(path.join(t, ".github/hooks/later__shared.sh"), "utf8")).toBe(
-      "second\n",
-    );
+    expect(await readFile(path.join(t, ".github/hooks/later__shared.sh"), "utf8")).toBe("second\n");
   });
 });
 

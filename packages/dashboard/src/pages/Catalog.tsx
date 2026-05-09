@@ -10,9 +10,12 @@ import {
   type McpItem,
   patchAgentMetadata,
   patchSkillMetadata,
+  type ResolveManifest,
   removeAgent,
   removeMcp,
   removeSkill,
+  resolveAgentInstall,
+  resolveSkillInstall,
   updateAgentContent,
   updateMcpContent,
   updateSkillContent,
@@ -23,6 +26,7 @@ import { PlusIcon } from "../components/Icons";
 import { McpGrid } from "../components/McpGrid";
 import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
 import { Modal } from "../components/Modal";
+import { ResolveTree } from "../components/ResolveTree";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
 
@@ -63,12 +67,18 @@ export function CatalogPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const doInstall = async (origin: string, name?: string) => {
+  const doInstall = async (
+    origin: string,
+    name: string | undefined,
+    scopeHints: Record<string, string>,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents") await installAgent(origin);
-      else if (tab === "skills") await installSkill(origin);
+      if (tab === "agents")
+        await installAgent(origin, hasHints(scopeHints) ? scopeHints : undefined);
+      else if (tab === "skills")
+        await installSkill(origin, hasHints(scopeHints) ? scopeHints : undefined);
       else {
         if (!name) throw new Error("name is required for MCP installs");
         await installMcp(origin, name);
@@ -257,27 +267,100 @@ interface InstallDialogProps {
   onClose: () => void;
   /**
    * `origin` is a URI: `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
-   * or `file:<absolute-path>`. `name` is required for MCPs (no
-   * frontmatter to derive it from), unused for skills/agents.
+   * or `file:<absolute-path>`. `name` is required for MCPs (full
+   * MCP-spec FQN, `<namespace>/<short>`). `scopeHints` is the per-FQN
+   * scope override map (skill/agent only — MCPs ignore hints).
    */
-  onSubmit: (origin: string, name?: string) => void;
+  onSubmit: (origin: string, name: string | undefined, scopeHints: Record<string, string>) => void;
 }
+
+type InstallStage = "input" | "previewing" | "preview" | "applying";
 
 function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDialogProps) {
   const [origin, setOrigin] = useState("");
   const [name, setName] = useState("");
+  const [stage, setStage] = useState<InstallStage>("input");
+  const [manifest, setManifest] = useState<ResolveManifest | null>(null);
+  const [scopeHints, setScopeHints] = useState<Record<string, string>>({});
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const isMcp = kind === "mcps";
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!origin.trim()) return;
-    if (isMcp && !name.trim()) return;
-    onSubmit(origin.trim(), name.trim() || undefined);
+  // Reset transient state whenever the dialog closes / re-opens.
+  useEffect(() => {
+    if (!open) {
+      setStage("input");
+      setManifest(null);
+      setScopeHints({});
+      setResolveError(null);
+    }
+  }, [open]);
+
+  const handleScopeChange = (fqn: string, scope: string): void => {
+    if (!manifest) return;
+    const node = manifest.nodes.find((n) => n.fqn === fqn);
+    const trimmed = scope.trim();
+    setScopeHints((prev) => {
+      const next = { ...prev };
+      // If the user blanked the field or set it back to the default,
+      // drop the hint so the install body stays sparse.
+      const defaultScope =
+        node && (node.kind === "skill" || node.kind === "agent") ? node.defaultScope : "";
+      if (trimmed === "" || trimmed === defaultScope) {
+        delete next[fqn];
+      } else {
+        next[fqn] = trimmed;
+      }
+      return next;
+    });
   };
 
+  const handlePreview = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!origin.trim()) return;
+    if (isMcp) {
+      // MCPs skip the resolve preview — single fetch + write, no deps to
+      // tweak; submit straight through.
+      if (!name.trim()) return;
+      onSubmit(origin.trim(), name.trim(), {});
+      return;
+    }
+    setStage("previewing");
+    setResolveError(null);
+    try {
+      const m =
+        kind === "agents"
+          ? await resolveAgentInstall(origin.trim())
+          : await resolveSkillInstall(origin.trim());
+      setManifest(m);
+      setStage("preview");
+    } catch (err) {
+      setResolveError((err as Error).message);
+      setStage("input");
+    }
+  };
+
+  const handleApply = (): void => {
+    setStage("applying");
+    onSubmit(origin.trim(), undefined, scopeHints);
+  };
+
+  const handleBack = (): void => {
+    setStage("input");
+    setManifest(null);
+    setScopeHints({});
+  };
+
+  const stageBusy = busy || stage === "previewing" || stage === "applying";
+  const showPreview = stage === "preview" || stage === "applying";
+
   return (
-    <Modal open={open} onClose={onClose} title={`Install ${KIND_LABEL[kind]}`}>
-      <form onSubmit={handleSubmit}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Install ${KIND_LABEL[kind]}`}
+      size={showPreview ? "large" : "default"}
+    >
+      <form onSubmit={handlePreview}>
         <div className="modal__body">
           <div className="form-field">
             <label htmlFor="install-origin">Origin URI</label>
@@ -289,12 +372,14 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
               placeholder="https://github.com/owner/repo/tree/main/path  or  file:/abs/path"
               // biome-ignore lint/a11y/noAutofocus: install dialog opens in response to a user click; auto-focusing the only field is expected UX
               autoFocus
-              disabled={busy}
+              disabled={stageBusy || showPreview}
             />
             <p className="form-hint">
-              <code>https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;ref&gt;/&lt;path&gt;</code>{" "}
+              <code>
+                https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;ref&gt;/&lt;path&gt;
+              </code>{" "}
               for remote installs, or <code>file:&lt;absolute-path&gt;</code> for the server's local
-              filesystem. Dependencies are recursively fetched + installed.
+              filesystem. Dependencies are recursively previewed and installed.
             </p>
           </div>
 
@@ -306,34 +391,71 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="my-mcp (short kebab-case name)"
-                disabled={busy}
+                placeholder="azure/mcp (full MCP-spec FQN with /)"
+                disabled={stageBusy}
               />
               <p className="form-hint">
-                Required — MCPs have no frontmatter, so the catalog needs the short name
-                explicitly. Scope auto-derives from origin.
+                Required — the full MCP-spec FQN (<code>&lt;namespace&gt;/&lt;short&gt;</code>).
+                MCPs do NOT participate in scope-mapping; the spec name IS the catalog identity.
               </p>
             </div>
           )}
 
-          {error && <div className="alert alert--error">⚠ {error}</div>}
+          {showPreview && manifest && (
+            <ResolveTree
+              manifest={manifest}
+              scopeHints={scopeHints}
+              onScopeChange={handleScopeChange}
+              disabled={stage === "applying"}
+            />
+          )}
+
+          {(error || resolveError) && (
+            <div className="alert alert--error">⚠ {error ?? resolveError}</div>
+          )}
         </div>
 
         <div className="modal__footer">
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+          {showPreview && (
+            <button
+              type="button"
+              className="btn btn--ghost modal__footer-secondary"
+              onClick={handleBack}
+              disabled={stageBusy}
+            >
+              ← Back
+            </button>
+          )}
+          <button type="button" className="btn" onClick={onClose} disabled={stageBusy}>
             Cancel
           </button>
-          <button
-            type="submit"
-            className="btn btn--primary"
-            disabled={busy || !origin.trim() || (isMcp && !name.trim())}
-          >
-            {busy ? "Installing..." : "Install"}
-          </button>
+          {!showPreview ? (
+            <button
+              type="submit"
+              className="btn btn--primary"
+              disabled={stageBusy || !origin.trim() || (isMcp && !name.trim())}
+            >
+              {stage === "previewing" ? "Resolving..." : isMcp ? "Install" : "Preview install"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleApply}
+              disabled={stageBusy}
+            >
+              {stage === "applying" ? "Installing..." : "Install"}
+            </button>
+          )}
         </div>
       </form>
     </Modal>
   );
+}
+
+function hasHints(hints: Record<string, string>): boolean {
+  for (const _ in hints) return true;
+  return false;
 }
 
 // ─── ConfirmRemoveDialog ──────────────────────────────────────────

@@ -71,11 +71,7 @@ export class FsMcpRepository implements McpRepository {
     return join(this.baseDir, namespace, `${shortName}.json`);
   }
 
-  private async scanDir(
-    dir: string,
-    namespace: string | null,
-    out: McpRepoEntry[],
-  ): Promise<void> {
+  private async scanDir(dir: string, namespace: string | null, out: McpRepoEntry[]): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith(".json")) {

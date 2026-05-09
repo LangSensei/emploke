@@ -25,10 +25,10 @@
  * single-server developer-tool deployment; would need a file-watch
  * + debounce for multi-process scenarios.
  */
-import { type ParsedOrigin, defaultMapping, parseOrigin } from "@emploke/catalog-fetcher";
+import { defaultMapping, type ParsedOrigin, parseOrigin } from "@emploke/catalog-fetcher";
 import {
-  type CatalogConfig,
   CATALOG_CONFIG_VERSION,
+  type CatalogConfig,
   type CatalogRepository,
 } from "./repositories/catalog-repository.js";
 
@@ -62,8 +62,10 @@ export class ScopeResolver {
 
   static async load(repo: CatalogRepository): Promise<ScopeResolver> {
     const stored = await repo.read();
-    const snapshot: CatalogConfig =
-      stored ?? { version: CATALOG_CONFIG_VERSION, scopeMappings: {} };
+    const snapshot: CatalogConfig = stored ?? {
+      version: CATALOG_CONFIG_VERSION,
+      scopeMappings: {},
+    };
     return new ScopeResolver(repo, snapshot);
   }
 

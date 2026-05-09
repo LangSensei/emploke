@@ -1,6 +1,6 @@
 import {
-  type CatalogConfig,
   CATALOG_CONFIG_VERSION,
+  type CatalogConfig,
   type CatalogRepository,
 } from "./catalog-repository.js";
 

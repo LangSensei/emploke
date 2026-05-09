@@ -5,8 +5,8 @@ import {
   applyFrontmatterPatch,
   depRefToFqn,
   frontmatterToAgent,
-  parseFrontmatter,
   type ProjectionOpts,
+  parseFrontmatter,
   projectionOpts,
 } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
@@ -91,7 +91,9 @@ export class AgentCatalog {
     if (Object.keys(patch).length > 0) {
       const rewritten = applyFrontmatterPatch(anchor.content, patch);
       toInstall = buffered.map((f) =>
-        f.relPath === "AGENTS.md" ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") } : f,
+        f.relPath === "AGENTS.md"
+          ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") }
+          : f,
       );
     }
     await this.repository.install(agent.name, asyncIterableOf(toInstall));
@@ -115,11 +117,7 @@ export class AgentCatalog {
     const sourcePath = `repository:agents/${name}/AGENTS.md`;
     const { data } = parseFrontmatter(content, sourcePath);
     const existingAgent = this.agents.get(name);
-    const agent = frontmatterToAgent(
-      data,
-      sourcePath,
-      projectionOpts(existingAgent?.origin),
-    );
+    const agent = frontmatterToAgent(data, sourcePath, projectionOpts(existingAgent?.origin));
     if (agent.name !== name) {
       throw new FrontmatterError(
         sourcePath,
@@ -162,11 +160,7 @@ export class AgentCatalog {
 
     const newContent = applyFrontmatterPatch(existing, merge);
     const { data } = parseFrontmatter(newContent, sourcePath);
-    const agent = frontmatterToAgent(
-      data,
-      sourcePath,
-      projectionOpts(existingAgent?.origin),
-    );
+    const agent = frontmatterToAgent(data, sourcePath, projectionOpts(existingAgent?.origin));
     if (agent.name !== name) {
       throw new FrontmatterError(
         sourcePath,

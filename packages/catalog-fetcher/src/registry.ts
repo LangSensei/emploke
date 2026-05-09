@@ -1,4 +1,4 @@
-import { type EntryFile, type Fetcher } from "./fetcher.js";
+import type { EntryFile, Fetcher } from "./fetcher.js";
 import { FileFetcher } from "./file-fetcher.js";
 import { GitHubFetcher } from "./github-fetcher.js";
 import { type ParsedOrigin, parseOrigin } from "./origin.js";

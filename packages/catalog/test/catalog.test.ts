@@ -5,11 +5,11 @@ import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { CatalogManager } from "../src/manager.js";
 import {
   dep,
+  type MakeSourceOpts,
   makeAgentSource,
   makeBase,
   makeMcpSource,
   makeSkillSource,
-  type MakeSourceOpts,
   mcpDep,
 } from "./helpers.js";
 
@@ -27,10 +27,7 @@ async function makeMcp(specName: string): Promise<{ content: string; origin: str
   const content = await readFile(file, "utf8");
   return { content, origin: `file:${file}` };
 }
-async function installMcp(
-  c: CatalogManager,
-  specName: string,
-): Promise<string> {
+async function installMcp(c: CatalogManager, specName: string): Promise<string> {
   const { content, origin } = await makeMcp(specName);
   return c.installMcp(content, { name: specName, origin });
 }

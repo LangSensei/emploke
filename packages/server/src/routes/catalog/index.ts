@@ -1,8 +1,5 @@
 import type { CatalogManager } from "@emploke/catalog";
-import {
-  defaultFetcherRegistry,
-  type FetcherRegistry,
-} from "@emploke/catalog-fetcher";
+import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";

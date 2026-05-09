@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  applyFrontmatterPatch,
   type AgentResolveResult,
+  applyFrontmatterPatch,
   type CatalogManager,
   stripMcpMeta,
 } from "@emploke/catalog";

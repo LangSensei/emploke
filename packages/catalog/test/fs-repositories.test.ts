@@ -59,10 +59,7 @@ describe("FsAgentRepository", () => {
     await repo.installFromDir("local/alpha", src);
 
     expect(await repo.read("local/alpha")).toBe("alpha-content");
-    const extra = await readFile(
-      join(catalogDir, "agents", "local", "alpha", "extra.txt"),
-      "utf8",
-    );
+    const extra = await readFile(join(catalogDir, "agents", "local", "alpha", "extra.txt"), "utf8");
     expect(extra).toBe("extra-bytes");
   });
 

@@ -52,9 +52,7 @@ export async function readAgentInstallBody(
  * the full MCP-spec FQN (`<namespace>/<short>`). MCPs don't take
  * `scopeHints` — spec name IS the catalog identity.
  */
-export async function readMcpInstallBody(
-  c: Context,
-): Promise<McpInstallBody | { error: string }> {
+export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | { error: string }> {
   const parsed = await parseJsonBody<unknown>(c);
   if (!parsed.ok) return { error: parsed.error };
   try {

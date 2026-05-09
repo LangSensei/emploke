@@ -74,11 +74,9 @@ describe("frontmatterToSkill", () => {
   });
 
   it("uses defaultOrigin from opts when frontmatter omits origin", () => {
-    const skill = frontmatterToSkill(
-      { name: "weather", description: "x" },
-      "weather/SKILL.md",
-      { defaultOrigin: "https://github.com/anthropic/skills/tree/main/weather" },
-    );
+    const skill = frontmatterToSkill({ name: "weather", description: "x" }, "weather/SKILL.md", {
+      defaultOrigin: "https://github.com/anthropic/skills/tree/main/weather",
+    });
     expect(skill.origin).toBe("https://github.com/anthropic/skills/tree/main/weather");
     expect(skill.scope).toBe("anthropic");
     expect(skill.name).toBe("anthropic/weather");
@@ -114,9 +112,9 @@ describe("frontmatterToSkill", () => {
   });
 
   it("throws NameInvalid when name contains a slash (must be short name)", () => {
-    expect(() =>
-      frontmatterToSkill({ name: "scope/foo", description: "x" }, "x.md"),
-    ).toThrow(/short name/);
+    expect(() => frontmatterToSkill({ name: "scope/foo", description: "x" }, "x.md")).toThrow(
+      /short name/,
+    );
   });
 
   it("throws when description is missing", () => {
@@ -143,10 +141,7 @@ describe("frontmatterToSkill", () => {
 
   it("throws when dependencies.skills entries are bare strings (post-#39 clean break)", () => {
     expect(() =>
-      frontmatterToSkill(
-        { name: "a", description: "x", dependencies: { skills: ["b"] } },
-        "x.md",
-      ),
+      frontmatterToSkill({ name: "a", description: "x", dependencies: { skills: ["b"] } }, "x.md"),
     ).toThrow(FrontmatterError);
   });
 

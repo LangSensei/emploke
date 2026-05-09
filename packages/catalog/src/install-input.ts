@@ -72,7 +72,10 @@ function expectObject(raw: unknown): Record<string, unknown> {
 function requireNonEmptyString(obj: Record<string, unknown>, key: string): string {
   const v = obj[key];
   if (typeof v !== "string" || v.length === 0) {
-    throw new FrontmatterError(REQUEST_PATH, `\`${key}\` is required and must be a non-empty string`);
+    throw new FrontmatterError(
+      REQUEST_PATH,
+      `\`${key}\` is required and must be a non-empty string`,
+    );
   }
   return v;
 }

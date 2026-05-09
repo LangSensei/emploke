@@ -125,24 +125,88 @@ const jsonInit = (method: string, body: object): RequestInit => ({
  * the registered fetcher (file:, https://github.com/...), recursively
  * resolves dependencies, and returns a manifest. Returns 207 on partial
  * failure — caller surfaces that as an error message via {@link extractError}.
+ *
+ * `scopeHints` is a sparse map of `<resolved-FQN> → <scope-override>` for
+ * nodes the user edited in the resolve preview. Server applies the
+ * overrides per node; nodes absent from the map use the resolver-derived
+ * scope (L1/L2/L3).
  */
-export const installAgent = (origin: string) =>
-  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { origin }));
+export const installAgent = (origin: string, scopeHints?: Record<string, string>) =>
+  mutate(
+    `${catalogPrefix()}/agents`,
+    jsonInit("POST", scopeHints !== undefined ? { origin, scopeHints } : { origin }),
+  );
 
 /** See {@link installAgent}. */
-export const installSkill = (origin: string) =>
-  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { origin }));
+export const installSkill = (origin: string, scopeHints?: Record<string, string>) =>
+  mutate(
+    `${catalogPrefix()}/skills`,
+    jsonInit("POST", scopeHints !== undefined ? { origin, scopeHints } : { origin }),
+  );
 
 /**
- * MCPs are JSON-only (no frontmatter), so `name` is required — the catalog
- * has no other source for the short name. Optional `scope` overrides the
- * default `scopeFromOrigin(origin)` derivation.
+ * MCPs are JSON-only; `name` is the full MCP-spec FQN
+ * (`<namespace>/<short>`, with the slash). MCPs do NOT participate in
+ * the L1/L2/L3 scope-mapping system — the spec name IS the catalog
+ * identity.
  */
-export const installMcp = (origin: string, name: string, scope?: string) =>
-  mutate(
-    `${catalogPrefix()}/mcps`,
-    jsonInit("POST", scope === undefined ? { origin, name } : { origin, name, scope }),
-  );
+export const installMcp = (origin: string, name: string) =>
+  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", { origin, name }));
+
+/**
+ * Resolve manifest returned by `POST /catalog/{kind}/resolve`. Read-only
+ * preview of the dep graph the install will create. Used by the
+ * dashboard's two-phase install dialog so the user can edit per-node
+ * scopes before committing.
+ */
+export interface ResolveNodeBase {
+  kind: "skill" | "agent" | "mcp";
+  origin: string;
+  fqn: string;
+  status: "new" | "already-installed" | "would-conflict" | "fetch-failed" | "parse-failed";
+  depFqns: string[];
+  editable: boolean;
+  error?: { name: string; message: string };
+}
+
+export interface SkillResolveNode extends ResolveNodeBase {
+  kind: "skill";
+  shortName: string;
+  defaultScope: string;
+  scopeSource: "L1" | "L2" | "L3";
+  matchedPattern?: string;
+}
+
+export interface AgentResolveNode extends ResolveNodeBase {
+  kind: "agent";
+  shortName: string;
+  defaultScope: string;
+  scopeSource: "L1" | "L2" | "L3";
+  matchedPattern?: string;
+}
+
+export interface McpResolveNode extends ResolveNodeBase {
+  kind: "mcp";
+  specName: string;
+}
+
+export type ResolveNode = SkillResolveNode | AgentResolveNode | McpResolveNode;
+
+export interface ResolveManifest {
+  rootFqn: string;
+  nodes: ResolveNode[];
+}
+
+/**
+ * Resolve an install (`POST /catalog/{kind}/resolve`) — returns the
+ * read-only `ResolveManifest` so the user can preview the tree and
+ * pick per-node scope overrides before committing.
+ */
+export const resolveSkillInstall = (origin: string): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", { origin }));
+
+export const resolveAgentInstall = (origin: string): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", { origin }));
 
 export const removeAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });

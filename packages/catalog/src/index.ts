@@ -1,11 +1,19 @@
 export {
   FetchError,
-  type ParsedOrigin,
-  OriginParseError,
   normalizeOrigin,
+  OriginParseError,
+  type ParsedOrigin,
   parseOrigin,
   scopeFromOrigin,
 } from "@emploke/catalog-fetcher";
+export {
+  type ApplyInstallInput,
+  applyInstall,
+  type FailedEntry,
+  type InstalledEntry,
+  type InstallManifest,
+  type SkippedEntry,
+} from "./apply.js";
 export {
   CatalogError,
   CatalogStateError,
@@ -21,6 +29,14 @@ export {
   UnsupportedCatalogVersionError,
 } from "./errors.js";
 export { applyFrontmatterPatch, depRefToFqn, synthesizeOriginFromPath } from "./frontmatter.js";
+export {
+  type AgentInstallBody,
+  type McpInstallBody,
+  type SkillInstallBody,
+  validateAgentInstallInput,
+  validateMcpInstallInput,
+  validateSkillInstallInput,
+} from "./install-input.js";
 export type {
   AgentMetadataPatch,
   CatalogOptions,
@@ -31,13 +47,20 @@ export type {
 } from "./manager.js";
 export { CatalogManager } from "./manager.js";
 export {
-  type AgentInstallBody,
-  type McpInstallBody,
-  type SkillInstallBody,
-  validateAgentInstallInput,
-  validateMcpInstallInput,
-  validateSkillInstallInput,
-} from "./install-input.js";
+  type McpFileShape,
+  type McpMeta,
+  parseMcpFile,
+  stripMcpMeta,
+  writeMcpMeta,
+} from "./mcp/mcp-frontmatter.js";
+export {
+  CATALOG_CONFIG_VERSION,
+  type CatalogConfig,
+  type CatalogRepository,
+} from "./repositories/catalog-repository.js";
+export { FsCatalogRepository } from "./repositories/fs-catalog-repository.js";
+export { InMemoryCatalogRepository } from "./repositories/in-memory-catalog-repository.js";
+export type { CatalogEntryFile } from "./repositories/repository.js";
 export {
   type AgentResolveNode,
   type McpResolveNode,
@@ -46,33 +69,14 @@ export {
   type ResolveManifest,
   type ResolveNode,
   type RootKind,
-  type SkillResolveNode,
   resolveInstall,
+  type SkillResolveNode,
 } from "./resolve.js";
 export {
-  type ApplyInstallInput,
-  type FailedEntry,
-  type InstalledEntry,
-  type InstallManifest,
-  type SkippedEntry,
-  applyInstall,
-} from "./apply.js";
-export { type CatalogConfig, CATALOG_CONFIG_VERSION, type CatalogRepository } from "./repositories/catalog-repository.js";
-export { FsCatalogRepository } from "./repositories/fs-catalog-repository.js";
-export { InMemoryCatalogRepository } from "./repositories/in-memory-catalog-repository.js";
-export {
-  type McpFileShape,
-  type McpMeta,
-  parseMcpFile,
-  stripMcpMeta,
-  writeMcpMeta,
-} from "./mcp/mcp-frontmatter.js";
-export {
   type ResolvedScope,
-  type ScopeSource,
   ScopeResolver,
+  type ScopeSource,
 } from "./scope-resolver.js";
-export type { CatalogEntryFile } from "./repositories/repository.js";
 export type {
   Agent,
   AgentEntry,

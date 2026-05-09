@@ -8,7 +8,14 @@ import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { Resolver } from "../src/resolver.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
-import { dep, makeAgentSource, makeBase, makeMcpSource, makeSkillSource, mcpDep } from "./helpers.js";
+import {
+  dep,
+  makeAgentSource,
+  makeBase,
+  makeMcpSource,
+  makeSkillSource,
+  mcpDep,
+} from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;

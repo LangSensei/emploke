@@ -1,5 +1,5 @@
-import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
+import { createGunzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { FetchError } from "./errors.js";
 import type { EntryFile, Fetcher } from "./fetcher.js";

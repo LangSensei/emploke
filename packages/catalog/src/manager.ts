@@ -8,17 +8,17 @@ import {
   depRefToFqn,
   frontmatterToAgent,
   frontmatterToSkill,
-  parseFrontmatter,
   type ProjectionOpts,
+  parseFrontmatter,
   projectionOpts,
 } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpCatalog } from "./mcp/mcp-catalog.js";
+import type { CatalogRepository } from "./repositories/catalog-repository.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
 import { FsCatalogRepository } from "./repositories/fs-catalog-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
-import type { CatalogRepository } from "./repositories/catalog-repository.js";
 import type {
   AgentRepository,
   CatalogEntryFile,
@@ -99,7 +99,6 @@ export class CatalogManager {
   private readonly agentStore: AgentCatalog;
   private readonly mcpStore: McpCatalog;
   private readonly resolver: Resolver;
-  private readonly catalogRepo: CatalogRepository;
   private readonly scopeResolver: ScopeResolver;
   private _issues: ScanIssue[] = [];
   private _skillEntries = new Map<string, SkillEntry>();
@@ -112,7 +111,6 @@ export class CatalogManager {
     const skillRepo = opts.repositories?.skills ?? new FsSkillRepository(opts.catalogDir);
     const agentRepo = opts.repositories?.agents ?? new FsAgentRepository(opts.catalogDir);
     const mcpRepo = opts.repositories?.mcps ?? new FsMcpRepository(opts.catalogDir);
-    this.catalogRepo = opts.repositories?.catalog ?? new FsCatalogRepository(opts.catalogDir);
     this.skillStore = new SkillCatalog(skillRepo);
     this.agentStore = new AgentCatalog(agentRepo);
     this.mcpStore = new McpCatalog(mcpRepo);
@@ -126,7 +124,10 @@ export class CatalogManager {
     await mkdirFs(opts.catalogDir, { recursive: true });
     const catalogRepo = opts.repositories?.catalog ?? new FsCatalogRepository(opts.catalogDir);
     const scopeResolver = await ScopeResolver.load(catalogRepo);
-    const c = new CatalogManager({ ...opts, repositories: { ...opts.repositories, catalog: catalogRepo } }, scopeResolver);
+    const c = new CatalogManager(
+      { ...opts, repositories: { ...opts.repositories, catalog: catalogRepo } },
+      scopeResolver,
+    );
     // Remove stale lock from previous crash. Safe under single-owner constraint.
     await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
     await c.scan();
@@ -178,7 +179,11 @@ export class CatalogManager {
       projOpts,
     );
     const skill = await this.withWriteLock(() =>
-      this.skillStore.installFromStream(asyncIterableOf(buffered), { ...opts, ...projOpts }, sourceLabel),
+      this.skillStore.installFromStream(
+        asyncIterableOf(buffered),
+        { ...opts, ...projOpts },
+        sourceLabel,
+      ),
     );
     this.recomputeStatus();
     return skill;
@@ -249,7 +254,11 @@ export class CatalogManager {
       projOpts,
     );
     const agent = await this.withWriteLock(() =>
-      this.agentStore.installFromStream(asyncIterableOf(buffered), { ...opts, ...projOpts }, sourceLabel),
+      this.agentStore.installFromStream(
+        asyncIterableOf(buffered),
+        { ...opts, ...projOpts },
+        sourceLabel,
+      ),
     );
     this.recomputeStatus();
     return agent;

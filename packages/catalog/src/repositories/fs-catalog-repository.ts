@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { mkdirP, writeJsonAtomic } from "@emploke/fs";
 import { FrontmatterError } from "../errors.js";
 import {
-  type CatalogConfig,
   CATALOG_CONFIG_VERSION,
+  type CatalogConfig,
   type CatalogRepository,
 } from "./catalog-repository.js";
 
@@ -45,9 +45,13 @@ export class FsCatalogRepository implements CatalogRepository {
     try {
       parsed = JSON.parse(raw);
     } catch (cause) {
-      throw new FrontmatterError(this.path, `catalog.json is not valid JSON: ${(cause as Error).message}`, {
-        cause,
-      });
+      throw new FrontmatterError(
+        this.path,
+        `catalog.json is not valid JSON: ${(cause as Error).message}`,
+        {
+          cause,
+        },
+      );
     }
     return parseCatalogConfig(parsed, this.path);
   }

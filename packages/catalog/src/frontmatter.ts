@@ -1,5 +1,10 @@
+import {
+  OriginParseError,
+  type ParsedOrigin,
+  parseOrigin,
+  scopeFromOrigin,
+} from "@emploke/catalog-fetcher";
 import yaml from "js-yaml";
-import { type ParsedOrigin, OriginParseError, parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
 import { FrontmatterError } from "./errors.js";
 import type { Agent, DependencyRef, Skill } from "./types.js";
 import { makeFqn, validateMcpName, validateScope, validateShortName } from "./validate.js";
@@ -127,8 +132,10 @@ export function projectionOpts(
 ): ProjectionOpts {
   const out: ProjectionOpts = {};
   if (o !== undefined) (out as { defaultOrigin?: string }).defaultOrigin = o;
-  if (extra?.scopeOverride !== undefined) (out as { scopeOverride?: string }).scopeOverride = extra.scopeOverride;
-  if (extra?.defaultScope !== undefined) (out as { defaultScope?: string }).defaultScope = extra.defaultScope;
+  if (extra?.scopeOverride !== undefined)
+    (out as { scopeOverride?: string }).scopeOverride = extra.scopeOverride;
+  if (extra?.defaultScope !== undefined)
+    (out as { defaultScope?: string }).defaultScope = extra.defaultScope;
   return out;
 }
 

@@ -21,8 +21,8 @@ export { FileFetcher } from "./file-fetcher.js";
 export { GitHubFetcher } from "./github-fetcher.js";
 export {
   normalizeOrigin,
-  parseOrigin,
   type ParsedOrigin,
+  parseOrigin,
   scopeFromOrigin,
 } from "./origin.js";
 export { defaultFetcherRegistry, FetcherRegistry } from "./registry.js";

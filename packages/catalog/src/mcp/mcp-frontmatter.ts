@@ -60,7 +60,12 @@ export function parseMcpFile(content: string, sourcePath: string): McpFileShape 
   }
   const obj = parsed as Record<string, unknown>;
   const metaRaw = obj._meta;
-  if (metaRaw === undefined || metaRaw === null || typeof metaRaw !== "object" || Array.isArray(metaRaw)) {
+  if (
+    metaRaw === undefined ||
+    metaRaw === null ||
+    typeof metaRaw !== "object" ||
+    Array.isArray(metaRaw)
+  ) {
     throw new InvalidMcpJsonError(
       sourcePath,
       "MCP file must include a `_meta` object with `name` and `origin`",
