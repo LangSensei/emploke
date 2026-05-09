@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import type { Catalog } from "@emploke/catalog";
 import { resolveEmplokePaths } from "@emploke/paths";
@@ -11,6 +12,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, bearerAuth, isLoopbackBind } from "./auth.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
+import { healthRoutes } from "./routes/health.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
@@ -62,6 +64,22 @@ async function main() {
   const cache = new WorkspaceContextCache({ runtimeRegistry, registry });
 
   const app = new Hono();
+
+  // /api/health is mounted *before* the auth middleware so the dashboard's
+  // backoff probe and external liveness checks can poll without first
+  // acquiring an API key. The endpoint exposes only `name`, `version`,
+  // `startedAt`, and `uptimeSec` — nothing a network observer couldn't
+  // already derive from the running socket.
+  const { name: serverName, version: serverVersion } = await readServerPackageMeta();
+  const startedAtMs = Date.now();
+  app.route(
+    "/api/health",
+    healthRoutes({
+      name: serverName,
+      version: serverVersion,
+      startedAtMs,
+    }),
+  );
 
   if (apiKey && apiKey.trim() !== "") {
     app.use("/api/*", bearerAuth(apiKey.trim()));
@@ -247,3 +265,27 @@ main().catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
+
+/**
+ * Read this server package's `package.json` to surface its name + version
+ * via `/api/health`. We resolve relative to `import.meta.url` so the
+ * lookup works whether the server runs from `dist/` (production build)
+ * or `src/` (tsx dev mode). Failures degrade gracefully — health stays
+ * up with placeholder strings rather than crashing the boot.
+ */
+async function readServerPackageMeta(): Promise<{ name: string; version: string }> {
+  // dist/index.js → ../package.json; src/index.ts (via tsx) → ../package.json
+  const pkgFile = path.resolve(import.meta.dirname, "..", "package.json");
+  try {
+    const raw = await readFile(pkgFile, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const name = typeof parsed.name === "string" ? parsed.name : "@emploke/server";
+    const version = typeof parsed.version === "string" ? parsed.version : "0.0.0-unknown";
+    return { name, version };
+  } catch {
+    // If we cannot read our own package.json (unusual: bundler stripped
+    // it, fs perms wonky), fall back to placeholders so /api/health still
+    // serves liveness probes.
+    return { name: "@emploke/server", version: "0.0.0-unknown" };
+  }
+}
