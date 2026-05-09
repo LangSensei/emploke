@@ -153,8 +153,19 @@ async function main() {
   // failure-reason="server shutdown" rows on next start (rather than
   // ghost "running" entries waiting for orphan recovery).
   //
-  // Timeout: 30s. Anything still alive after that gets process.exit(1) so
-  // a wedged subprocess can't pin the deploy host indefinitely.
+  // Ordering:
+  //   1. `server.close()` first — stops accepting new connections and
+  //      waits for in-flight HTTP to drain. This prevents two races:
+  //      (a) a `POST /tasks` arriving mid-shutdown spawning a new
+  //      subprocess after we've already taken the snapshot, and (b) the
+  //      first request to a workspace whose context wasn't loaded yet
+  //      lazy-instantiating a fresh TaskManager that wasn't in
+  //      `cache.loaded()` and would never get drained.
+  //   2. `tasks.shutdown()` second — by now no new dispatches can land,
+  //      so the snapshot of cached contexts is authoritative.
+  //
+  // Timeout: 30s. Anything still alive after that gets process.exit(1)
+  // so a wedged subprocess can't pin the deploy host indefinitely.
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -165,12 +176,6 @@ async function main() {
       process.exit(1);
     }, 30_000);
     deadline.unref();
-    try {
-      const ctxs = cache.loaded();
-      await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
-    } catch (err) {
-      console.error("error during tasks shutdown", err);
-    }
     try {
       await new Promise<void>((resolve, reject) => {
         // @hono/node-server's `serve` returns a node http.Server, which
@@ -183,6 +188,12 @@ async function main() {
       });
     } catch (err) {
       console.error("error closing http server", err);
+    }
+    try {
+      const ctxs = cache.loaded();
+      await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
+    } catch (err) {
+      console.error("error during tasks shutdown", err);
     }
     clearTimeout(deadline);
     process.exit(0);

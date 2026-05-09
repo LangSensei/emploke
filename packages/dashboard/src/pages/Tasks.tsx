@@ -118,16 +118,37 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     };
   }, []);
 
+  // Race guards for `refresh()`. Both work together:
+  //   * `wsTokenRef` captures the workspace at the moment a fetch begins;
+  //     if the user navigates to a different workspace before the fetch
+  //     resolves, we drop the response on the floor instead of writing
+  //     stale data into the new workspace's state. (Workspace switching
+  //     re-renders this component with a new `currentWorkspaceId` prop
+  //     rather than remounting, so `mountedRef` does NOT catch this.)
+  //   * `inFlightRef` lets the polling effect skip a tick when the
+  //     previous refresh hasn't returned yet, preventing request pile-up
+  //     on slow networks or large task lists.
+  const wsTokenRef = useRef<string | null>(null);
+  const inFlightRef = useRef(false);
+
   const refresh = useCallback(async () => {
     if (!currentWorkspaceId) {
       setTasks([]);
       setLoaded(true);
       return;
     }
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    const token = currentWorkspaceId;
+    wsTokenRef.current = token;
     setRefreshing(true);
     try {
       const next = await listTasks();
+      // Bail if (a) component unmounted, (b) workspace changed during
+      // the fetch — listTasks() resolved against the old prefix but the
+      // user is now looking at a different workspace.
       if (!mountedRef.current) return;
+      if (token !== currentWorkspaceId) return;
       setError(null);
       // Newest-first by createdAt — id is also timestamp-prefixed but
       // sorting on createdAt is the contract we want to depend on.
@@ -135,9 +156,11 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       setTasks(next);
     } catch (e) {
       if (!mountedRef.current) return;
+      if (token !== currentWorkspaceId) return;
       setError((e as Error).message);
     } finally {
-      if (mountedRef.current) {
+      inFlightRef.current = false;
+      if (mountedRef.current && token === currentWorkspaceId) {
         setRefreshing(false);
         setLoaded(true);
       }
@@ -426,10 +449,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
           <TaskDetailPanel
             taskId={selectedId}
             onClose={() => setSelectedId(null)}
-            onDeleted={async () => {
-              setSelectedId(null);
-              await refresh();
-            }}
             pollIntervalMs={pollIntervalMs}
           />
         </div>
@@ -658,7 +677,6 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
 interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
-  onDeleted: () => void;
   /** Auto-refresh cadence while the displayed task is running (ms). */
   pollIntervalMs: number;
 }
@@ -672,25 +690,55 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   const [tab, setTab] = useState<DetailTab>("events");
   const [loading, setLoading] = useState(false);
 
+  // Race guards mirroring the list view (see TasksPage.refresh):
+  //   * `mountedRef` for the standard unmount-during-fetch case
+  //   * `taskTokenRef` to drop the response when the user clicks task A
+  //     then task B before A's two-step fetch (getTask + fetchTaskEvents)
+  //     completes — without this guard A's payload would land under B's
+  //     header
+  //   * `inFlightRef` to keep the auto-poll from stacking when a refresh
+  //     outlives `pollIntervalMs` (a real risk on the detail panel
+  //     because each cycle fires two serial fetches)
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const taskTokenRef = useRef<string | null>(null);
+  const inFlightRef = useRef(false);
+
   const refreshDetail = useCallback(async () => {
     if (!taskId) return;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    const token = taskId;
+    taskTokenRef.current = token;
     setLoading(true);
     try {
       const t = await getTask(taskId);
+      if (!mountedRef.current || token !== taskTokenRef.current) return;
       setTask(t);
       try {
         const ev = await fetchTaskEvents(taskId);
+        if (!mountedRef.current || token !== taskTokenRef.current) return;
         setEvents(ev);
         setEventsError(null);
       } catch (e) {
+        if (!mountedRef.current || token !== taskTokenRef.current) return;
         setEventsError((e as Error).message);
         setEvents(null);
       }
     } catch (e) {
+      if (!mountedRef.current || token !== taskTokenRef.current) return;
       setTask(null);
       setEventsError((e as Error).message);
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (mountedRef.current && token === taskTokenRef.current) {
+        setLoading(false);
+      }
     }
   }, [taskId]);
 
@@ -851,6 +899,14 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
               {eventsError ? `: ${eventsError}` : ""}.
             </p>
           )}
+          {events === null && !eventsError && (
+            // 404 NoEventsYet from the server — the runtime hasn't
+            // produced an event log file yet (common in the first
+            // seconds of a task's life, before the agent's first event).
+            // The list-view auto-poll plus the detail panel's own
+            // poll-while-running will surface events as they appear.
+            <p className="muted">No events yet for this task.</p>
+          )}
           {events !== null && events.length === 0 && <p className="muted">No events yet.</p>}
           {events !== null && events.length > 0 && (
             <pre
@@ -913,7 +969,13 @@ function formatTime(iso: string): string {
  * passthrough and we'll add a runtime-aware renderer when needed.
  */
 function formatEventsJsonl(raw: string): string {
-  const lines = raw.split(/\r?\n/);
+  // Strip a leading UTF-8 BOM if present. NDJSON producers occasionally
+  // emit one (text-mode writes on Windows, some logging libraries); left
+  // in place it would make the first line fail JSON.parse and fall
+  // through to the verbatim path, dumping the BOM marker into the
+  // rendered pane.
+  const normalized = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  const lines = normalized.split(/\r?\n/);
   const out: string[] = [];
   for (const line of lines) {
     if (line.trim() === "") continue;

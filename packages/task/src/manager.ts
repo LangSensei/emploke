@@ -49,12 +49,29 @@ const SESSION_LINK = "session";
  * In-memory record for a task whose subprocess we still own. Once the
  * subprocess exits and the post-exit fs writes complete, the entry is
  * dropped from the map.
+ *
+ * `killedByUs` is the mutable flag that distinguishes "we (manager)
+ * intentionally terminated this subprocess" (via `delete()` or
+ * `shutdown()`) from "the subprocess exited on its own". It is checked
+ * by the exit watcher when classifying the terminal state — without
+ * it, a process that exits cleanly (`code: 0`) at the same instant as
+ * `shutdown()` runs would race against the global flag and be
+ * mis-recorded as `failure: "server shutdown"` rather than `success`.
+ * Per-task scope ensures one task's shutdown override doesn't bleed
+ * into another's natural exit.
  */
 interface LiveTask {
   readonly id: string;
   readonly handle: TaskHandle;
   /** Resolves once the post-exit persistence has finished (success or failure path). */
   readonly settled: Promise<void>;
+  /**
+   * Set to true when `delete()` or `shutdown()` calls `handle.kill()`
+   * for this task. The exit watcher reads this AT exit time (not at the
+   * moment shutdown began) so a clean self-exit racing with shutdown is
+   * still classified as `success`, not `failure: "server shutdown"`.
+   */
+  killedByUs: boolean;
 }
 
 /**
@@ -195,6 +212,31 @@ export class TaskManager {
       throw err;
     }
 
+    // 5b. Re-check `shuttingDown` after spawn. The flag is read once at
+    //     the top of `dispatch()`, but `await runtime.dispatchTask(...)`
+    //     yields the event loop and a SIGTERM-driven `shutdown()` could
+    //     have flipped it during that window. Without this guard the
+    //     subprocess is now live but `shutdown()`'s snapshot of
+    //     `this.live` (taken before we get to the `live.set` below)
+    //     would not include it — the manager would return cleanly, the
+    //     server would call `process.exit(0)`, and the subprocess would
+    //     be left as an orphan that the next boot's `recoverOrphaned()`
+    //     marks as failure.
+    if (this.shuttingDown) {
+      try {
+        handle.kill();
+      } catch {
+        // Already dead.
+      }
+      try {
+        await handle.exit;
+      } catch {
+        // exit promise should never reject by construction.
+      }
+      await safeRm(workdir, this.logger);
+      throw new Error("task manager is shutting down; refusing new dispatches");
+    }
+
     // 6. Apply `start` and persist the running record. From this point
     //    on, terminal status comes from the exit watcher; a write failure
     //    here would leave us inconsistent (subprocess up, disk says
@@ -221,6 +263,24 @@ export class TaskManager {
     //    the terminal status. Both run independently — junction failure
     //    must not block exit handling. We expose a `settled` promise so
     //    `shutdown()` and tests can await drain.
+    //
+    //    Order matters: we register the `LiveTask` entry BEFORE awaiting
+    //    anything, so a `shutdown()` arriving between this register and
+    //    the watcher's first `await` will see the entry in `this.live`
+    //    and route through the kill+drain path rather than missing it.
+    //    The watcher's IIFE closes over `liveEntry` so it can read
+    //    `liveEntry.killedByUs` AT exit time (not at watcher-start
+    //    time) — the value is what `delete()` / `shutdown()` set when
+    //    they invoked `kill()`, so a clean self-exit racing with
+    //    shutdown still classifies as `success`.
+    const liveEntry: LiveTask = {
+      id,
+      handle,
+      killedByUs: false,
+      // `settled` is filled in just below; we need the object reference
+      // first so the IIFE can close over it.
+      settled: undefined as unknown as Promise<void>,
+    };
     const settled = (async () => {
       // 7a. Junction the runtime's session dir. Best-effort: if the
       //     runtime can't tell us where it lives, or symlink fails (e.g.
@@ -253,12 +313,17 @@ export class TaskManager {
         return;
       }
 
-      const decision = decideTerminal(exitInfo, this.shuttingDown);
+      // Read killedByUs AT exit time, per the LiveTask JSDoc. If the
+      // task self-exited cleanly with `code: 0` while `shutdown()` was
+      // running but had not yet invoked `kill()` for this task, this
+      // flag is still false and we record `success`.
+      const decision = decideTerminal(exitInfo, liveEntry.killedByUs);
       await this.applyTerminal(workdir, running, decision);
       this.live.delete(id);
     })();
+    (liveEntry as { settled: Promise<void> }).settled = settled;
 
-    this.live.set(id, { id, handle, settled });
+    this.live.set(id, liveEntry);
 
     return running;
   }
@@ -346,7 +411,16 @@ export class TaskManager {
       return null;
     }
     if (typeof runtime.taskEventsPath !== "function") return null;
-    return runtime.taskEventsPath(meta.workdir);
+    try {
+      return runtime.taskEventsPath(meta.workdir);
+    } catch {
+      // Runtime impls are not contractually required to be infallible
+      // here — a buggy or partially-installed runtime could throw. Treat
+      // it the same as the other "no events available" branches so the
+      // route surfaces 404 NoEventsYet instead of 500. The dashboard
+      // already renders that as a recoverable degradation.
+      return null;
+    }
   }
 
   // ─── delete ──────────────────────────────────────────────
@@ -358,13 +432,41 @@ export class TaskManager {
    * Note: deleting a live task does NOT mark it `cancelled` first — the
    * caller asked for it to vanish, not for an audit trail. Live workers
    * receive a kill signal and the workdir is destroyed.
+   *
+   * `opts.force` skips the load-and-validate step and removes the
+   * directory whenever it exists on disk. Without this, a `task.json`
+   * that fails schema validation (corruption, future
+   * `CURRENT_SCHEMA_VERSION` bump) would leave the directory
+   * undeletable through the public API — `loadTask` would return
+   * `null`, `delete` would throw `TaskNotFoundError`, and operators
+   * would have to shell in to the workspace to clean up. With
+   * `force: true`, the directory's mere existence is enough to allow
+   * removal, mirroring `rm -rf` semantics.
    */
-  async delete(id: string): Promise<void> {
+  async delete(id: string, opts: { force?: boolean } = {}): Promise<void> {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
-    const existing = await this.loadTask(id, workdir);
-    if (existing === null) {
-      throw new TaskNotFoundError(id);
+
+    if (opts.force === true) {
+      // Existence check via stat(): we still want a 404 if the dir
+      // truly doesn't exist (so the dashboard's optimistic UI can
+      // distinguish "already gone" from "deleted now"), but we don't
+      // care whether the task.json inside parses.
+      let dirExists: boolean;
+      try {
+        const st = await stat(workdir);
+        dirExists = st.isDirectory();
+      } catch {
+        dirExists = false;
+      }
+      if (!dirExists) {
+        throw new TaskNotFoundError(id);
+      }
+    } else {
+      const existing = await this.loadTask(id, workdir);
+      if (existing === null) {
+        throw new TaskNotFoundError(id);
+      }
     }
 
     const live = this.live.get(id);
@@ -381,6 +483,14 @@ export class TaskManager {
       // rejects (the watcher catches everything internally), so the
       // try/catch is purely defensive.
       this.live.delete(id);
+      // Mark the task as killed-by-us BEFORE invoking kill(): the exit
+      // watcher might fire its 'exit' handler synchronously (via the
+      // Promise resolve queue) the moment we call kill(), so the flag
+      // must be set first. With it set, the watcher records `failure`
+      // — though for delete() the workdir is rm'd anyway, so the
+      // applyTerminal write is wasted. (We accept that small cost in
+      // exchange for not racing rm against writeFile.)
+      live.killedByUs = true;
       try {
         live.handle.kill();
       } catch {
@@ -494,6 +604,14 @@ export class TaskManager {
 
     const snapshot = [...this.live.values()];
     for (const l of snapshot) {
+      // Mark the task as killed-by-us before invoking kill(), so the
+      // exit watcher's decideTerminal() call records `failure: server
+      // shutdown` rather than reading the natural exit reason. Per-task
+      // scope (rather than a global flag) means another task that
+      // self-exits cleanly mid-shutdown is still classified as
+      // `success` — the kill flag only flips for tasks we actually
+      // killed.
+      l.killedByUs = true;
       try {
         l.handle.kill();
       } catch {
@@ -501,8 +619,8 @@ export class TaskManager {
       }
     }
     // Wait for every exit watcher to finish persisting its terminal
-    // status. The exit watcher checks `this.shuttingDown` to decide
-    // between "server shutdown" and the natural exit reason.
+    // status. The watcher reads `liveEntry.killedByUs` AT exit time to
+    // decide between "server shutdown" and the natural exit reason.
     await Promise.allSettled(snapshot.map((l) => l.settled));
   }
 
@@ -612,17 +730,22 @@ interface TerminalDecision {
 /**
  * Translate a subprocess exit into a Task FSM transition.
  *
- *   - shutting down → failure, "server shutdown" (regardless of code/signal,
- *     because we asked for it)
+ *   - killedByUs    → failure, "server shutdown" (regardless of code/signal,
+ *                     because we asked for it via `delete()` or `shutdown()`)
  *   - exit code 0   → success
  *   - exit code N   → failure, "exited with code N"
  *   - signal X      → failure, "terminated by signal X"
+ *
+ * The `killedByUs` flag is read AT exit time from the per-task LiveTask
+ * record (not at the moment shutdown began), so a clean self-exit with
+ * `code: 0` racing against `shutdown()` is still classified as `success`
+ * unless this manager actually invoked `kill()` for this task.
  */
 function decideTerminal(
   exitInfo: { code: number | null; signal: NodeJS.Signals | null },
-  shuttingDown: boolean,
+  killedByUs: boolean,
 ): TerminalDecision {
-  if (shuttingDown) {
+  if (killedByUs) {
     return {
       ok: false,
       reason: "server shutdown",

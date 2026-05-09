@@ -244,20 +244,48 @@ export async function dispatchCopilotTask(
   let stderrStream: WriteStream | null = null;
   if (child.stdout !== null) {
     stdoutStream = createWriteStream(stdoutPath, { flags: "a" });
+    // `pipe()` does NOT forward source-side errors to the destination,
+    // and on a `Writable` an unhandled `error` event throws in the
+    // process. Trigger surfaces: `ENOSPC`/`EROFS` on the log volume,
+    // permission flips, file system unmount mid-task. Swallow log-stream
+    // errors so a full disk degrades to "no captured output" rather than
+    // killing the manager process. The exit watcher still runs and the
+    // task still completes from the OS's point of view.
+    stdoutStream.on("error", () => {});
+    child.stdout.on("error", () => {});
     child.stdout.pipe(stdoutStream);
   }
   if (child.stderr !== null) {
     stderrStream = createWriteStream(stderrPath, { flags: "a" });
+    stderrStream.on("error", () => {});
+    child.stderr.on("error", () => {});
     child.stderr.pipe(stderrStream);
   }
 
   // Build the exit promise. Closes the log streams on exit so file
   // descriptors don't linger.
+  //
+  // Note on the post-spawn `child.on("error", ...)`: the pre-spawn
+  // listener (Step 4 above) is removed once the spawn|error race
+  // settles, so without this the child process emitting a late `error`
+  // event (failed `kill`, IPC issue, …) would crash the manager. We
+  // route it into the exit promise so the watcher still settles
+  // deterministically.
   const exit = new Promise<TaskExit>((resolve) => {
-    child.once("exit", (code, signal) => {
+    let settled = false;
+    const settle = (info: TaskExit) => {
+      if (settled) return;
+      settled = true;
       stdoutStream?.end();
       stderrStream?.end();
-      resolve({ code, signal });
+      resolve(info);
+    };
+    child.once("exit", (code, signal) => settle({ code, signal }));
+    child.on("error", () => {
+      // A late child-side error means we'll never get a clean exit
+      // event. Synthesise one so the watcher unblocks; the actual exit
+      // (if it ever comes) is then a no-op via the `settled` guard.
+      settle({ code: null, signal: null });
     });
   });
 

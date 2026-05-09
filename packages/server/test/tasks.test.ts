@@ -1,11 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   type Task,
+  TaskIdAllocationFailedError,
   type TaskManager,
   TaskNotFoundError,
 } from "@emploke/task";
@@ -184,7 +186,15 @@ describe("tasksRoutes", () => {
     const m = stubManager({});
     const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(204);
-    expect(m.delete).toHaveBeenCalledWith(sampleTask.id);
+    expect(m.delete).toHaveBeenCalledWith(sampleTask.id, { force: false });
+  });
+
+  it("DELETE /:tid?force=1 propagates the force flag to the manager", async () => {
+    const del = vi.fn(async () => undefined);
+    const m = stubManager({ delete: del });
+    const res = await tasksRoutes(m).request(`/${sampleTask.id}?force=1`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+    expect(del).toHaveBeenCalledWith(sampleTask.id, { force: true });
   });
 
   it("DELETE /:tid maps TaskNotFoundError to 404", async () => {
@@ -195,6 +205,36 @@ describe("tasksRoutes", () => {
     });
     const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(404);
+  });
+
+  // Server-side faults must not be reported as client-input errors.
+  // Both classes match the analogous mappings in sessions.ts.
+  it("POST / maps TaskIdAllocationFailedError to 500 (server-side fs collision)", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        throw new TaskIdAllocationFailedError(5);
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", instructions: "x" }),
+    });
+    expect(res.status).toBe(500);
+  });
+
+  it("POST / maps RuntimeDispatchTaskFailed to 500 (host-side spawn failure)", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        throw new RuntimeDispatchTaskFailed("copilot", "/tmp/wd", new Error("ENOENT"));
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", instructions: "x" }),
+    });
+    expect(res.status).toBe(500);
   });
 
   describe("GET /:tid/events", () => {

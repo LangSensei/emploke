@@ -288,13 +288,6 @@ const makeManager = (
 
 // ═════ tests ════════════════════════════════════════════════
 
-describe("TaskManager construction", () => {
-  it("constructs with catalog + runtimeRegistry + tasksDir", () => {
-    const m = makeManager();
-    expect(m).toBeDefined();
-  });
-});
-
 describe("dispatch — happy path", () => {
   it("creates dir, persists running task.json, populates runtime metadata, returns Task", async () => {
     const rt = new StubRuntime();
@@ -541,6 +534,77 @@ describe("delete", () => {
     const m = makeManager();
     await expect(m.delete("20260101-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });
+
+  // Without `force`, a corrupt or schema-mismatched task.json makes the
+  // task undeletable through the public API: loadTask returns null →
+  // delete throws TaskNotFoundError → operators can't clean up. With
+  // `force: true`, the directory's existence is enough.
+  it("force: true removes a corrupt task that delete(...) would otherwise refuse", async () => {
+    const id = "20260508-c0ffee01";
+    const workdir = path.join(tasksDir, id);
+    await mkdir(workdir, { recursive: true });
+    await writeFile(path.join(workdir, TASK_FILE_NAME), "this is not json", "utf8");
+
+    const m = makeManager();
+
+    // Without force: task is "missing" (validation rejects task.json).
+    await expect(m.delete(id)).rejects.toBeInstanceOf(TaskNotFoundError);
+
+    // With force: gone.
+    await m.delete(id, { force: true });
+    expect(await safeStat(workdir)).toBeNull();
+  });
+
+  it("force: true still returns TaskNotFoundError when the directory truly doesn't exist", async () => {
+    const m = makeManager();
+    await expect(m.delete("20260101-deadbeef", { force: true })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+  });
+});
+
+describe("getTaskEventsPath", () => {
+  it("returns the runtime's path when implemented", async () => {
+    class WithEvents extends StubRuntime {
+      taskEventsPath(workdir: string): string {
+        return path.join(workdir, "session", "events.jsonl");
+      }
+    }
+    const rt = new WithEvents();
+    const m = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    const p = await m.getTaskEventsPath(t.id);
+    expect(p).toBe(path.join(tasksDir, t.id, "session", "events.jsonl"));
+  });
+
+  it("returns null when the runtime omits taskEventsPath", async () => {
+    // The default StubRuntime has no taskEventsPath method.
+    const rt = new StubRuntime();
+    const m = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    expect(await m.getTaskEventsPath(t.id)).toBeNull();
+  });
+
+  it("returns null when the task doesn't exist", async () => {
+    const m = makeManager();
+    expect(await m.getTaskEventsPath("20260101-cafebabe")).toBeNull();
+  });
+
+  // A buggy or partially-installed runtime can throw from
+  // `taskEventsPath`. The facade swallows this and returns null so the
+  // server route surfaces 404 NoEventsYet (a recoverable degradation in
+  // the dashboard) instead of leaking a 500 to the client.
+  it("returns null when the runtime's taskEventsPath throws", async () => {
+    class Throws extends StubRuntime {
+      taskEventsPath(): string {
+        throw new Error("boom");
+      }
+    }
+    const rt = new Throws();
+    const m = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    expect(await m.getTaskEventsPath(t.id)).toBeNull();
+  });
 });
 
 describe("shutdown", () => {
@@ -573,6 +637,74 @@ describe("shutdown", () => {
     const m = makeManager();
     await m.shutdown();
     await m.shutdown();
+  });
+
+  // Regression for REV2-T2: a task that exits cleanly with code 0 at the
+  // same instant shutdown() flips the global flag should NOT be
+  // mis-recorded as `failure: "server shutdown"`. Per-task `killedByUs`
+  // means only tasks we actually killed get the shutdown reason; a task
+  // that beat us to the punch with a clean exit still records `success`.
+  it("does not misclassify a self-exiting task as 'server shutdown'", async () => {
+    const rt = new StubRuntime();
+    const m = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    // Trigger the natural success exit BEFORE invoking shutdown. The
+    // exit watcher's read of killedByUs happens AT exit time and sees
+    // false, so the task records success regardless of what shutdown()
+    // does to other live tasks.
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.status).toBe("success");
+
+    // Now shutdown is a no-op for this task (already terminal, dropped
+    // from this.live by the watcher).
+    await m.shutdown();
+    const final = await m.get(t.id);
+    expect(final?.status).toBe("success");
+    expect(final?.failure).toBeUndefined();
+  });
+
+  // Regression for REV2-T1: a dispatch that spawns mid-shutdown must
+  // not be left orphaned. The post-spawn `shuttingDown` re-check inside
+  // dispatch() should kill the just-spawned subprocess and roll back
+  // the workdir, surfacing the standard "shutting down" error to the
+  // caller.
+  it("dispatch that races with shutdown kills the subprocess and rolls back", async () => {
+    const rt = new StubRuntime();
+    rt.autoExitOnKill = true;
+    // Hold the dispatch in `runtime.dispatchTask` long enough for
+    // shutdown() to flip the flag underneath it.
+    let resolveSpawn!: () => void;
+    const spawnHold = new Promise<void>((r) => {
+      resolveSpawn = r;
+    });
+    const original = rt.dispatchTask;
+    Object.defineProperty(rt, "dispatchTask", {
+      get:
+        () =>
+        async (opts: Parameters<NonNullable<typeof original>>[0]): Promise<TaskHandle> => {
+          await spawnHold;
+          // biome-ignore lint/style/noNonNullAssertion: guarded above
+          return original!.call(rt, opts);
+        },
+    });
+    const m = makeManager({ runtime: rt });
+    const dispatched = m.dispatch(dispatchOf());
+
+    // Flip shutdown while the dispatch is parked inside spawnHold.
+    // Then release dispatchTask: the post-spawn check fires, kill is
+    // invoked, workdir is rolled back, dispatch rejects.
+    setTimeout(() => {
+      void m.shutdown();
+      resolveSpawn();
+    }, 10);
+
+    await expect(dispatched).rejects.toThrow(/shutting down/);
+
+    // No task dir survives.
+    const entries = await safeReaddir(tasksDir);
+    expect(entries.filter((e) => /^\d{8}-/.test(e))).toEqual([]);
   });
 });
 

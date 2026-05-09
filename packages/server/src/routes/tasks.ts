@@ -1,9 +1,11 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
+  TaskIdAllocationFailedError,
   type TaskManager,
   TaskNotFoundError,
 } from "@emploke/task";
@@ -25,10 +27,17 @@ interface DispatchBody {
 export type TaskManagerResolver = (c: import("hono").Context) => TaskManager;
 
 function statusForError(err: unknown): number | null {
+  // Client-side / input errors → 4xx.
   if (err instanceof InvalidTaskIdError) return 400;
   if (err instanceof TaskNotFoundError) return 404;
   if (err instanceof AgentNotFoundError) return 400;
   if (err instanceof RuntimeDoesNotSupportTasksError) return 400;
+  // Server-side / host faults → 5xx. These match the analogous
+  // mappings in sessions.ts (SessionIdAllocationFailedError → 500,
+  // RuntimeProvisionFailed → 500). Falling through to the default 400
+  // would lie to the dashboard about whose fault it is.
+  if (err instanceof TaskIdAllocationFailedError) return 500;
+  if (err instanceof RuntimeDispatchTaskFailed) return 500;
   return null;
 }
 
@@ -101,10 +110,17 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
   });
 
   // Delete a task: kills the subprocess if live, then rm -rf the workdir.
+  // `?force=1` skips the load-and-validate step and removes the directory
+  // whenever it exists on disk — useful for cleaning up tasks whose
+  // task.json is corrupted or schema-mismatched (e.g. across an emploke
+  // upgrade). Without `force`, a corrupt task.json would leave the
+  // directory undeletable through this endpoint (the dashboard would see
+  // 404 even though the row appears in the list).
   app.delete("/:tid", async (c) => {
     const id = c.req.param("tid");
+    const force = c.req.query("force") === "1";
     try {
-      await getManager(c).delete(id);
+      await getManager(c).delete(id, { force });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;

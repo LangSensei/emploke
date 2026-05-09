@@ -402,4 +402,40 @@ describe("dispatchCopilotTask", () => {
     const content = await readFile(path.join(taskDir, COPILOT_STDOUT_LOG), "utf8");
     expect(content).toContain('{"event":"start"}');
   });
+
+  // The child's stdout/stderr streams + the disk write streams + the
+  // child process itself all emit `error` events. `pipe()` does NOT
+  // forward them, and an unhandled `error` on a `Writable` /
+  // `EventEmitter` throws in the host process. Without listeners, a full
+  // disk during a long-running task would crash the manager. The
+  // listeners we attach swallow the error (best-effort: degrade to "no
+  // captured output" rather than die). This test fires a synthetic error
+  // on each surface and asserts the manager's exit promise still
+  // resolves cleanly.
+  it("survives errors on child streams and child itself without crashing", async () => {
+    const agent = await buildAgent();
+    const fake = makeFakeSpawn();
+    const handle = await dispatchCopilotTask(
+      { taskDir, agent, prompt: "x" },
+      {
+        copilotStateDir: stateDir,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
+      },
+    );
+
+    // Fire errors on every surface listed in the JSDoc. If any of these
+    // bubble up to the unhandled-error handler, vitest will surface
+    // them as test failures.
+    fake.child.stdout.emit("error", new Error("ENOSPC: disk full"));
+    fake.child.stderr.emit("error", new Error("EPIPE"));
+    fake.child.emit("error", new Error("late child error"));
+
+    // The synthetic child-side error should still settle the exit
+    // promise (per the JSDoc — we synthesise a {code:null, signal:null}
+    // exit so the manager doesn't hang).
+    const result = await handle.exit;
+    expect(result).toEqual({ code: null, signal: null });
+  });
 });
