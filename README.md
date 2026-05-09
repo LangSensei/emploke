@@ -105,9 +105,8 @@ important ones for downstream consumers are
 [`@emploke/workspace`](./packages/workspace),
 [`@emploke/task`](./packages/task),
 [`@emploke/session`](./packages/session),
-[`@emploke/runtime`](./packages/runtime),
-[`@emploke/server`](./packages/server), and
-[`@emploke/storage`](./packages/storage).
+[`@emploke/runtime`](./packages/runtime), and
+[`@emploke/server`](./packages/server).
 
 ## Development
 

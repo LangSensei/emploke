@@ -30,7 +30,7 @@ layers; never the reverse.
    └───────────┴────────────┼────────────┘               │
                             │                            │
                    ┌────────┴───────┐         ┌──────────┴─────────┐
-                   │ @emploke/storage│        │ @emploke/terminal  │
+                   │   @emploke/fs   │        │ @emploke/terminal  │
                    │  atomic IO + locks       └────────────────────┘
                    └────────▲────────┘
                             │
@@ -86,10 +86,10 @@ Three properties matter:
    the same way the FS impl does so tests can't pass with malformed
    inputs that production would reject.
 
-## `@emploke/storage`: the atomic IO seam
+## `@emploke/fs`: the atomic IO seam
 
 Every FS-touching operation in the repo goes through one of four
-primitives in [`packages/storage`](../packages/storage):
+primitives in [`packages/fs`](../packages/fs):
 
 | Primitive               | What it guarantees                                                                                                            |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -199,13 +199,22 @@ interface Runtime {
     runtimeSessionId: string;
   } | null>;
 
-  buildLaunch(session): LaunchCommand;                    // produce the exact `cmd args cwd`
+  buildLaunch(session, workspaceDir): Promise<LaunchCommand>;  // produce the exact `cmd args cwd`,
+                                                                //   optionally running per-launch
+                                                                //   preconditions keyed off workspaceDir
   deleteState(session): Promise<void>;                    // remove CLI's per-session state
-  registerWorkspace?(workspaceDir): Promise<void>;        // optional: per-workspace one-time setup
   dispatchTask?(opts): Promise<TaskHandle>;               // optional: one-shot non-interactive
   taskEventsPath?(taskWorkdir): string | null;            // optional: where to find task events
 }
 ```
+
+Per-runtime preconditions (e.g. Copilot's interactive mode requires
+`workspaceDir` to be in `~/.copilot/config.json` `trustedFolders` to
+suppress its folder-trust prompt) are owned inside the adapter and run
+lazily inside `buildLaunch`. There is no cross-runtime
+"register workspace" hook — different CLIs have wildly different gating
+rules and trying to abstract them just leaks one runtime's internals
+into the others.
 
 The runtime pulls **content** from the catalog through three streams,
 not via on-disk paths:
@@ -271,7 +280,7 @@ fine.
   the choice to use `Number.parseInt` over `+` because the input might
   be `"0x10"` is not. Lean toward more comments at decision points,
   fewer at mechanical steps.
-- **Atomic writes go through `@emploke/storage`.** Plain `writeFile`
+- **Atomic writes go through `@emploke/fs`.** Plain `writeFile`
   to a long-lived file is a code-review red flag.
 
 ## Adding a new runtime
@@ -304,7 +313,6 @@ them up.
   one extension surface. Read this before proposing architectural
   changes that touch the boundary between code and AI.
 - Per-package READMEs — public API surface for each entity:
-  - [`@emploke/storage`](../packages/storage/README.md)
   - [`@emploke/workspace`](../packages/workspace/README.md)
   - [`@emploke/catalog`](../packages/catalog/README.md)
   - [`@emploke/session`](../packages/session/README.md)

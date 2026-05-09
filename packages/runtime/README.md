@@ -5,8 +5,15 @@ Runtime adapter contract + Copilot CLI implementation.
 A *runtime* adapts a third-party CLI (GitHub Copilot, Gemini, Claude
 Code, …) for use by emploke. It owns four operations against the CLI's
 on-disk world: provision a workdir, refresh activity, build a launch
-command, delete state. Plus two optional operations: workspace-level
-trust setup and one-shot non-interactive task dispatch.
+command, delete state. Plus one optional operation: one-shot
+non-interactive task dispatch.
+
+Per-runtime preconditions (folder-trust setup, credential refresh,
+license checks, …) live **inside the adapter**, executed lazily at the
+moment they're needed. There is intentionally no cross-runtime
+"register workspace" hook — different CLIs have wildly different
+gating rules and abstracting them just leaks one runtime's internals
+into the others.
 
 ## The contract
 
@@ -37,14 +44,23 @@ interface Runtime {
     runtimeSessionId: string;
   } | null>;
 
-  /** Build the exact `cmd args cwd` the user runs to drop into a session. */
-  buildLaunch(session: Session): LaunchCommand;
+  /**
+   * Build the exact `cmd args cwd` the user runs to drop into a
+   * session. `workspaceDir` is the absolute path of the workspace this
+   * session lives under; runtimes whose interactive mode requires a
+   * per-launch precondition keyed off the workspace root use it to
+   * perform that precondition here, lazily, only when the user
+   * actually launches.
+   *
+   * Async by contract: a runtime may need to do a small amount of
+   * idempotent fs work (write a config, refresh a token) before
+   * returning the launch spec. Pure runtimes simply `return { ... }`
+   * without `await`ing anything.
+   */
+  buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand>;
 
   /** Remove the CLI's per-session state. Throws on partial failure. */
   deleteState(session: Session): Promise<void>;
-
-  /** Optional: per-workspace one-time setup (e.g. trust-folder registration). */
-  registerWorkspace?(workspaceDir: string): Promise<void>;
 
   /** Optional: spawn a one-shot non-interactive worker. */
   dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
@@ -75,7 +91,7 @@ import { CopilotRuntime } from "@emploke/runtime";
 const rt = new CopilotRuntime();
 // Optional config:
 //   copilotStateDir?:   defaults to ~/.copilot/session-state
-//   copilotSettingsPath?: defaults to ~/.copilot/settings.json
+//   copilotConfigPath?: defaults to ~/.copilot/config.json
 //   randomUUID?:        test seam for id generation
 ```
 
@@ -85,11 +101,21 @@ Key design points:
   `--resume=<id>` on every launch. First launch creates the session;
   subsequent launches resume it. Eliminates the "scan all sessions
   and match by cwd" dance the old impl needed.
-- **Trust handling is workspace-level, not session-level.**
-  `registerWorkspace(workspaceDir)` records the workspace as trusted
-  in the Copilot CLI's `settings.json` once at server bootstrap;
-  per-session `provision` no longer touches the settings file. Keeps
-  `trustedFolders` from growing unbounded.
+- **Per-launch trust preflight, not workspace-bootstrap.**
+  `buildLaunch(session, workspaceDir)` runs `ensureDirTrusted` against
+  `~/.copilot/config.json` immediately before returning the launch
+  spec, so trust I/O happens at the moment the user actually launches
+  an interactive session — never eagerly at workspace open. The write
+  is idempotent and ancestor-aware: the first launch in a workspace
+  pays one read+write; every subsequent launch passes `isPathCovered`
+  and short-circuits without writing.
+  `dispatchTask` (`copilot -p --yolo`) does not need trust and never
+  touches the file.
+- **Trust file is `config.json`, NOT `settings.json`.** The Copilot
+  CLI (verified against 1.0.44) only reads `trustedFolders` from
+  `config.json`; entries in `settings.json` are silently ignored, even
+  though `config.json`'s leading comment misleadingly says "User
+  settings belong in settings.json".
 - **Defends against malformed `runtimeSessionId`.** Every method that
   would compose the id into a filesystem path or `--resume=<id>`
   argument runs it through `isCopilotSessionId` first. Tampered
@@ -148,14 +174,15 @@ them up.
 RuntimeError
 ├── RuntimeNotFoundError                — kind not in registry
 ├── RuntimeProvisionFailed              — provision() threw (workdir prep, catalog read)
-├── RuntimeRegisterWorkspaceFailed      — registerWorkspace() threw
 ├── RuntimeRefreshFailed                — refresh() threw (CLI state corruption)
 ├── RuntimeStateDeletionFailed          — deleteState() threw
 ├── RuntimeDispatchTaskFailed           — dispatchTask() spawn / pre-spawn failure
 └── (Copilot-specific)
     ├── InvalidMcpJson                  — MCP content failed JSON parse during provision
     ├── WorkdirPrepFailed               — git init / mkdir failed
-    └── TrustRegistrationFailed         — settings.json mutation failed
+    └── TrustRegistrationFailed         — config.json mutation failed (mkdir, lock,
+                                          atomic write); thrown by buildLaunch's
+                                          per-launch ensureDirTrusted preflight
 ```
 
 ## Testing
@@ -164,9 +191,9 @@ RuntimeError
 pnpm --filter @emploke/runtime test
 ```
 
-117 tests cover Copilot runtime (provision, refresh, buildLaunch,
-deleteState, registerWorkspace, dispatchTask) plus path-traversal
-hardening and Windows-specific spawn timing.
+Tests cover Copilot runtime (provision, refresh, buildLaunch,
+deleteState, dispatchTask) plus path-traversal hardening, trust-file
+locking semantics, and Windows-specific spawn timing.
 
 `packages/runtime/test/copilot/test-catalog.ts` is the in-memory
 catalog helper that backs every provision-side test — useful when

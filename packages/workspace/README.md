@@ -90,7 +90,7 @@ Two implementations ship:
 
 - **`FsWorkspaceRepository`** — production. Single `workspaces.json`
   index protected by an advisory lock (`workspaces.json.lock` via
-  `@emploke/storage`'s `withFileLock`); per-workspace metadata at
+  `@emploke/fs`'s `withFileLock`); per-workspace metadata at
   `<workdir>/workspace.json` written atomically inside the same lock.
 - **`InMemoryWorkspaceRepository`** at `@emploke/workspace/testing` —
   for fast unit tests. Mirrors the FS impl's id validation + path
