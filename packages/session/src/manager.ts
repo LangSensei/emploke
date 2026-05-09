@@ -150,13 +150,34 @@ export class SessionManager {
 
     const refreshed = await Promise.all(survivors.map((s) => this.refreshSession(s)));
 
-    refreshed.sort((a, b) => {
-      const av = a.lastActiveAt ?? a.createdAt;
-      const bv = b.lastActiveAt ?? b.createdAt;
-      const d = bv.localeCompare(av);
+    // `activeSince` is post-refresh because lastActiveAt is only known
+    // after `runtime.refresh()`. Sessions that have never been launched
+    // (lastActiveAt === null) fail the "active since X" predicate by
+    // definition.
+    const filtered =
+      opts.activeSince !== undefined
+        ? refreshed.filter(
+            (s) => s.lastActiveAt !== null && s.lastActiveAt >= (opts.activeSince as string),
+          )
+        : refreshed;
+
+    // Sort by lastActiveAt desc, with never-launched sessions
+    // (lastActiveAt === null) ALWAYS at the bottom regardless of their
+    // createdAt. Among never-launched sessions, secondary sort by
+    // createdAt desc; among active sessions, ties broken by id desc for
+    // stability.
+    filtered.sort((a, b) => {
+      const aNull = a.lastActiveAt === null;
+      const bNull = b.lastActiveAt === null;
+      if (aNull !== bNull) return aNull ? 1 : -1;
+      if (aNull && bNull) {
+        const d = b.createdAt.localeCompare(a.createdAt);
+        return d !== 0 ? d : b.id.localeCompare(a.id);
+      }
+      const d = (b.lastActiveAt as string).localeCompare(a.lastActiveAt as string);
       return d !== 0 ? d : b.id.localeCompare(a.id);
     });
-    return refreshed;
+    return filtered;
   }
 
   // ─── get ─────────────────────────────────────────────────

@@ -234,12 +234,19 @@ export interface ListSessionsOpts {
   agent?: string;
   /** ISO 8601 timestamp; sessions created before this are excluded server-side. */
   createdSince?: string;
+  /**
+   * ISO 8601 timestamp; sessions whose lastActiveAt is before this (or
+   * null) are excluded server-side. More expensive than createdSince
+   * because the server must call runtime.refresh() before filtering.
+   */
+  activeSince?: string;
 }
 
 export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord[]> => {
   const params = new URLSearchParams();
   if (opts.agent) params.set("agent", opts.agent);
   if (opts.createdSince) params.set("createdSince", opts.createdSince);
+  if (opts.activeSince) params.set("activeSince", opts.activeSince);
   const qs = params.toString();
   return fetchJson<SessionRecord[]>(
     `${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`,

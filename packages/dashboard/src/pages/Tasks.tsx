@@ -319,7 +319,11 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
             onChange={(e) => setIdQuery(e.target.value)}
             placeholder="task id…"
             className="input"
-            style={{ width: 200 }}
+            // Task ids are fixed-width (`YYYYMMDD-xxxxxxxx`, 17 chars).
+            // 160px is the sweet spot — holds the full id, the search-input
+            // clear-x, and a bit of breathing room. The original 200px was
+            // wasted; 150 was a hair too tight.
+            style={{ width: 160 }}
           />
           <label htmlFor="task-agent-filter" className="muted" style={{ fontSize: 12 }}>
             Agent
