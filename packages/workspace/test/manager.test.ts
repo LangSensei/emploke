@@ -7,6 +7,7 @@ import {
   RegistryCorruptedError,
   RegistrySchemaMismatchError,
   WorkspaceCorruptedError,
+  WorkspaceIdConflictError,
   WorkspaceManager,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
@@ -63,6 +64,39 @@ describe("WorkspaceManager (FsWorkspaceRepository) — init", () => {
     await expect(m.init({ id: UUID_B, name: "B", workdir: wsDir })).rejects.toBeInstanceOf(
       WorkspacePathConflictError,
     );
+  });
+
+  it("rejects when the same id is initialized twice (sequential)", async () => {
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "First", workdir: path.join(scratch, "first") });
+    await expect(
+      m.init({ id: UUID_A, name: "Second", workdir: path.join(scratch, "second") }),
+    ).rejects.toBeInstanceOf(WorkspaceIdConflictError);
+  });
+
+  it("rejects concurrent init({id: same}) with WorkspaceIdConflictError (lock-loser sees the conflict)", async () => {
+    // Regression for #42: previously WorkspaceManager did read+save and
+    // had a race window where two concurrent init({id: same}) calls
+    // could both pass the manager-side check and silently overwrite each
+    // other in repository.save (last writer wins). Repository.create()
+    // performs the id-conflict check inside the registry lock, so one
+    // call must win and one must throw WorkspaceIdConflictError.
+    const m = newFsManager();
+    const dirA = path.join(scratch, "race-a");
+    const dirB = path.join(scratch, "race-b");
+    const results = await Promise.allSettled([
+      m.init({ id: UUID_A, name: "First", workdir: dirA }),
+      m.init({ id: UUID_A, name: "Second", workdir: dirB }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(WorkspaceIdConflictError);
+    // The winning workdir is whichever call reached the lock first.
+    const back = await m.read(UUID_A);
+    expect(back).not.toBeNull();
+    expect([path.resolve(dirA), path.resolve(dirB)]).toContain(back!.workdir);
   });
 
   it("auto-mints an id when none is supplied", async () => {

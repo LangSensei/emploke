@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import {
-  WorkspaceIdConflictError,
-  WorkspaceIdInvalidError,
-  WorkspaceNotRegisteredError,
-  WorkspacePathConflictError,
-} from "./errors.js";
+import { WorkspaceIdInvalidError, WorkspaceNotRegisteredError } from "./errors.js";
 import { assertValidDisplayName, isValidWorkspaceId } from "./names.js";
 import type { WorkspaceRepository } from "./repositories/repository.js";
 import { type Workspace, workspaceLayout } from "./types.js";
@@ -86,6 +81,14 @@ export class WorkspaceManager {
    * subdirs) on disk if they do not already exist, then persists the
    * workspace metadata + index entry. Throws when the workspace is
    * already registered (use `update` for renames / defaults changes).
+   *
+   * The id-uniqueness + path-uniqueness checks are delegated to
+   * {@link WorkspaceRepository.create}, which performs them inside the
+   * registry's critical section. A previous implementation did the
+   * checks at the manager layer (`read` + `save`), which had a race
+   * window where two concurrent `init({id: same})` calls could both
+   * pass the check and then silently overwrite each other in `save`.
+   * `create` closes that window.
    */
   async init(opts: WorkspaceInitOpts): Promise<Workspace> {
     assertValidDisplayName(opts.name);
@@ -96,17 +99,12 @@ export class WorkspaceManager {
     const id = opts.id ?? randomUUID();
     const resolvedWorkdir = path.resolve(opts.workdir);
 
-    // Refuse to silently shadow an existing registration. Callers who
-    // want idempotent semantics should call `read` first and skip
-    // `init` if the id already exists.
-    const existingById = await this.repository.read(id);
-    if (existingById) throw new WorkspaceIdConflictError(id);
-    const sameDir = (await this.repository.list()).find((e) => e.workdir === resolvedWorkdir);
-    if (sameDir) throw new WorkspacePathConflictError(resolvedWorkdir, sameDir.id);
-
-    // Create the workspace directory + standard subdirs. The user
+    // Create the workspace directory + standard subdirs. The user's
     // pre-existing files inside `workdir` are preserved; we only touch
-    // the named subdirs.
+    // the named subdirs. We do this BEFORE calling repository.create
+    // so the layout is in place by the time the metadata file is
+    // written; if create throws (id or path conflict), the empty
+    // subdirs we just created stick around but are harmless.
     await mkdir(resolvedWorkdir, { recursive: true });
     const layout = workspaceLayout(resolvedWorkdir);
     await Promise.all([
@@ -125,7 +123,7 @@ export class WorkspaceManager {
       workdir: resolvedWorkdir,
       ...(opts.defaults ? { defaults: opts.defaults } : {}),
     };
-    await this.repository.save(workspace);
+    await this.repository.create(workspace);
     return workspace;
   }
 

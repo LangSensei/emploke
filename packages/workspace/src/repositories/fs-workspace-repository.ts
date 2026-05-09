@@ -7,6 +7,7 @@ import {
   RegistryCorruptedError,
   RegistrySchemaMismatchError,
   WorkspaceCorruptedError,
+  WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
@@ -119,6 +120,44 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
       return current.currentId !== undefined
         ? { entries: inserted, currentId: current.currentId }
         : { entries: inserted };
+    });
+  }
+
+  async create(workspace: Workspace): Promise<void> {
+    if (!isValidWorkspaceId(workspace.id)) {
+      throw new WorkspaceIdInvalidError(workspace.id);
+    }
+    const resolvedWorkdir = path.resolve(workspace.workdir);
+    const metadataFile = path.join(resolvedWorkdir, WORKSPACE_FILE);
+    const persistedMetadata = {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      name: workspace.name,
+      createdAt: workspace.createdAt,
+      ...(workspace.defaults ? { defaults: workspace.defaults } : {}),
+    };
+
+    // create() differs from save() in exactly one spot: the id-conflict
+    // check runs INSIDE the registry lock, so two concurrent
+    // create({id: same}) calls — even with random UUIDs that happened to
+    // collide, or pinned-id callers in tests/migrations — can't both
+    // succeed. The lock-loser sees the registered entry and throws
+    // WorkspaceIdConflictError.
+    //
+    // Path-conflict check is also inside the lock, mirroring save()'s
+    // semantics for cross-id workdir collisions.
+    await this.mutateIndex(async (current) => {
+      if (current.entries.some((e) => e.id === workspace.id)) {
+        throw new WorkspaceIdConflictError(workspace.id);
+      }
+      const byPath = current.entries.find((e) => e.workdir === resolvedWorkdir);
+      if (byPath) throw new WorkspacePathConflictError(resolvedWorkdir, byPath.id);
+
+      await writeJsonAtomic(metadataFile, persistedMetadata);
+
+      const next: IndexEntry = { id: workspace.id, workdir: resolvedWorkdir };
+      return current.currentId !== undefined
+        ? { entries: [...current.entries, next], currentId: current.currentId }
+        : { entries: [...current.entries, next] };
     });
   }
 
