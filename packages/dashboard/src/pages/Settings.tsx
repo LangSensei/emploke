@@ -58,7 +58,7 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
         </dd>
 
         <dt>
-          Port <EnvHint>Override with PORT (default 3000).</EnvHint>
+          Port <EnvHint>Override with PORT (default 8787).</EnvHint>
         </dt>
         <dd>
           <code>{fmt(config?.port)}</code>

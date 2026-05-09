@@ -33,7 +33,7 @@ type WorkspaceVars = {
 
 const paths = resolveEmplokePaths(process.env);
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 8787);
 // Bind to loopback by default  the server exposes destructive endpoints
 // (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
 // as a single-user local dashboard. To intentionally expose on the LAN, set
@@ -45,9 +45,10 @@ const hostname = process.env.EMPLOKE_HOST ?? "127.0.0.1";
 // Empty / unset = no auth (only safe for loopback bind).
 const apiKey = process.env.EMPLOKE_API_KEY;
 const staticDir = process.env.EMPLOKE_STATIC_DIR ?? resolveStaticDir(import.meta.dirname);
-// In dev, the dashboard is served by Vite on its own port (:5173) and the
-// server only provides /api. In production, pass --serve-static so the server
-// serves the dashboard build output too, enabling single-port deployment.
+// In dev, the dashboard is served by Vite on its own port (:8787) and the
+// server only provides /api on a different port (default :41817 via the
+// `dev` script). In production, pass --serve-static so the server serves
+// the dashboard build output too on :8787, enabling single-port deployment.
 const serveStaticFiles = process.argv.includes("--serve-static");
 
 /**

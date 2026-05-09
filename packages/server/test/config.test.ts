@@ -6,7 +6,7 @@ describe("configRoutes", () => {
     const res = await configRoutes({
       emplokeHome: "/home/user/.emploke",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "/",
       currentWorkspace: () => "default",
     }).request("/");
@@ -16,7 +16,7 @@ describe("configRoutes", () => {
       emplokeHome: "/home/user/.emploke",
       currentWorkspace: "default",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "/",
       tasks: { pollIntervalMs: 4000 },
     });
@@ -26,7 +26,7 @@ describe("configRoutes", () => {
     const res = await configRoutes({
       emplokeHome: "/h",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "/",
       currentWorkspace: () => null,
       taskPollIntervalMs: 1500,
@@ -39,7 +39,7 @@ describe("configRoutes", () => {
     const res = await configRoutes({
       emplokeHome: "/h",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "/",
       currentWorkspace: () => null,
     }).request("/");
@@ -51,7 +51,7 @@ describe("configRoutes", () => {
     const res = await configRoutes({
       emplokeHome: "C:\\Users\\Lang\\.emploke",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "\\",
       currentWorkspace: () => null,
     }).request("/");
@@ -67,7 +67,7 @@ describe("configRoutes", () => {
     const app = configRoutes({
       emplokeHome: "/h",
       host: "127.0.0.1",
-      port: 3000,
+      port: 8787,
       pathSeparator: "/",
       currentWorkspace: () => current,
     });
