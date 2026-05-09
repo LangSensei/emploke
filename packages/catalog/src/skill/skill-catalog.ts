@@ -14,8 +14,8 @@ export type SkillMetadataPatch = Partial<{
   dependencies: { skills?: string[]; mcps?: string[] } | null;
 }>;
 
-/** Business-logic facade over a {@link SkillRepository}. See `AgentStore`. */
-export class SkillStore {
+/** Business-logic facade over a {@link SkillRepository}. See `AgentCatalog`. */
+export class SkillCatalog {
   private readonly skills = new Map<string, Skill>();
 
   constructor(private readonly repository: SkillRepository) {}
@@ -35,7 +35,7 @@ export class SkillStore {
   }
 
   async getContent(name: string): Promise<string> {
-    // Defense-in-depth: see AgentStore.getContent for rationale.
+    // Defense-in-depth: see AgentCatalog.getContent for rationale.
     validateName(name);
     if (!this.skills.has(name)) throw new NotFound("skill", name);
     const content = await this.repository.read(name);

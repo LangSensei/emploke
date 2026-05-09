@@ -2,7 +2,7 @@
  * In-memory repositories for fast unit tests.
  *
  * Production code never imports from this subpath; it constructs `Fs*Repository`
- * implementations via the `Catalog` facade.
+ * implementations via the `CatalogManager` facade.
  */
 
 export { InMemoryAgentRepository } from "./src/repositories/in-memory-agent-repository.js";

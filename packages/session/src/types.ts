@@ -1,4 +1,4 @@
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry, Session } from "@emploke/runtime";
 import type { SessionRepository } from "./repositories/repository.js";
@@ -13,7 +13,7 @@ export type { Logger } from "@emploke/logger";
 /** Configuration for SessionManager. All fields are optional except `catalog`, `runtimeRegistry`, and `sessionsDir`. */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
-  readonly catalog: Catalog;
+  readonly catalog: CatalogManager;
   /** Registry of runtime adapters; must contain at least the default runtime. */
   readonly runtimeRegistry: RuntimeRegistry;
   /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */

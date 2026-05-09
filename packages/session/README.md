@@ -38,10 +38,10 @@ The directory name is the **only source of truth for the session ID**.
 ## Usage
 
 ```ts
-import { Catalog } from "@emploke/catalog";
+import { CatalogManager } from "@emploke/catalog";
 import { SessionManager } from "@emploke/session";
 
-const catalog = await Catalog.open({ catalogDir: "/path/to/workspace/catalog" });
+const catalog = await CatalogManager.open({ catalogDir: "/path/to/workspace/catalog" });
 const sessions = new SessionManager({
   catalog,
   runtimeRegistry,

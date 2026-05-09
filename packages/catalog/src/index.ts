@@ -3,8 +3,8 @@ export type {
   CatalogOptions,
   ScanIssue,
   SkillMetadataPatch,
-} from "./catalog.js";
-export { Catalog } from "./catalog.js";
+} from "./manager.js";
+export { CatalogManager } from "./manager.js";
 export {
   CatalogError,
   CatalogStateError,

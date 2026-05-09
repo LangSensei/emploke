@@ -1,4 +1,4 @@
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
@@ -8,13 +8,13 @@ import { skillsRoutes } from "./skills.js";
 /**
  * Workspace-scoped catalog routes. Mounted at
  * `/api/workspaces/:name/catalog/*` in `index.ts`. The routes pull a
- * per-workspace `Catalog` instance off the Hono context (set up by the
+ * per-workspace `CatalogManager` instance off the Hono context (set up by the
  * workspace middleware), so handler logic doesn't need to know which
  * workspace is in play.
  *
- * Tests can pass a `Catalog` instance directly instead of a resolver.
+ * Tests can pass a `CatalogManager` instance directly instead of a resolver.
  */
-export function catalogRoutes(arg: CatalogResolver | Catalog): Hono {
+export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 

@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,7 +45,7 @@ interface StubCatalogOpts {
   resolveError?: Error;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
   const agents = opts.agents ?? {};
   return {
     catalogDir: "/tmp/catalog",
@@ -55,7 +55,7 @@ function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-  } as unknown as Catalog;
+  } as unknown as CatalogManager;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>
@@ -273,7 +273,7 @@ const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
 
 const makeManager = (
   overrides: {
-    catalog?: Catalog;
+    catalog?: CatalogManager;
     runtime?: Runtime;
     registry?: RuntimeRegistry;
     now?: () => Date;

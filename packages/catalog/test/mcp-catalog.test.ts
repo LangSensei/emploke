@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
-import { McpStore } from "../src/mcp/mcp-store.js";
+import { McpCatalog } from "../src/mcp/mcp-catalog.js";
 import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let store: McpStore;
+let store: McpCatalog;
 
 async function makeMcp(name: string, content?: object): Promise<string> {
   const file = join(sourceDir, `${name.replace("/", "--")}.json`);
@@ -26,14 +26,14 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new McpStore(new FsMcpRepository(catalogDir));
+  store = new McpCatalog(new FsMcpRepository(catalogDir));
 });
 
 afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
-describe("McpStore", () => {
+describe("McpCatalog", () => {
   describe("install", () => {
     it("installs unscoped mcp", async () => {
       const src = await makeMcp("github");
@@ -148,7 +148,7 @@ describe("McpStore", () => {
     });
   });
 
-  // See SkillStore equivalent for rationale.
+  // See SkillCatalog equivalent for rationale.
   describe("getContent / getPath path-traversal hardening", () => {
     it("getContent rejects names with `..` segments", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);

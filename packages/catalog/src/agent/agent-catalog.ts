@@ -21,7 +21,7 @@ export type AgentMetadataPatch = Partial<{
  * repository — the Store only touches user-provided source directories
  * directly (in `install()`).
  */
-export class AgentStore {
+export class AgentCatalog {
   private readonly agents = new Map<string, Agent>();
 
   constructor(private readonly repository: AgentRepository) {}

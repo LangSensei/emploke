@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
@@ -28,7 +28,7 @@ import { WorkspaceContextCache } from "./workspace-context.js";
 type WorkspaceVars = {
   sessionManager: SessionManager;
   taskManager: TaskManager;
-  catalog: Catalog;
+  catalog: CatalogManager;
 };
 
 const paths = resolveEmplokePaths(process.env);
@@ -257,7 +257,7 @@ async function main() {
 /**
  * Hono middleware: pulls `:id` from the route params, asks the cache for
  * its `WorkspaceContext`, and stashes the per-workspace `SessionManager`
- * and `Catalog` on `c.var`. Sub-route families pull whichever they need
+ * and `CatalogManager` on `c.var`. Sub-route families pull whichever they need
  * (sessions read `c.get("sessionManager")`; catalog reads `c.get("catalog")`).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;

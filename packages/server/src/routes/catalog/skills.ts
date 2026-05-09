@@ -1,4 +1,4 @@
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
@@ -8,9 +8,9 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * Routes for /skills/* relative to the parent mount. Mounted by
  * `catalogRoutes` at "/skills". Takes a per-request catalog resolver so
  * the same handler can serve multiple workspaces; tests can also pass a
- * `Catalog` instance directly.
+ * `CatalogManager` instance directly.
  */
-export function skillsRoutes(arg: CatalogResolver | Catalog): Hono {
+export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 

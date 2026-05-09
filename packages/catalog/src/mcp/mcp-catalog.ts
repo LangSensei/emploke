@@ -5,7 +5,7 @@ import type { McpRepository } from "../repositories/repository.js";
 import { validateMcpName } from "../validate.js";
 
 /** Business-logic facade over a {@link McpRepository}. */
-export class McpStore {
+export class McpCatalog {
   private readonly mcps = new Set<string>();
 
   constructor(private readonly repository: McpRepository) {}

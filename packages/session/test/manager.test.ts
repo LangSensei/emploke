@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
@@ -46,7 +46,7 @@ interface StubCatalogOpts {
   resolveError?: Error;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
   const agents = opts.agents ?? {};
   return {
     catalogDir,
@@ -56,7 +56,7 @@ function stubCatalog(opts: StubCatalogOpts = {}): Catalog {
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-  } as unknown as Catalog;
+  } as unknown as CatalogManager;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>

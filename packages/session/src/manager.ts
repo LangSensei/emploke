@@ -1,7 +1,7 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
@@ -37,7 +37,7 @@ const MAX_CREATE_RETRIES = 5;
  * into a full `Session` for downstream callers.
  */
 export class SessionManager {
-  private readonly catalog: Catalog;
+  private readonly catalog: CatalogManager;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
@@ -66,7 +66,7 @@ export class SessionManager {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    let resolveResult: ReturnType<Catalog["resolveAgent"]>;
+    let resolveResult: ReturnType<CatalogManager["resolveAgent"]>;
     try {
       resolveResult = this.catalog.resolveAgent(agentName);
     } catch (err) {

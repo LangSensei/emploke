@@ -14,7 +14,7 @@
  *    archive — emploke "stores but never reads" runtime metadata.
  */
 
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 
 /**
@@ -127,7 +127,7 @@ import type { TaskRepository } from "./repositories/repository.js";
 
 /** Constructor options for `TaskManager`. */
 export interface TaskManagerConfig {
-  readonly catalog: Catalog;
+  readonly catalog: CatalogManager;
   readonly runtimeRegistry: RuntimeRegistry;
   /** Absolute path to the directory holding per-task workdirs. */
   readonly tasksDir: string;

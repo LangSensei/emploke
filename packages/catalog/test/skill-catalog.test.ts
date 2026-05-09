@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
-import { SkillStore } from "../src/skill/skill-store.js";
+import { SkillCatalog } from "../src/skill/skill-catalog.js";
 
 let catalogDir: string;
 let sourceDir: string;
-let store: SkillStore;
+let store: SkillCatalog;
 
 async function makeSkill(
   name: string,
@@ -41,14 +41,14 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new SkillStore(new FsSkillRepository(catalogDir));
+  store = new SkillCatalog(new FsSkillRepository(catalogDir));
 });
 
 afterEach(async () => {
   await rm(join(catalogDir, ".."), { recursive: true, force: true });
 });
 
-describe("SkillStore", () => {
+describe("SkillCatalog", () => {
   describe("install", () => {
     it("installs and returns skill", async () => {
       const src = await makeSkill("weather");
@@ -185,7 +185,7 @@ describe("SkillStore", () => {
   });
 
   // Defense-in-depth: getContent / path / getPath validate names before
-  // composing on-disk paths. See SkillStore equivalent for rationale.
+  // composing on-disk paths. See SkillCatalog equivalent for rationale.
   describe("getContent path-traversal hardening", () => {
     it("rejects names with `..` segments before reading the filesystem", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
@@ -208,6 +208,6 @@ describe("SkillStore", () => {
   // public surface it must not hand back a traversed filesystem path
   // either — otherwise a future caller inherits the same hole.
   // The Repository pattern moved path-composition into FsSkillRepository,
-  // which validates names at every public method. The SkillStore.path()
+  // which validates names at every public method. The SkillCatalog.path()
   // surface was retired with no callers.
 });

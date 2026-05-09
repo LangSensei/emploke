@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import {
   FsWorkspaceRepository,
@@ -38,7 +38,7 @@ async function ensureWorkspace(name: string): Promise<Workspace> {
 }
 
 function mountApp() {
-  const app = new Hono<{ Variables: { catalog: Catalog } }>();
+  const app = new Hono<{ Variables: { catalog: CatalogManager } }>();
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);

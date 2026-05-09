@@ -2,9 +2,9 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentStore } from "../src/agent/agent-store.js";
-import { McpStore } from "../src/mcp/mcp-store.js";
-import { SkillStore } from "../src/skill/skill-store.js";
+import { AgentCatalog } from "../src/agent/agent-catalog.js";
+import { McpCatalog } from "../src/mcp/mcp-catalog.js";
+import { SkillCatalog } from "../src/skill/skill-catalog.js";
 import {
   InMemoryAgentRepository,
   InMemoryMcpRepository,
@@ -23,9 +23,9 @@ afterEach(async () => {
 });
 
 describe("Stores wired to InMemory repositories", () => {
-  it("AgentStore.install + scan round-trips through InMemoryAgentRepository", async () => {
+  it("AgentCatalog.install + scan round-trips through InMemoryAgentRepository", async () => {
     const repo = new InMemoryAgentRepository();
-    const store = new AgentStore(repo);
+    const store = new AgentCatalog(repo);
     const dir = join(sourceDir, "alpha-src");
     await mkdir(dir, { recursive: true });
     await writeFile(
@@ -38,15 +38,15 @@ describe("Stores wired to InMemory repositories", () => {
     expect(store.get("alpha")?.description).toBe("Alpha");
 
     // A fresh Store backed by the same repo recovers state via scan().
-    const reborn = new AgentStore(repo);
+    const reborn = new AgentCatalog(repo);
     const issues = await reborn.scan();
     expect(issues).toEqual([]);
     expect(reborn.has("alpha")).toBe(true);
   });
 
-  it("SkillStore.updateContent is observable via the repository", async () => {
+  it("SkillCatalog.updateContent is observable via the repository", async () => {
     const repo = new InMemorySkillRepository();
-    const store = new SkillStore(repo);
+    const store = new SkillCatalog(repo);
     const dir = join(sourceDir, "lint-src");
     await mkdir(dir, { recursive: true });
     await writeFile(
@@ -63,9 +63,9 @@ describe("Stores wired to InMemory repositories", () => {
     expect(await repo.read("lint")).toContain("Lint v2");
   });
 
-  it("McpStore install + remove updates the repository", async () => {
+  it("McpCatalog install + remove updates the repository", async () => {
     const repo = new InMemoryMcpRepository();
-    const store = new McpStore(repo);
+    const store = new McpCatalog(repo);
     const file = join(sourceDir, "github.json");
     await writeFile(file, '{"command":"gh"}');
 

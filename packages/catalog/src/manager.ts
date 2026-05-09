@@ -1,17 +1,17 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { type AgentMetadataPatch, AgentStore } from "./agent/agent-store.js";
+import { type AgentMetadataPatch, AgentCatalog } from "./agent/agent-catalog.js";
 import { pathExists } from "./atomic.js";
 import { CatalogStateError } from "./errors.js";
 import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
-import { McpStore } from "./mcp/mcp-store.js";
+import { McpCatalog } from "./mcp/mcp-catalog.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
 import type { AgentRepository, McpRepository, SkillRepository } from "./repositories/repository.js";
 import { Resolver } from "./resolver.js";
-import { type SkillMetadataPatch, SkillStore } from "./skill/skill-store.js";
+import { type SkillMetadataPatch, SkillCatalog } from "./skill/skill-catalog.js";
 import type {
   Agent,
   AgentEntry,
@@ -40,13 +40,13 @@ export interface CatalogOptions {
 }
 
 /**
- * Catalog — facade over SkillStore, AgentStore, McpStore, and Resolver.
+ * Catalog — facade over SkillCatalog, AgentCatalog, McpCatalog, and Resolver.
  */
-export class Catalog {
+export class CatalogManager {
   private readonly catalogDir: string;
-  private readonly skillStore: SkillStore;
-  private readonly agentStore: AgentStore;
-  private readonly mcpStore: McpStore;
+  private readonly skillStore: SkillCatalog;
+  private readonly agentStore: AgentCatalog;
+  private readonly mcpStore: McpCatalog;
   private readonly resolver: Resolver;
   private _issues: ScanIssue[] = [];
   private _skillEntries = new Map<string, SkillEntry>();
@@ -59,14 +59,14 @@ export class Catalog {
     const skillRepo = opts.repositories?.skills ?? new FsSkillRepository(opts.catalogDir);
     const agentRepo = opts.repositories?.agents ?? new FsAgentRepository(opts.catalogDir);
     const mcpRepo = opts.repositories?.mcps ?? new FsMcpRepository(opts.catalogDir);
-    this.skillStore = new SkillStore(skillRepo);
-    this.agentStore = new AgentStore(agentRepo);
-    this.mcpStore = new McpStore(mcpRepo);
+    this.skillStore = new SkillCatalog(skillRepo);
+    this.agentStore = new AgentCatalog(agentRepo);
+    this.mcpStore = new McpCatalog(mcpRepo);
     this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore, opts.catalogDir);
   }
 
-  static async open(opts: CatalogOptions): Promise<Catalog> {
-    const c = new Catalog(opts);
+  static async open(opts: CatalogOptions): Promise<CatalogManager> {
+    const c = new CatalogManager(opts);
     // Ensure catalog dir exists so subsequent writes (incl. .lock acquisition)
     // don't fail with ENOENT on a fresh install.
     await mkdirFs(opts.catalogDir, { recursive: true });

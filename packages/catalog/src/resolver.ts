@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import type { AgentStore } from "./agent/agent-store.js";
+import type { AgentCatalog } from "./agent/agent-catalog.js";
 import { type GraphNode, resolveTopological } from "./graph.js";
-import type { McpStore } from "./mcp/mcp-store.js";
-import type { SkillStore } from "./skill/skill-store.js";
+import type { McpCatalog } from "./mcp/mcp-catalog.js";
+import type { SkillCatalog } from "./skill/skill-catalog.js";
 import type {
   AgentResolveResult,
   ResolvedMcp,
@@ -13,9 +13,9 @@ import { nameToPath } from "./validate.js";
 
 export class Resolver {
   constructor(
-    private readonly skills: SkillStore,
-    private readonly agents: AgentStore,
-    private readonly mcps: McpStore,
+    private readonly skills: SkillCatalog,
+    private readonly agents: AgentCatalog,
+    private readonly mcps: McpCatalog,
     private readonly catalogDir: string,
   ) {}
 

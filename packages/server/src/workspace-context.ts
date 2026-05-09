@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Catalog } from "@emploke/catalog";
+import { CatalogManager } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
 import {
   type Runtime,
@@ -21,7 +21,7 @@ import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
-  readonly catalog: Catalog;
+  readonly catalog: CatalogManager;
   readonly sessions: SessionManager;
   readonly tasks: TaskManager;
 }
@@ -37,7 +37,7 @@ export interface WorkspaceContext {
  *      one-time setup (e.g. trust) happens before any session actually
  *      runs in this workspace. Failures wrap as
  *      `RuntimeRegisterWorkspaceFailed`.
- *   3. Open a per-workspace `Catalog` rooted at `<workspace>/catalog/`.
+ *   3. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
  *   4. Build `SessionManager` and `TaskManager` pointed at the
  *      per-workspace state directories.
  *   5. Cache the bundle keyed by id.
@@ -117,7 +117,7 @@ export class WorkspaceContextCache {
     await registerWorkspaceWithRuntimes(this.runtimeRegistry, workspace.workdir);
 
     const layout = workspaceLayout(workspace.workdir);
-    const catalog = await Catalog.open({ catalogDir: layout.catalog });
+    const catalog = await CatalogManager.open({ catalogDir: layout.catalog });
 
     const sessions = new SessionManager({
       catalog,

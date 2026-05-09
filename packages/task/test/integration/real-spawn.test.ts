@@ -23,7 +23,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -107,14 +107,14 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
     mcps: [],
   }) as unknown as AgentResolveResult;
 
-const stubCatalog = (agentNames: readonly string[]): Catalog =>
+const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
   ({
     catalogDir: "/tmp/catalog",
     resolveAgent(name: string): AgentResolveResult {
       if (!agentNames.includes(name)) throw new Error(`unknown agent: ${name}`);
       return fakeAgentResolve(name);
     },
-  }) as unknown as Catalog;
+  }) as unknown as CatalogManager;
 
 // ───────── helpers ────────────────────────────────────────────
 
@@ -135,7 +135,7 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
   throw new Error(`awaitTerminal: task ${id} did not reach terminal status within ${timeoutMs}ms`);
 }
 
-const makeManager = (catalog: Catalog, runtime: Runtime): TaskManager => {
+const makeManager = (catalog: CatalogManager, runtime: Runtime): TaskManager => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
   return new TaskManager({

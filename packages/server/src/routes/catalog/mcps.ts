@@ -1,4 +1,4 @@
-import type { Catalog } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readInstallBody } from "./helpers.js";
@@ -11,7 +11,7 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * MCPs do not have a metadata PATCH endpoint — they're config-only blobs
  * with no status/disabled state to flip.
  */
-export function mcpsRoutes(arg: CatalogResolver | Catalog): Hono {
+export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
