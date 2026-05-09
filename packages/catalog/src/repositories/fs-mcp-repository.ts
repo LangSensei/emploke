@@ -1,7 +1,6 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { mkdirP, writeFileAtomic } from "@emploke/fs";
-import { pathExists } from "../atomic.js";
+import { mkdirP, safeStat, writeFileAtomic } from "@emploke/fs";
 import { nameToPath, validateFqn } from "../validate.js";
 import type { McpRepoEntry, McpRepository, McpWriteOpts } from "./repository.js";
 
@@ -58,7 +57,7 @@ export class FsMcpRepository implements McpRepository {
 
   async scan(): Promise<McpRepoEntry[]> {
     const out: McpRepoEntry[] = [];
-    if (!(await pathExists(this.baseDir))) return out;
+    if ((await safeStat(this.baseDir)) === null) return out;
     await this.scanDir(this.baseDir, /*scope*/ null, out);
     return out;
   }

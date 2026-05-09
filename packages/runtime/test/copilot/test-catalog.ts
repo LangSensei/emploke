@@ -16,11 +16,23 @@ import {
  *
  * Each fixture is a map of relative paths to file contents. AGENTS.md /
  * SKILL.md must be present in the agent / skill fixtures respectively.
+ *
+ * Fixture keys MAY be either short names (auto-prefixed with `local/`)
+ * or full FQNs (`scope/name`). The scan-time origin synthesis runs
+ * `scopeFromOrigin(file:memory:…)` → `local`, so the in-memory repo
+ * MUST be seeded under the FQN that scan will compute — otherwise the
+ * catalog sees `local/<name>` in its in-memory cache but the repo's
+ * storage map is keyed by the raw `<name>`, breaking every subsequent
+ * read/write through the FQN.
  */
 export interface TestCatalogFixtures {
   agents?: Record<string, Record<string, string>>;
   skills?: Record<string, Record<string, string>>;
   mcps?: Record<string, string>;
+}
+
+function toFqn(name: string): string {
+  return name.includes("/") ? name : `local/${name}`;
 }
 
 export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promise<{
@@ -38,7 +50,8 @@ export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promi
   // Pre-seed each repo via its async write surface so the catalog's open()
   // scan finds the entries. We bypass installFromDir here because in-memory
   // repos already accept arbitrary trees per-entry.
-  for (const [name, files] of Object.entries(fixtures.agents ?? {})) {
+  for (const [shortOrFqn, files] of Object.entries(fixtures.agents ?? {})) {
+    const name = toFqn(shortOrFqn);
     for (const [rel, content] of Object.entries(files)) {
       const buf = Buffer.from(content, "utf8");
       // The first AGENTS.md write seeds the entry; subsequent paths add files.
@@ -63,7 +76,8 @@ export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promi
     }
   }
 
-  for (const [name, files] of Object.entries(fixtures.skills ?? {})) {
+  for (const [shortOrFqn, files] of Object.entries(fixtures.skills ?? {})) {
+    const name = toFqn(shortOrFqn);
     for (const [rel, content] of Object.entries(files)) {
       const buf = Buffer.from(content, "utf8");
       if (rel === "SKILL.md") await skillRepo.write(name, content);
@@ -86,8 +100,8 @@ export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promi
     }
   }
 
-  for (const [name, content] of Object.entries(fixtures.mcps ?? {})) {
-    await mcpRepo.write(name, content);
+  for (const [shortOrFqn, content] of Object.entries(fixtures.mcps ?? {})) {
+    await mcpRepo.write(toFqn(shortOrFqn), content);
   }
 
   // CatalogManager.open() needs a catalogDir for its stale-lock cleanup.

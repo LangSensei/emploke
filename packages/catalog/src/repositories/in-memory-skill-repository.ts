@@ -24,6 +24,19 @@ export class InMemorySkillRepository implements SkillRepository {
     this.storedEntries.set(name, files);
   }
 
+  async install(name: string, stream: AsyncIterable<CatalogEntryFile>): Promise<void> {
+    const files = new Map<string, Buffer>();
+    for await (const f of stream) {
+      const segments = f.relPath.split("/").filter((s) => s.length > 0);
+      if (segments.length === 0) continue;
+      if (segments.some((s) => s === "..") || f.relPath.startsWith("/")) {
+        throw new Error(`unsafe relPath in stream: ${f.relPath}`);
+      }
+      files.set(segments.join("/"), f.content);
+    }
+    this.storedEntries.set(name, files);
+  }
+
   async delete(name: string): Promise<void> {
     this.storedEntries.delete(name);
   }

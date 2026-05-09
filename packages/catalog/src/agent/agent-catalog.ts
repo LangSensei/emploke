@@ -54,6 +54,41 @@ export class AgentCatalog {
     return agent;
   }
 
+  /** Stream-based install. See {@link SkillCatalog.installFromStream}. */
+  async installFromStream(
+    stream: AsyncIterable<CatalogEntryFile>,
+    opts: InstallAgentOpts = {},
+    sourceLabel = "<stream>",
+  ): Promise<Agent> {
+    const buffered: CatalogEntryFile[] = [];
+    let anchor: { content: string; sourcePath: string } | null = null;
+    for await (const file of stream) {
+      buffered.push(file);
+      if (file.relPath === "AGENTS.md") {
+        anchor = {
+          content: file.content.toString("utf8"),
+          sourcePath: `${sourceLabel}/AGENTS.md`,
+        };
+      }
+    }
+    if (!anchor) {
+      throw new FrontmatterError(sourceLabel, "stream did not contain a top-level AGENTS.md");
+    }
+    const { data } = parseFrontmatter(anchor.content, anchor.sourcePath);
+    const agent = frontmatterToAgent(data, anchor.sourcePath, projectionOpts(opts.origin));
+
+    let toInstall: CatalogEntryFile[] = buffered;
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(anchor.content, { origin: agent.origin });
+      toInstall = buffered.map((f) =>
+        f.relPath === "AGENTS.md" ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") } : f,
+      );
+    }
+    await this.repository.install(agent.name, asyncIterableOf(toInstall));
+    this.agents.set(agent.name, agent);
+    return agent;
+  }
+
   async getContent(name: string): Promise<string> {
     // Defense-in-depth: validate before going to the repo. Repos validate too,
     // but rejecting at the Store boundary keeps NotFound semantics for invalid
@@ -191,4 +226,8 @@ export class AgentCatalog {
     if (!this.agents.has(name)) throw new NotFound("agent", name);
     return this.repository.entries(name);
   }
+}
+
+async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
+  for (const item of items) yield item;
 }

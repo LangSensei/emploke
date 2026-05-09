@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { safeStat } from "./safe-fs.js";
 
 /**
  * On Windows, rename can race with a reader on the destination
@@ -74,4 +76,57 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
     }
   }
   throw lastErr;
+}
+
+/**
+ * Best-effort atomic directory tree replacement.
+ *
+ * Strategy:
+ *   1. Copy `srcDir` recursively into a sibling temp dir of `dstDir`.
+ *   2. If `dstDir` exists, rename it aside to a backup path.
+ *   3. Rename the temp dir to `dstDir` (atomic on the same filesystem).
+ *   4. Remove the backup.
+ *
+ * Failure modes:
+ *   - If step 3 fails after the backup rename, we attempt to restore from
+ *     backup; if that restore also fails, the backup is left on disk.
+ *   - Any leftover temp / backup directories share a recognizable prefix
+ *     (".<basename>.tmp." / ".<basename>.old.") so a future scan can ignore
+ *     or clean them.
+ *
+ * This is not a true cross-volume atomic op (POSIX rename across mounts is
+ * not atomic). Callers depending on strict atomicity must keep `srcDir` and
+ * `dstDir` on the same filesystem.
+ */
+export async function replaceDirAtomic(srcDir: string, dstDir: string): Promise<void> {
+  const parent = dirname(dstDir);
+  await mkdir(parent, { recursive: true });
+
+  const stamp = randomBytes(6).toString("hex");
+  const tmp = join(parent, `.${basename(dstDir)}.tmp.${stamp}`);
+  const bak = join(parent, `.${basename(dstDir)}.old.${stamp}`);
+
+  await cp(srcDir, tmp, { recursive: true });
+
+  let backedUp = false;
+  if ((await safeStat(dstDir)) !== null) {
+    await rename(dstDir, bak);
+    backedUp = true;
+  }
+  try {
+    await renameWithRetry(tmp, dstDir);
+  } catch (err) {
+    if (backedUp) {
+      try {
+        await rename(bak, dstDir);
+      } catch {
+        // restore failed; leave bak in place for manual recovery
+      }
+    }
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+  if (backedUp) {
+    await rm(bak, { recursive: true, force: true }).catch(() => {});
+  }
 }

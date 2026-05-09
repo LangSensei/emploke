@@ -1,7 +1,8 @@
-import type { CatalogManager } from "@emploke/catalog";
+import { type CatalogManager, deepInstall } from "@emploke/catalog";
+import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
+import { readContentBody, readMetadataBody, readSkillInstallBody } from "./helpers.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
@@ -9,8 +10,22 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * `catalogRoutes` at "/skills". Takes a per-request catalog resolver so
  * the same handler can serve multiple workspaces; tests can also pass a
  * `CatalogManager` instance directly.
+ *
+ * The `POST /` install handler is the entry-point for both local
+ * (`file:`) and remote (`https://github.com/...`) installs. It always
+ * recursively installs declared dependencies — there is no "single-entry"
+ * mode. Behaviour:
+ *
+ *   - Fetches the root origin into a tmp staging dir
+ *   - Installs the root via {@link CatalogManager.installSkill}
+ *   - BFS-walks the resulting frontmatter dependencies
+ *   - Returns a manifest `{installed, skipped, failed}`; status 201 if
+ *     `failed.length === 0` else 207 (multi-status)
  */
-export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function skillsRoutes(
+  arg: CatalogResolver | CatalogManager,
+  fetcherRegistry: FetcherRegistry,
+): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -32,11 +47,18 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const skill = await catalog.installSkill(parsed.sourcePath);
-      return c.json(skill, 201);
+      const manifest = await deepInstall({
+        catalog,
+        fetchers: fetcherRegistry,
+        rootKind: "skill",
+        rootOrigin: parsed.origin,
+      });
+      const status = manifest.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(manifest, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

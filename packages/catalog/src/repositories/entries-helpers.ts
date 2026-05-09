@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, sep } from "node:path";
-import { pathExists } from "../atomic.js";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
+import { mkdirP, replaceDirAtomic, safeStat } from "@emploke/fs";
 import { NotFound } from "../errors.js";
 import type { CatalogEntryFile } from "./repository.js";
 
@@ -26,8 +26,48 @@ export async function* walkEntryDir(
   name: string,
   rootDir: string,
 ): AsyncIterable<CatalogEntryFile> {
-  if (!(await pathExists(rootDir))) throw new NotFound(kind, name);
+  if ((await safeStat(rootDir)) === null) throw new NotFound(kind, name);
   yield* walkInner(rootDir, "");
+}
+
+/**
+ * Drain `stream` into `dest`, atomically. Files are first written into
+ * a sibling temp dir (under the same parent as `dest`, so we get the
+ * same-filesystem guarantees that `replaceDirAtomic` needs for its
+ * fallback rename), then the whole tree is swapped in.
+ *
+ * Per-file safety:
+ *   - `relPath` is always normalised to POSIX before joining — incoming
+ *     path may have come from a remote tarball (slash separators).
+ *   - Reject any `..` segment to prevent path-escape from a malicious
+ *     fetcher result.
+ *   - Reject absolute paths for the same reason.
+ *
+ * The temp dir is always cleaned up on failure.
+ */
+export async function installStreamToDir(
+  dest: string,
+  stream: AsyncIterable<CatalogEntryFile>,
+): Promise<void> {
+  await mkdirP(dirname(dest));
+  const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(tmp, { recursive: true });
+  try {
+    for await (const file of stream) {
+      const segments = file.relPath.split("/").filter((s) => s.length > 0);
+      if (segments.length === 0) continue;
+      if (segments.some((s) => s === "..") || file.relPath.startsWith("/")) {
+        throw new Error(`unsafe relPath in stream: ${file.relPath}`);
+      }
+      const abs = join(tmp, ...segments);
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, file.content);
+    }
+    await replaceDirAtomic(tmp, dest);
+  } catch (err) {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 async function* walkInner(absRoot: string, relParent: string): AsyncIterable<CatalogEntryFile> {
@@ -47,8 +87,8 @@ async function* walkInner(absRoot: string, relParent: string): AsyncIterable<Cat
       // Defense: skip anything obviously massive — skills/agents are
       // text + small assets. A 50 MB file in a skill dir is almost
       // certainly an accident; refuse rather than load it.
-      const s = await stat(abs);
-      if (s.size > 50 * 1024 * 1024) continue;
+      const s = await safeStat(abs);
+      if (s !== null && s.size > 50 * 1024 * 1024) continue;
       yield { relPath: toPosix(childRel), content: await readFile(abs) };
     }
   }

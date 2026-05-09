@@ -1,6 +1,6 @@
 import yaml from "js-yaml";
-import { FrontmatterError, OriginParseError } from "./errors.js";
-import { type ParsedOrigin, parseOrigin, scopeFromOrigin } from "./origin.js";
+import { type ParsedOrigin, OriginParseError, parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
+import { FrontmatterError } from "./errors.js";
 import type { Agent, DependencyRef, Skill } from "./types.js";
 import { makeFqn, validateScope, validateShortName } from "./validate.js";
 

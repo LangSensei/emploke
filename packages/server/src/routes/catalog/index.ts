@@ -1,4 +1,8 @@
 import type { CatalogManager } from "@emploke/catalog";
+import {
+  defaultFetcherRegistry,
+  type FetcherRegistry,
+} from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
@@ -13,8 +17,20 @@ import { skillsRoutes } from "./skills.js";
  * workspace is in play.
  *
  * Tests can pass a `CatalogManager` instance directly instead of a resolver.
+ *
+ * `fetcherRegistry` is the (process-wide) {@link FetcherRegistry} used to
+ * resolve `origin:` URIs into pure-stream `EntryFile` iterables for install.
+ * Tests can pass a fake registry whose fetchers yield from in-memory
+ * fixtures; production uses {@link defaultFetcherRegistry} with `file:` +
+ * `github:` schemes wired up.
+ *
+ * Why one shared registry rather than one per workspace? Fetchers are
+ * stateless — there's no per-workspace data to keep around.
  */
-export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function catalogRoutes(
+  arg: CatalogResolver | CatalogManager,
+  fetcherRegistry: FetcherRegistry = defaultFetcherRegistry(),
+): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -31,9 +47,9 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
     await next();
   });
 
-  app.route("/skills", skillsRoutes(getCatalog));
-  app.route("/agents", agentsRoutes(getCatalog));
-  app.route("/mcps", mcpsRoutes(getCatalog));
+  app.route("/skills", skillsRoutes(getCatalog, fetcherRegistry));
+  app.route("/agents", agentsRoutes(getCatalog, fetcherRegistry));
+  app.route("/mcps", mcpsRoutes(getCatalog, fetcherRegistry));
 
   app.get("/overview", (c) => {
     const catalog = getCatalog(c);

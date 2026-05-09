@@ -1,7 +1,8 @@
-import type { CatalogManager } from "@emploke/catalog";
+import { type CatalogManager, deepInstall } from "@emploke/catalog";
+import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody } from "./helpers.js";
+import { readContentBody, readMcpInstallBody } from "./helpers.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
@@ -10,8 +11,16 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  *
  * MCPs do not have a metadata PATCH endpoint — they're config-only blobs
  * with no status/disabled state to flip.
+ *
+ * `POST /` body: `{ origin: string, name: string, scope?: string }`.
+ * Unlike skills/agents, the install is non-recursive (MCPs cannot declare
+ * dependencies); we still go through `deepInstall` for consistency so the
+ * caller always gets a manifest-shaped response.
  */
-export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function mcpsRoutes(
+  arg: CatalogResolver | CatalogManager,
+  fetcherRegistry: FetcherRegistry,
+): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -34,11 +43,23 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readMcpInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const name = await catalog.installMcp(parsed.sourcePath, parsed.name);
-      return c.json({ name }, 201);
+      const input: Parameters<typeof deepInstall>[0] = {
+        catalog,
+        fetchers: fetcherRegistry,
+        rootKind: "mcp",
+        rootOrigin: parsed.origin,
+        rootMcpName: parsed.name,
+      };
+      if (parsed.scope !== undefined) {
+        (input as { rootScope?: string }).rootScope = parsed.scope;
+      }
+      const manifest = await deepInstall(input);
+      const status = manifest.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(manifest, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

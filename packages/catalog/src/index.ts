@@ -1,15 +1,21 @@
 export {
+  FetchError,
+  type ParsedOrigin,
+  OriginParseError,
+  normalizeOrigin,
+  parseOrigin,
+  scopeFromOrigin,
+} from "@emploke/catalog-fetcher";
+export {
   CatalogError,
   CatalogStateError,
   CycleDetected,
-  FetchError,
   FrontmatterError,
   HasDependents,
   MissingDependencies,
   NameInvalid,
   NotFound,
   OriginConflictError,
-  OriginParseError,
 } from "./errors.js";
 export { applyFrontmatterPatch, depRefToFqn, synthesizeOriginFromPath } from "./frontmatter.js";
 export type {
@@ -21,8 +27,15 @@ export type {
   SkillMetadataPatch,
 } from "./manager.js";
 export { CatalogManager } from "./manager.js";
-export { normalizeOrigin, parseOrigin, scopeFromOrigin } from "./origin.js";
-export type { ParsedOrigin } from "./origin.js";
+export {
+  type DeepInstallInput,
+  type FailedEntry,
+  type InstallManifest,
+  type InstalledEntry,
+  type RootKind,
+  type SkippedEntry,
+  deepInstall,
+} from "./deep-install.js";
 export type { CatalogEntryFile } from "./repositories/repository.js";
 export type {
   Agent,

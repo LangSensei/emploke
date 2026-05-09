@@ -1,7 +1,8 @@
-import type { CatalogManager } from "@emploke/catalog";
+import { type CatalogManager, deepInstall } from "@emploke/catalog";
+import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
+import { readAgentInstallBody, readContentBody, readMetadataBody } from "./helpers.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
@@ -9,8 +10,16 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * `catalogRoutes` at "/agents". Takes a per-request catalog resolver so
  * the same handler can serve multiple workspaces; tests can also pass a
  * `CatalogManager` instance directly.
+ *
+ * The `POST /` install handler mirrors {@link skillsRoutes}: takes a body
+ * `{ origin: string }`, fetches via the registry, recursively installs
+ * declared frontmatter dependencies (skills + mcps; agents never appear
+ * as a dep), and returns a `{installed, skipped, failed}` manifest.
  */
-export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function agentsRoutes(
+  arg: CatalogResolver | CatalogManager,
+  fetcherRegistry: FetcherRegistry,
+): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -32,11 +41,18 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readAgentInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const agent = await catalog.installAgent(parsed.sourcePath);
-      return c.json(agent, 201);
+      const manifest = await deepInstall({
+        catalog,
+        fetchers: fetcherRegistry,
+        rootKind: "agent",
+        rootOrigin: parsed.origin,
+      });
+      const status = manifest.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(manifest, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

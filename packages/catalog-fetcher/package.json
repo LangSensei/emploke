@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/catalog",
+  "name": "@emploke/catalog-fetcher",
   "version": "0.0.1",
-  "description": "Skill + MCP dependency-aware registry (file-system backed)",
+  "description": "Pluggable Fetcher implementations (file:, https://github.com/) for @emploke/catalog's deepInstall orchestrator",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -13,15 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./testing": {
-      "types": "./testing.ts",
-      "import": "./testing.ts"
     }
   },
   "files": [
     "dist",
-    "testing.ts",
     "README.md",
     "LICENSE"
   ],
@@ -32,19 +27,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/catalog-fetcher": "workspace:*",
-    "@emploke/fs": "workspace:*",
-    "js-yaml": "^4.1.0"
+    "tar-stream": "^3.1.7"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "@types/tar-stream": "^3.1.3",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/catalog"
+    "directory": "packages/catalog-fetcher"
   }
 }
+

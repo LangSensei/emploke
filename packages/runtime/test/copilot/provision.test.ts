@@ -50,26 +50,42 @@ async function setup(opts: {
   >;
   mcps?: Record<string, string>;
 }): Promise<{ catalog: CatalogManager; agentName: string }> {
-  const agentName = opts.agent?.name ?? "demo-agent";
+  const agentShortName = opts.agent?.name ?? "demo-agent";
   const agentDeps = {
     skills: Object.keys(opts.skills ?? {}),
     mcps: Object.keys(opts.mcps ?? {}),
+  };
+  // Render dependencies in the post-#39 DependencyRef shape:
+  //   - { name, origin: "file:test/<scope>/<name>" [, scope] }
+  // Fixture keys may carry a `<scope>/<short>` form to test scoped FQNs;
+  // when that happens we split into name+scope on the dep ref so the
+  // frontmatter validator (which requires `name` to be a SHORT
+  // kebab-case) is satisfied. Otherwise scope defaults to `local` (via
+  // `scopeFromOrigin(file:)`).
+  const renderDepRef = (key: string): string => {
+    const slash = key.lastIndexOf("/");
+    if (slash >= 0) {
+      const scope = key.slice(0, slash);
+      const name = key.slice(slash + 1);
+      return `    - { name: "${name}", origin: "file:test/${scope}/${name}", scope: "${scope}" }`;
+    }
+    return `    - { name: "${key}", origin: "file:test/local/${key}" }`;
   };
   const agentBody =
     opts.agent?.body ??
     [
       "---",
-      `name: ${agentName}`,
+      `name: ${agentShortName}`,
       "description: agent for tests",
       "version: 0.0.1",
       ...(agentDeps.skills.length || agentDeps.mcps.length
         ? [
             "dependencies:",
             ...(agentDeps.skills.length
-              ? ["  skills:", ...agentDeps.skills.map((s) => `    - ${s}`)]
+              ? ["  skills:", ...agentDeps.skills.map(renderDepRef)]
               : []),
             ...(agentDeps.mcps.length
-              ? ["  mcps:", ...agentDeps.mcps.map((m) => `    - ${m}`)]
+              ? ["  mcps:", ...agentDeps.mcps.map(renderDepRef)]
               : []),
           ]
         : []),
@@ -79,7 +95,7 @@ async function setup(opts: {
 
   const fixtures: TestCatalogFixtures = {
     agents: {
-      [agentName]: { "AGENTS.md": agentBody, ...(opts.agent?.siblings ?? {}) },
+      [agentShortName]: { "AGENTS.md": agentBody, ...(opts.agent?.siblings ?? {}) },
     },
     skills: {},
     mcps: opts.mcps ?? {},
@@ -96,10 +112,10 @@ async function setup(opts: {
           ? [
               "dependencies:",
               ...(sk.deps.skills?.length
-                ? ["  skills:", ...sk.deps.skills.map((s) => `    - ${s}`)]
+                ? ["  skills:", ...sk.deps.skills.map(renderDepRef)]
                 : []),
               ...(sk.deps.mcps?.length
-                ? ["  mcps:", ...sk.deps.mcps.map((m) => `    - ${m}`)]
+                ? ["  mcps:", ...sk.deps.mcps.map(renderDepRef)]
                 : []),
             ]
           : []),
@@ -113,7 +129,7 @@ async function setup(opts: {
     fixtures.skills![name] = files;
   }
   const { catalog } = await makeTestCatalog(fixtures);
-  return { catalog, agentName };
+  return { catalog, agentName: `local/${agentShortName}` };
 }
 
 /**
@@ -126,26 +142,27 @@ async function makeTestCatalogWithBrokenMcp(mcpName: string): Promise<{
   catalog: CatalogManager;
   agentName: string;
 }> {
-  const agentName = "demo-agent";
+  const agentShortName = "demo-agent";
   const agentBody = [
     "---",
-    `name: ${agentName}`,
+    `name: ${agentShortName}`,
     "description: a",
     "version: 0.0.1",
     "dependencies:",
     "  mcps:",
-    `    - ${mcpName}`,
+    `    - { name: "${mcpName}", origin: "file:test/local/${mcpName}" }`,
     "---",
     "",
   ].join("\n");
   const { catalog, repos } = await makeTestCatalog({
-    agents: { [agentName]: { "AGENTS.md": agentBody } },
+    agents: { [agentShortName]: { "AGENTS.md": agentBody } },
     mcps: { [mcpName]: '{"command":"ok"}' },
   });
   // Now corrupt the MCP's bytes via the repo seam — the catalog still
-  // believes it exists (it was valid at scan time).
-  await repos.mcps.write(mcpName, "{not-json");
-  return { catalog, agentName };
+  // believes it exists (it was valid at scan time). Repo storage key is
+  // FQN, so write with the scoped name.
+  await repos.mcps.write(`local/${mcpName}`, "{not-json");
+  return { catalog, agentName: `local/${agentShortName}` };
 }
 
 describe("provisionCopilotWorkdir — basics", () => {
@@ -273,9 +290,12 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
+    // Keys are the flattened FQN — the implicit `local/` scope is stripped
+    // (so `swat` stays `swat`), real scopes become `<scope>__<name>` so
+    // two MCPs sharing a short name across scopes can't collide.
     expect(written).toEqual({
       mcpServers: {
-        "io.playwright/mcp": { command: "npx", args: ["@playwright/mcp"] },
+        "io.playwright__mcp": { command: "npx", args: ["@playwright/mcp"] },
         swat: { command: "swat" },
       },
     });
@@ -305,7 +325,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     } catch (e) {
       expect(e).toBeInstanceOf(InvalidMcpJson);
       const err = e as InvalidMcpJson;
-      expect(err.mcpName).toBe("broken");
+      expect(err.mcpName).toBe("local/broken");
       expect(err.cause).toBeInstanceOf(Error);
     }
   });
@@ -351,7 +371,11 @@ describe("provisionCopilotWorkdir — skills copy", () => {
     const { catalog, agentName } = await setup({
       skills: {
         "langsensei/weather": {
-          body: "---\nname: langsensei/weather\ndescription: w\nversion: 0.0.1\n---\n# Weather\n",
+          // Per #39 contract, frontmatter `name` is the SHORT name and
+          // scope is set explicitly (or auto-derived from origin). Here
+          // we override scope so the FQN becomes langsensei/weather even
+          // though the synthetic origin would otherwise yield `local`.
+          body: "---\nname: weather\nscope: langsensei\ndescription: w\nversion: 0.0.1\n---\n# Weather\n",
         },
       },
     });
@@ -373,9 +397,14 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
       },
     });
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
-    expect(await readFile(path.join(t, ".github/hooks/a.sh"), "utf8")).toBe("A\n");
-    expect(await readFile(path.join(t, ".github/hooks/b.sh"), "utf8")).toBe("B\n");
-    expect(await readFile(path.join(t, ".github/hooks/shared/cfg.json"), "utf8")).toBe('{"x":1}');
+    // Skill hooks are prefixed `<flattenedFqn>__` so two skills sharing a
+    // short name can't collide on a hook filename. The implicit `local/`
+    // scope is stripped, so `local/a` flattens to `a`.
+    expect(await readFile(path.join(t, ".github/hooks/a__a.sh"), "utf8")).toBe("A\n");
+    expect(await readFile(path.join(t, ".github/hooks/b__b.sh"), "utf8")).toBe("B\n");
+    expect(await readFile(path.join(t, ".github/hooks/shared/b__cfg.json"), "utf8")).toBe(
+      '{"x":1}',
+    );
   });
 
   it("does not create .github/hooks/ when no skill contributes copilot hooks", async () => {
@@ -390,13 +419,22 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
     const { catalog, agentName } = await setup({
       skills: {
         // `later` depends on `earlier` so the topological order is
-        // [earlier, later] in the resolve result.
+        // [earlier, later] in the resolve result. Hook filenames are
+        // prefixed per-skill, so a true cross-skill collision actually
+        // can't happen post-#39 — but if `later` were authored to ship
+        // a hook that overrode `earlier`'s contribution, the prefixed
+        // names ensure the writer rewrites only its own slot.
         earlier: { hooks: { "shared.sh": "first\n" } },
         later: { deps: { skills: ["earlier"] }, hooks: { "shared.sh": "second\n" } },
       },
     });
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
-    expect(await readFile(path.join(t, ".github/hooks/shared.sh"), "utf8")).toBe("second\n");
+    expect(await readFile(path.join(t, ".github/hooks/earlier__shared.sh"), "utf8")).toBe(
+      "first\n",
+    );
+    expect(await readFile(path.join(t, ".github/hooks/later__shared.sh"), "utf8")).toBe(
+      "second\n",
+    );
   });
 });
 
@@ -421,7 +459,7 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
       agent: { name: "demo", siblings: { "prompt.md": "## extra\n" } },
       skills: {
         "dev/lint": {
-          body: "---\nname: dev/lint\ndescription: lint\nversion: 0.0.1\n---\n",
+          body: "---\nname: lint\nscope: dev\ndescription: lint\nversion: 0.0.1\n---\n",
           extras: { "rules.json": "{}" },
           hooks: { "post-write.sh": "echo done\n" },
         },
@@ -435,7 +473,9 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
     expect(await exists(path.join(t, ".mcp.json"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/SKILL.md"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/rules.json"))).toBe(true);
-    expect(await exists(path.join(t, ".github/hooks/post-write.sh"))).toBe(true);
+    // dev__lint__post-write.sh — skill hooks ARE prefixed (cross-skill
+    // collision-prevention); see provision.ts SCOPE_FLATTEN_SEP doc.
+    expect(await exists(path.join(t, ".github/hooks/dev__lint__post-write.sh"))).toBe(true);
     // No .git/ — see the workdir-prep describe block above.
     expect(await exists(path.join(t, ".git"))).toBe(false);
   });

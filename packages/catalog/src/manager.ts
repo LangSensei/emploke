@@ -1,7 +1,8 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { normalizeOrigin, parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
+import { safeStat } from "@emploke/fs";
 import { AgentCatalog, type AgentMetadataPatch } from "./agent/agent-catalog.js";
-import { pathExists } from "./atomic.js";
 import { CatalogStateError, OriginConflictError } from "./errors.js";
 import {
   depRefToFqn,
@@ -12,7 +13,6 @@ import {
 } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpCatalog } from "./mcp/mcp-catalog.js";
-import { normalizeOrigin, parseOrigin, scopeFromOrigin } from "./origin.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
@@ -132,6 +132,32 @@ export class CatalogManager {
     return skill;
   }
 
+  /**
+   * Stream-based install used by the pluggable-fetcher route. Buffers the
+   * stream once (skill payloads are tiny), parses SKILL.md to compute the
+   * FQN, runs the same origin-conflict pre-flight as `installSkill`, then
+   * forwards to the repository's stream-install.
+   */
+  async installSkillFromStream(
+    stream: AsyncIterable<CatalogEntryFile>,
+    opts: InstallEntryOpts = {},
+    sourceLabel?: string,
+  ): Promise<Skill> {
+    const buffered = await bufferStream(stream);
+    await this.assertNoOriginConflictFromBuffer(
+      "skill",
+      buffered,
+      "SKILL.md",
+      sourceLabel ?? "<stream>",
+      opts.origin,
+    );
+    const skill = await this.withWriteLock(() =>
+      this.skillStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+    );
+    this.recomputeStatus();
+    return skill;
+  }
+
   async updateSkillContent(name: string, content: string): Promise<Skill> {
     const skill = await this.withWriteLock(() => this.skillStore.updateContent(name, content));
     this.recomputeStatus();
@@ -176,6 +202,27 @@ export class CatalogManager {
       await this.assertNoOriginConflict("agent", sourceDir, "AGENTS.md", opts.origin);
       return this.agentStore.install(sourceDir, opts);
     });
+    this.recomputeStatus();
+    return agent;
+  }
+
+  /** Stream-based install. See {@link installSkillFromStream}. */
+  async installAgentFromStream(
+    stream: AsyncIterable<CatalogEntryFile>,
+    opts: InstallEntryOpts = {},
+    sourceLabel?: string,
+  ): Promise<Agent> {
+    const buffered = await bufferStream(stream);
+    await this.assertNoOriginConflictFromBuffer(
+      "agent",
+      buffered,
+      "AGENTS.md",
+      sourceLabel ?? "<stream>",
+      opts.origin,
+    );
+    const agent = await this.withWriteLock(() =>
+      this.agentStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+    );
     this.recomputeStatus();
     return agent;
   }
@@ -240,6 +287,40 @@ export class CatalogManager {
         }
       }
       return this.mcpStore.install(sourceFile, opts);
+    });
+    this.recomputeStatus();
+    return name;
+  }
+
+  /**
+   * Content-based install used by the pluggable-fetcher route. The
+   * fetcher streams a single `<name>.json` file from the remote, the
+   * route reads it into memory, and we install directly. `opts.mcpName`
+   * MUST be provided by the caller (request body) — there is no
+   * `sourceFile` to infer a basename from, and inferring one from the
+   * URL path is too fragile (`mcp.json`, `config.json` are common
+   * placeholder filenames in upstream repos).
+   */
+  async installMcpFromContent(content: string, opts: InstallMcpOpts): Promise<string> {
+    if (!opts.mcpName) {
+      throw new Error("installMcpFromContent requires opts.mcpName");
+    }
+    if (!opts.origin) {
+      throw new Error("installMcpFromContent requires opts.origin");
+    }
+    const name = await this.withWriteLock(async () => {
+      const previewScope =
+        opts.scope ?? scopeFromOrigin(parseOrigin(opts.origin as string));
+      const previewFqn = `${previewScope}/${opts.mcpName}`;
+      const existing = this.mcpStore.get(previewFqn);
+      if (existing) {
+        const a = normalizeOrigin(parseOrigin(existing.origin));
+        const b = normalizeOrigin(parseOrigin(opts.origin as string));
+        if (a !== b) {
+          throw new OriginConflictError(previewFqn, existing.origin, opts.origin as string);
+        }
+      }
+      return this.mcpStore.installFromContent(content, opts);
     });
     this.recomputeStatus();
     return name;
@@ -323,12 +404,12 @@ export class CatalogManager {
     const skillPath = join(sourceDir, "SKILL.md");
     const agentPath = join(sourceDir, "AGENTS.md");
 
-    if (await pathExists(skillPath)) {
+    if ((await safeStat(skillPath)) !== null) {
       const content = await readFile(skillPath, "utf8");
       const { data } = parseFrontmatter(content, skillPath);
       return frontmatterToSkill(data, skillPath, projectionOpts(opts.origin));
     }
-    if (await pathExists(agentPath)) {
+    if ((await safeStat(agentPath)) !== null) {
       const content = await readFile(agentPath, "utf8");
       const { data } = parseFrontmatter(content, agentPath);
       return frontmatterToAgent(data, agentPath, projectionOpts(opts.origin));
@@ -357,6 +438,35 @@ export class CatalogManager {
   ): Promise<void> {
     const sourcePath = join(sourceDir, fileName);
     const content = await readFile(sourcePath, "utf8");
+    const { data } = parseFrontmatter(content, sourcePath);
+    const incoming =
+      kind === "skill"
+        ? frontmatterToSkill(data, sourcePath, projectionOpts(defaultOrigin))
+        : frontmatterToAgent(data, sourcePath, projectionOpts(defaultOrigin));
+
+    const existing =
+      kind === "skill" ? this.skillStore.get(incoming.name) : this.agentStore.get(incoming.name);
+    if (!existing) return;
+
+    const a = normalizeOrigin(parseOrigin(existing.origin));
+    const b = normalizeOrigin(parseOrigin(incoming.origin));
+    if (a !== b) throw new OriginConflictError(incoming.name, existing.origin, incoming.origin);
+  }
+
+  /** Stream-based variant of {@link assertNoOriginConflict}. */
+  private async assertNoOriginConflictFromBuffer(
+    kind: "skill" | "agent",
+    buffered: readonly CatalogEntryFile[],
+    fileName: string,
+    sourceLabel: string,
+    defaultOrigin?: string,
+  ): Promise<void> {
+    const anchor = buffered.find((f) => f.relPath === fileName);
+    if (!anchor) {
+      throw new Error(`stream did not contain a top-level ${fileName} (source: ${sourceLabel})`);
+    }
+    const sourcePath = `${sourceLabel}/${fileName}`;
+    const content = anchor.content.toString("utf8");
     const { data } = parseFrontmatter(content, sourcePath);
     const incoming =
       kind === "skill"
@@ -453,4 +563,14 @@ export class CatalogManager {
       await rmdir(lockDir).catch(() => {});
     }
   }
+}
+
+async function bufferStream(stream: AsyncIterable<CatalogEntryFile>): Promise<CatalogEntryFile[]> {
+  const out: CatalogEntryFile[] = [];
+  for await (const file of stream) out.push(file);
+  return out;
+}
+
+async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
+  for (const item of items) yield item;
 }

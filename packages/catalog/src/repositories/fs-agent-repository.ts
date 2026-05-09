@@ -1,9 +1,8 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdirP, writeFileAtomic } from "@emploke/fs";
-import { atomicReplaceDir, pathExists } from "../atomic.js";
+import { mkdirP, replaceDirAtomic, safeStat, writeFileAtomic } from "@emploke/fs";
 import { nameToPath, validateFqn } from "../validate.js";
-import { walkEntryDir } from "./entries-helpers.js";
+import { installStreamToDir, walkEntryDir } from "./entries-helpers.js";
 import type { AgentRepository, CatalogEntryFile, DocumentRepoEntry } from "./repository.js";
 
 export class FsAgentRepository implements AgentRepository {
@@ -38,7 +37,13 @@ export class FsAgentRepository implements AgentRepository {
   async installFromDir(name: string, sourceDir: string): Promise<void> {
     validateFqn(name);
     const dest = join(this.baseDir, nameToPath(name));
-    await atomicReplaceDir(sourceDir, dest);
+    await replaceDirAtomic(sourceDir, dest);
+  }
+
+  async install(name: string, stream: AsyncIterable<CatalogEntryFile>): Promise<void> {
+    validateFqn(name);
+    const dest = join(this.baseDir, nameToPath(name));
+    await installStreamToDir(dest, stream);
   }
 
   async delete(name: string): Promise<void> {
@@ -49,7 +54,7 @@ export class FsAgentRepository implements AgentRepository {
 
   async scan(): Promise<DocumentRepoEntry[]> {
     const out: DocumentRepoEntry[] = [];
-    if (!(await pathExists(this.baseDir))) return out;
+    if ((await safeStat(this.baseDir)) === null) return out;
     await this.scanDir(this.baseDir, /*scope*/ null, out);
     return out;
   }
@@ -69,7 +74,7 @@ export class FsAgentRepository implements AgentRepository {
       if (!entry.isDirectory()) continue;
       const entryPath = join(dir, entry.name);
       const agentMd = join(entryPath, "AGENTS.md");
-      if (await pathExists(agentMd)) {
+      if ((await safeStat(agentMd)) !== null) {
         const content = await readFile(agentMd, "utf8");
         out.push({ content, sourcePath: agentMd });
       } else if (scope === null) {

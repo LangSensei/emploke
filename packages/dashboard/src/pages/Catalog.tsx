@@ -63,13 +63,16 @@ export function CatalogPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const doInstall = async (sourcePath: string, name?: string) => {
+  const doInstall = async (origin: string, name?: string) => {
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents") await installAgent(sourcePath);
-      else if (tab === "skills") await installSkill(sourcePath);
-      else await installMcp(sourcePath, name);
+      if (tab === "agents") await installAgent(origin);
+      else if (tab === "skills") await installSkill(origin);
+      else {
+        if (!name) throw new Error("name is required for MCP installs");
+        await installMcp(origin, name);
+      }
       setInstallOpen(false);
       onChanged();
     } catch (e) {
@@ -252,18 +255,24 @@ interface InstallDialogProps {
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (sourcePath: string, name?: string) => void;
+  /**
+   * `origin` is a URI: `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
+   * or `file:<absolute-path>`. `name` is required for MCPs (no
+   * frontmatter to derive it from), unused for skills/agents.
+   */
+  onSubmit: (origin: string, name?: string) => void;
 }
 
 function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDialogProps) {
-  const [sourcePath, setSourcePath] = useState("");
+  const [origin, setOrigin] = useState("");
   const [name, setName] = useState("");
-  const isFile = kind === "mcps";
+  const isMcp = kind === "mcps";
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!sourcePath.trim()) return;
-    onSubmit(sourcePath.trim(), name.trim() || undefined);
+    if (!origin.trim()) return;
+    if (isMcp && !name.trim()) return;
+    onSubmit(origin.trim(), name.trim() || undefined);
   };
 
   return (
@@ -271,35 +280,39 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       <form onSubmit={handleSubmit}>
         <div className="modal__body">
           <div className="form-field">
-            <label htmlFor="install-source">
-              {isFile ? "Source JSON file" : "Source directory"}
-            </label>
+            <label htmlFor="install-origin">Origin URI</label>
             <input
-              id="install-source"
+              id="install-origin"
               type="text"
-              value={sourcePath}
-              onChange={(e) => setSourcePath(e.target.value)}
-              placeholder={isFile ? "/absolute/path/to/server.json" : "/absolute/path/to/skill-dir"}
+              value={origin}
+              onChange={(e) => setOrigin(e.target.value)}
+              placeholder="https://github.com/owner/repo/tree/main/path  or  file:/abs/path"
               // biome-ignore lint/a11y/noAutofocus: install dialog opens in response to a user click; auto-focusing the only field is expected UX
               autoFocus
               disabled={busy}
             />
             <p className="form-hint">
-              Path on the <strong>server's</strong> local filesystem.
+              <code>https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;ref&gt;/&lt;path&gt;</code>{" "}
+              for remote installs, or <code>file:&lt;absolute-path&gt;</code> for the server's local
+              filesystem. Dependencies are recursively fetched + installed.
             </p>
           </div>
 
-          {isFile && (
+          {isMcp && (
             <div className="form-field">
-              <label htmlFor="install-name">Name (optional)</label>
+              <label htmlFor="install-name">Name</label>
               <input
                 id="install-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Defaults to filename"
+                placeholder="my-mcp (short kebab-case name)"
                 disabled={busy}
               />
+              <p className="form-hint">
+                Required — MCPs have no frontmatter, so the catalog needs the short name
+                explicitly. Scope auto-derives from origin.
+              </p>
             </div>
           )}
 
@@ -310,7 +323,11 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn btn--primary" disabled={busy || !sourcePath.trim()}>
+          <button
+            type="submit"
+            className="btn btn--primary"
+            disabled={busy || !origin.trim() || (isMcp && !name.trim())}
+          >
             {busy ? "Installing..." : "Install"}
           </button>
         </div>
@@ -495,8 +512,16 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             onChange={setForm}
             availableSkills={availableSkills.filter((n) => n !== target.name)}
             availableMcps={availableMcps}
-            missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
-            missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
+            // Project DependencyRef → FQN string for the missing-set
+            // comparison. `MetadataForm` does the same projection internally
+            // when rendering chips, so the chip flagged as missing matches
+            // the FQN we test here.
+            missingSkills={form.skills
+              .map((s) => (s.scope ? `${s.scope}/${s.name}` : s.name))
+              .filter((label) => !availableSkills.includes(label))}
+            missingMcps={form.mcps
+              .map((m) => (m.scope ? `${m.scope}/${m.name}` : m.name))
+              .filter((label) => !availableMcps.includes(label))}
             disabled={saving}
           />
         ) : (

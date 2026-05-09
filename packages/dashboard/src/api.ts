@@ -120,14 +120,29 @@ const jsonInit = (method: string, body: object): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-export const installAgent = (sourcePath: string) =>
-  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { sourcePath }));
+/**
+ * Install a new agent by `origin` URI (post-#39). The server fetches via
+ * the registered fetcher (file:, https://github.com/...), recursively
+ * resolves dependencies, and returns a manifest. Returns 207 on partial
+ * failure — caller surfaces that as an error message via {@link extractError}.
+ */
+export const installAgent = (origin: string) =>
+  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { origin }));
 
-export const installSkill = (sourcePath: string) =>
-  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { sourcePath }));
+/** See {@link installAgent}. */
+export const installSkill = (origin: string) =>
+  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { origin }));
 
-export const installMcp = (sourcePath: string, name?: string) =>
-  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", name ? { sourcePath, name } : { sourcePath }));
+/**
+ * MCPs are JSON-only (no frontmatter), so `name` is required — the catalog
+ * has no other source for the short name. Optional `scope` overrides the
+ * default `scopeFromOrigin(origin)` derivation.
+ */
+export const installMcp = (origin: string, name: string, scope?: string) =>
+  mutate(
+    `${catalogPrefix()}/mcps`,
+    jsonInit("POST", scope === undefined ? { origin, name } : { origin, name, scope }),
+  );
 
 export const removeAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -174,7 +189,10 @@ export interface SkillMetadataPatch {
   description?: string;
   version?: string;
   prereqs?: string | null;
-  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+  dependencies?: {
+    skills?: import("@emploke/catalog").DependencyRef[];
+    mcps?: import("@emploke/catalog").DependencyRef[];
+  } | null;
 }
 
 export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
@@ -199,7 +217,10 @@ export const updateAgentContent = (name: string, content: string) =>
 export interface AgentMetadataPatch {
   description?: string;
   version?: string;
-  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+  dependencies?: {
+    skills?: import("@emploke/catalog").DependencyRef[];
+    mcps?: import("@emploke/catalog").DependencyRef[];
+  } | null;
 }
 
 export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>

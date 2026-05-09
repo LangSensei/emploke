@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import {
   FsLockTimeoutError,
   mkdirP,
   readJson,
+  replaceDirAtomic,
   safeReaddir,
   safeStat,
   withFileLock,
@@ -200,5 +201,68 @@ describe("withFileLock", () => {
       { waitMs: 1000, staleMs: 0 },
     );
     expect(ran).toBe(true);
+  });
+});
+
+describe("replaceDirAtomic", () => {
+  it("copies a fresh dir into place", async () => {
+    const src = path.join(scratch, "src");
+    const dst = path.join(scratch, "dst");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "file.txt"), "hello", "utf8");
+
+    await replaceDirAtomic(src, dst);
+
+    expect(await safeStat(dst)).not.toBeNull();
+    expect(await readFile(path.join(dst, "file.txt"), "utf8")).toBe("hello");
+  });
+
+  it("replaces an existing dir", async () => {
+    const src = path.join(scratch, "src");
+    const dst = path.join(scratch, "dst");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "new.txt"), "new content", "utf8");
+    await mkdir(dst, { recursive: true });
+    await writeFile(path.join(dst, "old.txt"), "old content", "utf8");
+
+    await replaceDirAtomic(src, dst);
+
+    expect(await safeStat(path.join(dst, "new.txt"))).not.toBeNull();
+    expect(await safeStat(path.join(dst, "old.txt"))).toBeNull();
+  });
+
+  it("preserves nested files", async () => {
+    const src = path.join(scratch, "src");
+    const dst = path.join(scratch, "dst");
+    await mkdir(path.join(src, "sub"), { recursive: true });
+    await writeFile(path.join(src, "sub", "nested.txt"), "n", "utf8");
+
+    await replaceDirAtomic(src, dst);
+
+    expect(await readFile(path.join(dst, "sub", "nested.txt"), "utf8")).toBe("n");
+  });
+
+  it("creates parent directories if missing", async () => {
+    const src = path.join(scratch, "src");
+    const dst = path.join(scratch, "deep", "nested", "dst");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "x.txt"), "x", "utf8");
+
+    await replaceDirAtomic(src, dst);
+
+    expect(await safeStat(dst)).not.toBeNull();
+  });
+
+  it("leaves no .tmp.* / .old.* siblings on success", async () => {
+    const src = path.join(scratch, "src");
+    const dst = path.join(scratch, "dst");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "file.txt"), "x", "utf8");
+
+    await replaceDirAtomic(src, dst);
+
+    const siblings = await readdir(scratch);
+    expect(siblings.filter((n) => n.startsWith(".dst.tmp."))).toHaveLength(0);
+    expect(siblings.filter((n) => n.startsWith(".dst.old."))).toHaveLength(0);
   });
 });

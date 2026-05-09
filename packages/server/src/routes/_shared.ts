@@ -41,11 +41,14 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "CatalogError",
   "CatalogStateError",
   "CycleDetected",
+  "FetchError",
   "FrontmatterError",
   "HasDependents",
   "MissingDependencies",
   "NameInvalid",
   "NotFound",
+  "OriginConflictError",
+  "OriginParseError",
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",
@@ -147,9 +150,10 @@ export function errorBody(err: unknown): { error: string; code?: string } {
 /**
  * Map an error from the catalog layer to an HTTP status code:
  *   - `NameInvalid` / `FrontmatterError` / `MissingDependencies` /
- *     `CycleDetected` → 400 (caller-fixable input)
+ *     `CycleDetected` / `OriginParseError` → 400 (caller-fixable input)
  *   - `NotFound` → 404
- *   - `HasDependents` → 409 (state conflict)
+ *   - `HasDependents` / `OriginConflictError` → 409 (state conflict)
+ *   - `FetchError` → 502 (downstream fetch failed; sanitised body)
  *   - everything else → 500 (server fault, paired with `errorBody` →
  *     `"internal error"` so internals don't leak)
  *
@@ -163,11 +167,15 @@ export function statusForCatalogError(err: unknown): number | null {
     case "FrontmatterError":
     case "MissingDependencies":
     case "CycleDetected":
+    case "OriginParseError":
       return 400;
     case "NotFound":
       return 404;
     case "HasDependents":
+    case "OriginConflictError":
       return 409;
+    case "FetchError":
+      return 502;
     default:
       return null;
   }

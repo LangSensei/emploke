@@ -60,6 +60,51 @@ export class SkillCatalog {
     return skill;
   }
 
+  /**
+   * Stream-based install used by the pluggable-fetcher path. The stream is
+   * fully buffered into memory so we can both parse SKILL.md (to derive the
+   * FQN) and forward the bytes to {@link SkillRepository.install}. Skills
+   * are tiny in practice (<100 KB anchor + small assets); a memory-buffered
+   * shape is fine and avoids needing an on-disk staging directory in the
+   * caller.
+   */
+  async installFromStream(
+    stream: AsyncIterable<CatalogEntryFile>,
+    opts: InstallSkillOpts = {},
+    sourceLabel = "<stream>",
+  ): Promise<Skill> {
+    const buffered: CatalogEntryFile[] = [];
+    let anchor: { content: string; sourcePath: string } | null = null;
+    for await (const file of stream) {
+      buffered.push(file);
+      if (file.relPath === "SKILL.md") {
+        anchor = {
+          content: file.content.toString("utf8"),
+          sourcePath: `${sourceLabel}/SKILL.md`,
+        };
+      }
+    }
+    if (!anchor) {
+      throw new FrontmatterError(sourceLabel, "stream did not contain a top-level SKILL.md");
+    }
+    const { data } = parseFrontmatter(anchor.content, anchor.sourcePath);
+    const skill = frontmatterToSkill(data, anchor.sourcePath, projectionOpts(opts.origin));
+
+    // If origin missing in source, rewrite the SKILL.md entry in the
+    // buffered stream so the on-disk copy is self-describing — same
+    // contract as installFromDir above.
+    let toInstall: CatalogEntryFile[] = buffered;
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(anchor.content, { origin: skill.origin });
+      toInstall = buffered.map((f) =>
+        f.relPath === "SKILL.md" ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") } : f,
+      );
+    }
+    await this.repository.install(skill.name, asyncIterableOf(toInstall));
+    this.skills.set(skill.name, skill);
+    return skill;
+  }
+
   async getContent(name: string): Promise<string> {
     // Defense-in-depth: see AgentCatalog.getContent for rationale.
     validateFqn(name);
@@ -202,4 +247,8 @@ export class SkillCatalog {
     if (!this.skills.has(name)) throw new NotFound("skill", name);
     return this.repository.entries(name);
   }
+}
+
+async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
+  for (const item of items) yield item;
 }

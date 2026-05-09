@@ -40,7 +40,7 @@ async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: Catal
   const { catalog } = await makeTestCatalog({
     agents: { demo: { "AGENTS.md": agentBody } },
   });
-  return { agent: catalog.resolveAgent("demo"), catalog };
+  return { agent: catalog.resolveAgent("local/demo"), catalog };
 }
 
 function fakeSession(over: Partial<Session> = {}): Session {

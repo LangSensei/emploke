@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { parseOrigin, scopeFromOrigin } from "@emploke/catalog-fetcher";
 import { HasDependents, NotFound } from "../errors.js";
 import { synthesizeOriginFromPath } from "../frontmatter.js";
-import { parseOrigin, scopeFromOrigin } from "../origin.js";
 import type { McpRepository } from "../repositories/repository.js";
 import type { McpMetadata } from "../types.js";
 import { makeFqn, splitFqn, validateFqn, validateScope, validateShortName } from "../validate.js";
@@ -67,6 +67,37 @@ export class McpCatalog {
     const fqn = makeFqn(scope, shortName);
     await this.repository.write(fqn, content, { origin });
     this.mcps.set(fqn, { name: fqn, shortName, scope, origin });
+    return fqn;
+  }
+
+  /**
+   * Install from raw JSON content (no on-disk source). Used by the
+   * pluggable-fetcher path: the fetcher streams a single JSON file from
+   * the remote, the route reads it into memory, and we install without
+   * round-tripping to disk. `opts.mcpName` is required (no source file
+   * to derive a basename from).
+   */
+  async installFromContent(content: string, opts: InstallMcpOpts = {}): Promise<string> {
+    JSON.parse(content);
+    if (!opts.mcpName) {
+      throw new Error("installFromContent requires opts.mcpName (no source file to infer from)");
+    }
+    validateShortName(opts.mcpName);
+    if (!opts.origin) {
+      throw new Error("installFromContent requires opts.origin");
+    }
+
+    let scope: string;
+    if (opts.scope !== undefined) {
+      validateScope(opts.scope);
+      scope = opts.scope;
+    } else {
+      scope = scopeFromOrigin(parseOrigin(opts.origin));
+    }
+
+    const fqn = makeFqn(scope, opts.mcpName);
+    await this.repository.write(fqn, content, { origin: opts.origin });
+    this.mcps.set(fqn, { name: fqn, shortName: opts.mcpName, scope, origin: opts.origin });
     return fqn;
   }
 

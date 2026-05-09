@@ -66,21 +66,6 @@ export class FrontmatterError extends CatalogError {
 export class CatalogStateError extends CatalogError {}
 
 /**
- * Origin URI failed to parse. Surfaces the raw URI plus the reason so the
- * dashboard / CLI can echo it back to the user without exposing internal
- * paths. Phase 1 schemes: `https://github.com/owner/repo/tree/ref/[path]`
- * and `file:<absolutePath>`.
- */
-export class OriginParseError extends CatalogError {
-  constructor(
-    public readonly origin: string,
-    reason: string,
-  ) {
-    super(`invalid origin "${origin}": ${reason}`);
-  }
-}
-
-/**
  * Attempted to install an entry whose computed FQN (`scope/name`) is already
  * occupied by an entry with a different (normalized) origin. The install is
  * refused rather than silently overwriting, so an upstream skill cannot be
@@ -99,21 +84,5 @@ export class OriginConflictError extends CatalogError {
     super(
       `origin conflict for "${fqn}": already installed from "${existingOrigin}", refused install from "${incomingOrigin}". Uninstall the existing entry to swap origins.`,
     );
-  }
-}
-
-/**
- * A {@link Fetcher} failed to materialize an origin to a temp dir. Wraps the
- * underlying cause (network error, git stderr, missing binary, etc.) so the
- * route layer can map to HTTP 502 with a sanitized public message while the
- * server log retains the full detail.
- */
-export class FetchError extends CatalogError {
-  constructor(
-    public readonly origin: string,
-    reason: string,
-    options?: { cause?: unknown },
-  ) {
-    super(`failed to fetch "${origin}": ${reason}`, options);
   }
 }

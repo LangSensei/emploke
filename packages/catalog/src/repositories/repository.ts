@@ -60,6 +60,13 @@ export interface AgentRepository {
    * files are preserved verbatim in the installed copy.
    */
   installFromDir(name: string, sourceDir: string): Promise<void>;
+  /**
+   * Atomically install an entry from an `EntryFile` stream. Used by the
+   * pluggable-fetcher install path so callers do not have to land bytes
+   * on disk before installing. Implementations MUST be atomic (a failed
+   * install MUST NOT leave a partially-replaced entry).
+   */
+  install(name: string, stream: AsyncIterable<CatalogEntryFile>): Promise<void>;
   /** Remove the entry for `name`. No-op if absent. */
   delete(name: string): Promise<void>;
   /** Enumerate every candidate AGENTS.md the repository knows about. */
@@ -77,6 +84,11 @@ export interface SkillRepository {
   read(name: string): Promise<string | null>;
   write(name: string, content: string): Promise<void>;
   installFromDir(name: string, sourceDir: string): Promise<void>;
+  /**
+   * Atomically install an entry from an `EntryFile` stream. See
+   * {@link AgentRepository.install} for atomicity contract.
+   */
+  install(name: string, stream: AsyncIterable<CatalogEntryFile>): Promise<void>;
   delete(name: string): Promise<void>;
   scan(): Promise<DocumentRepoEntry[]>;
   /**
