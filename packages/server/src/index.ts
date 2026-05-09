@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import type { Catalog } from "@emploke/catalog";
+import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
@@ -52,6 +53,15 @@ const serveStaticFiles = process.argv.includes("--serve-static");
 async function main() {
   assertBindIsSafe(hostname, apiKey);
 
+  // Logger: rotated JSON files under <home>/logs (default) plus stdout
+  // for the operator. Level + format honour env so dev can stay pretty
+  // and prod can pin JSON-only without code changes.
+  const logger: Logger = buildLogger({
+    dir: paths.logsDir,
+    level: parseLogLevel(process.env.EMPLOKE_LOG_LEVEL),
+    format: process.env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty",
+  });
+
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(new CopilotRuntime());
 
@@ -61,7 +71,7 @@ async function main() {
   // is simply empty and the landing page reflects that.
   const registry = await WorkspaceRegistry.open(paths.registryFile);
 
-  const cache = new WorkspaceContextCache({ runtimeRegistry, registry });
+  const cache = new WorkspaceContextCache({ runtimeRegistry, registry, logger });
 
   const app = new Hono();
 
@@ -148,21 +158,20 @@ async function main() {
   }
 
   const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
-  console.log(`emploke server listening on http://${displayHost}:${port}`);
-  console.log(`home:     ${paths.home}`);
-  console.log(`registry: ${paths.registryFile} (${registry.list().length} workspace(s))`);
-  console.log(`runtimes: ${runtimeRegistry.kinds().join(", ")}`);
-  console.log(serveStaticFiles ? `static:   ${staticDir}` : "static:   disabled (dev mode)");
-  if (apiKey && apiKey.trim() !== "") {
-    console.log("auth:     EMPLOKE_API_KEY set  /api/* requires Bearer auth");
-  } else {
-    console.log("auth:     disabled (loopback-only deployment)");
-  }
+  logger.info("emploke server starting", {
+    listen: `http://${displayHost}:${port}`,
+    home: paths.home,
+    registryFile: paths.registryFile,
+    workspaces: registry.list().length,
+    runtimes: runtimeRegistry.kinds(),
+    static: serveStaticFiles ? staticDir : null,
+    auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",
+    logsDir: paths.logsDir,
+  });
   if (!isLoopbackBind(hostname)) {
-    console.warn(
-      `  EMPLOKE_HOST=${hostname}  server is reachable from the network. ` +
-        "API key gating is enforced; rotate EMPLOKE_API_KEY if it leaks.",
-    );
+    logger.warn("server is reachable from the network; rotate EMPLOKE_API_KEY if it leaks", {
+      host: hostname,
+    });
   }
   const server = serve({ fetch: app.fetch, port, hostname });
 
@@ -188,9 +197,9 @@ async function main() {
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`received ${signal}, shutting down…`);
+    logger.info("shutdown initiated", { signal });
     const deadline = setTimeout(() => {
-      console.error("shutdown timed out after 30s; forcing exit");
+      logger.error("shutdown timed out after 30s; forcing exit");
       process.exit(1);
     }, 30_000);
     deadline.unref();
@@ -205,13 +214,13 @@ async function main() {
         });
       });
     } catch (err) {
-      console.error("error closing http server", err);
+      logger.error("error closing http server", { err: errorToMeta(err) });
     }
     try {
       const ctxs = cache.loaded();
       await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
     } catch (err) {
-      console.error("error during tasks shutdown", err);
+      logger.error("error during tasks shutdown", { err: errorToMeta(err) });
     }
     clearTimeout(deadline);
     process.exit(0);
@@ -262,9 +271,41 @@ function workspaceContextMiddleware(
 }
 
 main().catch((err) => {
+  // Boot-time failure: logger may not be alive yet, so fall back to
+  // console.error here. Subsequent exits go through the logger.
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
+
+/**
+ * Parse the `EMPLOKE_LOG_LEVEL` env into one of the four supported
+ * levels. Falls back to `"info"` on any unrecognised / unset value so
+ * a misconfigured env never silently disables logging.
+ */
+function parseLogLevel(raw: string | undefined): LogLevel {
+  switch (raw) {
+    case "debug":
+    case "info":
+    case "warn":
+    case "error":
+      return raw;
+    default:
+      return "info";
+  }
+}
+
+/**
+ * Reduce an unknown thrown value to a small structured record suitable
+ * for the logger's `meta`. Avoids the noise of pino auto-serialising a
+ * full Error (stack lines blow up a JSON line) while keeping the bits
+ * that actually help diagnosis.
+ */
+function errorToMeta(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { value: String(err) };
+}
 
 /**
  * Read this server package's `package.json` to surface its name + version

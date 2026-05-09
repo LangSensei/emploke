@@ -115,12 +115,14 @@ export interface CancelEvent {
 // ─── TaskManager-side types ───────────────────────────────────
 
 /**
- * Pluggable logger surface; matches `@emploke/session`'s shape so callers
- * can pass the same logger to both managers.
+ * Pluggable logger surface. Re-exported from `@emploke/logger` so we
+ * keep a single canonical definition; this re-export exists for source
+ * compatibility with callers that previously imported `Logger` from
+ * `@emploke/task` directly.
  */
-export interface Logger {
-  warn(msg: string, meta?: Record<string, unknown>): void;
-}
+export type { Logger } from "@emploke/logger";
+
+import type { Logger as _Logger } from "@emploke/logger";
 
 /** Constructor options for `TaskManager`. */
 export interface TaskManagerConfig {
@@ -130,7 +132,7 @@ export interface TaskManagerConfig {
   readonly tasksDir: string;
   /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
-  readonly logger?: Logger;
+  readonly logger?: _Logger;
   /** Test seam: clock injection. */
   readonly now?: () => Date;
   /** Test seam: random source for id generation. */

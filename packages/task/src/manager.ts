@@ -2,6 +2,7 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, Catalog } from "@emploke/catalog";
+import { silentLogger } from "@emploke/logger";
 import type { RuntimeRegistry, TaskHandle } from "@emploke/runtime";
 import { apply } from "./apply.js";
 import { create as createTask } from "./create.js";
@@ -30,7 +31,6 @@ import type {
   TaskStatus,
 } from "./types.js";
 
-const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
@@ -121,7 +121,7 @@ export class TaskManager {
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
-    this.logger = config.logger ?? SILENT_LOGGER;
+    this.logger = config.logger ?? silentLogger;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

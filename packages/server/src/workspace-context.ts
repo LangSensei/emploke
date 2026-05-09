@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Catalog } from "@emploke/catalog";
+import { type Logger, silentLogger } from "@emploke/logger";
 import {
   type Runtime,
   RuntimeRegisterWorkspaceFailed,
@@ -49,6 +50,7 @@ export interface WorkspaceContext {
 export class WorkspaceContextCache {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly registry: WorkspaceRegistry;
+  private readonly logger: Logger;
   private readonly entries = new Map<string, WorkspaceContext>();
   /**
    * Inflight lookups keyed by id, to dedupe concurrent first-request
@@ -60,9 +62,16 @@ export class WorkspaceContextCache {
   constructor(deps: {
     runtimeRegistry: RuntimeRegistry;
     registry: WorkspaceRegistry;
+    /**
+     * Logger threaded down into every `SessionManager` / `TaskManager`
+     * the cache lazy-instantiates. Defaults to `silentLogger` so
+     * non-server callers (tests) don't need to pass one.
+     */
+    logger?: Logger;
   }) {
     this.runtimeRegistry = deps.runtimeRegistry;
     this.registry = deps.registry;
+    this.logger = deps.logger ?? silentLogger;
   }
 
   /**
@@ -115,12 +124,14 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: workspace.sessionsDir,
+      logger: this.logger,
     });
 
     const tasks = new TaskManager({
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: workspace.tasksDir,
+      logger: this.logger,
     });
     // Sweep persisted tasks marked `running` from a previous server lifetime
     // and flip them to `failure`. Cheap (one fs scan + per-orphan rewrite),

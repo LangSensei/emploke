@@ -2,6 +2,7 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Catalog } from "@emploke/catalog";
+import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
 import {
@@ -25,7 +26,6 @@ import type {
   SessionManagerConfig,
 } from "./types.js";
 
-const SILENT_LOGGER: Logger = { warn: () => {} };
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
@@ -65,7 +65,7 @@ export class SessionManager {
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.sessionsDir = path.resolve(config.sessionsDir);
-    this.logger = config.logger ?? SILENT_LOGGER;
+    this.logger = config.logger ?? silentLogger;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

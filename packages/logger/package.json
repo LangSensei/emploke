@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/session",
+  "name": "@emploke/logger",
   "version": "0.0.1",
-  "description": "Per-session workdir registry for emploke (manages CLI sessions baked from a catalog, parameterised over a Runtime)",
+  "description": "Structured logger for emploke (pino under the hood; rotating file destination)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -27,13 +27,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/catalog": "workspace:*",
-    "@emploke/logger": "workspace:*",
-    "@emploke/runtime": "workspace:*",
-    "js-yaml": "^4.1.0"
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "pino-roll": "^3.0.0"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
@@ -41,6 +39,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/session"
+    "directory": "packages/logger"
   }
 }
