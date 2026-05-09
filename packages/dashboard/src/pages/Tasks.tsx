@@ -14,6 +14,7 @@ import {
 import { PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
 import { usePollWithBackoff } from "../hooks/usePollWithBackoff";
+import { serverNow } from "../serverClock";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -65,18 +66,25 @@ const TIME_PRESETS: { value: TimePreset; label: string }[] = [
   { value: "all", label: "All" },
 ];
 
+/**
+ * Convert a preset to a millisecond cutoff. Anchored on the server's
+ * approximate clock (`serverNow()` from `../serverClock`) rather than
+ * local `Date.now()`, so cutoffs match what the server actually sees
+ * even if the user's laptop clock has drifted.
+ */
 function presetToSinceMs(preset: TimePreset): number | null {
-  const now = Date.now();
+  const nowDate = serverNow();
+  const nowMs = nowDate.getTime();
   switch (preset) {
     case "today": {
-      const d = new Date();
+      const d = new Date(nowDate);
       d.setHours(0, 0, 0, 0);
       return d.getTime();
     }
     case "7d":
-      return now - 7 * 24 * 60 * 60 * 1000;
+      return nowMs - 7 * 24 * 60 * 60 * 1000;
     case "30d":
-      return now - 30 * 24 * 60 * 60 * 1000;
+      return nowMs - 30 * 24 * 60 * 60 * 1000;
     case "all":
       return null;
   }

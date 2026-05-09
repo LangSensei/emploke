@@ -23,6 +23,7 @@ import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
+import { startClockSync } from "./serverClock";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
@@ -547,6 +548,13 @@ function WorkspaceLayout() {
       cancelled = true;
     };
   }, []);
+
+  // Sync the dashboard's clock skew against the server periodically.
+  // serverNow() is then used by Tasks/Sessions presets ("Today", "7d",
+  // "30d") so the createdSince cutoff matches what the server actually
+  // sees, even if the user's laptop clock has drifted. See
+  // ./serverClock.ts for the rationale.
+  useEffect(() => startClockSync(), []);
 
   const navigateToSection = useCallback(
     (next: SectionId) => {

@@ -33,6 +33,17 @@ export interface HealthResponse {
   readonly startedAt: string;
   /** Whole seconds since `startedAt`, computed at request time. */
   readonly uptimeSec: number;
+  /**
+   * ISO 8601 UTC timestamp at the moment the server formed this response.
+   *
+   * Used by the dashboard to compute its clock skew against the server
+   * (`offsetMs = Date.parse(serverNow) - clientNowAtFetch`). This way
+   * filters like "tasks created in the last 7 days" use the server's
+   * clock as the anchor, not the user's laptop clock — so a phone-on-LAN
+   * dashboard, or a laptop whose NTP drifted, won't silently miss rows
+   * that were just persisted by the server.
+   */
+  readonly serverNow: string;
 }
 
 /**
@@ -58,13 +69,15 @@ export function healthRoutes(deps: {
   const startedAtIso = new Date(deps.startedAtMs).toISOString();
 
   app.get("/", (c) => {
-    const uptimeSec = Math.max(0, Math.floor((now() - deps.startedAtMs) / 1000));
+    const nowMs = now();
+    const uptimeSec = Math.max(0, Math.floor((nowMs - deps.startedAtMs) / 1000));
     return c.json<HealthResponse>({
       status: "ok",
       name: deps.name,
       version: deps.version,
       startedAt: startedAtIso,
       uptimeSec,
+      serverNow: new Date(nowMs).toISOString(),
     });
   });
 

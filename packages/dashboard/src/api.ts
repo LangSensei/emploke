@@ -273,6 +273,25 @@ export interface ServerConfig {
 export const getConfig = (): Promise<ServerConfig> =>
   fetchJson<ServerConfig>("/api/config", "config");
 
+/**
+ * Mirrors the server's `HealthResponse` (defined in
+ * `@emploke/server/routes/health.ts`). Re-declared here rather than
+ * imported because `@emploke/server` is a Node package and the dashboard
+ * bundle should not depend on it.
+ */
+export interface HealthResponse {
+  status: "ok";
+  name: string;
+  version: string;
+  startedAt: string;
+  uptimeSec: number;
+  /** ISO 8601 UTC timestamp at the moment the server formed the response. */
+  serverNow: string;
+}
+
+export const getHealth = (): Promise<HealthResponse> =>
+  fetchJson<HealthResponse>("/api/health", "health");
+
 export const getSession = (id: string): Promise<SessionRecord> =>
   fetchJson<SessionRecord>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
 

@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { CopyIcon, PlayIcon, PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
+import { serverNow } from "../serverClock";
 
 interface SessionsProps {
   agents: AgentEntry[];
@@ -45,8 +46,16 @@ type TimePreset = (typeof TIME_PRESETS)[number]["value"];
 
 const DEFAULT_TIME_PRESET: TimePreset = "7d";
 
-/** Convert a preset to an ISO 8601 lower bound for `createdAt`. `all` → undefined. */
-function presetToCreatedSince(preset: TimePreset, now: Date = new Date()): string | undefined {
+/**
+ * Convert a preset to an ISO 8601 lower bound for `createdAt`.
+ *
+ * Anchored on `now` (defaults to `serverNow()` from `../serverClock`)
+ * so cutoffs are computed against the **server's** clock, not the
+ * user's laptop. Without this, a clock-skewed laptop can hide today's
+ * tasks behind a future-dated "today" cutoff or include yesterday's
+ * with a stale one.
+ */
+function presetToCreatedSince(preset: TimePreset, now: Date = serverNow()): string | undefined {
   switch (preset) {
     case "today": {
       // Local-time midnight. The server compares ISO strings, so we send the

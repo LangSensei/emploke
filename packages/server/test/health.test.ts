@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type HealthResponse, healthRoutes } from "../src/routes/health.js";
 
 describe("healthRoutes", () => {
-  it("GET / returns status, name, version, startedAt, uptimeSec", async () => {
+  it("GET / returns status, name, version, startedAt, uptimeSec, serverNow", async () => {
     // Pinned clock so uptime is deterministic.
     const startedAtMs = Date.parse("2026-05-08T01:00:00.000Z");
     const nowMs = Date.parse("2026-05-08T01:00:42.500Z");
@@ -22,6 +22,9 @@ describe("healthRoutes", () => {
       startedAt: "2026-05-08T01:00:00.000Z",
       // 42.5s rounds down to whole seconds.
       uptimeSec: 42,
+      // Echoes the moment the response was formed; clients use this to
+      // compute their clock skew against the server.
+      serverNow: "2026-05-08T01:00:42.500Z",
     });
   });
 
