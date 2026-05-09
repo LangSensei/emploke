@@ -225,8 +225,10 @@ export class TaskManager {
       // 7a. Junction the runtime's session dir. Best-effort: if the
       //     runtime can't tell us where it lives, or symlink fails (e.g.
       //     Windows without the right perms), we log and move on. The
-      //     dashboard's events tab will 404 on `events.jsonl`, which is
-      //     a recoverable degradation.
+      //     dashboard's events tab will 404 NoEventsYet, which is a
+      //     recoverable degradation (the runtime's event log path
+      //     resolves through `Runtime.taskEventsPath`; with no junction
+      //     installed that path doesn't exist on disk yet).
       this.installSessionJunction(workdir, handle).catch((err) => {
         this.logger.warn("tasks: failed to install session junction", {
           taskId: id,

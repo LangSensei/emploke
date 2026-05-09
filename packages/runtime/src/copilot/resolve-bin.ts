@@ -7,9 +7,8 @@ import path from "node:path";
  * diagnostics so callers can explain to users which install was chosen.
  */
 export type CopilotBinResolutionReason =
-  | "configured" // caller passed an absolute path
-  | "winget-package" // detected WinGet shim, swapped to real binary
-  | "npm-package" // found node_modules/@github/copilot binary
+  | "configured" // caller passed an absolute path (and it's not the shim)
+  | "winget-package" // detected WinGet shim, swapped to real packaged binary
   | "path-passthrough"; // no Windows-specific shim found, hand back to spawn
 
 export interface ResolvedCopilotBin {
@@ -29,33 +28,45 @@ export interface ResolveCopilotBinDeps {
 }
 
 /**
- * Resolve the `copilot` binary path for non-console spawning on Windows.
+ * Escape hatch for the WinGet `copilot` shim on Windows.
  *
- * Why this exists: the WinGet shim copilot.exe at
+ * **This is not a general-purpose path resolver.** It exists solely to
+ * compensate for a bug in the WinGet shim: the shim at
  * `%LOCALAPPDATA%\Microsoft\WinGet\Links\copilot.exe` works fine when
- * launched from a console (PowerShell, cmd) but corrupts stdout and
- * returns exit code 1 — even on successful runs — when spawned by a
- * non-console parent (Node `child_process.spawn`, Python `subprocess`,
- * etc.). Empirically: same `copilot -p test --allow-all ...` invocation,
- * exit=0 and 15 KB of output via PowerShell, exit=1 and zero output via
- * Node spawn. Investigation traced the issue to the shim swallowing the
- * underlying process's exit code and stdout when no console is attached.
+ * launched from a console (PowerShell, cmd) but, when spawned by a
+ * non-console parent (Node `child_process.spawn`), corrupts stdout and
+ * reports exit code 1 even on successful runs. Empirically: same
+ * `copilot -p test --allow-all ...` invocation — exit=0 and 15 KB of
+ * output via PowerShell, exit=1 and zero output via Node `spawn`.
  *
- * This resolver detects when the configured `bin` (or PATH lookup)
- * points at the shim and substitutes the real packaged binary at
- * `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.Copilot_*\copilot.exe`,
- * which behaves correctly under non-console spawn.
+ * To make WinGet-installed Copilot usable through emploke's autonomous
+ * task dispatch, this resolver detects when the configured `bin` (or
+ * PATH lookup) points at the shim and substitutes the real packaged
+ * binary at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.Copilot_*\
+ * copilot.exe`, which behaves correctly under non-console spawn.
  *
- * Resolution order, on Windows:
- *   1. If `bin` is an absolute path that is NOT the WinGet shim, return it.
- *      (Caller knows what they want.)
- *   2. If a WinGet packages dir contains a real Copilot binary, prefer that.
- *   3. If a node_modules `@github/copilot` install exists in any ancestor
- *      of cwd, prefer that as a fallback.
- *   4. Otherwise return `bin` unchanged and let `child_process.spawn`
- *      (or whoever) deal with PATH lookup.
+ * Resolution order on Windows:
+ *   1. If `bin` is an absolute path that is NOT the WinGet shim, return
+ *      it untouched. (Caller knows what they want.)
+ *   2. If a WinGet packages dir contains a real Copilot binary, return
+ *      that.
+ *   3. Otherwise return `bin` unchanged and let `child_process.spawn`
+ *      (or whoever) deal with PATH lookup. WinGet users without the
+ *      packaged binary on disk will still hit the shim bug; that's the
+ *      pre-resolver baseline.
  *
- * On non-Windows platforms this is a no-op pass-through.
+ * Implementation note on path APIs: this function operates exclusively
+ * on Windows-shaped paths (drive letters, backslash separators). All
+ * `path.X` calls inside the win32 branch use `path.win32.X` so the
+ * tests that mock `platform: "win32"` on POSIX runners produce the same
+ * results as the win32 branch on a real Windows host. The function
+ * still early-returns on non-win32 platforms, so production behaviour
+ * is unaffected.
+ *
+ * Lifecycle: this whole file is a temporary compatibility layer. When
+ * the upstream WinGet / Copilot install story stops needing it, delete
+ * the file and have `dispatchCopilotTask` call `spawn("copilot", ...)`
+ * directly. See {@link https://github.com/LangSensei/emploke/issues/27}.
  */
 export function resolveCopilotBin(
   bin: string,
@@ -66,13 +77,18 @@ export function resolveCopilotBin(
     return { bin, reason: "path-passthrough" };
   }
 
+  // Use win32-shaped path APIs explicitly so this branch behaves the same
+  // when invoked on a POSIX runner with `platform: "win32"` mocked. On a
+  // real Windows host `path === path.win32`, so production behaviour is
+  // unchanged.
+  const win = path.win32;
   const env = deps.env ?? process.env;
   const exists = deps.exists ?? existsSync;
   const readdir = deps.readdir ?? readdirSync;
   const which = deps.which ?? defaultWhich;
 
   // If the caller supplied an absolute path and it is not the shim, trust it.
-  if (path.isAbsolute(bin)) {
+  if (win.isAbsolute(bin)) {
     if (!isWingetShim(bin, env)) {
       return { bin, reason: "configured" };
     }
@@ -82,7 +98,7 @@ export function resolveCopilotBin(
   // Resolve PATH so we can detect whether `copilot` would land on the shim.
   let pathHit: string | null = null;
   try {
-    pathHit = which(path.basename(bin, ".exe"));
+    pathHit = which(win.basename(bin, ".exe"));
   } catch {
     pathHit = null;
   }
@@ -92,14 +108,6 @@ export function resolveCopilotBin(
   const wingetReal = findWingetPackageBin(env, exists, readdir);
   if (wingetReal !== null) {
     return { bin: wingetReal, reason: "winget-package" };
-  }
-
-  // Try npm install (project-local node_modules ancestor walk would be
-  // overkill; the package is installed globally for most users, and we
-  // only fall back here when WinGet wasn't found).
-  const npmReal = findNpmPackageBin(env, exists);
-  if (npmReal !== null) {
-    return { bin: npmReal, reason: "npm-package" };
   }
 
   // Last resort: hand back what we were given. If it was the shim, the
@@ -127,8 +135,8 @@ function defaultWhich(cmd: string): string | null {
 function isWingetShim(p: string, env: NodeJS.ProcessEnv): boolean {
   const localAppData = env.LOCALAPPDATA;
   if (!localAppData) return false;
-  const linksDir = path.join(localAppData, "Microsoft", "WinGet", "Links").toLowerCase();
-  return path.dirname(p).toLowerCase() === linksDir;
+  const linksDir = path.win32.join(localAppData, "Microsoft", "WinGet", "Links").toLowerCase();
+  return path.win32.dirname(p).toLowerCase() === linksDir;
 }
 
 function findWingetPackageBin(
@@ -138,7 +146,7 @@ function findWingetPackageBin(
 ): string | null {
   const localAppData = env.LOCALAPPDATA;
   if (!localAppData) return null;
-  const packagesRoot = path.join(localAppData, "Microsoft", "WinGet", "Packages");
+  const packagesRoot = path.win32.join(localAppData, "Microsoft", "WinGet", "Packages");
   if (!exists(packagesRoot)) return null;
 
   let entries: readonly string[];
@@ -151,46 +159,6 @@ function findWingetPackageBin(
   const copilotDir = entries.find((name) => name.toLowerCase().startsWith("github.copilot_"));
   if (!copilotDir) return null;
 
-  const candidate = path.join(packagesRoot, copilotDir, "copilot.exe");
+  const candidate = path.win32.join(packagesRoot, copilotDir, "copilot.exe");
   return exists(candidate) ? candidate : null;
-}
-
-function findNpmPackageBin(env: NodeJS.ProcessEnv, exists: (p: string) => boolean): string | null {
-  // Probe a small set of conventional global install roots. Best-effort.
-  const candidates: string[] = [];
-  if (env.APPDATA) {
-    candidates.push(
-      path.join(
-        env.APPDATA,
-        "npm",
-        "node_modules",
-        "@github",
-        "copilot",
-        "node_modules",
-        "@github",
-        "copilot-win32-x64",
-        "copilot.exe",
-      ),
-    );
-  }
-  // nvm-windows / scoop layout: the active node has its own
-  // node_modules dir.
-  if (env.NVM_SYMLINK) {
-    candidates.push(
-      path.join(
-        env.NVM_SYMLINK,
-        "node_modules",
-        "@github",
-        "copilot",
-        "node_modules",
-        "@github",
-        "copilot-win32-x64",
-        "copilot.exe",
-      ),
-    );
-  }
-  for (const c of candidates) {
-    if (exists(c)) return c;
-  }
-  return null;
 }

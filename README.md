@@ -43,7 +43,9 @@ $EMPLOKE_HOME/                       (default ~/.emploke; override with EMPLOKE_
 ├── tasks/<id>/                      per-task workdirs (autonomous dispatch)
 │   ├── task.json                    Task value + runtime metadata
 │   ├── session/                     junction → runtime's per-task state dir
-│   │   └── events.jsonl             canonical execution log
+│   │   └── <runtime-specific>       runtime-native event log (e.g. events.jsonl
+│   │                                under copilot; format and filename are the
+│   │                                runtime adapter's concern, not the kernel's)
 │   └── stderr.log                   bug-out only (CLI errors before session)
 ├── workflows/<id>/                  placeholder (future)
 └── logs/                            placeholder (future)
@@ -56,7 +58,9 @@ stay valid across renames). Catalog endpoints are
 `/api/workspaces/<id>/catalog/{skills,agents,mcps,overview}`; sessions
 are `/api/workspaces/<id>/sessions/...`; tasks (autonomous one-shot
 agent dispatch) are `/api/workspaces/<id>/tasks/...` with a streaming
-`/tasks/<tid>/events` endpoint that serves the runtime's `events.jsonl`.
+`/tasks/<tid>/events` endpoint that serves whatever event log the
+task's runtime publishes (the runtime adapter resolves the file via
+`Runtime.taskEventsPath`; the server treats the bytes as opaque).
 There is no global catalog mount — switching workspace switches the
 catalog the dashboard sees.
 

@@ -704,9 +704,10 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
     void refreshDetail();
   }, [taskId, refreshDetail]);
 
-  // Auto-poll while running so events.jsonl + status update without a
-  // manual refresh click. Cadence comes from the parent (which sources
-  // it from /api/config) so list view and detail view stay in sync.
+  // Auto-poll while running so the runtime's event log + status update
+  // without a manual refresh click. Cadence comes from the parent (which
+  // sources it from /api/config) so list view and detail view stay in
+  // sync.
   useEffect(() => {
     if (!task || (task.status !== "running" && task.status !== "not_started")) return;
     const handle = setInterval(() => {
@@ -717,7 +718,7 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
 
   // Common box: anchored at top of the right column with its own scroll
   // container, capped at viewport-minus-toolbar so the page never grows
-  // scrollbars even with a huge events.jsonl payload.
+  // scrollbars even with a huge event log payload.
   const boxStyle: React.CSSProperties = {
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-md, 8px)",
@@ -904,9 +905,12 @@ function formatTime(iso: string): string {
 }
 
 /**
- * Pretty-print an events.jsonl payload by parsing each line and showing the
- * timestamp + type prefix on its own line. Lines that don't parse as JSON
- * are passed through verbatim so we don't lose any information.
+ * Pretty-print an NDJSON event log payload by parsing each line and showing
+ * the timestamp + type prefix on its own line. Lines that don't parse as
+ * JSON are passed through verbatim so we don't lose any information. The
+ * NDJSON shape itself is a Copilot-specific assumption; if a future runtime
+ * publishes a non-NDJSON log this formatter will fall through to verbatim
+ * passthrough and we'll add a runtime-aware renderer when needed.
  */
 function formatEventsJsonl(raw: string): string {
   const lines = raw.split(/\r?\n/);

@@ -377,9 +377,11 @@ export const updateWorkspaceMetadata = async (
 //
 // A Task is an autonomous one-shot agent invocation: dispatch a brief +
 // instructions, the runtime spawns the agent, and the dashboard polls for
-// terminal status. The canonical execution log is `events.jsonl` inside the
-// runtime's per-task state directory; the server junctions that directory
-// under the task workdir and exposes it via `/tasks/:tid/events`.
+// terminal status. Each runtime publishes its own native event log; the
+// server resolves the path via the runtime's `taskEventsPath` surface and
+// streams the bytes opaquely. Filename, format, and on-disk layout are
+// runtime-specific (today the Copilot adapter writes NDJSON; future
+// runtimes may differ).
 
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
@@ -437,10 +439,14 @@ export const deleteTask = (id: string) =>
   mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 /**
- * Build the URL to the events.jsonl stream for a task. Used by the detail
- * page; we let the browser pull the file via fetch + .text() rather than
- * EventSource because the server returns the whole file (not SSE), and a
- * single-shot fetch keeps the polling path simple.
+ * Build the URL to the task event stream. The server resolves the
+ * underlying file via `Runtime.taskEventsPath` and returns its bytes as
+ * `application/x-ndjson` (today, since the only runtime is Copilot's
+ * NDJSON; future runtimes may serve other formats and the dashboard
+ * will need to branch on `task.metadata.runtime` to render them). We
+ * fetch the whole file with `fetch().text()` rather than EventSource
+ * because the route is a one-shot read, not SSE; the polling loop on
+ * the detail page handles "tail" semantics.
  */
 export const taskEventsUrl = (id: string): string =>
   `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/events`;

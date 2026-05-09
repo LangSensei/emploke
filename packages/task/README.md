@@ -44,7 +44,8 @@ const mgr = new TaskManager({
 await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boot
 const t = await mgr.dispatch({ agent: "writer", instructions: "..." });
 // t.status === "running" — the subprocess has been spawned; poll mgr.get(t.id)
-// or watch <workdir>/session/events.jsonl for progress.
+// for status changes, or read the runtime's event log via
+// runtime.taskEventsPath?.(workdir) for streaming progress.
 
 await mgr.shutdown();                   // kills live tasks, persists "server shutdown"
 ```
@@ -104,11 +105,21 @@ delete operation — Task is a history accumulator.
 ```
 <workspace>/tasks/<task-id>/
 ├── task.json                 # PersistedTask = { schemaVersion: 1, task: Task }
-├── session/                  # junction → ~/.copilot/session-state/<runtimeSessionId>/
-│   └── events.jsonl          # canonical execution log
+├── session/                  # junction → runtime's per-task state dir,
+│                             #   e.g. ~/.copilot/session-state/<runtimeSessionId>/
+│                             #   under copilot. The exact target and the files
+│                             #   inside are the runtime adapter's concern.
 ├── stderr.log                # bug-out only — runtime CLI errors before session exists
 └── ...                       # whatever the agent writes
 ```
+
+The runtime adapter exposes the event log path through
+`Runtime.taskEventsPath?(taskWorkdir): string | null` so consumers can
+stream a per-task log without knowing where (or how) the runtime stores
+it. Today the only adapter (`@emploke/runtime` Copilot) returns
+`<workdir>/session/events.jsonl`; a future runtime is free to put its
+log somewhere else, name it differently, or skip the surface entirely
+by omitting the method.
 
 `task.json` writes are atomic (rename-after-write) with EPERM/EACCES retry
 to survive concurrent reads on Windows.
