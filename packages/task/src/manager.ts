@@ -8,6 +8,7 @@ import { apply } from "./apply.js";
 import { create as createTask } from "./create.js";
 import {
   AgentNotFoundError,
+  CorruptedTaskError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
@@ -15,13 +16,9 @@ import {
 import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
 import { createDirJunction } from "./junction.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import {
-  CURRENT_SCHEMA_VERSION,
-  type PersistedTask,
-  readPersistedTask,
-  readTaskRuntimeMetadata,
-  writePersistedTask,
-} from "./task-file.js";
+import { FsTaskRepository } from "./repositories/fs-task-repository.js";
+import type { TaskRepository } from "./repositories/repository.js";
+import { readTaskRuntimeMetadata } from "./task-meta.js";
 import type {
   DispatchOpts,
   ListTaskOpts,
@@ -106,6 +103,7 @@ export class TaskManager {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly tasksDir: string;
+  private readonly repository: TaskRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
@@ -121,6 +119,7 @@ export class TaskManager {
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
+    this.repository = config.repository ?? new FsTaskRepository({ tasksDir: this.tasksDir });
     this.logger = config.logger ?? silentLogger;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
@@ -449,28 +448,29 @@ export class TaskManager {
   // ─── delete ──────────────────────────────────────────────
 
   /**
-   * Remove a task: kill the subprocess if it's still live, then rm -rf
-   * the workdir. Throws `TaskNotFoundError` if no such task exists.
+   * Remove a task. Default behaviour removes only the task's metadata
+   * (the repository row / `task.json`). Pass `{ purge: true }` to
+   * additionally rm the entire workdir (`<tasksDir>/<id>/`) — including
+   * the runtime's session junction and any agent-produced files.
    *
-   * Note: deleting a live task does NOT mark it `cancelled` first — the
-   * caller asked for it to vanish, not for an audit trail. Live workers
-   * receive a kill signal and the workdir is destroyed.
+   * `purge: true` also implies "skip metadata validation" — a task
+   * whose `task.json` is corrupted (parse failure, future
+   * `CURRENT_SCHEMA_VERSION` bump) would otherwise be undeletable
+   * through the public API. Mirrors `rm -rf` semantics for that
+   * recovery path.
    *
-   * `opts.force` skips the load-and-validate step and removes the
-   * directory whenever it exists on disk. Without this, a `task.json`
-   * that fails schema validation (corruption, future
-   * `CURRENT_SCHEMA_VERSION` bump) would leave the directory
-   * undeletable through the public API — `loadTask` would return
-   * `null`, `delete` would throw `TaskNotFoundError`, and operators
-   * would have to shell in to the workspace to clean up. With
-   * `force: true`, the directory's mere existence is enough to allow
-   * removal, mirroring `rm -rf` semantics.
+   * Live subprocesses are killed before the rm regardless of `purge`,
+   * because the metadata removal alone would leave the running process
+   * orphaned. The kill path is the same in both modes.
+   *
+   * Throws `TaskNotFoundError` when no task with `id` exists (and, in
+   * default mode, when the metadata is unreadable).
    */
-  async delete(id: string, opts: { force?: boolean } = {}): Promise<void> {
+  async delete(id: string, opts: { purge?: boolean } = {}): Promise<void> {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
-    if (opts.force === true) {
+    if (opts.purge === true) {
       // Existence check via stat(): we still want a 404 if the dir
       // truly doesn't exist (so the dashboard's optimistic UI can
       // distinguish "already gone" from "deleted now"), but we don't
@@ -494,25 +494,7 @@ export class TaskManager {
 
     const live = this.live.get(id);
     if (live !== undefined) {
-      // Drop from live first so the exit watcher's `this.live.delete(id)`
-      // is a no-op and doesn't race with our rm. Then kill + drain.
-      //
-      // We await `settled` rather than `handle.exit` so the exit watcher
-      // has finished its post-exit `applyTerminal()` write before we
-      // start the rm. Otherwise the watcher's `writeFile(task.json)` and
-      // our `rm(workdir, recursive)` race: whichever loses logs a noisy
-      // ENOENT-driven "failed to persist terminal status" warn even
-      // though the task is being deliberately discarded. `settled` never
-      // rejects (the watcher catches everything internally), so the
-      // try/catch is purely defensive.
       this.live.delete(id);
-      // Mark the task as killed-by-us BEFORE invoking kill(): the exit
-      // watcher might fire its 'exit' handler synchronously (via the
-      // Promise resolve queue) the moment we call kill(), so the flag
-      // must be set first. With it set, the watcher records `failure`
-      // — though for delete() the workdir is rm'd anyway, so the
-      // applyTerminal write is wasted. (We accept that small cost in
-      // exchange for not racing rm against writeFile.)
       live.killedByUs = true;
       try {
         live.handle.kill();
@@ -526,7 +508,14 @@ export class TaskManager {
       }
     }
 
-    await rm(workdir, { recursive: true, force: true });
+    // Always remove metadata via the repository (otherwise a SQLite
+    // backend would leave a ghost row). For purge=true, ALSO rm the
+    // entire workdir; for default, agent-produced files under
+    // <tasksDir>/<id>/ are preserved for archival.
+    await this.repository.delete(id);
+    if (opts.purge === true) {
+      await rm(workdir, { recursive: true, force: true });
+    }
   }
 
   // ─── recoverOrphaned ─────────────────────────────────────
@@ -650,36 +639,35 @@ export class TaskManager {
   // ─── internals ───────────────────────────────────────────
 
   /** Read + validate the persisted task at `workdir`, or null on miss. */
-  private async loadTask(id: string, workdir: string): Promise<Task | null> {
-    const res = await readPersistedTask(workdir);
-    if (res === null) {
-      return null;
+  private async loadTask(id: string, _workdir: string): Promise<Task | null> {
+    let task: Task | null;
+    try {
+      task = await this.repository.read(id);
+    } catch (err) {
+      if (err instanceof CorruptedTaskError) {
+        this.logger.warn("tasks: skipping corrupted task.json", {
+          taskId: id,
+          reason: err.reason,
+        });
+        return null;
+      }
+      throw err;
     }
-    if (res.ok === false) {
-      this.logger.warn("tasks: skipping corrupted task.json", {
-        taskId: id,
-        reason: res.reason,
-      });
-      return null;
-    }
-    if (res.value.task.id !== id) {
+    if (task === null) return null;
+    if (task.id !== id) {
       // Defensive: directory name and id-in-file disagree. Trust the
       // directory name (it's how we found this) and surface a warning.
       this.logger.warn("tasks: id mismatch between dir and task.json", {
         taskId: id,
-        persistedId: res.value.task.id,
+        persistedId: task.id,
       });
     }
-    return res.value.task;
+    return task;
   }
 
   /** Atomic write of the persisted record. */
-  private async persist(workdir: string, task: Task): Promise<void> {
-    const value: PersistedTask = {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      task,
-    };
-    await writePersistedTask(workdir, value);
+  private async persist(_workdir: string, task: Task): Promise<void> {
+    await this.repository.save(task);
   }
 
   /**
@@ -851,7 +839,7 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-export type { TaskRuntimeMetadata } from "./task-file.js";
+export type { TaskRuntimeMetadata } from "./task-meta.js";
 // Re-export typed metadata reader so consumers don't have to dig into
-// `task-file.js`.
-export { readTaskRuntimeMetadata } from "./task-file.js";
+// `task-meta.js`.
+export { readTaskRuntimeMetadata } from "./task-meta.js";

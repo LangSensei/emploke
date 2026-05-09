@@ -27,13 +27,10 @@ import type { AgentResolveResult, Catalog } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type DispatchOpts,
-  type PersistedTask,
-  TASK_FILE_NAME,
-  type Task,
-  TaskManager,
-} from "../../src/index.js";
+import { type DispatchOpts, type Task, TaskManager } from "../../src/index.js";
+
+const TASK_FILE_NAME = "task.json";
+type PersistedTaskWire = { schemaVersion: number } & Task;
 
 // ───────── fixture lifecycle ─────────────────────────────────
 
@@ -160,10 +157,10 @@ describe("real-spawn smoke", () => {
 
     expect(final.status).toBe("success");
 
-    const persisted: PersistedTask = JSON.parse(
+    const persisted: PersistedTaskWire = JSON.parse(
       await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
     );
-    expect(persisted.task.status).toBe("success");
+    expect(persisted.status).toBe("success");
   });
 
   it("dispatch → real child exits non-zero → status persists as 'failure'", async () => {
@@ -175,9 +172,9 @@ describe("real-spawn smoke", () => {
 
     expect(final.status).toBe("failure");
 
-    const persisted: PersistedTask = JSON.parse(
+    const persisted: PersistedTaskWire = JSON.parse(
       await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
     );
-    expect(persisted.task.status).toBe("failure");
+    expect(persisted.status).toBe("failure");
   });
 });

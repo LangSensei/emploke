@@ -1,6 +1,7 @@
 import type { Catalog } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry, Session } from "@emploke/runtime";
+import type { SessionRepository } from "./repositories/repository.js";
 
 /**
  * Re-export the canonical `Logger` from `@emploke/logger` for source
@@ -24,6 +25,13 @@ export interface SessionManagerConfig {
    * "workspace" — it only knows about the directory you tell it to manage.
    */
   readonly sessionsDir: string;
+  /**
+   * Persistence backend for session state. When omitted, the manager
+   * constructs a `FsSessionRepository({ sessionsDir })` automatically;
+   * tests can inject an `InMemorySessionRepository` (from
+   * `@emploke/session/testing`) to avoid touching the filesystem.
+   */
+  readonly repository?: SessionRepository;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */
@@ -34,26 +42,6 @@ export interface SessionManagerConfig {
 
 /** Re-export the runtime view of a session as the canonical session record. */
 export type { LaunchCommand, Session } from "@emploke/runtime";
-
-/**
- * The on-disk shape persisted at `<workdir>/session.json`. Narrow on purpose:
- *
- *   - `id` is NOT persisted (it equals `path.basename(workdir)`).
- *   - `agent` is NOT persisted (it lives in `AGENTS.md` frontmatter, which
- *     the user is expected to be able to hand-edit).
- *   - `lastActiveAt` and `preview` are NOT persisted; they're refreshed from
- *     the runtime on every list/get call.
- *
- * Bumping `schemaVersion` is the migration path for future schema changes.
- */
-export interface PersistedSession {
-  readonly schemaVersion: 1;
-  readonly runtime: string;
-  /** ISO 8601 string. */
-  readonly createdAt: string;
-  /** Opaque-to-emploke id minted by the runtime. May be null until first launch. */
-  readonly runtimeSessionId: string | null;
-}
 
 /** Options for SessionManager.create. */
 export interface CreateSessionOpts {
@@ -83,10 +71,21 @@ export interface DeleteSessionOpts {
   /**
    * If true, ask the runtime to also remove its own per-session state (e.g.
    * for copilot, this is `~/.copilot/session-state/<runtimeSessionId>/`).
-   * Performed *before* the workdir is removed; a runtime failure leaves the
-   * workdir intact so the user can retry.
+   * Performed *before* the workdir is removed; a runtime failure leaves
+   * the workdir intact so the user can retry.
    */
   readonly deleteRuntimeState?: boolean;
+  /**
+   * If true, also remove the entire per-session workdir under
+   * `<sessionsDir>/<id>/` (including AGENTS.md, agent-produced files,
+   * etc.). Defaults to `false`: only the metadata is removed; the
+   * workdir contents are preserved for archival.
+   *
+   * Same semantics as `WorkspaceManager.delete({ purge })` and
+   * `TaskManager.delete({ purge })` — a single verb across all the
+   * entity managers.
+   */
+  readonly purge?: boolean;
 }
 
 /** Re-exported for callers that want to type-narrow. */

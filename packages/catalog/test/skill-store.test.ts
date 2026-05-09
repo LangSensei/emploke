@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
+import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { SkillStore } from "../src/skill/skill-store.js";
 
 let catalogDir: string;
@@ -40,7 +41,7 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new SkillStore(catalogDir);
+  store = new SkillStore(new FsSkillRepository(catalogDir));
 });
 
 afterEach(async () => {
@@ -206,18 +207,7 @@ describe("SkillStore", () => {
   // path() is a public method with no current caller in-repo, but as a
   // public surface it must not hand back a traversed filesystem path
   // either — otherwise a future caller inherits the same hole.
-  describe("path() path-traversal hardening", () => {
-    it("rejects malformed names before joining to baseDir", () => {
-      expect(() => store.path("../../etc")).toThrow(NameInvalid);
-      expect(() => store.path("a/b/c")).toThrow(NameInvalid);
-      expect(() => store.path("..\\evil")).toThrow(NameInvalid);
-    });
-    it("returns a valid path for well-formed names (smoke check)", () => {
-      // No assertion on the exact path — just that it doesn't throw and
-      // contains the name. The store doesn't need to have the skill
-      // installed; path() is purely structural.
-      const p = store.path("ok-name");
-      expect(p).toContain("ok-name");
-    });
-  });
+  // The Repository pattern moved path-composition into FsSkillRepository,
+  // which validates names at every public method. The SkillStore.path()
+  // surface was retired with no callers.
 });

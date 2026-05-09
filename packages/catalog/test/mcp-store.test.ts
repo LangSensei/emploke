@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
+import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -25,7 +26,7 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  store = new McpStore(catalogDir);
+  store = new McpStore(new FsMcpRepository(catalogDir));
 });
 
 afterEach(async () => {

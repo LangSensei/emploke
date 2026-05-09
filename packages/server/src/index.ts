@@ -7,7 +7,7 @@ import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { WorkspaceRegistry } from "@emploke/workspace";
+import { FsWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -83,13 +83,16 @@ async function main() {
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(new CopilotRuntime());
 
-  // Open the home-level registry. We do NOT auto-create a default
-  // workspace  the dashboard's landing page prompts the user to create
-  // one explicitly (path + display name). On first launch the registry
-  // is simply empty and the landing page reflects that.
-  const registry = await WorkspaceRegistry.open(paths.registryFile);
+  // Open the workspace manager backed by the FS repository. We do NOT
+  // auto-create a default workspace — the dashboard's landing page
+  // prompts the user to create one explicitly (workdir + display name).
+  // On first launch the index file is simply absent and the landing
+  // page reflects that.
+  const workspaces = new WorkspaceManager(
+    new FsWorkspaceRepository({ indexFile: paths.registryFile }),
+  );
 
-  const cache = new WorkspaceContextCache({ runtimeRegistry, registry, logger });
+  const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces, logger });
 
   const app = new Hono();
 
@@ -120,11 +123,11 @@ async function main() {
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => registry.current(),
+      currentWorkspace: () => workspaces.getCurrent(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
-  app.route("/api/workspaces", workspacesRoutes({ registry, cache }));
+  app.route("/api/workspaces", workspacesRoutes({ manager: workspaces, cache }));
 
   // Workspace-scoped sessions and catalog. The middleware resolves :id
   // context and stashes both `sessionManager` and `catalog` on c.var; each
@@ -180,7 +183,7 @@ async function main() {
     listen: `http://${displayHost}:${port}`,
     home: paths.home,
     registryFile: paths.registryFile,
-    workspaces: registry.list().length,
+    workspaces: (await workspaces.list()).length,
     runtimes: runtimeRegistry.kinds(),
     static: serveStaticFiles ? staticDir : null,
     auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",

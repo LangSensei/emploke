@@ -246,7 +246,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   // The workdir hint shows the user-facing display name (not the UUID),
   // falling back to the id only if metadata hasn't loaded yet.
   const currentDisplayName =
-    workspaces.find((w) => w.id === currentWorkspaceId)?.metadata?.name ?? currentWorkspaceId;
+    workspaces.find((w) => w.id === currentWorkspaceId)?.name ?? currentWorkspaceId;
 
   return (
     <>

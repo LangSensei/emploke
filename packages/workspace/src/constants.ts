@@ -2,14 +2,9 @@
 export const WORKSPACE_FILE = "workspace.json";
 
 /**
- * Filename of the per-workspace advisory lock used by `WorkspaceManager.init`
- * and `update`. Lives inside the workspace directory so each workspace has
- * its own lock; concurrent ops on different workspaces never contend.
- */
-export const WORKSPACE_LOCK_FILE = ".workspace.lock";
-
-/**
- * Schema version for both `workspace.json` and `workspaces.json`.
+ * Schema version for both `workspace.json` (per-workspace metadata) and
+ * `workspaces.json` (the home-level index `FsWorkspaceRepository`
+ * maintains).
  *
  * ## Bump policy
  *
@@ -31,16 +26,14 @@ export const WORKSPACE_LOCK_FILE = ".workspace.lock";
  *   - **Older on disk** (`onDisk < current`) — data was written by an
  *     older emploke; today there is no migration code, so reads fail
  *     with a message naming the missing migration step. When migrations
- *     are introduced they slot into the per-entity `readPersisted*`
- *     function: detect older versions, run a sequence of one-step
+ *     are introduced they slot into the parsing layer of the FS
+ *     repository: detect older versions, run a sequence of one-step
  *     migrations (`v1 -> v2`, `v2 -> v3`, ...), then re-validate.
  *
- * ## Why per-entity rather than a single global
- *
- * Each persisted entity (workspace, registry, session, task) carries its
- * own `CURRENT_SCHEMA_VERSION`. Bumping one does not force a re-read of
- * unrelated entities, and a forward-only migration in one entity does
- * not require touching the others.
+ * Note: this constant is the **wire-format version**, not part of any
+ * domain type. The `Workspace` interface intentionally has no
+ * `schemaVersion` field — the FS repository wraps + unwraps on save /
+ * load.
  */
 export const CURRENT_SCHEMA_VERSION = 1;
 

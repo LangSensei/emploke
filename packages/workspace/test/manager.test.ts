@@ -1,288 +1,262 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WORKSPACE_FILE } from "../src/constants.js";
 import {
-  WorkspaceAlreadyExistsError,
+  FsWorkspaceRepository,
+  RegistryCorruptedError,
+  RegistrySchemaMismatchError,
   WorkspaceCorruptedError,
-  WorkspaceNameInvalidError,
-  WorkspaceNotFoundError,
+  WorkspaceManager,
+  WorkspaceNotRegisteredError,
+  WorkspacePathConflictError,
   WorkspaceSchemaMismatchError,
-} from "../src/errors.js";
-import { WorkspaceManager } from "../src/manager.js";
+} from "../src/index.js";
+import { InMemoryWorkspaceRepository } from "../src/testing.js";
 
 let scratch: string;
+let indexFile: string;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-ws-mgr-"));
+  indexFile = path.join(scratch, ".emploke", "workspaces.json");
 });
 afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-const exists = async (p: string): Promise<boolean> => {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const UUID_A = "11111111-1111-4111-8111-111111111111";
+const UUID_B = "22222222-2222-4222-8222-222222222222";
 
-describe("WorkspaceManager.init", () => {
-  it("creates workspace.json with the supplied display name", async () => {
-    const dir = path.join(scratch, "any-folder");
-    const ws = await WorkspaceManager.init(dir, { name: "My Workspace" });
-    expect(ws.metadata.name).toBe("My Workspace");
-    expect(ws.metadata.schemaVersion).toBe(1);
-    expect(typeof ws.metadata.createdAt).toBe("string");
-    const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
-    expect(onDisk.name).toBe("My Workspace");
+const newFsManager = () => new WorkspaceManager(new FsWorkspaceRepository({ indexFile }));
+const newInMemoryManager = () => new WorkspaceManager(new InMemoryWorkspaceRepository());
+
+describe("WorkspaceManager (FsWorkspaceRepository) — init", () => {
+  it("creates the workdir + standard subdirs and persists the workspace", async () => {
+    const m = newFsManager();
+    const wsDir = path.join(scratch, "p");
+    const ws = await m.init({ id: UUID_A, name: "My Project", workdir: wsDir });
+
+    expect(ws.id).toBe(UUID_A);
+    expect(ws.name).toBe("My Project");
+    expect(ws.workdir).toBe(path.resolve(wsDir));
+    // Standard subdirs were created.
+    const fsImport = await import("node:fs/promises");
+    for (const sub of ["sessions", "tasks", "catalog", "workflows", "logs"]) {
+      const st = await fsImport.stat(path.join(wsDir, sub));
+      expect(st.isDirectory()).toBe(true);
+    }
+    // Round-trips through the repository.
+    const back = await m.read(UUID_A);
+    expect(back).toMatchObject({ id: UUID_A, name: "My Project" });
   });
 
-  it("creates the standard subdirs", async () => {
-    const dir = path.join(scratch, "p");
-    const ws = await WorkspaceManager.init(dir, { name: "p" });
-    expect(await exists(ws.sessionsDir)).toBe(true);
-    expect(await exists(ws.catalogDir)).toBe(true);
-    expect(await exists(ws.tasksDir)).toBe(true);
-    expect(await exists(ws.workflowsDir)).toBe(true);
-    expect(await exists(ws.logsDir)).toBe(true);
+  it("rejects an invalid display name", async () => {
+    const m = newFsManager();
+    await expect(m.init({ name: "", workdir: path.join(scratch, "x") })).rejects.toThrow();
   });
 
-  it("accepts unicode display names", async () => {
-    const dir = path.join(scratch, "anything");
-    const ws = await WorkspaceManager.init(dir, { name: "工作区 " });
-    expect(ws.metadata.name).toBe("工作区 ");
-  });
-
-  it("requires a display name (no basename fallback)", async () => {
-    await expect(
-      WorkspaceManager.init(path.join(scratch, "x"), {} as { name?: string }),
-    ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
-  });
-
-  it("rejects an empty / whitespace-only name", async () => {
-    await expect(
-      WorkspaceManager.init(path.join(scratch, "x"), { name: "   " }),
-    ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
-  });
-
-  it("persists defaults when given", async () => {
-    const dir = path.join(scratch, "p");
-    const ws = await WorkspaceManager.init(dir, {
-      name: "p",
-      defaults: { runtime: "copilot", agent: "demo" },
-    });
-    expect(ws.metadata.defaults).toEqual({ runtime: "copilot", agent: "demo" });
-  });
-
-  it("throws WorkspaceAlreadyExistsError if workspace.json exists", async () => {
-    const dir = path.join(scratch, "p");
-    await WorkspaceManager.init(dir, { name: "p" });
-    await expect(WorkspaceManager.init(dir, { name: "p" })).rejects.toBeInstanceOf(
-      WorkspaceAlreadyExistsError,
+  it("rejects when the same workdir is registered twice with different ids", async () => {
+    const m = newFsManager();
+    const wsDir = path.join(scratch, "shared");
+    await m.init({ id: UUID_A, name: "A", workdir: wsDir });
+    await expect(m.init({ id: UUID_B, name: "B", workdir: wsDir })).rejects.toBeInstanceOf(
+      WorkspacePathConflictError,
     );
   });
 
-  it("uses the now() seam", async () => {
-    const fixed = new Date("2026-01-01T00:00:00.000Z");
-    const ws = await WorkspaceManager.init(path.join(scratch, "p"), {
-      name: "p",
-      now: () => fixed,
-    });
-    expect(ws.metadata.createdAt).toBe(fixed.toISOString());
+  it("auto-mints an id when none is supplied", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ name: "Auto", workdir: path.join(scratch, "auto") });
+    expect(ws.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 });
 
-describe("WorkspaceManager.open", () => {
-  it("returns the parsed workspace", async () => {
-    const dir = path.join(scratch, "p");
-    const initted = await WorkspaceManager.init(dir, { name: "p" });
-    const opened = await WorkspaceManager.open(dir);
-    expect(opened.metadata).toEqual(initted.metadata);
-    expect(opened.dir).toBe(initted.dir);
+describe("WorkspaceManager — list / read", () => {
+  it("list returns all registered workspaces", async () => {
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
+    await m.init({ id: UUID_B, name: "B", workdir: path.join(scratch, "b") });
+    const all = await m.list();
+    expect(all.map((w) => w.id).sort()).toEqual([UUID_A, UUID_B].sort());
   });
 
-  it("throws WorkspaceNotFoundError when workspace.json missing", async () => {
-    const dir = path.join(scratch, "empty");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceNotFoundError);
-  });
-
-  it("throws WorkspaceCorruptedError on invalid JSON", async () => {
-    const dir = path.join(scratch, "p");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(path.join(dir, WORKSPACE_FILE), "not json", "utf8");
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceCorruptedError when not an object", async () => {
-    const dir = path.join(scratch, "p");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(path.join(dir, WORKSPACE_FILE), "[]", "utf8");
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceCorruptedError on missing required fields", async () => {
-    const dir = path.join(scratch, "p");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(path.join(dir, WORKSPACE_FILE), JSON.stringify({ schemaVersion: 1 }), "utf8");
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceCorruptedError when 'name' is whitespace-only", async () => {
-    const dir = path.join(scratch, "ws-ws");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({ schemaVersion: 1, name: "   ", createdAt: "2026-01-01T00:00:00Z" }),
-      "utf8",
-    );
-    // Read-side validation matches write-side (assertValidDisplayName), so
-    // a workspace.json that was hand-edited to a pathological name surfaces
-    // as corruption at open() rather than a confusing failure later inside
-    // update().
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceCorruptedError when 'name' contains control chars", async () => {
-    const dir = path.join(scratch, "ws-ctrl");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({
-        schemaVersion: 1,
-        name: "bad\u0007name",
-        createdAt: "2026-01-01T00:00:00Z",
-      }),
-      "utf8",
-    );
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceCorruptedError when 'name' is too long", async () => {
-    const dir = path.join(scratch, "ws-long");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({
-        schemaVersion: 1,
-        name: "x".repeat(65),
-        createdAt: "2026-01-01T00:00:00Z",
-      }),
-      "utf8",
-    );
-    await expect(WorkspaceManager.open(dir)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("throws WorkspaceSchemaMismatchError on newer schemaVersion with upgrade hint", async () => {
-    const dir = path.join(scratch, "p");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({ schemaVersion: 99, name: "p", createdAt: "2026-01-01T00:00:00Z" }),
-      "utf8",
-    );
-    await expect(WorkspaceManager.open(dir)).rejects.toMatchObject({
-      constructor: WorkspaceSchemaMismatchError,
-      fromVersion: 99,
-      toVersion: 1,
-      message: expect.stringContaining("Upgrade the server"),
-    });
-  });
-
-  it("throws WorkspaceSchemaMismatchError on older schemaVersion with migration hint", async () => {
-    const dir = path.join(scratch, "p2");
-    await import("node:fs/promises").then((m) => m.mkdir(dir));
-    await writeFile(
-      path.join(dir, WORKSPACE_FILE),
-      JSON.stringify({ schemaVersion: 0, name: "p2", createdAt: "2026-01-01T00:00:00Z" }),
-      "utf8",
-    );
-    await expect(WorkspaceManager.open(dir)).rejects.toMatchObject({
-      constructor: WorkspaceSchemaMismatchError,
-      fromVersion: 0,
-      toVersion: 1,
-      message: expect.stringContaining("Migration from older versions"),
-    });
+  it("read returns null for an unregistered id", async () => {
+    const m = newFsManager();
+    expect(await m.read(UUID_A)).toBeNull();
   });
 });
 
-describe("WorkspaceManager.openOrInit", () => {
-  it("inits when missing", async () => {
-    const dir = path.join(scratch, "fresh");
-    const ws = await WorkspaceManager.openOrInit(dir, { name: "Fresh One" });
-    expect(ws.metadata.name).toBe("Fresh One");
+describe("WorkspaceManager — update", () => {
+  it("renames a workspace and preserves immutable fields", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "Old", workdir: path.join(scratch, "x") });
+    const updated = await m.update(UUID_A, { name: "New" });
+    expect(updated.name).toBe("New");
+    expect(updated.workdir).toBe(ws.workdir);
+    expect(updated.createdAt).toBe(ws.createdAt);
   });
 
-  it("opens when present (ignoring opts.name)", async () => {
-    const dir = path.join(scratch, "exists");
-    await WorkspaceManager.init(dir, { name: "Original" });
-    const ws = await WorkspaceManager.openOrInit(dir, { name: "Ignored" });
-    expect(ws.metadata.name).toBe("Original");
-  });
-
-  it("survives concurrent openOrInit on the same dir", async () => {
-    const dir = path.join(scratch, "race");
-    const results = await Promise.all([
-      WorkspaceManager.openOrInit(dir, { name: "Race" }),
-      WorkspaceManager.openOrInit(dir, { name: "Race" }),
-      WorkspaceManager.openOrInit(dir, { name: "Race" }),
-    ]);
-    for (const r of results) expect(r.metadata.name).toBe("Race");
-  });
-});
-
-describe("WorkspaceManager.update", () => {
-  it("renames the workspace and rewrites workspace.json atomically", async () => {
-    const dir = path.join(scratch, "ws-dir");
-    await WorkspaceManager.init(dir, { name: "Old Name" });
-    const updated = await WorkspaceManager.update(dir, { name: "New Name" });
-    expect(updated.metadata.name).toBe("New Name");
-    const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
-    expect(onDisk.name).toBe("New Name");
-    expect(onDisk.schemaVersion).toBe(1);
-    // createdAt must be preserved across updates.
-    expect(onDisk.createdAt).toBe(updated.metadata.createdAt);
-  });
-
-  it("preserves defaults when patch.defaults is undefined", async () => {
-    const dir = path.join(scratch, "with-defaults");
-    await WorkspaceManager.init(dir, {
-      name: "With Defaults",
-      defaults: { runtime: "copilot", agent: "claude" },
-    });
-    const updated = await WorkspaceManager.update(dir, { name: "Renamed" });
-    expect(updated.metadata.defaults).toEqual({ runtime: "copilot", agent: "claude" });
-  });
-
-  it("clears defaults when patch.defaults is null", async () => {
-    const dir = path.join(scratch, "clear-defaults");
-    await WorkspaceManager.init(dir, {
-      name: "Clear",
+  it("clears defaults when passed null", async () => {
+    const m = newFsManager();
+    await m.init({
+      id: UUID_A,
+      name: "X",
+      workdir: path.join(scratch, "x"),
       defaults: { runtime: "copilot" },
     });
-    const updated = await WorkspaceManager.update(dir, { defaults: null });
-    expect(updated.metadata.defaults).toBeUndefined();
+    const updated = await m.update(UUID_A, { defaults: null });
+    expect(updated.defaults).toBeUndefined();
   });
 
-  it("rejects an empty name", async () => {
-    const dir = path.join(scratch, "valid");
-    await WorkspaceManager.init(dir, { name: "Valid" });
-    await expect(WorkspaceManager.update(dir, { name: "" })).rejects.toBeInstanceOf(
-      WorkspaceNameInvalidError,
+  it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
+    const m = newFsManager();
+    await expect(m.update(UUID_A, { name: "x" })).rejects.toBeInstanceOf(
+      WorkspaceNotRegisteredError,
     );
-    // workspace.json must not be touched on validation failure.
-    const onDisk = JSON.parse(await readFile(path.join(dir, WORKSPACE_FILE), "utf8"));
-    expect(onDisk.name).toBe("Valid");
+  });
+});
+
+describe("WorkspaceManager — delete", () => {
+  it("default delete removes only metadata; workdir contents preserved", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    // Drop a user file inside the workdir (NOT in an emploke-owned subdir).
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user data", "utf8");
+    await fs.writeFile(
+      path.join(ws.workdir, "sessions", "session-trace.txt"),
+      "agent file",
+      "utf8",
+    );
+
+    await m.delete(UUID_A);
+    expect(await m.read(UUID_A)).toBeNull();
+    // workspace.json removed
+    await expect(fs.stat(path.join(ws.workdir, "workspace.json"))).rejects.toThrow();
+    // user file preserved
+    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user data");
+    // sessions subdir preserved (not purged by default)
+    expect(await fs.readFile(path.join(ws.workdir, "sessions", "session-trace.txt"), "utf8")).toBe(
+      "agent file",
+    );
   });
 
-  it("throws WorkspaceNotFoundError if workspace.json is missing", async () => {
-    const dir = path.join(scratch, "ghost");
-    await expect(WorkspaceManager.update(dir, { name: "Anything" })).rejects.toBeInstanceOf(
-      WorkspaceNotFoundError,
-    );
+  it("purge=true also removes emploke-owned subdirs but preserves workdir + user files", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user data", "utf8");
+    await fs.writeFile(path.join(ws.workdir, "sessions", "trace.txt"), "agent", "utf8");
+
+    await m.delete(UUID_A, { purge: true });
+    expect(await m.read(UUID_A)).toBeNull();
+    // sessions subdir gone
+    await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
+    // workdir itself preserved
+    const st = await fs.stat(ws.workdir);
+    expect(st.isDirectory()).toBe(true);
+    // user file preserved
+    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user data");
   });
+
+  it("delete is idempotent for unregistered ids", async () => {
+    const m = newFsManager();
+    await m.delete(UUID_A); // no throw
+    await m.delete(UUID_A, { purge: true }); // also no throw
+  });
+});
+
+describe("WorkspaceManager — current selection", () => {
+  it("getCurrent returns null when nothing selected", async () => {
+    const m = newFsManager();
+    expect(await m.getCurrent()).toBeNull();
+  });
+
+  it("setCurrent + getCurrent round-trip", async () => {
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
+    await m.setCurrent(UUID_A);
+    expect(await m.getCurrent()).toBe(UUID_A);
+  });
+
+  it("setCurrent throws for an unregistered id", async () => {
+    const m = newFsManager();
+    await expect(m.setCurrent(UUID_A)).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+  });
+
+  it("delete clears currentId when the deleted workspace was current", async () => {
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
+    await m.setCurrent(UUID_A);
+    await m.delete(UUID_A);
+    expect(await m.getCurrent()).toBeNull();
+  });
+});
+
+describe("FsWorkspaceRepository — corruption / schema mismatch", () => {
+  it("rejects newer schemaVersion in workspace.json with upgrade hint", async () => {
+    const m = newFsManager();
+    const wsDir = path.join(scratch, "x");
+    await m.init({ id: UUID_A, name: "X", workdir: wsDir });
+    // Corrupt workspace.json with a newer schemaVersion.
+    await writeFile(
+      path.join(wsDir, "workspace.json"),
+      JSON.stringify({ schemaVersion: 99, name: "X", createdAt: "2026-01-01T00:00:00Z" }),
+      "utf8",
+    );
+    await expect(m.read(UUID_A)).rejects.toBeInstanceOf(WorkspaceSchemaMismatchError);
+  });
+
+  it("rejects newer schemaVersion in the index with upgrade hint", async () => {
+    // Plant a future-version index file directly.
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(path.dirname(indexFile), { recursive: true });
+    await writeFile(indexFile, JSON.stringify({ schemaVersion: 99, entries: [] }), "utf8");
+    const m = newFsManager();
+    await expect(m.list()).rejects.toBeInstanceOf(RegistrySchemaMismatchError);
+  });
+
+  it("non-numeric schemaVersion in the index is generic corruption", async () => {
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(path.dirname(indexFile), { recursive: true });
+    await writeFile(indexFile, JSON.stringify({ schemaVersion: "v1", entries: [] }), "utf8");
+    const m = newFsManager();
+    await expect(m.list()).rejects.toBeInstanceOf(RegistryCorruptedError);
+  });
+
+  it("missing workspace.json causes the entry to be dropped from list (warns)", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const fs = await import("node:fs/promises");
+    // Remove the metadata file out from under the index.
+    await fs.rm(path.join(ws.workdir, "workspace.json"), { force: true });
+
+    const all = await m.list();
+    expect(all).toEqual([]);
+  });
+
+  it("explicitly corrupted workspace.json bubbles WorkspaceCorruptedError on read(id)", async () => {
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    await writeFile(path.join(ws.workdir, "workspace.json"), "not json", "utf8");
+    await expect(m.read(UUID_A)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
+  });
+});
+
+describe("WorkspaceManager (InMemoryWorkspaceRepository) — sanity", () => {
+  it("init / list / read / delete round-trip without touching the fs", async () => {
+    const m = newInMemoryManager();
+    const ws = await m.init({ id: UUID_A, name: "Mem", workdir: "/tmp/mem-ws" });
+    expect(await m.list()).toEqual([ws]);
+    expect(await m.read(UUID_A)).toEqual(ws);
+    await m.delete(UUID_A);
+    expect(await m.read(UUID_A)).toBeNull();
+  });
+
+  // Note: init() still calls mkdir() on the chosen workdir — it has to,
+  // because a real agent will spawn there. So InMemory tests still
+  // touch /tmp briefly. If a future test wants zero fs IO, pass
+  // `mkdir`-stubbed workspace pre-existing in the seed and call
+  // `repository.save` directly instead of `manager.init`.
 });

@@ -51,7 +51,7 @@ export function configRoutes(deps: {
   host: string;
   port: number;
   pathSeparator: string;
-  currentWorkspace: () => string | null;
+  currentWorkspace: () => Promise<string | null> | string | null;
   /**
    * Optional override for the dashboard task-list poll cadence. Defaults
    * to 4000 ms — chosen as a tradeoff between snappiness and server load
@@ -64,10 +64,10 @@ export function configRoutes(deps: {
 }): Hono {
   const app = new Hono();
   const taskPollIntervalMs = deps.taskPollIntervalMs ?? 4000;
-  app.get("/", (c) =>
+  app.get("/", async (c) =>
     c.json<ServerConfig>({
       emplokeHome: deps.emplokeHome,
-      currentWorkspace: deps.currentWorkspace(),
+      currentWorkspace: await deps.currentWorkspace(),
       host: deps.host,
       port: deps.port,
       pathSeparator: deps.pathSeparator,

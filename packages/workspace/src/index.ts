@@ -1,21 +1,23 @@
 /**
- * @emploke/workspace  per-project workspace abstraction + home-level registry.
+ * @emploke/workspace — per-project workspace abstraction.
  *
- * A *workspace* is the project-level root directory that holds emploke's
- * ephemeral artifacts (sessions, tasks, workflows, logs). Each workspace
- * is identified by an opaque UUID `id` (the URL routing key) and lives at
- * an absolute filesystem `path`. Its user-facing display name is stored
- * separately in `<dir>/workspace.json#name` and may be changed at any
+ * A *workspace* is the user-chosen working directory that holds
+ * emploke's per-workspace state (sessions, tasks, workflows, catalog,
+ * logs) plus whatever the user has under it. Each workspace is
+ * identified by an opaque UUID `id` (the URL routing key) and lives at
+ * an absolute filesystem `workdir`. Its user-facing display name is
+ * stored as part of the workspace's metadata and may be changed at any
  * time without breaking links.
  *
- * The *registry* is a single JSON file at `$EMPLOKE_HOME/workspaces.json`
- * that the server uses to enumerate known workspaces, resolve id  path,
- * and remember which workspace was last selected. The registry never
- * stores the display name  clients fetch it via `WorkspaceManager.open`
- * when they need to render the UI.
+ * Persistence is delegated to a `WorkspaceRepository`. The default
+ * implementation `FsWorkspaceRepository` stores the index at
+ * `$EMPLOKE_HOME/workspaces.json` and the per-workspace metadata at
+ * `<workdir>/workspace.json`. Tests can swap in `InMemoryWorkspaceRepository`
+ * (re-exported from `@emploke/workspace/testing`).
  *
- * This package never spawns subprocesses, never touches `~/.copilot/`, and
- * has no opinions about runtimes  it's pure file-layout management.
+ * This package never spawns subprocesses, never touches `~/.copilot/`,
+ * and has no opinions about runtimes — it's pure workspace state
+ * management.
  */
 
 export {
@@ -27,7 +29,6 @@ export {
   TASKS_SUBDIR,
   WORKFLOWS_SUBDIR,
   WORKSPACE_FILE,
-  WORKSPACE_LOCK_FILE,
 } from "./constants.js";
 export {
   RegistryCorruptedError,
@@ -44,7 +45,13 @@ export {
   WorkspacePathConflictError,
   WorkspaceSchemaMismatchError,
 } from "./errors.js";
-export { type WorkspaceInitOpts, WorkspaceManager, type WorkspaceUpdatePatch } from "./manager.js";
+export {
+  type WorkspaceDeleteOpts,
+  type WorkspaceInitOpts,
+  WorkspaceManager,
+  type WorkspaceUpdatePatch,
+} from "./manager.js";
 export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
-export { type RegistryAddOpts, WorkspaceRegistry } from "./registry.js";
-export type { RegistryEntry, RegistryFile, Workspace, WorkspaceMetadata } from "./types.js";
+export { FsWorkspaceRepository } from "./repositories/fs-workspace-repository.js";
+export type { WorkspaceRepository } from "./repositories/repository.js";
+export { type Workspace, type WorkspaceLayout, workspaceLayout } from "./types.js";

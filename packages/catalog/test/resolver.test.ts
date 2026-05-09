@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentStore } from "../src/agent/agent-store.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
+import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
+import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
+import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { Resolver } from "../src/resolver.js";
 import { SkillStore } from "../src/skill/skill-store.js";
 
@@ -72,9 +75,9 @@ beforeEach(async () => {
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
   await mkdir(sourceDir, { recursive: true });
-  skills = new SkillStore(catalogDir);
-  agents = new AgentStore(catalogDir);
-  mcps = new McpStore(catalogDir);
+  skills = new SkillStore(new FsSkillRepository(catalogDir));
+  agents = new AgentStore(new FsAgentRepository(catalogDir));
+  mcps = new McpStore(new FsMcpRepository(catalogDir));
   resolver = new Resolver(skills, agents, mcps, catalogDir);
 });
 

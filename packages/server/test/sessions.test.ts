@@ -243,14 +243,28 @@ describe("sessionsRoutes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("DELETE /:id?deleteRuntimeState=1 propagates option", async () => {
+  it("DELETE /:id?deleteRuntimeState=1 propagates option (purge defaults to false)", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
     const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?deleteRuntimeState=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", { deleteRuntimeState: true });
+    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", {
+      deleteRuntimeState: true,
+      purge: false,
+    });
+  });
+
+  it("DELETE /:id?purge=1 propagates the purge flag", async () => {
+    const del = vi.fn(async () => undefined);
+    const m = stubManager({ delete: del });
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", { method: "DELETE" });
+    expect(res.status).toBe(204);
+    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", {
+      deleteRuntimeState: false,
+      purge: true,
+    });
   });
 
   it("DELETE /:id maps RuntimeStateDeletionFailed to 409", async () => {
@@ -349,7 +363,7 @@ describe("sessionsRoutes", () => {
         method: "DELETE",
       });
       expect(res.status).toBe(204);
-      expect(del).toHaveBeenCalledWith(sid, { deleteRuntimeState: false });
+      expect(del).toHaveBeenCalledWith(sid, { deleteRuntimeState: false, purge: false });
       // Negative assertion: the workspace UUID must never reach the manager.
       expect(del).not.toHaveBeenCalledWith(wsId, expect.anything());
     });

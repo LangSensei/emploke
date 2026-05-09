@@ -8,17 +8,24 @@ import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
-  CURRENT_SCHEMA_VERSION,
   type DispatchOpts,
   InvalidTaskIdError,
-  type PersistedTask,
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
-  TASK_FILE_NAME,
   type Task,
   TaskManager,
   TaskNotFoundError,
 } from "../src/index.js";
+
+// task.json wire-format constants — these used to be exported from
+// @emploke/task but are now FsTaskRepository implementation details.
+// Tests still verify on-disk shape, so the constants are redeclared
+// locally.
+const TASK_FILE_NAME = "task.json";
+const CURRENT_SCHEMA_VERSION = 1;
+
+/** Flat A1 wire shape: schemaVersion + task fields at the same level. */
+type PersistedTaskWire = { schemaVersion: number } & Task;
 
 // ───── filesystem fixture lifecycle ────────────────────────
 
@@ -253,9 +260,9 @@ const flushMicrotasks = async (n = 1) => {
   for (let i = 0; i < n; i++) await Promise.resolve();
 };
 
-const readPersisted = async (workdir: string): Promise<PersistedTask> => {
+const readPersisted = async (workdir: string): Promise<PersistedTaskWire> => {
   const raw = await readFile(path.join(workdir, TASK_FILE_NAME), "utf8");
-  return JSON.parse(raw) as PersistedTask;
+  return JSON.parse(raw) as PersistedTaskWire;
 };
 
 const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
@@ -310,11 +317,11 @@ describe("dispatch — happy path", () => {
     expect(meta.pid).toBe(rt.handles[0].pid);
     expect(meta.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
 
-    // task.json on disk matches the returned in-memory task.
+    // task.json on disk matches the returned in-memory task (flat A1 wire format).
     const persisted = await readPersisted(meta.workdir as string);
     expect(persisted.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(persisted.task.status).toBe("running");
-    expect(persisted.task.id).toBe(t.id);
+    expect(persisted.status).toBe("running");
+    expect(persisted.id).toBe(t.id);
   });
 
   it("installs <workdir>/session/ junction targeting handle.sessionDir", async () => {
@@ -580,7 +587,7 @@ describe("get / list", () => {
 });
 
 describe("delete", () => {
-  it("removes an exited task's workdir", async () => {
+  it("default delete removes metadata; workdir preserved", async () => {
     const rt = new StubRuntime();
     const m = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
@@ -589,27 +596,42 @@ describe("delete", () => {
 
     await m.delete(t.id);
 
+    // Metadata removed (task no longer get-able).
+    expect(await m.get(t.id)).toBeNull();
+    // Workdir preserved (consistent with workspace/session purge=false default).
+    expect(await safeStat(path.join(tasksDir, t.id))).not.toBeNull();
+    expect(await safeStat(path.join(tasksDir, t.id, TASK_FILE_NAME))).toBeNull();
+  });
+
+  it("purge=true removes the entire workdir", async () => {
+    const rt = new StubRuntime();
+    const m = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await m.delete(t.id, { purge: true });
+
     expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
   });
 
-  it("kills a live task before removing the workdir", async () => {
+  it("kills a live task before removing metadata (purge=true also removes workdir)", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
     const m = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    await m.delete(t.id);
+    await m.delete(t.id, { purge: true });
 
     expect(rt.handles[0].killed).toBe(true);
     expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
   });
 
   // Regression for the delete/exit-watcher race: deleting a live task
-  // used to await `handle.exit` rather than the watcher's `settled`
-  // promise, so the watcher's `applyTerminal()` write would race with
-  // our `rm -rf workdir`. Whichever lost logged a noisy "failed to
-  // persist terminal status" warn even though the discard was
-  // intentional. With the fix, no such warn is emitted.
+  // races the kill against the exit watcher's terminal-status persist.
+  // The watcher should NOT log "failed to persist terminal status"
+  // when its writeFile loses to our rm — kill+rm+drain must serialise
+  // cleanly.
   it("does not log 'failed to persist terminal status' when deleting a live task", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
@@ -617,7 +639,7 @@ describe("delete", () => {
     const m = makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
 
-    await m.delete(t.id);
+    await m.delete(t.id, { purge: true });
 
     expect(rt.handles[0].killed).toBe(true);
     expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
@@ -630,11 +652,11 @@ describe("delete", () => {
     await expect(m.delete("20260101-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
-  // Without `force`, a corrupt or schema-mismatched task.json makes the
+  // Without `purge`, a corrupt or schema-mismatched task.json makes the
   // task undeletable through the public API: loadTask returns null →
   // delete throws TaskNotFoundError → operators can't clean up. With
-  // `force: true`, the directory's existence is enough.
-  it("force: true removes a corrupt task that delete(...) would otherwise refuse", async () => {
+  // `purge: true`, the directory's existence is enough (mirrors `rm -rf`).
+  it("purge: true removes a corrupt task that default delete refuses", async () => {
     const id = "20260508-c0ffee01";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
@@ -642,17 +664,17 @@ describe("delete", () => {
 
     const m = makeManager();
 
-    // Without force: task is "missing" (validation rejects task.json).
+    // Default mode: task is "missing" (validation rejects task.json).
     await expect(m.delete(id)).rejects.toBeInstanceOf(TaskNotFoundError);
 
-    // With force: gone.
-    await m.delete(id, { force: true });
+    // purge=true: gone.
+    await m.delete(id, { purge: true });
     expect(await safeStat(workdir)).toBeNull();
   });
 
-  it("force: true still returns TaskNotFoundError when the directory truly doesn't exist", async () => {
+  it("purge: true still returns TaskNotFoundError when the directory truly doesn't exist", async () => {
     const m = makeManager();
-    await expect(m.delete("20260101-deadbeef", { force: true })).rejects.toBeInstanceOf(
+    await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
   });
@@ -780,8 +802,8 @@ describe("shutdown", () => {
         () =>
         async (opts: Parameters<NonNullable<typeof original>>[0]): Promise<TaskHandle> => {
           await spawnHold;
-          // biome-ignore lint/style/noNonNullAssertion: guarded above
-          return original!.call(rt, opts);
+          if (!original) throw new Error("dispatchTask hook lost");
+          return original.call(rt, opts);
         },
     });
     const m = makeManager({ runtime: rt });
@@ -824,7 +846,7 @@ describe("recoverOrphaned", () => {
     };
     await writeFile(
       path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, task: orphan }, null, 2),
+      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
       "utf8",
     );
 
@@ -853,7 +875,7 @@ describe("recoverOrphaned", () => {
     };
     await writeFile(
       path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, task: done }, null, 2),
+      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...done }, null, 2),
       "utf8",
     );
 
@@ -898,7 +920,7 @@ describe("recoverOrphaned", () => {
       };
       await writeFile(
         path.join(workdir, TASK_FILE_NAME),
-        JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, task: orphan }, null, 2),
+        JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
         "utf8",
       );
 
@@ -934,7 +956,7 @@ describe("recoverOrphaned", () => {
     };
     await writeFile(
       path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, task: orphan }, null, 2),
+      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
       "utf8",
     );
 

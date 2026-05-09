@@ -6,6 +6,10 @@ import { CatalogStateError } from "./errors.js";
 import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpStore } from "./mcp/mcp-store.js";
+import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
+import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
+import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
+import type { AgentRepository, McpRepository, SkillRepository } from "./repositories/repository.js";
 import { Resolver } from "./resolver.js";
 import { type SkillMetadataPatch, SkillStore } from "./skill/skill-store.js";
 import type {
@@ -27,6 +31,12 @@ export interface ScanIssue {
 
 export interface CatalogOptions {
   readonly catalogDir: string;
+  /** Optional repository overrides (defaults to `Fs*Repository(catalogDir)`). */
+  readonly repositories?: {
+    readonly agents?: AgentRepository;
+    readonly skills?: SkillRepository;
+    readonly mcps?: McpRepository;
+  };
 }
 
 /**
@@ -46,9 +56,12 @@ export class Catalog {
 
   private constructor(opts: CatalogOptions) {
     this.catalogDir = opts.catalogDir;
-    this.skillStore = new SkillStore(opts.catalogDir);
-    this.agentStore = new AgentStore(opts.catalogDir);
-    this.mcpStore = new McpStore(opts.catalogDir);
+    const skillRepo = opts.repositories?.skills ?? new FsSkillRepository(opts.catalogDir);
+    const agentRepo = opts.repositories?.agents ?? new FsAgentRepository(opts.catalogDir);
+    const mcpRepo = opts.repositories?.mcps ?? new FsMcpRepository(opts.catalogDir);
+    this.skillStore = new SkillStore(skillRepo);
+    this.agentStore = new AgentStore(agentRepo);
+    this.mcpStore = new McpStore(mcpRepo);
     this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore, opts.catalogDir);
   }
 

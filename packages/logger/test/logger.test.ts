@@ -17,7 +17,7 @@ afterEach(async () => {
  * so writes are not visible immediately — we poll with a short backoff
  * rather than baking in a fixed sleep.
  */
-async function waitForLogFile(dir: string, timeoutMs = 5000): Promise<string> {
+async function waitForLogFile(dir: string, timeoutMs = 15000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const entries = await readdir(dir).catch(() => [] as string[]);

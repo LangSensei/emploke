@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
@@ -27,7 +31,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/paths": "workspace:*"
+    "@emploke/paths": "workspace:*",
+    "@emploke/storage": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

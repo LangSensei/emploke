@@ -84,3 +84,18 @@ export class TaskIdAllocationFailedError extends TaskError {
     super(`failed to allocate a unique task id after ${attempts} attempts`);
   }
 }
+
+/**
+ * Thrown when `TaskRepository.read` finds a `task.json` whose shape or
+ * `schemaVersion` is incompatible with the current build. Manager's
+ * `recoverOrphaned` may catch and quarantine; direct `read(id)` callers
+ * (e.g. the dashboard's "open task" path) propagate it as a 5xx.
+ */
+export class CorruptedTaskError extends TaskError {
+  constructor(
+    public readonly id: string,
+    public readonly reason: string,
+  ) {
+    super(`task ${id} is corrupted: ${reason}`);
+  }
+}

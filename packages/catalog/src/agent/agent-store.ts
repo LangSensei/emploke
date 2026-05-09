@@ -1,11 +1,11 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicReplaceDir, pathExists } from "../atomic.js";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
 import { applyFrontmatterPatch, frontmatterToAgent, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
+import type { AgentRepository } from "../repositories/repository.js";
 import type { Agent } from "../types.js";
-import { nameToPath, validateName } from "../validate.js";
+import { validateName } from "../validate.js";
 
 export type AgentMetadataPatch = Partial<{
   description: string;
@@ -13,60 +13,65 @@ export type AgentMetadataPatch = Partial<{
   dependencies: { skills?: string[]; mcps?: string[] } | null;
 }>;
 
+/**
+ * Business-logic facade over an {@link AgentRepository}.
+ *
+ * The Store owns frontmatter parsing, name validation, the in-memory cache,
+ * and dependency-graph nodes. All catalog-internal IO is delegated to the
+ * repository — the Store only touches user-provided source directories
+ * directly (in `install()`).
+ */
 export class AgentStore {
   private readonly agents = new Map<string, Agent>();
 
-  constructor(private readonly catalogDir: string) {}
-
-  private get baseDir() {
-    return join(this.catalogDir, "agents");
-  }
+  constructor(private readonly repository: AgentRepository) {}
 
   async install(sourceDir: string): Promise<Agent> {
-    const agentMd = join(sourceDir, "AGENTS.md");
-    const content = await readFile(agentMd, "utf8");
-    const { data } = parseFrontmatter(content, agentMd);
-    const agent = frontmatterToAgent(data, agentMd);
+    const sourcePath = join(sourceDir, "AGENTS.md");
+    const content = await readFile(sourcePath, "utf8");
+    const { data } = parseFrontmatter(content, sourcePath);
+    const agent = frontmatterToAgent(data, sourcePath);
     validateName(agent.name);
 
-    const destDir = join(this.baseDir, nameToPath(agent.name));
-    await atomicReplaceDir(sourceDir, destDir);
+    await this.repository.installFromDir(agent.name, sourceDir);
     this.agents.set(agent.name, agent);
     return agent;
   }
 
   async getContent(name: string): Promise<string> {
-    // Defense-in-depth: see SkillStore.getContent for rationale.
+    // Defense-in-depth: validate before going to the repo. Repos validate too,
+    // but rejecting at the Store boundary keeps NotFound semantics for invalid
+    // names rather than leaking a path-traversal error upstream.
     validateName(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
-    const agentMd = join(this.baseDir, nameToPath(name), "AGENTS.md");
-    return readFile(agentMd, "utf8");
+    const content = await this.repository.read(name);
+    if (content === null) throw new NotFound("agent", name);
+    return content;
   }
 
   async updateContent(name: string, content: string): Promise<Agent> {
     if (!this.agents.has(name)) throw new NotFound("agent", name);
-    const agentMd = join(this.baseDir, nameToPath(name), "AGENTS.md");
-
-    const { data } = parseFrontmatter(content, agentMd);
-    const agent = frontmatterToAgent(data, agentMd);
+    const sourcePath = `repository:agents/${name}/AGENTS.md`;
+    const { data } = parseFrontmatter(content, sourcePath);
+    const agent = frontmatterToAgent(data, sourcePath);
     if (agent.name !== name) {
       throw new FrontmatterError(
-        agentMd,
+        sourcePath,
         `cannot rename via edit: frontmatter name "${agent.name}" must equal "${name}". Remove and re-install instead.`,
       );
     }
     validateName(agent.name);
 
-    await mkdir(join(this.baseDir, nameToPath(name)), { recursive: true });
-    await writeFile(agentMd, content, "utf8");
+    await this.repository.write(name, content);
     this.agents.set(name, agent);
     return agent;
   }
 
   async updateMetadata(name: string, patch: AgentMetadataPatch): Promise<Agent> {
     if (!this.agents.has(name)) throw new NotFound("agent", name);
-    const agentMd = join(this.baseDir, nameToPath(name), "AGENTS.md");
-    const existing = await readFile(agentMd, "utf8");
+    const sourcePath = `repository:agents/${name}/AGENTS.md`;
+    const existing = await this.repository.read(name);
+    if (existing === null) throw new NotFound("agent", name);
 
     const merge: Record<string, unknown> = {};
     if (patch.description !== undefined) merge.description = patch.description;
@@ -90,16 +95,16 @@ export class AgentStore {
     }
 
     const newContent = applyFrontmatterPatch(existing, merge);
-    const { data } = parseFrontmatter(newContent, agentMd);
-    const agent = frontmatterToAgent(data, agentMd);
+    const { data } = parseFrontmatter(newContent, sourcePath);
+    const agent = frontmatterToAgent(data, sourcePath);
     if (agent.name !== name) {
       throw new FrontmatterError(
-        agentMd,
+        sourcePath,
         `metadata patch must not change name (current="${name}", patched="${agent.name}")`,
       );
     }
 
-    await writeFile(agentMd, newContent, "utf8");
+    await this.repository.write(name, newContent);
     this.agents.set(name, agent);
     return agent;
   }
@@ -113,8 +118,7 @@ export class AgentStore {
       if (dependents.length > 0) throw new HasDependents(name, dependents);
     }
 
-    const destDir = join(this.baseDir, nameToPath(name));
-    await rm(destDir, { recursive: true, force: true });
+    await this.repository.delete(name);
     this.agents.delete(name);
   }
 
@@ -140,34 +144,16 @@ export class AgentStore {
   async scan(): Promise<{ path: string; reason: string }[]> {
     this.agents.clear();
     const issues: { path: string; reason: string }[] = [];
-    if (!(await pathExists(this.baseDir))) return issues;
-    await this.scanDir(this.baseDir, null, issues);
-    return issues;
-  }
-
-  private async scanDir(
-    dir: string,
-    scope: string | null,
-    issues: { path: string; reason: string }[],
-  ): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const entryPath = join(dir, entry.name);
-      const agentMd = join(entryPath, "AGENTS.md");
-
-      if (await pathExists(agentMd)) {
-        try {
-          const content = await readFile(agentMd, "utf8");
-          const { data } = parseFrontmatter(content, agentMd);
-          const agent = frontmatterToAgent(data, agentMd);
-          this.agents.set(agent.name, agent);
-        } catch (e) {
-          issues.push({ path: agentMd, reason: (e as Error).message });
-        }
-      } else if (scope === null) {
-        await this.scanDir(entryPath, entry.name, issues);
+    const entries = await this.repository.scan();
+    for (const { content, sourcePath } of entries) {
+      try {
+        const { data } = parseFrontmatter(content, sourcePath);
+        const agent = frontmatterToAgent(data, sourcePath);
+        this.agents.set(agent.name, agent);
+      } catch (e) {
+        issues.push({ path: sourcePath, reason: (e as Error).message });
       }
     }
+    return issues;
   }
 }

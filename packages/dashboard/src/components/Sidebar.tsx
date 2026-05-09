@@ -73,7 +73,7 @@ export function Sidebar({
   // Falling back to the raw id is intentional: it keeps the dropdown
   // populated even when workspace.json is unreadable, so the user can
   // navigate to settings and fix it.
-  const displayName = currentEntry?.metadata?.name ?? currentWorkspaceId ?? "";
+  const displayName = currentEntry?.name ?? currentWorkspaceId ?? "";
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -191,12 +191,10 @@ export function Sidebar({
                   <option value="">(select)</option>
                 )}
                 {workspaces.map((w) => {
-                  const label = w.metadata?.name ?? w.id;
-                  const suffix = w.status !== "ok" ? `  ${w.status}` : "";
+                  const label = w.name ?? w.id;
                   return (
                     <option key={w.id} value={w.id}>
                       {label}
-                      {suffix}
                     </option>
                   );
                 })}

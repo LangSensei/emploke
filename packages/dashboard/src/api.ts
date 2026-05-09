@@ -302,8 +302,15 @@ export const createSession = async (agent: string, runtime?: string): Promise<Se
 };
 
 export const deleteSession = (id: string, deleteRuntimeState = false) => {
-  const qs = deleteRuntimeState ? "?deleteRuntimeState=1" : "";
-  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}${qs}`, {
+  // Sessions are sandbox dirs (only emploke-managed contents) — the
+  // dashboard "delete" action removes both metadata and workdir.
+  // `?purge=1` enables the workdir removal; the manager defaults to
+  // metadata-only so the API matches workspace/task semantics. A
+  // future "archive" mode (preserve workdir) would expose this as a
+  // checkbox in the confirm modal.
+  const params: string[] = ["purge=1"];
+  if (deleteRuntimeState) params.push("deleteRuntimeState=1");
+  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}?${params.join("&")}`, {
     method: "DELETE",
   });
 };
@@ -330,24 +337,27 @@ export const spawnSession = async (id: string): Promise<SpawnResult> =>
 
 //  Workspaces ─
 
-export interface WorkspaceMetadata {
-  schemaVersion: number;
+/**
+ * A registered workspace, as returned by the `/api/workspaces` family of
+ * endpoints. The shape mirrors the server's `Workspace` domain type — flat,
+ * no `metadata` wrapper, no `schemaVersion` (that's a Repository-internal
+ * concern). `workdir` is the only filesystem path field; everything else is
+ * pure metadata that survives a backend swap (FS today, SQLite tomorrow).
+ */
+export interface WorkspaceListItem {
+  /** Opaque UUID; the URL routing key. */
+  id: string;
+  /** Display name (free-form text, 1-64 trimmed chars). */
   name: string;
+  /** ISO 8601 UTC timestamp at creation. */
   createdAt: string;
+  /** Absolute filesystem path the agents work under. */
+  workdir: string;
+  /** Optional UX defaults for sessions/tasks dispatched in this workspace. */
   defaults?: {
     runtime?: string;
     agent?: string;
   };
-}
-
-export interface WorkspaceListItem {
-  /** Opaque UUID; the URL routing key. */
-  id: string;
-  path: string;
-  lastOpenedAt?: string;
-  status: "ok" | "missing" | "corrupted";
-  metadata?: WorkspaceMetadata;
-  reason?: string;
 }
 
 export const listWorkspaces = (): Promise<WorkspaceListItem[]> =>
@@ -360,32 +370,40 @@ export const setServerCurrentWorkspace = (id: string): Promise<void> =>
   mutate("/api/workspaces/current", jsonInit("PUT", { id }));
 
 /**
- * Created workspace as returned by `POST /api/workspaces`. Mirrors the
- * server's response shape so we can render the new entry without a full
- * list refresh.
+ * Created workspace as returned by `POST /api/workspaces`. Identical shape
+ * to {@link WorkspaceListItem} — kept as a separate type only for callsite
+ * clarity (the server returns 201 + the same body).
  */
-export interface CreatedWorkspace {
-  id: string;
-  path: string;
-  lastOpenedAt?: string;
-  metadata: WorkspaceMetadata;
-}
+export type CreatedWorkspace = WorkspaceListItem;
 
 export const addWorkspace = async (
-  pathInput: string,
-  opts: { name: string; defaults?: WorkspaceMetadata["defaults"] },
+  workdir: string,
+  opts: { name: string; defaults?: WorkspaceListItem["defaults"] },
 ): Promise<CreatedWorkspace> => {
-  const body: Record<string, unknown> = { path: pathInput, name: opts.name };
+  const body: Record<string, unknown> = { workdir, name: opts.name };
   if (opts.defaults !== undefined) body.defaults = opts.defaults;
   return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };
 
-export const removeWorkspace = (id: string) =>
-  mutate(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+/**
+ * Remove a workspace from the registry.
+ *
+ * Default behaviour: metadata-only — `workspace.json` and the index entry
+ * are deleted but the user's directory contents (their files, plus any
+ * agent-produced sessions/, tasks/, catalog/) stay on disk untouched.
+ *
+ * Pass `{ purge: true }` to also rm every emploke-owned subdirectory under
+ * the workspace's workdir. The workdir itself is never removed — that's
+ * user-owned and outside the manager's purview.
+ */
+export const removeWorkspace = (id: string, opts?: { purge?: boolean }) => {
+  const qs = opts?.purge ? "?purge=1" : "";
+  return mutate(`/api/workspaces/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+};
 
 export const updateWorkspaceMetadata = async (
   id: string,
-  patch: { name?: string; defaults?: WorkspaceMetadata["defaults"] | null },
+  patch: { name?: string; defaults?: WorkspaceListItem["defaults"] | null },
 ): Promise<WorkspaceListItem> =>
   mutateJson<WorkspaceListItem>(
     `/api/workspaces/${encodeURIComponent(id)}`,
@@ -477,7 +495,11 @@ export const dispatchTask = async (
 };
 
 export const deleteTask = (id: string) =>
-  mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  // Tasks are sandbox dirs — `?purge=1` ensures both metadata and
+  // workdir are removed so the dashboard "delete" UI behaves as the
+  // user expects (no leftover files). A future "archive" mode would
+  // toggle this off.
+  mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}?purge=1`, { method: "DELETE" });
 
 /**
  * Build the URL to the task event stream. The server resolves the

@@ -156,12 +156,17 @@ export function sessionsRoutes(
     }
   });
 
-  // Delete a session.
+  // Delete a session. Default behaviour removes only the session's
+  // metadata; the workdir contents (AGENTS.md, agent-produced files)
+  // are preserved for archival. Pass `?purge=1` to also rm the entire
+  // workdir. Pass `?deleteRuntimeState=1` to also ask the runtime to
+  // remove its per-session state (e.g. ~/.copilot/session-state/<id>/).
   app.delete("/:sid", async (c) => {
     const id = c.req.param("sid");
     const deleteRuntimeState = c.req.query("deleteRuntimeState") === "1";
+    const purge = c.req.query("purge") === "1";
     try {
-      await getManager(c).delete(id, { deleteRuntimeState });
+      await getManager(c).delete(id, { deleteRuntimeState, purge });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
