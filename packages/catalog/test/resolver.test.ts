@@ -78,7 +78,7 @@ beforeEach(async () => {
   skills = new SkillCatalog(new FsSkillRepository(catalogDir));
   agents = new AgentCatalog(new FsAgentRepository(catalogDir));
   mcps = new McpCatalog(new FsMcpRepository(catalogDir));
-  resolver = new Resolver(skills, agents, mcps, catalogDir);
+  resolver = new Resolver(skills, agents, mcps);
 });
 
 afterEach(async () => {
