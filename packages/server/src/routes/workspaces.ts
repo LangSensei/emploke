@@ -21,12 +21,21 @@ import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
  * Build a JSON error response for a typed workspace error. Picks a
  * status via `workspaceErrorStatus`, falling back to `fallback`.
  *
+ * Server-side errors (status >= 500) are logged to stderr at the boundary
+ * so operators get the full diagnostic before the body is sanitised for
+ * the client. Same contract as the runtime error path in sessions.ts /
+ * tasks.ts (#24) — every 5xx that escapes a route handler must be
+ * observable in logs.
+ *
  * The `as any` cast bridges Hono's literal-union of HTTP status codes
  * with our `number` return — every value `workspaceErrorStatus`
  * returns (and every fallback) is in {400,404,409,500}.
  */
 function wsErrorJson(c: Context, err: unknown, fallback: number) {
   const status = workspaceErrorStatus(err) ?? fallback;
+  if (status >= 500) {
+    logServerError(err);
+  }
   // biome-ignore lint/suspicious/noExplicitAny: see helper docstring above
   return c.json(errorBody(err), status as any);
 }
@@ -267,9 +276,8 @@ export function workspacesRoutes(deps: {
       }
       // Reload failures past the live-task gate are 5xx — the workspace
       // exists but couldn't be rebuilt (corrupted on-disk state, fs
-      // permissions, …). Log the full diagnostic before sanitising the
-      // body, same contract as runtime errors (#24).
-      logServerError(err);
+      // permissions, …). The 5xx logging happens inside `wsErrorJson`
+      // (#24).
       return wsErrorJson(c, err, 500);
     }
   });
