@@ -73,8 +73,6 @@ describe("Stores wired to InMemory repositories", () => {
     expect(name).toBe("github");
     expect(store.has("github")).toBe(true);
     expect(await repo.read("github")).toBe('{"command":"gh"}');
-    // pathFor is unavailable on InMemory — getPath returns null.
-    expect(store.getPath("github")).toBeNull();
 
     await store.remove("github", () => []);
     expect(store.has("github")).toBe(false);

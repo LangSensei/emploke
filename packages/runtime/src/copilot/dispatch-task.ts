@@ -2,7 +2,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir as nodeMkdir } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { RuntimeDispatchTaskFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { TaskExit, TaskHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
@@ -82,6 +82,7 @@ export interface DispatchCopilotTaskDeps {
 export interface DispatchCopilotTaskOpts {
   readonly taskDir: string;
   readonly agent: AgentResolveResult;
+  readonly catalog: CatalogManager;
   readonly prompt: string;
 }
 
@@ -118,7 +119,7 @@ export async function dispatchCopilotTask(
 ): Promise<TaskHandle> {
   // Step 1: provision. Distinguishable from spawn failures via error type.
   try {
-    await provisionCopilotWorkdir(opts.taskDir, opts.agent);
+    await provisionCopilotWorkdir(opts.taskDir, opts.agent, opts.catalog);
   } catch (cause) {
     throw new RuntimeProvisionFailed("copilot", opts.taskDir, cause as Error);
   }

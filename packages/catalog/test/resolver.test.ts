@@ -93,7 +93,6 @@ describe("Resolver", () => {
 
     const result = resolver.resolveAgent("reviewer");
     expect(result.agent.name).toBe("reviewer");
-    expect(result.agentPath).toContain(join("agents", "reviewer"));
     expect(result.skills.map((s) => s.skill.name)).toEqual(["lint"]);
     expect(result.mcps.map((m) => m.name)).toEqual(["github"]);
   });
@@ -107,7 +106,6 @@ describe("Resolver", () => {
 
     const result = resolver.resolveSkill("security-audit");
     expect(result.skill.name).toBe("security-audit");
-    expect(result.skillPath).toContain(join("skills", "security-audit"));
     const names = result.skills.map((s) => s.skill.name);
     expect(names).toContain("cve-db");
     expect(names).toContain("security-audit");

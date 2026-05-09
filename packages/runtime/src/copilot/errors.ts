@@ -4,17 +4,17 @@
  */
 
 /**
- * Thrown when an MCP file referenced by the resolve result cannot be parsed
- * as JSON. Catalog scan validates JSON at install time, so this normally
- * indicates corruption or out-of-band edits between scan and provision.
+ * Thrown when an MCP server config retrieved from the catalog cannot be
+ * parsed as JSON. Catalog scan validates JSON at install time, so this
+ * normally indicates corruption or an out-of-band edit between scan and
+ * provision.
  */
 export class InvalidMcpJson extends Error {
   constructor(
     public readonly mcpName: string,
-    public readonly mcpPath: string,
     cause: Error,
   ) {
-    super(`MCP "${mcpName}" at ${mcpPath} is not valid JSON: ${cause.message}`);
+    super(`MCP "${mcpName}" is not valid JSON: ${cause.message}`);
     this.name = "InvalidMcpJson";
     this.cause = cause;
   }

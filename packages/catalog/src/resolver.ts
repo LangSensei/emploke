@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import type { AgentCatalog } from "./agent/agent-catalog.js";
 import { type GraphNode, resolveTopological } from "./graph.js";
 import type { McpCatalog } from "./mcp/mcp-catalog.js";
@@ -9,14 +8,20 @@ import type {
   ResolvedSkill,
   SkillResolveResult,
 } from "./types.js";
-import { nameToPath } from "./validate.js";
 
+/**
+ * Resolves dependency graphs for agents and skills.
+ *
+ * Returns logical pointers (entity records + names), not filesystem paths —
+ * the runtime obtains actual content via {@link CatalogManager.skillEntries}
+ * / {@link CatalogManager.agentEntries} / {@link CatalogManager.getMcpContent}
+ * so a future SQLite-backed repository works the same way as the FS one.
+ */
 export class Resolver {
   constructor(
     private readonly skills: SkillCatalog,
     private readonly agents: AgentCatalog,
     private readonly mcps: McpCatalog,
-    private readonly catalogDir: string,
   ) {}
 
   resolveAgent(name: string): AgentResolveResult {
@@ -32,12 +37,7 @@ export class Resolver {
     const rootDeps = [...(agent.dependencies?.skills ?? []), ...(agent.dependencies?.mcps ?? [])];
     const { skills, mcps } = this.#resolveDeps(rootDeps);
 
-    return {
-      agent,
-      agentPath: join(this.catalogDir, "agents", nameToPath(name)),
-      skills,
-      mcps,
-    };
+    return { agent, skills, mcps };
   }
 
   resolveSkill(name: string): SkillResolveResult {
@@ -53,10 +53,9 @@ export class Resolver {
     const { skills: depSkills, mcps } = this.#resolveDeps(rootDeps);
 
     // Include the entry skill itself at the END (topological order: deps first).
-    const skillPath = join(this.catalogDir, "skills", nameToPath(name));
-    const skills: ResolvedSkill[] = [...depSkills, { skill, path: skillPath }];
+    const skills: ResolvedSkill[] = [...depSkills, { skill }];
 
-    return { skill, skillPath, skills, mcps };
+    return { skill, skills, mcps };
   }
 
   /**
@@ -94,16 +93,11 @@ export class Resolver {
     const skills: ResolvedSkill[] = [];
     const mcps: ResolvedMcp[] = [];
     for (const node of resolved) {
-      if (this.skills.has(node.name)) {
-        skills.push({
-          skill: this.skills.get(node.name)!,
-          path: join(this.catalogDir, "skills", nameToPath(node.name)),
-        });
+      const s = this.skills.get(node.name);
+      if (s) {
+        skills.push({ skill: s });
       } else if (this.mcps.has(node.name)) {
-        mcps.push({
-          name: node.name,
-          path: join(this.catalogDir, "mcps", `${nameToPath(node.name)}.json`),
-        });
+        mcps.push({ name: node.name });
       }
     }
     return { skills, mcps };

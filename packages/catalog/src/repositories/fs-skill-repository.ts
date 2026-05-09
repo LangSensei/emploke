@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { mkdirP } from "@emploke/storage";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
 import { nameToPath, validateName } from "../validate.js";
-import type { DocumentRepoEntry, SkillRepository } from "./repository.js";
+import { walkEntryDir } from "./entries-helpers.js";
+import type { CatalogEntryFile, DocumentRepoEntry, SkillRepository } from "./repository.js";
 
 export class FsSkillRepository implements SkillRepository {
   private readonly baseDir: string;
@@ -47,6 +48,11 @@ export class FsSkillRepository implements SkillRepository {
     if (!(await pathExists(this.baseDir))) return out;
     await this.scanDir(this.baseDir, /*scope*/ null, out);
     return out;
+  }
+
+  entries(name: string): AsyncIterable<CatalogEntryFile> {
+    validateName(name);
+    return walkEntryDir("skill", name, join(this.baseDir, nameToPath(name)));
   }
 
   private async scanDir(

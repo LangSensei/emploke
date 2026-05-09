@@ -15,7 +15,6 @@ export interface OverviewData {
 
 export interface McpItem {
   name: string;
-  path: string | null;
 }
 
 export interface CatalogData {
@@ -141,7 +140,6 @@ export const removeMcp = (name: string) =>
 
 export interface McpDetail {
   name: string;
-  path: string | null;
   /** Raw JSON content as stored on disk (preserves user formatting). */
   content: string;
 }

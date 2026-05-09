@@ -42,14 +42,10 @@ export class FsMcpRepository implements McpRepository {
     return out;
   }
 
-  /** Returns the on-disk JSON path that backs `name`. Always defined for fs. */
-  pathFor(name: string): string {
-    validateMcpName(name);
-    return this.fileFor(name);
-  }
-
-  /** @deprecated alias for `pathFor` kept for internal callers. */
-  fileFor(name: string): string {
+  /** Path-composition for the on-disk JSON file. Internal — not part of the
+   * `McpRepository` contract; never leak to higher layers (consumers must
+   * use `read(name)` to get the content directly). */
+  private fileFor(name: string): string {
     return join(this.baseDir, `${nameToPath(name)}.json`);
   }
 

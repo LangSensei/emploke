@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
 import { applyFrontmatterPatch, frontmatterToSkill, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
-import type { SkillRepository } from "../repositories/repository.js";
+import type { CatalogEntryFile, SkillRepository } from "../repositories/repository.js";
 import type { Skill } from "../types.js";
 import { validateName } from "../validate.js";
 
@@ -154,5 +154,12 @@ export class SkillCatalog {
       }
     }
     return issues;
+  }
+
+  /** Stream every file of `name`. Throws NotFound if absent. */
+  entries(name: string): AsyncIterable<CatalogEntryFile> {
+    validateName(name);
+    if (!this.skills.has(name)) throw new NotFound("skill", name);
+    return this.repository.entries(name);
   }
 }

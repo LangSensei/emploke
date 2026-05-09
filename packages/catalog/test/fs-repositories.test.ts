@@ -99,15 +99,78 @@ describe("FsMcpRepository", () => {
     expect(names).toEqual(["github", "io.playwright/mcp"]);
   });
 
-  it("pathFor returns the on-disk JSON file path", async () => {
-    const repo = new FsMcpRepository(catalogDir);
-    const p = repo.pathFor("github");
-    expect(p).toContain("mcps");
-    expect(p).toMatch(/github\.json$/);
-  });
+  // pathFor was removed from McpRepository — the runtime fetches MCP
+  // content via `read(name)` (or `CatalogManager.getMcpContent`) so the
+  // catalog seam never has to expose on-disk paths to higher layers.
 
   it("delete is a no-op for missing entries", async () => {
     const repo = new FsMcpRepository(catalogDir);
     await expect(repo.delete("absent")).resolves.toBeUndefined();
+  });
+});
+
+describe("FsAgentRepository.entries", () => {
+  it("yields every file under the agent directory (incl. siblings)", async () => {
+    const repo = new FsAgentRepository(catalogDir);
+    const src = join(sourceDir, "agent-multi");
+    await mkdir(join(src, "scripts"), { recursive: true });
+    await writeFile(join(src, "AGENTS.md"), "agents-md");
+    await writeFile(join(src, "prompt.txt"), "prompt-bytes");
+    await writeFile(join(src, "scripts", "lint.sh"), "lint-bytes");
+    await repo.installFromDir("multi", src);
+
+    const got: Record<string, string> = {};
+    for await (const { relPath, content } of repo.entries("multi")) {
+      got[relPath] = content.toString("utf8");
+    }
+    expect(got).toEqual({
+      "AGENTS.md": "agents-md",
+      "prompt.txt": "prompt-bytes",
+      "scripts/lint.sh": "lint-bytes",
+    });
+  });
+
+  it("yields posix-style relPath even on Windows-style sources", async () => {
+    const repo = new FsAgentRepository(catalogDir);
+    const src = join(sourceDir, "agent-pathsep");
+    await mkdir(join(src, "deep", "nest"), { recursive: true });
+    await writeFile(join(src, "AGENTS.md"), "x");
+    await writeFile(join(src, "deep", "nest", "f.md"), "y");
+    await repo.installFromDir("pathsep", src);
+
+    const seen = new Set<string>();
+    for await (const { relPath } of repo.entries("pathsep")) seen.add(relPath);
+    expect(seen).toContain("deep/nest/f.md");
+    // Never the OS-native form.
+    expect([...seen].some((p) => p.includes("\\"))).toBe(false);
+  });
+
+  it("throws NotFound when the agent doesn't exist", async () => {
+    const repo = new FsAgentRepository(catalogDir);
+    await expect(async () => {
+      for await (const _ of repo.entries("absent")) {
+        // unreachable
+      }
+    }).rejects.toMatchObject({ name: "NotFound" });
+  });
+});
+
+describe("FsSkillRepository.entries", () => {
+  it("yields SKILL.md plus all sibling files (incl. hooks/)", async () => {
+    const repo = new FsSkillRepository(catalogDir);
+    const src = join(sourceDir, "skill-multi");
+    await mkdir(join(src, "hooks", "copilot"), { recursive: true });
+    await writeFile(join(src, "SKILL.md"), "skill-md");
+    await writeFile(join(src, "hooks", "copilot", "pre.js"), "pre-bytes");
+    await repo.installFromDir("multi", src);
+
+    const got: Record<string, string> = {};
+    for await (const { relPath, content } of repo.entries("multi")) {
+      got[relPath] = content.toString("utf8");
+    }
+    expect(got).toEqual({
+      "SKILL.md": "skill-md",
+      "hooks/copilot/pre.js": "pre-bytes",
+    });
   });
 });

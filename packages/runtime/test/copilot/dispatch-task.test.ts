@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import type { AgentResolveResult } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SpawnFn } from "../../src/copilot/dispatch-task.js";
 import {
@@ -13,6 +13,7 @@ import {
   RuntimeDispatchTaskFailed,
   RuntimeProvisionFailed,
 } from "../../src/index.js";
+import { makeTestCatalog } from "./test-catalog.js";
 
 let scratch: string;
 let taskDir: string;
@@ -31,16 +32,12 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function buildAgent(): Promise<AgentResolveResult> {
-  const agentPath = path.join(scratch, "agents", "demo");
-  await mkdir(agentPath, { recursive: true });
-  await writeFile(path.join(agentPath, "AGENTS.md"), "# demo\n", "utf8");
-  return {
-    agent: { name: "demo", description: "d", version: "0.0.1" },
-    agentPath,
-    skills: [],
-    mcps: [],
-  };
+async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogManager }> {
+  const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
+  const { catalog } = await makeTestCatalog({
+    agents: { demo: { "AGENTS.md": agentBody } },
+  });
+  return { agent: catalog.resolveAgent("demo"), catalog };
 }
 
 interface FakeSpawn {
@@ -91,10 +88,10 @@ const NOOP_RESOLVE_BIN = {
 
 describe("dispatchCopilotTask", () => {
   it("provisions the workdir before spawning", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, prompt: "hello" },
+      { taskDir, agent, catalog, prompt: "hello" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -107,10 +104,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("pre-creates the session-state dir so it can be junctioned immediately", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "hi" },
+      { taskDir, agent, catalog, prompt: "hi" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -124,10 +121,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("spawns copilot with the expected non-interactive args", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, prompt: "do thing" },
+      { taskDir, agent, catalog, prompt: "do thing" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -155,10 +152,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("honours an injected copilotBin override", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -170,10 +167,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("returns a handle exposing pid and runtimeSessionId", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -186,10 +183,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("exit promise resolves with code+signal=null on clean exit", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -202,10 +199,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("exit promise carries the non-zero exit code", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -218,10 +215,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("exit promise carries the termination signal", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -234,10 +231,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("kill() forwards to child.kill", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -250,13 +247,13 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("kill() swallows errors from already-dead processes", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     fake.child.killImpl = () => {
       throw new Error("ESRCH");
     };
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -268,7 +265,7 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("rejects with RuntimeDispatchTaskFailed when 'error' fires before 'spawn'", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const child = new FakeChild();
     const spawn: SpawnFn = (() => {
       queueMicrotask(() => child.emit("error", new Error("ENOENT: copilot not found")));
@@ -276,7 +273,7 @@ describe("dispatchCopilotTask", () => {
     }) as SpawnFn;
     await expect(
       dispatchCopilotTask(
-        { taskDir, agent, prompt: "x" },
+        { taskDir, agent, catalog, prompt: "x" },
         {
           copilotStateDir: stateDir,
           randomUUID: () => FIXED_UUID,
@@ -294,14 +291,14 @@ describe("dispatchCopilotTask", () => {
   // orphans behind the rejected promise. Tests inject a tiny timeout so
   // they don't actually wait 30s.
   it("rejects with RuntimeDispatchTaskFailed when neither 'spawn' nor 'error' fires within the timeout", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const child = new FakeChild();
     const spawn: SpawnFn = (() => {
       // Intentionally never emit 'spawn' or 'error'.
       return child as unknown as ReturnType<SpawnFn>;
     }) as SpawnFn;
     const promise = dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -336,14 +333,14 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("wraps mkdir failures on the session dir as RuntimeDispatchTaskFailed", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const failingMkdir = (async () => {
       throw new Error("EACCES: mock");
     }) as unknown as typeof mkdir;
     await expect(
       dispatchCopilotTask(
-        { taskDir, agent, prompt: "x" },
+        { taskDir, agent, catalog, prompt: "x" },
         {
           copilotStateDir: stateDir,
           randomUUID: () => FIXED_UUID,
@@ -355,10 +352,10 @@ describe("dispatchCopilotTask", () => {
   });
 
   it("mirrors child stderr to <taskDir>/stderr.log", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -382,10 +379,10 @@ describe("dispatchCopilotTask", () => {
     // NUL → FlushFileBuffers fails with "Incorrect function." We
     // assert both that the file is created and that pushed bytes
     // land in it.
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,
@@ -413,10 +410,10 @@ describe("dispatchCopilotTask", () => {
   // on each surface and asserts the manager's exit promise still
   // resolves cleanly.
   it("survives errors on child streams and child itself without crashing", async () => {
-    const agent = await buildAgent();
+    const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x" },
       {
         copilotStateDir: stateDir,
         randomUUID: () => FIXED_UUID,

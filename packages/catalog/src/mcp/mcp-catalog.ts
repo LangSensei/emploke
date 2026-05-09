@@ -81,18 +81,6 @@ export class McpCatalog {
     return this.mcps.has(name);
   }
 
-  /**
-   * Returns the on-disk path for an installed MCP, or `null` if either:
-   *   - the MCP isn't installed, or
-   *   - the underlying repository isn't file-backed (e.g. an in-memory test
-   *     repository).
-   */
-  getPath(name: string): string | null {
-    if (!this.mcps.has(name)) return null;
-    if (!this.repository.pathFor) return null;
-    return this.repository.pathFor(name);
-  }
-
   async scan(): Promise<{ path: string; reason: string }[]> {
     this.mcps.clear();
     const issues: { path: string; reason: string }[] = [];

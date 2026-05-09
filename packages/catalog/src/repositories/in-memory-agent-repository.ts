@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentRepository, DocumentRepoEntry } from "./repository.js";
+import { NotFound } from "../errors.js";
+import type { AgentRepository, CatalogEntryFile, DocumentRepoEntry } from "./repository.js";
 
 /**
  * In-memory `AgentRepository` for fast unit tests.
@@ -10,45 +11,52 @@ import type { AgentRepository, DocumentRepoEntry } from "./repository.js";
  * tests that don't care about cross-process atomicity.
  */
 export class InMemoryAgentRepository implements AgentRepository {
-  private readonly entries = new Map<string, Map<string, string>>();
+  private readonly storedEntries = new Map<string, Map<string, Buffer>>();
 
   async read(name: string): Promise<string | null> {
-    return this.entries.get(name)?.get("AGENTS.md") ?? null;
+    const buf = this.storedEntries.get(name)?.get("AGENTS.md");
+    return buf !== undefined ? buf.toString("utf8") : null;
   }
 
   async write(name: string, content: string): Promise<void> {
-    const files = this.entries.get(name) ?? new Map<string, string>();
-    files.set("AGENTS.md", content);
-    this.entries.set(name, files);
+    const files = this.storedEntries.get(name) ?? new Map<string, Buffer>();
+    files.set("AGENTS.md", Buffer.from(content, "utf8"));
+    this.storedEntries.set(name, files);
   }
 
   async installFromDir(name: string, sourceDir: string): Promise<void> {
-    const files = new Map<string, string>();
+    const files = new Map<string, Buffer>();
     await this.copyTree(sourceDir, "", files);
-    this.entries.set(name, files);
+    this.storedEntries.set(name, files);
   }
 
   async delete(name: string): Promise<void> {
-    this.entries.delete(name);
+    this.storedEntries.delete(name);
   }
 
   async scan(): Promise<DocumentRepoEntry[]> {
     const out: DocumentRepoEntry[] = [];
-    for (const [name, files] of this.entries) {
+    for (const [name, files] of this.storedEntries) {
       const md = files.get("AGENTS.md");
       if (md !== undefined) {
-        out.push({ content: md, sourcePath: `memory:agents/${name}/AGENTS.md` });
+        out.push({ content: md.toString("utf8"), sourcePath: `memory:agents/${name}/AGENTS.md` });
       }
     }
     return out;
   }
 
-  /** Test helper: list raw file payloads for `name`. */
-  files(name: string): ReadonlyMap<string, string> | null {
-    return this.entries.get(name) ?? null;
+  async *entries(name: string): AsyncIterable<CatalogEntryFile> {
+    const files = this.storedEntries.get(name);
+    if (!files) throw new NotFound("agent", name);
+    for (const [relPath, content] of files) yield { relPath, content };
   }
 
-  private async copyTree(rootDir: string, rel: string, files: Map<string, string>): Promise<void> {
+  /** Test helper: list raw file payloads for `name`. */
+  files(name: string): ReadonlyMap<string, Buffer> | null {
+    return this.storedEntries.get(name) ?? null;
+  }
+
+  private async copyTree(rootDir: string, rel: string, files: Map<string, Buffer>): Promise<void> {
     const dir = rel ? join(rootDir, rel) : rootDir;
     const entries = await readdir(dir, { withFileTypes: true });
     for (const e of entries) {
@@ -59,7 +67,7 @@ export class InMemoryAgentRepository implements AgentRepository {
       } else if (e.isFile()) {
         const s = await stat(abs);
         if (s.size > 1_048_576) continue;
-        files.set(childRel, await readFile(abs, "utf8"));
+        files.set(childRel, await readFile(abs));
       }
     }
   }

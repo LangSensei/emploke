@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
 import { applyFrontmatterPatch, frontmatterToAgent, parseFrontmatter } from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
-import type { AgentRepository } from "../repositories/repository.js";
+import type { AgentRepository, CatalogEntryFile } from "../repositories/repository.js";
 import type { Agent } from "../types.js";
 import { validateName } from "../validate.js";
 
@@ -155,5 +155,12 @@ export class AgentCatalog {
       }
     }
     return issues;
+  }
+
+  /** Stream every file of `name`. Throws NotFound if absent. */
+  entries(name: string): AsyncIterable<CatalogEntryFile> {
+    validateName(name);
+    if (!this.agents.has(name)) throw new NotFound("agent", name);
+    return this.repository.entries(name);
   }
 }

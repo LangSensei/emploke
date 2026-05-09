@@ -40,8 +40,8 @@ export function McpGrid({ mcps, onEdit, onRemove }: McpGridProps) {
               {m.name}
             </span>
           </div>
-          <p className="card-grid__desc card-grid__desc--mono" title={m.path ?? undefined}>
-            {m.path ?? <em>no path</em>}
+          <p className="card-grid__desc card-grid__desc--mono" title={m.name}>
+            <em>JSON config</em>
           </p>
           <div className="card-grid__footer">
             <div className="card-grid__meta">{/* MCPs have no version / dep count */}</div>

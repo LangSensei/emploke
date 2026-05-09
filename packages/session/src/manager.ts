@@ -98,7 +98,7 @@ export class SessionManager {
     }
 
     try {
-      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult);
+      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult, this.catalog);
       const createdAt = this.now().toISOString();
       const state: SessionState = {
         runtime: runtime.kind,

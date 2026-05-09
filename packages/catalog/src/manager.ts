@@ -1,6 +1,6 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { type AgentMetadataPatch, AgentCatalog } from "./agent/agent-catalog.js";
+import { AgentCatalog, type AgentMetadataPatch } from "./agent/agent-catalog.js";
 import { pathExists } from "./atomic.js";
 import { CatalogStateError } from "./errors.js";
 import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
@@ -9,9 +9,14 @@ import { McpCatalog } from "./mcp/mcp-catalog.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
-import type { AgentRepository, McpRepository, SkillRepository } from "./repositories/repository.js";
+import type {
+  AgentRepository,
+  CatalogEntryFile,
+  McpRepository,
+  SkillRepository,
+} from "./repositories/repository.js";
 import { Resolver } from "./resolver.js";
-import { type SkillMetadataPatch, SkillCatalog } from "./skill/skill-catalog.js";
+import { SkillCatalog, type SkillMetadataPatch } from "./skill/skill-catalog.js";
 import type {
   Agent,
   AgentEntry,
@@ -62,7 +67,7 @@ export class CatalogManager {
     this.skillStore = new SkillCatalog(skillRepo);
     this.agentStore = new AgentCatalog(agentRepo);
     this.mcpStore = new McpCatalog(mcpRepo);
-    this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore, opts.catalogDir);
+    this.resolver = new Resolver(this.skillStore, this.agentStore, this.mcpStore);
   }
 
   static async open(opts: CatalogOptions): Promise<CatalogManager> {
@@ -192,12 +197,25 @@ export class CatalogManager {
     this.recomputeStatus();
   }
 
-  getMcpPath(name: string): string | null {
-    return this.mcpStore.getPath(name);
-  }
-
   listMcps(): string[] {
     return this.mcpStore.list();
+  }
+
+  // ─── Entry-content streams ──────────────────────────────
+  //
+  // Stream the files of a skill or agent without exposing on-disk paths.
+  // The runtime uses these to bake catalog entries into a session workdir.
+  // FS-backed and SQLite-backed repositories implement the same surface,
+  // so the runtime never has to know which is in play.
+
+  /** Stream every file of the named skill (incl. SKILL.md). */
+  skillEntries(name: string): AsyncIterable<CatalogEntryFile> {
+    return this.skillStore.entries(name);
+  }
+
+  /** Stream every file of the named agent (incl. AGENTS.md). */
+  agentEntries(name: string): AsyncIterable<CatalogEntryFile> {
+    return this.agentStore.entries(name);
   }
 
   // ─── Resolution ─────────────────────────────────────────

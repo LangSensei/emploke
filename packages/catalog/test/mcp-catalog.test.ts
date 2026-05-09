@@ -92,23 +92,11 @@ describe("McpCatalog", () => {
     });
   });
 
-  describe("getPath", () => {
-    it("returns path for installed", async () => {
-      await store.install(await makeMcp("github"));
-      expect(store.getPath("github")).toContain(join("mcps", "github.json"));
-    });
-
-    it("returns path for scoped mcp", async () => {
-      await store.install(await makeMcp("mcp"), "io.playwright/mcp");
-      expect(store.getPath("io.playwright/mcp")).toContain(
-        join("mcps", "io.playwright", "mcp.json"),
-      );
-    });
-
-    it("returns null for unknown", () => {
-      expect(store.getPath("nope")).toBeNull();
-    });
-  });
+  // `getPath` was removed: MCP path access is now an internal detail of
+  // `FsMcpRepository` (the runtime fetches content via getMcpContent so
+  // the catalog seam stays backend-agnostic). The path-traversal hardening
+  // tests for getContent below cover the remaining public surface; the
+  // path-composition hardening lives in `validate.test.ts`.
 
   describe("scan", () => {
     it("scans flat mcps", async () => {
@@ -149,7 +137,7 @@ describe("McpCatalog", () => {
   });
 
   // See SkillCatalog equivalent for rationale.
-  describe("getContent / getPath path-traversal hardening", () => {
+  describe("getContent path-traversal hardening", () => {
     it("getContent rejects names with `..` segments", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
     });
@@ -158,19 +146,6 @@ describe("McpCatalog", () => {
     });
     it("getContent rejects names with backslashes", async () => {
       await expect(store.getContent("..\\..\\etc")).rejects.toBeInstanceOf(NameInvalid);
-    });
-    it("getPath returns null for unknown name without throwing", () => {
-      // null short-circuit happens before validation — a not-installed name
-      // is a normal lookup outcome, not an attack.
-      expect(store.getPath("never-installed")).toBeNull();
-    });
-    it("getPath throws NameInvalid when an installed name is structurally bogus", async () => {
-      // Force the in-memory set to contain an invalid entry (simulates a
-      // scan() that loaded a malformed name from disk). getPath must not
-      // hand back a traversed path.
-      // biome-ignore lint/suspicious/noExplicitAny: probing a private field for the test.
-      (store as any).mcps.add("../escape");
-      expect(() => store.getPath("../escape")).toThrow(NameInvalid);
     });
   });
 });

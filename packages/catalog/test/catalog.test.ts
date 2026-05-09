@@ -2,8 +2,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CatalogManager } from "../src/manager.js";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
+import { CatalogManager } from "../src/manager.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -275,7 +275,6 @@ describe("CatalogManager", () => {
 
       const result = c.resolveAgent("reviewer");
       expect(result.agent.name).toBe("reviewer");
-      expect(result.agentPath).toContain(join("agents", "reviewer"));
       expect(result.skills.map((s) => s.skill.name)).toContain("security-audit");
       expect(result.mcps.map((m) => m.name)).toContain("github");
     });
@@ -315,7 +314,6 @@ describe("CatalogManager", () => {
 
       const result = c.resolveSkill("security-audit");
       expect(result.skill.name).toBe("security-audit");
-      expect(result.skillPath).toContain(join("skills", "security-audit"));
       const names = result.skills.map((s) => s.skill.name);
       expect(names).toEqual(["cve-db", "security-audit"]);
       expect(result.mcps.map((m) => m.name)).toContain("semgrep");

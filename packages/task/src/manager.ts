@@ -211,6 +211,7 @@ export class TaskManager {
       handle = await runtime.dispatchTask({
         taskDir: workdir,
         agent: resolveResult,
+        catalog: this.catalog,
         prompt: opts.instructions,
       });
     } catch (err) {

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Session } from "../../src/index.js";
 import {
@@ -10,6 +10,7 @@ import {
   RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
 } from "../../src/index.js";
+import { makeTestCatalog } from "./test-catalog.js";
 
 let scratch: string;
 let workdir: string;
@@ -34,16 +35,12 @@ const exists = async (p: string): Promise<boolean> => {
   }
 };
 
-async function buildAgent(): Promise<AgentResolveResult> {
-  const agentPath = path.join(scratch, "source", "agents", "demo");
-  await mkdir(agentPath, { recursive: true });
-  await writeFile(path.join(agentPath, "AGENTS.md"), "# demo\n", "utf8");
-  return {
-    agent: { name: "demo", description: "d", version: "0.0.1" },
-    agentPath,
-    skills: [],
-    mcps: [],
-  };
+async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogManager }> {
+  const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
+  const { catalog } = await makeTestCatalog({
+    agents: { demo: { "AGENTS.md": agentBody } },
+  });
+  return { agent: catalog.resolveAgent("demo"), catalog };
 }
 
 function fakeSession(over: Partial<Session> = {}): Session {
@@ -73,9 +70,10 @@ describe("CopilotRuntime", () => {
         randomUUID: () => FIXED_UUID,
         copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
       });
-      const r = await rt.provision(workdir, await buildAgent());
+      const { agent, catalog } = await buildAgent();
+      const r = await rt.provision(workdir, agent, catalog);
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
-      expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toBe("# demo\n");
+      expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
       expect(await exists(path.join(workdir, ".git"))).toBe(true);
     });
 
@@ -83,23 +81,26 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({
         copilotSettingsPath: path.join(scratch, "copilot-settings.json"),
       });
-      // Workdir's parent is missing AGENTS.md → cp will fail. Construct a
-      // resolve result whose agentPath does not contain AGENTS.md.
-      const agentPath = path.join(scratch, "broken-agent");
-      await mkdir(agentPath, { recursive: true });
+      // Force a provision failure by handing the runtime a fabricated
+      // `AgentResolveResult` whose agent name doesn't exist in the catalog —
+      // catalog.agentEntries() will throw NotFound, which provision wraps
+      // as RuntimeProvisionFailed.
+      const { catalog } = await buildAgent();
       const broken: AgentResolveResult = {
-        agent: { name: "demo", description: "d", version: "0.0.1" },
-        agentPath,
+        agent: { name: "absent", description: "d", version: "0.0.1" },
         skills: [],
         mcps: [],
       };
-      await expect(rt.provision(workdir, broken)).rejects.toBeInstanceOf(RuntimeProvisionFailed);
+      await expect(rt.provision(workdir, broken, catalog)).rejects.toBeInstanceOf(
+        RuntimeProvisionFailed,
+      );
     });
 
     it("does NOT touch the settings file (trust handled by registerWorkspace)", async () => {
       const sp = path.join(scratch, "copilot-settings.json");
       const rt = new CopilotRuntime({ copilotSettingsPath: sp });
-      await rt.provision(workdir, await buildAgent());
+      const { agent, catalog } = await buildAgent();
+      await rt.provision(workdir, agent, catalog);
       expect(await exists(sp)).toBe(false);
     });
   });

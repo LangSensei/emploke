@@ -17,17 +17,15 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.get("/", (c) => {
     const catalog = getCatalog(c);
-    return c.json(catalog.listMcps().map((name) => ({ name, path: catalog.getMcpPath(name) })));
+    return c.json(catalog.listMcps().map((name) => ({ name })));
   });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const path = catalog.getMcpPath(name);
-      if (!path) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getMcpContent(name);
-      return c.json({ name, path, content });
+      return c.json({ name, content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
@@ -40,7 +38,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     if ("error" in parsed) return c.json(parsed, 400);
     try {
       const name = await catalog.installMcp(parsed.sourcePath, parsed.name);
-      return c.json({ name, path: catalog.getMcpPath(name) }, 201);
+      return c.json({ name }, 201);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
