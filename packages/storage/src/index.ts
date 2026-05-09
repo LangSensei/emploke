@@ -21,7 +21,12 @@ export {
   writeFileAtomic,
   writeJsonAtomic,
 } from "./primitives/atomic.js";
-export { readJson } from "./primitives/json.js";
+export {
+  DEFAULT_READ_JSON_MAX_BYTES,
+  JsonFileTooLargeError,
+  type ReadJsonOpts,
+  readJson,
+} from "./primitives/json.js";
 export {
   StorageLockTimeoutError,
   type WithFileLockOpts,

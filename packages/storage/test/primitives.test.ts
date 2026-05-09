@@ -70,6 +70,17 @@ describe("writeJsonAtomic + readJson", () => {
     await writeFile(file, "not json", "utf8");
     await expect(readJson(file)).rejects.toThrow();
   });
+
+  it("readJson rejects files exceeding maxBytes (DoS guard)", async () => {
+    const file = path.join(scratch, "big.json");
+    // 8 KB of valid JSON; cap at 1 KB. Choose a payload that would parse
+    // fine to confirm the guard fires before parse, not after.
+    const big = `{"x":"${"a".repeat(8000)}"}`;
+    await writeFile(file, big, "utf8");
+    await expect(readJson(file, { maxBytes: 1024 })).rejects.toMatchObject({
+      name: "JsonFileTooLargeError",
+    });
+  });
 });
 
 describe("safeReaddir / safeStat / mkdirP", () => {
