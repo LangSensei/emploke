@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { NameInvalid } from "../src/errors.js";
-import { validateName } from "../src/validate.js";
+import { validateFqn, validateScope, validateShortName } from "../src/validate.js";
 
-describe("validateName (kebab-case)", () => {
+describe("validateShortName (kebab-case, no slash)", () => {
   it.each([
     "a",
     "abc",
@@ -12,7 +12,7 @@ describe("validateName (kebab-case)", () => {
     "foo-bar-baz",
     "x-2-y",
   ])("accepts %s", (name) => {
-    expect(() => validateName(name)).not.toThrow();
+    expect(() => validateShortName(name)).not.toThrow();
   });
 
   it.each([
@@ -25,41 +25,49 @@ describe("validateName (kebab-case)", () => {
     "foo--bar",
     "1foo",
     "FOO",
+    "scope/name", // short names must NOT contain slashes (#39)
+    "io.playwright/mcp",
   ])("rejects %j", (name) => {
-    expect(() => validateName(name)).toThrow(NameInvalid);
+    expect(() => validateShortName(name)).toThrow(NameInvalid);
   });
 
   it("rejects non-string", () => {
     // @ts-expect-error: deliberately passing wrong type
-    expect(() => validateName(123)).toThrow(NameInvalid);
+    expect(() => validateShortName(123)).toThrow(NameInvalid);
     // @ts-expect-error: deliberately passing wrong type
-    expect(() => validateName(undefined)).toThrow(NameInvalid);
+    expect(() => validateShortName(undefined)).toThrow(NameInvalid);
   });
 });
 
-import { validateMcpName } from "../src/validate.js";
+describe("validateScope (kebab-case, dots OK for reverse-DNS)", () => {
+  it.each(["local", "anthropic", "io.playwright", "com.example.team"])("accepts %j", (s) => {
+    expect(() => validateScope(s)).not.toThrow();
+  });
 
-describe("validateMcpName (scoped)", () => {
+  it.each(["", "Foo", "scope/name", "-bad", ".bad"])("rejects %j", (s) => {
+    expect(() => validateScope(s)).toThrow(NameInvalid);
+  });
+});
+
+describe("validateFqn (must be `<scope>/<name>`)", () => {
   it.each([
-    "github",
+    "local/foo",
     "io.playwright/mcp",
     "com.example.team/my-server",
     "langsensei/weather",
-  ])("accepts %j", (name) => {
-    expect(() => validateMcpName(name)).not.toThrow();
+  ])("accepts %j", (fqn) => {
+    expect(() => validateFqn(fqn)).not.toThrow();
   });
 
-  it.each(["io.playwright/mcp/extra", ".bad/name", "scope/Bad"])("rejects %j", (name) => {
-    expect(() => validateMcpName(name)).toThrow(NameInvalid);
-  });
-});
-
-describe("validateName (dots in scope)", () => {
-  it.each(["io.playwright/browser", "com.example/tool"])("accepts %j", (name) => {
-    expect(() => validateName(name)).not.toThrow();
-  });
-
-  it("rejects dots in name segment", () => {
-    expect(() => validateName("scope/na.me")).toThrow(NameInvalid);
+  it.each([
+    "foo", // bare short name
+    "io.playwright/mcp/extra", // multiple slashes
+    ".bad/name",
+    "scope/Bad",
+    "/leading-slash",
+    "trailing/", // empty short name segment
+    "",
+  ])("rejects %j", (fqn) => {
+    expect(() => validateFqn(fqn)).toThrow(NameInvalid);
   });
 });

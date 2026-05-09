@@ -34,14 +34,14 @@ describe("Stores wired to InMemory repositories", () => {
     );
 
     await store.install(dir);
-    expect(store.has("alpha")).toBe(true);
-    expect(store.get("alpha")?.description).toBe("Alpha");
+    expect(store.has("local/alpha")).toBe(true);
+    expect(store.get("local/alpha")?.description).toBe("Alpha");
 
     // A fresh Store backed by the same repo recovers state via scan().
     const reborn = new AgentCatalog(repo);
     const issues = await reborn.scan();
     expect(issues).toEqual([]);
-    expect(reborn.has("alpha")).toBe(true);
+    expect(reborn.has("local/alpha")).toBe(true);
   });
 
   it("SkillCatalog.updateContent is observable via the repository", async () => {
@@ -56,11 +56,11 @@ describe("Stores wired to InMemory repositories", () => {
 
     await store.install(dir);
     await store.updateContent(
-      "lint",
+      "local/lint",
       ["---", "name: lint", "description: Lint v2", "---", "# body"].join("\n"),
     );
-    expect(store.get("lint")?.description).toBe("Lint v2");
-    expect(await repo.read("lint")).toContain("Lint v2");
+    expect(store.get("local/lint")?.description).toBe("Lint v2");
+    expect(await repo.read("local/lint")).toContain("Lint v2");
   });
 
   it("McpCatalog install + remove updates the repository", async () => {
@@ -69,13 +69,13 @@ describe("Stores wired to InMemory repositories", () => {
     const file = join(sourceDir, "github.json");
     await writeFile(file, '{"command":"gh"}');
 
-    const name = await store.install(file);
-    expect(name).toBe("github");
-    expect(store.has("github")).toBe(true);
-    expect(await repo.read("github")).toBe('{"command":"gh"}');
+    const fqn = await store.install(file);
+    expect(fqn).toBe("local/github");
+    expect(store.has("local/github")).toBe(true);
+    expect(await repo.read("local/github")).toBe('{"command":"gh"}');
 
-    await store.remove("github", () => []);
-    expect(store.has("github")).toBe(false);
-    expect(await repo.read("github")).toBeNull();
+    await store.remove("local/github", () => []);
+    expect(store.has("local/github")).toBe(false);
+    expect(await repo.read("local/github")).toBeNull();
   });
 });

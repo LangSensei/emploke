@@ -1,18 +1,36 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
-import { applyFrontmatterPatch, frontmatterToSkill, parseFrontmatter } from "../frontmatter.js";
+import {
+  applyFrontmatterPatch,
+  depRefToFqn,
+  frontmatterToSkill,
+  parseFrontmatter,
+  projectionOpts,
+} from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
 import type { CatalogEntryFile, SkillRepository } from "../repositories/repository.js";
-import type { Skill } from "../types.js";
-import { validateName } from "../validate.js";
+import type { DependencyRef, Skill } from "../types.js";
+import { validateFqn } from "../validate.js";
 
 export type SkillMetadataPatch = Partial<{
   description: string;
   version: string;
   prereqs: string | null;
-  dependencies: { skills?: string[]; mcps?: string[] } | null;
+  dependencies: { skills?: DependencyRef[]; mcps?: DependencyRef[] } | null;
 }>;
+
+/**
+ * Per-call options for {@link SkillCatalog.install}.
+ *
+ * `origin` is propagated into the parsed Skill (and injected into the
+ * SKILL.md COPY in the catalog if missing in the source). The route layer
+ * passes `file:<absoluteSourceDir>` for local installs; the catalog-sources
+ * fetchers pass the original remote URI.
+ */
+export interface InstallSkillOpts {
+  readonly origin?: string;
+}
 
 /** Business-logic facade over a {@link SkillRepository}. See `AgentCatalog`. */
 export class SkillCatalog {
@@ -22,21 +40,29 @@ export class SkillCatalog {
 
   // ─── CRUD ───────────────────────────────────────────────
 
-  async install(sourceDir: string): Promise<Skill> {
+  async install(sourceDir: string, opts: InstallSkillOpts = {}): Promise<Skill> {
     const sourcePath = join(sourceDir, "SKILL.md");
-    const content = await readFile(sourcePath, "utf8");
-    const { data } = parseFrontmatter(content, sourcePath);
-    const skill = frontmatterToSkill(data, sourcePath);
-    validateName(skill.name);
+    const original = await readFile(sourcePath, "utf8");
+    const { data } = parseFrontmatter(original, sourcePath);
+    const skill = frontmatterToSkill(data, sourcePath, projectionOpts(opts.origin));
 
+    // installFromDir copies the entire source tree under the FQN; if the
+    // source frontmatter omitted `origin`, follow up with a write() that
+    // overwrites the SKILL.md COPY (in the catalog only — the user's source
+    // file is never touched) so the entry is self-describing for future
+    // scans without depending on the install-time defaultOrigin.
     await this.repository.installFromDir(skill.name, sourceDir);
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(original, { origin: skill.origin });
+      await this.repository.write(skill.name, rewritten);
+    }
     this.skills.set(skill.name, skill);
     return skill;
   }
 
   async getContent(name: string): Promise<string> {
     // Defense-in-depth: see AgentCatalog.getContent for rationale.
-    validateName(name);
+    validateFqn(name);
     if (!this.skills.has(name)) throw new NotFound("skill", name);
     const content = await this.repository.read(name);
     if (content === null) throw new NotFound("skill", name);
@@ -48,14 +74,20 @@ export class SkillCatalog {
     const sourcePath = `repository:skills/${name}/SKILL.md`;
 
     const { data } = parseFrontmatter(content, sourcePath);
-    const skill = frontmatterToSkill(data, sourcePath);
+    const existingSkill = this.skills.get(name);
+    // Preserve the existing entry's origin when the patch omits one — the
+    // user shouldn't have to retype it on every metadata edit.
+    const skill = frontmatterToSkill(
+      data,
+      sourcePath,
+      projectionOpts(existingSkill?.origin),
+    );
     if (skill.name !== name) {
       throw new FrontmatterError(
         sourcePath,
-        `cannot rename via edit: frontmatter name "${skill.name}" must equal "${name}". Remove and re-install instead.`,
+        `cannot rename via edit: frontmatter resolves to "${skill.name}" but entry is "${name}". Remove and re-install instead.`,
       );
     }
-    validateName(skill.name);
 
     await this.repository.write(name, content);
     this.skills.set(name, skill);
@@ -67,6 +99,7 @@ export class SkillCatalog {
     const sourcePath = `repository:skills/${name}/SKILL.md`;
     const existing = await this.repository.read(name);
     if (existing === null) throw new NotFound("skill", name);
+    const existingSkill = this.skills.get(name);
 
     const merge: Record<string, unknown> = {};
     if (patch.description !== undefined) merge.description = patch.description;
@@ -82,7 +115,7 @@ export class SkillCatalog {
         if (skills.length === 0 && mcps.length === 0) {
           merge.dependencies = null;
         } else {
-          const obj: { skills?: readonly string[]; mcps?: readonly string[] } = {};
+          const obj: { skills?: readonly DependencyRef[]; mcps?: readonly DependencyRef[] } = {};
           if (skills.length > 0) obj.skills = skills;
           if (mcps.length > 0) obj.mcps = mcps;
           merge.dependencies = obj;
@@ -93,11 +126,15 @@ export class SkillCatalog {
     const newContent = applyFrontmatterPatch(existing, merge);
 
     const { data } = parseFrontmatter(newContent, sourcePath);
-    const skill = frontmatterToSkill(data, sourcePath);
+    const skill = frontmatterToSkill(
+      data,
+      sourcePath,
+      projectionOpts(existingSkill?.origin),
+    );
     if (skill.name !== name) {
       throw new FrontmatterError(
         sourcePath,
-        `metadata patch must not change name (current="${name}", patched="${skill.name}")`,
+        `metadata patch must not change identity (current="${name}", patched="${skill.name}")`,
       );
     }
 
@@ -107,7 +144,7 @@ export class SkillCatalog {
   }
 
   async remove(name: string, getDependents: (name: string) => string[]): Promise<void> {
-    validateName(name);
+    validateFqn(name);
     if (!this.skills.has(name)) throw new NotFound("skill", name);
 
     const dependents = getDependents(name);
@@ -134,7 +171,10 @@ export class SkillCatalog {
   graphNodes(): GraphNode[] {
     return [...this.skills].map(([name, skill]) => ({
       name,
-      dependencies: [...(skill.dependencies?.skills ?? []), ...(skill.dependencies?.mcps ?? [])],
+      dependencies: [
+        ...(skill.dependencies?.skills ?? []).map(depRefToFqn),
+        ...(skill.dependencies?.mcps ?? []).map(depRefToFqn),
+      ],
     }));
   }
 
@@ -158,7 +198,7 @@ export class SkillCatalog {
 
   /** Stream every file of `name`. Throws NotFound if absent. */
   entries(name: string): AsyncIterable<CatalogEntryFile> {
-    validateName(name);
+    validateFqn(name);
     if (!this.skills.has(name)) throw new NotFound("skill", name);
     return this.repository.entries(name);
   }

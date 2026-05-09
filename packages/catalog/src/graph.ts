@@ -2,8 +2,12 @@ import { CycleDetected, MissingDependencies } from "./errors.js";
 
 /**
  * Minimal interface satisfied by any catalog node participating in the graph.
- * Both Skill (with composed dependencies) and MCP (always leaf) can adapt to
- * this shape inside the Catalog implementation.
+ *
+ * Both Skill and MCP adapt to this shape inside the Catalog implementation;
+ * `dependencies` is a flat list of FQN strings (`<scope>/<short>`) — the
+ * catalog flattens its rich `DependencyRef[]` to FQN strings via
+ * `depRefToFqn` at the boundary so this module stays string-keyed and
+ * topologically simple.
  */
 export interface GraphNode {
   readonly name: string;

@@ -2,7 +2,7 @@ import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdirP, writeFileAtomic } from "@emploke/fs";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
-import { nameToPath, validateName } from "../validate.js";
+import { nameToPath, validateFqn } from "../validate.js";
 import { walkEntryDir } from "./entries-helpers.js";
 import type { AgentRepository, CatalogEntryFile, DocumentRepoEntry } from "./repository.js";
 
@@ -14,7 +14,7 @@ export class FsAgentRepository implements AgentRepository {
   }
 
   async read(name: string): Promise<string | null> {
-    validateName(name);
+    validateFqn(name);
     const file = join(this.baseDir, nameToPath(name), "AGENTS.md");
     try {
       return await readFile(file, "utf8");
@@ -25,7 +25,7 @@ export class FsAgentRepository implements AgentRepository {
   }
 
   async write(name: string, content: string): Promise<void> {
-    validateName(name);
+    validateFqn(name);
     const dir = join(this.baseDir, nameToPath(name));
     await mkdirP(dir);
     // Atomic write: a crash mid-update must not leave a partial AGENTS.md
@@ -36,13 +36,13 @@ export class FsAgentRepository implements AgentRepository {
   }
 
   async installFromDir(name: string, sourceDir: string): Promise<void> {
-    validateName(name);
+    validateFqn(name);
     const dest = join(this.baseDir, nameToPath(name));
     await atomicReplaceDir(sourceDir, dest);
   }
 
   async delete(name: string): Promise<void> {
-    validateName(name);
+    validateFqn(name);
     const dir = join(this.baseDir, nameToPath(name));
     await rm(dir, { recursive: true, force: true });
   }
@@ -55,7 +55,7 @@ export class FsAgentRepository implements AgentRepository {
   }
 
   entries(name: string): AsyncIterable<CatalogEntryFile> {
-    validateName(name);
+    validateFqn(name);
     return walkEntryDir("agent", name, join(this.baseDir, nameToPath(name)));
   }
 

@@ -1,17 +1,28 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
-import { applyFrontmatterPatch, frontmatterToAgent, parseFrontmatter } from "../frontmatter.js";
+import {
+  applyFrontmatterPatch,
+  depRefToFqn,
+  frontmatterToAgent,
+  parseFrontmatter,
+  projectionOpts,
+} from "../frontmatter.js";
 import type { GraphNode } from "../graph.js";
 import type { AgentRepository, CatalogEntryFile } from "../repositories/repository.js";
-import type { Agent } from "../types.js";
-import { validateName } from "../validate.js";
+import type { Agent, DependencyRef } from "../types.js";
+import { validateFqn } from "../validate.js";
 
 export type AgentMetadataPatch = Partial<{
   description: string;
   version: string;
-  dependencies: { skills?: string[]; mcps?: string[] } | null;
+  dependencies: { skills?: DependencyRef[]; mcps?: DependencyRef[] } | null;
 }>;
+
+/** Per-call options for {@link AgentCatalog.install}; see {@link InstallSkillOpts}. */
+export interface InstallAgentOpts {
+  readonly origin?: string;
+}
 
 /**
  * Business-logic facade over an {@link AgentRepository}.
@@ -26,14 +37,19 @@ export class AgentCatalog {
 
   constructor(private readonly repository: AgentRepository) {}
 
-  async install(sourceDir: string): Promise<Agent> {
+  async install(sourceDir: string, opts: InstallAgentOpts = {}): Promise<Agent> {
     const sourcePath = join(sourceDir, "AGENTS.md");
-    const content = await readFile(sourcePath, "utf8");
-    const { data } = parseFrontmatter(content, sourcePath);
-    const agent = frontmatterToAgent(data, sourcePath);
-    validateName(agent.name);
+    const original = await readFile(sourcePath, "utf8");
+    const { data } = parseFrontmatter(original, sourcePath);
+    const agent = frontmatterToAgent(data, sourcePath, projectionOpts(opts.origin));
 
+    // See SkillCatalog.install for rationale: stage the dir copy first, then
+    // inject `origin` into the catalog COPY only if the source omitted it.
     await this.repository.installFromDir(agent.name, sourceDir);
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(original, { origin: agent.origin });
+      await this.repository.write(agent.name, rewritten);
+    }
     this.agents.set(agent.name, agent);
     return agent;
   }
@@ -42,7 +58,7 @@ export class AgentCatalog {
     // Defense-in-depth: validate before going to the repo. Repos validate too,
     // but rejecting at the Store boundary keeps NotFound semantics for invalid
     // names rather than leaking a path-traversal error upstream.
-    validateName(name);
+    validateFqn(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
     const content = await this.repository.read(name);
     if (content === null) throw new NotFound("agent", name);
@@ -53,14 +69,18 @@ export class AgentCatalog {
     if (!this.agents.has(name)) throw new NotFound("agent", name);
     const sourcePath = `repository:agents/${name}/AGENTS.md`;
     const { data } = parseFrontmatter(content, sourcePath);
-    const agent = frontmatterToAgent(data, sourcePath);
+    const existingAgent = this.agents.get(name);
+    const agent = frontmatterToAgent(
+      data,
+      sourcePath,
+      projectionOpts(existingAgent?.origin),
+    );
     if (agent.name !== name) {
       throw new FrontmatterError(
         sourcePath,
-        `cannot rename via edit: frontmatter name "${agent.name}" must equal "${name}". Remove and re-install instead.`,
+        `cannot rename via edit: frontmatter resolves to "${agent.name}" but entry is "${name}". Remove and re-install instead.`,
       );
     }
-    validateName(agent.name);
 
     await this.repository.write(name, content);
     this.agents.set(name, agent);
@@ -72,6 +92,7 @@ export class AgentCatalog {
     const sourcePath = `repository:agents/${name}/AGENTS.md`;
     const existing = await this.repository.read(name);
     if (existing === null) throw new NotFound("agent", name);
+    const existingAgent = this.agents.get(name);
 
     const merge: Record<string, unknown> = {};
     if (patch.description !== undefined) merge.description = patch.description;
@@ -86,7 +107,7 @@ export class AgentCatalog {
         if (skills.length === 0 && mcps.length === 0) {
           merge.dependencies = null;
         } else {
-          const obj: { skills?: readonly string[]; mcps?: readonly string[] } = {};
+          const obj: { skills?: readonly DependencyRef[]; mcps?: readonly DependencyRef[] } = {};
           if (skills.length > 0) obj.skills = skills;
           if (mcps.length > 0) obj.mcps = mcps;
           merge.dependencies = obj;
@@ -96,11 +117,15 @@ export class AgentCatalog {
 
     const newContent = applyFrontmatterPatch(existing, merge);
     const { data } = parseFrontmatter(newContent, sourcePath);
-    const agent = frontmatterToAgent(data, sourcePath);
+    const agent = frontmatterToAgent(
+      data,
+      sourcePath,
+      projectionOpts(existingAgent?.origin),
+    );
     if (agent.name !== name) {
       throw new FrontmatterError(
         sourcePath,
-        `metadata patch must not change name (current="${name}", patched="${agent.name}")`,
+        `metadata patch must not change identity (current="${name}", patched="${agent.name}")`,
       );
     }
 
@@ -110,7 +135,7 @@ export class AgentCatalog {
   }
 
   async remove(name: string, getDependents?: (name: string) => string[]): Promise<void> {
-    validateName(name);
+    validateFqn(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
 
     if (getDependents) {
@@ -137,7 +162,10 @@ export class AgentCatalog {
   graphNodes(): GraphNode[] {
     return [...this.agents].map(([name, agent]) => ({
       name,
-      dependencies: [...(agent.dependencies?.skills ?? []), ...(agent.dependencies?.mcps ?? [])],
+      dependencies: [
+        ...(agent.dependencies?.skills ?? []).map(depRefToFqn),
+        ...(agent.dependencies?.mcps ?? []).map(depRefToFqn),
+      ],
     }));
   }
 
@@ -159,7 +187,7 @@ export class AgentCatalog {
 
   /** Stream every file of `name`. Throws NotFound if absent. */
   entries(name: string): AsyncIterable<CatalogEntryFile> {
-    validateName(name);
+    validateFqn(name);
     if (!this.agents.has(name)) throw new NotFound("agent", name);
     return this.repository.entries(name);
   }

@@ -89,12 +89,29 @@ export interface SkillRepository {
 
 /** A file-style catalog entry whose name derives from its filename. */
 export interface McpRepoEntry {
-  /** Resolved name (`scope/base` or `base`), derived from path. */
+  /** Resolved FQN (`scope/name`), derived from the on-disk path. */
   readonly name: string;
   /** Raw file content (JSON string, written verbatim — never re-serialized). */
   readonly content: string;
   /** Diagnostic identifier (path or synthetic label). */
   readonly sourcePath: string;
+  /**
+   * Origin URI for the MCP, when the repository can persist it (e.g. via a
+   * `<name>.origin.json` sidecar in the FS impl). Undefined for backends
+   * that can't carry side-channel metadata; the catalog layer synthesises
+   * one from `sourcePath` in that case.
+   */
+  readonly origin?: string;
+}
+
+/** Per-write options for {@link McpRepository.write}. */
+export interface McpWriteOpts {
+  /**
+   * Origin URI to persist alongside the JSON content. Repositories that
+   * can't store metadata SHOULD ignore this field; the catalog re-derives
+   * origin from `sourcePath` on scan.
+   */
+  readonly origin?: string;
 }
 
 /**
@@ -102,12 +119,16 @@ export interface McpRepoEntry {
  *
  * MCPs are single-file, so the read/write byte API is sufficient — no
  * `entries()` stream needed; consumers call `read(name)` to get the JSON
- * content directly.
+ * content directly. Origin metadata is carried via `McpWriteOpts.origin`
+ * on writes and `McpRepoEntry.origin` on scans.
  */
 export interface McpRepository {
   read(name: string): Promise<string | null>;
-  /** Write JSON content for `name`. Creates parent dirs (for scoped names) as needed. */
-  write(name: string, content: string): Promise<void>;
+  /**
+   * Write JSON content for `name`, optionally persisting origin metadata.
+   * Creates parent dirs (for scoped names) as needed.
+   */
+  write(name: string, content: string, opts?: McpWriteOpts): Promise<void>;
   delete(name: string): Promise<void>;
   scan(): Promise<McpRepoEntry[]>;
 }

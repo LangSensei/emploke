@@ -42,7 +42,7 @@ describe("parseFrontmatter", () => {
 });
 
 describe("frontmatterToSkill", () => {
-  it("projects MetaAgents fields (no type field)", () => {
+  it("projects MetaAgents fields and computes FQN from synthetic file: origin", () => {
     const skill = frontmatterToSkill(
       {
         name: "git-pr",
@@ -50,18 +50,52 @@ describe("frontmatterToSkill", () => {
         version: "1.2.3",
         type: "skill", // ignored — not in MetaAgents
         license: "MIT", // ignored
-        dependencies: { skills: ["sop"], mcps: ["swat"] },
+        dependencies: {
+          skills: [{ name: "sop", origin: "file:/test/local/sop" }],
+          mcps: [{ name: "swat", origin: "file:/test/local/swat" }],
+        },
         prereqs: "Run setup.sh first",
       },
       "git-pr/SKILL.md",
     );
     expect(skill).toEqual({
-      name: "git-pr",
+      name: "local/git-pr",
+      shortName: "git-pr",
+      scope: "local",
+      origin: "file:git-pr/SKILL.md",
       description: "Open a PR",
       version: "1.2.3",
-      dependencies: { skills: ["sop"], mcps: ["swat"] },
+      dependencies: {
+        skills: [{ name: "sop", origin: "file:/test/local/sop" }],
+        mcps: [{ name: "swat", origin: "file:/test/local/swat" }],
+      },
       prereqs: "Run setup.sh first",
     });
+  });
+
+  it("uses defaultOrigin from opts when frontmatter omits origin", () => {
+    const skill = frontmatterToSkill(
+      { name: "weather", description: "x" },
+      "weather/SKILL.md",
+      { defaultOrigin: "https://github.com/anthropic/skills/tree/main/weather" },
+    );
+    expect(skill.origin).toBe("https://github.com/anthropic/skills/tree/main/weather");
+    expect(skill.scope).toBe("anthropic");
+    expect(skill.name).toBe("anthropic/weather");
+  });
+
+  it("frontmatter `scope` overrides scope-from-origin", () => {
+    const skill = frontmatterToSkill(
+      {
+        name: "weather",
+        description: "x",
+        scope: "my-fork",
+        origin: "https://github.com/anthropic/skills/tree/main/weather",
+      },
+      "x.md",
+    );
+    expect(skill.scope).toBe("my-fork");
+    expect(skill.name).toBe("my-fork/weather");
   });
 
   it("defaults version to 0.0.1 when frontmatter omits it", () => {
@@ -77,6 +111,12 @@ describe("frontmatterToSkill", () => {
 
   it("throws when name is missing", () => {
     expect(() => frontmatterToSkill({ description: "x" }, "x.md")).toThrow(FrontmatterError);
+  });
+
+  it("throws NameInvalid when name contains a slash (must be short name)", () => {
+    expect(() =>
+      frontmatterToSkill({ name: "scope/foo", description: "x" }, "x.md"),
+    ).toThrow(/short name/);
   });
 
   it("throws when description is missing", () => {
@@ -101,43 +141,78 @@ describe("frontmatterToSkill", () => {
     ).toThrow(FrontmatterError);
   });
 
-  it("throws when dependencies.skills is not an array of strings", () => {
+  it("throws when dependencies.skills entries are bare strings (post-#39 clean break)", () => {
     expect(() =>
-      frontmatterToSkill({ name: "a", description: "x", dependencies: { skills: [1, 2] } }, "x.md"),
+      frontmatterToSkill(
+        { name: "a", description: "x", dependencies: { skills: ["b"] } },
+        "x.md",
+      ),
+    ).toThrow(FrontmatterError);
+  });
+
+  it("throws when a dependency ref omits origin", () => {
+    expect(() =>
+      frontmatterToSkill(
+        { name: "a", description: "x", dependencies: { skills: [{ name: "b" }] } },
+        "x.md",
+      ),
     ).toThrow(FrontmatterError);
   });
 
   it("accepts dependencies with only one of skills/mcps", () => {
     const a = frontmatterToSkill(
-      { name: "a", description: "x", dependencies: { skills: ["b"] } },
+      {
+        name: "a",
+        description: "x",
+        dependencies: { skills: [{ name: "b", origin: "file:/test/local/b" }] },
+      },
       "x.md",
     );
-    expect(a.dependencies).toEqual({ skills: ["b"] });
+    expect(a.dependencies).toEqual({
+      skills: [{ name: "b", origin: "file:/test/local/b" }],
+    });
 
     const b = frontmatterToSkill(
-      { name: "a", description: "x", dependencies: { mcps: ["m"] } },
+      {
+        name: "a",
+        description: "x",
+        dependencies: { mcps: [{ name: "m", origin: "file:/test/local/m" }] },
+      },
       "x.md",
     );
-    expect(b.dependencies).toEqual({ mcps: ["m"] });
+    expect(b.dependencies).toEqual({
+      mcps: [{ name: "m", origin: "file:/test/local/m" }],
+    });
   });
 });
 
 describe("frontmatterToAgent", () => {
-  it("parses agent frontmatter", () => {
+  it("parses agent frontmatter and computes FQN", () => {
     const agent = frontmatterToAgent(
       {
-        name: "langsensei/reviewer",
+        name: "reviewer",
+        scope: "langsensei",
+        origin: "file:/test/langsensei/reviewer",
         description: "Reviews PRs",
         version: "1.0.0",
-        dependencies: { skills: ["security-audit"], mcps: ["github"] },
+        dependencies: {
+          skills: [{ name: "security-audit", origin: "file:/test/local/security-audit" }],
+          mcps: [{ name: "github", origin: "file:/test/local/github" }],
+        },
       },
       "AGENTS.md",
     );
     expect(agent).toEqual({
       name: "langsensei/reviewer",
+      shortName: "reviewer",
+      scope: "langsensei",
+      origin: "file:/test/langsensei/reviewer",
       description: "Reviews PRs",
       version: "1.0.0",
-      dependencies: { skills: ["security-audit"], mcps: ["github"] },
+      dependencies: {
+        skills: [{ name: "security-audit", origin: "file:/test/local/security-audit" }],
+        mcps: [{ name: "github", origin: "file:/test/local/github" }],
+      },
     });
   });
 

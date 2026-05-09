@@ -1,4 +1,5 @@
 import type { AgentCatalog } from "./agent/agent-catalog.js";
+import { depRefToFqn } from "./frontmatter.js";
 import { type GraphNode, resolveTopological } from "./graph.js";
 import type { McpCatalog } from "./mcp/mcp-catalog.js";
 import type { SkillCatalog } from "./skill/skill-catalog.js";
@@ -16,6 +17,10 @@ import type {
  * the runtime obtains actual content via {@link CatalogManager.skillEntries}
  * / {@link CatalogManager.agentEntries} / {@link CatalogManager.getMcpContent}
  * so a future SQLite-backed repository works the same way as the FS one.
+ *
+ * Post-#39: dependency refs are objects (`DependencyRef`), not bare strings.
+ * The resolver flattens them to FQN strings (`<scope>/<short>`) at the
+ * boundary via {@link depRefToFqn} so the dependency graph stays string-keyed.
  */
 export class Resolver {
   constructor(
@@ -34,7 +39,10 @@ export class Resolver {
       throw new Error(`agent not found in catalog: "${name}"`);
     }
 
-    const rootDeps = [...(agent.dependencies?.skills ?? []), ...(agent.dependencies?.mcps ?? [])];
+    const rootDeps = [
+      ...(agent.dependencies?.skills ?? []).map(depRefToFqn),
+      ...(agent.dependencies?.mcps ?? []).map(depRefToFqn),
+    ];
     const { skills, mcps } = this.#resolveDeps(rootDeps);
 
     return { agent, skills, mcps };
@@ -49,7 +57,10 @@ export class Resolver {
       throw new Error(`skill not found in catalog: "${name}"`);
     }
 
-    const rootDeps = [...(skill.dependencies?.skills ?? []), ...(skill.dependencies?.mcps ?? [])];
+    const rootDeps = [
+      ...(skill.dependencies?.skills ?? []).map(depRefToFqn),
+      ...(skill.dependencies?.mcps ?? []).map(depRefToFqn),
+    ];
     const { skills: depSkills, mcps } = this.#resolveDeps(rootDeps);
 
     // Include the entry skill itself at the END (topological order: deps first).
@@ -73,8 +84,8 @@ export class Resolver {
         return {
           name: n,
           dependencies: [
-            ...(skill.dependencies?.skills ?? []),
-            ...(skill.dependencies?.mcps ?? []),
+            ...(skill.dependencies?.skills ?? []).map(depRefToFqn),
+            ...(skill.dependencies?.mcps ?? []).map(depRefToFqn),
           ],
         };
       }

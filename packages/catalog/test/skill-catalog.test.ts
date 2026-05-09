@@ -1,42 +1,17 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
+import { dep, makeBase, makeSkillSource } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
 let store: SkillCatalog;
 
-async function makeSkill(
-  name: string,
-  opts: { deps?: { skills?: string[]; mcps?: string[] }; prereqs?: string } = {},
-): Promise<string> {
-  const dir = join(sourceDir, name.replace("/", "--"));
-  await mkdir(dir, { recursive: true });
-  const lines = [
-    "---",
-    `name: ${name}`,
-    `description: Skill ${name}`,
-    ...(opts.deps
-      ? [
-          `dependencies:`,
-          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
-          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
-        ]
-      : []),
-    ...(opts.prereqs ? [`prereqs: "${opts.prereqs}"`] : []),
-    "---",
-    "# Instructions",
-  ].join("\n");
-  await writeFile(join(dir, "SKILL.md"), lines);
-  return dir;
-}
-
 beforeEach(async () => {
-  const base = join(tmpdir(), `skill-store-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const base = makeBase("skill-store");
   catalogDir = join(base, "catalog");
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
@@ -50,24 +25,26 @@ afterEach(async () => {
 
 describe("SkillCatalog", () => {
   describe("install", () => {
-    it("installs and returns skill", async () => {
-      const src = await makeSkill("weather");
+    it("installs and returns skill (FQN local/<name> from synthetic origin)", async () => {
+      const src = await makeSkillSource(sourceDir, "weather");
       const skill = await store.install(src);
-      expect(skill.name).toBe("weather");
-      expect(store.get("weather")).toEqual(skill);
+      expect(skill.name).toBe("local/weather");
+      expect(skill.shortName).toBe("weather");
+      expect(skill.scope).toBe("local");
+      expect(store.get("local/weather")).toEqual(skill);
     });
 
-    it("installs scoped skill", async () => {
-      const src = await makeSkill("langsensei/weather");
+    it("installs scoped skill via frontmatter `scope:`", async () => {
+      const src = await makeSkillSource(sourceDir, "weather", { scope: "langsensei" });
       const skill = await store.install(src);
       expect(skill.name).toBe("langsensei/weather");
       expect(store.has("langsensei/weather")).toBe(true);
     });
 
     it("upserts on re-install", async () => {
-      const src1 = await makeSkill("weather");
+      const src1 = await makeSkillSource(sourceDir, "weather");
       await store.install(src1);
-      const src2 = await makeSkill("weather");
+      const src2 = await makeSkillSource(sourceDir, "weather");
       await store.install(src2);
       expect(store.list()).toHaveLength(1);
     });
@@ -80,66 +57,73 @@ describe("SkillCatalog", () => {
     });
 
     it("preserves prereqs", async () => {
-      const src = await makeSkill("setup", { prereqs: "npm install" });
+      const src = await makeSkillSource(sourceDir, "setup", { prereqs: "npm install" });
       const skill = await store.install(src);
       expect(skill.prereqs).toBe("npm install");
     });
 
     it("preserves dependencies", async () => {
-      const src = await makeSkill("parent", { deps: { skills: ["child"], mcps: ["gh"] } });
+      const src = await makeSkillSource(sourceDir, "parent", {
+        deps: { skills: [dep("child")], mcps: [dep("gh")] },
+      });
       const skill = await store.install(src);
-      expect(skill.dependencies).toEqual({ skills: ["child"], mcps: ["gh"] });
+      expect(skill.dependencies).toEqual({
+        skills: [{ name: "child", origin: "file:/test/local/child", scope: "local" }],
+        mcps: [{ name: "gh", origin: "file:/test/local/gh", scope: "local" }],
+      });
     });
   });
 
   describe("remove", () => {
     it("removes installed skill", async () => {
-      const src = await makeSkill("weather");
+      const src = await makeSkillSource(sourceDir, "weather");
       await store.install(src);
-      await store.remove("weather", () => []);
-      expect(store.get("weather")).toBeNull();
+      await store.remove("local/weather", () => []);
+      expect(store.get("local/weather")).toBeNull();
     });
 
     it("throws NotFound for unknown", async () => {
-      await expect(store.remove("nope", () => [])).rejects.toThrow(NotFound);
+      await expect(store.remove("local/nope", () => [])).rejects.toThrow(NotFound);
     });
 
     it("blocks removal with dependents", async () => {
-      const src = await makeSkill("leaf");
+      const src = await makeSkillSource(sourceDir, "leaf");
       await store.install(src);
-      await expect(store.remove("leaf", () => ["parent"])).rejects.toThrow(HasDependents);
+      await expect(store.remove("local/leaf", () => ["local/parent"])).rejects.toThrow(
+        HasDependents,
+      );
     });
   });
 
   describe("get/list/has", () => {
     it("get returns null for unknown", () => {
-      expect(store.get("nope")).toBeNull();
+      expect(store.get("local/nope")).toBeNull();
     });
 
     it("list returns all installed", async () => {
-      await store.install(await makeSkill("a"));
-      await store.install(await makeSkill("b"));
+      await store.install(await makeSkillSource(sourceDir, "a"));
+      await store.install(await makeSkillSource(sourceDir, "b"));
       expect(
         store
           .list()
           .map((s) => s.name)
           .sort(),
-      ).toEqual(["a", "b"]);
+      ).toEqual(["local/a", "local/b"]);
     });
 
     it("has returns false for unknown", () => {
-      expect(store.has("nope")).toBe(false);
+      expect(store.has("local/nope")).toBe(false);
     });
   });
 
   describe("scan", () => {
-    it("scans flat skills", async () => {
-      const dir = join(catalogDir, "skills", "weather");
+    it("scans flat skills (legacy unscoped folder → local/ scope)", async () => {
+      const dir = join(catalogDir, "skills", "local", "weather");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: weather\ndescription: W\n---\n");
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
-      expect(store.get("weather")!.name).toBe("weather");
+      expect(store.get("local/weather")!.name).toBe("local/weather");
     });
 
     it("scans scoped skills", async () => {
@@ -147,7 +131,7 @@ describe("SkillCatalog", () => {
       await mkdir(dir, { recursive: true });
       await writeFile(
         join(dir, "SKILL.md"),
-        "---\nname: langsensei/weather\ndescription: W\n---\n",
+        "---\nname: weather\nscope: langsensei\ndescription: W\n---\n",
       );
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
@@ -155,7 +139,7 @@ describe("SkillCatalog", () => {
     });
 
     it("records issues for bad frontmatter", async () => {
-      const dir = join(catalogDir, "skills", "bad");
+      const dir = join(catalogDir, "skills", "local", "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: : :\n---\n");
       const issues = await store.scan();
@@ -164,23 +148,26 @@ describe("SkillCatalog", () => {
     });
 
     it("picks up externally added skills on rescan", async () => {
-      await store.scan(); // empty
+      await store.scan();
       expect(store.list()).toHaveLength(0);
-      // Simulate external write
-      const dir = join(catalogDir, "skills", "new-skill");
+      const dir = join(catalogDir, "skills", "local", "new-skill");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: new-skill\ndescription: New\n---\n");
       await store.scan();
-      expect(store.has("new-skill")).toBe(true);
+      expect(store.has("local/new-skill")).toBe(true);
     });
   });
 
   describe("graphNodes", () => {
-    it("returns dependency graph", async () => {
-      await store.install(await makeSkill("parent", { deps: { skills: ["child"], mcps: ["gh"] } }));
+    it("returns dependency graph (FQNs from DependencyRef origins)", async () => {
+      await store.install(
+        await makeSkillSource(sourceDir, "parent", {
+          deps: { skills: [dep("child")], mcps: [dep("gh")] },
+        }),
+      );
       const nodes = store.graphNodes();
       expect(nodes).toHaveLength(1);
-      expect(nodes[0]!.dependencies).toEqual(["child", "gh"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["local/child", "local/gh"]);
     });
   });
 
@@ -203,11 +190,4 @@ describe("SkillCatalog", () => {
       await expect(store.getContent("")).rejects.toBeInstanceOf(NameInvalid);
     });
   });
-
-  // path() is a public method with no current caller in-repo, but as a
-  // public surface it must not hand back a traversed filesystem path
-  // either — otherwise a future caller inherits the same hole.
-  // The Repository pattern moved path-composition into FsSkillRepository,
-  // which validates names at every public method. The SkillCatalog.path()
-  // surface was retired with no callers.
 });

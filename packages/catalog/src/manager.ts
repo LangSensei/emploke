@@ -1,11 +1,18 @@
 import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { AgentCatalog, type AgentMetadataPatch } from "./agent/agent-catalog.js";
 import { pathExists } from "./atomic.js";
-import { CatalogStateError } from "./errors.js";
-import { frontmatterToAgent, frontmatterToSkill, parseFrontmatter } from "./frontmatter.js";
+import { CatalogStateError, OriginConflictError } from "./errors.js";
+import {
+  depRefToFqn,
+  frontmatterToAgent,
+  frontmatterToSkill,
+  parseFrontmatter,
+  projectionOpts,
+} from "./frontmatter.js";
 import { findDirectDependents } from "./graph.js";
 import { McpCatalog } from "./mcp/mcp-catalog.js";
+import { normalizeOrigin, parseOrigin, scopeFromOrigin } from "./origin.js";
 import { FsAgentRepository } from "./repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "./repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "./repositories/fs-skill-repository.js";
@@ -21,11 +28,19 @@ import type {
   Agent,
   AgentEntry,
   AgentResolveResult,
+  DependencyRef,
   MissingDep,
   Skill,
   SkillEntry,
   SkillResolveResult,
 } from "./types.js";
+
+/** Strip the trailing `.json` (or any other) extension. */
+function basenameWithoutExt(file: string): string {
+  const b = basename(file);
+  const dot = b.lastIndexOf(".");
+  return dot > 0 ? b.slice(0, dot) : b;
+}
 
 export type { AgentMetadataPatch, SkillMetadataPatch };
 
@@ -42,6 +57,24 @@ export interface CatalogOptions {
     readonly skills?: SkillRepository;
     readonly mcps?: McpRepository;
   };
+}
+
+/**
+ * Per-call options for `installSkill` / `installAgent` / `installMcp`.
+ * `origin` is the URI the caller wants to associate with the new entry.
+ * Defaults to `file:<sourcePath>` (synthesised by the per-store install
+ * impls). Routes pass `file:<absoluteSourceDir>` for local installs and the
+ * remote URI for fetched installs.
+ */
+export interface InstallEntryOpts {
+  readonly origin?: string;
+}
+
+export interface InstallMcpOpts extends InstallEntryOpts {
+  /** Override the auto-derived MCP short name (basename of source file). */
+  readonly mcpName?: string;
+  /** Override the auto-derived scope (origin scheme → scope). */
+  readonly scope?: string;
 }
 
 /**
@@ -87,8 +120,14 @@ export class CatalogManager {
 
   // ─── Skill ──────────────────────────────────────────────
 
-  async installSkill(sourceDir: string): Promise<Skill> {
-    const skill = await this.withWriteLock(() => this.skillStore.install(sourceDir));
+  async installSkill(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill> {
+    const skill = await this.withWriteLock(async () => {
+      // Pre-flight origin-conflict check: parse the would-be FQN+origin
+      // before doing any IO so a conflict fails fast and predictably.
+      // Re-uses the same defaultOrigin chain as install().
+      await this.assertNoOriginConflict("skill", sourceDir, "SKILL.md", opts.origin);
+      return this.skillStore.install(sourceDir, opts);
+    });
     this.recomputeStatus();
     return skill;
   }
@@ -132,8 +171,11 @@ export class CatalogManager {
 
   // ─── Agent ──────────────────────────────────────────────
 
-  async installAgent(sourceDir: string): Promise<Agent> {
-    const agent = await this.withWriteLock(() => this.agentStore.install(sourceDir));
+  async installAgent(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Agent> {
+    const agent = await this.withWriteLock(async () => {
+      await this.assertNoOriginConflict("agent", sourceDir, "AGENTS.md", opts.origin);
+      return this.agentStore.install(sourceDir, opts);
+    });
     this.recomputeStatus();
     return agent;
   }
@@ -177,8 +219,28 @@ export class CatalogManager {
 
   // ─── MCP ────────────────────────────────────────────────
 
-  async installMcp(sourceFile: string, mcpName?: string): Promise<string> {
-    const name = await this.withWriteLock(() => this.mcpStore.install(sourceFile, mcpName));
+  async installMcp(sourceFile: string, opts: InstallMcpOpts = {}): Promise<string> {
+    const name = await this.withWriteLock(async () => {
+      // Pre-flight origin-conflict check. We can't reuse the skill/agent
+      // helper because MCPs don't have frontmatter — we need to compute the
+      // would-be FQN ourselves from the install opts before letting
+      // mcpStore.install do the work.
+      const previewName =
+        opts.mcpName ?? basenameWithoutExt(sourceFile);
+      const previewOrigin = opts.origin ?? `file:${sourceFile}`;
+      const previewScope =
+        opts.scope ?? scopeFromOrigin(parseOrigin(previewOrigin));
+      const previewFqn = `${previewScope}/${previewName}`;
+      const existing = this.mcpStore.get(previewFqn);
+      if (existing) {
+        const a = normalizeOrigin(parseOrigin(existing.origin));
+        const b = normalizeOrigin(parseOrigin(previewOrigin));
+        if (a !== b) {
+          throw new OriginConflictError(previewFqn, existing.origin, previewOrigin);
+        }
+      }
+      return this.mcpStore.install(sourceFile, opts);
+    });
     this.recomputeStatus();
     return name;
   }
@@ -257,19 +319,19 @@ export class CatalogManager {
 
   // ─── Inspection ─────────────────────────────────────────
 
-  async inspectSource(sourceDir: string): Promise<Skill | Agent> {
+  async inspectSource(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill | Agent> {
     const skillPath = join(sourceDir, "SKILL.md");
     const agentPath = join(sourceDir, "AGENTS.md");
 
     if (await pathExists(skillPath)) {
       const content = await readFile(skillPath, "utf8");
       const { data } = parseFrontmatter(content, skillPath);
-      return frontmatterToSkill(data, skillPath);
+      return frontmatterToSkill(data, skillPath, projectionOpts(opts.origin));
     }
     if (await pathExists(agentPath)) {
       const content = await readFile(agentPath, "utf8");
       const { data } = parseFrontmatter(content, agentPath);
-      return frontmatterToAgent(data, agentPath);
+      return frontmatterToAgent(data, agentPath, projectionOpts(opts.origin));
     }
     throw new Error(`Source directory has neither SKILL.md nor AGENTS.md: ${sourceDir}`);
   }
@@ -279,6 +341,35 @@ export class CatalogManager {
   private getDependents(name: string): string[] {
     const allNodes = [...this.skillStore.graphNodes(), ...this.agentStore.graphNodes()];
     return findDirectDependents(name, allNodes).map((d) => d.name);
+  }
+
+  /**
+   * Pre-flight check: parse the source frontmatter, project to FQN, and
+   * compare origins against any existing entry under the same FQN.
+   * Throws {@link OriginConflictError} on mismatch (post-#39 catalog
+   * identity rule: same FQN must always resolve to the same upstream).
+   */
+  private async assertNoOriginConflict(
+    kind: "skill" | "agent",
+    sourceDir: string,
+    fileName: string,
+    defaultOrigin?: string,
+  ): Promise<void> {
+    const sourcePath = join(sourceDir, fileName);
+    const content = await readFile(sourcePath, "utf8");
+    const { data } = parseFrontmatter(content, sourcePath);
+    const incoming =
+      kind === "skill"
+        ? frontmatterToSkill(data, sourcePath, projectionOpts(defaultOrigin))
+        : frontmatterToAgent(data, sourcePath, projectionOpts(defaultOrigin));
+
+    const existing =
+      kind === "skill" ? this.skillStore.get(incoming.name) : this.agentStore.get(incoming.name);
+    if (!existing) return;
+
+    const a = normalizeOrigin(parseOrigin(existing.origin));
+    const b = normalizeOrigin(parseOrigin(incoming.origin));
+    if (a !== b) throw new OriginConflictError(incoming.name, existing.origin, incoming.origin);
   }
 
   private async scan(): Promise<void> {
@@ -319,16 +410,18 @@ export class CatalogManager {
   }
 
   private findMissing(dependencies?: {
-    readonly skills?: readonly string[];
-    readonly mcps?: readonly string[];
+    readonly skills?: readonly DependencyRef[];
+    readonly mcps?: readonly DependencyRef[];
   }): MissingDep[] {
     if (!dependencies) return [];
     const missing: MissingDep[] = [];
-    for (const s of dependencies.skills ?? []) {
-      if (!this.skillStore.has(s)) missing.push({ kind: "skill", name: s });
+    for (const ref of dependencies.skills ?? []) {
+      const fqn = depRefToFqn(ref);
+      if (!this.skillStore.has(fqn)) missing.push({ kind: "skill", name: fqn });
     }
-    for (const m of dependencies.mcps ?? []) {
-      if (!this.mcpStore.has(m)) missing.push({ kind: "mcp", name: m });
+    for (const ref of dependencies.mcps ?? []) {
+      const fqn = depRefToFqn(ref);
+      if (!this.mcpStore.has(fqn)) missing.push({ kind: "mcp", name: fqn });
     }
     return missing;
   }

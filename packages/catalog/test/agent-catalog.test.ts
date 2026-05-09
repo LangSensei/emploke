@@ -1,41 +1,17 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentCatalog } from "../src/agent/agent-catalog.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
+import { dep, makeAgentSource, makeBase } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
 let store: AgentCatalog;
 
-async function makeAgent(
-  name: string,
-  opts: { deps?: { skills?: string[]; mcps?: string[] } } = {},
-): Promise<string> {
-  const dir = join(sourceDir, `agent-${name.replace("/", "--")}`);
-  await mkdir(dir, { recursive: true });
-  const lines = [
-    "---",
-    `name: ${name}`,
-    `description: Agent ${name}`,
-    ...(opts.deps
-      ? [
-          `dependencies:`,
-          ...(opts.deps.skills ? [`  skills:`, ...opts.deps.skills.map((s) => `    - ${s}`)] : []),
-          ...(opts.deps.mcps ? [`  mcps:`, ...opts.deps.mcps.map((m) => `    - ${m}`)] : []),
-        ]
-      : []),
-    "---",
-    "# Instructions",
-  ].join("\n");
-  await writeFile(join(dir, "AGENTS.md"), lines);
-  return dir;
-}
-
 beforeEach(async () => {
-  const base = join(tmpdir(), `agent-store-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const base = makeBase("agent-store");
   catalogDir = join(base, "catalog");
   sourceDir = join(base, "source");
   await mkdir(catalogDir, { recursive: true });
@@ -49,22 +25,22 @@ afterEach(async () => {
 
 describe("AgentCatalog", () => {
   describe("install", () => {
-    it("installs and returns agent", async () => {
-      const src = await makeAgent("reviewer");
+    it("installs and returns agent (FQN local/<name>)", async () => {
+      const src = await makeAgentSource(sourceDir, "reviewer");
       const agent = await store.install(src);
-      expect(agent.name).toBe("reviewer");
-      expect(store.get("reviewer")).toEqual(agent);
+      expect(agent.name).toBe("local/reviewer");
+      expect(store.get("local/reviewer")).toEqual(agent);
     });
 
-    it("installs scoped agent", async () => {
-      const src = await makeAgent("langsensei/reviewer");
+    it("installs scoped agent via frontmatter `scope:`", async () => {
+      const src = await makeAgentSource(sourceDir, "reviewer", { scope: "langsensei" });
       const agent = await store.install(src);
       expect(agent.name).toBe("langsensei/reviewer");
     });
 
     it("upserts on re-install", async () => {
-      await store.install(await makeAgent("reviewer"));
-      await store.install(await makeAgent("reviewer"));
+      await store.install(await makeAgentSource(sourceDir, "reviewer"));
+      await store.install(await makeAgentSource(sourceDir, "reviewer"));
       expect(store.list()).toHaveLength(1);
     });
 
@@ -76,32 +52,37 @@ describe("AgentCatalog", () => {
     });
 
     it("preserves dependencies", async () => {
-      const src = await makeAgent("reviewer", { deps: { skills: ["lint"], mcps: ["gh"] } });
+      const src = await makeAgentSource(sourceDir, "reviewer", {
+        deps: { skills: [dep("lint")], mcps: [dep("gh")] },
+      });
       const agent = await store.install(src);
-      expect(agent.dependencies).toEqual({ skills: ["lint"], mcps: ["gh"] });
+      expect(agent.dependencies).toEqual({
+        skills: [{ name: "lint", origin: "file:/test/local/lint", scope: "local" }],
+        mcps: [{ name: "gh", origin: "file:/test/local/gh", scope: "local" }],
+      });
     });
   });
 
   describe("remove", () => {
     it("removes installed agent", async () => {
-      await store.install(await makeAgent("reviewer"));
-      await store.remove("reviewer");
-      expect(store.get("reviewer")).toBeNull();
+      await store.install(await makeAgentSource(sourceDir, "reviewer"));
+      await store.remove("local/reviewer");
+      expect(store.get("local/reviewer")).toBeNull();
     });
 
     it("throws NotFound for unknown", async () => {
-      await expect(store.remove("nope")).rejects.toThrow(NotFound);
+      await expect(store.remove("local/nope")).rejects.toThrow(NotFound);
     });
   });
 
   describe("scan", () => {
-    it("scans flat agents", async () => {
-      const dir = join(catalogDir, "agents", "reviewer");
+    it("scans legacy unscoped agents (auto-scoped to local)", async () => {
+      const dir = join(catalogDir, "agents", "local", "reviewer");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "AGENTS.md"), "---\nname: reviewer\ndescription: R\n---\n");
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
-      expect(store.get("reviewer")!.name).toBe("reviewer");
+      expect(store.get("local/reviewer")!.name).toBe("local/reviewer");
     });
 
     it("scans scoped agents", async () => {
@@ -109,14 +90,14 @@ describe("AgentCatalog", () => {
       await mkdir(dir, { recursive: true });
       await writeFile(
         join(dir, "AGENTS.md"),
-        "---\nname: langsensei/reviewer\ndescription: R\n---\n",
+        "---\nname: reviewer\nscope: langsensei\ndescription: R\n---\n",
       );
       await store.scan();
       expect(store.has("langsensei/reviewer")).toBe(true);
     });
 
     it("records issues for bad frontmatter", async () => {
-      const dir = join(catalogDir, "agents", "bad");
+      const dir = join(catalogDir, "agents", "local", "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "AGENTS.md"), "---\n: invalid\n---\n");
       const issues = await store.scan();
@@ -125,16 +106,17 @@ describe("AgentCatalog", () => {
   });
 
   describe("graphNodes", () => {
-    it("returns dependency graph", async () => {
+    it("returns dependency graph (FQNs from refs)", async () => {
       await store.install(
-        await makeAgent("reviewer", { deps: { skills: ["lint"], mcps: ["gh"] } }),
+        await makeAgentSource(sourceDir, "reviewer", {
+          deps: { skills: [dep("lint")], mcps: [dep("gh")] },
+        }),
       );
       const nodes = store.graphNodes();
-      expect(nodes[0]!.dependencies).toEqual(["lint", "gh"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["local/gh", "local/lint"]);
     });
   });
 
-  // See SkillCatalog equivalent for rationale.
   describe("getContent path-traversal hardening", () => {
     it("rejects names with `..` segments", async () => {
       await expect(store.getContent("../../../etc/passwd")).rejects.toBeInstanceOf(NameInvalid);
