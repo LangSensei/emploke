@@ -52,11 +52,19 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
     const index = await this.readIndex();
     // For each entry, hydrate metadata from the per-workspace file.
     // Entries whose metadata file is missing or corrupted are dropped
-    // here and surfaced via list-time logging in the manager layer; we
-    // don't want a single bad workspace to take down the whole list.
+    // here so a single bad workspace does not take down the whole list.
+    // Single-id callers (`read(id)`) still get the typed error; only the
+    // list path swallows it.
     const out: Workspace[] = [];
     for (const entry of index.entries) {
-      const ws = await this.tryHydrate(entry);
+      let ws: Workspace | null = null;
+      try {
+        ws = await this.tryHydrate(entry);
+      } catch {
+        // Corrupted / unreadable workspace.json — drop silently. The
+        // entry stays in the index until the user explicitly removes
+        // (or re-registers) the workspace.
+      }
       if (ws) out.push(ws);
     }
     return out;

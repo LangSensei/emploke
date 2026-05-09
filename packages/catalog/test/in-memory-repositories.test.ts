@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentStore } from "../src/agent/agent-store.js";
 import { McpStore } from "../src/mcp/mcp-store.js";
+import { SkillStore } from "../src/skill/skill-store.js";
 import {
   InMemoryAgentRepository,
   InMemoryMcpRepository,
   InMemorySkillRepository,
 } from "../testing.js";
-import { SkillStore } from "../src/skill/skill-store.js";
 
 let sourceDir: string;
 

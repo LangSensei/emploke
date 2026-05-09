@@ -71,20 +71,31 @@ export async function withFileLock<T>(
   const myPid = process.pid;
   const myMarker = `${myPid}\n`;
   while (true) {
+    let fh: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      const fh = await open(lockPath, "wx");
+      fh = await open(lockPath, "wx");
       try {
         await fh.write(myMarker);
       } catch {
         // Diagnostic write failure is non-fatal; the lock itself is held.
       }
       await fh.close();
+      fh = null;
       try {
         return await fn();
       } finally {
         await releaseIfMine(lockPath, myMarker);
       }
     } catch (err) {
+      // Make sure we don't leak a still-open handle (close() above may
+      // have thrown after `open` succeeded). Also release the on-disk
+      // lock file we just created if we never reached the fn() critical
+      // section — otherwise stale-recovery would have to wait `staleMs`
+      // before another caller could proceed.
+      if (fh) {
+        await fh.close().catch(() => {});
+        await releaseIfMine(lockPath, myMarker);
+      }
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") throw err;
 

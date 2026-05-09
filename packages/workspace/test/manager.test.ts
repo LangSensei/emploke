@@ -242,6 +242,21 @@ describe("FsWorkspaceRepository — corruption / schema mismatch", () => {
     await writeFile(path.join(ws.workdir, "workspace.json"), "not json", "utf8");
     await expect(m.read(UUID_A)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
   });
+
+  it("explicitly corrupted workspace.json is dropped from list() (resilient)", async () => {
+    // Regression: tryHydrate used to throw on parse errors, taking down
+    // the whole list. list() must isolate per-entry corruption so a single
+    // bad workspace doesn't hide every other registered one.
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "Healthy", workdir: path.join(scratch, "h") });
+    const bad = await m.init({ id: UUID_B, name: "Bad", workdir: path.join(scratch, "b") });
+    await writeFile(path.join(bad.workdir, "workspace.json"), "not json", "utf8");
+
+    const all = await m.list();
+    expect(all.map((w) => w.id)).toEqual([UUID_A]);
+    // Single-id read still surfaces the typed error.
+    await expect(m.read(UUID_B)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
+  });
 });
 
 describe("WorkspaceManager (InMemoryWorkspaceRepository) — sanity", () => {
