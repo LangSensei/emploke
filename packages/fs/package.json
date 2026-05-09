@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/storage",
+  "name": "@emploke/fs",
   "version": "0.0.1",
-  "description": "Storage primitives for emploke (atomic write, cross-process lock, JSON helpers)",
+  "description": "Filesystem primitives for emploke (atomic write, cross-process lock, JSON helpers)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -34,6 +34,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/storage"
+    "directory": "packages/fs"
   }
 }

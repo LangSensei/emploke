@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { mkdirP, readJson, safeReaddir, writeJsonAtomic } from "@emploke/storage";
+import { mkdirP, readJson, safeReaddir, writeJsonAtomic } from "@emploke/fs";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { assertValidTaskId, TASK_ID_RE } from "../ids.js";
 import { readTaskRuntimeMetadata } from "../task-meta.js";

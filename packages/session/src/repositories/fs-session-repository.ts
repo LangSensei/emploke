@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readJson, safeReaddir, writeJsonAtomic } from "@emploke/storage";
+import { readJson, safeReaddir, writeJsonAtomic } from "@emploke/fs";
 import { InvalidSessionIdError, SessionCorruptedError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
 import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";

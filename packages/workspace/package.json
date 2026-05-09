@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@emploke/paths": "workspace:*",
-    "@emploke/storage": "workspace:*"
+    "@emploke/fs": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,6 +1,6 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdirP, writeFileAtomic } from "@emploke/storage";
+import { mkdirP, writeFileAtomic } from "@emploke/fs";
 import { atomicReplaceDir, pathExists } from "../atomic.js";
 import { nameToPath, validateName } from "../validate.js";
 import { walkEntryDir } from "./entries-helpers.js";

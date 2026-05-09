@@ -34,7 +34,7 @@
     "@emploke/catalog": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
-    "@emploke/storage": "workspace:*",
+    "@emploke/fs": "workspace:*",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {

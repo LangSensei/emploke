@@ -65,7 +65,7 @@ class RealNodeRuntime implements Runtime {
   async refresh(): Promise<null> {
     return null;
   }
-  buildLaunch(s: Session): LaunchCommand {
+  async buildLaunch(s: Session): Promise<LaunchCommand> {
     return { cmd: "noop", args: [], cwd: s.workdir, display: "noop" };
   }
   async deleteState(): Promise<void> {}

@@ -1,11 +1,6 @@
-import path from "node:path";
 import { CatalogManager } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
-import {
-  type Runtime,
-  RuntimeRegisterWorkspaceFailed,
-  type RuntimeRegistry,
-} from "@emploke/runtime";
+import type { RuntimeRegistry } from "@emploke/runtime";
 import { SessionManager } from "@emploke/session";
 import { TaskManager } from "@emploke/task";
 import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke/workspace";
@@ -33,14 +28,14 @@ export interface WorkspaceContext {
  * Lookup flow on a cache miss:
  *   1. Look up the workspace via the injected `WorkspaceManager`. If
  *      not registered, return null — the route handler will respond 404.
- *   2. Call `Runtime.registerWorkspace?` on every registered runtime so
- *      one-time setup (e.g. trust) happens before any session actually
- *      runs in this workspace. Failures wrap as
- *      `RuntimeRegisterWorkspaceFailed`.
- *   3. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
- *   4. Build `SessionManager` and `TaskManager` pointed at the
- *      per-workspace state directories.
- *   5. Cache the bundle keyed by id.
+ *   2. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
+ *   3. Build `SessionManager` and `TaskManager` pointed at the
+ *      per-workspace state directories. Both receive `workspaceDir` so
+ *      runtime adapters can run any per-launch / per-dispatch
+ *      preflights they need (e.g. Copilot's interactive-mode trust
+ *      write into `~/.copilot/config.json`) without the server having
+ *      to know which runtime needs what.
+ *   4. Cache the bundle keyed by id.
  *
  * We cache by id (URL identifier) rather than by absolute path so a stale
  * cache entry can be expired with `invalidate(id)` when the workspace
@@ -53,8 +48,8 @@ export class WorkspaceContextCache {
   private readonly entries = new Map<string, WorkspaceContext>();
   /**
    * Inflight lookups keyed by id, to dedupe concurrent first-request
-   * stampedes (the `registerWorkspace` calls each runtime makes can be
-   * expensive — we don't want N parallel calls for one workspace).
+   * stampedes (catalog opens and orphan-task recovery are both bounded
+   * but non-trivial; we don't want N parallel runs for one workspace).
    */
   private readonly inflight = new Map<string, Promise<WorkspaceContext | null>>();
 
@@ -114,8 +109,6 @@ export class WorkspaceContextCache {
     const workspace = await this.workspaces.read(id);
     if (!workspace) return null;
 
-    await registerWorkspaceWithRuntimes(this.runtimeRegistry, workspace.workdir);
-
     const layout = workspaceLayout(workspace.workdir);
     const catalog = await CatalogManager.open({ catalogDir: layout.catalog });
 
@@ -123,6 +116,7 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
+      workspaceDir: workspace.workdir,
       logger: this.logger,
     });
 
@@ -142,30 +136,4 @@ export class WorkspaceContextCache {
     this.entries.set(id, ctx);
     return ctx;
   }
-}
-
-/**
- * Call `registerWorkspace` on every runtime that implements it. Runtimes
- * without the optional method are skipped silently. Failures wrap into
- * `RuntimeRegisterWorkspaceFailed` so callers see a typed error.
- *
- * Exported for tests.
- */
-export async function registerWorkspaceWithRuntimes(
-  registry: RuntimeRegistry,
-  workspaceDir: string,
-): Promise<void> {
-  const dir = path.resolve(workspaceDir);
-  const tasks: Promise<void>[] = [];
-  for (const kind of registry.kinds()) {
-    const runtime: Runtime = registry.get(kind);
-    if (!runtime.registerWorkspace) continue;
-    tasks.push(
-      runtime.registerWorkspace(dir).catch((err) => {
-        if (err instanceof RuntimeRegisterWorkspaceFailed) throw err;
-        throw new RuntimeRegisterWorkspaceFailed(kind, dir, err as Error);
-      }),
-    );
-  }
-  await Promise.all(tasks);
 }

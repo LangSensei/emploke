@@ -33,7 +33,6 @@ export {
   RuntimeDispatchTaskFailed,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
-  RuntimeRegisterWorkspaceFailed,
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "./errors.js";

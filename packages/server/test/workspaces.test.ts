@@ -22,7 +22,7 @@ async function makeApp() {
   const manager = new WorkspaceManager(new FsWorkspaceRepository({ indexFile }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
-    new CopilotRuntime({ copilotSettingsPath: path.join(scratch, "copilot-settings.json") }),
+    new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
   );
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
   return { app: workspacesRoutes({ manager, cache }), manager };

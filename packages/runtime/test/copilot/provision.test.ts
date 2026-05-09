@@ -178,13 +178,13 @@ describe("provisionCopilotWorkdir — basics", () => {
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
   });
 
-  it("does NOT touch any settings file (trust handling moved to registerWorkspace)", async () => {
+  it("does NOT touch any settings file (trust handling moved to the buildLaunch preflight)", async () => {
     const t = targetDir();
-    const settingsPath = path.join(scratch, "copilot-settings.json");
-    expect(await exists(settingsPath)).toBe(false);
+    const configPath = path.join(scratch, "copilot-config.json");
+    expect(await exists(configPath)).toBe(false);
     const { catalog, agentName } = await setup({});
     await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
-    expect(await exists(settingsPath)).toBe(false);
+    expect(await exists(configPath)).toBe(false);
   });
 
   it("copies sibling files the agent installs alongside AGENTS.md", async () => {

@@ -41,18 +41,27 @@ export class WorkdirPrepFailed extends Error {
 }
 
 /**
- * Thrown when `CopilotRuntime.registerWorkspace` fails to persist a trust
- * entry into the Copilot CLI's settings file. This happens before any
- * sessions can run inside the workspace; without it the spawned `copilot`
- * CLI would interrupt the user with a per-folder trust prompt.
+ * Thrown when ensuring trust on the Copilot CLI's `config.json` (the
+ * file the CLI actually reads `trustedFolders` from — see `trust.ts`
+ * for why this is `config.json` and not `settings.json`) fails.
+ *
+ * Surfaced from `CopilotRuntime.buildLaunch` as part of the per-launch
+ * trust preflight: an interactive (`-i`) Copilot session that runs in a
+ * folder not covered by `trustedFolders` would stall on the blocking
+ * "Confirm folder trust" prompt inside the freshly-spawned terminal.
+ * Failing the launch up front (and surfacing this error in the
+ * dashboard) is much better UX than silently spawning into that prompt.
+ *
+ * The non-interactive `copilot -p --yolo` path used by `dispatchTask`
+ * is unaffected because it has no folder-trust gate.
  */
 export class TrustRegistrationFailed extends Error {
   constructor(
-    public readonly settingsPath: string,
+    public readonly configPath: string,
     public readonly workspaceDir: string,
     cause: Error,
   ) {
-    super(`failed to register workspace ${workspaceDir} in ${settingsPath}: ${cause.message}`);
+    super(`failed to ensure ${workspaceDir} is trusted in ${configPath}: ${cause.message}`);
     this.name = "TrustRegistrationFailed";
     this.cause = cause;
   }

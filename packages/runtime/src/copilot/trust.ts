@@ -1,215 +1,121 @@
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { FsLockTimeoutError } from "@emploke/fs";
+import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/fs";
 import { TrustRegistrationFailed } from "./errors.js";
 
 /**
- * Persistence + concurrency for `~/.copilot/settings.json.trustedFolders`.
+ * Persistence + concurrency for `~/.copilot/config.json.trustedFolders`.
  *
- * Splitting this out of `provision.ts` reflects the new design: trust is a
- * **workspace-level** concern, not a per-session one. The Copilot runtime
- * calls `ensureDirTrusted` once per workspace at registration time; per
- * session no longer touches `settings.json` at all. The result is one
- * `trustedFolders` entry per workspace instead of one per session.
+ * # Why `config.json` and not `settings.json`?
  *
- * Concurrency, atomicity and "covered-by-ancestor" matching all behave
- * exactly as the previous `ensureWorkdirTrusted` did — only the call site
- * and the meaning of the path argument have changed.
+ * The Copilot CLI exposes two top-level user files in `~/.copilot/`:
  *
- * Note: the lock implementation here is intentionally a sibling of the one
- * in `@emploke/workspace`'s `atomic.ts` (same PID-guard hardening). The
- * two are kept in sync by hand to avoid a `runtime → workspace` dependency.
- * If a third caller appears, factor both into a shared `@emploke/fs-utils`.
+ *   - `settings.json` — documented "user settings" (logLevel, model, …).
+ *     It happens to also accept a `trustedFolders` field syntactically,
+ *     but the CLI **silently ignores** it for trust-gate decisions.
+ *
+ *   - `config.json` — leading comment says "managed automatically", which
+ *     makes it look off-limits for hand-edits. It is in fact the ONLY
+ *     file the CLI reads `trustedFolders` from. Verified empirically
+ *     against Copilot CLI 1.0.44 by writing identical entries to both
+ *     files and observing that only the `config.json` entry suppressed
+ *     the "Confirm folder trust" prompt in `-i` mode.
+ *
+ *   - Independent verification: a hand-added entry survives a Copilot
+ *     `-p --yolo` round-trip without being rewritten or removed, so it
+ *     is safe for emploke to keep its own entries here.
+ *
+ * Using `config.json` is therefore both correct and stable. The previous
+ * implementation wrote to `settings.json`, which was a no-op for the
+ * trust gate — hence issue #38's report that interactive sessions still
+ * showed the trust prompt despite "registration succeeding".
+ *
+ * # When this runs (lazy, per-launch)
+ *
+ * `ensureDirTrusted` is called from `CopilotRuntime.buildLaunch` as a
+ * pre-launch preflight, NOT from a workspace-bootstrap hook. The first
+ * interactive launch in a workspace pays one read+write of `config.json`;
+ * every subsequent launch hits the "already covered" early return after
+ * a single read. That keeps `trustedFolders` O(workspaces) (one entry
+ * per workspace via ancestor coverage) and means workspaces that are
+ * only used for non-interactive `-p --yolo` tasks never touch the file.
+ *
+ * # Why Copilot-only
+ *
+ * The whole module is intentionally Copilot-specific. Trust is not
+ * lifted into the cross-runtime `Runtime` interface; each runtime
+ * adapter owns its own preconditions and decides where to enforce them.
+ * A future Gemini or Claude-Code adapter would write its own helper, or
+ * none at all, depending on what its CLI requires.
+ *
+ * # IO mechanics
+ *
+ * The atomic-write + cross-process lock primitives come from
+ * `@emploke/fs` (the same primitives every `Fs*Repository` uses). The
+ * lock has PID-based stale recovery and the write goes through a tmp
+ * file + rename, so concurrent buildLaunch preflights from multiple
+ * dashboard sessions cannot lose-update each other or partially write
+ * `config.json`.
  */
 
-/** Default time to wait for a contended lock before failing. */
-const SETTINGS_LOCK_WAIT_MS = 5000;
 /**
- * Time after which an existing lock file is *eligible* for stale-recovery
- * via mtime alone. Even past this threshold we still try a PID liveness
- * check first; the mtime threshold is the fallback for the case where the
- * holder PID could not be parsed.
- */
-const SETTINGS_LOCK_STALE_MS = 30000;
-/** Poll interval while waiting on a contended lock. */
-const SETTINGS_LOCK_POLL_MS = 50;
-
-/**
- * Make sure `dir` is covered by `<settingsPath>.trustedFolders` so the
- * spawned Copilot CLI does not interrupt the user with a per-folder trust
- * prompt.
+ * Make sure `dir` is covered by `<configPath>.trustedFolders` so the
+ * spawned interactive Copilot CLI (`-i`, see `buildLaunch`) does not
+ * interrupt the user with a per-folder trust prompt.
+ *
+ * `configPath` is normally `~/.copilot/config.json` — see the module
+ * jsdoc for why this file (and not `settings.json`) is the correct
+ * authority for `trustedFolders`. The Copilot `-p --yolo` mode used by
+ * `dispatchTask` has no folder-trust gate at all and therefore does
+ * NOT call this function.
  *
  * Coverage rules (see `isPathCovered`):
  *   - exact match on the resolved absolute path counts as trusted
  *   - any ancestor directory listed in `trustedFolders` counts as trusted
  *
- * Concurrency: the entire read-modify-write sequence runs under a
- * `<settingsPath>.lock` file (`O_EXCL` create-or-fail, with stale-lock
- * recovery). Without the lock, two concurrent registerWorkspace calls
- * could both pass `isPathCovered` before either wrote, then the second
- * `rename()` would clobber the first writer's unrelated changes.
+ * Concurrency: the entire read-modify-write sequence runs under
+ * `withFileLock(<configPath>.lock)`. Without the lock, two concurrent
+ * buildLaunch preflights could both pass `isPathCovered` before either
+ * wrote, then the second `writeJsonAtomic` would clobber the first
+ * writer's unrelated changes.
+ *
+ * Failure modes — every failure path (mkdir, lock timeout, atomic
+ * write, parent permissions) is wrapped as {@link TrustRegistrationFailed}.
+ * That gives `buildLaunch` a single, typed catch surface and preserves
+ * the underlying message (which for {@link FsLockTimeoutError} includes
+ * the holder PID — the operator's only handle to a wedged trust write).
  *
  * If `dir` (or an ancestor) is already covered, the file is left untouched.
- * A missing or unparseable settings file is treated as "start fresh"; we
- * never refuse to register a workspace because the user's settings are
- * corrupted (that would block the very first session on a new install).
+ * A missing or unparseable config file is treated as "start fresh"; we
+ * never refuse to launch because the user's config is corrupted (that
+ * would block the very first session on a new install).
  */
-export async function ensureDirTrusted(dir: string, settingsPath: string): Promise<void> {
+export async function ensureDirTrusted(dir: string, configPath: string): Promise<void> {
   const resolvedDir = path.resolve(dir);
 
   try {
-    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdirP(path.dirname(configPath));
+    await withFileLock(`${configPath}.lock`, async () => {
+      let config: Record<string, unknown> = {};
+      try {
+        const parsed = await readJson<unknown>(configPath);
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+          config = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Invalid JSON — start fresh. We never refuse to launch because
+        // the user's config is corrupted; the rewrite below will produce
+        // a valid file containing just `trustedFolders`.
+      }
+
+      const existing = readTrustedFolders(config.trustedFolders);
+      if (isPathCovered(resolvedDir, existing)) return;
+
+      config.trustedFolders = [...existing, resolvedDir];
+      await writeJsonAtomic(configPath, config);
+    });
   } catch (cause) {
-    throw new TrustRegistrationFailed(settingsPath, resolvedDir, cause as Error);
-  }
-
-  await withSettingsLock(`${settingsPath}.lock`, async () => {
-    let settings: Record<string, unknown> = {};
-    try {
-      const raw = await readFile(settingsPath, "utf8");
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        settings = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // ENOENT or invalid JSON — fall through with `settings = {}`.
-    }
-
-    const existing = readTrustedFolders(settings.trustedFolders);
-    if (isPathCovered(resolvedDir, existing)) return;
-
-    settings.trustedFolders = [...existing, resolvedDir];
-
-    try {
-      const tmp = `${settingsPath}.tmp-${process.pid}-${Date.now()}`;
-      await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-      await rename(tmp, settingsPath);
-    } catch (cause) {
-      throw new TrustRegistrationFailed(settingsPath, resolvedDir, cause as Error);
-    }
-  });
-}
-
-/**
- * Acquire an advisory lock on `lockPath`, run `fn`, then release.
- *
- * Stale-recovery is conservative: if we can read a PID from the existing
- * lock file and `process.kill(pid, 0)` does not throw, we never steal —
- * even if the file is older than `SETTINGS_LOCK_STALE_MS`. Only when the
- * holder PID is dead, unparseable, or absent AND the file is past the
- * mtime threshold do we evict and retry.
- *
- * Release only `unlink`s the file if its contents still match our PID.
- * That guards the (now narrow) race where a long-running `fn()` was
- * evicted by a waiter that decided we were stale; we must not then
- * delete the new owner's lock.
- */
-async function withSettingsLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  const start = Date.now();
-  const myMarker = `${process.pid}\n`;
-  while (true) {
-    try {
-      const fh = await open(lockPath, "wx");
-      try {
-        await fh.write(myMarker);
-      } catch {}
-      await fh.close();
-      try {
-        return await fn();
-      } finally {
-        await releaseIfMine(lockPath, myMarker);
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") throw err;
-
-      if (Date.now() - start > SETTINGS_LOCK_WAIT_MS) {
-        const holder = await readLockHolder(lockPath);
-        const detail = holder !== null ? ` (held by PID ${holder})` : "";
-        throw new Error(
-          `timed out (${SETTINGS_LOCK_WAIT_MS}ms) acquiring lock on ${lockPath}${detail}`,
-        );
-      }
-
-      if (await tryStealStaleLock(lockPath)) continue;
-      await new Promise((resolve) => setTimeout(resolve, SETTINGS_LOCK_POLL_MS));
-    }
-  }
-}
-
-/**
- * Inspect the lock file and `unlink` it iff it is safely stealable.
- * Returns true if the caller should immediately retry acquisition.
- *
- * Order of checks:
- *   1. Holder PID readable AND alive → never steal (long-running fn).
- *   2. Holder PID readable AND dead (ESRCH) → steal regardless of mtime.
- *   3. PID unparseable AND mtime past `SETTINGS_LOCK_STALE_MS` → steal.
- *   4. Otherwise leave alone; let the poll loop wait.
- */
-async function tryStealStaleLock(lockPath: string): Promise<boolean> {
-  let st: Awaited<ReturnType<typeof stat>>;
-  try {
-    st = await stat(lockPath);
-  } catch {
-    // Lock file vanished between EEXIST and stat — race; retry now.
-    return true;
-  }
-  const holder = await readLockHolder(lockPath);
-  if (holder !== null) {
-    if (isProcessAlive(holder)) return false;
-    await unlinkIgnoreMissing(lockPath);
-    return true;
-  }
-  if (Date.now() - st.mtimeMs > SETTINGS_LOCK_STALE_MS) {
-    await unlinkIgnoreMissing(lockPath);
-    return true;
-  }
-  return false;
-}
-
-async function releaseIfMine(lockPath: string, expectedMarker: string): Promise<void> {
-  let raw: string;
-  try {
-    raw = await readFile(lockPath, "utf8");
-  } catch {
-    return;
-  }
-  if (raw === expectedMarker) {
-    await unlinkIgnoreMissing(lockPath);
-  }
-  // else: another waiter took ownership; do not touch.
-}
-
-async function unlinkIgnoreMissing(p: string): Promise<void> {
-  try {
-    await unlink(p);
-  } catch {}
-}
-
-/** Best-effort read of the PID written by the current lock holder. */
-async function readLockHolder(lockPath: string): Promise<number | null> {
-  try {
-    const raw = (await readFile(lockPath, "utf8")).trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * `process.kill(pid, 0)` returns nothing on success and throws ESRCH if
- * the pid is dead. EPERM means "exists but I don't own it" — treat as
- * alive. Any other error: be conservative and assume alive.
- */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return false;
-    return true;
+    throw new TrustRegistrationFailed(configPath, resolvedDir, cause as Error);
   }
 }
 

@@ -71,7 +71,6 @@ describe("errorBody", () => {
       "RuntimeProvisionFailed",
       "RuntimeRefreshFailed",
       "RuntimeStateDeletionFailed",
-      "RuntimeRegisterWorkspaceFailed",
       "UnknownRuntimeError",
       "TrustRegistrationFailed",
       "WorkdirPrepFailed",

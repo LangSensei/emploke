@@ -30,9 +30,9 @@ importers:
 
   packages/catalog:
     dependencies:
-      '@emploke/storage':
+      '@emploke/fs':
         specifier: workspace:*
-        version: link:../storage
+        version: link:../fs
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -93,6 +93,18 @@ importers:
         specifier: ^6.3.5
         version: 6.4.2(@types/node@22.19.17)(tsx@4.21.0)
 
+  packages/fs:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/logger:
     dependencies:
       pino:
@@ -132,6 +144,9 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/fs':
+        specifier: workspace:*
+        version: link:../fs
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -203,15 +218,15 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/fs':
+        specifier: workspace:*
+        version: link:../fs
       '@emploke/logger':
         specifier: workspace:*
         version: link:../logger
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@emploke/storage':
-        specifier: workspace:*
-        version: link:../storage
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -229,32 +244,20 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)
 
-  packages/storage:
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.17
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.17)
-
   packages/task:
     dependencies:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/fs':
+        specifier: workspace:*
+        version: link:../fs
       '@emploke/logger':
         specifier: workspace:*
         version: link:../logger
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@emploke/storage':
-        specifier: workspace:*
-        version: link:../storage
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -284,12 +287,12 @@ importers:
 
   packages/workspace:
     dependencies:
+      '@emploke/fs':
+        specifier: workspace:*
+        version: link:../fs
       '@emploke/paths':
         specifier: workspace:*
         version: link:../paths
-      '@emploke/storage':
-        specifier: workspace:*
-        version: link:../storage
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

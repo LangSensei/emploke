@@ -25,7 +25,7 @@ beforeEach(async () => {
   workspaces = new WorkspaceManager(new FsWorkspaceRepository({ indexFile }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
-    new CopilotRuntime({ copilotSettingsPath: path.join(scratch, "copilot-settings.json") }),
+    new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
   );
   cache = new WorkspaceContextCache({ runtimeRegistry, workspaces });
 });

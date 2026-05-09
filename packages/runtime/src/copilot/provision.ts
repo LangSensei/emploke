@@ -46,10 +46,11 @@ export function flattenSkillName(name: string): string {
  * way.
  *
  * **Trust handling moved out**: previous versions of this function also
- * appended `workdir` to `~/.copilot/settings.json.trustedFolders`. That
- * concern is now `CopilotRuntime.registerWorkspace`, called once per
- * workspace at server bootstrap. Per-session provision no longer touches
- * the user's settings file.
+ * appended `workdir` to `~/.copilot/config.json.trustedFolders`. That
+ * concern is now `CopilotRuntime.buildLaunch`'s preflight, which writes
+ * the workspace dir (idempotently, with ancestor coverage) into
+ * `config.json` immediately before producing the launch spec. Per-session
+ * provision no longer touches the user's Copilot config file.
  *
  * Idempotent in the trivial sense (re-running with the same inputs produces
  * the same files), but emploke's session manager always provisions into a

@@ -83,8 +83,21 @@ export interface Runtime {
    *
    * The caller is expected to have just invoked `refresh()` so that
    * `runtimeSessionId` is as up to date as it can be.
+   *
+   * `workspaceDir` is the absolute path of the workspace this session
+   * lives under (the parent of `<workspace>/sessions/<id>/workdir`).
+   * Runtimes are free to ignore it; CLIs whose interactive mode requires
+   * a per-launch precondition keyed off the workspace root (e.g. Copilot
+   * needs an entry in `~/.copilot/config.json` `trustedFolders` to
+   * suppress its folder-trust prompt) use it to perform that
+   * precondition here, lazily, only when the user actually launches.
+   *
+   * Async by contract: a runtime may need to do a small amount of
+   * idempotent fs work (write a config, open a token) before returning
+   * the launch spec. Pure runtimes simply `return { ... }` without
+   * `await`ing anything.
    */
-  buildLaunch(session: Session): LaunchCommand;
+  buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand>;
 
   /**
    * Remove the CLI's recorded state for `session`. No-op if no state exists.
@@ -92,23 +105,6 @@ export interface Runtime {
    * the caller is responsible for surfacing this to the user.
    */
   deleteState(session: Session): Promise<void>;
-
-  /**
-   * Optional one-time setup step performed against a workspace root rather
-   * than a per-session workdir. Called by the server when a workspace is
-   * first opened (and again on subsequent server bootstraps; implementations
-   * MUST be idempotent).
-   *
-   * Use cases:
-   *  - record the workspace as trusted with the CLI so spawned sessions
-   *    don't trigger per-folder trust prompts (Copilot)
-   *  - register a workspace-level config, project token, etc.
-   *
-   * Runtimes with no workspace-level setup omit this method entirely.
-   * Failures should be wrapped in `RuntimeRegisterWorkspaceFailed` by the
-   * caller (the runtime can throw any error; the registry adapter wraps).
-   */
-  registerWorkspace?(workspaceDir: string): Promise<void>;
 
   /**
    * Optional. Runtimes whose underlying CLI supports non-interactive

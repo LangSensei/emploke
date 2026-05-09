@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as storage from "@emploke/storage";
+import * as storage from "@emploke/fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NameInvalid } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
@@ -11,11 +11,11 @@ import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 // Hoisted-by-vitest mock that wraps `writeFileAtomic` with a spyable
 // passthrough. Only the regression test below uses the spy; everything
 // else hits the real implementation. Required because the production
-// code static-imports `writeFileAtomic` from `@emploke/storage`, which
+// code static-imports `writeFileAtomic` from `@emploke/fs`, which
 // binds the function at module load — `vi.spyOn(storage, ...)` after
 // the fact would not affect the production code's local binding.
-vi.mock("@emploke/storage", async () => {
-  const actual = await vi.importActual<typeof import("@emploke/storage")>("@emploke/storage");
+vi.mock("@emploke/fs", async () => {
+  const actual = await vi.importActual<typeof import("@emploke/fs")>("@emploke/fs");
   return {
     ...actual,
     writeFileAtomic: vi.fn(actual.writeFileAtomic),
@@ -220,7 +220,7 @@ describe("FsSkillRepository.entries", () => {
 });
 
 // Parameterised regression for issue #45: every catalog repo's `write()`
-// MUST go through `@emploke/storage.writeFileAtomic`. The original
+// MUST go through `@emploke/fs.writeFileAtomic`. The original
 // PR #41 review-fix claimed all three were switched but agent was
 // missed; without this test the next mass-rewrite could lose it again
 // silently.
@@ -256,7 +256,7 @@ describe("catalog FS repos: write() goes through writeFileAtomic (regression for
       payload: '{"command":"gh"}',
     },
   ]) {
-    it(`${repoName}.write() invokes @emploke/storage.writeFileAtomic`, async () => {
+    it(`${repoName}.write() invokes @emploke/fs.writeFileAtomic`, async () => {
       const repo = build(catalogDir);
       await repo.write(entryName, payload);
       expect(vi.mocked(storage.writeFileAtomic)).toHaveBeenCalled();
