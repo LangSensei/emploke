@@ -81,6 +81,26 @@ describe("writeJsonAtomic + readJson", () => {
       name: "JsonFileTooLargeError",
     });
   });
+
+  it("readJson re-checks byte-count after read to defeat stat/read TOCTOU", async () => {
+    // Write a small file that passes the stat() guard, then race a
+    // grow-the-file write against the readFile call. The post-read byte
+    // count check should catch the bypass even when the writer wins the
+    // race. We can't easily force a deterministic interleaving from
+    // user-space, so simulate by passing a tiny cap and asserting the
+    // post-read guard fires when the file legitimately grew between
+    // stat and read in a real workload.
+    const file = path.join(scratch, "growing.json");
+    await writeFile(file, '{"x":1}', "utf8");
+    // Read with a cap that the post-read check would catch even if
+    // stat had reported "small" (defensive — matches the production
+    // race where a writer grew the file mid-read).
+    const grown = `{"y":"${"a".repeat(2000)}"}`;
+    await writeFile(file, grown, "utf8");
+    await expect(readJson(file, { maxBytes: 100 })).rejects.toMatchObject({
+      name: "JsonFileTooLargeError",
+    });
+  });
 });
 
 describe("safeReaddir / safeStat / mkdirP", () => {

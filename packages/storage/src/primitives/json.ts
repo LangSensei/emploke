@@ -56,10 +56,18 @@ export async function readJson<T = unknown>(
   // open(). Reading via readFile() afterwards would re-stat and could
   // race a concurrent writer growing the file past the cap.
   const fh = await open(absPath, "r");
+  let buf: string;
   try {
-    const buf = await fh.readFile({ encoding: "utf8" });
-    return JSON.parse(buf) as T;
+    buf = await fh.readFile({ encoding: "utf8" });
   } finally {
     await fh.close();
   }
+  // Defense-in-depth: stat-then-open is a TOCTOU race — a concurrent
+  // writer can grow the file between stat() and readFile(). The pre-read
+  // stat is still useful (avoids materializing genuinely huge files at
+  // all) but the byte-count guard belongs after the read too.
+  if (buf.length > maxBytes) {
+    throw new JsonFileTooLargeError(absPath, buf.length, maxBytes);
+  }
+  return JSON.parse(buf) as T;
 }
