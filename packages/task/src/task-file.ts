@@ -6,7 +6,12 @@ import type { Task } from "./types.js";
 /** Filename written under each task dir. */
 export const TASK_FILE_NAME = "task.json";
 
-/** Bumped when the on-disk schema changes incompatibly. */
+/**
+ * Bumped when the on-disk schema changes incompatibly. See the canonical
+ * policy on `@emploke/workspace`'s `CURRENT_SCHEMA_VERSION` (jsdoc) for
+ * bump criteria, mismatch behaviour, and migration strategy. The same
+ * rules apply per entity.
+ */
 export const CURRENT_SCHEMA_VERSION = 1;
 
 /**
@@ -52,7 +57,7 @@ export async function readPersistedTask(
   }
   const obj = parsed as Record<string, unknown>;
   if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
-    return { ok: false, reason: `unsupported schemaVersion: ${JSON.stringify(obj.schemaVersion)}` };
+    return { ok: false, reason: schemaMismatchReason(obj.schemaVersion) };
   }
   const task = obj.task;
   if (!task || typeof task !== "object" || Array.isArray(task)) {
@@ -156,6 +161,25 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
     }
   }
   throw lastErr;
+}
+
+/**
+ * Build a direction-aware rejection message for a schemaVersion mismatch.
+ * Distinguishing newer vs older lets operators take the right action
+ * without reading source: a newer-on-disk file means "upgrade the
+ * server", an older-on-disk file means "this version of emploke can't
+ * read pre-N data yet" (a future migration would land here).
+ */
+function schemaMismatchReason(onDisk: unknown): string {
+  if (typeof onDisk === "number" && Number.isFinite(onDisk)) {
+    if (onDisk > CURRENT_SCHEMA_VERSION) {
+      return `task.json was written by a newer emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`;
+    }
+    if (onDisk < CURRENT_SCHEMA_VERSION) {
+      return `task.json was written by an older emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Migration from older versions is not yet implemented.`;
+    }
+  }
+  return `unsupported schemaVersion: ${JSON.stringify(onDisk)}`;
 }
 
 /**

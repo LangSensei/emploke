@@ -49,10 +49,36 @@ describe("readPersistedSession", () => {
     expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("object") });
   });
 
-  it("rejects unsupported schemaVersion", async () => {
+  it("rejects newer schemaVersion with an upgrade-server hint", async () => {
     await writeFile(
       path.join(workdir, SESSION_FILE_NAME),
       JSON.stringify({ ...sample, schemaVersion: 99 }),
+      "utf8",
+    );
+    const r = await readPersistedSession(workdir);
+    expect(r).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("Upgrade the server"),
+    });
+  });
+
+  it("rejects older schemaVersion with a migration-not-implemented hint", async () => {
+    await writeFile(
+      path.join(workdir, SESSION_FILE_NAME),
+      JSON.stringify({ ...sample, schemaVersion: 0 }),
+      "utf8",
+    );
+    const r = await readPersistedSession(workdir);
+    expect(r).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("Migration from older versions"),
+    });
+  });
+
+  it("rejects non-numeric schemaVersion as generic unsupported", async () => {
+    await writeFile(
+      path.join(workdir, SESSION_FILE_NAME),
+      JSON.stringify({ ...sample, schemaVersion: "v1" }),
       "utf8",
     );
     const r = await readPersistedSession(workdir);

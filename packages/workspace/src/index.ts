@@ -32,6 +32,7 @@ export {
 export {
   RegistryCorruptedError,
   RegistryError,
+  RegistrySchemaMismatchError,
   WorkspaceAlreadyExistsError,
   WorkspaceCorruptedError,
   WorkspaceError,

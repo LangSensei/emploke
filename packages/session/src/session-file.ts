@@ -6,7 +6,12 @@ import type { PersistedSession } from "./types.js";
 /** Filename written under each workdir to record per-session state. */
 export const SESSION_FILE_NAME = "session.json";
 
-/** Bumped when the on-disk schema changes incompatibly. */
+/**
+ * Bumped when the on-disk schema changes incompatibly. See the canonical
+ * policy on `@emploke/workspace`'s `CURRENT_SCHEMA_VERSION` (jsdoc) for
+ * bump criteria, mismatch behaviour, and migration strategy. The same
+ * rules apply per entity.
+ */
 export const CURRENT_SCHEMA_VERSION = 1;
 
 /**
@@ -38,7 +43,7 @@ export async function readPersistedSession(
   }
   const obj = parsed as Record<string, unknown>;
   if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
-    return { ok: false, reason: `unsupported schemaVersion: ${JSON.stringify(obj.schemaVersion)}` };
+    return { ok: false, reason: schemaMismatchReason(obj.schemaVersion) };
   }
   if (typeof obj.runtime !== "string" || obj.runtime.length === 0) {
     return { ok: false, reason: "missing or invalid 'runtime'" };
@@ -91,4 +96,20 @@ export async function writePersistedSession(
     } catch {}
     throw err;
   }
+}
+
+/**
+ * Build a direction-aware rejection message for a schemaVersion mismatch.
+ * See `@emploke/task`'s `schemaMismatchReason` for the rationale.
+ */
+function schemaMismatchReason(onDisk: unknown): string {
+  if (typeof onDisk === "number" && Number.isFinite(onDisk)) {
+    if (onDisk > CURRENT_SCHEMA_VERSION) {
+      return `session.json was written by a newer emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`;
+    }
+    if (onDisk < CURRENT_SCHEMA_VERSION) {
+      return `session.json was written by an older emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Migration from older versions is not yet implemented.`;
+    }
+  }
+  return `unsupported schemaVersion: ${JSON.stringify(onDisk)}`;
 }

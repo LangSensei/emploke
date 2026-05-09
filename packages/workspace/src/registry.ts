@@ -5,6 +5,7 @@ import { withFileLock, writeFileAtomic } from "./atomic.js";
 import { CURRENT_SCHEMA_VERSION } from "./constants.js";
 import {
   RegistryCorruptedError,
+  RegistrySchemaMismatchError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
@@ -228,6 +229,9 @@ function parseRegistry(file: string, raw: string): ParseResult {
   const obj = parsed as Record<string, unknown>;
 
   if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+    if (typeof obj.schemaVersion === "number" && Number.isFinite(obj.schemaVersion)) {
+      throw new RegistrySchemaMismatchError(file, obj.schemaVersion, CURRENT_SCHEMA_VERSION);
+    }
     throw new RegistryCorruptedError(
       file,
       `unsupported schemaVersion: ${JSON.stringify(obj.schemaVersion)}`,
