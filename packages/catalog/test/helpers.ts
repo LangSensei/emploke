@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type EntryFile, FileFetcher } from "@emploke/catalog-fetcher";
 import type { DependencyRef } from "../src/types.js";
 
 /**
@@ -12,12 +13,11 @@ import type { DependencyRef } from "../src/types.js";
  *  - `name` is the SHORT name authored in the frontmatter (kebab-case, no
  *    `/`). Tests should NEVER write `name: "scope/foo"` — instead set
  *    `scope: "scope"` separately and let the test helpers compute the FQN.
- *  - `scope` is optional — when absent the install will pick `local` from
- *    the synthetic `file:<sourcePath>` origin. Tests that need an
- *    explicit scope (e.g. for graphNodes assertions) pass it.
+ *  - `scope` is optional — when absent the FQN resolves to `public/<name>`
+ *    (the catalog's default scope when frontmatter omits `scope:`).
  *  - `deps` accept either short-form `[{name, originHint}, ...]` or
  *    helper-produced refs via `dep("foo")`. The helper synthesises a
- *    `file:` origin so the resulting FQN resolves to `local/foo`.
+ *    `file:` origin so the resulting FQN resolves to `public/foo`.
  */
 
 /** Compute the FQN for a fixture that omits `scope:`. Always `public/<name>`. */
@@ -40,6 +40,22 @@ export function dep(shortName: string, scope = "public"): DependencyRef {
  */
 export function mcpDep(specName: string): DependencyRef {
   return { name: specName, origin: `file:/test/mcps/${specName.replace("/", "_")}.json` };
+}
+
+const FILE_FETCHER = new FileFetcher();
+
+/**
+ * Convert a local source dir to an `EntryFile` stream + the canonical
+ * `file:<dir>` origin URI. Use this when a test wants to install from
+ * a dir built via `makeSkillSource` / `makeAgentSource` — catalog only
+ * accepts streams now (no more `installFromDir`).
+ */
+export function streamFromDir(dir: string): {
+  stream: AsyncIterable<EntryFile>;
+  origin: string;
+} {
+  const origin = `file:${dir}`;
+  return { stream: FILE_FETCHER.fetch(origin), origin };
 }
 
 export interface MakeSourceOpts {
@@ -132,4 +148,65 @@ export async function makeMcpSource(
 /** Allocate a fresh tmp base dir for a test. */
 export function makeBase(prefix: string): string {
   return join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
+
+/**
+ * Convenience: install an entry from a local directory into a store
+ * that takes a stream + opts. Wraps {@link streamFromDir}.
+ *
+ * Works for `SkillCatalog`, `AgentCatalog`, and `CatalogManager`'s
+ * `installSkill` / `installAgent` (they share the
+ * `(stream, { origin }, label?) → Promise<T>` shape).
+ */
+export async function installFromDir<T>(
+  store: {
+    install(stream: AsyncIterable<EntryFile>, opts: { origin: string }, label?: string): Promise<T>;
+  },
+  dir: string,
+): Promise<T> {
+  const { stream, origin } = streamFromDir(dir);
+  return store.install(stream, { origin }, origin);
+}
+
+/**
+ * Convenience: install a skill into a CatalogManager from a local
+ * dir. Wraps streamFromDir.
+ */
+export async function installCatalogSkillFromDir<
+  C extends {
+    installSkill(
+      stream: AsyncIterable<EntryFile>,
+      opts: { origin: string },
+      label?: string,
+    ): Promise<unknown>;
+  },
+>(c: C, dir: string) {
+  const { stream, origin } = streamFromDir(dir);
+  return c.installSkill(stream, { origin }, origin);
+}
+
+/** Convenience: install an agent into a CatalogManager from a local dir. */
+export async function installCatalogAgentFromDir<
+  C extends {
+    installAgent(
+      stream: AsyncIterable<EntryFile>,
+      opts: { origin: string },
+      label?: string,
+    ): Promise<unknown>;
+  },
+>(c: C, dir: string) {
+  const { stream, origin } = streamFromDir(dir);
+  return c.installAgent(stream, { origin }, origin);
+}
+
+/**
+ * Convenience: install a Repository entry from a local dir, by
+ * wrapping FileFetcher's stream. Used by FsRepository tests that
+ * previously called repo.installFromDir directly.
+ */
+export async function installRepoFromDir<
+  R extends { install(name: string, stream: AsyncIterable<EntryFile>): Promise<void> },
+>(repo: R, name: string, dir: string): Promise<void> {
+  const { stream } = streamFromDir(dir);
+  await repo.install(name, stream);
 }

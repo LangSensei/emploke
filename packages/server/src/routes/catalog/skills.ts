@@ -1,5 +1,4 @@
 import { applyInstall, type CatalogManager, resolveInstall } from "@emploke/catalog";
-import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMetadataBody, readSkillInstallBody } from "./helpers.js";
@@ -7,27 +6,16 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /skills/* relative to the parent mount. Mounted by
- * `catalogRoutes` at "/skills". Takes a per-request catalog resolver so
- * the same handler can serve multiple workspaces; tests can also pass a
- * `CatalogManager` instance directly.
+ * `catalogRoutes` at "/skills".
  *
- * The `POST /` install handler is the entry-point for both local
- * (`file:`) and remote (`https://github.com/...`) installs. It always
- * recursively installs declared dependencies. Behaviour:
+ * Two endpoints for installs:
+ *   - `POST /resolve` — read-only preview (returns ResolveManifest)
+ *   - `POST /` — full install (resolve + apply, returns InstallManifest)
  *
- *   - Resolves the dep graph (read-only) into a `ResolveManifest`
- *   - Applies it node-by-node, honoring `scopeHints` if supplied
- *   - Returns an `InstallManifest` `{installed, skipped, failed}`;
- *     status 201 if `failed.length === 0` else 207 (multi-status)
- *
- * Dashboard's two-phase flow uses `POST /skills/resolve` (returns the
- * resolve manifest only) → user edits scopes → `POST /skills` with
- * `{ origin, scopeHints }`.
+ * Dashboard's two-phase flow uses `/resolve` to show the user what
+ * will happen, then `/` to commit.
  */
-export function skillsRoutes(
-  arg: CatalogResolver | CatalogManager,
-  fetcherRegistry: FetcherRegistry,
-): Hono {
+export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -40,7 +28,6 @@ export function skillsRoutes(
     try {
       const manifest = await resolveInstall({
         catalog,
-        fetchers: fetcherRegistry,
         rootKind: "skill",
         rootOrigin: parsed.origin,
       });
@@ -72,15 +59,10 @@ export function skillsRoutes(
     try {
       const resolved = await resolveInstall({
         catalog,
-        fetchers: fetcherRegistry,
         rootKind: "skill",
         rootOrigin: parsed.origin,
       });
-      const manifest = await applyInstall({
-        catalog,
-        fetchers: fetcherRegistry,
-        manifest: resolved,
-      });
+      const manifest = await applyInstall({ catalog, manifest: resolved });
       const status = manifest.failed.length > 0 ? 207 : 201;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(manifest, status as any);

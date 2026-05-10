@@ -32,7 +32,6 @@ export type RootKind = "skill" | "agent" | "mcp";
 
 export interface ResolveInstallInput {
   readonly catalog: CatalogManager;
-  readonly fetchers: FetcherRegistry;
   readonly rootKind: RootKind;
   readonly rootOrigin: string;
   /** Required when rootKind === "mcp" — the spec FQN to install under. */
@@ -95,7 +94,8 @@ interface PendingNode {
 }
 
 export async function resolveInstall(input: ResolveInstallInput): Promise<ResolveManifest> {
-  const { catalog, fetchers, rootKind, rootOrigin, rootMcpName } = input;
+  const { catalog, rootKind, rootOrigin, rootMcpName } = input;
+  const fetchers = catalog.fetchers;
 
   const nodes = new Map<string, ResolveNode>();
   const visitedOrigins = new Set<string>();

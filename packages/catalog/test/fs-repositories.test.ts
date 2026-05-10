@@ -7,6 +7,7 @@ import { NameInvalid } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
 import { FsMcpRepository } from "../src/repositories/fs-mcp-repository.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
+import { installRepoFromDir } from "./helpers.js";
 
 // Hoisted-by-vitest mock that wraps `writeFileAtomic` with a spyable
 // passthrough. Only the regression test below uses the spy; everything
@@ -49,14 +50,14 @@ describe("FsAgentRepository", () => {
     expect(await repo.read("local/a")).toBe("hello");
   });
 
-  it("installFromDir copies AGENTS.md and sibling files atomically", async () => {
+  it("install via stream copies AGENTS.md and sibling files atomically", async () => {
     const repo = new FsAgentRepository(catalogDir);
     const src = join(sourceDir, "agent-alpha");
     await mkdir(src, { recursive: true });
     await writeFile(join(src, "AGENTS.md"), "alpha-content");
     await writeFile(join(src, "extra.txt"), "extra-bytes");
 
-    await repo.installFromDir("local/alpha", src);
+    await installRepoFromDir(repo, "local/alpha", src);
 
     expect(await repo.read("local/alpha")).toBe("alpha-content");
     const extra = await readFile(join(catalogDir, "agents", "local", "alpha", "extra.txt"), "utf8");
@@ -136,7 +137,7 @@ describe("FsAgentRepository.entries", () => {
     await writeFile(join(src, "AGENTS.md"), "agents-md");
     await writeFile(join(src, "prompt.txt"), "prompt-bytes");
     await writeFile(join(src, "scripts", "lint.sh"), "lint-bytes");
-    await repo.installFromDir("local/multi", src);
+    await installRepoFromDir(repo, "local/multi", src);
 
     const got: Record<string, string> = {};
     for await (const { relPath, content } of repo.entries("local/multi")) {
@@ -155,7 +156,7 @@ describe("FsAgentRepository.entries", () => {
     await mkdir(join(src, "deep", "nest"), { recursive: true });
     await writeFile(join(src, "AGENTS.md"), "x");
     await writeFile(join(src, "deep", "nest", "f.md"), "y");
-    await repo.installFromDir("local/pathsep", src);
+    await installRepoFromDir(repo, "local/pathsep", src);
 
     const seen = new Set<string>();
     for await (const { relPath } of repo.entries("local/pathsep")) seen.add(relPath);
@@ -188,7 +189,7 @@ describe("FsAgentRepository.entries", () => {
       if ((e as NodeJS.ErrnoException).code === "EPERM") return;
       throw e;
     }
-    await repo.installFromDir("local/symlinky", src);
+    await installRepoFromDir(repo, "local/symlinky", src);
 
     const seen = new Set<string>();
     for await (const { relPath } of repo.entries("local/symlinky")) seen.add(relPath);
@@ -203,7 +204,7 @@ describe("FsSkillRepository.entries", () => {
     await mkdir(join(src, "hooks", "copilot"), { recursive: true });
     await writeFile(join(src, "SKILL.md"), "skill-md");
     await writeFile(join(src, "hooks", "copilot", "pre.js"), "pre-bytes");
-    await repo.installFromDir("local/multi", src);
+    await installRepoFromDir(repo, "local/multi", src);
 
     const got: Record<string, string> = {};
     for await (const { relPath, content } of repo.entries("local/multi")) {

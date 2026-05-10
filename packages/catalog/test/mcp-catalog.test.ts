@@ -30,7 +30,7 @@ const sampleClient = JSON.stringify({ command: "npx", args: ["-y", "@example/mcp
 describe("McpCatalog", () => {
   describe("install", () => {
     it("installs an MCP under its spec FQN", async () => {
-      const fqn = await store.installFromContent(sampleClient, {
+      const fqn = await store.install(sampleClient, {
         name: "azure/mcp",
         origin: "https://github.com/Azure/azure-mcp/tree/main/.mcp",
       });
@@ -42,7 +42,7 @@ describe("McpCatalog", () => {
     });
 
     it("installs an MCP with reverse-DNS namespace", async () => {
-      const fqn = await store.installFromContent(sampleClient, {
+      const fqn = await store.install(sampleClient, {
         name: "io.github.user/weather",
         origin: "https://github.com/user/weather-mcp/tree/main/server.json",
       });
@@ -54,32 +54,32 @@ describe("McpCatalog", () => {
         name: "azure/mcp",
         origin: "https://github.com/Azure/azure-mcp/tree/main",
       };
-      await store.installFromContent(sampleClient, opts);
-      await store.installFromContent(sampleClient, opts);
+      await store.install(sampleClient, opts);
+      await store.install(sampleClient, opts);
       expect(store.list()).toHaveLength(1);
     });
 
     it("rejects invalid name (no slash)", async () => {
       await expect(
-        store.installFromContent(sampleClient, { name: "noslash", origin: "file:/x" }),
+        store.install(sampleClient, { name: "noslash", origin: "file:/x" }),
       ).rejects.toBeInstanceOf(McpNameInvalidError);
     });
 
     it("rejects invalid name (multiple slashes)", async () => {
       await expect(
-        store.installFromContent(sampleClient, { name: "a/b/c", origin: "file:/x" }),
+        store.install(sampleClient, { name: "a/b/c", origin: "file:/x" }),
       ).rejects.toBeInstanceOf(McpNameInvalidError);
     });
 
     it("rejects invalid JSON content", async () => {
       await expect(
-        store.installFromContent("not json", { name: "azure/mcp", origin: "file:/x" }),
+        store.install("not json", { name: "azure/mcp", origin: "file:/x" }),
       ).rejects.toBeInstanceOf(InvalidMcpJsonError);
     });
 
     it("persists _meta.{name, origin} inline in the JSON content", async () => {
       const origin = "https://github.com/Azure/azure-mcp/tree/main";
-      await store.installFromContent(sampleClient, { name: "azure/mcp", origin });
+      await store.install(sampleClient, { name: "azure/mcp", origin });
       const onDisk = await readFile(join(catalogDir, "mcps", "azure", "mcp.json"), "utf8");
       const parsed = JSON.parse(onDisk);
       expect(parsed._meta).toEqual({ name: "azure/mcp", origin });
@@ -96,7 +96,7 @@ describe("McpCatalog", () => {
           "io.modelcontextprotocol.registry/published": "2025-01-01",
         },
       });
-      await store.installFromContent(input, { name: "example/mcp", origin: "file:/x" });
+      await store.install(input, { name: "example/mcp", origin: "file:/x" });
       const onDisk = await readFile(join(catalogDir, "mcps", "example", "mcp.json"), "utf8");
       const parsed = JSON.parse(onDisk);
       expect(parsed._meta.name).toBe("example/mcp");
@@ -107,7 +107,7 @@ describe("McpCatalog", () => {
 
   describe("remove", () => {
     it("removes an installed MCP", async () => {
-      await store.installFromContent(sampleClient, {
+      await store.install(sampleClient, {
         name: "azure/mcp",
         origin: "file:/x",
       });
@@ -120,7 +120,7 @@ describe("McpCatalog", () => {
     });
 
     it("blocks removal with dependents", async () => {
-      await store.installFromContent(sampleClient, {
+      await store.install(sampleClient, {
         name: "azure/mcp",
         origin: "file:/x",
       });

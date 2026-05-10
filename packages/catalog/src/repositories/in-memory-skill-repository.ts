@@ -1,5 +1,3 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { NotFound } from "../errors.js";
 import type { CatalogEntryFile, DocumentRepoEntry, SkillRepository } from "./repository.js";
 
@@ -15,12 +13,6 @@ export class InMemorySkillRepository implements SkillRepository {
   async write(name: string, content: string): Promise<void> {
     const files = this.storedEntries.get(name) ?? new Map<string, Buffer>();
     files.set("SKILL.md", Buffer.from(content, "utf8"));
-    this.storedEntries.set(name, files);
-  }
-
-  async installFromDir(name: string, sourceDir: string): Promise<void> {
-    const files = new Map<string, Buffer>();
-    await this.copyTree(sourceDir, "", files);
     this.storedEntries.set(name, files);
   }
 
@@ -58,26 +50,8 @@ export class InMemorySkillRepository implements SkillRepository {
     for (const [relPath, content] of files) yield { relPath, content };
   }
 
+  /** Test-only escape hatch for seeding extra files alongside SKILL.md. */
   files(name: string): ReadonlyMap<string, Buffer> | null {
     return this.storedEntries.get(name) ?? null;
-  }
-
-  private async copyTree(rootDir: string, rel: string, files: Map<string, Buffer>): Promise<void> {
-    const dir = rel ? join(rootDir, rel) : rootDir;
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const childRel = rel ? `${rel}/${e.name}` : e.name;
-      const abs = join(dir, e.name);
-      if (e.isDirectory()) {
-        await this.copyTree(rootDir, childRel, files);
-      } else if (e.isFile()) {
-        const s = await stat(abs);
-        // Same 50 MB cap as the FS walker (`entries-helpers.ts`). Tests
-        // that pass with InMemory must behave identically with FS in
-        // production — diverging caps let large-file regressions hide.
-        if (s.size > 50 * 1024 * 1024) continue;
-        files.set(childRel, await readFile(abs));
-      }
-    }
   }
 }

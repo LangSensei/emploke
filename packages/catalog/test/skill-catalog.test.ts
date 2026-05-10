@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { FsSkillRepository } from "../src/repositories/fs-skill-repository.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
-import { dep, makeBase, makeSkillSource, mcpDep } from "./helpers.js";
+import { dep, installFromDir, makeBase, makeSkillSource, mcpDep } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -27,7 +27,7 @@ describe("SkillCatalog", () => {
   describe("install", () => {
     it("installs and returns skill (FQN public/<name> when frontmatter omits scope)", async () => {
       const src = await makeSkillSource(sourceDir, "weather");
-      const skill = await store.install(src);
+      const skill = await installFromDir(store, src);
       expect(skill.name).toBe("public/weather");
       expect(skill.shortName).toBe("weather");
       expect(skill.scope).toBe("public");
@@ -36,16 +36,16 @@ describe("SkillCatalog", () => {
 
     it("installs scoped skill via frontmatter `scope:`", async () => {
       const src = await makeSkillSource(sourceDir, "weather", { scope: "langsensei" });
-      const skill = await store.install(src);
+      const skill = await installFromDir(store, src);
       expect(skill.name).toBe("langsensei/weather");
       expect(store.has("langsensei/weather")).toBe(true);
     });
 
     it("upserts on re-install", async () => {
       const src1 = await makeSkillSource(sourceDir, "weather");
-      await store.install(src1);
+      await installFromDir(store, src1);
       const src2 = await makeSkillSource(sourceDir, "weather");
-      await store.install(src2);
+      await installFromDir(store, src2);
       expect(store.list()).toHaveLength(1);
     });
 
@@ -53,12 +53,12 @@ describe("SkillCatalog", () => {
       const dir = join(sourceDir, "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: Bad_Name\ndescription: x\n---\n");
-      await expect(store.install(dir)).rejects.toThrow(NameInvalid);
+      await expect(installFromDir(store, dir)).rejects.toThrow(NameInvalid);
     });
 
     it("preserves prereqs", async () => {
       const src = await makeSkillSource(sourceDir, "setup", { prereqs: "npm install" });
-      const skill = await store.install(src);
+      const skill = await installFromDir(store, src);
       expect(skill.prereqs).toBe("npm install");
     });
 
@@ -66,7 +66,7 @@ describe("SkillCatalog", () => {
       const src = await makeSkillSource(sourceDir, "parent", {
         deps: { skills: [dep("child")], mcps: [mcpDep("github/cli")] },
       });
-      const skill = await store.install(src);
+      const skill = await installFromDir(store, src);
       expect(skill.dependencies).toEqual({
         skills: [{ name: "child", origin: "file:/test/public/child", scope: "public" }],
         mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
@@ -77,7 +77,7 @@ describe("SkillCatalog", () => {
   describe("remove", () => {
     it("removes installed skill", async () => {
       const src = await makeSkillSource(sourceDir, "weather");
-      await store.install(src);
+      await installFromDir(store, src);
       await store.remove("public/weather", () => []);
       expect(store.get("public/weather")).toBeNull();
     });
@@ -88,7 +88,7 @@ describe("SkillCatalog", () => {
 
     it("blocks removal with dependents", async () => {
       const src = await makeSkillSource(sourceDir, "leaf");
-      await store.install(src);
+      await installFromDir(store, src);
       await expect(store.remove("public/leaf", () => ["public/parent"])).rejects.toThrow(
         HasDependents,
       );
@@ -101,8 +101,8 @@ describe("SkillCatalog", () => {
     });
 
     it("list returns all installed", async () => {
-      await store.install(await makeSkillSource(sourceDir, "a"));
-      await store.install(await makeSkillSource(sourceDir, "b"));
+      await installFromDir(store, await makeSkillSource(sourceDir, "a"));
+      await installFromDir(store, await makeSkillSource(sourceDir, "b"));
       expect(
         store
           .list()
@@ -160,7 +160,8 @@ describe("SkillCatalog", () => {
 
   describe("graphNodes", () => {
     it("returns dependency graph (FQNs from DependencyRef origins)", async () => {
-      await store.install(
+      await installFromDir(
+        store,
         await makeSkillSource(sourceDir, "parent", {
           deps: { skills: [dep("child")], mcps: [mcpDep("github/cli")] },
         }),

@@ -39,10 +39,9 @@ describe("resolveInstall", () => {
   it("returns a single 'new' node for a leaf skill", async () => {
     const origin = "file:/test/leaf";
     entries.set(origin, [file("SKILL.md", "---\nname: leaf\ndescription: l\n---\n")]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -74,10 +73,9 @@ describe("resolveInstall", () => {
       ),
     ]);
     entries.set(childOrigin, [file("SKILL.md", "---\nname: child\ndescription: c\n---\n")]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin,
     });
@@ -107,10 +105,9 @@ describe("resolveInstall", () => {
     ]);
     entries.set(goodChild, [file("SKILL.md", "---\nname: good\ndescription: g\n---\n")]);
     // badChild not registered → fetch fails
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin,
     });
@@ -137,10 +134,9 @@ describe("resolveInstall", () => {
         ].join("\n"),
       ),
     ]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin,
     });
@@ -155,10 +151,9 @@ describe("resolveInstall", () => {
   it("uses inline scope when frontmatter declares scope", async () => {
     const origin = "file:/test/x";
     entries.set(origin, [file("SKILL.md", "---\nname: x\nscope: my-fork\ndescription: x\n---\n")]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -170,10 +165,9 @@ describe("resolveInstall", () => {
 
   it("MCP root resolves directly without fetching", async () => {
     const origin = "https://github.com/Azure/azure-mcp/tree/main/.mcp/server.json";
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const m = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "mcp",
       rootOrigin: origin,
       rootMcpName: "azure/mcp",

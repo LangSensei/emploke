@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
 import {
   applyFrontmatterPatch,
@@ -40,35 +38,16 @@ export class SkillCatalog {
 
   // ─── CRUD ───────────────────────────────────────────────
 
-  async install(sourceDir: string, opts: InstallSkillOpts = {}): Promise<Skill> {
-    const sourcePath = join(sourceDir, "SKILL.md");
-    const original = await readFile(sourcePath, "utf8");
-    const { data } = parseFrontmatter(original, sourcePath);
-    const skill = frontmatterToSkill(data, sourcePath, projectionOpts(opts.origin));
-
-    // installFromDir copies the entire source tree under the FQN; if the
-    // source frontmatter omitted `origin`, follow up with a write() that
-    // overwrites the SKILL.md COPY (in the catalog only — the user's source
-    // file is never touched) so the entry is self-describing for future
-    // scans without depending on the install-time defaultOrigin.
-    await this.repository.installFromDir(skill.name, sourceDir);
-    if (data.origin === undefined) {
-      const rewritten = applyFrontmatterPatch(original, { origin: skill.origin });
-      await this.repository.write(skill.name, rewritten);
-    }
-    this.skills.set(skill.name, skill);
-    return skill;
-  }
-
   /**
-   * Stream-based install used by the pluggable-fetcher path. The stream is
-   * fully buffered into memory so we can both parse SKILL.md (to derive the
-   * FQN) and forward the bytes to {@link SkillRepository.install}. Skills
-   * are tiny in practice (<100 KB anchor + small assets); a memory-buffered
-   * shape is fine and avoids needing an on-disk staging directory in the
-   * caller.
+   * Stream-based install — the only install path. Streams come from the
+   * {@link Fetcher} layer (file:, github:, ...). The stream is fully
+   * buffered into memory so we can both parse SKILL.md (to derive the
+   * FQN) and forward the bytes to {@link SkillRepository.install}.
+   * Skills are tiny in practice (<100 KB anchor + small assets); a
+   * memory-buffered shape is fine and avoids needing an on-disk staging
+   * directory in the caller.
    */
-  async installFromStream(
+  async install(
     stream: AsyncIterable<CatalogEntryFile>,
     opts: InstallSkillOpts = {},
     sourceLabel = "<stream>",
@@ -91,8 +70,7 @@ export class SkillCatalog {
     const skill = frontmatterToSkill(data, anchor.sourcePath, projectionOpts(opts.origin));
 
     // If origin is missing in source, rewrite the SKILL.md entry in the
-    // buffered stream so the on-disk copy is self-describing — same
-    // contract as installFromDir above.
+    // buffered stream so the on-disk copy is self-describing.
     let toInstall: CatalogEntryFile[] = buffered;
     if (data.origin === undefined) {
       const rewritten = applyFrontmatterPatch(anchor.content, { origin: skill.origin });

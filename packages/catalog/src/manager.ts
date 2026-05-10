@@ -1,7 +1,12 @@
-import { mkdir as mkdirFs, readFile, rmdir } from "node:fs/promises";
+import { mkdir as mkdirFs, rmdir } from "node:fs/promises";
 import { join } from "node:path";
-import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
-import { safeStat } from "@emploke/fs";
+import {
+  defaultFetcherRegistry,
+  type EntryFile,
+  type FetcherRegistry,
+  normalizeOrigin,
+  parseOrigin,
+} from "@emploke/catalog-fetcher";
 import { AgentCatalog, type AgentMetadataPatch } from "./agent/agent-catalog.js";
 import { CatalogStateError, OriginConflictError } from "./errors.js";
 import {
@@ -45,6 +50,12 @@ export interface ScanIssue {
 
 export interface CatalogOptions {
   readonly catalogDir: string;
+  /**
+   * Optional fetcher registry override. Defaults to
+   * {@link defaultFetcherRegistry} (file: + github:). Tests inject a
+   * fake registry whose fetchers yield from in-memory fixtures.
+   */
+  readonly fetchers?: FetcherRegistry;
   /** Optional repository overrides (defaults to `Fs*Repository(catalogDir)`). */
   readonly repositories?: {
     readonly agents?: AgentRepository;
@@ -54,17 +65,16 @@ export interface CatalogOptions {
 }
 
 /**
- * Per-call options for `installSkill` / `installAgent`.
+ * Per-call options for the install* methods.
  *
  * `origin` is the URI to associate with the new entry (recorded in the
  * catalog's frontmatter copy if the source omits one). Routes pass the
- * URI the user supplied; the per-store install impls synthesise
- * `file:<sourcePath>` if neither this nor the frontmatter has it.
+ * URI the user supplied.
  *
  * No `scopeOverride`: scope is determined entirely by the entry's
  * frontmatter (`scope: <name>` or default `public`). Forking under a
  * different scope means editing the upstream's frontmatter, not
- * passing a per-install flag — see `frontmatter.ts` for rationale.
+ * passing a per-install flag.
  */
 export interface InstallEntryOpts {
   readonly origin?: string;
@@ -76,7 +86,7 @@ export interface InstallEntryOpts {
  *  - `origin` — install-source URI (recorded in `_meta.origin`)
  *
  * MCPs do NOT participate in scope-mapping; the spec name IS the
- * catalog identity, no derivation, no override.
+ * catalog identity.
  */
 export interface InstallMcpOpts {
   readonly name: string;
@@ -85,8 +95,15 @@ export interface InstallMcpOpts {
 
 /**
  * Catalog — facade over SkillCatalog, AgentCatalog, McpCatalog, and Resolver.
- * Holds the catalog write-lock; scope is purely frontmatter-driven (no
- * external resolver / mapping table).
+ * Holds the catalog write-lock + the FetcherRegistry; scope is purely
+ * frontmatter-driven (no external resolver / mapping table).
+ *
+ * Two install-method shapes per kind:
+ *  - `installSkill(stream, opts)` — low-level, takes an EntryFile stream
+ *    (used internally by `applyInstall` after the fetcher has produced
+ *    a stream).
+ *  - `installSkillFromOrigin(origin)` — high-level, dispatches the
+ *    fetcher itself. Routes / CLI use this directly.
  */
 export class CatalogManager {
   private readonly catalogDir: string;
@@ -94,6 +111,7 @@ export class CatalogManager {
   private readonly agentStore: AgentCatalog;
   private readonly mcpStore: McpCatalog;
   private readonly resolver: Resolver;
+  private readonly fetcherRegistry: FetcherRegistry;
   private _issues: ScanIssue[] = [];
   private _skillEntries = new Map<string, SkillEntry>();
   private _agentEntries = new Map<string, AgentEntry>();
@@ -105,6 +123,7 @@ export class CatalogManager {
     const skillRepo = opts.repositories?.skills ?? new FsSkillRepository(opts.catalogDir);
     const agentRepo = opts.repositories?.agents ?? new FsAgentRepository(opts.catalogDir);
     const mcpRepo = opts.repositories?.mcps ?? new FsMcpRepository(opts.catalogDir);
+    this.fetcherRegistry = opts.fetchers ?? defaultFetcherRegistry();
     this.skillStore = new SkillCatalog(skillRepo);
     this.agentStore = new AgentCatalog(agentRepo);
     this.mcpStore = new McpCatalog(mcpRepo);
@@ -120,38 +139,33 @@ export class CatalogManager {
     return c;
   }
 
+  /** The FetcherRegistry this catalog uses. Used by `resolveInstall`/`applyInstall`. */
+  get fetchers(): FetcherRegistry {
+    return this.fetcherRegistry;
+  }
+
   get scanIssues(): readonly ScanIssue[] {
     return this._issues;
   }
 
   // ─── Skill ──────────────────────────────────────────────
 
-  async installSkill(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill> {
-    const projOpts = projectionOpts(opts.origin);
-    const skill = await this.withWriteLock(async () => {
-      // Pre-flight origin-conflict check: parse the would-be FQN+origin
-      // before doing any IO so a conflict fails fast and predictably.
-      await this.assertNoOriginConflict("skill", sourceDir, "SKILL.md", projOpts);
-      return this.skillStore.install(sourceDir, opts);
-    });
-    this.recomputeStatus();
-    return skill;
-  }
-
   /**
-   * Stream-based install used by the pluggable-fetcher route. Buffers the
-   * stream once (skill payloads are tiny), parses SKILL.md to compute the
-   * FQN, runs the same origin-conflict pre-flight as `installSkill`, then
-   * forwards to the repository's stream-install.
+   * Install a skill from an `EntryFile` stream (low-level). Buffers the
+   * stream, parses SKILL.md to derive the FQN, runs the origin-conflict
+   * pre-flight, then forwards to the repository's stream-install.
+   *
+   * Most callers want {@link installSkillFromOrigin} instead, which
+   * handles the fetcher dispatch.
    */
-  async installSkillFromStream(
+  async installSkill(
     stream: AsyncIterable<CatalogEntryFile>,
     opts: InstallEntryOpts = {},
     sourceLabel?: string,
   ): Promise<Skill> {
     const buffered = await bufferStream(stream);
     const projOpts = projectionOpts(opts.origin);
-    await this.assertNoOriginConflictFromBuffer(
+    await this.assertNoOriginConflict(
       "skill",
       buffered,
       "SKILL.md",
@@ -159,10 +173,23 @@ export class CatalogManager {
       projOpts,
     );
     const skill = await this.withWriteLock(() =>
-      this.skillStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+      this.skillStore.install(asyncIterableOf(buffered), opts, sourceLabel),
     );
     this.recomputeStatus();
     return skill;
+  }
+
+  /**
+   * Install a skill by `origin` URI — fetches via the registered fetcher
+   * (file:, https://github.com/...) and installs. The most direct API for
+   * single-shot installs (CLI, route convenience).
+   *
+   * For recursive installs (fetch the root + walk its dep graph), use
+   * `resolveInstall` + `applyInstall` from the catalog package.
+   */
+  async installSkillFromOrigin(origin: string, opts: InstallEntryOpts = {}): Promise<Skill> {
+    const stream = this.fetcherRegistry.dispatch(origin);
+    return this.installSkill(stream, { ...opts, origin: opts.origin ?? origin }, origin);
   }
 
   async updateSkillContent(name: string, content: string): Promise<Skill> {
@@ -204,25 +231,15 @@ export class CatalogManager {
 
   // ─── Agent ──────────────────────────────────────────────
 
-  async installAgent(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Agent> {
-    const projOpts = projectionOpts(opts.origin);
-    const agent = await this.withWriteLock(async () => {
-      await this.assertNoOriginConflict("agent", sourceDir, "AGENTS.md", projOpts);
-      return this.agentStore.install(sourceDir, opts);
-    });
-    this.recomputeStatus();
-    return agent;
-  }
-
-  /** Stream-based install. See {@link installSkillFromStream}. */
-  async installAgentFromStream(
+  /** Install an agent from an `EntryFile` stream. See {@link installSkill}. */
+  async installAgent(
     stream: AsyncIterable<CatalogEntryFile>,
     opts: InstallEntryOpts = {},
     sourceLabel?: string,
   ): Promise<Agent> {
     const buffered = await bufferStream(stream);
     const projOpts = projectionOpts(opts.origin);
-    await this.assertNoOriginConflictFromBuffer(
+    await this.assertNoOriginConflict(
       "agent",
       buffered,
       "AGENTS.md",
@@ -230,10 +247,16 @@ export class CatalogManager {
       projOpts,
     );
     const agent = await this.withWriteLock(() =>
-      this.agentStore.installFromStream(asyncIterableOf(buffered), opts, sourceLabel),
+      this.agentStore.install(asyncIterableOf(buffered), opts, sourceLabel),
     );
     this.recomputeStatus();
     return agent;
+  }
+
+  /** Install an agent by `origin` URI. See {@link installSkillFromOrigin}. */
+  async installAgentFromOrigin(origin: string, opts: InstallEntryOpts = {}): Promise<Agent> {
+    const stream = this.fetcherRegistry.dispatch(origin);
+    return this.installAgent(stream, { ...opts, origin: opts.origin ?? origin }, origin);
   }
 
   async updateAgentContent(name: string, content: string): Promise<Agent> {
@@ -278,9 +301,6 @@ export class CatalogManager {
   /**
    * Install an MCP from raw JSON content. The spec name (`opts.name`,
    * with `/`) IS the catalog identity — no scope-mapping, no derivation.
-   * The caller (route layer) is expected to have validated `opts.name`
-   * via {@link validateMcpName} already; this method validates again
-   * defensively.
    */
   async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
     const fqn = await this.withWriteLock(async () => {
@@ -292,10 +312,21 @@ export class CatalogManager {
           throw new OriginConflictError(opts.name, existing.origin, opts.origin);
         }
       }
-      return this.mcpStore.installFromContent(content, opts);
+      return this.mcpStore.install(content, opts);
     });
     this.recomputeStatus();
     return fqn;
+  }
+
+  /**
+   * Install an MCP by `origin` URI. Fetches via the registered fetcher,
+   * reads the (single) JSON file, and installs under `opts.name` (the
+   * MCP-spec FQN).
+   */
+  async installMcpFromOrigin(origin: string, name: string): Promise<string> {
+    const stream = this.fetcherRegistry.dispatch(origin);
+    const content = await readSingleFile(stream);
+    return this.installMcp(content, { name, origin });
   }
 
   async updateMcpContent(name: string, content: string): Promise<void> {
@@ -375,26 +406,6 @@ export class CatalogManager {
     await this._pendingScan;
   }
 
-  // ─── Inspection ─────────────────────────────────────────
-
-  async inspectSource(sourceDir: string, opts: InstallEntryOpts = {}): Promise<Skill | Agent> {
-    const skillPath = join(sourceDir, "SKILL.md");
-    const agentPath = join(sourceDir, "AGENTS.md");
-    const projOpts = projectionOpts(opts.origin);
-
-    if ((await safeStat(skillPath)) !== null) {
-      const content = await readFile(skillPath, "utf8");
-      const { data } = parseFrontmatter(content, skillPath);
-      return frontmatterToSkill(data, skillPath, projOpts);
-    }
-    if ((await safeStat(agentPath)) !== null) {
-      const content = await readFile(agentPath, "utf8");
-      const { data } = parseFrontmatter(content, agentPath);
-      return frontmatterToAgent(data, agentPath, projOpts);
-    }
-    throw new Error(`Source directory has neither SKILL.md nor AGENTS.md: ${sourceDir}`);
-  }
-
   // ─── Internal ───────────────────────────────────────────
 
   private getDependents(name: string): string[] {
@@ -405,34 +416,10 @@ export class CatalogManager {
   /**
    * Pre-flight check: parse the source frontmatter, project to FQN, and
    * compare origins against any existing entry under the same FQN.
-   * Throws {@link OriginConflictError} on mismatch (post-#39 catalog
-   * identity rule: same FQN must always resolve to the same upstream).
+   * Throws {@link OriginConflictError} on mismatch (catalog identity
+   * rule: same FQN must always resolve to the same upstream).
    */
   private async assertNoOriginConflict(
-    kind: "skill" | "agent",
-    sourceDir: string,
-    fileName: string,
-    projOpts: ProjectionOpts,
-  ): Promise<void> {
-    const sourcePath = join(sourceDir, fileName);
-    const content = await readFile(sourcePath, "utf8");
-    const { data } = parseFrontmatter(content, sourcePath);
-    const incoming =
-      kind === "skill"
-        ? frontmatterToSkill(data, sourcePath, projOpts)
-        : frontmatterToAgent(data, sourcePath, projOpts);
-
-    const existing =
-      kind === "skill" ? this.skillStore.get(incoming.name) : this.agentStore.get(incoming.name);
-    if (!existing) return;
-
-    const a = normalizeOrigin(parseOrigin(existing.origin));
-    const b = normalizeOrigin(parseOrigin(incoming.origin));
-    if (a !== b) throw new OriginConflictError(incoming.name, existing.origin, incoming.origin);
-  }
-
-  /** Stream-based variant of {@link assertNoOriginConflict}. */
-  private async assertNoOriginConflictFromBuffer(
     kind: "skill" | "agent",
     buffered: readonly CatalogEntryFile[],
     fileName: string,
@@ -551,4 +538,13 @@ async function bufferStream(stream: AsyncIterable<CatalogEntryFile>): Promise<Ca
 
 async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
   for (const item of items) yield item;
+}
+
+async function readSingleFile(stream: AsyncIterable<EntryFile>): Promise<string> {
+  let result: Buffer | null = null;
+  for await (const file of stream) {
+    if (result === null) result = file.content;
+  }
+  if (result === null) throw new Error("stream yielded no files (expected one for mcp install)");
+  return result.toString("utf8");
 }

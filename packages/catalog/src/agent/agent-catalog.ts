@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { FrontmatterError, HasDependents, NotFound } from "../errors.js";
 import {
   applyFrontmatterPatch,
@@ -29,33 +27,15 @@ export interface InstallAgentOpts {
  *
  * The Store owns frontmatter parsing, name validation, the in-memory cache,
  * and dependency-graph nodes. All catalog-internal IO is delegated to the
- * repository — the Store only touches user-provided source directories
- * directly (in `install()`).
+ * repository.
  */
 export class AgentCatalog {
   private readonly agents = new Map<string, Agent>();
 
   constructor(private readonly repository: AgentRepository) {}
 
-  async install(sourceDir: string, opts: InstallAgentOpts = {}): Promise<Agent> {
-    const sourcePath = join(sourceDir, "AGENTS.md");
-    const original = await readFile(sourcePath, "utf8");
-    const { data } = parseFrontmatter(original, sourcePath);
-    const agent = frontmatterToAgent(data, sourcePath, projectionOpts(opts.origin));
-
-    // See SkillCatalog.install for rationale: stage the dir copy first, then
-    // inject `origin` into the catalog COPY only if the source omitted it.
-    await this.repository.installFromDir(agent.name, sourceDir);
-    if (data.origin === undefined) {
-      const rewritten = applyFrontmatterPatch(original, { origin: agent.origin });
-      await this.repository.write(agent.name, rewritten);
-    }
-    this.agents.set(agent.name, agent);
-    return agent;
-  }
-
-  /** Stream-based install. See {@link SkillCatalog.installFromStream}. */
-  async installFromStream(
+  /** Stream-based install. See {@link SkillCatalog.install}. */
+  async install(
     stream: AsyncIterable<CatalogEntryFile>,
     opts: InstallAgentOpts = {},
     sourceLabel = "<stream>",

@@ -1,5 +1,4 @@
 import type { CatalogManager } from "@emploke/catalog";
-import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
@@ -9,25 +8,16 @@ import { skillsRoutes } from "./skills.js";
 /**
  * Workspace-scoped catalog routes. Mounted at
  * `/api/workspaces/:name/catalog/*` in `index.ts`. The routes pull a
- * per-workspace `CatalogManager` instance off the Hono context (set up by the
- * workspace middleware), so handler logic doesn't need to know which
- * workspace is in play.
+ * per-workspace `CatalogManager` instance off the Hono context (set up
+ * by the workspace middleware), so handler logic doesn't need to know
+ * which workspace is in play.
  *
- * Tests can pass a `CatalogManager` instance directly instead of a resolver.
- *
- * `fetcherRegistry` is the (process-wide) {@link FetcherRegistry} used to
- * resolve `origin:` URIs into pure-stream `EntryFile` iterables for install.
- * Tests can pass a fake registry whose fetchers yield from in-memory
- * fixtures; production uses {@link defaultFetcherRegistry} with `file:` +
- * `github:` schemes wired up.
- *
- * Why one shared registry rather than one per workspace? Fetchers are
- * stateless — there's no per-workspace data to keep around.
+ * Tests can pass a `CatalogManager` instance directly instead of a
+ * resolver. The catalog brings its own `FetcherRegistry` via
+ * `CatalogOptions.fetchers` (defaults to `defaultFetcherRegistry`);
+ * routes don't need to thread fetchers through.
  */
-export function catalogRoutes(
-  arg: CatalogResolver | CatalogManager,
-  fetcherRegistry: FetcherRegistry = defaultFetcherRegistry(),
-): Hono {
+export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -44,9 +34,9 @@ export function catalogRoutes(
     await next();
   });
 
-  app.route("/skills", skillsRoutes(getCatalog, fetcherRegistry));
-  app.route("/agents", agentsRoutes(getCatalog, fetcherRegistry));
-  app.route("/mcps", mcpsRoutes(getCatalog, fetcherRegistry));
+  app.route("/skills", skillsRoutes(getCatalog));
+  app.route("/agents", agentsRoutes(getCatalog));
+  app.route("/mcps", mcpsRoutes(getCatalog));
 
   app.get("/overview", (c) => {
     const catalog = getCatalog(c);

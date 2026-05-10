@@ -5,6 +5,8 @@ import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
 import { CatalogManager } from "../src/manager.js";
 import {
   dep,
+  installCatalogAgentFromDir,
+  installCatalogSkillFromDir,
   type MakeSourceOpts,
   makeAgentSource,
   makeBase,
@@ -111,7 +113,7 @@ describe("CatalogManager", () => {
     it("installs a skill (FQN public/<name>)", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeSkill("weather", { description: "Get weather" });
-      const skill = await c.installSkill(src);
+      const skill = await installCatalogSkillFromDir(c, src);
       expect(skill.name).toBe("public/weather");
       expect(skill.description).toBe("Get weather");
       expect(c.getSkill("public/weather")).toEqual(skill);
@@ -123,7 +125,7 @@ describe("CatalogManager", () => {
         scope: "langsensei",
         description: "Weather",
       });
-      const skill = await c.installSkill(src);
+      const skill = await installCatalogSkillFromDir(c, src);
       expect(skill.name).toBe("langsensei/weather");
       const onDisk = join(catalogDir, "skills", "langsensei", "weather", "SKILL.md");
       expect(await readFile(onDisk, "utf8")).toContain("langsensei");
@@ -132,9 +134,9 @@ describe("CatalogManager", () => {
     it("updates (upserts) existing skill", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src1 = await makeSkill("weather", { version: "1.0.0" });
-      await c.installSkill(src1);
+      await installCatalogSkillFromDir(c, src1);
       const src2 = await makeSkill("weather", { version: "2.0.0" });
-      const updated = await c.installSkill(src2);
+      const updated = await installCatalogSkillFromDir(c, src2);
       expect(updated.version).toBe("2.0.0");
       expect(c.listSkills()).toHaveLength(1);
     });
@@ -142,7 +144,7 @@ describe("CatalogManager", () => {
     it("preserves prereqs", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeSkill("setup", { prereqs: "Run setup.sh first" });
-      const skill = await c.installSkill(src);
+      const skill = await installCatalogSkillFromDir(c, src);
       expect(skill.prereqs).toBe("Run setup.sh first");
     });
 
@@ -151,7 +153,7 @@ describe("CatalogManager", () => {
       const dir = join(sourceDir, "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: Bad_Name\ndescription: x\n---\n");
-      await expect(c.installSkill(dir)).rejects.toThrow(NameInvalid);
+      await expect(installCatalogSkillFromDir(c, dir)).rejects.toThrow(NameInvalid);
     });
   });
 
@@ -159,7 +161,7 @@ describe("CatalogManager", () => {
     it("removes an installed skill", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeSkill("weather");
-      await c.installSkill(src);
+      await installCatalogSkillFromDir(c, src);
       await c.removeSkill("public/weather");
       expect(c.getSkill("public/weather")).toBeNull();
     });
@@ -173,9 +175,9 @@ describe("CatalogManager", () => {
       const c = await CatalogManager.open({ catalogDir });
       await installMcp(c, "github/cli");
       const leafSrc = await makeSkill("leaf", { description: "Leaf" });
-      await c.installSkill(leafSrc);
+      await installCatalogSkillFromDir(c, leafSrc);
       const parentSrc = await makeSkill("parent", { deps: { skills: [dep("leaf")] } });
-      await c.installSkill(parentSrc);
+      await installCatalogSkillFromDir(c, parentSrc);
       await expect(c.removeSkill("public/leaf")).rejects.toThrow(HasDependents);
     });
   });
@@ -184,7 +186,7 @@ describe("CatalogManager", () => {
     it("installs an agent", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeAgent("reviewer", { description: "Reviews PRs" });
-      const agent = await c.installAgent(src);
+      const agent = await installCatalogAgentFromDir(c, src);
       expect(agent.name).toBe("public/reviewer");
       expect(c.getAgent("public/reviewer")).toEqual(agent);
     });
@@ -192,7 +194,7 @@ describe("CatalogManager", () => {
     it("installs a scoped agent via frontmatter scope:", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeAgent("reviewer", { scope: "langsensei" });
-      const agent = await c.installAgent(src);
+      const agent = await installCatalogAgentFromDir(c, src);
       expect(agent.name).toBe("langsensei/reviewer");
     });
   });
@@ -201,7 +203,7 @@ describe("CatalogManager", () => {
     it("removes an installed agent", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeAgent("reviewer");
-      await c.installAgent(src);
+      await installCatalogAgentFromDir(c, src);
       await c.removeAgent("public/reviewer");
       expect(c.getAgent("public/reviewer")).toBeNull();
     });
@@ -227,11 +229,11 @@ describe("CatalogManager", () => {
       const c = await CatalogManager.open({ catalogDir });
       await installMcp(c, "github/cli");
       const skillSrc = await makeSkill("security-audit");
-      await c.installSkill(skillSrc);
+      await installCatalogSkillFromDir(c, skillSrc);
       const agentSrc = await makeAgent("reviewer", {
         deps: { skills: [dep("security-audit")], mcps: [mcpDep("github/cli")] },
       });
-      await c.installAgent(agentSrc);
+      await installCatalogAgentFromDir(c, agentSrc);
 
       const result = c.resolveAgent("public/reviewer");
       expect(result.agent.name).toBe("public/reviewer");
@@ -243,15 +245,15 @@ describe("CatalogManager", () => {
       const c = await CatalogManager.open({ catalogDir });
       await installMcp(c, "semgrep/cli");
       const leafSrc = await makeSkill("cve-db");
-      await c.installSkill(leafSrc);
+      await installCatalogSkillFromDir(c, leafSrc);
       const midSrc = await makeSkill("security-audit", {
         deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       });
-      await c.installSkill(midSrc);
+      await installCatalogSkillFromDir(c, midSrc);
       const agentSrc = await makeAgent("reviewer", {
         deps: { skills: [dep("security-audit")] },
       });
-      await c.installAgent(agentSrc);
+      await installCatalogAgentFromDir(c, agentSrc);
 
       const result = c.resolveAgent("public/reviewer");
       const names = result.skills.map((s) => s.skill.name);
@@ -265,11 +267,11 @@ describe("CatalogManager", () => {
       const c = await CatalogManager.open({ catalogDir });
       await installMcp(c, "semgrep/cli");
       const leafSrc = await makeSkill("cve-db");
-      await c.installSkill(leafSrc);
+      await installCatalogSkillFromDir(c, leafSrc);
       const midSrc = await makeSkill("security-audit", {
         deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       });
-      await c.installSkill(midSrc);
+      await installCatalogSkillFromDir(c, midSrc);
 
       const result = c.resolveSkill("public/security-audit");
       expect(result.skill.name).toBe("public/security-audit");
@@ -285,35 +287,17 @@ describe("CatalogManager", () => {
     });
   });
 
-  describe("inspectSource", () => {
-    it("inspects a skill source", async () => {
-      const c = await CatalogManager.open({ catalogDir });
-      const src = await makeSkill("weather", { description: "Weather skill" });
-      const result = await c.inspectSource(src);
-      expect(result.name).toBe("public/weather");
-      expect(result.description).toBe("Weather skill");
-    });
-
-    it("inspects an agent source", async () => {
-      const c = await CatalogManager.open({ catalogDir });
-      const src = await makeAgent("reviewer", { description: "PR reviewer" });
-      const result = await c.inspectSource(src);
-      expect(result.name).toBe("public/reviewer");
-      expect(result.description).toBe("PR reviewer");
-    });
-  });
-
   describe("name validation", () => {
     it("accepts unscoped kebab-case (becomes public/<name>)", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeSkill("my-skill");
-      await expect(c.installSkill(src)).resolves.toBeDefined();
+      await expect(installCatalogSkillFromDir(c, src)).resolves.toBeDefined();
     });
 
     it("accepts explicit scope via frontmatter", async () => {
       const c = await CatalogManager.open({ catalogDir });
       const src = await makeSkill("my-skill", { scope: "langsensei" });
-      await expect(c.installSkill(src)).resolves.toBeDefined();
+      await expect(installCatalogSkillFromDir(c, src)).resolves.toBeDefined();
     });
 
     it("rejects uppercase short name", async () => {
@@ -321,7 +305,7 @@ describe("CatalogManager", () => {
       const dir = join(sourceDir, "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: Bad\ndescription: x\n---\n");
-      await expect(c.installSkill(dir)).rejects.toThrow(NameInvalid);
+      await expect(installCatalogSkillFromDir(c, dir)).rejects.toThrow(NameInvalid);
     });
 
     it("rejects slashes in the short-name field", async () => {
@@ -329,7 +313,7 @@ describe("CatalogManager", () => {
       const dir = join(sourceDir, "bad2");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: a/b\ndescription: x\n---\n");
-      await expect(c.installSkill(dir)).rejects.toThrow();
+      await expect(installCatalogSkillFromDir(c, dir)).rejects.toThrow();
     });
   });
 });
@@ -339,7 +323,7 @@ describe("entry status", () => {
     const c = await CatalogManager.open({ catalogDir });
     await installMcp(c, "github/cli");
     const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
-    await c.installSkill(skillSrc);
+    await installCatalogSkillFromDir(c, skillSrc);
 
     const entry = c.getSkillEntry("public/lint");
     expect(entry!.status).toBe("ready");
@@ -349,7 +333,7 @@ describe("entry status", () => {
   it("skill is disabled when dep missing", async () => {
     const c = await CatalogManager.open({ catalogDir });
     const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
-    await c.installSkill(skillSrc);
+    await installCatalogSkillFromDir(c, skillSrc);
 
     const entry = c.getSkillEntry("public/lint");
     expect(entry!.status).toBe("disabled");
@@ -360,7 +344,7 @@ describe("entry status", () => {
   it("skill becomes ready after dep installed", async () => {
     const c = await CatalogManager.open({ catalogDir });
     const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
-    await c.installSkill(skillSrc);
+    await installCatalogSkillFromDir(c, skillSrc);
     expect(c.getSkillEntry("public/lint")!.status).toBe("disabled");
 
     await installMcp(c, "github/cli");
@@ -371,7 +355,7 @@ describe("entry status", () => {
     const c = await CatalogManager.open({ catalogDir });
     await installMcp(c, "github/cli");
     const skillSrc = await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } });
-    await c.installSkill(skillSrc);
+    await installCatalogSkillFromDir(c, skillSrc);
     expect(c.getSkillEntry("public/lint")!.status).toBe("ready");
 
     // Remove dep — but lint depends on it, so should be blocked
@@ -381,7 +365,7 @@ describe("entry status", () => {
   it("agent is disabled when skill dep missing", async () => {
     const c = await CatalogManager.open({ catalogDir });
     const agentSrc = await makeAgent("reviewer", { deps: { skills: [dep("lint")] } });
-    await c.installAgent(agentSrc);
+    await installCatalogAgentFromDir(c, agentSrc);
 
     const entry = c.getAgentEntry("public/reviewer");
     expect(entry!.status).toBe("disabled");
@@ -392,18 +376,21 @@ describe("entry status", () => {
   it("agent becomes ready after skill installed", async () => {
     const c = await CatalogManager.open({ catalogDir });
     const agentSrc = await makeAgent("reviewer", { deps: { skills: [dep("lint")] } });
-    await c.installAgent(agentSrc);
+    await installCatalogAgentFromDir(c, agentSrc);
     expect(c.getAgentEntry("public/reviewer")!.status).toBe("disabled");
 
     const skillSrc = await makeSkill("lint");
-    await c.installSkill(skillSrc);
+    await installCatalogSkillFromDir(c, skillSrc);
     expect(c.getAgentEntry("public/reviewer")!.status).toBe("ready");
   });
 
   it("listSkillEntries returns all with status", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    await c.installSkill(await makeSkill("a"));
-    await c.installSkill(await makeSkill("b", { deps: { skills: [dep("missing")] } }));
+    await installCatalogSkillFromDir(c, await makeSkill("a"));
+    await installCatalogSkillFromDir(
+      c,
+      await makeSkill("b", { deps: { skills: [dep("missing")] } }),
+    );
 
     const entries = c.listSkillEntries();
     expect(entries).toHaveLength(2);
@@ -413,7 +400,7 @@ describe("entry status", () => {
 
   it("listAgentEntries returns all with status", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    await c.installAgent(await makeAgent("simple"));
+    await installCatalogAgentFromDir(c, await makeAgent("simple"));
     const entries = c.listAgentEntries();
     expect(entries).toHaveLength(1);
     expect(entries[0]!.status).toBe("ready");
@@ -421,7 +408,10 @@ describe("entry status", () => {
 
   it("rescan recomputes status", async () => {
     const c = await CatalogManager.open({ catalogDir });
-    await c.installSkill(await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } }));
+    await installCatalogSkillFromDir(
+      c,
+      await makeSkill("lint", { deps: { mcps: [mcpDep("github/cli")] } }),
+    );
     expect(c.getSkillEntry("public/lint")!.status).toBe("disabled");
 
     // Manually write MCP file to disk under the github/ namespace

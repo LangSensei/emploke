@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentCatalog } from "../src/agent/agent-catalog.js";
 import { NameInvalid, NotFound } from "../src/errors.js";
 import { FsAgentRepository } from "../src/repositories/fs-agent-repository.js";
-import { dep, makeAgentSource, makeBase, mcpDep } from "./helpers.js";
+import { dep, installFromDir, makeAgentSource, makeBase, mcpDep } from "./helpers.js";
 
 let catalogDir: string;
 let sourceDir: string;
@@ -27,20 +27,20 @@ describe("AgentCatalog", () => {
   describe("install", () => {
     it("installs and returns agent (FQN public/<name>)", async () => {
       const src = await makeAgentSource(sourceDir, "reviewer");
-      const agent = await store.install(src);
+      const agent = await installFromDir(store, src);
       expect(agent.name).toBe("public/reviewer");
       expect(store.get("public/reviewer")).toEqual(agent);
     });
 
     it("installs scoped agent via frontmatter `scope:`", async () => {
       const src = await makeAgentSource(sourceDir, "reviewer", { scope: "langsensei" });
-      const agent = await store.install(src);
+      const agent = await installFromDir(store, src);
       expect(agent.name).toBe("langsensei/reviewer");
     });
 
     it("upserts on re-install", async () => {
-      await store.install(await makeAgentSource(sourceDir, "reviewer"));
-      await store.install(await makeAgentSource(sourceDir, "reviewer"));
+      await installFromDir(store, await makeAgentSource(sourceDir, "reviewer"));
+      await installFromDir(store, await makeAgentSource(sourceDir, "reviewer"));
       expect(store.list()).toHaveLength(1);
     });
 
@@ -48,14 +48,14 @@ describe("AgentCatalog", () => {
       const dir = join(sourceDir, "bad");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "AGENTS.md"), "---\nname: BAD\ndescription: x\n---\n");
-      await expect(store.install(dir)).rejects.toThrow(NameInvalid);
+      await expect(installFromDir(store, dir)).rejects.toThrow(NameInvalid);
     });
 
     it("preserves dependencies", async () => {
       const src = await makeAgentSource(sourceDir, "reviewer", {
         deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
       });
-      const agent = await store.install(src);
+      const agent = await installFromDir(store, src);
       expect(agent.dependencies).toEqual({
         skills: [{ name: "lint", origin: "file:/test/public/lint", scope: "public" }],
         mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
@@ -65,7 +65,7 @@ describe("AgentCatalog", () => {
 
   describe("remove", () => {
     it("removes installed agent", async () => {
-      await store.install(await makeAgentSource(sourceDir, "reviewer"));
+      await installFromDir(store, await makeAgentSource(sourceDir, "reviewer"));
       await store.remove("public/reviewer");
       expect(store.get("public/reviewer")).toBeNull();
     });
@@ -107,7 +107,8 @@ describe("AgentCatalog", () => {
 
   describe("graphNodes", () => {
     it("returns dependency graph (FQNs from refs)", async () => {
-      await store.install(
+      await installFromDir(
+        store,
         await makeAgentSource(sourceDir, "reviewer", {
           deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
         }),

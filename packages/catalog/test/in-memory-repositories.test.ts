@@ -10,6 +10,7 @@ import {
   InMemoryMcpRepository,
   InMemorySkillRepository,
 } from "../testing.js";
+import { installFromDir } from "./helpers.js";
 
 let sourceDir: string;
 
@@ -33,7 +34,7 @@ describe("Stores wired to InMemory repositories", () => {
       ["---", "name: alpha", "description: Alpha", "---", "# body"].join("\n"),
     );
 
-    await store.install(dir);
+    await installFromDir(store, dir);
     expect(store.has("public/alpha")).toBe(true);
     expect(store.get("public/alpha")?.description).toBe("Alpha");
 
@@ -54,7 +55,7 @@ describe("Stores wired to InMemory repositories", () => {
       ["---", "name: lint", "description: Lint", "---", "# body"].join("\n"),
     );
 
-    await store.install(dir);
+    await installFromDir(store, dir);
     await store.updateContent(
       "public/lint",
       ["---", "name: lint", "description: Lint v2", "---", "# body"].join("\n"),
@@ -67,7 +68,7 @@ describe("Stores wired to InMemory repositories", () => {
     const repo = new InMemoryMcpRepository();
     const store = new McpCatalog(repo);
 
-    const fqn = await store.installFromContent('{"command":"gh"}', {
+    const fqn = await store.install('{"command":"gh"}', {
       name: "github/cli",
       origin: "file:/x",
     });

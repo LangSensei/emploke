@@ -1,5 +1,4 @@
 import { applyInstall, type CatalogManager, resolveInstall } from "@emploke/catalog";
-import type { FetcherRegistry } from "@emploke/catalog-fetcher";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readAgentInstallBody, readContentBody, readMetadataBody } from "./helpers.js";
@@ -8,16 +7,13 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 /**
  * Routes for /agents/* relative to the parent mount. Mounted by
  * `catalogRoutes` at "/agents". Mirrors {@link skillsRoutes}: takes a
- * body `{ origin, scopeHints? }`, performs `resolveInstall` →
- * `applyInstall`, returns an `InstallManifest`.
+ * body `{ origin }`, performs `resolveInstall` → `applyInstall`,
+ * returns an `InstallManifest`.
  *
  * `POST /resolve` returns the read-only `ResolveManifest` for the
  * dashboard's two-phase install flow.
  */
-export function agentsRoutes(
-  arg: CatalogResolver | CatalogManager,
-  fetcherRegistry: FetcherRegistry,
-): Hono {
+export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -30,7 +26,6 @@ export function agentsRoutes(
     try {
       const manifest = await resolveInstall({
         catalog,
-        fetchers: fetcherRegistry,
         rootKind: "agent",
         rootOrigin: parsed.origin,
       });
@@ -62,15 +57,10 @@ export function agentsRoutes(
     try {
       const resolved = await resolveInstall({
         catalog,
-        fetchers: fetcherRegistry,
         rootKind: "agent",
         rootOrigin: parsed.origin,
       });
-      const manifest = await applyInstall({
-        catalog,
-        fetchers: fetcherRegistry,
-        manifest: resolved,
-      });
+      const manifest = await applyInstall({ catalog, manifest: resolved });
       const status = manifest.failed.length > 0 ? 207 : 201;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(manifest, status as any);

@@ -40,10 +40,9 @@ describe("applyInstall", () => {
   it("installs a single skill node", async () => {
     const origin = "file:/test/leaf";
     entries.set(origin, [file("SKILL.md", "---\nname: leaf\ndescription: l\n---\n")]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const manifest = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -60,10 +59,9 @@ describe("applyInstall", () => {
     entries.set(origin, [
       file("SKILL.md", "---\nname: leaf\nscope: anthropic\ndescription: l\n---\n"),
     ]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const manifest = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -90,10 +88,9 @@ describe("applyInstall", () => {
       ),
     ]);
     entries.set(mcpOrigin, [file("ns_mcp.json", JSON.stringify({ command: "x" }))]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const manifest = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin,
     });
@@ -106,11 +103,10 @@ describe("applyInstall", () => {
   it("skips already-installed nodes (same origin)", async () => {
     const origin = "file:/test/leaf";
     entries.set(origin, [file("SKILL.md", "---\nname: leaf\ndescription: l\n---\n")]);
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     // First install lands the entry.
     const m1 = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -118,7 +114,6 @@ describe("applyInstall", () => {
     // Re-resolve and apply.
     const m2 = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin: origin,
     });
@@ -150,10 +145,9 @@ describe("applyInstall", () => {
     ]);
     entries.set(goodChild, [file("SKILL.md", "---\nname: good\ndescription: g\n---\n")]);
     // bad → fetch fails (registered → no fixture)
-    const catalog = await CatalogManager.open({ catalogDir });
+    const catalog = await CatalogManager.open({ catalogDir, fetchers });
     const manifest = await resolveInstall({
       catalog,
-      fetchers,
       rootKind: "skill",
       rootOrigin,
     });

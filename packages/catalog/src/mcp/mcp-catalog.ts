@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { HasDependents, NotFound } from "../errors.js";
 import type { McpRepository } from "../repositories/repository.js";
 import type { McpMetadata } from "../types.js";
@@ -40,18 +39,13 @@ export class McpCatalog {
 
   constructor(private readonly repository: McpRepository) {}
 
-  async install(sourceFile: string, opts: InstallMcpOpts): Promise<string> {
-    const content = await readFile(sourceFile, "utf8");
-    return this.installFromContent(content, opts);
-  }
-
   /**
    * Install from raw JSON content. The content's existing structure
    * (client shape: `command`/`args`/`env`/...) is preserved; emploke
    * only injects/overwrites the inline `_meta: { name, origin }` keys
    * via {@link writeMcpMeta}.
    */
-  async installFromContent(content: string, opts: InstallMcpOpts): Promise<string> {
+  async install(content: string, opts: InstallMcpOpts): Promise<string> {
     validateMcpName(opts.name);
     if (typeof opts.origin !== "string" || opts.origin.length === 0) {
       throw new Error("install requires opts.origin (non-empty string)");

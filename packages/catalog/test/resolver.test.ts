@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentCatalog } from "../src/agent/agent-catalog.js";
@@ -10,6 +10,7 @@ import { Resolver } from "../src/resolver.js";
 import { SkillCatalog } from "../src/skill/skill-catalog.js";
 import {
   dep,
+  installFromDir,
   makeAgentSource,
   makeBase,
   makeMcpSource,
@@ -42,14 +43,16 @@ afterEach(async () => {
 
 async function installMcp(specName: string): Promise<void> {
   const file = await makeMcpSource(sourceDir, specName.replace("/", "_"));
-  await mcps.install(file, { name: specName, origin: `file:${file}` });
+  const content = await readFile(file, "utf8");
+  await mcps.install(content, { name: specName, origin: `file:${file}` });
 }
 
 describe("Resolver", () => {
   it("resolveAgent: agent with direct deps", async () => {
     await installMcp("github/cli");
-    await skills.install(await makeSkillSource(sourceDir, "lint"));
-    await agents.install(
+    await installFromDir(skills, await makeSkillSource(sourceDir, "lint"));
+    await installFromDir(
+      agents,
       await makeAgentSource(sourceDir, "reviewer", {
         deps: { skills: [dep("lint")], mcps: [mcpDep("github/cli")] },
       }),
@@ -63,8 +66,9 @@ describe("Resolver", () => {
 
   it("resolveSkill: skill with direct deps; entry skill is included in skills[]", async () => {
     await installMcp("semgrep/cli");
-    await skills.install(await makeSkillSource(sourceDir, "cve-db"));
-    await skills.install(
+    await installFromDir(skills, await makeSkillSource(sourceDir, "cve-db"));
+    await installFromDir(
+      skills,
       await makeSkillSource(sourceDir, "security-audit", {
         deps: { skills: [dep("cve-db")], mcps: [mcpDep("semgrep/cli")] },
       }),
@@ -81,13 +85,15 @@ describe("Resolver", () => {
 
   it("resolveAgent: transitive dependencies in topological order", async () => {
     await installMcp("postgres/db");
-    await skills.install(await makeSkillSource(sourceDir, "leaf"));
-    await skills.install(
+    await installFromDir(skills, await makeSkillSource(sourceDir, "leaf"));
+    await installFromDir(
+      skills,
       await makeSkillSource(sourceDir, "mid", {
         deps: { skills: [dep("leaf")], mcps: [mcpDep("postgres/db")] },
       }),
     );
-    await agents.install(
+    await installFromDir(
+      agents,
       await makeAgentSource(sourceDir, "top", { deps: { skills: [dep("mid")] } }),
     );
 
@@ -108,21 +114,21 @@ describe("Resolver", () => {
   });
 
   it("resolveAgent: throws helpful error when name is a skill", async () => {
-    await skills.install(await makeSkillSource(sourceDir, "a-skill"));
+    await installFromDir(skills, await makeSkillSource(sourceDir, "a-skill"));
     expect(() => resolver.resolveAgent("public/a-skill")).toThrow(
       "is a skill, not an agent — use resolveSkill() instead",
     );
   });
 
   it("resolveSkill: throws helpful error when name is an agent", async () => {
-    await agents.install(await makeAgentSource(sourceDir, "an-agent"));
+    await installFromDir(agents, await makeAgentSource(sourceDir, "an-agent"));
     expect(() => resolver.resolveSkill("public/an-agent")).toThrow(
       "is an agent, not a skill — use resolveAgent() instead",
     );
   });
 
   it("resolveAgent: agent with no deps", async () => {
-    await agents.install(await makeAgentSource(sourceDir, "simple"));
+    await installFromDir(agents, await makeAgentSource(sourceDir, "simple"));
     const result = resolver.resolveAgent("public/simple");
     expect(result.skills).toHaveLength(0);
     expect(result.mcps).toHaveLength(0);
@@ -130,18 +136,20 @@ describe("Resolver", () => {
   });
 
   it("resolveSkill: skill with no deps still returns itself", async () => {
-    await skills.install(await makeSkillSource(sourceDir, "standalone"));
+    await installFromDir(skills, await makeSkillSource(sourceDir, "standalone"));
     const result = resolver.resolveSkill("public/standalone");
     expect(result.skills.map((s) => s.skill.name)).toEqual(["public/standalone"]);
     expect(result.mcps).toHaveLength(0);
   });
 
   it("rejects an agent listed as a dependency (agents can only depend on others, not be depended on)", async () => {
-    await agents.install(await makeAgentSource(sourceDir, "inner-agent"));
-    await skills.install(
+    await installFromDir(agents, await makeAgentSource(sourceDir, "inner-agent"));
+    await installFromDir(
+      skills,
       await makeSkillSource(sourceDir, "bad-skill", { deps: { skills: [dep("inner-agent")] } }),
     );
-    await agents.install(
+    await installFromDir(
+      agents,
       await makeAgentSource(sourceDir, "outer-agent", { deps: { skills: [dep("bad-skill")] } }),
     );
 
