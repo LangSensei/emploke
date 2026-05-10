@@ -3,9 +3,8 @@
  *
  * Returns a {@link ResolveManifest} describing every node in the
  * transitive dep graph: per-FQN status (`new`, `already-installed`,
- * `would-conflict`, `fetch-failed`, `parse-failed`), the L1/L2/L3-derived
- * default scope, and the dep edges (`depFqns`) so the dashboard can
- * render the tree.
+ * `would-conflict`, `fetch-failed`, `parse-failed`), and the dep edges
+ * (`depFqns`) so the dashboard can render the tree.
  *
  * Best-effort: per-node failures don't stop the walk; siblings keep
  * resolving. Per-node failures carry an `error: { name, message }`.
@@ -15,8 +14,8 @@
  * post-fetch FQN dedupe is a defensive second layer in
  * {@link applyInstall}.
  *
- * No catalog mutations; the {@link ScopeResolver} is consulted via
- * its read-only `preview()` method (no L3 → L2 auto-write).
+ * No catalog mutations. Scope comes purely from frontmatter (or
+ * default `public`); no scope-mapping system is consulted.
  */
 import {
   type EntryFile,
@@ -24,9 +23,8 @@ import {
   normalizeOrigin,
   parseOrigin,
 } from "@emploke/catalog-fetcher";
-import { parseFrontmatter } from "./frontmatter.js";
+import { DEFAULT_SCOPE, parseFrontmatter } from "./frontmatter.js";
 import type { CatalogManager } from "./manager.js";
-import type { ScopeResolver } from "./scope-resolver.js";
 import type { DependencyRef } from "./types.js";
 import { makeFqn, validateMcpName } from "./validate.js";
 
@@ -58,25 +56,23 @@ interface CommonNode {
   readonly fqn: string;
   readonly status: NodeStatus;
   readonly depFqns: readonly string[];
-  /** True for skill/agent (scope can be edited); false for MCP. */
-  readonly editable: boolean;
   readonly error?: ResolveNodeError;
 }
 
 export interface SkillResolveNode extends CommonNode {
   readonly kind: "skill";
   readonly shortName: string;
-  readonly defaultScope: string;
-  readonly scopeSource: "L1" | "L2" | "L3";
-  readonly matchedPattern?: string;
+  /** Scope as resolved from frontmatter (or DEFAULT_SCOPE if omitted). */
+  readonly scope: string;
+  /** True iff frontmatter omitted `scope:` and we used the default. */
+  readonly scopeIsDefault: boolean;
 }
 
 export interface AgentResolveNode extends CommonNode {
   readonly kind: "agent";
   readonly shortName: string;
-  readonly defaultScope: string;
-  readonly scopeSource: "L1" | "L2" | "L3";
-  readonly matchedPattern?: string;
+  readonly scope: string;
+  readonly scopeIsDefault: boolean;
 }
 
 export interface McpResolveNode extends CommonNode {
@@ -100,12 +96,8 @@ interface PendingNode {
 
 export async function resolveInstall(input: ResolveInstallInput): Promise<ResolveManifest> {
   const { catalog, fetchers, rootKind, rootOrigin, rootMcpName } = input;
-  const scopes = catalog.scopes;
 
-  // Order-preserving result list keyed by FQN. We push the root first
-  // so it lands at index 0 even if its children resolve faster.
   const nodes = new Map<string, ResolveNode>();
-  // De-dup keys: we visit each origin (skill/agent) or each spec name (mcp) once.
   const visitedOrigins = new Set<string>();
   const visitedMcpNames = new Set<string>();
 
@@ -134,7 +126,7 @@ export async function resolveInstall(input: ResolveInstallInput): Promise<Resolv
     }
     if (visitedOrigins.has(next.origin)) continue;
     visitedOrigins.add(next.origin);
-    const result = await resolveSkillOrAgentNode(catalog, fetchers, scopes, next.kind, next.origin);
+    const result = await resolveSkillOrAgentNode(catalog, fetchers, next.kind, next.origin);
     nodes.set(result.node.fqn, result.node);
     if (rootFqn === null) rootFqn = result.node.fqn;
     for (const dep of result.children) queue.push(dep);
@@ -161,7 +153,6 @@ async function resolveMcpNode(
     specName: name,
     status,
     depFqns: [],
-    editable: false,
   };
 }
 
@@ -173,7 +164,6 @@ interface SkillOrAgentResolveResult {
 async function resolveSkillOrAgentNode(
   catalog: CatalogManager,
   fetchers: FetcherRegistry,
-  scopes: ScopeResolver,
   kind: "skill" | "agent",
   origin: string,
 ): Promise<SkillOrAgentResolveResult> {
@@ -186,15 +176,10 @@ async function resolveSkillOrAgentNode(
     return { node: failedSkillOrAgentNode(kind, origin, err), children: [] };
   }
   let data: Record<string, unknown>;
-  let frontmatterErr: unknown = null;
   try {
     ({ data } = parseFrontmatter(anchor, `${origin}/${anchorName}`));
   } catch (err) {
-    frontmatterErr = err;
-    data = {};
-  }
-  if (frontmatterErr !== null) {
-    return { node: failedSkillOrAgentNode(kind, origin, frontmatterErr), children: [] };
+    return { node: failedSkillOrAgentNode(kind, origin, err), children: [] };
   }
 
   const shortName = typeof data.name === "string" ? data.name : "";
@@ -205,23 +190,9 @@ async function resolveSkillOrAgentNode(
     };
   }
 
-  // L1 inline > L2/L3 preview.
-  let scope: string;
-  let scopeSource: "L1" | "L2" | "L3";
-  let matchedPattern: string | undefined;
-  if (typeof data.scope === "string" && data.scope.length > 0) {
-    scope = data.scope;
-    scopeSource = "L1";
-  } else {
-    try {
-      const resolved = scopes.preview(origin);
-      scope = resolved.scope;
-      scopeSource = resolved.source;
-      matchedPattern = resolved.matchedPattern;
-    } catch (err) {
-      return { node: failedSkillOrAgentNode(kind, origin, err), children: [] };
-    }
-  }
+  const inlineScope = typeof data.scope === "string" && data.scope.length > 0 ? data.scope : null;
+  const scope = inlineScope ?? DEFAULT_SCOPE;
+  const scopeIsDefault = inlineScope === null;
 
   let fqn: string;
   try {
@@ -233,7 +204,7 @@ async function resolveSkillOrAgentNode(
   const skillDeps = pickDepRefs(data.dependencies, "skills");
   const mcpDeps = pickDepRefs(data.dependencies, "mcps");
   const depFqns = [
-    ...skillDeps.map((r) => makeFqnQuiet(r.scope ?? scopes.preview(r.origin).scope, r.name)),
+    ...skillDeps.map((r) => makeFqnQuiet(r.scope ?? DEFAULT_SCOPE, r.name)),
     ...mcpDeps.map((r) => r.name),
   ];
 
@@ -242,12 +213,10 @@ async function resolveSkillOrAgentNode(
     origin,
     fqn,
     shortName,
-    defaultScope: scope,
-    scopeSource,
-    ...(matchedPattern !== undefined ? { matchedPattern } : {}),
+    scope,
+    scopeIsDefault,
     status,
     depFqns,
-    editable: true,
   };
   const node: SkillResolveNode | AgentResolveNode =
     kind === "skill" ? { kind: "skill", ...baseNode } : { kind: "agent", ...baseNode };
@@ -307,11 +276,10 @@ function failedSkillOrAgentNode(
     origin,
     fqn: `__failed__:${kind}:${origin}`,
     shortName: "",
-    defaultScope: "",
-    scopeSource: "L3" as const,
+    scope: "",
+    scopeIsDefault: false,
     status: classifyError(e),
     depFqns: [] as readonly string[],
-    editable: false,
     error: { name: e.name, message: e.message },
   };
   return kind === "skill" ? { kind: "skill", ...base } : { kind: "agent", ...base };
@@ -326,7 +294,6 @@ function failedMcpNode(origin: string, name: string, err: unknown): McpResolveNo
     specName: name,
     status: classifyError(e),
     depFqns: [],
-    editable: false,
     error: { name: e.name, message: e.message },
   };
 }

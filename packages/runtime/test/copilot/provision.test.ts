@@ -69,7 +69,7 @@ async function setup(opts: {
       const name = key.slice(slash + 1);
       return `    - { name: "${name}", origin: "file:test/${scope}/${name}", scope: "${scope}" }`;
     }
-    return `    - { name: "${key}", origin: "file:test/local/${key}" }`;
+    return `    - { name: "${key}", origin: "file:test/public/${key}" }`;
   };
   // MCP dep refs in Phase 2: `name` is the full spec FQN with `/`. The
   // fixture key MUST already be in `<namespace>/<short>` form.
@@ -133,7 +133,7 @@ async function setup(opts: {
     fixtures.skills![name] = files;
   }
   const { catalog } = await makeTestCatalog(fixtures);
-  return { catalog, agentName: `local/${agentShortName}` };
+  return { catalog, agentName: `public/${agentShortName}` };
 }
 
 /**
@@ -166,7 +166,7 @@ async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
   // Now corrupt the MCP's bytes via the repo seam — the catalog still
   // believes it exists (it was valid at scan time).
   await repos.mcps.write(specName, "{not-json");
-  return { catalog, agentName: `local/${agentShortName}`, mcpName: specName };
+  return { catalog, agentName: `public/${agentShortName}`, mcpName: specName };
 }
 
 describe("provisionCopilotWorkdir — basics", () => {

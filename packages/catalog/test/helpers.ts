@@ -20,13 +20,13 @@ import type { DependencyRef } from "../src/types.js";
  *    `file:` origin so the resulting FQN resolves to `local/foo`.
  */
 
-/** Compute the FQN for a fixture that omits `scope:`. Always `local/<name>`. */
+/** Compute the FQN for a fixture that omits `scope:`. Always `public/<name>`. */
 export function localFqn(shortName: string): string {
-  return `local/${shortName}`;
+  return `public/${shortName}`;
 }
 
-/** Build a {@link DependencyRef} for a SKILL dep installed as `local/<short>`. */
-export function dep(shortName: string, scope = "local"): DependencyRef {
+/** Build a {@link DependencyRef} for a SKILL dep installed as `public/<short>`. */
+export function dep(shortName: string, scope = "public"): DependencyRef {
   // Use a synthetic file: URI; parseOrigin accepts any non-empty path.
   // Distinct per-call so the URI uniquely identifies the dep target
   // (the recursive installer wouldn't actually fetch anything in tests).

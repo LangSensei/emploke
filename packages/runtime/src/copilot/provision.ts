@@ -43,22 +43,22 @@ const SCOPE_FLATTEN_SEP = "__";
 /**
  * Flatten `scope/name` into a single safe path segment.
  *
- * The implicit default scope `local/` (assigned to entries installed from
- * `file:` origins) is **stripped** rather than flattened — `.github/` paths
- * stay clean for the common single-machine case. Real third-party scopes
- * keep their `<scope>__<name>` form so cross-scope collisions still can't
- * happen. (Collision between `local/foo` → `foo` and a hypothetical
- * `<scope>/<name>` flattening to `foo` is impossible because `__` cannot
- * appear in a valid kebab-case `shortName`.)
+ * The default scope `public/` (assigned to entries whose frontmatter
+ * omits `scope:`) is **stripped** rather than flattened — `.github/`
+ * paths stay clean for the common case. Real third-party scopes keep
+ * their `<scope>__<name>` form so cross-scope collisions still can't
+ * happen. (Collision between `public/foo` → `foo` and a hypothetical
+ * `<scope>/<name>` flattening to `foo` is impossible because `__`
+ * cannot appear in a valid kebab-case `shortName`.)
  */
 export function flattenSkillName(name: string): string {
-  if (name.startsWith(LOCAL_SCOPE_PREFIX)) {
-    return name.slice(LOCAL_SCOPE_PREFIX.length);
+  if (name.startsWith(DEFAULT_SCOPE_PREFIX)) {
+    return name.slice(DEFAULT_SCOPE_PREFIX.length);
   }
   return name.replaceAll("/", SCOPE_FLATTEN_SEP);
 }
 
-const LOCAL_SCOPE_PREFIX = "local/";
+const DEFAULT_SCOPE_PREFIX = "public/";
 
 /**
  * Bake `agent` into `workdir` so `copilot` can be launched there.

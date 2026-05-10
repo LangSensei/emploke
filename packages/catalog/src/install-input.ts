@@ -9,16 +9,14 @@
  * shared across HTTP, future CLI, future programmatic SDK.
  */
 import { FrontmatterError } from "./errors.js";
-import { validateMcpName, validateScope } from "./validate.js";
+import { validateMcpName } from "./validate.js";
 
 export interface SkillInstallBody {
   readonly origin: string;
-  readonly scopeHints?: Readonly<Record<string, string>>;
 }
 
 export interface AgentInstallBody {
   readonly origin: string;
-  readonly scopeHints?: Readonly<Record<string, string>>;
 }
 
 export interface McpInstallBody {
@@ -34,25 +32,18 @@ const REQUEST_PATH = "<request>";
  */
 export function validateSkillInstallInput(raw: unknown): SkillInstallBody {
   const obj = expectObject(raw);
-  return {
-    origin: requireNonEmptyString(obj, "origin"),
-    ...(obj.scopeHints !== undefined ? { scopeHints: validateScopeHints(obj.scopeHints) } : {}),
-  };
+  return { origin: requireNonEmptyString(obj, "origin") };
 }
 
 /** Validate the body of `POST /catalog/agents`. Same shape as skills. */
 export function validateAgentInstallInput(raw: unknown): AgentInstallBody {
   const obj = expectObject(raw);
-  return {
-    origin: requireNonEmptyString(obj, "origin"),
-    ...(obj.scopeHints !== undefined ? { scopeHints: validateScopeHints(obj.scopeHints) } : {}),
-  };
+  return { origin: requireNonEmptyString(obj, "origin") };
 }
 
 /**
  * Validate the body of `POST /catalog/mcps`. MCPs require both
- * `origin` and `name` (the spec FQN); they don't take `scopeHints`
- * because MCPs don't participate in emploke's scope-mapping system.
+ * `origin` and `name` (the spec FQN).
  */
 export function validateMcpInstallInput(raw: unknown): McpInstallBody {
   const obj = expectObject(raw);
@@ -78,22 +69,4 @@ function requireNonEmptyString(obj: Record<string, unknown>, key: string): strin
     );
   }
   return v;
-}
-
-function validateScopeHints(raw: unknown): Readonly<Record<string, string>> {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new FrontmatterError(REQUEST_PATH, "`scopeHints` must be a JSON object");
-  }
-  const out: Record<string, string> = {};
-  for (const [fqn, scope] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof scope !== "string" || scope.length === 0) {
-      throw new FrontmatterError(
-        REQUEST_PATH,
-        `\`scopeHints[${JSON.stringify(fqn)}]\` must be a non-empty string`,
-      );
-    }
-    validateScope(scope);
-    out[fqn] = scope;
-  }
-  return out;
 }

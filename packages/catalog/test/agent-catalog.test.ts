@@ -25,11 +25,11 @@ afterEach(async () => {
 
 describe("AgentCatalog", () => {
   describe("install", () => {
-    it("installs and returns agent (FQN local/<name>)", async () => {
+    it("installs and returns agent (FQN public/<name>)", async () => {
       const src = await makeAgentSource(sourceDir, "reviewer");
       const agent = await store.install(src);
-      expect(agent.name).toBe("local/reviewer");
-      expect(store.get("local/reviewer")).toEqual(agent);
+      expect(agent.name).toBe("public/reviewer");
+      expect(store.get("public/reviewer")).toEqual(agent);
     });
 
     it("installs scoped agent via frontmatter `scope:`", async () => {
@@ -57,7 +57,7 @@ describe("AgentCatalog", () => {
       });
       const agent = await store.install(src);
       expect(agent.dependencies).toEqual({
-        skills: [{ name: "lint", origin: "file:/test/local/lint", scope: "local" }],
+        skills: [{ name: "lint", origin: "file:/test/public/lint", scope: "public" }],
         mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
       });
     });
@@ -66,12 +66,12 @@ describe("AgentCatalog", () => {
   describe("remove", () => {
     it("removes installed agent", async () => {
       await store.install(await makeAgentSource(sourceDir, "reviewer"));
-      await store.remove("local/reviewer");
-      expect(store.get("local/reviewer")).toBeNull();
+      await store.remove("public/reviewer");
+      expect(store.get("public/reviewer")).toBeNull();
     });
 
     it("throws NotFound for unknown", async () => {
-      await expect(store.remove("local/nope")).rejects.toThrow(NotFound);
+      await expect(store.remove("public/nope")).rejects.toThrow(NotFound);
     });
   });
 
@@ -82,7 +82,7 @@ describe("AgentCatalog", () => {
       await writeFile(join(dir, "AGENTS.md"), "---\nname: reviewer\ndescription: R\n---\n");
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
-      expect(store.get("local/reviewer")!.name).toBe("local/reviewer");
+      expect(store.get("public/reviewer")!.name).toBe("public/reviewer");
     });
 
     it("scans scoped agents", async () => {
@@ -113,7 +113,7 @@ describe("AgentCatalog", () => {
         }),
       );
       const nodes = store.graphNodes();
-      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "local/lint"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "public/lint"]);
     });
   });
 

@@ -70,7 +70,6 @@ export function agentsRoutes(
         catalog,
         fetchers: fetcherRegistry,
         manifest: resolved,
-        ...(parsed.scopeHints !== undefined ? { scopeHints: parsed.scopeHints } : {}),
       });
       const status = manifest.failed.length > 0 ? 207 : 201;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.

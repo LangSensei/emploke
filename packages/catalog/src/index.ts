@@ -4,7 +4,6 @@ export {
   OriginParseError,
   type ParsedOrigin,
   parseOrigin,
-  scopeFromOrigin,
 } from "@emploke/catalog-fetcher";
 export {
   type ApplyInstallInput,
@@ -26,9 +25,13 @@ export {
   NameInvalid,
   NotFound,
   OriginConflictError,
-  UnsupportedCatalogVersionError,
 } from "./errors.js";
-export { applyFrontmatterPatch, depRefToFqn, synthesizeOriginFromPath } from "./frontmatter.js";
+export {
+  applyFrontmatterPatch,
+  DEFAULT_SCOPE,
+  depRefToFqn,
+  synthesizeOriginFromPath,
+} from "./frontmatter.js";
 export {
   type AgentInstallBody,
   type McpInstallBody,
@@ -53,13 +56,6 @@ export {
   stripMcpMeta,
   writeMcpMeta,
 } from "./mcp/mcp-frontmatter.js";
-export {
-  CATALOG_CONFIG_VERSION,
-  type CatalogConfig,
-  type CatalogRepository,
-} from "./repositories/catalog-repository.js";
-export { FsCatalogRepository } from "./repositories/fs-catalog-repository.js";
-export { InMemoryCatalogRepository } from "./repositories/in-memory-catalog-repository.js";
 export type { CatalogEntryFile } from "./repositories/repository.js";
 export {
   type AgentResolveNode,
@@ -72,11 +68,6 @@ export {
   resolveInstall,
   type SkillResolveNode,
 } from "./resolve.js";
-export {
-  type ResolvedScope,
-  ScopeResolver,
-  type ScopeSource,
-} from "./scope-resolver.js";
 export type {
   Agent,
   AgentEntry,

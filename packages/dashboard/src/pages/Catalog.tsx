@@ -67,18 +67,12 @@ export function CatalogPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const doInstall = async (
-    origin: string,
-    name: string | undefined,
-    scopeHints: Record<string, string>,
-  ) => {
+  const doInstall = async (origin: string, name: string | undefined) => {
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents")
-        await installAgent(origin, hasHints(scopeHints) ? scopeHints : undefined);
-      else if (tab === "skills")
-        await installSkill(origin, hasHints(scopeHints) ? scopeHints : undefined);
+      if (tab === "agents") await installAgent(origin);
+      else if (tab === "skills") await installSkill(origin);
       else {
         if (!name) throw new Error("name is required for MCP installs");
         await installMcp(origin, name);
@@ -268,10 +262,9 @@ interface InstallDialogProps {
   /**
    * `origin` is a URI: `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
    * or `file:<absolute-path>`. `name` is required for MCPs (full
-   * MCP-spec FQN, `<namespace>/<short>`). `scopeHints` is the per-FQN
-   * scope override map (skill/agent only — MCPs ignore hints).
+   * MCP-spec FQN, `<namespace>/<short>`).
    */
-  onSubmit: (origin: string, name: string | undefined, scopeHints: Record<string, string>) => void;
+  onSubmit: (origin: string, name: string | undefined) => void;
 }
 
 type InstallStage = "input" | "previewing" | "preview" | "applying";
@@ -281,7 +274,6 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
   const [name, setName] = useState("");
   const [stage, setStage] = useState<InstallStage>("input");
   const [manifest, setManifest] = useState<ResolveManifest | null>(null);
-  const [scopeHints, setScopeHints] = useState<Record<string, string>>({});
   const [resolveError, setResolveError] = useState<string | null>(null);
   const isMcp = kind === "mcps";
 
@@ -290,29 +282,9 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
     if (!open) {
       setStage("input");
       setManifest(null);
-      setScopeHints({});
       setResolveError(null);
     }
   }, [open]);
-
-  const handleScopeChange = (fqn: string, scope: string): void => {
-    if (!manifest) return;
-    const node = manifest.nodes.find((n) => n.fqn === fqn);
-    const trimmed = scope.trim();
-    setScopeHints((prev) => {
-      const next = { ...prev };
-      // If the user blanked the field or set it back to the default,
-      // drop the hint so the install body stays sparse.
-      const defaultScope =
-        node && (node.kind === "skill" || node.kind === "agent") ? node.defaultScope : "";
-      if (trimmed === "" || trimmed === defaultScope) {
-        delete next[fqn];
-      } else {
-        next[fqn] = trimmed;
-      }
-      return next;
-    });
-  };
 
   const handlePreview = async (e: FormEvent) => {
     e.preventDefault();
@@ -321,7 +293,7 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       // MCPs skip the resolve preview — single fetch + write, no deps to
       // tweak; submit straight through.
       if (!name.trim()) return;
-      onSubmit(origin.trim(), name.trim(), {});
+      onSubmit(origin.trim(), name.trim());
       return;
     }
     setStage("previewing");
@@ -341,13 +313,12 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
 
   const handleApply = (): void => {
     setStage("applying");
-    onSubmit(origin.trim(), undefined, scopeHints);
+    onSubmit(origin.trim(), undefined);
   };
 
   const handleBack = (): void => {
     setStage("input");
     setManifest(null);
-    setScopeHints({});
   };
 
   const stageBusy = busy || stage === "previewing" || stage === "applying";
@@ -396,19 +367,11 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
               />
               <p className="form-hint">
                 Required — the full MCP-spec FQN (<code>&lt;namespace&gt;/&lt;short&gt;</code>).
-                MCPs do NOT participate in scope-mapping; the spec name IS the catalog identity.
               </p>
             </div>
           )}
 
-          {showPreview && manifest && (
-            <ResolveTree
-              manifest={manifest}
-              scopeHints={scopeHints}
-              onScopeChange={handleScopeChange}
-              disabled={stage === "applying"}
-            />
-          )}
+          {showPreview && manifest && <ResolveTree manifest={manifest} />}
 
           {(error || resolveError) && (
             <div className="alert alert--error">⚠ {error ?? resolveError}</div>
@@ -451,11 +414,6 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       </form>
     </Modal>
   );
-}
-
-function hasHints(hints: Record<string, string>): boolean {
-  for (const _ in hints) return true;
-  return false;
 }
 
 // ─── ConfirmRemoveDialog ──────────────────────────────────────────

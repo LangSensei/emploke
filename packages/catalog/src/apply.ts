@@ -1,19 +1,19 @@
 /**
  * `applyInstall` — execute a {@link ResolveManifest}.
  *
- * Counterpart to {@link resolveInstall}. Walks the manifest in BFS-friendly
- * order (root first, then each level of deps), fetches each node's
- * content via the {@link FetcherRegistry}, and installs through the
- * appropriate {@link CatalogManager} primitive.
- *
- * `scopeHints` lets the caller override the resolver-derived scope on
- * a per-node basis. Keys are the FQNs as produced by `resolveInstall`
- * (i.e. `defaultScope/shortName`), values are the desired scope. Only
- * applied to skill/agent nodes — MCPs ignore hints (`editable: false`).
+ * Counterpart to {@link resolveInstall}. Walks the manifest in
+ * BFS-friendly order (root first, then each level of deps), fetches
+ * each node's content via the {@link FetcherRegistry}, and installs
+ * through the appropriate {@link CatalogManager} primitive.
  *
  * Best-effort: failures don't stop the walk. Returns an
  * {@link InstallManifest} listing per-FQN outcomes (`installed`,
- * `skipped`, `failed`) — same shape `deepInstall` used to produce.
+ * `skipped`, `failed`).
+ *
+ * No `scopeHints` parameter: scope is determined entirely by each
+ * entry's frontmatter (or default `public`). To install under a
+ * different scope, fork the upstream and edit `scope:` in the
+ * frontmatter — there is no per-install rename mechanism.
  */
 import type { EntryFile, FetcherRegistry } from "@emploke/catalog-fetcher";
 import type { CatalogManager } from "./manager.js";
@@ -23,8 +23,6 @@ export interface ApplyInstallInput {
   readonly catalog: CatalogManager;
   readonly fetchers: FetcherRegistry;
   readonly manifest: ResolveManifest;
-  /** FQN → scope override, sparse. Only honored for skill/agent nodes. */
-  readonly scopeHints?: Readonly<Record<string, string>>;
 }
 
 export interface InstalledEntry {
@@ -52,17 +50,11 @@ export interface InstallManifest {
 }
 
 export async function applyInstall(input: ApplyInstallInput): Promise<InstallManifest> {
-  const { catalog, fetchers, manifest, scopeHints } = input;
+  const { catalog, fetchers, manifest } = input;
   const installed: InstalledEntry[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
 
-  // Order matters only insofar as a parent must install BEFORE the
-  // catalog computes its own resolve graph against the dep — which
-  // happens lazily on resolveAgent/resolveSkill. Apply order doesn't
-  // need to be topological; the catalog tolerates installing children
-  // first. We process in manifest-order (root first) for predictable
-  // logs.
   for (const node of manifest.nodes) {
     if (node.error) {
       // Resolution flagged this node as failed; surface that as a
@@ -72,7 +64,7 @@ export async function applyInstall(input: ApplyInstallInput): Promise<InstallMan
       continue;
     }
     try {
-      const result = await applyOne(catalog, fetchers, node, scopeHints);
+      const result = await applyOne(catalog, fetchers, node);
       if (result.kind === "installed") installed.push(result.entry);
       else skipped.push(result.entry);
     } catch (err) {
@@ -97,7 +89,6 @@ async function applyOne(
   catalog: CatalogManager,
   fetchers: FetcherRegistry,
   node: ResolveNode,
-  scopeHints: Readonly<Record<string, string>> | undefined,
 ): Promise<ApplyOneResult> {
   if (node.status === "already-installed") {
     return { kind: "skipped", entry: { fqn: node.fqn, reason: "already-installed-same-origin" } };
@@ -109,14 +100,15 @@ async function applyOne(
     return { kind: "installed", entry: { fqn, kind: "mcp", origin: node.origin } };
   }
   const stream = fetchers.dispatch(node.origin);
-  const hint = scopeHints?.[node.fqn];
-  const installOpts: { origin: string; scopeOverride?: string } = { origin: node.origin };
-  if (hint !== undefined) installOpts.scopeOverride = hint;
   if (node.kind === "skill") {
-    const skill = await catalog.installSkillFromStream(stream, installOpts, node.origin);
+    const skill = await catalog.installSkillFromStream(
+      stream,
+      { origin: node.origin },
+      node.origin,
+    );
     return { kind: "installed", entry: { fqn: skill.name, kind: "skill", origin: node.origin } };
   }
-  const agent = await catalog.installAgentFromStream(stream, installOpts, node.origin);
+  const agent = await catalog.installAgentFromStream(stream, { origin: node.origin }, node.origin);
   return { kind: "installed", entry: { fqn: agent.name, kind: "agent", origin: node.origin } };
 }
 

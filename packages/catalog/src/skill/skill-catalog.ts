@@ -5,7 +5,6 @@ import {
   applyFrontmatterPatch,
   depRefToFqn,
   frontmatterToSkill,
-  type ProjectionOpts,
   parseFrontmatter,
   projectionOpts,
 } from "../frontmatter.js";
@@ -28,15 +27,9 @@ export type SkillMetadataPatch = Partial<{
  * SKILL.md COPY in the catalog if missing in the source). The route layer
  * passes `file:<absoluteSourceDir>` for local installs; the catalog-sources
  * fetchers pass the original remote URI.
- *
- * `scopeOverride` / `defaultScope` are forwarded to projection (see
- * {@link ProjectionOpts}). Set by the {@link CatalogManager} after
- * {@link ScopeResolver} runs.
  */
 export interface InstallSkillOpts {
   readonly origin?: string;
-  readonly scopeOverride?: string;
-  readonly defaultScope?: string;
 }
 
 /** Business-logic facade over a {@link SkillRepository}. See `AgentCatalog`. */
@@ -51,7 +44,7 @@ export class SkillCatalog {
     const sourcePath = join(sourceDir, "SKILL.md");
     const original = await readFile(sourcePath, "utf8");
     const { data } = parseFrontmatter(original, sourcePath);
-    const skill = frontmatterToSkill(data, sourcePath, optsToProjection(opts));
+    const skill = frontmatterToSkill(data, sourcePath, projectionOpts(opts.origin));
 
     // installFromDir copies the entire source tree under the FQN; if the
     // source frontmatter omitted `origin`, follow up with a write() that
@@ -59,19 +52,9 @@ export class SkillCatalog {
     // file is never touched) so the entry is self-describing for future
     // scans without depending on the install-time defaultOrigin.
     await this.repository.installFromDir(skill.name, sourceDir);
-    if (data.origin === undefined || data.scope === undefined) {
-      const patch: Record<string, unknown> = {};
-      if (data.origin === undefined) patch.origin = skill.origin;
-      // Persist scope inline only when it differs from what scopeFromOrigin
-      // would produce — keeps the on-disk frontmatter clean for the common
-      // case (P2-19).
-      if (data.scope === undefined && opts.scopeOverride !== undefined) {
-        patch.scope = skill.scope;
-      }
-      if (Object.keys(patch).length > 0) {
-        const rewritten = applyFrontmatterPatch(original, patch);
-        await this.repository.write(skill.name, rewritten);
-      }
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(original, { origin: skill.origin });
+      await this.repository.write(skill.name, rewritten);
     }
     this.skills.set(skill.name, skill);
     return skill;
@@ -105,17 +88,14 @@ export class SkillCatalog {
       throw new FrontmatterError(sourceLabel, "stream did not contain a top-level SKILL.md");
     }
     const { data } = parseFrontmatter(anchor.content, anchor.sourcePath);
-    const skill = frontmatterToSkill(data, anchor.sourcePath, optsToProjection(opts));
+    const skill = frontmatterToSkill(data, anchor.sourcePath, projectionOpts(opts.origin));
 
-    // If origin or scope is missing in source, rewrite the SKILL.md entry in
-    // the buffered stream so the on-disk copy is self-describing — same
-    // contract as installFromDir above. Persist scope only when overridden.
+    // If origin is missing in source, rewrite the SKILL.md entry in the
+    // buffered stream so the on-disk copy is self-describing — same
+    // contract as installFromDir above.
     let toInstall: CatalogEntryFile[] = buffered;
-    const patch: Record<string, unknown> = {};
-    if (data.origin === undefined) patch.origin = skill.origin;
-    if (data.scope === undefined && opts.scopeOverride !== undefined) patch.scope = skill.scope;
-    if (Object.keys(patch).length > 0) {
-      const rewritten = applyFrontmatterPatch(anchor.content, patch);
+    if (data.origin === undefined) {
+      const rewritten = applyFrontmatterPatch(anchor.content, { origin: skill.origin });
       toInstall = buffered.map((f) =>
         f.relPath === "SKILL.md"
           ? { relPath: f.relPath, content: Buffer.from(rewritten, "utf8") }
@@ -265,11 +245,4 @@ export class SkillCatalog {
 
 async function* asyncIterableOf<T>(items: Iterable<T>): AsyncIterable<T> {
   for (const item of items) yield item;
-}
-
-function optsToProjection(opts: InstallSkillOpts): ProjectionOpts {
-  const extra: { scopeOverride?: string; defaultScope?: string } = {};
-  if (opts.scopeOverride !== undefined) extra.scopeOverride = opts.scopeOverride;
-  if (opts.defaultScope !== undefined) extra.defaultScope = opts.defaultScope;
-  return projectionOpts(opts.origin, extra);
 }

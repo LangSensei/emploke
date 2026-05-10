@@ -91,30 +91,6 @@ export function parseOrigin(uri: string): ParsedOrigin {
 }
 
 /**
- * Derive the canonical scope for an origin. Scope serves as the catalog's
- * organizational namespace (`<scope>/<name>` is the FQN); deriving it from
- * the origin keeps installs deterministic without forcing the user to
- * invent a name.
- *
- * - `github`: scope = lowercase owner segment (e.g. `langsensei`,
- *   `anthropic`). Owners may legally contain uppercase letters on GitHub
- *   but are case-insensitive for routing — lowercasing here makes catalog
- *   identity case-stable.
- * - `file`: scope = the literal `local`. All `file:` installs share this
- *   single scope by design (per #39 review): two locally-authored skills
- *   with the same short name are intended to be a user-visible conflict
- *   rather than silently coexisting under different scopes.
- */
-export function scopeFromOrigin(origin: ParsedOrigin): string {
-  switch (origin.scheme) {
-    case "github":
-      return origin.owner.toLowerCase();
-    case "file":
-      return "local";
-  }
-}
-
-/**
  * Canonical string form for storage / equality comparison. Two origins are
  * "the same" iff their {@link normalizeOrigin} outputs match. Used by the
  * origin-conflict detector to decide whether an install is a re-install

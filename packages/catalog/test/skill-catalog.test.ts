@@ -25,13 +25,13 @@ afterEach(async () => {
 
 describe("SkillCatalog", () => {
   describe("install", () => {
-    it("installs and returns skill (FQN local/<name> from synthetic origin)", async () => {
+    it("installs and returns skill (FQN public/<name> when frontmatter omits scope)", async () => {
       const src = await makeSkillSource(sourceDir, "weather");
       const skill = await store.install(src);
-      expect(skill.name).toBe("local/weather");
+      expect(skill.name).toBe("public/weather");
       expect(skill.shortName).toBe("weather");
-      expect(skill.scope).toBe("local");
-      expect(store.get("local/weather")).toEqual(skill);
+      expect(skill.scope).toBe("public");
+      expect(store.get("public/weather")).toEqual(skill);
     });
 
     it("installs scoped skill via frontmatter `scope:`", async () => {
@@ -68,7 +68,7 @@ describe("SkillCatalog", () => {
       });
       const skill = await store.install(src);
       expect(skill.dependencies).toEqual({
-        skills: [{ name: "child", origin: "file:/test/local/child", scope: "local" }],
+        skills: [{ name: "child", origin: "file:/test/public/child", scope: "public" }],
         mcps: [{ name: "github/cli", origin: "file:/test/mcps/github_cli.json" }],
       });
     });
@@ -78,18 +78,18 @@ describe("SkillCatalog", () => {
     it("removes installed skill", async () => {
       const src = await makeSkillSource(sourceDir, "weather");
       await store.install(src);
-      await store.remove("local/weather", () => []);
-      expect(store.get("local/weather")).toBeNull();
+      await store.remove("public/weather", () => []);
+      expect(store.get("public/weather")).toBeNull();
     });
 
     it("throws NotFound for unknown", async () => {
-      await expect(store.remove("local/nope", () => [])).rejects.toThrow(NotFound);
+      await expect(store.remove("public/nope", () => [])).rejects.toThrow(NotFound);
     });
 
     it("blocks removal with dependents", async () => {
       const src = await makeSkillSource(sourceDir, "leaf");
       await store.install(src);
-      await expect(store.remove("local/leaf", () => ["local/parent"])).rejects.toThrow(
+      await expect(store.remove("public/leaf", () => ["public/parent"])).rejects.toThrow(
         HasDependents,
       );
     });
@@ -97,7 +97,7 @@ describe("SkillCatalog", () => {
 
   describe("get/list/has", () => {
     it("get returns null for unknown", () => {
-      expect(store.get("local/nope")).toBeNull();
+      expect(store.get("public/nope")).toBeNull();
     });
 
     it("list returns all installed", async () => {
@@ -108,22 +108,22 @@ describe("SkillCatalog", () => {
           .list()
           .map((s) => s.name)
           .sort(),
-      ).toEqual(["local/a", "local/b"]);
+      ).toEqual(["public/a", "public/b"]);
     });
 
     it("has returns false for unknown", () => {
-      expect(store.has("local/nope")).toBe(false);
+      expect(store.has("public/nope")).toBe(false);
     });
   });
 
   describe("scan", () => {
-    it("scans flat skills (legacy unscoped folder → local/ scope)", async () => {
+    it("scans flat skills (legacy unscoped folder → public/ scope)", async () => {
       const dir = join(catalogDir, "skills", "local", "weather");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: weather\ndescription: W\n---\n");
       const issues = await store.scan();
       expect(issues).toHaveLength(0);
-      expect(store.get("local/weather")!.name).toBe("local/weather");
+      expect(store.get("public/weather")!.name).toBe("public/weather");
     });
 
     it("scans scoped skills", async () => {
@@ -154,7 +154,7 @@ describe("SkillCatalog", () => {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: new-skill\ndescription: New\n---\n");
       await store.scan();
-      expect(store.has("local/new-skill")).toBe(true);
+      expect(store.has("public/new-skill")).toBe(true);
     });
   });
 
@@ -167,7 +167,7 @@ describe("SkillCatalog", () => {
       );
       const nodes = store.graphNodes();
       expect(nodes).toHaveLength(1);
-      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "local/child"]);
+      expect(nodes[0]!.dependencies.sort()).toEqual(["github/cli", "public/child"]);
     });
   });
 

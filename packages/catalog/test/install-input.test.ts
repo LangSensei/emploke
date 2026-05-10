@@ -10,15 +10,6 @@ describe("validateSkillInstallInput", () => {
   it("accepts { origin }", () => {
     const out = validateSkillInstallInput({ origin: "file:/x" });
     expect(out.origin).toBe("file:/x");
-    expect(out.scopeHints).toBeUndefined();
-  });
-
-  it("accepts { origin, scopeHints }", () => {
-    const out = validateSkillInstallInput({
-      origin: "file:/x",
-      scopeHints: { "ns/foo": "my-fork" },
-    });
-    expect(out.scopeHints).toEqual({ "ns/foo": "my-fork" });
   });
 
   it("rejects non-object body", () => {
@@ -35,22 +26,10 @@ describe("validateSkillInstallInput", () => {
     expect(() => validateSkillInstallInput({ origin: "" })).toThrow(/`origin`/);
   });
 
-  it("rejects non-object scopeHints", () => {
-    expect(() => validateSkillInstallInput({ origin: "file:/x", scopeHints: "no" })).toThrow(
-      /scopeHints/,
-    );
-  });
-
-  it("rejects scopeHints with non-string scope value", () => {
-    expect(() =>
-      validateSkillInstallInput({ origin: "file:/x", scopeHints: { foo: 123 } }),
-    ).toThrow(/scopeHints/);
-  });
-
-  it("validates scopeHints scope grammar", () => {
-    expect(() =>
-      validateSkillInstallInput({ origin: "file:/x", scopeHints: { foo: "BAD_SCOPE" } }),
-    ).toThrow();
+  it("ignores extra fields (scope is determined by frontmatter, not request)", () => {
+    const out = validateSkillInstallInput({ origin: "file:/x", scope: "ignored" });
+    expect(out.origin).toBe("file:/x");
+    expect(out).toEqual({ origin: "file:/x" });
   });
 });
 

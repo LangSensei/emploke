@@ -121,34 +121,26 @@ const jsonInit = (method: string, body: object): RequestInit => ({
 });
 
 /**
- * Install a new agent by `origin` URI (post-#39). The server fetches via
- * the registered fetcher (file:, https://github.com/...), recursively
+ * Install a new agent by `origin` URI. The server fetches via the
+ * registered fetcher (file:, https://github.com/...), recursively
  * resolves dependencies, and returns a manifest. Returns 207 on partial
  * failure — caller surfaces that as an error message via {@link extractError}.
  *
- * `scopeHints` is a sparse map of `<resolved-FQN> → <scope-override>` for
- * nodes the user edited in the resolve preview. Server applies the
- * overrides per node; nodes absent from the map use the resolver-derived
- * scope (L1/L2/L3).
+ * No `scopeHints`: scope is determined entirely by each entry's
+ * frontmatter (or default `public`). Forking under a different scope =
+ * editing upstream's frontmatter, not a per-install flag.
  */
-export const installAgent = (origin: string, scopeHints?: Record<string, string>) =>
-  mutate(
-    `${catalogPrefix()}/agents`,
-    jsonInit("POST", scopeHints !== undefined ? { origin, scopeHints } : { origin }),
-  );
+export const installAgent = (origin: string) =>
+  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { origin }));
 
 /** See {@link installAgent}. */
-export const installSkill = (origin: string, scopeHints?: Record<string, string>) =>
-  mutate(
-    `${catalogPrefix()}/skills`,
-    jsonInit("POST", scopeHints !== undefined ? { origin, scopeHints } : { origin }),
-  );
+export const installSkill = (origin: string) =>
+  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { origin }));
 
 /**
  * MCPs are JSON-only; `name` is the full MCP-spec FQN
  * (`<namespace>/<short>`, with the slash). MCPs do NOT participate in
- * the L1/L2/L3 scope-mapping system — the spec name IS the catalog
- * identity.
+ * the scope-mapping system — the spec name IS the catalog identity.
  */
 export const installMcp = (origin: string, name: string) =>
   mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", { origin, name }));
@@ -156,8 +148,8 @@ export const installMcp = (origin: string, name: string) =>
 /**
  * Resolve manifest returned by `POST /catalog/{kind}/resolve`. Read-only
  * preview of the dep graph the install will create. Used by the
- * dashboard's two-phase install dialog so the user can edit per-node
- * scopes before committing.
+ * dashboard's two-phase install dialog so the user can preview the
+ * tree (status / scope / conflicts) before committing.
  */
 export interface ResolveNodeBase {
   kind: "skill" | "agent" | "mcp";
@@ -165,24 +157,23 @@ export interface ResolveNodeBase {
   fqn: string;
   status: "new" | "already-installed" | "would-conflict" | "fetch-failed" | "parse-failed";
   depFqns: string[];
-  editable: boolean;
   error?: { name: string; message: string };
 }
 
 export interface SkillResolveNode extends ResolveNodeBase {
   kind: "skill";
   shortName: string;
-  defaultScope: string;
-  scopeSource: "L1" | "L2" | "L3";
-  matchedPattern?: string;
+  /** Scope as it'll appear in the catalog (frontmatter or `public` default). */
+  scope: string;
+  /** True iff the entry's frontmatter omitted `scope:` and we used the default. */
+  scopeIsDefault: boolean;
 }
 
 export interface AgentResolveNode extends ResolveNodeBase {
   kind: "agent";
   shortName: string;
-  defaultScope: string;
-  scopeSource: "L1" | "L2" | "L3";
-  matchedPattern?: string;
+  scope: string;
+  scopeIsDefault: boolean;
 }
 
 export interface McpResolveNode extends ResolveNodeBase {
@@ -199,8 +190,8 @@ export interface ResolveManifest {
 
 /**
  * Resolve an install (`POST /catalog/{kind}/resolve`) — returns the
- * read-only `ResolveManifest` so the user can preview the tree and
- * pick per-node scope overrides before committing.
+ * read-only `ResolveManifest` so the user can preview the tree before
+ * committing.
  */
 export const resolveSkillInstall = (origin: string): Promise<ResolveManifest> =>
   mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", { origin }));

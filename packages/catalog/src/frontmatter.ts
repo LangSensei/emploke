@@ -1,9 +1,4 @@
-import {
-  OriginParseError,
-  type ParsedOrigin,
-  parseOrigin,
-  scopeFromOrigin,
-} from "@emploke/catalog-fetcher";
+import { OriginParseError, parseOrigin } from "@emploke/catalog-fetcher";
 import yaml from "js-yaml";
 import { FrontmatterError } from "./errors.js";
 import type { Agent, DependencyRef, Skill } from "./types.js";
@@ -99,44 +94,21 @@ export function applyFrontmatterPatch(raw: string, patch: Record<string, unknown
 /**
  * Per-call options for {@link frontmatterToSkill} / {@link frontmatterToAgent}.
  *
- * `defaultOrigin` provides the origin URI used when the frontmatter doesn't
- * include `origin:`. Callers (install routes, fetchers) supply this so the
- * resulting `Skill.origin` is deterministic. If neither the frontmatter
- * nor `defaultOrigin` carries an origin, the parser synthesises
- * `file:<sourcePath>` so existing test fixtures and untagged local installs
- * still produce a valid `local/<name>` FQN.
- *
- * `scopeOverride` forces the scope to a specific value, bypassing both
- * the frontmatter's inline `scope:` field AND the origin-derived
- * default. Used by the resolve→apply install flow when the user edits
- * a node's scope in the dashboard.
- *
- * `defaultScope` provides the L2/L3-resolved scope to use when the
- * frontmatter has no inline `scope:` field. Lets the manager inject
- * the {@link ScopeResolver}'s output without making projection async.
+ * `defaultOrigin` provides the origin URI used when the frontmatter
+ * doesn't include `origin:`. Callers (install routes) pass the URI the
+ * user supplied so the resulting `Skill.origin` is deterministic.
  */
 export interface ProjectionOpts {
   readonly defaultOrigin?: string;
-  readonly scopeOverride?: string;
-  readonly defaultScope?: string;
 }
 
 /**
- * Build a {@link ProjectionOpts} from optionally-undefined fields without
- * tripping `exactOptionalPropertyTypes`. Returns an object containing only
- * the fields actually provided (no present-with-undefined entries).
+ * Build a {@link ProjectionOpts} from an optionally-undefined origin
+ * without tripping `exactOptionalPropertyTypes` (omits the field entirely
+ * when undefined rather than setting it to `undefined`).
  */
-export function projectionOpts(
-  o: string | undefined,
-  extra?: { scopeOverride?: string; defaultScope?: string },
-): ProjectionOpts {
-  const out: ProjectionOpts = {};
-  if (o !== undefined) (out as { defaultOrigin?: string }).defaultOrigin = o;
-  if (extra?.scopeOverride !== undefined)
-    (out as { scopeOverride?: string }).scopeOverride = extra.scopeOverride;
-  if (extra?.defaultScope !== undefined)
-    (out as { defaultScope?: string }).defaultScope = extra.defaultScope;
-  return out;
+export function projectionOpts(o: string | undefined): ProjectionOpts {
+  return o === undefined ? {} : { defaultOrigin: o };
 }
 
 interface CommonFields {
@@ -150,6 +122,12 @@ interface CommonFields {
     mcps?: readonly DependencyRef[];
   };
 }
+
+/** Default scope when frontmatter omits it. Reserved namespace meaning
+ * "no specific publisher claimed this entry". Two unrelated entries
+ * landing under `public/<name>` will surface as an OriginConflictError
+ * at install time — by design, to force the user to fork or rename. */
+export const DEFAULT_SCOPE = "public";
 
 function parseCommonFields(
   data: Record<string, unknown>,
@@ -175,9 +153,11 @@ function parseCommonFields(
 
   const resolvedOrigin = resolveOrigin(origin, opts.defaultOrigin, sourcePath);
 
-  let parsedOrigin: ParsedOrigin;
+  // Validate origin parses (we don't need the parsed shape past this
+  // point — scope no longer derives from origin). Throwing here keeps
+  // bad URIs from polluting the catalog.
   try {
-    parsedOrigin = parseOrigin(resolvedOrigin);
+    parseOrigin(resolvedOrigin);
   } catch (cause) {
     if (cause instanceof OriginParseError) {
       throw new FrontmatterError(sourcePath, cause.message, { cause });
@@ -186,26 +166,14 @@ function parseCommonFields(
   }
 
   let resolvedScope: string;
-  if (opts.scopeOverride !== undefined) {
-    // Caller-side override — bypasses inline scope and L2/L3 entirely.
-    validateScope(opts.scopeOverride);
-    resolvedScope = opts.scopeOverride;
-  } else if (scope !== undefined) {
-    // L1 inline scope: highest priority below caller override.
-    if (typeof scope !== "string") {
-      throw new FrontmatterError(sourcePath, "`scope` must be a string when present");
-    }
+  if (scope === undefined) {
+    resolvedScope = DEFAULT_SCOPE;
+  } else if (typeof scope !== "string") {
+    throw new FrontmatterError(sourcePath, "`scope` must be a string when present");
+  } else {
     // Same rationale as validateShortName: let NameInvalid propagate.
     validateScope(scope);
     resolvedScope = scope;
-  } else if (opts.defaultScope !== undefined) {
-    // L2/L3-derived default supplied by ScopeResolver.
-    validateScope(opts.defaultScope);
-    resolvedScope = opts.defaultScope;
-  } else {
-    // Final fallback: legacy origin-derived scope. Used in test fixtures
-    // and pure-parse code paths that don't go through the manager.
-    resolvedScope = scopeFromOrigin(parsedOrigin);
   }
 
   return {
@@ -386,18 +354,14 @@ function parseDepRefArray(
 /**
  * Compute the FQN of a {@link DependencyRef}.
  *
- *  - For skill / agent refs (short name + scope-derivation): returns
- *    `(scope ?? scopeFromOrigin(origin)) + "/" + name`.
- *  - For MCP refs (`kind === "mcp"`): returns the `ref.name` verbatim
+ *  - For skill / agent refs: returns `(scope ?? DEFAULT_SCOPE) + "/" + name`.
+ *    Dep refs that omit `scope:` resolve to the `public/<name>`
+ *    namespace, matching how the dep's own SKILL.md / AGENTS.md would
+ *    project if its frontmatter also omitted `scope:`.
+ *  - For MCP refs (`kind === "mcp"`): returns `ref.name` verbatim
  *    (it's already the full spec FQN).
- *
- * Centralises the scope-derivation fallback so resolver / graph /
- * manager all agree on identity. Throws {@link FrontmatterError} if
- * the ref's origin is unparseable; callers wrap with their own
- * context if needed.
  */
 export function depRefToFqn(ref: DependencyRef, kind: "skill" | "mcp" = "skill"): string {
   if (kind === "mcp") return ref.name;
-  const scope = ref.scope ?? scopeFromOrigin(parseOrigin(ref.origin));
-  return makeFqn(scope, ref.name);
+  return makeFqn(ref.scope ?? DEFAULT_SCOPE, ref.name);
 }

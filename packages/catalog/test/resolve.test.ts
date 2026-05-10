@@ -46,14 +46,14 @@ describe("resolveInstall", () => {
       rootKind: "skill",
       rootOrigin: origin,
     });
-    expect(m.rootFqn).toBe("local/leaf");
+    expect(m.rootFqn).toBe("public/leaf");
     expect(m.nodes).toHaveLength(1);
     const n = m.nodes[0];
     if (!n || n.kind !== "skill") throw new Error("expected skill node");
-    expect(n.fqn).toBe("local/leaf");
+    expect(n.fqn).toBe("public/leaf");
     expect(n.status).toBe("new");
-    expect(n.editable).toBe(true);
-    expect(n.scopeSource).toBe("L3");
+    expect(n.scope).toBe("public");
+    expect(n.scopeIsDefault).toBe(true);
   });
 
   it("walks transitive dependencies", async () => {
@@ -82,8 +82,8 @@ describe("resolveInstall", () => {
       rootOrigin,
     });
     const fqns = m.nodes.map((n) => n.fqn);
-    expect(fqns).toContain("local/parent");
-    expect(fqns).toContain("local/child");
+    expect(fqns).toContain("public/parent");
+    expect(fqns).toContain("public/child");
   });
 
   it("flags a fetch failure as parse-failed/fetch-failed and continues siblings", async () => {
@@ -121,7 +121,7 @@ describe("resolveInstall", () => {
     expect(bad?.error).toBeDefined();
   });
 
-  it("MCP nodes are leaves with editable=false", async () => {
+  it("MCP nodes are leaves (no further recursion)", async () => {
     const rootOrigin = "file:/test/parent";
     entries.set(rootOrigin, [
       file(
@@ -148,11 +148,11 @@ describe("resolveInstall", () => {
     if (!mcp || mcp.kind !== "mcp") throw new Error("expected mcp node");
     expect(mcp.fqn).toBe("ns/mcp");
     expect(mcp.specName).toBe("ns/mcp");
-    expect(mcp.editable).toBe(false);
+    expect(mcp.depFqns).toEqual([]);
     expect(mcp.status).toBe("new");
   });
 
-  it("uses L1 inline scope when frontmatter declares scope", async () => {
+  it("uses inline scope when frontmatter declares scope", async () => {
     const origin = "file:/test/x";
     entries.set(origin, [file("SKILL.md", "---\nname: x\nscope: my-fork\ndescription: x\n---\n")]);
     const catalog = await CatalogManager.open({ catalogDir });
@@ -164,8 +164,8 @@ describe("resolveInstall", () => {
     });
     const n = m.nodes[0];
     if (!n || n.kind !== "skill") throw new Error("expected skill node");
-    expect(n.defaultScope).toBe("my-fork");
-    expect(n.scopeSource).toBe("L1");
+    expect(n.scope).toBe("my-fork");
+    expect(n.scopeIsDefault).toBe(false);
   });
 
   it("MCP root resolves directly without fetching", async () => {

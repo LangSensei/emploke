@@ -59,9 +59,9 @@ describe("frontmatterToSkill", () => {
       "git-pr/SKILL.md",
     );
     expect(skill).toEqual({
-      name: "local/git-pr",
+      name: "public/git-pr",
       shortName: "git-pr",
-      scope: "local",
+      scope: "public",
       origin: "file:git-pr/SKILL.md",
       description: "Open a PR",
       version: "1.2.3",
@@ -73,16 +73,16 @@ describe("frontmatterToSkill", () => {
     });
   });
 
-  it("uses defaultOrigin from opts when frontmatter omits origin", () => {
+  it("uses defaultOrigin from opts when frontmatter omits origin (scope still defaults to public)", () => {
     const skill = frontmatterToSkill({ name: "weather", description: "x" }, "weather/SKILL.md", {
       defaultOrigin: "https://github.com/anthropic/skills/tree/main/weather",
     });
     expect(skill.origin).toBe("https://github.com/anthropic/skills/tree/main/weather");
-    expect(skill.scope).toBe("anthropic");
-    expect(skill.name).toBe("anthropic/weather");
+    expect(skill.scope).toBe("public");
+    expect(skill.name).toBe("public/weather");
   });
 
-  it("frontmatter `scope` overrides scope-from-origin", () => {
+  it("frontmatter `scope` is respected verbatim (no derivation from origin)", () => {
     const skill = frontmatterToSkill(
       {
         name: "weather",

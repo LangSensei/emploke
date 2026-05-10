@@ -34,14 +34,14 @@ describe("Stores wired to InMemory repositories", () => {
     );
 
     await store.install(dir);
-    expect(store.has("local/alpha")).toBe(true);
-    expect(store.get("local/alpha")?.description).toBe("Alpha");
+    expect(store.has("public/alpha")).toBe(true);
+    expect(store.get("public/alpha")?.description).toBe("Alpha");
 
     // A fresh Store backed by the same repo recovers state via scan().
     const reborn = new AgentCatalog(repo);
     const issues = await reborn.scan();
     expect(issues).toEqual([]);
-    expect(reborn.has("local/alpha")).toBe(true);
+    expect(reborn.has("public/alpha")).toBe(true);
   });
 
   it("SkillCatalog.updateContent is observable via the repository", async () => {
@@ -56,11 +56,11 @@ describe("Stores wired to InMemory repositories", () => {
 
     await store.install(dir);
     await store.updateContent(
-      "local/lint",
+      "public/lint",
       ["---", "name: lint", "description: Lint v2", "---", "# body"].join("\n"),
     );
-    expect(store.get("local/lint")?.description).toBe("Lint v2");
-    expect(await repo.read("local/lint")).toContain("Lint v2");
+    expect(store.get("public/lint")?.description).toBe("Lint v2");
+    expect(await repo.read("public/lint")).toContain("Lint v2");
   });
 
   it("McpCatalog install + remove updates the repository", async () => {

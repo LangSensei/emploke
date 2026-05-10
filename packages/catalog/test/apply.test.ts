@@ -49,15 +49,17 @@ describe("applyInstall", () => {
     });
     const result = await applyInstall({ catalog, fetchers, manifest });
     expect(result.installed).toEqual([
-      expect.objectContaining({ fqn: "local/leaf", kind: "skill", origin }),
+      expect.objectContaining({ fqn: "public/leaf", kind: "skill", origin }),
     ]);
     expect(result.failed).toEqual([]);
-    expect(catalog.getSkill("local/leaf")).toBeDefined();
+    expect(catalog.getSkill("public/leaf")).toBeDefined();
   });
 
-  it("honours scopeHints when overriding a node's scope", async () => {
+  it("respects inline `scope:` in frontmatter (no per-install override)", async () => {
     const origin = "https://github.com/Anthropic/skills/tree/main/leaf";
-    entries.set(origin, [file("SKILL.md", "---\nname: leaf\ndescription: l\n---\n")]);
+    entries.set(origin, [
+      file("SKILL.md", "---\nname: leaf\nscope: anthropic\ndescription: l\n---\n"),
+    ]);
     const catalog = await CatalogManager.open({ catalogDir });
     const manifest = await resolveInstall({
       catalog,
@@ -65,16 +67,9 @@ describe("applyInstall", () => {
       rootKind: "skill",
       rootOrigin: origin,
     });
-    // Manifest's defaultScope = anthropic (L3 from owner). Override to my-fork.
-    const result = await applyInstall({
-      catalog,
-      fetchers,
-      manifest,
-      scopeHints: { "anthropic/leaf": "my-fork" },
-    });
-    expect(result.installed).toEqual([expect.objectContaining({ fqn: "my-fork/leaf" })]);
-    expect(catalog.getSkill("my-fork/leaf")).toBeDefined();
-    expect(catalog.getSkill("anthropic/leaf")).toBeNull();
+    const result = await applyInstall({ catalog, fetchers, manifest });
+    expect(result.installed).toEqual([expect.objectContaining({ fqn: "anthropic/leaf" })]);
+    expect(catalog.getSkill("anthropic/leaf")).toBeDefined();
   });
 
   it("installs MCP leaf via standalone primitive (with _meta)", async () => {
@@ -131,7 +126,7 @@ describe("applyInstall", () => {
     const result = await applyInstall({ catalog, fetchers, manifest: m2 });
     expect(result.installed).toEqual([]);
     expect(result.skipped).toEqual([
-      expect.objectContaining({ fqn: "local/leaf", reason: "already-installed-same-origin" }),
+      expect.objectContaining({ fqn: "public/leaf", reason: "already-installed-same-origin" }),
     ]);
   });
 
@@ -164,7 +159,7 @@ describe("applyInstall", () => {
     });
     const result = await applyInstall({ catalog, fetchers, manifest });
     // good + parent installed; bad skipped (resolution flagged it failed)
-    expect(result.installed.map((e) => e.fqn).sort()).toEqual(["local/good", "local/parent"]);
+    expect(result.installed.map((e) => e.fqn).sort()).toEqual(["public/good", "public/parent"]);
     expect(result.skipped.some((s) => s.reason === "previewed-but-failed")).toBe(true);
   });
 });

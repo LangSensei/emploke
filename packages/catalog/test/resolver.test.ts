@@ -55,9 +55,9 @@ describe("Resolver", () => {
       }),
     );
 
-    const result = resolver.resolveAgent("local/reviewer");
-    expect(result.agent.name).toBe("local/reviewer");
-    expect(result.skills.map((s) => s.skill.name)).toEqual(["local/lint"]);
+    const result = resolver.resolveAgent("public/reviewer");
+    expect(result.agent.name).toBe("public/reviewer");
+    expect(result.skills.map((s) => s.skill.name)).toEqual(["public/lint"]);
     expect(result.mcps.map((m) => m.name)).toEqual(["github/cli"]);
   });
 
@@ -70,12 +70,12 @@ describe("Resolver", () => {
       }),
     );
 
-    const result = resolver.resolveSkill("local/security-audit");
-    expect(result.skill.name).toBe("local/security-audit");
+    const result = resolver.resolveSkill("public/security-audit");
+    expect(result.skill.name).toBe("public/security-audit");
     const names = result.skills.map((s) => s.skill.name);
-    expect(names).toContain("local/cve-db");
-    expect(names).toContain("local/security-audit");
-    expect(names.indexOf("local/cve-db")).toBeLessThan(names.indexOf("local/security-audit"));
+    expect(names).toContain("public/cve-db");
+    expect(names).toContain("public/security-audit");
+    expect(names.indexOf("public/cve-db")).toBeLessThan(names.indexOf("public/security-audit"));
     expect(result.mcps.map((m) => m.name)).toContain("semgrep/cli");
   });
 
@@ -91,48 +91,48 @@ describe("Resolver", () => {
       await makeAgentSource(sourceDir, "top", { deps: { skills: [dep("mid")] } }),
     );
 
-    const result = resolver.resolveAgent("local/top");
+    const result = resolver.resolveAgent("public/top");
     const names = result.skills.map((s) => s.skill.name);
-    expect(names).toContain("local/leaf");
-    expect(names).toContain("local/mid");
-    expect(names.indexOf("local/leaf")).toBeLessThan(names.indexOf("local/mid"));
+    expect(names).toContain("public/leaf");
+    expect(names).toContain("public/mid");
+    expect(names.indexOf("public/leaf")).toBeLessThan(names.indexOf("public/mid"));
     expect(result.mcps.map((m) => m.name)).toContain("postgres/db");
   });
 
   it("resolveAgent: throws for unknown name", () => {
-    expect(() => resolver.resolveAgent("local/nope")).toThrow("agent not found in catalog");
+    expect(() => resolver.resolveAgent("public/nope")).toThrow("agent not found in catalog");
   });
 
   it("resolveSkill: throws for unknown name", () => {
-    expect(() => resolver.resolveSkill("local/nope")).toThrow("skill not found in catalog");
+    expect(() => resolver.resolveSkill("public/nope")).toThrow("skill not found in catalog");
   });
 
   it("resolveAgent: throws helpful error when name is a skill", async () => {
     await skills.install(await makeSkillSource(sourceDir, "a-skill"));
-    expect(() => resolver.resolveAgent("local/a-skill")).toThrow(
+    expect(() => resolver.resolveAgent("public/a-skill")).toThrow(
       "is a skill, not an agent — use resolveSkill() instead",
     );
   });
 
   it("resolveSkill: throws helpful error when name is an agent", async () => {
     await agents.install(await makeAgentSource(sourceDir, "an-agent"));
-    expect(() => resolver.resolveSkill("local/an-agent")).toThrow(
+    expect(() => resolver.resolveSkill("public/an-agent")).toThrow(
       "is an agent, not a skill — use resolveAgent() instead",
     );
   });
 
   it("resolveAgent: agent with no deps", async () => {
     await agents.install(await makeAgentSource(sourceDir, "simple"));
-    const result = resolver.resolveAgent("local/simple");
+    const result = resolver.resolveAgent("public/simple");
     expect(result.skills).toHaveLength(0);
     expect(result.mcps).toHaveLength(0);
-    expect(result.agent.name).toBe("local/simple");
+    expect(result.agent.name).toBe("public/simple");
   });
 
   it("resolveSkill: skill with no deps still returns itself", async () => {
     await skills.install(await makeSkillSource(sourceDir, "standalone"));
-    const result = resolver.resolveSkill("local/standalone");
-    expect(result.skills.map((s) => s.skill.name)).toEqual(["local/standalone"]);
+    const result = resolver.resolveSkill("public/standalone");
+    expect(result.skills.map((s) => s.skill.name)).toEqual(["public/standalone"]);
     expect(result.mcps).toHaveLength(0);
   });
 
@@ -145,10 +145,10 @@ describe("Resolver", () => {
       await makeAgentSource(sourceDir, "outer-agent", { deps: { skills: [dep("bad-skill")] } }),
     );
 
-    expect(() => resolver.resolveAgent("local/outer-agent")).toThrow(
+    expect(() => resolver.resolveAgent("public/outer-agent")).toThrow(
       "is an agent and cannot be a dependency",
     );
-    expect(() => resolver.resolveSkill("local/bad-skill")).toThrow(
+    expect(() => resolver.resolveSkill("public/bad-skill")).toThrow(
       "is an agent and cannot be a dependency",
     );
   });

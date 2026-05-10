@@ -5,7 +5,6 @@ import {
   normalizeOrigin,
   OriginParseError,
   parseOrigin,
-  scopeFromOrigin,
 } from "../src/index.js";
 
 describe("parseOrigin", () => {
@@ -43,16 +42,6 @@ describe("parseOrigin", () => {
 
   it("rejects github URL without /tree/<ref>", () => {
     expect(() => parseOrigin("https://github.com/me/repo")).toThrow(OriginParseError);
-  });
-});
-
-describe("scopeFromOrigin", () => {
-  it("returns 'local' for file: URIs", () => {
-    expect(scopeFromOrigin(parseOrigin("file:/x/y/z"))).toBe("local");
-  });
-
-  it("returns lowercase owner for github URIs", () => {
-    expect(scopeFromOrigin(parseOrigin("https://github.com/MyOrg/repo/tree/main"))).toBe("myorg");
   });
 });
 

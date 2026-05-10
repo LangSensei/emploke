@@ -18,7 +18,7 @@ import {
  * SKILL.md must be present in the agent / skill fixtures respectively.
  *
  * Skill / Agent fixture keys MAY be either short names (auto-prefixed
- * with `local/`) or full FQNs (`scope/name`).
+ * with `public/`) or full FQNs (`scope/name`).
  *
  * MCP fixture keys MUST be full MCP-spec FQNs (`<namespace>/<short>`) —
  * MCP identity in Phase 2 is the spec name, no scope-derivation. The
@@ -32,7 +32,7 @@ export interface TestCatalogFixtures {
 }
 
 function toFqn(name: string): string {
-  return name.includes("/") ? name : `local/${name}`;
+  return name.includes("/") ? name : `public/${name}`;
 }
 
 function ensureMcpMeta(content: string, fqn: string): string {

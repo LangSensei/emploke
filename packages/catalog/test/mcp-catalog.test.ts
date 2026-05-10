@@ -124,7 +124,7 @@ describe("McpCatalog", () => {
         name: "azure/mcp",
         origin: "file:/x",
       });
-      await expect(store.remove("azure/mcp", () => ["local/reviewer"])).rejects.toThrow(
+      await expect(store.remove("azure/mcp", () => ["public/reviewer"])).rejects.toThrow(
         HasDependents,
       );
     });

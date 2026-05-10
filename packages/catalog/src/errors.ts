@@ -104,25 +104,6 @@ export class OriginConflictError extends CatalogError {
 }
 
 /**
- * Loaded `catalog.json` carries a `version` field that this build of
- * emploke doesn't recognise. Refused at boot rather than continuing
- * with potentially incompatible data — losing scope mappings or
- * silently corrupting catalog config would be much worse than a loud
- * crash.
- */
-export class UnsupportedCatalogVersionError extends CatalogError {
-  constructor(
-    public readonly path: string,
-    public readonly foundVersion: unknown,
-    public readonly expectedVersion: number,
-  ) {
-    super(
-      `unsupported catalog.json version ${JSON.stringify(foundVersion)} at ${path}; this build expects version ${expectedVersion}`,
-    );
-  }
-}
-
-/**
  * Invalid MCP file content (raw JSON parse failure or missing required
  * keys). Distinct from {@link FrontmatterError} so the route layer can
  * map it to a more specific 400 message.
