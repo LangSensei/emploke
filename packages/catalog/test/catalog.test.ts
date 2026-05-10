@@ -55,9 +55,12 @@ describe("CatalogManager", () => {
       expect(c.listMcps()).toEqual([]);
     });
 
-    it("scans existing skills (legacy unscoped flat folder + scoped)", async () => {
-      // Legacy unscoped skill: scope = public, name = public/weather
-      const skillDir = join(catalogDir, "skills", "local", "weather");
+    it("scans existing skills under their path-derived scope", async () => {
+      // Path-as-truth: the directory layout defines FQN, not the
+      // frontmatter. An entry at skills/public/weather/ has FQN
+      // public/weather; one at skills/langsensei/analytics/ has
+      // FQN langsensei/analytics — even when frontmatter omits scope:.
+      const skillDir = join(catalogDir, "skills", "public", "weather");
       await mkdir(skillDir, { recursive: true });
       await writeFile(
         join(skillDir, "SKILL.md"),
@@ -81,7 +84,7 @@ describe("CatalogManager", () => {
     });
 
     it("scans existing agents", async () => {
-      const agentDir = join(catalogDir, "agents", "local", "reviewer");
+      const agentDir = join(catalogDir, "agents", "public", "reviewer");
       await mkdir(agentDir, { recursive: true });
       await writeFile(
         join(agentDir, "AGENTS.md"),
@@ -164,6 +167,41 @@ describe("CatalogManager", () => {
       await installCatalogSkillFromDir(c, src);
       await c.removeSkill("public/weather");
       expect(c.getSkill("public/weather")).toBeNull();
+    });
+
+    it("removed skill stays gone after rescan (no zombie revival from path/frontmatter mismatch)", async () => {
+      // Regression: install + delete + rescan must NOT bring the entry
+      // back. Previously, scan re-derived FQN from frontmatter (which
+      // could disagree with the path) so delete-by-FQN computed the
+      // wrong path and left orphan files that scan resurrected.
+      const c = await CatalogManager.open({ catalogDir });
+      await installCatalogSkillFromDir(c, await makeSkill("ghost"));
+      await c.removeSkill("public/ghost");
+      await c.rescan();
+      expect(c.getSkill("public/ghost")).toBeNull();
+      expect(c.listSkills().map((s) => s.name)).not.toContain("public/ghost");
+    });
+
+    it("crash-leftover .tmp dir is wiped at boot and never appears in scan", async () => {
+      // Regression: previously installStreamToDir wrote to <dest>.<pid>.<ts>.tmp
+      // INSIDE the scan path. A killed install left the partial tree there;
+      // the next scan picked up the partial SKILL.md (if any) as a real
+      // entry. Now the tmp lives in <catalogDir>/.tmp/ and is wiped at
+      // CatalogManager.open().
+      // Simulate a crashed install: write a partial entry directly into
+      // <catalogDir>/.tmp/ before opening the catalog.
+      const tmpDir = join(catalogDir, ".tmp", "leftover-from-crash");
+      await mkdir(tmpDir, { recursive: true });
+      await writeFile(
+        join(tmpDir, "SKILL.md"),
+        "---\nname: leftover\ndescription: should never appear\n---\n",
+      );
+      const c = await CatalogManager.open({ catalogDir });
+      // .tmp should be wiped on open
+      const stillThere = await readFile(join(tmpDir, "SKILL.md"), "utf8").catch(() => null);
+      expect(stillThere).toBeNull();
+      // And it certainly should not be in the catalog
+      expect(c.listSkills().map((s) => s.name)).not.toContain("public/leftover");
     });
 
     it("throws NotFound for unknown skill", async () => {

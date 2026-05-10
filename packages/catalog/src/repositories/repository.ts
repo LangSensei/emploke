@@ -15,13 +15,21 @@
 
 /** A document-style (dir-backed) catalog entry as returned by `scan()`. */
 export interface DocumentRepoEntry {
+  /**
+   * Path-derived FQN (`<scope>/<short>`). The repository derives this
+   * from the on-disk directory layout, so it's the source of truth for
+   * "where is this entry actually stored". Catalog layer uses it as the
+   * in-memory key; if the frontmatter declares a different `scope:`,
+   * that's surfaced as a scan issue rather than silently overriding.
+   */
+  readonly name: string;
   /** Raw file content (e.g. AGENTS.md / SKILL.md). */
   readonly content: string;
   /**
-   * Identifier suitable for diagnostic messages — typically the on-disk path
-   * for `Fs*Repository` impls, or a synthetic label for in-memory impls.
-   * The Catalog layer passes this through to {@link parseFrontmatter} for
-   * nice errors.
+   * Identifier suitable for diagnostic messages — typically the on-disk
+   * path for `Fs*Repository` impls, or a synthetic label for in-memory
+   * impls. The Catalog layer passes this through to {@link parseFrontmatter}
+   * for nice errors.
    */
   readonly sourcePath: string;
 }

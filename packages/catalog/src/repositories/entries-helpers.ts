@@ -32,9 +32,18 @@ export async function* walkEntryDir(
 
 /**
  * Drain `stream` into `dest`, atomically. Files are first written into
- * a sibling temp dir (under the same parent as `dest`, so we get the
- * same-filesystem guarantees that `replaceDirAtomic` needs for its
- * fallback rename), then the whole tree is swapped in.
+ * a fresh dir under `tmpRoot/`, then the whole tree is swapped in via
+ * `replaceDirAtomic`.
+ *
+ * The catalog repositories all pass `<catalogDir>/.tmp` as `tmpRoot`,
+ * giving us a single well-known place for in-progress installs:
+ *
+ *   - Out of every scanner's path (`skills/`, `agents/`, `mcps/` are
+ *     siblings of `.tmp`).
+ *   - Same filesystem as `dest` (replaceDirAtomic needs same-volume
+ *     for atomic rename).
+ *   - One sweep at boot time cleans crash-leftovers
+ *     (`rm -rf <catalogDir>/.tmp/*`).
  *
  * Per-file safety:
  *   - `relPath` is always normalised to POSIX before joining — incoming
@@ -46,11 +55,13 @@ export async function* walkEntryDir(
  * The temp dir is always cleaned up on failure.
  */
 export async function installStreamToDir(
+  tmpRoot: string,
   dest: string,
   stream: AsyncIterable<CatalogEntryFile>,
 ): Promise<void> {
   await mkdirP(dirname(dest));
-  const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(tmpRoot, { recursive: true });
+  const tmp = join(tmpRoot, `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`);
   await mkdir(tmp, { recursive: true });
   try {
     for await (const file of stream) {

@@ -98,17 +98,39 @@ export function applyFrontmatterPatch(raw: string, patch: Record<string, unknown
  * doesn't include `origin:`. Callers (install routes) pass the URI the
  * user supplied so the resulting `Skill.origin` is deterministic.
  */
+/**
+ * Per-call options for {@link frontmatterToSkill} / {@link frontmatterToAgent}.
+ *
+ * `defaultOrigin` provides the origin URI used when the frontmatter
+ * doesn't include `origin:`. Callers (install routes) pass the URI the
+ * user supplied so the resulting `Skill.origin` is deterministic.
+ *
+ * `defaultScope` overrides the {@link DEFAULT_SCOPE} `"public"`
+ * fallback when the frontmatter omits `scope:`. Used by the catalog
+ * scan path so that an entry living at `skills/<scope>/<name>/` whose
+ * frontmatter doesn't declare a scope gets rebuilt under the
+ * path-derived scope (matching its on-disk location), not under
+ * `public/`.
+ */
 export interface ProjectionOpts {
   readonly defaultOrigin?: string;
+  readonly defaultScope?: string;
 }
 
 /**
- * Build a {@link ProjectionOpts} from an optionally-undefined origin
- * without tripping `exactOptionalPropertyTypes` (omits the field entirely
- * when undefined rather than setting it to `undefined`).
+ * Build a {@link ProjectionOpts} from optionally-undefined fields without
+ * tripping `exactOptionalPropertyTypes`. Returns an object containing
+ * only the fields actually provided.
  */
-export function projectionOpts(o: string | undefined): ProjectionOpts {
-  return o === undefined ? {} : { defaultOrigin: o };
+export function projectionOpts(
+  o: string | undefined,
+  extra?: { defaultScope?: string },
+): ProjectionOpts {
+  const out: ProjectionOpts = {};
+  if (o !== undefined) (out as { defaultOrigin?: string }).defaultOrigin = o;
+  if (extra?.defaultScope !== undefined)
+    (out as { defaultScope?: string }).defaultScope = extra.defaultScope;
+  return out;
 }
 
 interface CommonFields {
@@ -167,7 +189,7 @@ function parseCommonFields(
 
   let resolvedScope: string;
   if (scope === undefined) {
-    resolvedScope = DEFAULT_SCOPE;
+    resolvedScope = opts.defaultScope ?? DEFAULT_SCOPE;
   } else if (typeof scope !== "string") {
     throw new FrontmatterError(sourcePath, "`scope` must be a string when present");
   } else {

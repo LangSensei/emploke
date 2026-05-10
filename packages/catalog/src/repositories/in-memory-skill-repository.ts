@@ -38,7 +38,11 @@ export class InMemorySkillRepository implements SkillRepository {
     for (const [name, files] of this.storedEntries) {
       const md = files.get("SKILL.md");
       if (md !== undefined) {
-        out.push({ content: md.toString("utf8"), sourcePath: `memory:skills/${name}/SKILL.md` });
+        out.push({
+          name,
+          content: md.toString("utf8"),
+          sourcePath: `memory:skills/${name}/SKILL.md`,
+        });
       }
     }
     return out;

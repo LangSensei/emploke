@@ -38,7 +38,11 @@ export class InMemoryAgentRepository implements AgentRepository {
     for (const [name, files] of this.storedEntries) {
       const md = files.get("AGENTS.md");
       if (md !== undefined) {
-        out.push({ content: md.toString("utf8"), sourcePath: `memory:agents/${name}/AGENTS.md` });
+        out.push({
+          name,
+          content: md.toString("utf8"),
+          sourcePath: `memory:agents/${name}/AGENTS.md`,
+        });
       }
     }
     return out;

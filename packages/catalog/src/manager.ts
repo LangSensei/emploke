@@ -1,4 +1,4 @@
-import { mkdir as mkdirFs, rmdir } from "node:fs/promises";
+import { mkdir as mkdirFs, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   defaultFetcherRegistry,
@@ -133,8 +133,16 @@ export class CatalogManager {
   static async open(opts: CatalogOptions): Promise<CatalogManager> {
     await mkdirFs(opts.catalogDir, { recursive: true });
     const c = new CatalogManager(opts);
-    // Remove stale lock from previous crash. Safe under single-owner constraint.
-    await rmdir(join(opts.catalogDir, ".lock")).catch(() => {});
+    // Boot cleanup:
+    //  - .lock: stale lock from a previous crash (safe under single-owner)
+    //  - .tmp:  in-progress install scratch from a crashed/killed process.
+    //           Anything still here means the install never reached the
+    //           atomic-rename step; we throw it away and the user can
+    //           re-trigger the install.
+    await Promise.all([
+      rmdir(join(opts.catalogDir, ".lock")).catch(() => {}),
+      rm(join(opts.catalogDir, ".tmp"), { recursive: true, force: true }).catch(() => {}),
+    ]);
     await c.scan();
     return c;
   }

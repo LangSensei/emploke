@@ -76,8 +76,8 @@ describe("AgentCatalog", () => {
   });
 
   describe("scan", () => {
-    it("scans legacy unscoped agents (auto-scoped to local)", async () => {
-      const dir = join(catalogDir, "agents", "local", "reviewer");
+    it("scans agents from their path-derived scope", async () => {
+      const dir = join(catalogDir, "agents", "public", "reviewer");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "AGENTS.md"), "---\nname: reviewer\ndescription: R\n---\n");
       const issues = await store.scan();

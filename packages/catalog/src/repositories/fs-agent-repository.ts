@@ -1,5 +1,5 @@
 import { readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirP, safeStat, writeFileAtomic } from "@emploke/fs";
 import { nameToPath, validateFqn } from "../validate.js";
 import { installStreamToDir, walkEntryDir } from "./entries-helpers.js";
@@ -7,9 +7,12 @@ import type { AgentRepository, CatalogEntryFile, DocumentRepoEntry } from "./rep
 
 export class FsAgentRepository implements AgentRepository {
   private readonly baseDir: string;
+  private readonly tmpRoot: string;
 
   constructor(catalogDir: string) {
     this.baseDir = join(catalogDir, "agents");
+    // See FsSkillRepository: shared `<catalogDir>/.tmp` for atomic installs.
+    this.tmpRoot = join(catalogDir, ".tmp");
   }
 
   async read(name: string): Promise<string | null> {
@@ -35,13 +38,22 @@ export class FsAgentRepository implements AgentRepository {
   async install(name: string, stream: AsyncIterable<CatalogEntryFile>): Promise<void> {
     validateFqn(name);
     const dest = join(this.baseDir, nameToPath(name));
-    await installStreamToDir(dest, stream);
+    await installStreamToDir(this.tmpRoot, dest, stream);
   }
 
   async delete(name: string): Promise<void> {
     validateFqn(name);
     const dir = join(this.baseDir, nameToPath(name));
     await rm(dir, { recursive: true, force: true });
+    // See FsSkillRepository.delete: clean up empty scope dir.
+    const scopeDir = dirname(dir);
+    if (scopeDir !== this.baseDir) {
+      try {
+        await rm(scopeDir, { recursive: false });
+      } catch {
+        // Non-empty — leave it.
+      }
+    }
   }
 
   async scan(): Promise<DocumentRepoEntry[]> {
@@ -64,11 +76,15 @@ export class FsAgentRepository implements AgentRepository {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // See FsSkillRepository.scanDir for the dot-prefix / inner-dot rules.
+      if (entry.name.startsWith(".")) continue;
+      if (scope !== null && entry.name.includes(".")) continue;
       const entryPath = join(dir, entry.name);
       const agentMd = join(entryPath, "AGENTS.md");
       if ((await safeStat(agentMd)) !== null) {
+        if (scope === null) continue;
         const content = await readFile(agentMd, "utf8");
-        out.push({ content, sourcePath: agentMd });
+        out.push({ name: `${scope}/${entry.name}`, content, sourcePath: agentMd });
       } else if (scope === null) {
         await this.scanDir(entryPath, entry.name, out);
       }

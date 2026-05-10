@@ -201,11 +201,29 @@ export class SkillCatalog {
     this.skills.clear();
     const issues: { path: string; reason: string }[] = [];
     const entries = await this.repository.scan();
-    for (const { content, sourcePath } of entries) {
+    for (const { name: pathFqn, content, sourcePath } of entries) {
       try {
         const { data } = parseFrontmatter(content, sourcePath);
-        const skill = frontmatterToSkill(data, sourcePath);
-        this.skills.set(skill.name, skill);
+        // Path is the source of truth for "where this entry lives".
+        // Pass the path-derived scope as `defaultScope` so frontmatter
+        // that omits `scope:` projects to the same FQN as its path
+        // (otherwise it'd default to "public" and disagree with the
+        // path, breaking lookup-by-FQN). Frontmatter that DOES declare
+        // a different scope is surfaced as a scan issue below.
+        const pathScope = pathFqn.slice(0, pathFqn.indexOf("/"));
+        const skill = frontmatterToSkill(
+          data,
+          sourcePath,
+          projectionOpts(undefined, { defaultScope: pathScope }),
+        );
+        if (skill.name !== pathFqn) {
+          issues.push({
+            path: sourcePath,
+            reason: `path-derived FQN "${pathFqn}" doesn't match frontmatter-derived FQN "${skill.name}" (frontmatter scope=${JSON.stringify(data.scope)}, name=${JSON.stringify(data.name)}). Move the entry to "skills/${skill.name}/" or fix the frontmatter to match the path.`,
+          });
+          continue;
+        }
+        this.skills.set(pathFqn, skill);
       } catch (e) {
         issues.push({ path: sourcePath, reason: (e as Error).message });
       }

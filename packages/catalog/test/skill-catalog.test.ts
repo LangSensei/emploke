@@ -117,8 +117,8 @@ describe("SkillCatalog", () => {
   });
 
   describe("scan", () => {
-    it("scans flat skills (legacy unscoped folder → public/ scope)", async () => {
-      const dir = join(catalogDir, "skills", "local", "weather");
+    it("scans skills from their path-derived scope", async () => {
+      const dir = join(catalogDir, "skills", "public", "weather");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: weather\ndescription: W\n---\n");
       const issues = await store.scan();
@@ -150,7 +150,7 @@ describe("SkillCatalog", () => {
     it("picks up externally added skills on rescan", async () => {
       await store.scan();
       expect(store.list()).toHaveLength(0);
-      const dir = join(catalogDir, "skills", "local", "new-skill");
+      const dir = join(catalogDir, "skills", "public", "new-skill");
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "SKILL.md"), "---\nname: new-skill\ndescription: New\n---\n");
       await store.scan();

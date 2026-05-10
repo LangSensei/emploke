@@ -182,11 +182,24 @@ export class AgentCatalog {
     this.agents.clear();
     const issues: { path: string; reason: string }[] = [];
     const entries = await this.repository.scan();
-    for (const { content, sourcePath } of entries) {
+    for (const { name: pathFqn, content, sourcePath } of entries) {
       try {
         const { data } = parseFrontmatter(content, sourcePath);
-        const agent = frontmatterToAgent(data, sourcePath);
-        this.agents.set(agent.name, agent);
+        // See SkillCatalog.scan for the path-as-truth rationale.
+        const pathScope = pathFqn.slice(0, pathFqn.indexOf("/"));
+        const agent = frontmatterToAgent(
+          data,
+          sourcePath,
+          projectionOpts(undefined, { defaultScope: pathScope }),
+        );
+        if (agent.name !== pathFqn) {
+          issues.push({
+            path: sourcePath,
+            reason: `path-derived FQN "${pathFqn}" doesn't match frontmatter-derived FQN "${agent.name}" (frontmatter scope=${JSON.stringify(data.scope)}, name=${JSON.stringify(data.name)}). Move the entry to "agents/${agent.name}/" or fix the frontmatter to match the path.`,
+          });
+          continue;
+        }
+        this.agents.set(pathFqn, agent);
       } catch (e) {
         issues.push({ path: sourcePath, reason: (e as Error).message });
       }
