@@ -806,6 +806,7 @@ button {
   border: 1px solid var(--color-accent);
   font-size: 13px;
   line-height: 1.5;
+  display: block;
 }
 
 .alert--info code {
@@ -813,6 +814,171 @@ button {
   padding: 0 4px;
   border-radius: 3px;
   font-size: 12px;
+  word-break: break-all;
+}
+
+/* ─── DetailDialog (read-only view for immutable entries) ──────────── */
+
+.detail-dialog {
+  /* Long URLs in dep lists must wrap, never push the modal wider. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-dialog__strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+  font-size: 13px;
+}
+
+.detail-dialog__strip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-accent);
+}
+
+.detail-dialog__strip-label code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.detail-dialog__dl {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-4) 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.detail-dialog__dl dt {
+  color: var(--color-text-muted);
+  font-weight: 500;
+  padding-top: 2px;
+}
+
+.detail-dialog__dl dd {
+  margin: 0;
+  min-width: 0;
+  word-wrap: break-word;
+}
+
+.detail-dialog__dl code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.detail-dialog__origin {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  color: var(--color-accent);
+  word-break: break-all;
+  text-decoration: none;
+}
+
+.detail-dialog__origin:hover {
+  text-decoration: underline;
+}
+
+.detail-dialog__empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.detail-dialog__deps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detail-dialog__deps li {
+  margin: 0;
+  min-width: 0;
+}
+
+.detail-dialog__dep {
+  display: block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text);
+  text-decoration: none;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.detail-dialog__dep:hover {
+  background: var(--color-accent-bg);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.detail-dialog__prereqs {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.detail-dialog__source {
+  margin-top: var(--space-3);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.detail-dialog__source > summary {
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 13px;
+  user-select: none;
+}
+
+.detail-dialog__source[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+.detail-dialog__source-hint {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.detail-dialog__code {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 400px;
 }
 
 /* ─── Settings list ─────────────────────────────────────────────── */
@@ -1196,7 +1362,8 @@ button {
 }
 
 .form-field input,
-.form-field textarea {
+.form-field textarea,
+.form-field select {
   font-family: var(--font-sans);
   font-size: 13px;
   padding: var(--space-2) var(--space-3);
@@ -1211,17 +1378,36 @@ button {
   font-family: var(--font-mono);
 }
 
+.form-field select {
+  /* native chevron via SVG background; native arrow looks dated */
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 4.5 6 7.5 9 4.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  background-size: 12px 12px;
+  padding-right: calc(var(--space-3) + 18px);
+  cursor: pointer;
+}
+
 .form-field input:focus,
-.form-field textarea:focus {
+.form-field textarea:focus,
+.form-field select:focus {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
   border-color: var(--color-accent);
 }
 
 .form-field input:disabled,
-.form-field textarea:disabled {
+.form-field textarea:disabled,
+.form-field select:disabled {
   background: var(--color-surface);
   cursor: not-allowed;
+}
+
+/* Provider dropdown specifically: narrower, matches inline label feel. */
+.install-dialog__provider {
+  max-width: 200px;
 }
 
 .metadata-form {
@@ -1591,22 +1777,62 @@ button {
    absorbs the remainder, which on wide screens leaves it generously sized. */
 .table--wide {
   max-width: none;
+  /* Sessions table has a long-tail column (Agent fqn) that should
+     fit-content per row instead of being clipped to a fixed width.
+     Switch to auto layout and let column-level widths below describe
+     intent (1% = "as small as content allows"; the Activity column
+     gets the slack). */
+  table-layout: auto;
+}
+
+.table--wide th,
+.table--wide td {
+  /* Default: shrink to content; only Activity gets to take the slack. */
+  width: 1%;
+  white-space: nowrap;
+}
+
+.table--wide th.col-activity,
+.table--wide td.col-activity {
+  width: auto;
+  white-space: normal;
+}
+
+.table--wide td.col-actions,
+.table--wide th.col-actions {
+  text-align: right;
+}
+
+/* Agent column allows the chip to wrap onto two lines for long fqns
+   so the user sees the full name, not "...". Mono font keeps it
+   aligned even when wrapped. */
+.table--wide .agent-tag {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  text-overflow: clip;
+  /* Keep a minimum readable width so a row with a short agent doesn't
+     compress to nothing. */
+  min-width: 120px;
 }
 
 .table .col-session {
+  /* Override base 1% with explicit width so session id chip is comfy. */
   width: 200px;
 }
 
 .table .col-agent {
-  width: 180px;
+  /* Bound chip width: above min-width, lets text wrap; below the
+     bound, lets layout shrink the column on narrow viewports. */
+  max-width: 280px;
 }
 
 .table .col-runtime {
-  width: 140px;
+  /* `width: 1%` from the cascade; nothing else needed. */
 }
 
 .table .col-actions {
-  width: 220px;
+  /* `width: 1%` from the cascade; align-right via the rule above. */
 }
 
 .session-id {
@@ -1996,3 +2222,196 @@ button {
   font-size: 11px;
 }
 
+
+/*  ResolveTree (install preview) ─ */
+
+.resolve-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.resolve-tree__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.resolve-tree__count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.resolve-tree__count--new {
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+}
+
+.resolve-tree__count--existing {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-muted);
+}
+
+.resolve-tree__count--sync {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.resolve-tree__count--problem {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.resolve-tree__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resolve-tree__item {
+  margin: 0;
+}
+
+.resolve-tree__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.resolve-tree__row--root {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-bg);
+}
+
+.resolve-tree__row--problem {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.resolve-tree__kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 14px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.resolve-tree__kind[data-kind="agent"] { background: #ede9fe; }
+.resolve-tree__kind[data-kind="skill"] { background: #dbeafe; }
+.resolve-tree__kind[data-kind="mcp"]   { background: #fef3c7; }
+
+.resolve-tree__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resolve-tree__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.resolve-tree__fqn {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  color: var(--color-text);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 8px;
+  border-radius: 4px;
+  word-break: break-all;
+  max-width: 100%;
+}
+
+.resolve-tree__root-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+  background: var(--color-accent-bg);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.resolve-tree__badge {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.resolve-tree__status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.resolve-tree__status--new {
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+}
+
+.resolve-tree__status--already-installed {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-muted);
+}
+
+.resolve-tree__status--will-sync {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.resolve-tree__status--would-conflict,
+.resolve-tree__status--fetch-failed,
+.resolve-tree__status--parse-failed {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.resolve-tree__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-danger);
+  line-height: 1.45;
+}
+
+.resolve-tree__error-icon {
+  flex-shrink: 0;
+}
+
+.resolve-tree__error-msg {
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+}

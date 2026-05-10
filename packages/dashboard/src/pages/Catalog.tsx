@@ -1,9 +1,11 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import {
   getAgent,
   getMcp,
   getSkill,
+  type InstallProvider,
+  type InstallSource,
   installAgent,
   installMcp,
   installSkill,
@@ -21,6 +23,7 @@ import {
   updateSkillContent,
 } from "../api";
 import { CodeEditor } from "../components/CodeEditor";
+import { DetailDialog } from "../components/DetailDialog";
 import { EntryGrid } from "../components/EntryGrid";
 import { PlusIcon } from "../components/Icons";
 import { McpGrid } from "../components/McpGrid";
@@ -47,10 +50,12 @@ const KIND_LABEL: Record<CatalogTab, string> = {
   mcps: "MCP",
 };
 
-type EditTarget =
-  | { kind: "skill"; name: string }
-  | { kind: "agent"; name: string }
-  | { kind: "mcp"; name: string };
+type DialogTarget =
+  | { kind: "skill"; name: string; mutable: boolean }
+  | { kind: "agent"; name: string; mutable: boolean }
+  | { kind: "mcp"; name: string; mutable: boolean };
+
+type EditTarget = DialogTarget;
 
 export function CatalogPage({
   tab,
@@ -67,16 +72,13 @@ export function CatalogPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const doInstall = async (origin: string, name: string | undefined) => {
+  const doInstall = async (src: InstallSource) => {
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents") await installAgent(origin);
-      else if (tab === "skills") await installSkill(origin);
-      else {
-        if (!name) throw new Error("name is required for MCP installs");
-        await installMcp(origin, name);
-      }
+      if (tab === "agents") await installAgent(src);
+      else if (tab === "skills") await installSkill(src);
+      else await installMcp(src);
       setInstallOpen(false);
       onChanged();
     } catch (e) {
@@ -171,7 +173,8 @@ export function CatalogPage({
               emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
               onEdit={(name) => {
                 setError(null);
-                setEdit({ kind: "agent", name });
+                const a = agents.find((x) => x.agent.fqn === name);
+                setEdit({ kind: "agent", name, mutable: a?.agent.mutable ?? true });
               }}
               onRemove={(name) => setConfirmRemove(name)}
             />
@@ -192,7 +195,8 @@ export function CatalogPage({
               emptyHint={<>A skill is a reusable capability package referenced by agents.</>}
               onEdit={(name) => {
                 setError(null);
-                setEdit({ kind: "skill", name });
+                const s = skills.find((x) => x.skill.fqn === name);
+                setEdit({ kind: "skill", name, mutable: s?.skill.mutable ?? true });
               }}
               onRemove={(name) => setConfirmRemove(name)}
             />
@@ -203,7 +207,8 @@ export function CatalogPage({
               mcps={mcps}
               onEdit={(name) => {
                 setError(null);
-                setEdit({ kind: "mcp", name });
+                const m = mcps.find((x) => x.name === name);
+                setEdit({ kind: "mcp", name, mutable: m?.mutable ?? true });
               }}
               onRemove={(name) => setConfirmRemove(name)}
             />
@@ -233,18 +238,28 @@ export function CatalogPage({
             onConfirm={() => confirmRemove && doRemove(confirmRemove)}
           />
 
-          {edit !== null && (
-            <EditDialog
-              target={edit}
-              availableSkills={skills.map((s) => s.skill.fqn)}
-              availableMcps={mcps.map((m) => m.name)}
-              onClose={() => setEdit(null)}
-              onSaved={() => {
-                setEdit(null);
-                onChanged();
-              }}
-            />
-          )}
+          {edit !== null &&
+            (edit.mutable ? (
+              <EditDialog
+                target={edit}
+                availableSkills={skills.map((s) => s.skill.fqn)}
+                availableMcps={mcps.map((m) => m.name)}
+                onClose={() => setEdit(null)}
+                onSaved={() => {
+                  setEdit(null);
+                  onChanged();
+                }}
+              />
+            ) : (
+              <DetailDialog
+                target={{ kind: edit.kind, name: edit.name }}
+                onClose={() => setEdit(null)}
+                onSynced={() => {
+                  setEdit(null);
+                  onChanged();
+                }}
+              />
+            ))}
         </>
       )}
     </div>
@@ -260,18 +275,19 @@ interface InstallDialogProps {
   error: string | null;
   onClose: () => void;
   /**
-   * `origin` is a URI: `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
-   * or `file:<absolute-path>`. `name` is required for MCPs (full
-   * MCP-spec FQN, `<namespace>/<short>`).
+   * `src` is the structured install source (provider + location);
+   * server assembles the canonical origin URI from those.
    */
-  onSubmit: (origin: string, name: string | undefined) => void;
+  onSubmit: (src: InstallSource) => void;
 }
 
 type InstallStage = "input" | "previewing" | "preview" | "applying";
 
 function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDialogProps) {
-  const [origin, setOrigin] = useState("");
-  const [name, setName] = useState("");
+  const [provider, setProvider] = useState<InstallProvider>("github");
+  // Per-provider input value. Provider-switching clears it so a half-typed
+  // github URL doesn't accidentally submit when the user flips to local.
+  const [input, setInput] = useState("");
   const [stage, setStage] = useState<InstallStage>("input");
   const [manifest, setManifest] = useState<ResolveManifest | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
@@ -283,26 +299,37 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       setStage("input");
       setManifest(null);
       setResolveError(null);
+      setInput("");
+      setProvider("github");
     }
   }, [open]);
 
+  const handleProviderChange = (p: InstallProvider): void => {
+    setProvider(p);
+    setInput("");
+    setResolveError(null);
+  };
+
+  // Build the structured install source from the form. The server is
+  // responsible for assembling the canonical origin URI — clients
+  // never need to type `file:` prefixes or assemble URI strings.
+  const buildSource = (): InstallSource => ({ provider, location: input.trim() });
+
   const handlePreview = async (e: FormEvent) => {
     e.preventDefault();
-    if (!origin.trim()) return;
+    if (!input.trim()) return;
+    const src = buildSource();
     if (isMcp) {
-      // MCPs skip the resolve preview — single fetch + write, no deps to
-      // tweak; submit straight through.
-      if (!name.trim()) return;
-      onSubmit(origin.trim(), name.trim());
+      // MCPs are leaf entries (no dep graph to preview) and the FQN
+      // is recovered from `_meta.name` server-side; submit straight
+      // through without the two-phase resolve dance.
+      onSubmit(src);
       return;
     }
     setStage("previewing");
     setResolveError(null);
     try {
-      const m =
-        kind === "agents"
-          ? await resolveAgentInstall(origin.trim())
-          : await resolveSkillInstall(origin.trim());
+      const m = kind === "agents" ? await resolveAgentInstall(src) : await resolveSkillInstall(src);
       setManifest(m);
       setStage("preview");
     } catch (err) {
@@ -313,7 +340,7 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
 
   const handleApply = (): void => {
     setStage("applying");
-    onSubmit(origin.trim(), undefined);
+    onSubmit(buildSource());
   };
 
   const handleBack = (): void => {
@@ -323,6 +350,18 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
 
   const stageBusy = busy || stage === "previewing" || stage === "applying";
   const showPreview = stage === "preview" || stage === "applying";
+  // When the resolved root was already installed under the same origin,
+  // `install` semantically becomes "sync from upstream" (catalog upserts
+  // with fresh content). Re-label the primary action so the user knows
+  // we're not re-creating; we're updating in place.
+  const rootIsWillSync =
+    manifest !== null &&
+    manifest.nodes.some((n) => n.fqn === manifest.rootFqn && n.status === "will-sync");
+
+  // Per-provider input metadata: label, placeholder, hint. Tweaked per
+  // catalog kind (skill vs agent vs mcp) so the hint always matches the
+  // file the user is actually pointing at.
+  const inputMeta = inputMetaFor(provider, kind);
 
   return (
     <Modal
@@ -334,42 +373,33 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       <form onSubmit={handlePreview}>
         <div className="modal__body">
           <div className="form-field">
-            <label htmlFor="install-origin">Origin URI</label>
+            <label htmlFor="install-provider">Source</label>
+            <select
+              id="install-provider"
+              className="install-dialog__provider"
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value as InstallProvider)}
+              disabled={stageBusy || showPreview}
+            >
+              <option value="github">GitHub</option>
+              <option value="file">Local file</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="install-input">{inputMeta.label}</label>
             <input
-              id="install-origin"
+              id="install-input"
               type="text"
-              value={origin}
-              onChange={(e) => setOrigin(e.target.value)}
-              placeholder="https://github.com/owner/repo/tree/main/path  or  file:/abs/path"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={inputMeta.placeholder}
               // biome-ignore lint/a11y/noAutofocus: install dialog opens in response to a user click; auto-focusing the only field is expected UX
               autoFocus
               disabled={stageBusy || showPreview}
             />
-            <p className="form-hint">
-              <code>
-                https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;ref&gt;/&lt;path&gt;
-              </code>{" "}
-              for remote installs, or <code>file:&lt;absolute-path&gt;</code> for the server's local
-              filesystem. Dependencies are recursively previewed and installed.
-            </p>
+            <p className="form-hint">{inputMeta.hint}</p>
           </div>
-
-          {isMcp && (
-            <div className="form-field">
-              <label htmlFor="install-name">Name</label>
-              <input
-                id="install-name"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="azure/mcp (full MCP-spec FQN with /)"
-                disabled={stageBusy}
-              />
-              <p className="form-hint">
-                Required — the full MCP-spec FQN (<code>&lt;namespace&gt;/&lt;short&gt;</code>).
-              </p>
-            </div>
-          )}
 
           {showPreview && manifest && <ResolveTree manifest={manifest} />}
 
@@ -396,7 +426,7 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
             <button
               type="submit"
               className="btn btn--primary"
-              disabled={stageBusy || !origin.trim() || (isMcp && !name.trim())}
+              disabled={stageBusy || !input.trim()}
             >
               {stage === "previewing" ? "Resolving..." : isMcp ? "Install" : "Preview install"}
             </button>
@@ -407,7 +437,13 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
               onClick={handleApply}
               disabled={stageBusy}
             >
-              {stage === "applying" ? "Installing..." : "Install"}
+              {stage === "applying"
+                ? rootIsWillSync
+                  ? "Syncing..."
+                  : "Installing..."
+                : rootIsWillSync
+                  ? "Sync from upstream"
+                  : "Install"}
             </button>
           )}
         </div>
@@ -485,11 +521,12 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Origin + mutability of the entry being edited. `mutable === false`
-  // (i.e. github: / non-file: origin) flips the dialog into read-only
-  // mode: Save is replaced by Sync (re-install from origin).
-  const [origin, setOrigin] = useState<string>("");
-  const [mutable, setMutable] = useState<boolean>(true);
+
+  // EditDialog is only opened for mutable (file: origin) entries —
+  // the Catalog page routes immutable entries to DetailDialog instead.
+  // We don't carry mutability state here; the catalog facade still
+  // gates writes on the server side, so a stale state (entry mutability
+  // changed under us) surfaces as a 405 from the API.
 
   // Load on mount / target change. We always fetch the raw content (covers
   // source mode) and additionally project the server's structured fields
@@ -503,8 +540,6 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         const d = await getMcp(target.name);
         if (cancelled) return;
         setText(d.content);
-        setOrigin(d.origin);
-        setMutable(d.mutable);
         return;
       }
       const detail =
@@ -512,8 +547,6 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
       if (cancelled) return;
       setText(detail.content);
       const meta = "skill" in detail ? detail.skill : detail.agent;
-      setOrigin(meta.origin);
-      setMutable(meta.mutable);
       setForm({
         description: meta.description ?? "",
         version: meta.version ?? "",
@@ -578,25 +611,6 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     }
   };
 
-  // Sync action for read-only (immutable) entries: re-install from the
-  // entry's own origin. The catalog `install` is upsert, so this overwrites
-  // the local SQLite copy with a fresh fetch from upstream — the only way
-  // to "update" a github:/etc. entry without forking it.
-  const handleSync = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      if (target.kind === "skill") await installSkill(origin);
-      else if (target.kind === "agent") await installAgent(origin);
-      else await installMcp(origin, target.name);
-      onSaved();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
   const title = `Edit ${kindLabel}: ${target.name}`;
   const isLargeMode = mode === "source" || target.kind === "mcp";
@@ -604,14 +618,6 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
   return (
     <Modal open onClose={onClose} title={title} size={isLargeMode ? "large" : "default"}>
       <div className="modal__body modal__body--scroll">
-        {!loading && !mutable && (
-          <div className="alert alert--info">
-            🔒 This entry was installed from <code>{origin}</code> and is read-only. To pick up
-            upstream changes, click <strong>Sync from upstream</strong> below (re-fetches and
-            overwrites the local copy). To customise it, fork the upstream and re-install from your
-            fork.
-          </div>
-        )}
         {loading ? (
           <p className="form-hint">Loading...</p>
         ) : target.kind === "mcp" ? (
@@ -619,7 +625,7 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             value={text}
             onChange={setText}
             language="json"
-            disabled={saving || !mutable}
+            disabled={saving}
             height="500px"
           />
         ) : mode === "form" ? (
@@ -633,14 +639,14 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             // origin isn't in the installed set as missing.
             missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
             missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
-            disabled={saving || !mutable}
+            disabled={saving}
           />
         ) : (
           <CodeEditor
             value={text}
             onChange={setText}
             language="markdown"
-            disabled={saving || !mutable}
+            disabled={saving}
             height="500px"
           />
         )}
@@ -660,29 +666,76 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         <button type="button" className="btn" onClick={onClose} disabled={saving}>
           Cancel
         </button>
-        {mutable ? (
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={handleSave}
-            disabled={loading || saving}
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={handleSync}
-            disabled={loading || saving || origin === ""}
-            title="Re-fetch from upstream and overwrite the local copy"
-          >
-            {saving ? "Syncing..." : "Sync from upstream"}
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={handleSave}
+          disabled={loading || saving}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
       </div>
     </Modal>
   );
+}
+
+// ─── InstallDialog input metadata ────────────────────────────────
+
+interface InputMeta {
+  label: string;
+  placeholder: string;
+  hint: ReactNode;
+}
+
+/**
+ * Per-(provider × catalog kind) input field metadata. The user types
+ * ONE thing — a github URL or a local path — and we tell them exactly
+ * what we expect to find at that location.
+ *
+ * GitHub URLs go through verbatim; local paths get the `file:` prefix
+ * added on submit (see {@link InstallDialog.buildOrigin}). The label
+ * never says "Origin URI" because users shouldn't need to know the
+ * underlying URI grammar.
+ */
+function inputMetaFor(provider: InstallProvider, kind: CatalogTab): InputMeta {
+  const what =
+    kind === "skills"
+      ? "skill folder (must contain SKILL.md)"
+      : kind === "agents"
+        ? "agent folder (must contain AGENTS.md)"
+        : "MCP JSON file";
+
+  if (provider === "github") {
+    const example =
+      kind === "skills"
+        ? "https://github.com/owner/repo/tree/main/skills/my-skill"
+        : kind === "agents"
+          ? "https://github.com/owner/repo/tree/main/agents/my-agent"
+          : "https://github.com/owner/repo/tree/main/mcps/my-mcp.json";
+    return {
+      label: "GitHub URL",
+      placeholder: example,
+      hint: (
+        <>
+          URL to the {what}. Paste the exact URL from your browser when viewing the folder/file on
+          github.com.
+        </>
+      ),
+    };
+  }
+
+  // Local file
+  const example =
+    kind === "skills"
+      ? "/home/me/skills/my-skill"
+      : kind === "agents"
+        ? "/home/me/agents/my-agent"
+        : "/home/me/mcps/my-mcp.json";
+  return {
+    label: "Absolute path",
+    placeholder: example,
+    hint: <>Absolute path on the server's filesystem to the {what}.</>,
+  };
 }
 
 // ─── Frontmatter helpers (client-side, best-effort) ───────────────

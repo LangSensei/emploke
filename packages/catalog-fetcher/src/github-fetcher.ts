@@ -97,9 +97,26 @@ export class GitHubFetcher implements Fetcher {
         const afterPrefix = headerName.slice(prefix.length);
         let relPath: string;
         if (subPrefix) {
-          if (afterPrefix !== subPrefix && !afterPrefix.startsWith(`${subPrefix}/`)) continue;
-          relPath = afterPrefix === subPrefix ? "" : afterPrefix.slice(subPrefix.length + 1);
-          if (relPath === "") continue; // the subpath itself, no file payload
+          // Two cases when a subpath is given:
+          //
+          //  1) subpath points to a directory:
+          //     `<subPrefix>/foo` → relPath = "foo"
+          //     `<subPrefix>` itself is a directory entry → no payload, skip.
+          //
+          //  2) subpath points to a single file (e.g. `mcps/foo.json`):
+          //     the only matching entry IS the file; we yield it under its
+          //     basename so consumers can identify it. Without this branch
+          //     the fetcher would treat the file like case (1)'s directory
+          //     entry and silently drop the only payload.
+          if (afterPrefix === subPrefix) {
+            // Single-file subpath: yield as basename (e.g. "foo.json").
+            const slashIdx = subPrefix.lastIndexOf("/");
+            relPath = slashIdx >= 0 ? subPrefix.slice(slashIdx + 1) : subPrefix;
+          } else if (afterPrefix.startsWith(`${subPrefix}/`)) {
+            relPath = afterPrefix.slice(subPrefix.length + 1);
+          } else {
+            continue;
+          }
         } else {
           relPath = afterPrefix;
         }

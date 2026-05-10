@@ -28,7 +28,13 @@ interface BaseNode {
   readonly kind: "skill" | "agent" | "mcp";
   readonly origin: string;
   readonly fqn: string;
-  readonly status: "new" | "already-installed" | "would-conflict" | "fetch-failed" | "parse-failed";
+  readonly status:
+    | "new"
+    | "will-sync"
+    | "already-installed"
+    | "would-conflict"
+    | "fetch-failed"
+    | "parse-failed";
   /** Origin URIs of dep entries (post-rename: dep refs ARE origins). */
   readonly depFqns: readonly string[];
   readonly error?: { readonly name: string; readonly message: string };
@@ -65,7 +71,12 @@ export type ResolveManifestNode = SkillManifestNode | AgentManifestNode | McpMan
 export function planToManifest(plan: CatalogPlan, rootOrigin: string): ResolveManifest {
   const nodes: ResolveManifestNode[] = [];
   for (const planNode of plan.toInstall) {
-    nodes.push(planNodeToManifest(planNode, "new"));
+    // Same-origin re-install acts as a sync — the catalog will overwrite
+    // the local copy with fresh content fetched from upstream. Surface
+    // that to the dashboard with a distinct status so the install
+    // button can re-label as "Sync from upstream".
+    const status = planNode.wasAlreadyInstalled === true ? "will-sync" : "new";
+    nodes.push(planNodeToManifest(planNode, status));
   }
   for (const planNode of plan.alreadyInstalled) {
     nodes.push(planNodeToManifest(planNode, "already-installed"));
@@ -84,7 +95,7 @@ export function planToManifest(plan: CatalogPlan, rootOrigin: string): ResolveMa
 
 function planNodeToManifest(
   planNode: CatalogPlanNode,
-  status: "new" | "already-installed",
+  status: "new" | "will-sync" | "already-installed",
 ): ResolveManifestNode {
   const fqn = planNode.node.fqn;
   if (planNode.kind === "mcp") {

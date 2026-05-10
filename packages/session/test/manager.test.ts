@@ -192,7 +192,7 @@ describe("create()", () => {
     });
     const s = await m.create({ agent: "demo" });
 
-    expect(s.agent).toBe("demo");
+    expect(s.agent).toBe("public/demo");
     expect(s.runtime).toBe("copilot");
     expect(s.runtimeSessionId).toBe("12345678-1234-1234-1234-1234567890ab");
     expect(s.lastActiveAt).toBeNull();
@@ -346,9 +346,9 @@ describe("list()", () => {
     });
     await m.create({ agent: "a" });
     await m.create({ agent: "b" });
-    const onlyA = await m.list({ agent: "a" });
+    const onlyA = await m.list({ agent: "public/a" });
     expect(onlyA).toHaveLength(1);
-    expect(onlyA[0]?.agent).toBe("a");
+    expect(onlyA[0]?.agent).toBe("public/a");
   });
 
   it("filters by createdSince and skips refresh on excluded sessions", async () => {
@@ -391,9 +391,9 @@ describe("list()", () => {
     await m.create({ agent: "a" }); // new, agent a
     await m.create({ agent: "b" }); // new, agent b
 
-    const out = await m.list({ agent: "a", createdSince: "2026-01-15T00:00:00.000Z" });
+    const out = await m.list({ agent: "public/a", createdSince: "2026-01-15T00:00:00.000Z" });
     expect(out).toHaveLength(1);
-    expect(out[0]?.agent).toBe("a");
+    expect(out[0]?.agent).toBe("public/a");
     expect(out[0]?.createdAt).toBe("2026-02-01T00:00:00.000Z");
   });
 
@@ -525,10 +525,35 @@ describe("list()", () => {
       preview: null,
       runtimeSessionId: rt.provisionId as string,
     });
-    // `never` keeps the default null refresh.
+    // `never` was created at the test's `now()` (typically 2026-01-15);
+    // cutoff (2099-01-01) is far in the future so it stays excluded
+    // even via the createdAt fallback.
     const cutoff = "2099-01-01T00:00:00.000Z";
     const out = await m.list({ activeSince: cutoff });
     expect(out.map((s) => s.id)).toEqual([recent.id]);
+  });
+
+  it("activeSince includes never-launched sessions whose createdAt is within the window", async () => {
+    // Regression for "new session not appearing in default 7d filter":
+    // a session you just created has lastActiveAt=null until the runtime
+    // is queried. The activeSince predicate must fall through to
+    // createdAt for such sessions, otherwise the dashboard hides every
+    // brand-new session behind its default time filter.
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      now: fixedNow("2026-05-08T01:05:00.000Z"),
+    });
+    rt.refreshResult = null;
+    const fresh = await m.create({ agent: "demo" }); // createdAt = 2026-05-08
+    // Cutoff one day before `now` — a freshly created session must
+    // pass even though it has no lastActiveAt.
+    const cutoff = "2026-05-07T00:00:00.000Z";
+    const out = await m.list({ activeSince: cutoff });
+    expect(out.map((s) => s.id)).toEqual([fresh.id]);
   });
 });
 

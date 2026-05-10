@@ -40,8 +40,10 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const parsed = await readMcpInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const fqn = await catalog.installMcpFromOrigin(parsed.origin, parsed.name);
-      return c.json({ name: fqn, origin: parsed.origin }, 201);
+      const result = await catalog.installMcpFromOrigin(parsed.origin);
+      const status = result.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

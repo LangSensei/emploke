@@ -385,10 +385,10 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
         <table className="table table--wide">
           <thead>
             <tr>
-              <th className="col-session">Session</th>
-              <th className="col-agent">Agent</th>
-              <th className="col-runtime">Runtime</th>
-              <th>Activity</th>
+              <th>Session</th>
+              <th>Agent</th>
+              <th>Runtime</th>
+              <th className="col-activity">Activity</th>
               <th className="col-actions">Actions</th>
             </tr>
           </thead>
@@ -481,15 +481,15 @@ function SessionRow({ session, launching, onLaunch, onDelete }: RowProps) {
           {session.agent}
         </span>
       </td>
-      <td>
+      <td className="col-runtime">
         <span className="agent-tag" title={`Runtime: ${session.runtime}`}>
           {session.runtime}
         </span>
       </td>
-      <td>
+      <td className="col-activity">
         <ActivityCell session={session} />
       </td>
-      <td>
+      <td className="col-actions">
         <div className="row-actions">
           <button
             type="button"

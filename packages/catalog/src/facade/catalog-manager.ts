@@ -62,9 +62,9 @@ import { HasDependentsError } from "./errors.js";
 // ─── Plan shape ─────────────────────────────────────────────
 
 export type CatalogPlanNode =
-  | { kind: "mcp"; node: McpResolvedNode }
-  | { kind: "skill"; node: SkillResolvedNode }
-  | { kind: "agent"; node: AgentResolvedNode };
+  | { kind: "mcp"; node: McpResolvedNode; wasAlreadyInstalled?: boolean }
+  | { kind: "skill"; node: SkillResolvedNode; wasAlreadyInstalled?: boolean }
+  | { kind: "agent"; node: AgentResolvedNode; wasAlreadyInstalled?: boolean };
 
 export interface McpResolvedNode {
   /** MCP spec FQN (mcps don't have a separate `fqn` concept; name IS fqn). */
@@ -320,7 +320,12 @@ export class CatalogManager {
     return entity.name;
   }
 
-  async installMcpFromOrigin(origin: string, _name?: string): Promise<CatalogInstallResult> {
+  /**
+   * Install an MCP by origin. The MCP's spec FQN is recovered from the
+   * fetched JSON's `_meta.name` field at resolve time — clients don't
+   * need to specify a name up front.
+   */
+  async installMcpFromOrigin(origin: string): Promise<CatalogInstallResult> {
     return this.install(await this.resolveMcp(origin));
   }
 
@@ -643,24 +648,29 @@ export class CatalogManager {
     if (ctx.visited.has(origin)) return;
     ctx.visited.add(origin);
 
-    if (!isRoot) {
-      const local = await this.skill.getByOrigin(origin);
-      if (local !== null) {
-        ctx.alreadyInstalled.push({
-          kind: "skill",
-          node: {
-            fqn: local.fqn,
-            origin: local.origin,
-            anchorContent: local.anchorContent,
-            frontmatterSha256: local.frontmatterSha256,
-            depsRefs: {
-              skills: [...local.dependencies.skills],
-              mcps: [...local.dependencies.mcps],
-            },
+    // Check whether this origin is already installed locally. For DEPS
+    // (isRoot=false), already-installed entries short-circuit the fetch:
+    // we surface them in `alreadyInstalled` and don't re-resolve. For ROOT,
+    // we still re-fetch (a same-origin reinstall acts as a sync from
+    // upstream — the user explicitly asked for this URL). The fact that
+    // it was already installed is recorded on the plan node so the
+    // dashboard can swap "Install" for "Sync from upstream" in the UI.
+    const localExisting = await this.skill.getByOrigin(origin);
+    if (!isRoot && localExisting !== null) {
+      ctx.alreadyInstalled.push({
+        kind: "skill",
+        node: {
+          fqn: localExisting.fqn,
+          origin: localExisting.origin,
+          anchorContent: localExisting.anchorContent,
+          frontmatterSha256: localExisting.frontmatterSha256,
+          depsRefs: {
+            skills: [...localExisting.dependencies.skills],
+            mcps: [...localExisting.dependencies.mcps],
           },
-        });
-        return;
-      }
+        },
+      });
+      return;
     }
 
     const plan = await this.skill.resolve(origin);
@@ -681,12 +691,22 @@ export class CatalogManager {
     for (const skillOrigin of plan.node.depsRefs.skills) {
       await this.walkSkill(skillOrigin, ctx, false);
     }
-    ctx.toInstall.push({ kind: "skill", node: plan.node });
+    ctx.toInstall.push({
+      kind: "skill",
+      node: plan.node,
+      ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+    });
   }
 
   private async walkAgent(origin: string, ctx: ResolveContext): Promise<void> {
     if (ctx.visited.has(origin)) return;
     ctx.visited.add(origin);
+
+    // Agents are always root entries (never dep-referenced by other
+    // entities), so the same-origin re-install path is the only way to
+    // sync. See `walkSkill` for the rationale on keeping root in
+    // toInstall while annotating it as previously installed.
+    const localExisting = await this.agent.getByOrigin(origin);
 
     const plan = await this.agent.resolve(origin);
     if (plan.conflict !== null) {
@@ -706,22 +726,28 @@ export class CatalogManager {
     for (const skillOrigin of plan.node.depsRefs.skills) {
       await this.walkSkill(skillOrigin, ctx, false);
     }
-    ctx.toInstall.push({ kind: "agent", node: plan.node });
+    ctx.toInstall.push({
+      kind: "agent",
+      node: plan.node,
+      ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+    });
   }
 
   private async walkMcp(origin: string, ctx: ResolveContext, isRoot: boolean): Promise<void> {
     if (ctx.visited.has(origin)) return;
     ctx.visited.add(origin);
 
-    if (!isRoot) {
-      const local = await this.mcp.getByOrigin(origin);
-      if (local !== null) {
-        ctx.alreadyInstalled.push({
-          kind: "mcp",
-          node: { fqn: local.name, origin: local.origin, content: local.content },
-        });
-        return;
-      }
+    const localExisting = await this.mcp.getByOrigin(origin);
+    if (!isRoot && localExisting !== null) {
+      ctx.alreadyInstalled.push({
+        kind: "mcp",
+        node: {
+          fqn: localExisting.name,
+          origin: localExisting.origin,
+          content: localExisting.content,
+        },
+      });
+      return;
     }
 
     const result = await this.resolveMcpAdapter(origin);
@@ -730,7 +756,11 @@ export class CatalogManager {
       return;
     }
     if (result.node === null) return;
-    ctx.toInstall.push({ kind: "mcp", node: result.node });
+    ctx.toInstall.push({
+      kind: "mcp",
+      node: result.node,
+      ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+    });
   }
 
   // ─── Reads (entity access) ────────────────────────────

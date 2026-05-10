@@ -124,29 +124,45 @@ const jsonInit = (method: string, body: object): RequestInit => ({
 });
 
 /**
- * Install a new agent by `origin` URI. The server fetches via the
- * registered fetcher (file:, https://github.com/...), recursively
- * resolves dependencies, and returns a manifest. Returns 207 on partial
- * failure — caller surfaces that as an error message via {@link extractError}.
+ * Install a new agent. The wire body is `{provider, location}` — the
+ * server assembles the canonical origin URI from those. The server
+ * fetches via the registered fetcher (file:, https://github.com/...),
+ * recursively resolves dependencies, and returns a manifest. Returns
+ * 207 on partial failure — caller surfaces that as an error message
+ * via {@link extractError}.
  *
  * No `scopeHints`: scope is determined entirely by each entry's
  * frontmatter (or default `public`). Forking under a different scope =
  * editing upstream's frontmatter, not a per-install flag.
  */
-export const installAgent = (origin: string) =>
-  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { origin }));
+export type InstallProvider = "github" | "file";
+
+export interface InstallSource {
+  /** Pick the provider whose grammar matches your URL/path. */
+  provider: InstallProvider;
+  /**
+   * Canonical input string for the chosen provider:
+   *  - `github`: full https://github.com/owner/repo/tree/ref/path URL
+   *  - `file`:   absolute filesystem path on the server
+   * Whitespace is trimmed; clients never need to add scheme prefixes.
+   */
+  location: string;
+}
+
+export const installAgent = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", src));
 
 /** See {@link installAgent}. */
-export const installSkill = (origin: string) =>
-  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { origin }));
+export const installSkill = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", src));
 
 /**
- * MCPs are JSON-only; `name` is the full MCP-spec FQN
- * (`<namespace>/<short>`, with the slash). MCPs do NOT participate in
- * the scope-mapping system — the spec name IS the catalog identity.
+ * Install an MCP. The MCP's spec FQN is recovered from the fetched
+ * JSON's `_meta.name` at install time, so callers don't need to
+ * supply a name.
  */
-export const installMcp = (origin: string, name: string) =>
-  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", { origin, name }));
+export const installMcp = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
 
 /**
  * Resolve manifest returned by `POST /catalog/{kind}/resolve`. Read-only
@@ -158,7 +174,13 @@ export interface ResolveNodeBase {
   kind: "skill" | "agent" | "mcp";
   origin: string;
   fqn: string;
-  status: "new" | "already-installed" | "would-conflict" | "fetch-failed" | "parse-failed";
+  status:
+    | "new"
+    | "will-sync"
+    | "already-installed"
+    | "would-conflict"
+    | "fetch-failed"
+    | "parse-failed";
   depFqns: string[];
   error?: { name: string; message: string };
 }
@@ -196,11 +218,11 @@ export interface ResolveManifest {
  * read-only `ResolveManifest` so the user can preview the tree before
  * committing.
  */
-export const resolveSkillInstall = (origin: string): Promise<ResolveManifest> =>
-  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", { origin }));
+export const resolveSkillInstall = (src: InstallSource): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", src));
 
-export const resolveAgentInstall = (origin: string): Promise<ResolveManifest> =>
-  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", { origin }));
+export const resolveAgentInstall = (src: InstallSource): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", src));
 
 export const removeAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
