@@ -159,7 +159,7 @@ export function CatalogPage({
           {tab === "agents" && (
             <EntryGrid
               items={agents.map((a) => ({
-                name: a.agent.name,
+                name: a.agent.fqn,
                 description: a.agent.description,
                 version: a.agent.version,
                 status: a.status,
@@ -180,7 +180,7 @@ export function CatalogPage({
           {tab === "skills" && (
             <EntryGrid
               items={skills.map((s) => ({
-                name: s.skill.name,
+                name: s.skill.fqn,
                 description: s.skill.description,
                 version: s.skill.version,
                 status: s.status,
@@ -236,7 +236,7 @@ export function CatalogPage({
           {edit !== null && (
             <EditDialog
               target={edit}
-              availableSkills={skills.map((s) => s.skill.name)}
+              availableSkills={skills.map((s) => s.skill.fqn)}
               availableMcps={mcps.map((m) => m.name)}
               onClose={() => setEdit(null)}
               onSaved={() => {
@@ -485,6 +485,11 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Origin + mutability of the entry being edited. `mutable === false`
+  // (i.e. github: / non-file: origin) flips the dialog into read-only
+  // mode: Save is replaced by Sync (re-install from origin).
+  const [origin, setOrigin] = useState<string>("");
+  const [mutable, setMutable] = useState<boolean>(true);
 
   // Load on mount / target change. We always fetch the raw content (covers
   // source mode) and additionally project the server's structured fields
@@ -496,7 +501,10 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     const load = async (): Promise<void> => {
       if (target.kind === "mcp") {
         const d = await getMcp(target.name);
-        if (!cancelled) setText(d.content);
+        if (cancelled) return;
+        setText(d.content);
+        setOrigin(d.origin);
+        setMutable(d.mutable);
         return;
       }
       const detail =
@@ -504,6 +512,8 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
       if (cancelled) return;
       setText(detail.content);
       const meta = "skill" in detail ? detail.skill : detail.agent;
+      setOrigin(meta.origin);
+      setMutable(meta.mutable);
       setForm({
         description: meta.description ?? "",
         version: meta.version ?? "",
@@ -568,6 +578,25 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     }
   };
 
+  // Sync action for read-only (immutable) entries: re-install from the
+  // entry's own origin. The catalog `install` is upsert, so this overwrites
+  // the local SQLite copy with a fresh fetch from upstream — the only way
+  // to "update" a github:/etc. entry without forking it.
+  const handleSync = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (target.kind === "skill") await installSkill(origin);
+      else if (target.kind === "agent") await installAgent(origin);
+      else await installMcp(origin, target.name);
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
   const title = `Edit ${kindLabel}: ${target.name}`;
   const isLargeMode = mode === "source" || target.kind === "mcp";
@@ -575,6 +604,14 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
   return (
     <Modal open onClose={onClose} title={title} size={isLargeMode ? "large" : "default"}>
       <div className="modal__body modal__body--scroll">
+        {!loading && !mutable && (
+          <div className="alert alert--info">
+            🔒 This entry was installed from <code>{origin}</code> and is read-only. To pick up
+            upstream changes, click <strong>Sync from upstream</strong> below (re-fetches and
+            overwrites the local copy). To customise it, fork the upstream and re-install from your
+            fork.
+          </div>
+        )}
         {loading ? (
           <p className="form-hint">Loading...</p>
         ) : target.kind === "mcp" ? (
@@ -582,7 +619,7 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             value={text}
             onChange={setText}
             language="json"
-            disabled={saving}
+            disabled={saving || !mutable}
             height="500px"
           />
         ) : mode === "form" ? (
@@ -592,24 +629,18 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             onChange={setForm}
             availableSkills={availableSkills.filter((n) => n !== target.name)}
             availableMcps={availableMcps}
-            // Project DependencyRef → FQN string for the missing-set
-            // comparison. `MetadataForm` does the same projection internally
-            // when rendering chips, so the chip flagged as missing matches
-            // the FQN we test here.
-            missingSkills={form.skills
-              .map((s) => (s.scope ? `${s.scope}/${s.name}` : s.name))
-              .filter((label) => !availableSkills.includes(label))}
-            missingMcps={form.mcps
-              .map((m) => (m.scope ? `${m.scope}/${m.name}` : m.name))
-              .filter((label) => !availableMcps.includes(label))}
-            disabled={saving}
+            // dep refs are now bare origin strings; surface ones whose
+            // origin isn't in the installed set as missing.
+            missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
+            missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
+            disabled={saving || !mutable}
           />
         ) : (
           <CodeEditor
             value={text}
             onChange={setText}
             language="markdown"
-            disabled={saving}
+            disabled={saving || !mutable}
             height="500px"
           />
         )}
@@ -629,14 +660,26 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         <button type="button" className="btn" onClick={onClose} disabled={saving}>
           Cancel
         </button>
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={handleSave}
-          disabled={loading || saving}
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
+        {mutable ? (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={handleSave}
+            disabled={loading || saving}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={handleSync}
+            disabled={loading || saving || origin === ""}
+            title="Re-fetch from upstream and overwrite the local copy"
+          >
+            {saving ? "Syncing..." : "Sync from upstream"}
+          </button>
+        )}
       </div>
     </Modal>
   );

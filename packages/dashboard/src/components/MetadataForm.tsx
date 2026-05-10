@@ -23,14 +23,13 @@ interface MetadataFormProps {
 }
 
 /**
- * Render `DependencyRef` as a chip label using its FQN form
- * (`<scope>/<name>` or just `<name>` when scope is auto-derivable). Chips
- * are display-only post-#39 — adding a dep requires an origin, which
- * doesn't fit a single-line chip input. Operators add deps via source
- * mode where they can author the full `{name, origin, scope?}` shape.
+ * Render `DependencyRef` as a chip label. Post-rename, dep refs are
+ * bare origin URI strings, so we just render them as-is. The full
+ * URI is informative enough to identify the dep without round-tripping
+ * to the catalog to recover its FQN.
  */
 function depRefLabel(ref: DependencyRef): string {
-  return ref.scope ? `${ref.scope}/${ref.name}` : ref.name;
+  return ref;
 }
 
 export function MetadataForm({

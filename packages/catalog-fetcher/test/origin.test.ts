@@ -15,6 +15,37 @@ describe("parseOrigin", () => {
     expect(o.path).toBe("/abs/path/to/skill");
   });
 
+  it("accepts file:/// triple-slash form (RFC 8089)", () => {
+    const o = parseOrigin("file:///abs/path");
+    expect(o.scheme).toBe("file");
+    if (o.scheme !== "file") throw new Error("narrow");
+    expect(o.path).toBe("/abs/path");
+  });
+
+  it("accepts Windows drive paths", () => {
+    const o = parseOrigin("file:C:/Users/lang/skill");
+    expect(o.scheme).toBe("file");
+    if (o.scheme !== "file") throw new Error("narrow");
+    expect(o.path).toBe("C:/Users/lang/skill");
+  });
+
+  it("accepts file:///C:/... Windows triple-slash form", () => {
+    const o = parseOrigin("file:///C:/Users/lang/skill");
+    expect(o.scheme).toBe("file");
+    if (o.scheme !== "file") throw new Error("narrow");
+    expect(o.path).toBe("C:/Users/lang/skill");
+  });
+
+  it("rejects file: URI with relative path", () => {
+    expect(() => parseOrigin("file:./relative")).toThrow(OriginParseError);
+    expect(() => parseOrigin("file:relative")).toThrow(OriginParseError);
+    expect(() => parseOrigin("file:../sibling")).toThrow(OriginParseError);
+  });
+
+  it("rejects file: URI with home expansion (~)", () => {
+    expect(() => parseOrigin("file:~/skills")).toThrow(OriginParseError);
+  });
+
   it("parses github tree URL with subpath", () => {
     const o = parseOrigin("https://github.com/anthropic/skills/tree/main/tool-use");
     expect(o.scheme).toBe("github");

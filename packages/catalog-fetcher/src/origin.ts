@@ -51,6 +51,22 @@ const GITHUB_TREE_RE =
  * avoids a network round-trip to discover the default branch and forces the
  * user to commit to a specific ref so installs are reproducible.
  */
+/**
+ * Cross-platform absolute-path detection. Accepts:
+ *  - POSIX:    `/usr/local/...`
+ *  - Windows:  `C:/...`, `C:\...`, `\\server\share\...`
+ *
+ * Rejects: `./foo`, `../foo`, bare `foo`, `~/foo`.
+ */
+function isAbsolutePath(p: string): boolean {
+  if (p.length === 0) return false;
+  if (p.startsWith("/")) return true;
+  if (p.startsWith("\\\\")) return true; // Windows UNC
+  // Windows drive: `C:/...` or `C:\...`. Case-insensitive single letter.
+  if (p.length >= 3 && /^[a-zA-Z]:[\\/]/.test(p)) return true;
+  return false;
+}
+
 export function parseOrigin(uri: string): ParsedOrigin {
   if (typeof uri !== "string" || uri.length === 0) {
     throw new OriginParseError(String(uri), "must be a non-empty string");
@@ -61,7 +77,22 @@ export function parseOrigin(uri: string): ParsedOrigin {
     if (rest.length === 0) {
       throw new OriginParseError(uri, "file: URI requires a path (e.g. file:/abs/path)");
     }
-    return { scheme: "file", path: rest, raw: uri };
+    // Normalise: accept `file:/abs`, `file:///abs`, and `file:C:/...` /
+    // `file:///C:/...` shapes; strip the leading double-slash if present,
+    // and also strip a single leading `/` when followed by a Windows
+    // drive letter (RFC 8089 says `file:///C:/...` so the path part is
+    // `/C:/...` which we want to coerce to `C:/...` for native `node:fs`).
+    let stripped = rest.startsWith("//") ? rest.slice(2) : rest;
+    if (/^\/[a-zA-Z]:[\\/]/.test(stripped)) stripped = stripped.slice(1);
+    if (!isAbsolutePath(stripped)) {
+      throw new OriginParseError(
+        uri,
+        "file: URI must be an absolute path " +
+          '(e.g. "file:/Users/me/skills/x" or "file:///C:/Users/me/skills/x"). ' +
+          "Relative paths are intentionally rejected so origins are stable across cwd.",
+      );
+    }
+    return { scheme: "file", path: stripped, raw: uri };
   }
 
   if (uri.startsWith("https://github.com/")) {
@@ -112,6 +143,9 @@ export function normalizeOrigin(origin: ParsedOrigin): string {
       return `https://github.com/${o}/${r}/tree/${origin.ref}${path}`;
     }
     case "file":
-      return `file:${origin.path}`;
+      // Canonical file URI form: `file:///<path>`. Both the parser
+      // and existing storage may have stripped the leading `//`, so
+      // re-add when normalising for cross-platform equality.
+      return `file:///${origin.path.replace(/^\/+/, "")}`;
   }
 }

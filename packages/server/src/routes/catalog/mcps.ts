@@ -25,8 +25,10 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
+      const meta = catalog.getMcp(name);
+      if (meta === null) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getMcpContent(name);
-      return c.json({ name, content });
+      return c.json({ ...meta, content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

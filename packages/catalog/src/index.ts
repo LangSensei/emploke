@@ -1,37 +1,50 @@
+/**
+ * Public API of `@emploke/catalog`.
+ *
+ * Two surfaces:
+ *  - **New, clean entity-based API**: per-entity services (Mcp/Skill/
+ *    Agent), entity classes, repository interfaces, the cross-entity
+ *    `CatalogManager` facade. Available under `agent.*`, `skill.*`,
+ *    `mcp.*`, `facade.*` namespaces and at the top level.
+ *  - **Legacy compat API** for in-tree consumers (server routes,
+ *    runtime, dashboard). POJO type re-exports and convenience
+ *    methods on `CatalogManager` mirror the pre-refactor shape.
+ *
+ * The legacy surface is the larger of the two by line count; over
+ * time consumers will migrate to the new entity classes and the
+ * compat re-exports can be removed.
+ */
+
+// ─── Compat: catalog-fetcher re-exports ──────────────
 export {
   FetchError,
+  type FetcherRegistry,
   normalizeOrigin,
   OriginParseError,
   type ParsedOrigin,
   parseOrigin,
 } from "@emploke/catalog-fetcher";
+// ─── Compat: errors (preserve legacy names) ──────────
+//
+// Old code imports things like `NotFound`, `FrontmatterError`,
+// `OriginConflictError`, etc. We re-export the per-entity errors with
+// these aliases so HTTP error-status mapping in server/_shared.ts
+// keeps working.
 export {
-  type ApplyInstallInput,
-  applyInstall,
-  type FailedEntry,
-  type InstalledEntry,
-  type InstallManifest,
-  type SkippedEntry,
-} from "./apply.js";
-export {
-  CatalogError,
-  CatalogStateError,
-  CycleDetected,
-  FrontmatterError,
-  HasDependents,
-  InvalidMcpJsonError,
-  McpNameInvalidError,
-  MissingDependencies,
-  NameInvalid,
-  NotFound,
-  OriginConflictError,
-} from "./errors.js";
-export {
-  applyFrontmatterPatch,
-  DEFAULT_SCOPE,
-  depRefToFqn,
-  synthesizeOriginFromPath,
-} from "./frontmatter.js";
+  AgentFrontmatterError,
+  AgentNameInvalidError,
+  AgentNotFoundError,
+  AgentOriginConflictError,
+  AgentPlanStaleError,
+} from "./agent/errors.js";
+export type { AgentFetcher } from "./agent/index.js";
+// ─── Namespaces ─────────────────────────────────────────────
+export * as agent from "./agent/index.js";
+
+// ─── Top-level entity classes (rich API) ───────────────
+export { Agent } from "./agent/index.js";
+// ─── Compat: utility functions ─────────────────────────
+export { applyFrontmatterPatch } from "./compat/frontmatter-patch.js";
 export {
   type AgentInstallBody,
   type McpInstallBody,
@@ -39,57 +52,84 @@ export {
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,
-} from "./install-input.js";
+} from "./compat/install-input.js";
+// ─── Compat: POJO types (legacy consumer shape) ────────
 export type {
-  AgentMetadataPatch,
-  CatalogOptions,
-  InstallEntryOpts,
-  InstallMcpOpts,
-  ScanIssue,
-  SkillMetadataPatch,
-} from "./manager.js";
-export { CatalogManager } from "./manager.js";
-export {
-  type McpFileShape,
-  type McpMeta,
-  parseMcpFile,
-  stripMcpMeta,
-  writeMcpMeta,
-} from "./mcp/mcp-frontmatter.js";
-export type { CatalogEntryFile } from "./repositories/repository.js";
-export {
-  type AgentResolveNode,
-  type McpResolveNode,
-  type NodeStatus,
-  type ResolveInstallInput,
-  type ResolveManifest,
-  type ResolveNode,
-  type RootKind,
-  resolveInstall,
-  type SkillResolveNode,
-} from "./resolve.js";
-export type {
-  Agent,
+  Agent as AgentPojo,
   AgentEntry,
+  AgentMetadataPatch,
   AgentResolveResult,
   CatalogKind,
   DependencyKind,
   DependencyRef,
   EntryStatus,
+  InstallEntryOpts,
+  InstallMcpOpts,
   McpMetadata,
   MissingDep,
   ResolvedMcp,
   ResolvedSkill,
-  Skill,
+  ScanIssue,
+  Skill as SkillPojo,
   SkillEntry,
+  SkillMetadataPatch,
   SkillResolveResult,
-} from "./types.js";
+} from "./compat/types.js";
+export * as facade from "./facade/index.js";
+// ─── Top-level facade ───────────────────────────────────
 export {
+  type CatalogConflict,
+  type CatalogInstallResult,
+  CatalogManager,
+  type CatalogOptions,
+  type CatalogPlan,
+  type CatalogPlanNode,
+  HasDependentsError,
+  type McpResolvedNode,
+} from "./facade/index.js";
+export {
+  McpInvalidJsonError,
+  McpInvalidJsonError as InvalidMcpJsonError,
+  McpNameInvalidError,
+  McpNotFoundError,
+  McpOriginConflictError,
+} from "./mcp/errors.js";
+// ─── Entity-fetcher contract types ─────────────────────
+export type { McpFetcher } from "./mcp/index.js";
+export * as mcp from "./mcp/index.js";
+export { Mcp } from "./mcp/index.js";
+
+// ─── Compat: codec re-exports ─────────────────────────
+export {
+  type McpFile as McpFileShape,
+  type McpMeta,
+  parse as parseMcpFile,
+  stripMeta as stripMcpMeta,
+  writeMeta as writeMcpMeta,
+} from "./mcp/mcp-format.js";
+export { splitMcpName, validateMcpName } from "./mcp/validate.js";
+// ─── Origin mutability ──────────────────────────────
+export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
+export {
+  PlanStaleError,
+  SkillFrontmatterError,
+  SkillFrontmatterError as FrontmatterError,
+  SkillNameInvalidError,
+  SkillNameInvalidError as NameInvalid,
+  SkillNotFoundError,
+  SkillNotFoundError as NotFound,
+  SkillOriginConflictError,
+  SkillOriginConflictError as OriginConflictError,
+} from "./skill/errors.js";
+export type { SkillFetcher } from "./skill/index.js";
+export * as skill from "./skill/index.js";
+export { Skill } from "./skill/index.js";
+// ─── Compat: validate utilities ─────────────────────
+export {
+  DEFAULT_SCOPE,
   makeFqn,
   splitFqn,
-  splitMcpName,
   validateFqn,
-  validateMcpName,
   validateScope,
   validateShortName,
-} from "./validate.js";
+} from "./skill/validate.js";

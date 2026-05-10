@@ -109,7 +109,7 @@ export async function provisionCopilotWorkdir(
   catalog: CatalogManager,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
-  await materializeAgent(workdir, agent.agent.name, catalog);
+  await materializeAgent(workdir, agent.agent.fqn, catalog);
   await writeMcpConfig(workdir, agent.mcps, catalog);
   await materializeSkills(workdir, agent.skills, catalog);
 }
@@ -199,7 +199,7 @@ async function writeMcpConfig(
  */
 async function materializeSkills(
   workdir: string,
-  skills: readonly { readonly skill: { readonly name: string } }[],
+  skills: readonly { readonly skill: { readonly fqn: string } }[],
   catalog: CatalogManager,
 ): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
@@ -207,11 +207,11 @@ async function materializeSkills(
   let hooksDestReady = false;
 
   for (const s of skills) {
-    const flatName = flattenSkillName(s.skill.name);
+    const flatName = flattenSkillName(s.skill.fqn);
     const skillDest = path.join(skillsRoot, flatName);
     const hookPrefix = `${flatName}${SCOPE_FLATTEN_SEP}`;
     await mkdir(skillDest, { recursive: true });
-    for await (const { relPath, content } of catalog.skillEntries(s.skill.name)) {
+    for await (const { relPath, content } of catalog.skillEntries(s.skill.fqn)) {
       const hookRel = stripHooksPrefix(relPath);
       if (hookRel !== null) {
         if (!hooksDestReady) {

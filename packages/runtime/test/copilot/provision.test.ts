@@ -51,36 +51,25 @@ async function setup(opts: {
   mcps?: Record<string, string>;
 }): Promise<{ catalog: CatalogManager; agentName: string }> {
   const agentShortName = opts.agent?.name ?? "demo-agent";
+  // Pre-create the source root so we know absolute origin URIs in
+  // advance — they're embedded in frontmatter dep refs as bare URI
+  // strings (the post-rename Phase 2 contract).
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const sourceRoot = await mkdtemp(path.join(tmpdir(), "test-catalog-src-"));
+  const skillOrigin = (key: string): string => {
+    const slash = key.lastIndexOf("/");
+    const short = slash >= 0 ? key.slice(slash + 1) : key;
+    return `file:${path.join(sourceRoot, "skills", short)}`;
+  };
+  const mcpOrigin = (key: string): string =>
+    `file:${path.join(sourceRoot, "mcps", `${key.replace("/", "_")}.json`)}`;
+
   const agentDeps = {
     skills: Object.keys(opts.skills ?? {}),
     mcps: Object.keys(opts.mcps ?? {}),
   };
-  // Render skill dependencies in the post-#39 DependencyRef shape:
-  //   - { name, origin: "file:test/<scope>/<name>" [, scope] }
-  // Fixture keys may carry a `<scope>/<short>` form to test scoped FQNs;
-  // when that happens we split into name+scope on the dep ref so the
-  // frontmatter validator (which requires `name` to be a SHORT
-  // kebab-case) is satisfied. Otherwise scope defaults to `local` (via
-  // `scopeFromOrigin(file:)`).
-  const renderDepRef = (key: string): string => {
-    const slash = key.lastIndexOf("/");
-    if (slash >= 0) {
-      const scope = key.slice(0, slash);
-      const name = key.slice(slash + 1);
-      return `    - { name: "${name}", origin: "file:test/${scope}/${name}", scope: "${scope}" }`;
-    }
-    return `    - { name: "${key}", origin: "file:test/public/${key}" }`;
-  };
-  // MCP dep refs in Phase 2: `name` is the full spec FQN with `/`. The
-  // fixture key MUST already be in `<namespace>/<short>` form.
-  const renderMcpDepRef = (key: string): string => {
-    if (!key.includes("/")) {
-      throw new Error(
-        `MCP fixture key "${key}" must use spec FQN <namespace>/<short> (e.g. "github/cli")`,
-      );
-    }
-    return `    - { name: "${key}", origin: "file:test/mcps/${key.replace("/", "_")}.json" }`;
-  };
+  const renderDepRef = (origin: string): string => `    - '${origin.replace(/'/g, "''")}'`;
   const agentBody =
     opts.agent?.body ??
     [
@@ -92,9 +81,11 @@ async function setup(opts: {
         ? [
             "dependencies:",
             ...(agentDeps.skills.length
-              ? ["  skills:", ...agentDeps.skills.map(renderDepRef)]
+              ? ["  skills:", ...agentDeps.skills.map((k) => renderDepRef(skillOrigin(k)))]
               : []),
-            ...(agentDeps.mcps.length ? ["  mcps:", ...agentDeps.mcps.map(renderMcpDepRef)] : []),
+            ...(agentDeps.mcps.length
+              ? ["  mcps:", ...agentDeps.mcps.map((k) => renderDepRef(mcpOrigin(k)))]
+              : []),
           ]
         : []),
       "---",
@@ -119,8 +110,12 @@ async function setup(opts: {
         ...(sk.deps
           ? [
               "dependencies:",
-              ...(sk.deps.skills?.length ? ["  skills:", ...sk.deps.skills.map(renderDepRef)] : []),
-              ...(sk.deps.mcps?.length ? ["  mcps:", ...sk.deps.mcps.map(renderMcpDepRef)] : []),
+              ...(sk.deps.skills?.length
+                ? ["  skills:", ...sk.deps.skills.map((k) => renderDepRef(skillOrigin(k)))]
+                : []),
+              ...(sk.deps.mcps?.length
+                ? ["  mcps:", ...sk.deps.mcps.map((k) => renderDepRef(mcpOrigin(k)))]
+                : []),
             ]
           : []),
         "---",
@@ -132,7 +127,7 @@ async function setup(opts: {
     }
     fixtures.skills![name] = files;
   }
-  const { catalog } = await makeTestCatalog(fixtures);
+  const { catalog } = await makeTestCatalog(fixtures, sourceRoot);
   return { catalog, agentName: `public/${agentShortName}` };
 }
 
@@ -147,6 +142,10 @@ async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
   agentName: string;
   mcpName: string;
 }> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const sourceRoot = await mkdtemp(path.join(tmpdir(), "test-catalog-src-"));
+  const mcpOrigin = `file:${path.join(sourceRoot, "mcps", `${specName.replace("/", "_")}.json`)}`;
   const agentShortName = "demo-agent";
   const agentBody = [
     "---",
@@ -155,17 +154,20 @@ async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
     "version: 0.0.1",
     "dependencies:",
     "  mcps:",
-    `    - { name: "${specName}", origin: "file:test/mcps/${specName.replace("/", "_")}.json" }`,
+    `    - '${mcpOrigin}'`,
     "---",
     "",
   ].join("\n");
-  const { catalog, repos } = await makeTestCatalog({
-    agents: { [agentShortName]: { "AGENTS.md": agentBody } },
-    mcps: { [specName]: '{"command":"ok"}' },
-  });
-  // Now corrupt the MCP's bytes via the repo seam — the catalog still
-  // believes it exists (it was valid at scan time).
-  await repos.mcps.write(specName, "{not-json");
+  const { catalog, corruptMcp } = await makeTestCatalog(
+    {
+      agents: { [agentShortName]: { "AGENTS.md": agentBody } },
+      mcps: { [specName]: '{"command":"ok"}' },
+    },
+    sourceRoot,
+  );
+  // Now corrupt the MCP's bytes — the catalog still believes it
+  // exists (it was valid at scan time).
+  await corruptMcp(specName, "{not-json");
   return { catalog, agentName: `public/${agentShortName}`, mcpName: specName };
 }
 

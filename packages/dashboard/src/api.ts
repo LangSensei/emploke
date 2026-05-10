@@ -1,4 +1,4 @@
-import type { AgentEntry, MissingDep, SkillEntry } from "@emploke/catalog";
+import type { AgentEntry, McpMetadata, MissingDep, SkillEntry } from "@emploke/catalog";
 
 export interface OverviewData {
   counts: {
@@ -13,9 +13,12 @@ export interface OverviewData {
   }[];
 }
 
-export interface McpItem {
-  name: string;
-}
+/**
+ * Wire shape for an installed MCP — mirrors @emploke/catalog `McpMetadata`.
+ * `mutable` controls whether the dashboard offers Edit (file: origin) vs
+ * Sync (re-install from upstream for github: etc.).
+ */
+export type McpItem = McpMetadata;
 
 export interface CatalogData {
   overview: OverviewData | null;
@@ -210,6 +213,8 @@ export const removeMcp = (name: string) =>
 
 export interface McpDetail {
   name: string;
+  origin: string;
+  mutable: boolean;
   /** Raw JSON content as stored on disk (preserves user formatting). */
   content: string;
 }
@@ -225,7 +230,7 @@ export interface MarkdownDetail {
 }
 
 export interface SkillDetail {
-  skill: import("@emploke/catalog").Skill;
+  skill: import("@emploke/catalog").SkillPojo;
   status: "ready" | "disabled";
   missingDeps?: MissingDep[];
   content: string;
@@ -254,7 +259,7 @@ export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
   mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
 export interface AgentDetail {
-  agent: import("@emploke/catalog").Agent;
+  agent: import("@emploke/catalog").AgentPojo;
   status: "ready" | "disabled";
   missingDeps?: MissingDep[];
   content: string;

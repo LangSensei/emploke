@@ -289,8 +289,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           >
             <option value={ALL_AGENTS}>All</option>
             {agents.map((a) => (
-              <option key={a.agent.name} value={a.agent.name}>
-                {a.agent.name}
+              <option key={a.agent.fqn} value={a.agent.fqn}>
+                {a.agent.fqn}
               </option>
             ))}
           </select>
@@ -602,8 +602,8 @@ function CreateModal({
   const [runtime, setRuntime] = useState<string>("");
 
   useEffect(() => {
-    if (open && agents.length > 0 && !agents.some((a) => a.agent.name === agent)) {
-      setAgent(agents[0]?.agent.name ?? "");
+    if (open && agents.length > 0 && !agents.some((a) => a.agent.fqn === agent)) {
+      setAgent(agents[0]?.agent.fqn ?? "");
     }
   }, [open, agents, agent]);
 
@@ -639,8 +639,8 @@ function CreateModal({
               className="select select--full"
             >
               {agents.map((a) => (
-                <option key={a.agent.name} value={a.agent.name}>
-                  {a.agent.name}
+                <option key={a.agent.fqn} value={a.agent.fqn}>
+                  {a.agent.fqn}
                 </option>
               ))}
             </select>

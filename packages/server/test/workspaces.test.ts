@@ -9,12 +9,14 @@ import { WorkspaceContextCache } from "../src/workspace-context.js";
 
 let scratch: string;
 let indexFile: string;
+const openCaches: WorkspaceContextCache[] = [];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-ws-"));
   indexFile = path.join(scratch, ".emploke", "workspaces.json");
 });
 afterEach(async () => {
+  for (const c of openCaches.splice(0)) c.closeAll();
   await rm(scratch, { recursive: true, force: true });
 });
 
@@ -25,6 +27,7 @@ async function makeApp() {
     new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
   );
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
+  openCaches.push(cache);
   return { app: workspacesRoutes({ manager, cache }), manager, cache };
 }
 

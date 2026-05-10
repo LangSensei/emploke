@@ -1,7 +1,8 @@
-import { applyInstall, type CatalogManager, resolveInstall } from "@emploke/catalog";
+import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMetadataBody, readSkillInstallBody } from "./helpers.js";
+import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
@@ -9,8 +10,8 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * `catalogRoutes` at "/skills".
  *
  * Two endpoints for installs:
- *   - `POST /resolve` — read-only preview (returns ResolveManifest)
- *   - `POST /` — full install (resolve + apply, returns InstallManifest)
+ *   - `POST /resolve` — read-only preview (returns CatalogPlan)
+ *   - `POST /` — full install (resolve + apply, returns CatalogInstallResult)
  *
  * Dashboard's two-phase flow uses `/resolve` to show the user what
  * will happen, then `/` to commit.
@@ -26,12 +27,8 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const manifest = await resolveInstall({
-        catalog,
-        rootKind: "skill",
-        rootOrigin: parsed.origin,
-      });
-      return c.json(manifest);
+      const plan = await catalog.resolveSkill(parsed.origin);
+      return c.json(planToManifest(plan, parsed.origin));
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
@@ -57,15 +54,10 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const resolved = await resolveInstall({
-        catalog,
-        rootKind: "skill",
-        rootOrigin: parsed.origin,
-      });
-      const manifest = await applyInstall({ catalog, manifest: resolved });
-      const status = manifest.failed.length > 0 ? 207 : 201;
+      const result = await catalog.installSkill(parsed.origin);
+      const status = result.failed.length > 0 ? 207 : 201;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(manifest, status as any);
+      return c.json(result, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

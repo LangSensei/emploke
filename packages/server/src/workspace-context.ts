@@ -117,9 +117,18 @@ export class WorkspaceContextCache {
   /**
    * Drop the cached context for `id`. Safe to call when no entry exists.
    * Invoked by routes that mutate workspace metadata (rename, remove)
-   * so the next request sees a fresh world.
+   * so the next request sees a fresh world. Closes the catalog's
+   * SQLite handles before dropping the entry.
    */
   invalidate(id: string): void {
+    const cached = this.entries.get(id);
+    if (cached) {
+      try {
+        cached.catalog.close();
+      } catch {
+        // best-effort
+      }
+    }
     this.entries.delete(id);
   }
 
@@ -161,6 +170,11 @@ export class WorkspaceContextCache {
       if (live > 0) {
         throw new WorkspaceHasLiveTasksError(id, live);
       }
+      try {
+        cached.catalog.close();
+      } catch {
+        // best-effort
+      }
     }
     this.entries.delete(id);
     return this.get(id);
@@ -173,6 +187,28 @@ export class WorkspaceContextCache {
    */
   loaded(): WorkspaceContext[] {
     return [...this.entries.values()];
+  }
+
+  /**
+   * Close every cached context's CatalogManager, releasing SQLite
+   * file handles. Required at server shutdown (so the OS releases
+   * the catalog.db lock cleanly) and at the end of every test that
+   * created ephemeral workspaces (Windows refuses to unlink files
+   * with open handles, so the test cleanup `rm -rf <scratch>` would
+   * fail with EBUSY without this).
+   *
+   * Drops every cache entry as a side effect — subsequent `get(id)`
+   * calls rebuild from scratch.
+   */
+  closeAll(): void {
+    for (const ctx of this.entries.values()) {
+      try {
+        ctx.catalog.close();
+      } catch {
+        // best-effort
+      }
+    }
+    this.entries.clear();
   }
 
   private async load(id: string): Promise<WorkspaceContext | null> {

@@ -43,7 +43,10 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "CycleDetected",
   "FetchError",
   "FrontmatterError",
+  "AgentFrontmatterError",
+  "SkillFrontmatterError",
   "HasDependents",
+  "ImmutableOriginError",
   "InvalidMcpJsonError",
   "McpNameInvalidError",
   "MissingDependencies",
@@ -169,6 +172,8 @@ export function statusForCatalogError(err: unknown): number | null {
     case "NameInvalid":
     case "McpNameInvalidError":
     case "FrontmatterError":
+    case "AgentFrontmatterError":
+    case "SkillFrontmatterError":
     case "InvalidMcpJsonError":
     case "MissingDependencies":
     case "CycleDetected":
@@ -179,6 +184,8 @@ export function statusForCatalogError(err: unknown): number | null {
     case "HasDependents":
     case "OriginConflictError":
       return 409;
+    case "ImmutableOriginError":
+      return 405;
     case "FetchError":
       return 502;
     case "UnsupportedCatalogVersionError":

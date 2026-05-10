@@ -21,7 +21,7 @@ import { parseJsonBody } from "../_shared.js";
  * lives in the catalog so HTTP / future CLI / SDK share one source of truth.
  */
 
-/** POST /catalog/skills body: `{ origin: string, scopeHints?: { fqn: scope } }`. */
+/** POST /catalog/skills body: `{ origin: string }`. Scope is frontmatter-driven. */
 export async function readSkillInstallBody(
   c: Context,
 ): Promise<SkillInstallBody | { error: string }> {
@@ -49,8 +49,8 @@ export async function readAgentInstallBody(
 
 /**
  * POST /catalog/mcps body: `{ origin: string, name: string }`. `name` is
- * the full MCP-spec FQN (`<namespace>/<short>`). MCPs don't take
- * `scopeHints` — spec name IS the catalog identity.
+ * the full MCP-spec FQN (`<namespace>/<short>`). The spec name IS the
+ * catalog identity — no scope, no derivation, no mapping.
  */
 export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | { error: string }> {
   const parsed = await parseJsonBody<unknown>(c);

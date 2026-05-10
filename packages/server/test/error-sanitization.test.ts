@@ -89,6 +89,7 @@ describe("errorBody", () => {
       "CycleDetected",
       "FrontmatterError",
       "HasDependents",
+      "ImmutableOriginError",
       "MissingDependencies",
       "NameInvalid",
       "NotFound",
@@ -126,6 +127,7 @@ describe("statusForCatalogError", () => {
     ["MissingDependencies", 400],
     ["CycleDetected", 400],
     ["NotFound", 404],
+    ["ImmutableOriginError", 405],
     ["HasDependents", 409],
   ])("maps %s to %d", (name, status) => {
     const e = new Error("x");

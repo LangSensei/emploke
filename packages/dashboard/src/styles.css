@@ -800,6 +800,21 @@ button {
   border: 1px solid var(--color-danger);
 }
 
+.alert--info {
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.alert--info code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
 /* ─── Settings list ─────────────────────────────────────────────── */
 
 .kv-list {
