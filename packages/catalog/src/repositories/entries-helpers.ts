@@ -74,7 +74,7 @@ export async function installStreamToDir(
       await mkdir(dirname(abs), { recursive: true });
       await writeFile(abs, file.content);
     }
-    await replaceDirAtomic(tmp, dest);
+    await replaceDirAtomic(tmp, dest, { scratchDir: tmpRoot });
   } catch (err) {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
     throw err;
