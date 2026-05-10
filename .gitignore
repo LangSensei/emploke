@@ -10,3 +10,7 @@ coverage/
 packages/catalog/dist/
 packages/dashboard/dist/
 packages/server/dist/
+
+# Local commit-message scratch files
+.commit-msg*.txt
+
