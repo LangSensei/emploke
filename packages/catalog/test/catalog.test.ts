@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HasDependents, NameInvalid, NotFound } from "../src/errors.js";
@@ -142,6 +142,29 @@ describe("CatalogManager", () => {
       const updated = await installCatalogSkillFromDir(c, src2);
       expect(updated.version).toBe("2.0.0");
       expect(c.listSkills()).toHaveLength(1);
+    });
+
+    it("reinstall leaves zero leftover dirs in scope folder", async () => {
+      // Regression for the zombie-skill bug chain:
+      //   bug 2: installStreamToDir wrote `<dest>.<pid>.<ts>.tmp` into scan path
+      //   bug 3: replaceDirAtomic wrote `.<basename>.tmp.<stamp>` /
+      //          `.<basename>.old.<stamp>` into dst.parent (= scan path)
+      // After the fix, the scope dir (skills/<scope>/) must contain ONLY
+      // entry dirs, even after many install + reinstall cycles. Anything
+      // else would get scanned as a real entry, causing zombies after delete.
+      const c = await CatalogManager.open({ catalogDir });
+      const scopeDir = join(catalogDir, "skills", "public");
+      for (let i = 0; i < 5; i++) {
+        const src = await makeSkill("weather", { version: `${i + 1}.0.0` });
+        await installCatalogSkillFromDir(c, src);
+      }
+      const entries = await readdir(scopeDir);
+      expect(entries.sort()).toEqual(["weather"]);
+      // After install + delete + reinstall, scope dir is still clean
+      await c.removeSkill("public/weather");
+      const src = await makeSkill("weather", { version: "9.0.0" });
+      await installCatalogSkillFromDir(c, src);
+      expect((await readdir(scopeDir)).sort()).toEqual(["weather"]);
     });
 
     it("preserves prereqs", async () => {

@@ -253,7 +253,7 @@ describe("replaceDirAtomic", () => {
     expect(await safeStat(dst)).not.toBeNull();
   });
 
-  it("leaves no .tmp.* / .old.* siblings on success", async () => {
+  it("leaves no .tmp.* / .old.* siblings on success (legacy path)", async () => {
     const src = path.join(scratch, "src");
     const dst = path.join(scratch, "dst");
     await mkdir(src, { recursive: true });
@@ -264,5 +264,72 @@ describe("replaceDirAtomic", () => {
     const siblings = await readdir(scratch);
     expect(siblings.filter((n) => n.startsWith(".dst.tmp."))).toHaveLength(0);
     expect(siblings.filter((n) => n.startsWith(".dst.old."))).toHaveLength(0);
+  });
+
+  describe("scratchDir fast path", () => {
+    it("leaves zero siblings in dst.parent on first install", async () => {
+      const parent = path.join(scratch, "scope");
+      const scratchDir = path.join(scratch, ".tmp");
+      const src = path.join(scratchDir, "staging-1");
+      const dst = path.join(parent, "entry");
+      await mkdir(src, { recursive: true });
+      await writeFile(path.join(src, "file.txt"), "v1", "utf8");
+
+      await replaceDirAtomic(src, dst, { scratchDir });
+
+      const siblings = await readdir(parent);
+      expect(siblings).toEqual(["entry"]);
+      // src moved into place — scratchDir holds nothing for this entry
+      const scratchEntries = await readdir(scratchDir);
+      expect(scratchEntries.filter((n) => n.includes("entry"))).toHaveLength(0);
+    });
+
+    it("leaves zero siblings in dst.parent on reinstall (replace existing)", async () => {
+      // Regression for the zombie-skill bug: previously the legacy path
+      // left .<basename>.tmp.<stamp> and .<basename>.old.<stamp> dirs in
+      // dst.parent (which is the catalog scan path), so a crash mid-replace
+      // poisoned the next scan. Fast path must keep all intermediate state
+      // out of dst.parent entirely.
+      const parent = path.join(scratch, "scope");
+      const scratchDir = path.join(scratch, ".tmp");
+      const dst = path.join(parent, "entry");
+
+      // First install
+      const src1 = path.join(scratchDir, "staging-1");
+      await mkdir(src1, { recursive: true });
+      await writeFile(path.join(src1, "file.txt"), "v1", "utf8");
+      await replaceDirAtomic(src1, dst, { scratchDir });
+
+      // Reinstall (this is the case that was leaking)
+      const src2 = path.join(scratchDir, "staging-2");
+      await mkdir(src2, { recursive: true });
+      await writeFile(path.join(src2, "file.txt"), "v2", "utf8");
+      await replaceDirAtomic(src2, dst, { scratchDir });
+
+      // dst.parent must contain ONLY the entry — no .entry.tmp.*, no
+      // .entry.old.*, no `<entry>.<pid>.<ts>.tmp` from the old code.
+      const siblings = await readdir(parent);
+      expect(siblings).toEqual(["entry"]);
+      // And the new content must be in place
+      expect(await readFile(path.join(dst, "file.txt"), "utf8")).toBe("v2");
+      // scratchDir should also be clean of entry-named bak files after success
+      const scratchEntries = await readdir(scratchDir);
+      expect(scratchEntries.filter((n) => n.includes("entry"))).toHaveLength(0);
+    });
+
+    it("survives many sequential reinstalls without leaking siblings", async () => {
+      const parent = path.join(scratch, "scope");
+      const scratchDir = path.join(scratch, ".tmp");
+      const dst = path.join(parent, "entry");
+      for (let i = 0; i < 5; i++) {
+        const src = path.join(scratchDir, `staging-${i}`);
+        await mkdir(src, { recursive: true });
+        await writeFile(path.join(src, "file.txt"), `v${i}`, "utf8");
+        await replaceDirAtomic(src, dst, { scratchDir });
+      }
+      expect(await readdir(parent)).toEqual(["entry"]);
+      const scratchEntries = await readdir(scratchDir);
+      expect(scratchEntries.filter((n) => n.includes("entry"))).toHaveLength(0);
+    });
   });
 });
