@@ -1,7 +1,7 @@
 # @emploke/workspace
 
 Per-project root abstraction. A *workspace* is a directory that holds
-emploke's per-project state (sessions, tasks, catalog, workflows, logs)
+emploke's per-project state (sessions, tasks, catalog)
 plus a self-describing `workspace.json`. The directory is normally
 user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
@@ -19,8 +19,8 @@ maps opaque UUIDs to absolute workspace paths.
   survive workspace renames.
 - **The `name`** is free-form display text, edited via the sidebar's
   pencil icon. Has no routing significance.
-- **Standard subdirs** — `sessions/`, `tasks/`, `catalog/`,
-  `workflows/`, `logs/`. Created at `init`; computed from `workdir`
+- **Standard subdirs** — `sessions/`, `tasks/`, `catalog/`. Created
+  at `init`; computed from `workdir`
   by the `workspaceLayout` helper. Not stored on the type so a
   SQLite-backed repository wouldn't have to round-trip the layout.
 
@@ -38,7 +38,7 @@ const ws = await workspaces.init({
   name: "Acme prod",
   workdir: "/Users/me/code/acme",
 });
-// → creates /Users/me/code/acme/{workspace.json,sessions,tasks,catalog,workflows,logs}
+// → creates /Users/me/code/acme/{workspace.json,sessions,tasks,catalog}
 // → adds {id, workdir} to the index
 
 // `workdir` is always required at the manager layer — defaulting it
@@ -158,8 +158,6 @@ const layout = workspaceLayout("/abs/workdir");
 //   sessions:  "/abs/workdir/sessions",
 //   tasks:     "/abs/workdir/tasks",
 //   catalog:   "/abs/workdir/catalog",
-//   workflows: "/abs/workdir/workflows",
-//   logs:      "/abs/workdir/logs",
 // }
 ```
 

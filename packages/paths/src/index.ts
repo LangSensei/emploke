@@ -1,22 +1,28 @@
 /**
- * @emploke/paths — resolve emploke's user-level filesystem layout.
+ * @emploke/paths — resolve emploke's server-global filesystem layout.
+ *
+ * Owns every path under `<EMPLOKE_HOME>` that is **shared across the
+ * server lifetime** (not per-request, not per-workspace). Today that's
+ * five files / directories:
+ *
+ *   - `<home>/workspaces.json` — registry of registered workspaces
+ *   - `<home>/workspaces/` — parent dir for auto-allocated workspaces
+ *   - `<home>/logs/` — server's rotated log files (pino-roll)
+ *   - `<home>/runtime.json` — CLI lifecycle breadcrumb (pid + port + apiKey)
+ *   - `<home>/shared/` — runtime adapters' `${globalDir}` placeholder root
  *
  * One overrideable knob:
  *
  *   - `EMPLOKE_HOME` — the user-level root. Default `~/.emploke`.
  *
- * Everything else (`workspaces.json`) is derived from `<home>` and not
- * independently overrideable — those locations are part of the contract
- * emploke promises to the user.
+ * Everything else is derived from `<home>` and not independently
+ * overrideable — those locations are part of the contract emploke
+ * promises to its CLI clients, runtime adapters, and on-disk consumers.
  *
- * The catalog is no longer a global concept; each workspace owns a
- * `<workspace>/catalog/` subdir managed by `@emploke/workspace`. There is
- * therefore no `catalogDir` field here.
- *
- * Workspace directories themselves are user-chosen (no auto-created
- * default), so this module also no longer exposes a `workspacesDir` /
- * `defaultWorkspaceDir` — only the registry that records where the user
- * placed each one.
+ * Per-workspace paths (`<workspace>/sessions/`, `<workspace>/tasks/`,
+ * `<workspace>/catalog/`, ...) are NOT this module's concern — they're
+ * computed by `@emploke/workspace`'s `workspaceLayout(workdir)` and
+ * passed to entity managers as constructor arguments.
  *
  * Pure: no filesystem access, no process state. Callers pass `process.env`
  * (or a stub for testing); the function returns a plain record.
@@ -35,6 +41,31 @@ export const WORKSPACES_REGISTRY_FILE = "workspaces.json";
 export const LOGS_SUBDIR = "logs";
 
 /**
+ * Filename (under `<home>`) for the CLI lifecycle breadcrumb. Written by
+ * `emploke start`, read by `emploke status` / `stop` / `connect`, deleted
+ * by `emploke stop`. Records pid + host + port + apiKey of the running
+ * server so a later CLI invocation can find and talk to it.
+ */
+export const RUNTIME_FILE_NAME = "runtime.json";
+
+/**
+ * Subdirectory (under `<home>`) used by runtime adapters as the resolved
+ * value for the `${globalDir}` MCP placeholder. Stable per-machine path
+ * shared across every workspace and runtime — spec authors get to write
+ * `${globalDir}/some-state.db` without baking host paths into JSON.
+ */
+export const SHARED_SUBDIR = "shared";
+
+/**
+ * Subdirectory (under `<home>`) where the server auto-allocates new
+ * workspace directories when the user creates a workspace without
+ * specifying a `workdir`. Each auto-allocated workspace lives at
+ * `<home>/workspaces/<uuid>/`. Users who explicitly pick their own
+ * `workdir` never touch this subdir.
+ */
+export const WORKSPACES_PARENT_SUBDIR = "workspaces";
+
+/**
  * Resolved emploke paths derived from environment. All paths are absolute
  * (`path.resolve`-d) so callers don't have to worry about cwd-relative input
  * sneaking in via env.
@@ -49,6 +80,24 @@ export interface EmplokePaths {
    * `<home>/logs`. Created on demand by `@emploke/logger`.
    */
   readonly logsDir: string;
+  /**
+   * Path to the CLI lifecycle breadcrumb, `<home>/runtime.json`. Created
+   * by `emploke start`, deleted by `emploke stop`. Reading it tells you
+   * pid + host + port + apiKey of the locally-running server.
+   */
+  readonly runtimeFile: string;
+  /**
+   * Directory used by runtime adapters as the `${globalDir}` placeholder
+   * root, `<home>/shared`. Stable per-machine path that an MCP spec can
+   * reference without knowing the host's `EMPLOKE_HOME` override.
+   */
+  readonly sharedDir: string;
+  /**
+   * Parent directory the server auto-allocates new workspace dirs under,
+   * `<home>/workspaces`. Each workspace created without an explicit
+   * `workdir` lives at `<sharedWorkspacesDir>/<uuid>/`.
+   */
+  readonly sharedWorkspacesDir: string;
 }
 
 /**
@@ -66,8 +115,12 @@ export function resolveEmplokePaths(env: NodeJS.ProcessEnv = {}): EmplokePaths {
     homeOverride && homeOverride.length > 0 ? homeOverride : DEFAULT_EMPLOKE_HOME,
   );
 
-  const registryFile = path.join(home, WORKSPACES_REGISTRY_FILE);
-  const logsDir = path.join(home, LOGS_SUBDIR);
-
-  return { home, registryFile, logsDir };
+  return {
+    home,
+    registryFile: path.join(home, WORKSPACES_REGISTRY_FILE),
+    logsDir: path.join(home, LOGS_SUBDIR),
+    runtimeFile: path.join(home, RUNTIME_FILE_NAME),
+    sharedDir: path.join(home, SHARED_SUBDIR),
+    sharedWorkspacesDir: path.join(home, WORKSPACES_PARENT_SUBDIR),
+  };
 }

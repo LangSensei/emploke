@@ -257,8 +257,8 @@ export function workspacesRoutes(deps: {
   // Remove a workspace. Default behaviour removes only the metadata
   // (workspace.json + index entry); user files preserved. Pass
   // `?purge=1` to also rm every emploke-owned subdirectory under the
-  // workspace's workdir (sessions/, tasks/, catalog/, workflows/,
-  // logs/). The workdir itself is never removed.
+  // workspace's workdir (sessions/, tasks/, catalog/). The workdir
+  // itself is never removed.
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
     const purge = c.req.query("purge") === "1";

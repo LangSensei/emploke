@@ -1,11 +1,5 @@
 import path from "node:path";
-import {
-  CATALOG_SUBDIR,
-  LOGS_SUBDIR,
-  SESSIONS_SUBDIR,
-  TASKS_SUBDIR,
-  WORKFLOWS_SUBDIR,
-} from "./constants.js";
+import { CATALOG_SUBDIR, SESSIONS_SUBDIR, TASKS_SUBDIR } from "./constants.js";
 
 /**
  * The workspace domain object — an emploke working unit identified by a
@@ -69,8 +63,6 @@ export interface WorkspaceLayout {
   readonly sessions: string;
   readonly tasks: string;
   readonly catalog: string;
-  readonly workflows: string;
-  readonly logs: string;
 }
 
 /** Compute every fixed-name subdirectory under `workdir`. */
@@ -80,7 +72,5 @@ export function workspaceLayout(workdir: string): WorkspaceLayout {
     sessions: path.join(root, SESSIONS_SUBDIR),
     tasks: path.join(root, TASKS_SUBDIR),
     catalog: path.join(root, CATALOG_SUBDIR),
-    workflows: path.join(root, WORKFLOWS_SUBDIR),
-    logs: path.join(root, LOGS_SUBDIR),
   };
 }

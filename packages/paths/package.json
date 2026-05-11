@@ -1,7 +1,7 @@
 {
   "name": "@emploke/paths",
   "version": "0.0.1",
-  "description": "Resolve emploke's user-level paths (EMPLOKE_HOME, catalog dir, workspaces dir, registry file)",
+  "description": "Resolve emploke's server-global filesystem layout (EMPLOKE_HOME, registry file, logs dir, runtime breadcrumb, shared dir, auto-allocated workspaces parent)",
   "license": "MIT",
   "type": "module",
   "engines": {

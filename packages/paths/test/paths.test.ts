@@ -9,6 +9,9 @@ describe("resolveEmplokePaths", () => {
     expect(p.home).toBe(path.resolve(homedir(), ".emploke"));
     expect(p.registryFile).toBe(path.join(p.home, "workspaces.json"));
     expect(p.logsDir).toBe(path.join(p.home, "logs"));
+    expect(p.runtimeFile).toBe(path.join(p.home, "runtime.json"));
+    expect(p.sharedDir).toBe(path.join(p.home, "shared"));
+    expect(p.sharedWorkspacesDir).toBe(path.join(p.home, "workspaces"));
   });
 
   it("default home equals DEFAULT_EMPLOKE_HOME constant", () => {
@@ -20,6 +23,9 @@ describe("resolveEmplokePaths", () => {
     expect(p.home).toBe(path.resolve("/tmp/eh"));
     expect(p.registryFile).toBe(path.resolve("/tmp/eh/workspaces.json"));
     expect(p.logsDir).toBe(path.resolve("/tmp/eh/logs"));
+    expect(p.runtimeFile).toBe(path.resolve("/tmp/eh/runtime.json"));
+    expect(p.sharedDir).toBe(path.resolve("/tmp/eh/shared"));
+    expect(p.sharedWorkspacesDir).toBe(path.resolve("/tmp/eh/workspaces"));
   });
 
   it("does NOT expose a global catalogDir field", () => {

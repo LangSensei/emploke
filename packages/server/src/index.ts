@@ -175,8 +175,9 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     new CopilotRuntime({
       // Resolve `${globalDir}` placeholders in MCP specs against
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
-      // directory without baking host paths into JSON.
-      globalDir: path.join(paths.home, "shared"),
+      // directory without baking host paths into JSON. The literal subdir
+      // name lives in `@emploke/paths` (`SHARED_SUBDIR`).
+      globalDir: paths.sharedDir,
     }),
   );
 
@@ -229,7 +230,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     workspacesRoutes({
       manager: workspaces,
       cache,
-      defaultWorkspaceParent: path.join(paths.home, "workspaces"),
+      defaultWorkspaceParent: paths.sharedWorkspacesDir,
     }),
   );
 
