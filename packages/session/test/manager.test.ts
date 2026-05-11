@@ -22,7 +22,7 @@ import {
 // details. The tests still verify on-disk shape so they redeclare the
 // constants locally.
 const SESSION_FILE_NAME = "session.json";
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 // ───── helpers ──────────────────────────────────────────────
 

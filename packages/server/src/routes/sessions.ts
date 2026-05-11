@@ -2,6 +2,7 @@ import type { LaunchCommand } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
+  RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
   SessionIdAllocationFailedError,
@@ -48,6 +49,7 @@ function statusForError(err: unknown): number | null {
   if (err instanceof SessionNotFoundError) return 404;
   if (err instanceof AgentNotFoundError) return 400;
   if (err instanceof UnknownRuntimeError) return 400;
+  if (err instanceof RuntimeDoesNotSupportRemoteError) return 400;
   if (err instanceof RuntimeStateDeletionFailed) return 409;
   if (err instanceof SessionIdAllocationFailedError) return 500;
   // Provisioning failures (mkdir, MCP/skill copy, agent file resolution)
@@ -196,15 +198,32 @@ export function sessionsRoutes(
   });
 
   // One-click launch: build the launch command via the runtime adapter and
-  // hand it to the terminal spawner. On any spawn failure we return 200
-  // with `{ ok: false, display, ... }` so the dashboard can fall back to
-  // showing the copy-paste command without needing a second round-trip.
+  // hand it to the terminal spawner. Body `{ remote?: boolean }` selects
+  // the spawn variant (the dashboard renders this as separate "Spawn local"
+  // / "Spawn remote" buttons; both POST to the same route with different
+  // body). On any spawn failure we return 200 with `{ ok: false, display,
+  // ... }` so the dashboard can fall back to showing the copy-paste command
+  // without needing a second round-trip.
   app.post("/:sid/spawn", async (c) => {
     const id = c.req.param("sid");
 
+    // Body is optional — pre-remote callers pass nothing and get the
+    // local launch. We only care about the `remote` boolean and tolerate
+    // an empty / missing body so the existing `spawnSession(id)` JS
+    // signature keeps working without a body.
+    let remote = false;
+    if (c.req.header("content-length") !== "0" && c.req.header("content-type")?.includes("json")) {
+      const parsed = await parseJsonBody<{ remote?: unknown }>(c);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      if (parsed.body.remote === true) remote = true;
+      else if (parsed.body.remote !== undefined && parsed.body.remote !== false) {
+        return c.json({ error: "`remote`, when present, must be a boolean" }, 400);
+      }
+    }
+
     let cmd: LaunchCommand;
     try {
-      cmd = await getManager(c).buildLaunch(id);
+      cmd = await getManager(c).buildLaunch(id, { remote });
     } catch (err) {
       const status = statusForError(err) ?? 400;
       if (status >= 500) logServerError(err);

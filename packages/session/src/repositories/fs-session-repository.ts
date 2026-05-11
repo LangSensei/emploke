@@ -6,7 +6,7 @@ import { SESSION_ID_RE } from "../ids.js";
 import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";
 
 const SESSION_FILE_NAME = "session.json";
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Filesystem implementation of `SessionRepository`. Each session
@@ -53,6 +53,9 @@ export class FsSessionRepository implements SessionRepository {
       createdAt: state.createdAt,
       runtimeSessionId: state.runtimeSessionId,
     };
+    if (state.lastLaunchMode !== undefined) {
+      wire.lastLaunchMode = state.lastLaunchMode;
+    }
     await writeJsonAtomic(file, wire);
   }
 
@@ -92,7 +95,12 @@ function parseSessionState(id: string, raw: unknown): SessionState {
     throw new SessionCorruptedError(id, "expected an object");
   }
   const obj = raw as Record<string, unknown>;
-  if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+  // We accept both schemaVersion 1 (no `lastLaunchMode`) and 2 (with
+  // optional `lastLaunchMode`). v1 records are not auto-rewritten —
+  // they stay v1 on disk until the next save() promotes them. This
+  // keeps reads cheap and avoids touching files the user hasn't
+  // interacted with.
+  if (obj.schemaVersion !== 1 && obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
     throw new SessionCorruptedError(id, schemaMismatchReason(obj.schemaVersion));
   }
   if (typeof obj.runtime !== "string" || obj.runtime.length === 0) {
@@ -105,11 +113,17 @@ function parseSessionState(id: string, raw: unknown): SessionState {
   if (rsid !== null && typeof rsid !== "string") {
     throw new SessionCorruptedError(id, "'runtimeSessionId' must be string or null");
   }
-  return {
+  const lastLaunchMode = obj.lastLaunchMode;
+  if (lastLaunchMode !== undefined && lastLaunchMode !== "local" && lastLaunchMode !== "remote") {
+    throw new SessionCorruptedError(id, "'lastLaunchMode' must be 'local', 'remote', or absent");
+  }
+  const out: SessionState = {
     runtime: obj.runtime,
     createdAt: obj.createdAt,
     runtimeSessionId: rsid,
+    ...(lastLaunchMode !== undefined ? { lastLaunchMode } : {}),
   };
+  return out;
 }
 
 function schemaMismatchReason(onDisk: unknown): string {

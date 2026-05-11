@@ -97,3 +97,25 @@ export class RuntimeDispatchTaskFailed extends Error {
     this.cause = cause;
   }
 }
+
+/**
+ * Thrown by `Runtime.buildLaunch` when called with `{ remote: true }`
+ * against a runtime that does NOT advertise
+ * `capabilities.remoteSession === true`.
+ *
+ * The dashboard already gates the "Spawn remote" button by capabilities
+ * so this error only fires when something bypasses that gate (a
+ * hand-rolled curl, a future CLI / MCP caller, a stale dashboard tab
+ * after a runtime swap). Mapping to HTTP 400 lets the caller correct
+ * the request without retry.
+ *
+ * The kind is the only public field — `.message` says exactly which
+ * runtime refused so the client can surface the correct UI hint
+ * without echoing internal state. No path / cause is involved.
+ */
+export class RuntimeDoesNotSupportRemoteError extends Error {
+  constructor(public readonly kind: string) {
+    super(`runtime "${kind}" does not support remote sessions`);
+    this.name = "RuntimeDoesNotSupportRemoteError";
+  }
+}

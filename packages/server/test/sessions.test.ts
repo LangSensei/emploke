@@ -22,6 +22,7 @@ const sampleRecord: Session = {
   createdAt: "2026-05-08T01:05:00.000Z",
   lastActiveAt: null,
   preview: null,
+  lastLaunchMode: null,
 };
 
 const sampleLaunch: LaunchCommand = {
@@ -330,8 +331,35 @@ describe("sessionsRoutes", () => {
       expect(body.ok).toBe(true);
       expect(body.launcher).toBe("wt");
       expect(body.display).toBe(sampleLaunch.display);
-      expect(m.buildLaunch).toHaveBeenCalledWith("20260508-9dfbdf05");
+      // No body → manager.buildLaunch is called with default opts (remote=false).
+      expect(m.buildLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: false });
       expect(spawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("forwards remote: true to the manager when body sets it", async () => {
+      // The dashboard's "Spawn remote" button posts `{remote: true}`;
+      // the route must thread the flag down so the runtime sees it.
+      const m = stubManager({});
+      const spawn = vi.fn(async () => ({ launcher: "wt" as const }));
+      const res = await sessionsRoutes(m, spawn).request("/20260508-9dfbdf05/spawn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ remote: true }),
+      });
+      expect(res.status).toBe(200);
+      expect(m.buildLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: true });
+    });
+
+    it("rejects a non-boolean `remote` value with 400", async () => {
+      // Defends the wire contract — clients should send a literal
+      // boolean, not a string or number, even when the value coerces.
+      const m = stubManager({});
+      const res = await sessionsRoutes(m).request("/20260508-9dfbdf05/spawn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ remote: "yes" }),
+      });
+      expect(res.status).toBe(400);
     });
 
     it("returns ok:false with display on terminal spawn failure", async () => {

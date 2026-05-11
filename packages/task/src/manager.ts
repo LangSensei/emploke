@@ -1,5 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
@@ -518,6 +518,75 @@ export class TaskManager {
       // already renders that as a recoverable degradation.
       return null;
     }
+  }
+
+  // ─── getTaskActivity ─────────────────────────────────────
+
+  /**
+   * Read + parse a task's runtime-native event log into the
+   * runtime-neutral {@link import("@emploke/runtime").ActivityItem}
+   * vocabulary, plus a derived "result" string (the headline answer
+   * the agent produced).
+   *
+   * Returns `null` when:
+   *   - the task is missing or its metadata is corrupted,
+   *   - the runtime is no longer registered,
+   *   - the runtime doesn't implement `parseActivity` (no structured
+   *     log support),
+   *   - the event log file isn't on disk yet (task hasn't started, or
+   *     started but hasn't emitted its first event).
+   *
+   * The route layer maps `null` to 404 NoEventsYet — same shape as
+   * `getTaskEventsPath`, so the dashboard can fail through to the raw
+   * NDJSON view if it wants.
+   *
+   * Read errors after the file has been stat'd (e.g. permission error
+   * mid-read) propagate; they're true server faults and should
+   * surface as 500.
+   */
+  async getTaskActivity(id: string): Promise<{
+    activity: import("@emploke/runtime").ActivityItem[];
+    result: string | null;
+  } | null> {
+    const task = await this.get(id);
+    if (task === null) return null;
+    const meta = readTaskRuntimeMetadata(task);
+    if (typeof meta.workdir !== "string" || typeof meta.runtime !== "string") {
+      return null;
+    }
+    let runtime: import("@emploke/runtime").Runtime;
+    try {
+      runtime = this.runtimeRegistry.get(meta.runtime);
+    } catch {
+      return null;
+    }
+    if (
+      typeof runtime.taskEventsPath !== "function" ||
+      typeof runtime.parseActivity !== "function"
+    ) {
+      return null;
+    }
+    let eventsPath: string | null;
+    try {
+      eventsPath = runtime.taskEventsPath(meta.workdir);
+    } catch {
+      return null;
+    }
+    if (eventsPath === null) return null;
+    let raw: string;
+    try {
+      raw = await readFile(eventsPath, "utf8");
+    } catch (err) {
+      // ENOENT means the agent hasn't written its first event yet —
+      // the route surfaces this as 404 NoEventsYet, matching the
+      // /events streaming route's behaviour. Other errors propagate.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw err;
+    }
+    const activity = runtime.parseActivity(raw);
+    const result = typeof runtime.deriveResult === "function" ? runtime.deriveResult(raw) : null;
+    return { activity, result };
   }
 
   // ─── delete ──────────────────────────────────────────────

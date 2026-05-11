@@ -27,6 +27,20 @@ export interface Runtime {
   readonly kind: string;
 
   /**
+   * Optional capability flags advertised to the rest of the system.
+   * Absent or `undefined` means "baseline-only" (only the four required
+   * verbs are guaranteed to do anything useful). Surfaced through the
+   * server's `/api/runtimes` endpoint so the dashboard can disable UI
+   * affordances that map to capabilities the active runtime doesn't
+   * support — see {@link RuntimeCapabilities}.
+   *
+   * New flags are added here as runtimes diverge in functionality. Keep
+   * the set small: each flag should map to a real, observable user-
+   * facing affordance, not internal implementation differences.
+   */
+  readonly capabilities?: RuntimeCapabilities;
+
+  /**
    * Bake `agent` into `workdir` so the CLI can be launched against it.
    *
    * The returned `runtimeSessionId` becomes the binding between this emploke
@@ -100,12 +114,23 @@ export interface Runtime {
    * suppress its folder-trust prompt) use it to perform that
    * precondition here, lazily, only when the user actually launches.
    *
+   * `opts` carries per-launch flags that the user picks at spawn time
+   * (via the dashboard's "Spawn local" vs "Spawn remote" buttons). The
+   * default — `{}` or `{ remote: false }` — is the original local
+   * behaviour. Runtimes that don't implement a flag MUST throw a typed
+   * error when asked for it (see {@link RuntimeCapabilities}); they
+   * MUST NOT silently ignore an unsupported flag.
+   *
    * Async by contract: a runtime may need to do a small amount of
    * idempotent fs work (write a config, open a token) before returning
    * the launch spec. Pure runtimes simply `return { ... }` without
    * `await`ing anything.
    */
-  buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand>;
+  buildLaunch(
+    session: Session,
+    workspaceDir: string,
+    opts?: BuildLaunchOpts,
+  ): Promise<LaunchCommand>;
 
   /**
    * Remove the CLI's recorded state for `session`. No-op if no state exists.
@@ -159,6 +184,54 @@ export interface Runtime {
    * the same way (404 NoEventsYet on the events route).
    */
   taskEventsPath?(taskWorkdir: string): string | null;
+
+  /**
+   * Optional. Lift the runtime's raw event log into a runtime-neutral
+   * Activity timeline.
+   *
+   * Each runtime owns its own log schema (Copilot writes NDJSON with
+   * `assistant.message` events; future runtimes may use plain text or
+   * a different shape entirely). Rather than push that knowledge into
+   * every consumer, the runtime translates its own format into the
+   * shared {@link ActivityItem} vocabulary here. The dashboard, MCP
+   * clients, and any future log surface can render the result without
+   * knowing which runtime produced it.
+   *
+   * Returns the activity entries in chronological order (same order as
+   * the source events), filtered to the high-signal ones — `kind:
+   * "user"`, `"assistant"`, `"summary"`. Low-signal events the runtime
+   * emits for its own bookkeeping (handshake, model handshake, system
+   * prompts) are dropped here, never reaching consumers.
+   *
+   * `raw` is the event log file's full byte content. Implementations
+   * are responsible for any format-specific tokenisation (NDJSON
+   * line-splitting, JSON parsing, whatever).
+   *
+   * Runtimes whose CLI doesn't emit a structured log simply omit this
+   * method. Consumers fall back to displaying the raw bytes when no
+   * `parseActivity` is available, so omitting is always safe.
+   */
+  parseActivity?(raw: string): ActivityItem[];
+
+  /**
+   * Optional. Pick the entry that represents "the agent's final
+   * answer" for the task. Almost always the last assistant message
+   * with non-empty text content.
+   *
+   * Surfaced by the dashboard as the "Result" panel — the headline
+   * thing a user wants to see when revisiting a finished task. The
+   * raw event log is still available for forensic diving, but this
+   * gives users the answer without making them grep NDJSON.
+   *
+   * Returns `null` when there is no representative result (task
+   * crashed before any assistant output, runtime doesn't model the
+   * concept, ...). The dashboard handles `null` by showing the raw
+   * `task.result.output` fallback.
+   *
+   * `raw` is the event log file's full byte content, same as
+   * {@link Runtime.parseActivity}.
+   */
+  deriveResult?(raw: string): string | null;
 }
 
 /**
@@ -191,6 +264,49 @@ export interface DispatchTaskOpts {
 export interface ProvisionContext {
   /** Absolute path of the workspace this session/task belongs to. */
   readonly workspaceDir: string;
+}
+
+/**
+ * Per-launch flags handed to {@link Runtime.buildLaunch}. Each field
+ * maps to a user-facing affordance the dashboard exposes (typically as
+ * a separate spawn button). Runtimes that don't support a flag MUST
+ * throw — see the per-flag note for the right error class.
+ */
+export interface BuildLaunchOpts {
+  /**
+   * If `true`, the launch should enable remote control of the
+   * interactive session (so the user can steer it from a browser /
+   * mobile app). For Copilot this maps to the CLI's `--remote` flag.
+   *
+   * The dashboard only surfaces a "Spawn remote" button when the
+   * active runtime advertises `capabilities.remoteSession === true`;
+   * the runtime MUST still defend itself by throwing
+   * {@link RuntimeDoesNotSupportRemoteError} when called with
+   * `{ remote: true }` on a runtime that doesn't support it. Silently
+   * ignoring an unsupported flag would let a HTTP caller (CLI, future
+   * MCP client) bypass the UI gate and end up with a launch that
+   * misses the very behaviour they asked for.
+   */
+  readonly remote?: boolean;
+}
+
+/**
+ * Optional capability flags advertised by a {@link Runtime}. Each flag
+ * is a public guarantee about a specific behaviour the runtime
+ * implements; the absence of a flag means the runtime makes no claim
+ * either way (and in practice doesn't support it). Surfaced by the
+ * server's `/api/runtimes` endpoint so dashboards / CLIs can
+ * conditionally expose UI / commands.
+ */
+export interface RuntimeCapabilities {
+  /**
+   * Whether {@link Runtime.buildLaunch} supports `opts.remote = true`.
+   * When `true`, calling buildLaunch with `{ remote: true }` produces
+   * a launch that puts the underlying CLI into remote-control mode.
+   * When `false` or absent, the runtime throws
+   * {@link RuntimeDoesNotSupportRemoteError} on that input.
+   */
+  readonly remoteSession?: boolean;
 }
 
 /**
@@ -271,6 +387,12 @@ export interface Session {
   readonly createdAt: string;
   readonly lastActiveAt: string | null;
   readonly preview: string | null;
+  /**
+   * Mode the user chose for the most recent successful launch of this
+   * session, or `null` if it has never been launched. Defaults the
+   * dashboard's Resume button to the user's last intent.
+   */
+  readonly lastLaunchMode: "local" | "remote" | null;
 }
 
 /**
@@ -284,4 +406,58 @@ export interface LaunchCommand {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly display: string;
+}
+
+/**
+ * Runtime-neutral entries returned by {@link Runtime.parseActivity}.
+ * The vocabulary covers the three things a user actually wants to see
+ * in a task's timeline:
+ *
+ *   - `user` — what the user asked
+ *   - `assistant` — what the agent answered, plus any tool calls it
+ *     issued in that turn
+ *   - `summary` — terminal stats (files changed, premium requests,
+ *     token usage); typically emitted at most once per task
+ *
+ * Lower-signal events (handshake, model-handshake, system prompts,
+ * turn boundaries) are filtered out by the runtime — consumers never
+ * see them via this surface. The raw event log remains available
+ * (see {@link Runtime.taskEventsPath}) for forensic use.
+ */
+export type ActivityItem =
+  | { readonly kind: "user"; readonly timestamp: string; readonly content: string }
+  | {
+      readonly kind: "assistant";
+      readonly timestamp: string;
+      readonly content: string;
+      readonly toolRequests: readonly ToolRequest[];
+    }
+  | { readonly kind: "summary"; readonly timestamp: string; readonly summary: ActivitySummary };
+
+/**
+ * A tool invocation requested by the agent. Inert representation —
+ * the runtime has already executed (or chosen not to) by the time the
+ * dashboard renders this; we only carry it for the timeline view.
+ */
+export interface ToolRequest {
+  readonly name: string;
+  readonly arguments?: Record<string, unknown> | undefined;
+}
+
+/**
+ * End-of-task aggregate stats. Field set is the union of what current
+ * runtimes can produce — implementations zero out fields they don't
+ * track so consumers can render unconditionally without a per-runtime
+ * shape branch.
+ */
+export interface ActivitySummary {
+  readonly linesAdded: number;
+  readonly linesRemoved: number;
+  readonly filesModified: readonly string[];
+  /** "Premium" / billable request count, when the runtime exposes one. */
+  readonly premiumRequests: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  /** Last-seen model id, or `null` if the runtime doesn't surface it. */
+  readonly model: string | null;
 }

@@ -30,6 +30,7 @@ export {
 export { isPathCovered } from "./copilot/trust.js";
 export {
   RuntimeDispatchTaskFailed,
+  RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
@@ -45,11 +46,16 @@ export {
 } from "./placeholders.js";
 export { RuntimeRegistry } from "./registry.js";
 export type {
+  ActivityItem,
+  ActivitySummary,
+  BuildLaunchOpts,
   DispatchTaskOpts,
   LaunchCommand,
   ProvisionContext,
   Runtime,
+  RuntimeCapabilities,
   Session,
   TaskExit,
   TaskHandle,
+  ToolRequest,
 } from "./types.js";

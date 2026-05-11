@@ -247,5 +247,32 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     });
   });
 
+  // Runtime-neutral activity timeline for a task. The runtime parses
+  // its own event log into the {ActivityItem, ActivitySummary} vocabulary
+  // declared in @emploke/runtime; this route just forwards that result
+  // as JSON. Consumers (dashboard, future MCP clients) render without
+  // knowing which runtime produced the underlying log.
+  //
+  // Returns:
+  //   - 404 if the task doesn't exist
+  //   - 404 with code=NoEventsYet if the runtime doesn't implement
+  //     parseActivity, or the log file isn't on disk yet
+  //   - 200 application/json `{ activity: ActivityItem[], result: string|null }` otherwise
+  app.get("/:tid/activity", async (c) => {
+    const id = c.req.param("tid");
+    let payload: Awaited<ReturnType<TaskManager["getTaskActivity"]>>;
+    try {
+      payload = await getManager(c).getTaskActivity(id);
+    } catch (err) {
+      const status = statusForError(err) ?? 400;
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return c.json(errorBody(err), status as any);
+    }
+    if (payload === null) {
+      return c.json({ error: "no activity is available for this task", code: "NoEventsYet" }, 404);
+    }
+    return c.json(payload);
+  });
+
   return app;
 }

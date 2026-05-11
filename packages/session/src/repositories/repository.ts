@@ -29,6 +29,14 @@ export interface SessionState {
    * `null` when not yet known (e.g. discovery-only runtimes that lazy-mint).
    */
   readonly runtimeSessionId: string | null;
+  /**
+   * Mode the user chose for the most recent successful `buildLaunch`
+   * call against this session, or `undefined` if the session has never
+   * been launched. Persisted so the dashboard can default the next
+   * launch to the user's last intent (e.g. "this session is one I
+   * always run remotely"), without forcing a global preference.
+   */
+  readonly lastLaunchMode?: "local" | "remote";
 }
 
 /**

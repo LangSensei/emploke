@@ -68,6 +68,24 @@ export interface CreateSessionOpts {
   readonly runtime?: string;
 }
 
+/**
+ * Options for `SessionManager.buildLaunch`. The session's persisted
+ * record is unchanged across calls — these flags only modify how the
+ * runtime renders the launch command this time around. The dashboard
+ * sets these from the user's choice of "Spawn local" vs "Spawn remote"
+ * button so the same session can be launched either way.
+ */
+export interface BuildLaunchSessionOpts {
+  /**
+   * If `true`, ask the runtime to enable remote control of the
+   * interactive session (browser / mobile steering). Forwarded to
+   * `Runtime.buildLaunch`'s `BuildLaunchOpts.remote`. The runtime
+   * throws `RuntimeDoesNotSupportRemoteError` if it doesn't support
+   * the flag — the route layer maps that to HTTP 400.
+   */
+  readonly remote?: boolean;
+}
+
 /** Options for SessionManager.list. */
 export interface ListSessionOpts {
   /** Filter to sessions whose AGENTS.md frontmatter name matches this exact value. */

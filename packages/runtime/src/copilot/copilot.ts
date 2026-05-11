@@ -3,12 +3,22 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import {
+  RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
-import type { LaunchCommand, ProvisionContext, Runtime, Session, TaskHandle } from "../types.js";
+import type {
+  BuildLaunchOpts,
+  LaunchCommand,
+  ProvisionContext,
+  Runtime,
+  RuntimeCapabilities,
+  Session,
+  TaskHandle,
+} from "../types.js";
+import { deriveCopilotResult, parseCopilotActivity } from "./activity.js";
 import {
   type DispatchCopilotTaskDeps,
   type DispatchCopilotTaskOpts,
@@ -140,6 +150,20 @@ export interface CopilotRuntimeConfig {
 export class CopilotRuntime implements Runtime {
   readonly kind = "copilot";
 
+  /**
+   * Capabilities Copilot's CLI implements that other runtimes might
+   * not. Read by the server's `/api/runtimes` route → surfaced in the
+   * dashboard so the "Spawn remote" button only renders enabled when
+   * the active runtime supports it.
+   *
+   * - `remoteSession`: Copilot CLI 1.0.44+ accepts `--remote` to bridge
+   *   the interactive session to a browser / mobile app via GitHub. See
+   *   {@link buildLaunch} for the per-launch wiring.
+   */
+  readonly capabilities: RuntimeCapabilities = {
+    remoteSession: true,
+  };
+
   private readonly copilotStateDir: string;
   private readonly copilotConfigPath: string;
   private readonly globalDir: string;
@@ -197,12 +221,22 @@ export class CopilotRuntime implements Runtime {
    * still runs; that is not a security concern because workspaceDir is
    * controlled by the caller (server, not user input).
    */
-  async buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand> {
+  async buildLaunch(
+    session: Session,
+    workspaceDir: string,
+    opts: BuildLaunchOpts = {},
+  ): Promise<LaunchCommand> {
+    if (opts.remote === true && this.capabilities.remoteSession !== true) {
+      // Defensive: shouldn't fire because we set the capability above,
+      // but the cross-runtime contract requires runtimes to refuse
+      // unsupported flags rather than silently dropping them.
+      throw new RuntimeDoesNotSupportRemoteError(this.kind);
+    }
     await ensureDirTrusted(workspaceDir, this.copilotConfigPath);
     // Pass the id through the validator so a tampered session.json can't
     // smuggle shell metacharacters into the displayed `--resume=<id>` string.
     const id = safeCopilotId(session.runtimeSessionId);
-    return buildCopilotLaunchCommand(session.workdir, id);
+    return buildCopilotLaunchCommand(session.workdir, id, opts);
   }
 
   async refresh(
@@ -269,6 +303,23 @@ export class CopilotRuntime implements Runtime {
    */
   taskEventsPath(taskWorkdir: string): string {
     return path.join(taskWorkdir, "session", "events.jsonl");
+  }
+
+  /**
+   * Lift Copilot's NDJSON event log into the runtime-neutral
+   * {@link ActivityItem} vocabulary. See
+   * `./activity.ts` for the event taxonomy we consume vs drop.
+   */
+  parseActivity(raw: string) {
+    return parseCopilotActivity(raw);
+  }
+
+  /**
+   * Pick the last assistant message as the run's "result" line.
+   * See {@link Runtime.deriveResult} for the contract.
+   */
+  deriveResult(raw: string): string | null {
+    return deriveCopilotResult(raw);
   }
 }
 
