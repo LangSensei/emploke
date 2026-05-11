@@ -1,11 +1,13 @@
 /**
- * Bundle the emploke server (and all workspace packages) into a single
- * executable JS file at bundle/emploke.js.
+ * Bundle the emploke CLI (and the server it embeds, plus all workspace
+ * packages reachable from them) into a single executable JS file at
+ * `bundle/emploke.js`.
  *
- * Output is meant to be the `bin` entry of a published npm package
- * (@langsensei/emploke). At install time, npm symlinks `emploke` to this
- * file; running `emploke` boots the HTTP server with the dashboard
- * pre-bundled into `bundle/static/`.
+ * Output is the `bin` entry of the published `@langsensei/emploke`
+ * npm package. At install time, npm symlinks `emploke` to this file;
+ * running `emploke` enters the CLI dispatcher (`@emploke/cli`), which
+ * subcommands either talk to a running server over HTTP or, in the
+ * case of `serve` / `start`, drive the embedded server directly.
  *
  * Mirrors the approach used by google-gemini/gemini-cli: keep workspace
  * packages private, ship one bundled binary, externalize anything that
@@ -26,7 +28,7 @@ import esbuild from "esbuild";
 const external = ["pino", "pino-pretty", "pino-roll", "thread-stream"];
 
 const result = await esbuild.build({
-  entryPoints: { emploke: "packages/server/src/bin.ts" },
+  entryPoints: { emploke: "packages/cli/src/bin.ts" },
   outdir: "bundle",
   bundle: true,
   platform: "node",

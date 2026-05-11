@@ -21,6 +21,46 @@ import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { WorkspaceContextCache } from "./workspace-context.js";
 
+// Re-export the route manifest so downstream packages (@emploke/cli,
+// future @emploke/mcp) can build typed clients against the same source
+// of truth the server's reflection test enforces.
+export {
+  type AgentWithContent,
+  type ApiError,
+  type CatalogOverview,
+  type CatalogResourcePathParams,
+  type ContentUpdateBody,
+  defineRoute,
+  type HttpMethod,
+  listRoutes,
+  type McpWithContent,
+  type MetadataPatchBody,
+  type OkResponse,
+  ROUTES,
+  type RouteKey,
+  type RouteReq,
+  type RouteRequest,
+  type RouteRes,
+  type RouteSpec,
+  type SessionCreateBody,
+  type SessionDeleteQuery,
+  type SessionListQuery,
+  type SessionPathParams,
+  type SessionSpawnBody,
+  type SessionSpawnRes,
+  type SkillWithContent,
+  type TaskDeleteQuery,
+  type TaskDispatchBody,
+  type TaskListQuery,
+  type TaskPathParams,
+  type WorkspaceCreateBody,
+  type WorkspaceCurrentPutBody,
+  type WorkspaceCurrentRes,
+  type WorkspacePatchBody,
+  type WorkspacePathParams,
+  type WorkspaceSummary,
+} from "./routes/manifest.js";
+
 /**
  * Per-request variables stashed on the Hono context by `workspaceContextMiddleware`.
  * Both managers point at the same workspace; routes pull whichever they need.
@@ -31,29 +71,37 @@ type WorkspaceVars = {
   catalog: CatalogManager;
 };
 
-const paths = resolveEmplokePaths(process.env);
-
-// `||` instead of `??` so `PORT=""` (common in CI / .env templates with
-// empty values) falls back to the default rather than coercing to 0,
-// which Node treats as "bind to a random ephemeral port"  surprising
-// and almost never what the operator wanted.
-const port = Number(process.env.PORT || 8787);
-// Bind to loopback by default  the server exposes destructive endpoints
-// (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
-// as a single-user local dashboard. To intentionally expose on the LAN, set
-// EMPLOKE_HOST=0.0.0.0 AND set EMPLOKE_API_KEY=<token>. Non-loopback bind
-// without an API key is refused at startup (see assertBindIsSafe in ./auth).
-const hostname = process.env.EMPLOKE_HOST ?? "127.0.0.1";
-// When set, every /api/* request must carry `Authorization: Bearer <key>`
-// (or `?apiKey=<key>` for dashboards that can't easily set headers).
-// Empty / unset = no auth (only safe for loopback bind).
-const apiKey = process.env.EMPLOKE_API_KEY;
-const staticDir = process.env.EMPLOKE_STATIC_DIR ?? resolveStaticDir(import.meta.dirname);
-// In dev, the dashboard is served by Vite on its own port (:8787) and the
-// server only provides /api on a different port (default :41817 via the
-// `dev` script). In production, pass --serve-static so the server serves
-// the dashboard build output too on :8787, enabling single-port deployment.
-const serveStaticFiles = process.argv.includes("--serve-static");
+/**
+ * Options accepted by {@link runServer}. Every field is optional; unset
+ * fields fall back to the corresponding environment variable (see each
+ * field's comment for the exact name) and then to the documented default.
+ *
+ * Lets the CLI's `serve` command (in `@emploke/cli`) drive the server with
+ * structured opts while the historical `bin.ts` and the source-mode
+ * `pnpm dev` keep working from env / argv.
+ */
+export interface RunServerOpts {
+  /** Override `EMPLOKE_HOME`. */
+  readonly home?: string;
+  /** Override `PORT`. Defaults to `8787`. */
+  readonly port?: number;
+  /** Override `EMPLOKE_HOST`. Defaults to `"127.0.0.1"`. */
+  readonly host?: string;
+  /** Override `EMPLOKE_API_KEY`. Empty / unset = no auth. */
+  readonly apiKey?: string;
+  /**
+   * Serve the dashboard SPA from `staticDir`. Default `false` (dev mode —
+   * Vite serves the dashboard separately). The bundled binary's `bin.ts`
+   * and the CLI's `serve` command default this to `true` for production.
+   */
+  readonly serveStatic?: boolean;
+  /** Override `EMPLOKE_STATIC_DIR`. */
+  readonly staticDir?: string;
+  /** Override `EMPLOKE_LOG_LEVEL`. Defaults to `"info"`. */
+  readonly logLevel?: LogLevel;
+  /** Override `EMPLOKE_LOG_FORMAT`. Defaults to `"pretty"`. */
+  readonly logFormat?: "pretty" | "json";
+}
 
 /**
  * Pick the dashboard static directory based on layout.
@@ -73,7 +121,44 @@ function resolveStaticDir(serverDir: string): string {
   return path.resolve(serverDir, "../../dashboard/dist");
 }
 
-async function main() {
+/**
+ * Boot the emploke HTTP server. Resolves opts → env → default for every
+ * tunable, wires the workspace cache, registers routes, and blocks until
+ * `SIGTERM` / `SIGINT` triggers graceful shutdown.
+ *
+ * Direct callers:
+ *  - `packages/server/src/bin.ts` — historical foreground entry, picks
+ *    up `--no-serve-static` from argv.
+ *  - `packages/cli/src/commands/serve.ts` — `emploke serve` subcommand.
+ */
+export async function runServer(opts: RunServerOpts = {}): Promise<void> {
+  const env = process.env;
+  const paths = resolveEmplokePaths(
+    opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
+  );
+
+  // `||` instead of `??` so `PORT=""` (common in CI / .env templates with
+  // empty values) falls back to the default rather than coercing to 0,
+  // which Node treats as "bind to a random ephemeral port" — surprising
+  // and almost never what the operator wanted.
+  const port = opts.port ?? Number(env.PORT || 8787);
+  // Bind to loopback by default — the server exposes destructive endpoints
+  // (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
+  // as a single-user local dashboard. To intentionally expose on the LAN, set
+  // EMPLOKE_HOST=0.0.0.0 AND set EMPLOKE_API_KEY=<token>. Non-loopback bind
+  // without an API key is refused at startup (see assertBindIsSafe in ./auth).
+  const hostname = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
+  // When set, every /api/* request must carry `Authorization: Bearer <key>`
+  // (or `?apiKey=<key>` for dashboards that can't easily set headers).
+  // Empty / unset = no auth (only safe for loopback bind).
+  const apiKey = opts.apiKey ?? env.EMPLOKE_API_KEY;
+  const staticDir =
+    opts.staticDir ?? env.EMPLOKE_STATIC_DIR ?? resolveStaticDir(import.meta.dirname);
+  // In source-mode dev, the dashboard is served by Vite on its own port and the
+  // server only provides /api. In production (bundled binary) the bin
+  // defaults this to true so the SPA is served alongside /api on one port.
+  const serveStaticFiles = opts.serveStatic ?? false;
+
   assertBindIsSafe(hostname, apiKey);
 
   // Logger: rotated JSON files under <home>/logs (default) plus stdout
@@ -81,8 +166,8 @@ async function main() {
   // and prod can pin JSON-only without code changes.
   const logger: Logger = buildLogger({
     dir: paths.logsDir,
-    level: parseLogLevel(process.env.EMPLOKE_LOG_LEVEL),
-    format: process.env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty",
+    level: opts.logLevel ?? parseLogLevel(env.EMPLOKE_LOG_LEVEL),
+    format: opts.logFormat ?? (env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty"),
   });
 
   const runtimeRegistry = new RuntimeRegistry();
@@ -309,13 +394,6 @@ function workspaceContextMiddleware(
     await next();
   };
 }
-
-main().catch((err) => {
-  // Boot-time failure: logger may not be alive yet, so fall back to
-  // console.error here. Subsequent exits go through the logger.
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
 
 /**
  * Parse the `EMPLOKE_LOG_LEVEL` env into one of the four supported

@@ -20,14 +20,18 @@ import {
 } from "@emploke/terminal";
 import { Hono } from "hono";
 import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
-
-interface CreateBody {
-  agent?: unknown;
-  runtime?: unknown;
-}
+import type { SessionCreateBody } from "./manifest.js";
 
 /** Override hook used by tests to bypass real terminal spawning. */
 export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
+
+/**
+ * Defensive parse alias: the manifest type is the strict wire contract;
+ * locally we still re-type the JSON we got as `unknown` per field so the
+ * runtime `typeof` guards stay both defensive and TS-meaningful (the
+ * contract type would narrow them to dead code).
+ */
+type SessionCreateBodyRaw = { [K in keyof SessionCreateBody]?: unknown };
 
 /**
  * Resolver passed into `sessionsRoutes` so the routes can pull the
@@ -131,7 +135,7 @@ export function sessionsRoutes(
 
   // Create a new session for the given agent.
   app.post("/", async (c) => {
-    const parsed = await parseJsonBody<CreateBody>(c);
+    const parsed = await parseJsonBody<SessionCreateBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
     if (typeof body.agent !== "string" || body.agent.trim() === "") {

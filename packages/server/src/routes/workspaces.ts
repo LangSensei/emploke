@@ -17,6 +17,11 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { type WorkspaceContextCache, WorkspaceHasLiveTasksError } from "../workspace-context.js";
 import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
+import type {
+  WorkspaceCreateBody,
+  WorkspaceCurrentPutBody,
+  WorkspacePatchBody,
+} from "./manifest.js";
 
 /**
  * Build a JSON error response for a typed workspace error. Picks a
@@ -41,21 +46,17 @@ function wsErrorJson(c: Context, err: unknown, fallback: number) {
   return c.json(errorBody(err), status as any);
 }
 
-interface CreateBody {
-  workdir?: unknown;
-  name?: unknown;
-  defaults?: unknown;
-}
-
-interface PutCurrentBody {
-  /** UUID of the workspace to mark current. */
-  id?: unknown;
-}
-
-interface PatchBody {
-  name?: unknown;
-  defaults?: unknown;
-}
+/**
+ * Defensive parse aliases — the manifest types are the strict wire
+ * contract, but we still validate every field at runtime because the
+ * JSON we get on the wire is `unknown` regardless of TypeScript's
+ * declared shape. Locally re-typing the parsed body as a partial /
+ * `unknown`-fielded variant lets the existing typeof / Array.isArray
+ * guards stay both defensive and unsuppressed by TS narrowing.
+ */
+type CreateBodyRaw = { [K in keyof WorkspaceCreateBody]?: unknown };
+type PutCurrentBodyRaw = { [K in keyof WorkspaceCurrentPutBody]?: unknown };
+type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
 
 /**
  * Routes for `/api/workspaces/*`. Workspace-scoped resources (sessions,
@@ -103,7 +104,7 @@ export function workspacesRoutes(deps: {
   // so renames stay free and two workspaces with the same display name
   // don't collide on disk.
   app.post("/", async (c) => {
-    const parsed = await parseJsonBody<CreateBody>(c);
+    const parsed = await parseJsonBody<CreateBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
     if (typeof body.name !== "string") {
@@ -174,7 +175,7 @@ export function workspacesRoutes(deps: {
 
   // Set the currently-selected workspace by id.
   app.put("/current", async (c) => {
-    const parsed = await parseJsonBody<PutCurrentBody>(c);
+    const parsed = await parseJsonBody<PutCurrentBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     if (typeof parsed.body.id !== "string" || parsed.body.id === "") {
       return c.json({ error: "id is required (string)" }, 400);
@@ -214,7 +215,7 @@ export function workspacesRoutes(deps: {
   // Update a workspace's mutable fields (name, defaults).
   app.patch("/:id", async (c) => {
     const id = c.req.param("id");
-    const parsed = await parseJsonBody<PatchBody>(c);
+    const parsed = await parseJsonBody<PatchBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
 
