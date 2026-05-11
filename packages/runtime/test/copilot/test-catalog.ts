@@ -79,7 +79,7 @@ export async function makeTestCatalog(
     await mkdir(path.dirname(filePath), { recursive: true });
     const origin = `file:${filePath}`;
     await writeFile(filePath, ensureMcpMeta(content, fqn, origin), "utf8");
-    await catalog.installMcpFromOrigin(origin, fqn);
+    await catalog.installMcpFromOrigin(origin);
   }
   for (const [shortOrFqn, files] of Object.entries(fixtures.skills ?? {})) {
     const fqn = toFqn(shortOrFqn);
@@ -106,23 +106,23 @@ export async function makeTestCatalog(
     await catalog.installAgentFromOrigin(`file:${dir}`);
   }
 
-  await catalog.rescan();
-
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(path.join(catalogDir, "catalog.db"));
     db.prepare("UPDATE mcp SET content = ? WHERE name = ?").run(content, specName);
     db.close();
-    // No rescan: the catalog's in-memory cache still believes the MCP
-    // exists with valid content (it was valid at scan time). The next
-    // direct read via getMcpContent picks up the corrupted bytes.
+    // CatalogManager has no in-memory snapshot, so the next direct read
+    // via getMcpContent picks up the corrupted bytes immediately.
   };
 
   return { catalog, catalogDir, corruptMcp };
 }
 
 /** Build an `AgentResolveResult` from a catalog plus a name. */
-export function resolveTestAgent(catalog: CatalogManager, name: string): AgentResolveResult {
+export function resolveTestAgent(
+  catalog: CatalogManager,
+  name: string,
+): Promise<AgentResolveResult> {
   return catalog.resolveAgent(name);
 }
 

@@ -50,7 +50,7 @@ function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
   const agents = opts.agents ?? {};
   return {
     catalogDir,
-    resolveAgent(name: string): AgentResolveResult {
+    async resolveAgent(name: string): Promise<AgentResolveResult> {
       if (opts.resolveError) throw opts.resolveError;
       const a = agents[name];
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);

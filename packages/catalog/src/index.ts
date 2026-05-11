@@ -75,7 +75,6 @@ export type {
   MissingDep,
   ResolvedMcp,
   ResolvedSkill,
-  ScanIssue,
   Skill as SkillPojo,
   SkillEntry,
   SkillMetadataPatch,

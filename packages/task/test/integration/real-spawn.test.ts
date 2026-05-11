@@ -110,7 +110,7 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
 const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
   ({
     catalogDir: "/tmp/catalog",
-    resolveAgent(name: string): AgentResolveResult {
+    async resolveAgent(name: string): Promise<AgentResolveResult> {
       if (!agentNames.includes(name)) throw new Error(`unknown agent: ${name}`);
       return fakeAgentResolve(name);
     },

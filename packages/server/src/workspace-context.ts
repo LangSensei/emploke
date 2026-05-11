@@ -136,12 +136,16 @@ export class WorkspaceContextCache {
    * Drop the cached context for `id` and eagerly rebuild it. Returns
    * the fresh context, or null if the workspace is no longer registered.
    *
-   * Use case: catalog drift. The dashboard's `CatalogManager` is an
-   * in-memory snapshot taken at first-touch time; if a user adds an
-   * agent yaml under `<workspace>/catalog/agents/` from outside emploke
-   * (manual edit, `git pull`, …), the cached catalog won't see it.
-   * Reload rebuilds the catalog index and re-runs `recoverOrphaned` so
-   * the next request sees the on-disk truth.
+   * Use case: workspace-level state drift the cached managers can't
+   * observe themselves. Today that means orphan-task recovery: the
+   * cached `TaskManager` only sweeps `task.json` rows once at first
+   * touch, so reload re-runs that sweep against the on-disk truth.
+   *
+   * Catalog content drift no longer needs reload — `CatalogManager`
+   * holds no in-memory snapshot, so a `git pull` of the workspace's
+   * `catalog.db` (or any external write) is observable on the next
+   * request. The cached `CatalogManager` only owns the SQLite handle
+   * itself.
    *
    * Refuses (`WorkspaceHasLiveTasksError`) when the existing cached
    * context still has live task subprocesses — see the class jsdoc for

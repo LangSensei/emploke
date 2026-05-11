@@ -37,7 +37,7 @@ async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: Catal
   const { catalog } = await makeTestCatalog({
     agents: { demo: { "AGENTS.md": agentBody } },
   });
-  return { agent: catalog.resolveAgent("public/demo"), catalog };
+  return { agent: await catalog.resolveAgent("public/demo"), catalog };
 }
 
 interface FakeSpawn {

@@ -21,7 +21,6 @@ import type {
   MissingDep,
   ResolvedMcp,
   ResolvedSkill,
-  ScanIssue,
   SkillEntry,
   SkillMetadataPatch,
   Skill as SkillPojo,
@@ -52,6 +51,19 @@ import { HasDependentsError } from "./errors.js";
  * 2. **Legacy consumer-facing API** — `listSkillEntries`,
  *    `getSkillContent`, `agentEntries`, etc. mirror the pre-refactor
  *    `CatalogManager`.
+ *
+ * Backing store: SQLite (one `catalog.db` per workspace, opened by the
+ * per-entity repositories in WAL mode). The facade holds no in-memory
+ * snapshot — every read goes straight to the repos and runs in
+ * autocommit, so each call starts a fresh implicit read transaction
+ * that observes any commit from another `CatalogManager` instance in
+ * the same process or from a separate SQLite-aware writer holding its
+ * own connection to the same file. (External tools that *replace* the
+ * `catalog.db` file out-of-band — e.g. `git pull` overwriting it
+ * while a handle is open — are unsupported; SQLite's WAL invariants
+ * assume the file is only mutated through SQLite.) Status-aware list
+ * operations (e.g. `listSkillEntries`) batch the underlying SELECTs
+ * with `Promise.all` to keep the wall-clock cost flat.
  *
  * Identity vocabulary recap:
  *   - skill / agent: `fqn` (`<scope>/<shortName>`) is the local
@@ -123,8 +135,6 @@ export type McpResolveAdapter = (origin: string) => Promise<{
 }>;
 
 export class CatalogManager {
-  scanIssues: ScanIssue[] = [];
-
   constructor(
     private readonly mcp: McpService,
     private readonly skill: SkillService,
@@ -197,9 +207,7 @@ export class CatalogManager {
       }
     };
 
-    const mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, resolveMcp);
-    await mgr.refresh();
-    return mgr;
+    return new CatalogManager(mcpSvc, skillSvc, agentSvc, resolveMcp);
   }
 
   // ─── Lifecycle ────────────────────────────────────────
@@ -269,7 +277,6 @@ export class CatalogManager {
       }
     }
 
-    if (installed.length > 0) await this.refresh();
     return { installed, skipped, failed };
   }
 
@@ -296,7 +303,6 @@ export class CatalogManager {
     if (installed === null) {
       throw new Error(`installSkillFromOrigin: no entity persisted for ${origin}`);
     }
-    await this.refresh();
     return installed.toJSON() as unknown as SkillPojo;
   }
 
@@ -311,13 +317,11 @@ export class CatalogManager {
     if (installed === null) {
       throw new Error(`installAgentFromOrigin: no entity persisted for ${origin}`);
     }
-    await this.refresh();
     return installed.toJSON() as unknown as AgentPojo;
   }
 
   async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
     const entity = await this.mcp.install(opts.name, opts.origin, content);
-    await this.refresh();
     return entity.name;
   }
 
@@ -332,42 +336,49 @@ export class CatalogManager {
 
   // ─── Reads ────────────────────────────────────────────
 
-  listSkillEntries(): SkillEntry[] {
-    const skills = this._skillsCache;
-    const installedMcps = new Set(this._mcpsCache.map((m) => m.name));
-    const installedSkillOrigins = new Set(this._skillsCache.map((s) => s.origin));
+  async listSkillEntries(): Promise<SkillEntry[]> {
+    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const installedMcps = new Set(mcps.map((m) => m.name));
+    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
+    const installedMcpOrigins = mcps.map((m) => m.origin);
     const out: SkillEntry[] = [];
     for (const s of skills) {
       const { status, missingDeps } = computeStatus(
         s.dependencies,
         installedSkillOrigins,
         installedMcps,
-        this._mcpsCache.map((m) => m.origin),
+        installedMcpOrigins,
       );
       out.push(buildSkillEntry(s, status, missingDeps));
     }
     return out;
   }
 
-  listAgentEntries(): AgentEntry[] {
-    const agents = this._agentsCache;
-    const installedMcps = new Set(this._mcpsCache.map((m) => m.name));
-    const installedSkillOrigins = new Set(this._skillsCache.map((s) => s.origin));
+  async listAgentEntries(): Promise<AgentEntry[]> {
+    const [agents, skills, mcps] = await Promise.all([
+      this.agent.list(),
+      this.skill.list(),
+      this.mcp.list(),
+    ]);
+    const installedMcps = new Set(mcps.map((m) => m.name));
+    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
+    const installedMcpOrigins = mcps.map((m) => m.origin);
     const out: AgentEntry[] = [];
     for (const a of agents) {
       const { status, missingDeps } = computeStatus(
         a.dependencies,
         installedSkillOrigins,
         installedMcps,
-        this._mcpsCache.map((m) => m.origin),
+        installedMcpOrigins,
       );
       out.push(buildAgentEntry(a, status, missingDeps));
     }
     return out;
   }
 
-  listMcps(): McpMetadata[] {
-    return this._mcpsCache.map(
+  async listMcps(): Promise<McpMetadata[]> {
+    const mcps = await this.mcp.list();
+    return mcps.map(
       (m) =>
         ({
           ...(m.toJSON() as object),
@@ -375,8 +386,9 @@ export class CatalogManager {
         }) as unknown as McpMetadata,
     );
   }
-  listSkills(): SkillPojo[] {
-    return this._skillsCache.map(
+  async listSkills(): Promise<SkillPojo[]> {
+    const skills = await this.skill.list();
+    return skills.map(
       (s) =>
         ({
           ...(s.toJSON() as object),
@@ -384,8 +396,9 @@ export class CatalogManager {
         }) as unknown as SkillPojo,
     );
   }
-  listAgents(): AgentPojo[] {
-    return this._agentsCache.map(
+  async listAgents(): Promise<AgentPojo[]> {
+    const agents = await this.agent.list();
+    return agents.map(
       (a) =>
         ({
           ...(a.toJSON() as object),
@@ -394,30 +407,32 @@ export class CatalogManager {
     );
   }
 
-  getSkillEntry(fqn: string): SkillEntry | null {
-    const s = this._skillsCache.find((x) => x.fqn === fqn);
-    if (s === undefined) return null;
-    const installedMcps = new Set(this._mcpsCache.map((m) => m.name));
-    const installedSkillOrigins = new Set(this._skillsCache.map((x) => x.origin));
+  async getSkillEntry(fqn: string): Promise<SkillEntry | null> {
+    const s = await this.skill.get(fqn);
+    if (s === null) return null;
+    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const installedMcps = new Set(mcps.map((m) => m.name));
+    const installedSkillOrigins = new Set(skills.map((x) => x.origin));
     const { status, missingDeps } = computeStatus(
       s.dependencies,
       installedSkillOrigins,
       installedMcps,
-      this._mcpsCache.map((m) => m.origin),
+      mcps.map((m) => m.origin),
     );
     return buildSkillEntry(s, status, missingDeps);
   }
 
-  getAgentEntry(fqn: string): AgentEntry | null {
-    const a = this._agentsCache.find((x) => x.fqn === fqn);
-    if (a === undefined) return null;
-    const installedMcps = new Set(this._mcpsCache.map((m) => m.name));
-    const installedSkillOrigins = new Set(this._skillsCache.map((s) => s.origin));
+  async getAgentEntry(fqn: string): Promise<AgentEntry | null> {
+    const a = await this.agent.get(fqn);
+    if (a === null) return null;
+    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const installedMcps = new Set(mcps.map((m) => m.name));
+    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
     const { status, missingDeps } = computeStatus(
       a.dependencies,
       installedSkillOrigins,
       installedMcps,
-      this._mcpsCache.map((m) => m.origin),
+      mcps.map((m) => m.origin),
     );
     return buildAgentEntry(a, status, missingDeps);
   }
@@ -438,29 +453,29 @@ export class CatalogManager {
     return this.mcp.getContent(name);
   }
 
-  // ─── Sync POJO read accessors ──
+  // ─── Async POJO read accessors ──
 
-  getSkill(fqn: string): SkillPojo | null {
-    const s = this._skillsCache.find((x) => x.fqn === fqn);
-    if (s === undefined) return null;
+  async getSkill(fqn: string): Promise<SkillPojo | null> {
+    const s = await this.skill.get(fqn);
+    if (s === null) return null;
     return {
       ...(s.toJSON() as object),
       mutable: isOriginMutable(s.origin),
     } as unknown as SkillPojo;
   }
 
-  getAgent(fqn: string): AgentPojo | null {
-    const a = this._agentsCache.find((x) => x.fqn === fqn);
-    if (a === undefined) return null;
+  async getAgent(fqn: string): Promise<AgentPojo | null> {
+    const a = await this.agent.get(fqn);
+    if (a === null) return null;
     return {
       ...(a.toJSON() as object),
       mutable: isOriginMutable(a.origin),
     } as unknown as AgentPojo;
   }
 
-  getMcp(name: string): McpMetadata | null {
-    const m = this._mcpsCache.find((x) => x.name === name);
-    if (m === undefined) return null;
+  async getMcp(name: string): Promise<McpMetadata | null> {
+    const m = await this.mcp.get(name);
+    if (m === null) return null;
     return {
       ...(m.toJSON() as object),
       mutable: isOriginMutable(m.origin),
@@ -471,7 +486,6 @@ export class CatalogManager {
 
   async updateSkillContent(fqn: string, content: string): Promise<SkillPojo> {
     const updated = await this.skill.updateAnchor(fqn, content);
-    await this.refresh();
     return {
       ...(updated.toJSON() as object),
       mutable: isOriginMutable(updated.origin),
@@ -480,7 +494,6 @@ export class CatalogManager {
 
   async updateAgentContent(fqn: string, content: string): Promise<AgentPojo> {
     const updated = await this.agent.updateAnchor(fqn, content);
-    await this.refresh();
     return {
       ...(updated.toJSON() as object),
       mutable: isOriginMutable(updated.origin),
@@ -489,12 +502,10 @@ export class CatalogManager {
 
   async updateMcpContent(name: string, content: string): Promise<void> {
     await this.mcp.updateContent(name, content);
-    await this.refresh();
   }
 
   async updateSkillMetadata(fqn: string, patch: SkillMetadataPatch): Promise<SkillPojo> {
     const updated = await this.skill.updateMetadata(fqn, patch as Record<string, unknown>);
-    await this.refresh();
     return {
       ...(updated.toJSON() as object),
       mutable: isOriginMutable(updated.origin),
@@ -503,7 +514,6 @@ export class CatalogManager {
 
   async updateAgentMetadata(fqn: string, patch: AgentMetadataPatch): Promise<AgentPojo> {
     const updated = await this.agent.updateMetadata(fqn, patch as Record<string, unknown>);
-    await this.refresh();
     return {
       ...(updated.toJSON() as object),
       mutable: isOriginMutable(updated.origin),
@@ -512,17 +522,14 @@ export class CatalogManager {
 
   async removeSkill(fqn: string): Promise<void> {
     await this.deleteSkill(fqn);
-    await this.refresh();
   }
 
   async removeAgent(fqn: string): Promise<void> {
     await this.deleteAgent(fqn);
-    await this.refresh();
   }
 
   async removeMcp(name: string): Promise<void> {
     await this.deleteMcp(name);
-    await this.refresh();
   }
 
   // ─── Streaming entries (for runtime materialisation) ─
@@ -544,19 +551,24 @@ export class CatalogManager {
   // ─── Resolve from local catalog (runtime-facing) ─────
   //
   // `resolveAgent(fqn)` walks the *already-installed* graph for an
-  // agent: no network, just local cache lookup. Used by the runtime
-  // when materialising a session workdir.
+  // agent: no network, just SQLite reads. Used by the runtime when
+  // materialising a session workdir.
   //
   // Skills/mcps in the dep graph are looked up by origin (since dep
-  // refs are origin-only). The cache holds origin → entity for both,
-  // so this is O(deps) lookups against a Map.
+  // refs are origin-only). One SELECT per kind, then in-process
+  // `Map.get(origin)` walks the dep DAG — no per-dep round trip.
 
-  resolveAgent(fqn: string): AgentResolveResult {
-    const agent = this._agentsCache.find((a) => a.fqn === fqn);
+  async resolveAgent(fqn: string): Promise<AgentResolveResult> {
+    const [agents, skills, mcps] = await Promise.all([
+      this.agent.list(),
+      this.skill.list(),
+      this.mcp.list(),
+    ]);
+    const agent = agents.find((a) => a.fqn === fqn);
     if (agent === undefined) throw new AgentNotFoundError(fqn);
 
-    const skillByOrigin = new Map(this._skillsCache.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(this._mcpsCache.map((m) => [m.origin, m]));
+    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
+    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
 
     const visited = new Set<string>();
     const orderedSkills: Skill[] = [];
@@ -586,11 +598,12 @@ export class CatalogManager {
     };
   }
 
-  resolveSkillFromCatalog(fqn: string): SkillResolveResult {
-    const root = this._skillsCache.find((s) => s.fqn === fqn);
+  async resolveSkillFromCatalog(fqn: string): Promise<SkillResolveResult> {
+    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const root = skills.find((s) => s.fqn === fqn);
     if (root === undefined) throw new SkillNotFoundError(fqn);
-    const skillByOrigin = new Map(this._skillsCache.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(this._mcpsCache.map((m) => [m.origin, m]));
+    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
+    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
     const visited = new Set<string>();
     const ordered: Skill[] = [];
     const mcpFqns = new Set<string>();
@@ -614,33 +627,6 @@ export class CatalogManager {
       skills: ordered.map((s) => ({ skill: s.toJSON() as unknown as SkillPojo })),
       mcps: [...mcpFqns].map((name) => ({ name })),
     };
-  }
-
-  // ─── Rescan / cache management ────────────────────────
-
-  private _skillsCache: Skill[] = [];
-  private _agentsCache: Agent[] = [];
-  private _mcpsCache: Mcp[] = [];
-  private _lastScanAt = 0;
-
-  async rescan(): Promise<void> {
-    await this.refresh();
-    this._lastScanAt = Date.now();
-  }
-
-  async rescanIfStale(maxAgeMs = 5000): Promise<void> {
-    if (Date.now() - this._lastScanAt > maxAgeMs) await this.rescan();
-  }
-
-  private async refresh(): Promise<void> {
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    this._skillsCache = skills;
-    this._agentsCache = agents;
-    this._mcpsCache = mcps;
   }
 
   // ─── Internals: cross-entity resolve walkers ──────
@@ -780,21 +766,18 @@ export class CatalogManager {
 
   async deleteAgent(fqn: string): Promise<void> {
     await this.agent.delete(fqn);
-    await this.refresh();
   }
 
   async deleteSkill(fqn: string): Promise<void> {
     const dependents = await this.findSkillDependents(fqn);
     if (dependents.length > 0) throw new HasDependentsError(fqn, dependents);
     await this.skill.delete(fqn);
-    await this.refresh();
   }
 
   async deleteMcp(name: string): Promise<void> {
     const dependents = await this.findMcpDependents(name);
     if (dependents.length > 0) throw new HasDependentsError(name, dependents);
     await this.mcp.delete(name);
-    await this.refresh();
   }
 
   /**
