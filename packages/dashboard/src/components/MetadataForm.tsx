@@ -1,3 +1,4 @@
+import type { DependencyRef } from "@emploke/catalog";
 import { ChipsInput } from "./ChipsInput";
 
 export interface MetadataFormValues {
@@ -5,8 +6,8 @@ export interface MetadataFormValues {
   version: string;
   /** undefined = field absent (skill only) */
   prereqs: string;
-  skills: string[];
-  mcps: string[];
+  skills: DependencyRef[];
+  mcps: DependencyRef[];
 }
 
 interface MetadataFormProps {
@@ -21,18 +22,47 @@ interface MetadataFormProps {
   disabled?: boolean;
 }
 
+/**
+ * Render `DependencyRef` as a chip label. Post-rename, dep refs are
+ * bare origin URI strings, so we just render them as-is. The full
+ * URI is informative enough to identify the dep without round-tripping
+ * to the catalog to recover its FQN.
+ */
+function depRefLabel(ref: DependencyRef): string {
+  return ref;
+}
+
 export function MetadataForm({
   kind,
   values,
   onChange,
-  availableSkills,
-  availableMcps,
+  availableSkills: _availableSkills,
+  availableMcps: _availableMcps,
   missingSkills,
   missingMcps,
   disabled,
 }: MetadataFormProps) {
   const update = <K extends keyof MetadataFormValues>(key: K, val: MetadataFormValues[K]) =>
     onChange({ ...values, [key]: val });
+
+  // Project DependencyRef[] → string[] for the chip display, then map
+  // user removals back onto the original DependencyRef[]. We allow
+  // remove-only (no add), since a freshly-typed chip would lack the
+  // required origin field and silently drop on save.
+  const skillLabels = values.skills.map(depRefLabel);
+  const mcpLabels = values.mcps.map(depRefLabel);
+  const onSkillsChange = (next: string[]) => {
+    const kept = next
+      .map((label) => values.skills.find((r) => depRefLabel(r) === label))
+      .filter((r): r is DependencyRef => r !== undefined);
+    update("skills", kept);
+  };
+  const onMcpsChange = (next: string[]) => {
+    const kept = next
+      .map((label) => values.mcps.find((r) => depRefLabel(r) === label))
+      .filter((r): r is DependencyRef => r !== undefined);
+    update("mcps", kept);
+  };
 
   return (
     <div className="metadata-form">
@@ -64,24 +94,28 @@ export function MetadataForm({
         <label htmlFor="md-skills">Skill dependencies</label>
         <ChipsInput
           inputId="md-skills"
-          values={values.skills}
-          onChange={(v) => update("skills", v)}
-          options={availableSkills}
-          placeholder="Type to search or add custom..."
+          values={skillLabels}
+          onChange={onSkillsChange}
+          options={[]}
+          placeholder="Edit in source mode to add new dependencies"
           disabled={disabled}
           emptyText="No skill dependencies"
           invalidValues={missingSkills}
         />
+        <p className="form-hint">
+          Remove with × on each chip. To add new dependencies (which require an origin URI), switch
+          to source mode.
+        </p>
       </div>
 
       <div className="form-field">
         <label htmlFor="md-mcps">MCP dependencies</label>
         <ChipsInput
           inputId="md-mcps"
-          values={values.mcps}
-          onChange={(v) => update("mcps", v)}
-          options={availableMcps}
-          placeholder="Type to search or add custom..."
+          values={mcpLabels}
+          onChange={onMcpsChange}
+          options={[]}
+          placeholder="Edit in source mode to add new dependencies"
           disabled={disabled}
           emptyText="No MCP dependencies"
           invalidValues={missingMcps}

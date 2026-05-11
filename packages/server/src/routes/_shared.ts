@@ -38,14 +38,32 @@ export async function parseJsonBody<T = unknown>(
  */
 const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/catalog
-  "CatalogError",
-  "CatalogStateError",
-  "CycleDetected",
-  "FrontmatterError",
-  "HasDependents",
-  "MissingDependencies",
-  "NameInvalid",
-  "NotFound",
+  // Real instances only — the catalog never throws an instance of the
+  // abstract `CatalogError` base class, and previous entries
+  // (`CatalogStateError`, `CycleDetected`, `MissingDependencies`,
+  // `UnsupportedCatalogVersionError`) named classes that don't exist
+  // in the codebase. Adding speculative names here would mask future
+  // typos: an entry on this list looks intentional even when the
+  // referenced class never gets thrown. Update by grepping
+  // `^export class \w+Error` in `packages/catalog/src/**`.
+  "FetchError",
+  "AgentFrontmatterError",
+  "SkillFrontmatterError",
+  "HasDependentsError",
+  "ImmutableOriginError",
+  "McpInvalidJsonError",
+  "McpNameInvalidError",
+  "SkillNameInvalidError",
+  "AgentNameInvalidError",
+  "SkillNotFoundError",
+  "AgentNotFoundError",
+  "McpNotFoundError",
+  "SkillOriginConflictError",
+  "AgentOriginConflictError",
+  "McpOriginConflictError",
+  "OriginParseError",
+  "PlanStaleError",
+  "AgentPlanStaleError",
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",
@@ -146,28 +164,52 @@ export function errorBody(err: unknown): { error: string; code?: string } {
 
 /**
  * Map an error from the catalog layer to an HTTP status code:
- *   - `NameInvalid` / `FrontmatterError` / `MissingDependencies` /
- *     `CycleDetected` → 400 (caller-fixable input)
- *   - `NotFound` → 404
- *   - `HasDependents` → 409 (state conflict)
+ *   - `*NameInvalidError` / `*FrontmatterError` / `McpInvalidJsonError` /
+ *     `OriginParseError` / `PlanStaleError` → 400 (caller-fixable input)
+ *   - `*NotFoundError` → 404
+ *   - `HasDependentsError` / `*OriginConflictError` → 409 (state conflict)
+ *   - `ImmutableOriginError` → 405 (mutation against a read-only origin)
+ *   - `FetchError` → 502 (downstream fetch failed; sanitised body)
  *   - everything else → 500 (server fault, paired with `errorBody` →
  *     `"internal error"` so internals don't leak)
  *
  * Returns null when the error class is unrecognised; callers should treat
  * that as 500.
+ *
+ * **Important**: cases below MUST use the real per-entity class names
+ * (`SkillNotFoundError`, not the alias `NotFound`). The catalog's
+ * abstract base error class sets `this.name = new.target.name`, so an
+ * `instanceof SkillNotFoundError` thrown by service code carries
+ * `.name === "SkillNotFoundError"`. A switch on the alias would never
+ * match and every error would fall through to 500. The unit suite in
+ * `test/error-sanitization.test.ts` exercises this with real instances.
  */
 export function statusForCatalogError(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
   switch (err.name) {
-    case "NameInvalid":
-    case "FrontmatterError":
-    case "MissingDependencies":
-    case "CycleDetected":
+    case "SkillNameInvalidError":
+    case "AgentNameInvalidError":
+    case "McpNameInvalidError":
+    case "AgentFrontmatterError":
+    case "SkillFrontmatterError":
+    case "McpInvalidJsonError":
+    case "OriginParseError":
+    case "PlanStaleError":
+    case "AgentPlanStaleError":
       return 400;
-    case "NotFound":
+    case "SkillNotFoundError":
+    case "AgentNotFoundError":
+    case "McpNotFoundError":
       return 404;
-    case "HasDependents":
+    case "HasDependentsError":
+    case "SkillOriginConflictError":
+    case "AgentOriginConflictError":
+    case "McpOriginConflictError":
       return 409;
+    case "ImmutableOriginError":
+      return 405;
+    case "FetchError":
+      return 502;
     default:
       return null;
   }

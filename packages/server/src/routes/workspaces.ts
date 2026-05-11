@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   RegistryError,
@@ -60,13 +61,20 @@ interface PatchBody {
  * Routes for `/api/workspaces/*`. Workspace-scoped resources (sessions,
  * tasks, catalog) live under `/api/workspaces/:id/...` and are mounted
  * separately so the workspace id is part of the resource URL.
+ *
+ * `defaultWorkspaceParent` is the directory under which auto-generated
+ * workspace directories are created when the user creates a workspace
+ * without specifying a `workdir`. Server bootstrap passes
+ * `<EMPLOKE_HOME>/workspaces`; the route mints a fresh UUID-named
+ * directory under it per such request.
  */
 export function workspacesRoutes(deps: {
   manager: WorkspaceManager;
   cache: WorkspaceContextCache;
+  defaultWorkspaceParent: string;
 }): Hono {
   const app = new Hono();
-  const { manager, cache } = deps;
+  const { manager, cache, defaultWorkspaceParent } = deps;
 
   // List all registered workspaces.
   app.get("/", async (c) => {
@@ -88,17 +96,34 @@ export function workspacesRoutes(deps: {
   });
 
   // Add a workspace: init the directory + register it. The id is
-  // generated server-side. The display name is mandatory — there is no
-  // auto-default and no basename fallback.
+  // generated server-side. The display name is mandatory; `workdir` is
+  // optional — when omitted, the server generates a fresh
+  // `<defaultWorkspaceParent>/<uuid>/` directory and uses that. The
+  // generated dir name is intentionally a UUID (not the display name)
+  // so renames stay free and two workspaces with the same display name
+  // don't collide on disk.
   app.post("/", async (c) => {
     const parsed = await parseJsonBody<CreateBody>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
-    if (typeof body.workdir !== "string" || body.workdir.trim() === "") {
-      return c.json({ error: "workdir is required (string)" }, 400);
-    }
     if (typeof body.name !== "string") {
       return c.json({ error: "name is required (string)" }, 400);
+    }
+    let workdir: string;
+    let preallocatedId: string | undefined;
+    if (body.workdir === undefined || body.workdir === null || body.workdir === "") {
+      // Auto-generate. Mint the workspace id here and reuse it as the
+      // on-disk dir name so the registry id and the directory basename
+      // stay coupled — `ls $EMPLOKE_HOME/workspaces/` reads as "list
+      // workspace ids" and the dashboard URL `<wsId>` matches the path
+      // on disk. We don't mkdir here — `WorkspaceManager.init` does
+      // that idempotently.
+      preallocatedId = randomUUID();
+      workdir = path.join(defaultWorkspaceParent, preallocatedId);
+    } else if (typeof body.workdir !== "string" || body.workdir.trim() === "") {
+      return c.json({ error: "workdir, when present, must be a non-empty string" }, 400);
+    } else {
+      workdir = path.resolve(body.workdir);
     }
     if (
       body.defaults !== undefined &&
@@ -113,8 +138,9 @@ export function workspacesRoutes(deps: {
       >[0][K];
     } = {
       name: body.name,
-      workdir: path.resolve(body.workdir),
+      workdir,
     };
+    if (preallocatedId !== undefined) initOpts.id = preallocatedId;
     if (body.defaults && typeof body.defaults === "object") {
       initOpts.defaults = body.defaults as Parameters<WorkspaceManager["init"]>[0]["defaults"];
     }

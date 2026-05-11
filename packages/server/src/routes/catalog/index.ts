@@ -8,11 +8,14 @@ import { skillsRoutes } from "./skills.js";
 /**
  * Workspace-scoped catalog routes. Mounted at
  * `/api/workspaces/:name/catalog/*` in `index.ts`. The routes pull a
- * per-workspace `CatalogManager` instance off the Hono context (set up by the
- * workspace middleware), so handler logic doesn't need to know which
- * workspace is in play.
+ * per-workspace `CatalogManager` instance off the Hono context (set up
+ * by the workspace middleware), so handler logic doesn't need to know
+ * which workspace is in play.
  *
- * Tests can pass a `CatalogManager` instance directly instead of a resolver.
+ * Tests can pass a `CatalogManager` instance directly instead of a
+ * resolver. The catalog brings its own `FetcherRegistry` via
+ * `CatalogOptions.fetchers` (defaults to `defaultFetcherRegistry`);
+ * routes don't need to thread fetchers through.
  */
 export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();

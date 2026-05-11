@@ -1,20 +1,36 @@
 import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
+import { readAgentInstallBody, readContentBody, readMetadataBody } from "./helpers.js";
+import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
- * Routes for /agents/* relative to the parent mount. Mounted by
- * `catalogRoutes` at "/agents". Takes a per-request catalog resolver so
- * the same handler can serve multiple workspaces; tests can also pass a
- * `CatalogManager` instance directly.
+ * Routes for /agents/* relative to the parent mount. Mirrors
+ * {@link skillsRoutes}: takes a body `{ origin }`, performs
+ * `installAgent` (resolve + apply), returns a `CatalogInstallResult`.
+ *
+ * `POST /resolve` returns the read-only `CatalogPlan` for the
+ * dashboard's two-phase install flow.
  */
 export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
   app.get("/", (c) => c.json(getCatalog(c).listAgentEntries()));
+
+  app.post("/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const parsed = await readAgentInstallBody(c);
+    if ("error" in parsed) return c.json(parsed, 400);
+    try {
+      const plan = await catalog.resolveAgentFromOrigin(parsed.origin);
+      return c.json(planToManifest(plan, parsed.origin));
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
@@ -32,11 +48,13 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readAgentInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const agent = await catalog.installAgent(parsed.sourcePath);
-      return c.json(agent, 201);
+      const result = await catalog.installAgent(parsed.origin);
+      const status = result.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

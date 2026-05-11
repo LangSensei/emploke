@@ -287,6 +287,7 @@ const makeManager = (
     catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
     runtimeRegistry: registry,
     tasksDir,
+    workspaceDir: tasksDir,
     now: overrides.now ?? fixedNow("2026-05-08T01:05:00.000Z"),
     randomBytes: overrides.randomBytes ?? seqRandom(),
     logger: overrides.logger,

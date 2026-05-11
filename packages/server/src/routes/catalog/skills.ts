@@ -1,20 +1,39 @@
 import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody, readMetadataBody } from "./helpers.js";
+import { readContentBody, readMetadataBody, readSkillInstallBody } from "./helpers.js";
+import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /skills/* relative to the parent mount. Mounted by
- * `catalogRoutes` at "/skills". Takes a per-request catalog resolver so
- * the same handler can serve multiple workspaces; tests can also pass a
- * `CatalogManager` instance directly.
+ * `catalogRoutes` at "/skills".
+ *
+ * Two endpoints for installs:
+ *   - `POST /resolve` — read-only preview (returns CatalogPlan)
+ *   - `POST /` — full install (resolve + apply, returns CatalogInstallResult)
+ *
+ * Dashboard's two-phase flow uses `/resolve` to show the user what
+ * will happen, then `/` to commit.
  */
 export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
   app.get("/", (c) => c.json(getCatalog(c).listSkillEntries()));
+
+  app.post("/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const parsed = await readSkillInstallBody(c);
+    if ("error" in parsed) return c.json(parsed, 400);
+    try {
+      const plan = await catalog.resolveSkill(parsed.origin);
+      return c.json(planToManifest(plan, parsed.origin));
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
@@ -32,11 +51,13 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const skill = await catalog.installSkill(parsed.sourcePath);
-      return c.json(skill, 201);
+      const result = await catalog.installSkill(parsed.origin);
+      const status = result.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

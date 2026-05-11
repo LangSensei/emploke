@@ -288,7 +288,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   // doesn't have any tasks yet (giving a "no matches" empty state instead
   // of hiding the option entirely).
   const filterAgentNames = useMemo(() => {
-    const set = new Set<string>(agents.map((a) => a.agent.name));
+    const set = new Set<string>(agents.map((a) => a.agent.fqn));
     for (const t of tasks) set.add(t.agent);
     return Array.from(set).sort();
   }, [agents, tasks]);
@@ -600,7 +600,7 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
   // Reset form on open so re-opening doesn't replay the previous dispatch.
   useEffect(() => {
     if (open) {
-      setAgent(agents[0]?.agent.name ?? "");
+      setAgent(agents[0]?.agent.fqn ?? "");
       setRuntime(runtimes[0] ?? "");
       setInstructions("");
     }
@@ -629,8 +629,8 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
               required
             >
               {agents.map((a) => (
-                <option key={a.agent.name} value={a.agent.name}>
-                  {a.agent.name}
+                <option key={a.agent.fqn} value={a.agent.fqn}>
+                  {a.agent.fqn}
                 </option>
               ))}
             </select>

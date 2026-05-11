@@ -17,6 +17,7 @@
  */
 
 export {
+  replaceDirAtomic,
   writeFileAtomic,
   writeJsonAtomic,
 } from "./primitives/atomic.js";

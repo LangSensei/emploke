@@ -289,8 +289,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           >
             <option value={ALL_AGENTS}>All</option>
             {agents.map((a) => (
-              <option key={a.agent.name} value={a.agent.name}>
-                {a.agent.name}
+              <option key={a.agent.fqn} value={a.agent.fqn}>
+                {a.agent.fqn}
               </option>
             ))}
           </select>
@@ -385,10 +385,10 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
         <table className="table table--wide">
           <thead>
             <tr>
-              <th className="col-session">Session</th>
-              <th className="col-agent">Agent</th>
-              <th className="col-runtime">Runtime</th>
-              <th>Activity</th>
+              <th>Session</th>
+              <th>Agent</th>
+              <th>Runtime</th>
+              <th className="col-activity">Activity</th>
               <th className="col-actions">Actions</th>
             </tr>
           </thead>
@@ -481,15 +481,15 @@ function SessionRow({ session, launching, onLaunch, onDelete }: RowProps) {
           {session.agent}
         </span>
       </td>
-      <td>
+      <td className="col-runtime">
         <span className="agent-tag" title={`Runtime: ${session.runtime}`}>
           {session.runtime}
         </span>
       </td>
-      <td>
+      <td className="col-activity">
         <ActivityCell session={session} />
       </td>
-      <td>
+      <td className="col-actions">
         <div className="row-actions">
           <button
             type="button"
@@ -602,8 +602,8 @@ function CreateModal({
   const [runtime, setRuntime] = useState<string>("");
 
   useEffect(() => {
-    if (open && agents.length > 0 && !agents.some((a) => a.agent.name === agent)) {
-      setAgent(agents[0]?.agent.name ?? "");
+    if (open && agents.length > 0 && !agents.some((a) => a.agent.fqn === agent)) {
+      setAgent(agents[0]?.agent.fqn ?? "");
     }
   }, [open, agents, agent]);
 
@@ -639,8 +639,8 @@ function CreateModal({
               className="select select--full"
             >
               {agents.map((a) => (
-                <option key={a.agent.name} value={a.agent.name}>
-                  {a.agent.name}
+                <option key={a.agent.fqn} value={a.agent.fqn}>
+                  {a.agent.fqn}
                 </option>
               ))}
             </select>

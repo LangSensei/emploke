@@ -1,4 +1,4 @@
-import type { AgentEntry, MissingDep, SkillEntry } from "@emploke/catalog";
+import type { AgentEntry, McpMetadata, MissingDep, SkillEntry } from "@emploke/catalog";
 
 export interface OverviewData {
   counts: {
@@ -13,9 +13,12 @@ export interface OverviewData {
   }[];
 }
 
-export interface McpItem {
-  name: string;
-}
+/**
+ * Wire shape for an installed MCP — mirrors @emploke/catalog `McpMetadata`.
+ * `mutable` controls whether the dashboard offers Edit (file: origin) vs
+ * Sync (re-install from upstream for github: etc.).
+ */
+export type McpItem = McpMetadata;
 
 export interface CatalogData {
   overview: OverviewData | null;
@@ -120,14 +123,106 @@ const jsonInit = (method: string, body: object): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-export const installAgent = (sourcePath: string) =>
-  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", { sourcePath }));
+/**
+ * Install a new agent. The wire body is `{provider, location}` — the
+ * server assembles the canonical origin URI from those. The server
+ * fetches via the registered fetcher (file:, https://github.com/...),
+ * recursively resolves dependencies, and returns a manifest. Returns
+ * 207 on partial failure — caller surfaces that as an error message
+ * via {@link extractError}.
+ *
+ * No `scopeHints`: scope is determined entirely by each entry's
+ * frontmatter (or default `public`). Forking under a different scope =
+ * editing upstream's frontmatter, not a per-install flag.
+ */
+export type InstallProvider = "github" | "file";
 
-export const installSkill = (sourcePath: string) =>
-  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", { sourcePath }));
+export interface InstallSource {
+  /** Pick the provider whose grammar matches your URL/path. */
+  provider: InstallProvider;
+  /**
+   * Canonical input string for the chosen provider:
+   *  - `github`: full https://github.com/owner/repo/tree/ref/path URL
+   *  - `file`:   absolute filesystem path on the server
+   * Whitespace is trimmed; clients never need to add scheme prefixes.
+   */
+  location: string;
+}
 
-export const installMcp = (sourcePath: string, name?: string) =>
-  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", name ? { sourcePath, name } : { sourcePath }));
+export const installAgent = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", src));
+
+/** See {@link installAgent}. */
+export const installSkill = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", src));
+
+/**
+ * Install an MCP. The MCP's spec FQN is recovered from the fetched
+ * JSON's `_meta.name` at install time, so callers don't need to
+ * supply a name.
+ */
+export const installMcp = (src: InstallSource) =>
+  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
+
+/**
+ * Resolve manifest returned by `POST /catalog/{kind}/resolve`. Read-only
+ * preview of the dep graph the install will create. Used by the
+ * dashboard's two-phase install dialog so the user can preview the
+ * tree (status / scope / conflicts) before committing.
+ */
+export interface ResolveNodeBase {
+  kind: "skill" | "agent" | "mcp";
+  origin: string;
+  fqn: string;
+  status:
+    | "new"
+    | "will-sync"
+    | "already-installed"
+    | "would-conflict"
+    | "fetch-failed"
+    | "parse-failed";
+  depFqns: string[];
+  error?: { name: string; message: string };
+}
+
+export interface SkillResolveNode extends ResolveNodeBase {
+  kind: "skill";
+  shortName: string;
+  /** Scope as it'll appear in the catalog (frontmatter or `public` default). */
+  scope: string;
+  /** True iff the entry's frontmatter omitted `scope:` and we used the default. */
+  scopeIsDefault: boolean;
+}
+
+export interface AgentResolveNode extends ResolveNodeBase {
+  kind: "agent";
+  shortName: string;
+  scope: string;
+  scopeIsDefault: boolean;
+}
+
+export interface McpResolveNode extends ResolveNodeBase {
+  kind: "mcp";
+  specName: string;
+}
+
+export type ResolveNode = SkillResolveNode | AgentResolveNode | McpResolveNode;
+
+export interface ResolveManifest {
+  rootFqn: string;
+  nodes: ResolveNode[];
+}
+
+/**
+ * Resolve an install (`POST /catalog/{kind}/resolve`) — returns the
+ * read-only `ResolveManifest` so the user can preview the tree before
+ * committing.
+ */
+export const resolveSkillInstall = (src: InstallSource): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", src));
+
+export const resolveAgentInstall = (src: InstallSource): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", src));
 
 export const removeAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -140,6 +235,8 @@ export const removeMcp = (name: string) =>
 
 export interface McpDetail {
   name: string;
+  origin: string;
+  mutable: boolean;
   /** Raw JSON content as stored on disk (preserves user formatting). */
   content: string;
 }
@@ -155,7 +252,7 @@ export interface MarkdownDetail {
 }
 
 export interface SkillDetail {
-  skill: import("@emploke/catalog").Skill;
+  skill: import("@emploke/catalog").SkillPojo;
   status: "ready" | "disabled";
   missingDeps?: MissingDep[];
   content: string;
@@ -174,14 +271,17 @@ export interface SkillMetadataPatch {
   description?: string;
   version?: string;
   prereqs?: string | null;
-  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+  dependencies?: {
+    skills?: import("@emploke/catalog").DependencyRef[];
+    mcps?: import("@emploke/catalog").DependencyRef[];
+  } | null;
 }
 
 export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
   mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
 export interface AgentDetail {
-  agent: import("@emploke/catalog").Agent;
+  agent: import("@emploke/catalog").AgentPojo;
   status: "ready" | "disabled";
   missingDeps?: MissingDep[];
   content: string;
@@ -199,7 +299,10 @@ export const updateAgentContent = (name: string, content: string) =>
 export interface AgentMetadataPatch {
   description?: string;
   version?: string;
-  dependencies?: { skills?: string[]; mcps?: string[] } | null;
+  dependencies?: {
+    skills?: import("@emploke/catalog").DependencyRef[];
+    mcps?: import("@emploke/catalog").DependencyRef[];
+  } | null;
 }
 
 export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
@@ -381,11 +484,15 @@ export const setServerCurrentWorkspace = (id: string): Promise<void> =>
  */
 export type CreatedWorkspace = WorkspaceListItem;
 
-export const addWorkspace = async (
-  workdir: string,
-  opts: { name: string; defaults?: WorkspaceListItem["defaults"] },
-): Promise<CreatedWorkspace> => {
-  const body: Record<string, unknown> = { workdir, name: opts.name };
+export const addWorkspace = async (opts: {
+  name: string;
+  /** Optional. When omitted, the server creates a fresh
+   *  `<EMPLOKE_HOME>/workspaces/<uuid>/` directory. */
+  workdir?: string;
+  defaults?: WorkspaceListItem["defaults"];
+}): Promise<CreatedWorkspace> => {
+  const body: Record<string, unknown> = { name: opts.name };
+  if (opts.workdir !== undefined && opts.workdir !== "") body.workdir = opts.workdir;
   if (opts.defaults !== undefined) body.defaults = opts.defaults;
   return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };

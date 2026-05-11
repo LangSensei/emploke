@@ -9,12 +9,14 @@ import { WorkspaceContextCache } from "../src/workspace-context.js";
 
 let scratch: string;
 let indexFile: string;
+const openCaches: WorkspaceContextCache[] = [];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-ws-"));
   indexFile = path.join(scratch, ".emploke", "workspaces.json");
 });
 afterEach(async () => {
+  for (const c of openCaches.splice(0)) c.closeAll();
   await rm(scratch, { recursive: true, force: true });
 });
 
@@ -25,7 +27,16 @@ async function makeApp() {
     new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
   );
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
-  return { app: workspacesRoutes({ manager, cache }), manager, cache };
+  openCaches.push(cache);
+  // The default workspace parent is per-test-scratch so omitted-workdir
+  // requests land somewhere isolated and get cleaned up by afterEach.
+  const defaultWorkspaceParent = path.join(scratch, "default-workspaces");
+  return {
+    app: workspacesRoutes({ manager, cache, defaultWorkspaceParent }),
+    manager,
+    cache,
+    defaultWorkspaceParent,
+  };
 }
 
 describe("workspacesRoutes — empty registry", () => {
@@ -87,12 +98,31 @@ describe("workspacesRoutes — POST /", () => {
     expect(res.status).toBe(400);
   });
 
-  it("rejects missing workdir", async () => {
-    const { app } = await makeApp();
+  it("auto-generates a UUID-named workdir under defaultWorkspaceParent when workdir is omitted", async () => {
+    const { app, defaultWorkspaceParent } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "no-dir" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; name: string; workdir: string };
+    expect(body.name).toBe("no-dir");
+    // The auto-generated workdir lives under the parent we configured;
+    // its basename matches the workspace's UUID — tying the registry id
+    // to the on-disk dir name keeps "which folder belongs to which
+    // workspace?" answerable without opening workspace.json.
+    const expectedPrefix = path.resolve(defaultWorkspaceParent) + path.sep;
+    expect(body.workdir.startsWith(expectedPrefix)).toBe(true);
+    expect(path.basename(body.workdir)).toBe(body.id);
+  });
+
+  it("rejects empty-string workdir (use omission to pick the default)", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "blank-dir", workdir: "   " }),
     });
     expect(res.status).toBe(400);
   });

@@ -30,6 +30,7 @@ beforeEach(async () => {
   cache = new WorkspaceContextCache({ runtimeRegistry, workspaces });
 });
 afterEach(async () => {
+  cache.closeAll();
   await rm(scratch, { recursive: true, force: true });
 });
 

@@ -1,35 +1,68 @@
+import {
+  type AgentInstallBody,
+  type McpInstallBody,
+  type SkillInstallBody,
+  validateAgentInstallInput,
+  validateMcpInstallInput,
+  validateSkillInstallInput,
+} from "@emploke/catalog";
 import type { Context } from "hono";
 import { parseJsonBody } from "../_shared.js";
 
-interface InstallBody {
-  sourcePath?: unknown;
-  name?: unknown;
-}
-
 /**
- * POST /install body shape used by skills, agents, and mcps:
- * `{ sourcePath: string, name?: string }`. Returns either the parsed
- * fields or an `{ error }` shape suitable for a 400 response.
+ * Per-route input parsers. Thin adapter around the catalog package's
+ * pure validators (`@emploke/catalog/install-input.ts`):
+ *  - parse JSON body
+ *  - delegate validation to catalog
+ *  - convert thrown {@link FrontmatterError} / {@link McpNameInvalidError}
+ *    into the route's `{ error }` shape (callers map to 400)
+ *
+ * All semantic validation (required fields, scope grammar, MCP name shape)
+ * lives in the catalog so HTTP / future CLI / SDK share one source of truth.
  */
-export async function readInstallBody(
+
+/** POST /catalog/skills body: `{ origin: string }`. Scope is frontmatter-driven. */
+export async function readSkillInstallBody(
   c: Context,
-): Promise<{ sourcePath: string; name?: string } | { error: string }> {
-  const parsed = await parseJsonBody<InstallBody>(c);
+): Promise<SkillInstallBody | { error: string }> {
+  const parsed = await parseJsonBody<unknown>(c);
   if (!parsed.ok) return { error: parsed.error };
-  const body = parsed.body;
-  if (typeof body.sourcePath !== "string" || body.sourcePath.trim() === "") {
-    return { error: "sourcePath is required (string)" };
+  try {
+    return validateSkillInstallInput(parsed.body);
+  } catch (e) {
+    return { error: (e as Error).message };
   }
-  const out: { sourcePath: string; name?: string } = { sourcePath: body.sourcePath };
-  if (typeof body.name === "string" && body.name.trim() !== "") {
-    out.name = body.name;
+}
+
+/** POST /catalog/agents body — same shape as skills. */
+export async function readAgentInstallBody(
+  c: Context,
+): Promise<AgentInstallBody | { error: string }> {
+  const parsed = await parseJsonBody<unknown>(c);
+  if (!parsed.ok) return { error: parsed.error };
+  try {
+    return validateAgentInstallInput(parsed.body);
+  } catch (e) {
+    return { error: (e as Error).message };
   }
-  return out;
 }
 
 /**
- * PUT body for updating a resource's content: `{ content: string }`.
+ * POST /catalog/mcps body: `{ origin: string, name: string }`. `name` is
+ * the full MCP-spec FQN (`<namespace>/<short>`). The spec name IS the
+ * catalog identity — no scope, no derivation, no mapping.
  */
+export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | { error: string }> {
+  const parsed = await parseJsonBody<unknown>(c);
+  if (!parsed.ok) return { error: parsed.error };
+  try {
+    return validateMcpInstallInput(parsed.body);
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+/** PUT body for updating a resource's content: `{ content: string }`. */
 export async function readContentBody(
   c: Context,
 ): Promise<{ content: string } | { error: string }> {

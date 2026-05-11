@@ -1,15 +1,16 @@
 import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
-import { readContentBody, readInstallBody } from "./helpers.js";
+import { readContentBody, readMcpInstallBody } from "./helpers.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /mcps/* relative to the parent mount. Mounted by
  * `catalogRoutes` at "/mcps".
  *
- * MCPs do not have a metadata PATCH endpoint — they're config-only blobs
- * with no status/disabled state to flip.
+ * `POST /` body: `{ origin: string, name: string }`. The `name` is the
+ * full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`). MCPs
+ * have no deps, so the install is a single fetch + write.
  */
 export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
@@ -17,15 +18,24 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.get("/", (c) => {
     const catalog = getCatalog(c);
-    return c.json(catalog.listMcps().map((name) => ({ name })));
+    // listMcps() already returns McpMetadata[] (`{ name, origin, mutable }`)
+    // — return as-is. The dashboard's `McpItem` is the same shape. The
+    // previous `.map((name) => ({ name }))` was a leftover from the
+    // pre-PR-#52 catalog where `listMcps()` returned `string[]`; against
+    // the new metadata shape it produced `{ name: { name, origin, mutable } }`
+    // and crashed the dashboard's React render with "Objects are not
+    // valid as a React child".
+    return c.json(catalog.listMcps());
   });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
+      const meta = catalog.getMcp(name);
+      if (meta === null) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getMcpContent(name);
-      return c.json({ name, content });
+      return c.json({ ...meta, content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
@@ -34,11 +44,13 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.post("/", async (c) => {
     const catalog = getCatalog(c);
-    const parsed = await readInstallBody(c);
+    const parsed = await readMcpInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const name = await catalog.installMcp(parsed.sourcePath, parsed.name);
-      return c.json({ name }, 201);
+      const result = await catalog.installMcpFromOrigin(parsed.origin);
+      const status = result.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);

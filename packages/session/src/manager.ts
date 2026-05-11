@@ -100,7 +100,9 @@ export class SessionManager {
     }
 
     try {
-      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult, this.catalog);
+      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult, this.catalog, {
+        workspaceDir: this.workspaceDir,
+      });
       const createdAt = this.now().toISOString();
       const state: SessionState = {
         runtime: runtime.kind,
@@ -108,10 +110,15 @@ export class SessionManager {
         runtimeSessionId,
       };
       await this.repository.save(id, state);
+      // Return the canonical fqn read back from the provisioned workdir,
+      // not the caller-supplied input. They MAY differ — list() always
+      // reports the on-disk fqn, and the two should agree so the UI
+      // can match newly-created sessions to filter selections.
+      const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
       return {
         id,
         workdir,
-        agent: agentName,
+        agent: canonicalAgent,
         runtime: runtime.kind,
         runtimeSessionId,
         createdAt,
@@ -153,14 +160,20 @@ export class SessionManager {
     const refreshed = await Promise.all(survivors.map((s) => this.refreshSession(s)));
 
     // `activeSince` is post-refresh because lastActiveAt is only known
-    // after `runtime.refresh()`. Sessions that have never been launched
-    // (lastActiveAt === null) fail the "active since X" predicate by
-    // definition.
+    // after `runtime.refresh()`. A session passes the predicate if EITHER:
+    //   - it has been launched at or after the cutoff (lastActiveAt ≥ X), OR
+    //   - it was created at or after the cutoff and never launched
+    //     (createdAt ≥ X && lastActiveAt === null).
+    // The second arm matters for "today" / "7d" filters: a session you
+    // just created should show up immediately, even though it has no
+    // launch activity yet.
     const filtered =
       opts.activeSince !== undefined
-        ? refreshed.filter(
-            (s) => s.lastActiveAt !== null && s.lastActiveAt >= (opts.activeSince as string),
-          )
+        ? refreshed.filter((s) => {
+            const since = opts.activeSince as string;
+            if (s.lastActiveAt !== null) return s.lastActiveAt >= since;
+            return s.createdAt >= since;
+          })
         : refreshed;
 
     // Sort by lastActiveAt desc, with never-launched sessions

@@ -1,0 +1,43 @@
+{
+  "name": "@emploke/catalog-fetcher",
+  "version": "0.0.1",
+  "description": "Pluggable Fetcher implementations (file:, https://github.com/) for @emploke/catalog's deepInstall orchestrator",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "tar-stream": "^3.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/tar-stream": "^3.1.3",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LangSensei/emploke.git",
+    "directory": "packages/catalog-fetcher"
+  }
+}

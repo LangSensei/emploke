@@ -1,21 +1,23 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentResolveResult, type CatalogEntryFile, CatalogManager } from "@emploke/catalog";
-import {
-  InMemoryAgentRepository,
-  InMemoryMcpRepository,
-  InMemorySkillRepository,
-} from "@emploke/catalog/testing";
+import { type AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
- * Build a `CatalogManager` backed by in-memory repositories, with optional
- * fixtures pre-installed. Tests use this instead of touching a real
- * filesystem catalog when all they need is "the runtime can pull this
- * agent's bytes".
+ * Build a `CatalogManager` backed by a SQLite database in a temp dir,
+ * with optional fixtures pre-installed.
  *
- * Each fixture is a map of relative paths to file contents. AGENTS.md /
- * SKILL.md must be present in the agent / skill fixtures respectively.
+ * Each fixture entry is a map of relative paths → file contents.
+ * AGENTS.md / SKILL.md must be present where applicable. The helper
+ * writes fixtures into a temporary "source" directory (one per
+ * entry), then drives `catalog.installAgentFromOrigin` /
+ * `installSkillFromOrigin` / `installMcp` to register them through
+ * the normal install path. This keeps test fixtures honest — they
+ * exercise the real install flow rather than bypassing it.
+ *
+ * Fixture keys MAY be either short names (auto-prefixed with
+ * `public/`) or full FQNs (`scope/name`). MCP fixture keys MUST be
+ * full MCP-spec FQNs (`<namespace>/<short>`).
  */
 export interface TestCatalogFixtures {
   agents?: Record<string, Record<string, string>>;
@@ -23,82 +25,100 @@ export interface TestCatalogFixtures {
   mcps?: Record<string, string>;
 }
 
-export async function makeTestCatalog(fixtures: TestCatalogFixtures = {}): Promise<{
+function toFqn(name: string): string {
+  return name.includes("/") ? name : `public/${name}`;
+}
+
+function ensureMcpMeta(content: string, fqn: string, origin: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return content;
+  const obj = parsed as Record<string, unknown>;
+  const existing =
+    obj._meta !== null && typeof obj._meta === "object" && !Array.isArray(obj._meta)
+      ? (obj._meta as Record<string, unknown>)
+      : {};
+  obj._meta = { ...existing, name: fqn, origin: existing.origin ?? origin };
+  return JSON.stringify(obj);
+}
+
+export async function makeTestCatalog(
+  fixtures: TestCatalogFixtures = {},
+  sourceRootArg?: string,
+): Promise<{
   catalog: CatalogManager;
-  repos: {
-    agents: InMemoryAgentRepository;
-    skills: InMemorySkillRepository;
-    mcps: InMemoryMcpRepository;
-  };
+  catalogDir: string;
+  /**
+   * Test-only helper: write garbage bytes into the SQLite-stored
+   * content for an installed MCP, simulating an out-of-band data
+   * corruption between scan and read. Bypasses the catalog's normal
+   * mutation API (which validates) by issuing a direct SQL UPDATE.
+   */
+  corruptMcp: (specName: string, content: string) => Promise<void>;
 }> {
-  const agentRepo = new InMemoryAgentRepository();
-  const skillRepo = new InMemorySkillRepository();
-  const mcpRepo = new InMemoryMcpRepository();
+  const catalogDir = await mkdtemp(path.join(tmpdir(), "test-catalog-"));
+  const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
 
-  // Pre-seed each repo via its async write surface so the catalog's open()
-  // scan finds the entries. We bypass installFromDir here because in-memory
-  // repos already accept arbitrary trees per-entry.
-  for (const [name, files] of Object.entries(fixtures.agents ?? {})) {
-    for (const [rel, content] of Object.entries(files)) {
-      const buf = Buffer.from(content, "utf8");
-      // The first AGENTS.md write seeds the entry; subsequent paths add files.
-      const file = (
-        agentRepo as unknown as {
-          files: (n: string) => Map<string, Buffer> | null;
-        }
-      ).files(name);
-      if (rel === "AGENTS.md") await agentRepo.write(name, content);
-      else if (file) file.set(rel, buf);
-      else {
-        // Unusual: caller listed sibling files before AGENTS.md. Seed
-        // AGENTS.md as empty placeholder so the entry slot exists, then add.
-        await agentRepo.write(name, "");
-        const seeded = (
-          agentRepo as unknown as {
-            files: (n: string) => Map<string, Buffer> | null;
-          }
-        ).files(name);
-        seeded?.set(rel, buf);
-      }
+  const catalog = await CatalogManager.open({ catalogDir });
+
+  // Materialise each fixture as a tiny on-disk source dir so the
+  // installer can fetch it via `file:` and run its full validation.
+  // Order matters: mcps first (skill/agent deps may reference them),
+  // then skills (agent deps may reference them), then agents.
+  for (const [fqn, content] of Object.entries(fixtures.mcps ?? {})) {
+    if (!fqn.includes("/")) {
+      throw new Error(
+        `MCP fixture "${fqn}" must use spec FQN <namespace>/<short> (e.g. "github/cli")`,
+      );
     }
+    const filePath = path.join(sourceRoot, "mcps", `${fqn.replace("/", "_")}.json`);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const origin = `file:${filePath}`;
+    await writeFile(filePath, ensureMcpMeta(content, fqn, origin), "utf8");
+    await catalog.installMcpFromOrigin(origin, fqn);
   }
-
-  for (const [name, files] of Object.entries(fixtures.skills ?? {})) {
+  for (const [shortOrFqn, files] of Object.entries(fixtures.skills ?? {})) {
+    const fqn = toFqn(shortOrFqn);
+    const [, shortName] = fqn.split("/");
+    const dir = path.join(sourceRoot, "skills", shortName!);
+    await mkdir(dir, { recursive: true });
     for (const [rel, content] of Object.entries(files)) {
-      const buf = Buffer.from(content, "utf8");
-      if (rel === "SKILL.md") await skillRepo.write(name, content);
-      else {
-        const seeded = (
-          skillRepo as unknown as {
-            files: (n: string) => Map<string, Buffer> | null;
-          }
-        ).files(name);
-        if (!seeded) {
-          await skillRepo.write(name, "");
-        }
-        const after = (
-          skillRepo as unknown as {
-            files: (n: string) => Map<string, Buffer> | null;
-          }
-        ).files(name);
-        after?.set(rel, buf);
-      }
+      const full = path.join(dir, ...rel.split("/"));
+      await mkdir(path.dirname(full), { recursive: true });
+      await writeFile(full, content, "utf8");
     }
+    await catalog.installSkillFromOrigin(`file:${dir}`);
+  }
+  for (const [shortOrFqn, files] of Object.entries(fixtures.agents ?? {})) {
+    const fqn = toFqn(shortOrFqn);
+    const [, shortName] = fqn.split("/");
+    const dir = path.join(sourceRoot, "agents", shortName!);
+    await mkdir(dir, { recursive: true });
+    for (const [rel, content] of Object.entries(files)) {
+      const full = path.join(dir, ...rel.split("/"));
+      await mkdir(path.dirname(full), { recursive: true });
+      await writeFile(full, content, "utf8");
+    }
+    await catalog.installAgentFromOrigin(`file:${dir}`);
   }
 
-  for (const [name, content] of Object.entries(fixtures.mcps ?? {})) {
-    await mcpRepo.write(name, content);
-  }
+  await catalog.rescan();
 
-  // CatalogManager.open() needs a catalogDir for its stale-lock cleanup.
-  // Even with in-memory repos that path is created (mkdir/recursive), so
-  // we hand it a tmpdir and forget about it.
-  const tmp = await mkdtemp(path.join(tmpdir(), "test-catalog-"));
-  const catalog = await CatalogManager.open({
-    catalogDir: tmp,
-    repositories: { agents: agentRepo, skills: skillRepo, mcps: mcpRepo },
-  });
-  return { catalog, repos: { agents: agentRepo, skills: skillRepo, mcps: mcpRepo } };
+  const corruptMcp = async (specName: string, content: string): Promise<void> => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(path.join(catalogDir, "catalog.db"));
+    db.prepare("UPDATE mcp SET content = ? WHERE name = ?").run(content, specName);
+    db.close();
+    // No rescan: the catalog's in-memory cache still believes the MCP
+    // exists with valid content (it was valid at scan time). The next
+    // direct read via getMcpContent picks up the corrupted bytes.
+  };
+
+  return { catalog, catalogDir, corruptMcp };
 }
 
 /** Build an `AgentResolveResult` from a catalog plus a name. */
@@ -107,4 +127,4 @@ export function resolveTestAgent(catalog: CatalogManager, name: string): AgentRe
 }
 
 /** Re-export so callers don't need a second import. */
-export type { AgentResolveResult, CatalogEntryFile };
+export type { AgentResolveResult };

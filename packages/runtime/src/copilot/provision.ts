@@ -1,6 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import {
+  type AgentResolveResult,
+  applyFrontmatterPatch,
+  type CatalogManager,
+  stripMcpMeta,
+} from "@emploke/catalog";
+import {
+  type PlaceholderContext,
+  substitutePlaceholdersDeep,
+  UnknownPlaceholderError,
+} from "../placeholders.js";
 import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
@@ -9,19 +19,51 @@ const MCP_CONFIG_PATH = ".mcp.json";
 /**
  * Separator used to flatten scoped names into single directory segments.
  *
- * Copilot scans `.github/skills/` for one-level entries containing
- * `SKILL.md`. A nested layout like `.github/skills/langsensei/weather/`
- * would be misread, so scoped skill names must be flattened.
+ * Copilot CLI scans `.github/skills/` for one-level entries containing
+ * `SKILL.md` and uses each skill's frontmatter `name` field as the
+ * unique identifier in `<available_skills>`. A nested layout like
+ * `.github/skills/langsensei/weather/` would be misread, so scoped skill
+ * names must be flattened to a single segment.
+ *
+ * **Critical (#39)**: the CLI also silently de-duplicates skills with the
+ * same `name` field — when two SKILL.md files share `name: tool-use`, only
+ * the first one in readdir order survives, with no warning. This means the
+ * frontmatter `name` field MUST also be rewritten to the flattened form,
+ * not just the directory. Empirical testing confirmed that names
+ * containing `__` / `.` / `-` are all accepted by the CLI; only `/`,
+ * `:`, `@` are silently rejected.
  *
  * Double-underscore is unambiguous: catalog grammar is kebab-case
  * (`[a-z][a-z0-9]*(-[a-z0-9]+)*`), so `__` cannot appear in a valid name.
+ *
+ * Hook files in `.github/hooks/` get the same prefix for the same reason:
+ * if two skills (different scopes, same short name) both contribute a
+ * `setup.json` hook, the second would overwrite the first inside
+ * `.github/hooks/`. Prefixing with `<scope>__<short>__` guarantees
+ * disjoint filenames; per the official CLI hooks reference the runtime
+ * loads every `*.json` under `.github/hooks/`, so the prefix is harmless.
  */
 const SCOPE_FLATTEN_SEP = "__";
 
-/** Flatten `scope/name` into a single safe path segment. */
+/**
+ * Flatten `scope/name` into a single safe path segment.
+ *
+ * The default scope `public/` (assigned to entries whose frontmatter
+ * omits `scope:`) is **stripped** rather than flattened — `.github/`
+ * paths stay clean for the common case. Real third-party scopes keep
+ * their `<scope>__<name>` form so cross-scope collisions still can't
+ * happen. (Collision between `public/foo` → `foo` and a hypothetical
+ * `<scope>/<name>` flattening to `foo` is impossible because `__`
+ * cannot appear in a valid kebab-case `shortName`.)
+ */
 export function flattenSkillName(name: string): string {
+  if (name.startsWith(DEFAULT_SCOPE_PREFIX)) {
+    return name.slice(DEFAULT_SCOPE_PREFIX.length);
+  }
   return name.replaceAll("/", SCOPE_FLATTEN_SEP);
 }
+
+const DEFAULT_SCOPE_PREFIX = "public/";
 
 /**
  * Bake `agent` into `workdir` so `copilot` can be launched there.
@@ -31,8 +73,13 @@ export function flattenSkillName(name: string): string {
  *   AGENTS.md                       — copied verbatim from the resolved agent
  *   <agent siblings...>             — every other file the agent installed
  *   .mcp.json                       — `{ "mcpServers": { name: <parsed>, … } }`
- *   .github/skills/<name>/…         — each skill's content (excluding hooks/copilot/)
- *   .github/hooks/…                 — merged from each skill's hooks/copilot/
+ *   .github/skills/<flatname>/…     — each skill's content (excluding hooks/copilot/)
+ *   .github/hooks/<flatname>__<file> — merged from each skill's hooks/copilot/
+ *
+ * `placeholders.workspaceDir` and `placeholders.globalDir` are required;
+ * they're substituted into MCP `args` / `env` / nested string fields so
+ * marketplace-shareable specs can refer to per-workspace and per-machine
+ * state without baking absolute host paths into JSON.
  *
  * Note: no `git init` is run. Copilot CLI loads hooks from
  * `<cwd>/.github/hooks/*.json` directly — it does not require a `.git/`
@@ -60,18 +107,21 @@ export function flattenSkillName(name: string): string {
  * the same files), but emploke's session manager always provisions into a
  * freshly-created empty workdir so we never rely on that.
  *
- * When two skills contribute files at the same relative path under
- * `.github/hooks/` or `.github/skills/<name>/`, the later one wins. Skill
- * order is the topological order the catalog produced.
+ * When two skills contribute non-hook files at the same relative path
+ * under `.github/skills/<flatname>/`, the later one wins (impossible
+ * across distinct skills since each gets its own directory; only matters
+ * within a single skill's own tree). Hook files cannot collide across
+ * skills because of the `<flatname>__` filename prefix.
  */
 export async function provisionCopilotWorkdir(
   workdir: string,
   agent: AgentResolveResult,
   catalog: CatalogManager,
+  placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
-  await materializeAgent(workdir, agent.agent.name, catalog);
-  await writeMcpConfig(workdir, agent.mcps, catalog);
+  await materializeAgent(workdir, agent.agent.fqn, catalog);
+  await writeMcpConfig(workdir, agent.mcps, catalog, placeholders);
   await materializeSkills(workdir, agent.skills, catalog);
 }
 
@@ -83,7 +133,8 @@ export async function provisionCopilotWorkdir(
  *
  * Hooks under the agent's own `hooks/copilot/` are merged into
  * `<workdir>/.github/hooks/` (same convention as skills) so an agent can
- * ship its own pretooluse / postresponse hooks.
+ * ship its own pretooluse / postresponse hooks. Filename prefix mirrors
+ * the skill case to keep collision-resistance consistent.
  */
 async function materializeAgent(
   workdir: string,
@@ -92,6 +143,10 @@ async function materializeAgent(
 ): Promise<void> {
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");
   let hooksDestReady = false;
+  // Agents are singleton per workdir, so cross-agent hook-filename
+  // collisions are impossible. Skip the `<flatname>__` prefix that
+  // skills require for collision-resistance — the agent's hook files
+  // land in `.github/hooks/` under their authored basenames.
   for await (const { relPath, content } of catalog.agentEntries(agentName)) {
     const hookRel = stripHooksPrefix(relPath);
     if (hookRel !== null) {
@@ -109,23 +164,54 @@ async function materializeAgent(
 /**
  * For each MCP referenced by the agent's dependency graph, fetch its JSON
  * content from the catalog and merge into a single `<workdir>/.mcp.json`
- * keyed by MCP name. We don't reformat — the user's whitespace inside each
- * MCP's JSON is preserved.
+ * keyed by MCP name. We strip the inline `_meta` block from each MCP body
+ * before writing — Copilot CLI shouldn't see emploke's metadata.
+ *
+ * String fields inside each MCP server config (anywhere in `args`,
+ * `env`, or nested objects) get emploke's placeholder grammar resolved
+ * via {@link substitutePlaceholdersDeep}. This is what lets a marketplace
+ * MCP spec say `"--storage-state ${workspaceDir}/playwright/state.json"`
+ * and end up with a real per-workspace path on disk — no `bash -c` shell
+ * trickery, no `$HOME` env-var reliance, works on Windows.
+ *
+ * A typo in a placeholder (`${workspceDir}`) surfaces as
+ * {@link UnknownPlaceholderError} → wrapped as {@link InvalidMcpJson}
+ * here so the caller treats it the same as any other malformed-spec
+ * failure. The error's `.message` carries the offending MCP name +
+ * placeholder so the dashboard can show the user where to fix.
+ *
+ * Keys in `.mcp.json` use the FULL MCP-spec name (e.g. `azure/mcp`, with
+ * `/`). Copilot CLI accepts `/` in mcpServers keys (verified empirically),
+ * so we don't need to flatten — keeping the spec name verbatim is the
+ * cleaner contract for users who recognize MCPs by their spec FQN.
  */
 async function writeMcpConfig(
   workdir: string,
   mcps: readonly { readonly name: string }[],
   catalog: CatalogManager,
+  placeholders: PlaceholderContext,
 ): Promise<void> {
   if (mcps.length === 0) return;
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
     const raw = await catalog.getMcpContent(mcp.name);
+    let stripped: unknown;
     try {
-      mcpServers[mcp.name] = JSON.parse(raw);
+      stripped = stripMcpMeta(raw, `mcps:${mcp.name}`);
     } catch (cause) {
       throw new InvalidMcpJson(mcp.name, cause as Error);
+    }
+    try {
+      mcpServers[mcp.name] = substitutePlaceholdersDeep(stripped, placeholders, `mcps:${mcp.name}`);
+    } catch (cause) {
+      // UnknownPlaceholderError or similar — treat as a malformed spec.
+      // Wrapping in InvalidMcpJson keeps the route-side error mapping
+      // the same as other MCP parse failures.
+      if (cause instanceof UnknownPlaceholderError) {
+        throw new InvalidMcpJson(mcp.name, cause);
+      }
+      throw cause;
     }
   }
 
@@ -138,11 +224,18 @@ async function writeMcpConfig(
  * For each resolved skill, pull its file stream from the catalog and write
  * into `<workdir>/.github/skills/<flattenedName>/`. Skill-internal
  * `hooks/copilot/` files are diverted to `<workdir>/.github/hooks/`
- * (Copilot's hook discovery only looks there).
+ * (Copilot's hook discovery only looks there) with a per-skill filename
+ * prefix to prevent cross-skill collisions.
+ *
+ * The COPY of `SKILL.md` written to `.github/` has its frontmatter `name`
+ * field rewritten to the flattened form (`<scope>__<short>`). The catalog
+ * source SKILL.md is never modified — frontmatter rewriting happens only
+ * on the projection that lands inside the workdir, so the catalog stays
+ * portable. See {@link SCOPE_FLATTEN_SEP} for why this is required.
  */
 async function materializeSkills(
   workdir: string,
-  skills: readonly { readonly skill: { readonly name: string } }[],
+  skills: readonly { readonly skill: { readonly fqn: string } }[],
   catalog: CatalogManager,
 ): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
@@ -150,16 +243,24 @@ async function materializeSkills(
   let hooksDestReady = false;
 
   for (const s of skills) {
-    const skillDest = path.join(skillsRoot, flattenSkillName(s.skill.name));
+    const flatName = flattenSkillName(s.skill.fqn);
+    const skillDest = path.join(skillsRoot, flatName);
+    const hookPrefix = `${flatName}${SCOPE_FLATTEN_SEP}`;
     await mkdir(skillDest, { recursive: true });
-    for await (const { relPath, content } of catalog.skillEntries(s.skill.name)) {
+    for await (const { relPath, content } of catalog.skillEntries(s.skill.fqn)) {
       const hookRel = stripHooksPrefix(relPath);
       if (hookRel !== null) {
         if (!hooksDestReady) {
           await mkdir(hooksDest, { recursive: true });
           hooksDestReady = true;
         }
-        await writeFileAt(hooksDest, hookRel, content);
+        await writeFileAt(hooksDest, prefixHookPath(hookRel, hookPrefix), content);
+      } else if (relPath === "SKILL.md") {
+        // Rewrite the frontmatter `name` field on the COPY only. Required to
+        // dodge the Copilot CLI's silent same-name dedup. Catalog source is
+        // untouched.
+        const rewritten = applyFrontmatterPatch(content.toString("utf8"), { name: flatName });
+        await writeFileAt(skillDest, relPath, Buffer.from(rewritten, "utf8"));
       } else {
         await writeFileAt(skillDest, relPath, content);
       }
@@ -180,6 +281,17 @@ function stripHooksPrefix(relPath: string): string | null {
   if (!relPath.startsWith(PREFIX)) return null;
   const rest = relPath.slice(PREFIX.length);
   return rest === "" ? null : rest;
+}
+
+/**
+ * Prefix the *filename* (not the path) of `hookRel` with `prefix`. Hooks
+ * may be nested (`subdir/setup.json`) — only the leaf gets the prefix to
+ * keep the directory shape intact in case Copilot ever cares.
+ */
+function prefixHookPath(hookRel: string, prefix: string): string {
+  const idx = hookRel.lastIndexOf("/");
+  if (idx === -1) return `${prefix}${hookRel}`;
+  return `${hookRel.slice(0, idx + 1)}${prefix}${hookRel.slice(idx + 1)}`;
 }
 
 /**

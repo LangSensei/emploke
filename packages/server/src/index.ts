@@ -86,7 +86,14 @@ async function main() {
   });
 
   const runtimeRegistry = new RuntimeRegistry();
-  runtimeRegistry.register(new CopilotRuntime());
+  runtimeRegistry.register(
+    new CopilotRuntime({
+      // Resolve `${globalDir}` placeholders in MCP specs against
+      // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
+      // directory without baking host paths into JSON.
+      globalDir: path.join(paths.home, "shared"),
+    }),
+  );
 
   // Open the workspace manager backed by the FS repository. We do NOT
   // auto-create a default workspace — the dashboard's landing page
@@ -132,7 +139,14 @@ async function main() {
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
-  app.route("/api/workspaces", workspacesRoutes({ manager: workspaces, cache }));
+  app.route(
+    "/api/workspaces",
+    workspacesRoutes({
+      manager: workspaces,
+      cache,
+      defaultWorkspaceParent: path.join(paths.home, "workspaces"),
+    }),
+  );
 
   // Workspace-scoped sessions and catalog. The middleware resolves :id
   // context and stashes both `sessionManager` and `catalog` on c.var; each
