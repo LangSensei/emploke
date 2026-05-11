@@ -1172,6 +1172,21 @@ button {
   opacity: 0.85;
 }
 
+/* Badge row sits above the name and right-aligns the status pill.
+ * Lifting the badge out of the title row was a deliberate fix for
+ * long fqns + long blocked-reason badges colliding on a single line
+ * (e.g. "langsensei/xiaohongshu-research" + "BLOCKED DEPS" used to
+ * push the title onto two visual rows). The trade-off is one extra
+ * row of vertical chrome per card, which we accept because the
+ * card grid is sparse and the title is the primary information. */
+.card-grid__badge-row {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 20px;
+}
+
+/* Legacy single-row title strip — kept for any callers we missed.
+ * New code uses `.card-grid__badge-row` + a bare `.card-grid__name`. */
 .card-grid__top {
   display: flex;
   align-items: center;
@@ -1179,7 +1194,6 @@ button {
 }
 
 .card-grid__name {
-  flex: 1;
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 14px;

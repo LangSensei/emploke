@@ -45,36 +45,50 @@ export function EntryGrid({ items, emptyTitle, emptyHint, onEdit, onRemove }: En
   );
 }
 
-function NeedsLine({ deps }: { deps: readonly MissingDep[] }) {
-  const skills = deps.filter((d) => d.kind === "skill");
-  const mcps = deps.filter((d) => d.kind === "mcp");
-  const fullList = deps.map((d) => `${d.kind} ${d.name}`).join(", ");
+/**
+ * Project a {@link BlockedReason} into a compact multi-reason summary
+ * like `"disabled · missing 2 deps · 1 dep blocked"`. Each reason is
+ * abbreviated to a few words; specifics live in DetailDialog.
+ *
+ * Reasons can co-occur (a user-disabled agent can also have missing
+ * deps), so we deliberately list every populated reason instead of
+ * picking one — picking one would mislead the user (clicking Enable
+ * wouldn't make a missing-dep entry usable).
+ *
+ * Returns `null` when the reason is undefined or empty so callers can
+ * fall back to the description.
+ */
+function blockedSummary(reason: BlockedReason | undefined): string | null {
+  if (reason === undefined) return null;
   const parts: string[] = [];
-  if (skills.length > 0) parts.push(`skill: ${skills.map((d) => d.name).join(", ")}`);
-  if (mcps.length > 0) parts.push(`mcp: ${mcps.map((d) => d.name).join(", ")}`);
-  return (
-    <p className="card-grid__desc card-grid__desc--needs" title={`Missing: ${fullList}`}>
-      <span className="card-grid__needs-icon" aria-hidden="true">
-        ⛔
-      </span>{" "}
-      Needs {parts.join(" · ")}
-    </p>
-  );
+  if (reason.disabledByUser) parts.push("disabled");
+  if (reason.needsPrereqsAck) parts.push("needs ack");
+  if (reason.orphaned) parts.push("orphaned");
+  if (reason.missingDeps && reason.missingDeps.length > 0) {
+    const n = reason.missingDeps.length;
+    parts.push(`missing ${n} dep${n === 1 ? "" : "s"}`);
+  }
+  if (reason.blockedDeps && reason.blockedDeps.length > 0) {
+    const n = reason.blockedDeps.length;
+    parts.push(`${n} dep${n === 1 ? "" : "s"} blocked`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/**
- * Project a {@link BlockedReason} into a single user-facing badge label.
- * Self causes are listed first, then dep-cascade causes — the order
- * matches the dashboard's CTA priority (fix self before fixing deps).
- */
-function blockedBadgeLabel(reason: BlockedReason | undefined): string {
-  if (reason === undefined) return "blocked";
-  if (reason.disabledByUser) return "disabled";
-  if (reason.needsPrereqsAck) return "needs ack";
-  if (reason.orphaned) return "orphaned";
-  if (reason.missingDeps && reason.missingDeps.length > 0) return "missing deps";
-  if (reason.blockedDeps && reason.blockedDeps.length > 0) return "blocked deps";
-  return "blocked";
+/** Tooltip-friendly long form of {@link blockedSummary}. */
+function blockedSummaryTooltip(reason: BlockedReason | undefined): string {
+  if (reason === undefined) return "";
+  const lines: string[] = [];
+  if (reason.disabledByUser) lines.push("Disabled by user — re-enable in DetailDialog");
+  if (reason.needsPrereqsAck) lines.push("Prereqs not acknowledged");
+  if (reason.orphaned) lines.push("Orphaned (no reverse-deps)");
+  if (reason.missingDeps && reason.missingDeps.length > 0) {
+    lines.push(`Missing deps: ${reason.missingDeps.map((d) => `${d.kind} ${d.name}`).join(", ")}`);
+  }
+  if (reason.blockedDeps && reason.blockedDeps.length > 0) {
+    lines.push(`Blocked deps: ${reason.blockedDeps.map((d) => d.fqn).join(", ")}`);
+  }
+  return lines.join("\n");
 }
 
 function EntryCard({
@@ -87,6 +101,7 @@ function EntryCard({
   onRemove: () => void;
 }) {
   const isBlocked = item.status === "blocked";
+  const summary = isBlocked ? blockedSummary(item.blockedReason) : null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
@@ -102,20 +117,37 @@ function EntryCard({
       }}
       title={`Click to edit ${item.name}`}
     >
-      <div className="card-grid__top">
-        <span className="card-grid__name" title={item.name}>
-          {item.name}
-        </span>
+      {/*
+        Header strip: the badge floats on its own row above the name.
+        We used to put both on one row (`.card-grid__top` with flex)
+        but long fqns and longer reason badges (e.g. "blocked deps")
+        kept clipping the name into a second visual line. Lifting the
+        badge to its own right-aligned row lets the name take the full
+        card width and keeps the badge column predictable.
+      */}
+      <div className="card-grid__badge-row">
         {item.status === "ready" ? (
           <span className="badge badge--ready">✓ ready</span>
         ) : (
-          <span className="badge badge--disabled">⛔ {blockedBadgeLabel(item.blockedReason)}</span>
+          <span className="badge badge--disabled" title={blockedSummaryTooltip(item.blockedReason)}>
+            ⛔ blocked
+          </span>
         )}
       </div>
-      {isBlocked && item.missingDeps && item.missingDeps.length > 0 ? (
-        <NeedsLine deps={item.missingDeps} />
-      ) : (
-        <p className="card-grid__desc">{item.description}</p>
+      <div className="card-grid__name" title={item.name}>
+        {item.name}
+      </div>
+      <p className="card-grid__desc">{item.description}</p>
+      {summary !== null && (
+        <p
+          className="card-grid__desc card-grid__desc--needs"
+          title={blockedSummaryTooltip(item.blockedReason)}
+        >
+          <span className="card-grid__needs-icon" aria-hidden="true">
+            ⛔
+          </span>{" "}
+          {summary}
+        </p>
       )}
       <div className="card-grid__footer">
         <div className="card-grid__meta">
