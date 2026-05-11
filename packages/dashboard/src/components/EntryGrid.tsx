@@ -2,6 +2,8 @@ import type { BlockedReason, MissingDep } from "@emploke/catalog";
 import type { ReactNode } from "react";
 import { TrashIcon } from "./Icons";
 
+export type EntryKind = "agent" | "skill" | "mcp";
+
 export interface EntryCardItem {
   name: string;
   description: string;
@@ -14,6 +16,12 @@ export interface EntryCardItem {
 }
 
 interface EntryGridProps {
+  /**
+   * Entity kind shown in this grid. Drives the small uppercase label
+   * + icon in the card header. EntryGrid is single-kind by design;
+   * mcps go through the dedicated McpGrid.
+   */
+  kind: Exclude<EntryKind, "mcp">;
   items: EntryCardItem[];
   emptyTitle: string;
   emptyHint?: ReactNode;
@@ -21,7 +29,14 @@ interface EntryGridProps {
   onRemove: (name: string) => void;
 }
 
-export function EntryGrid({ items, emptyTitle, emptyHint, onEdit, onRemove }: EntryGridProps) {
+export function EntryGrid({
+  kind,
+  items,
+  emptyTitle,
+  emptyHint,
+  onEdit,
+  onRemove,
+}: EntryGridProps) {
   if (items.length === 0) {
     return (
       <div className="empty">
@@ -36,6 +51,7 @@ export function EntryGrid({ items, emptyTitle, emptyHint, onEdit, onRemove }: En
       {items.map((item) => (
         <EntryCard
           key={item.name}
+          kind={kind}
           item={item}
           onEdit={() => onEdit(item.name)}
           onRemove={() => onRemove(item.name)}
@@ -91,21 +107,52 @@ function blockedSummaryTooltip(reason: BlockedReason | undefined): string {
   return lines.join("\n");
 }
 
+/**
+ * Split `<scope>/<short>` into namespace prefix + bold short name.
+ * Names without `/` (legacy / unscoped) render entirely as short.
+ */
+function splitFqn(fqn: string): { namespace: string; short: string } {
+  const slash = fqn.lastIndexOf("/");
+  if (slash < 0) return { namespace: "", short: fqn };
+  return { namespace: fqn.slice(0, slash + 1), short: fqn.slice(slash + 1) };
+}
+
+const KIND_ICON: Record<EntryKind, string> = {
+  agent: "🤖",
+  skill: "🛠",
+  mcp: "🔌",
+};
+
+const KIND_LABEL: Record<EntryKind, string> = {
+  agent: "AGENT",
+  skill: "SKILL",
+  mcp: "MCP",
+};
+
 function EntryCard({
+  kind,
   item,
   onEdit,
   onRemove,
 }: {
+  kind: EntryKind;
   item: EntryCardItem;
   onEdit: () => void;
   onRemove: () => void;
 }) {
   const isBlocked = item.status === "blocked";
   const summary = isBlocked ? blockedSummary(item.blockedReason) : null;
+  const { namespace, short } = splitFqn(item.name);
+  // Card chrome: status drives a left-edge color stripe (via
+  // data-status attr → CSS) instead of a corner badge. The badge that
+  // used to fight the title for horizontal space is now a small dot
+  // pill in the footer; the stripe is what the eye picks up while
+  // scanning the grid.
   return (
     // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
-      className={`card-grid__item${isBlocked ? " card-grid__item--disabled" : ""}`}
+      className="card-grid__item"
+      data-status={item.status}
       role="button"
       tabIndex={0}
       onClick={onEdit}
@@ -117,63 +164,13 @@ function EntryCard({
       }}
       title={`Click to edit ${item.name}`}
     >
-      {/*
-        Header strip: the badge floats on its own row above the name.
-        We used to put both on one row (`.card-grid__top` with flex)
-        but long fqns and longer reason badges (e.g. "blocked deps")
-        kept clipping the name into a second visual line. Lifting the
-        badge to its own right-aligned row lets the name take the full
-        card width and keeps the badge column predictable.
-      */}
-      <div className="card-grid__badge-row">
-        {item.status === "ready" ? (
-          <span className="badge badge--ready">✓ ready</span>
-        ) : (
-          <span className="badge badge--disabled" title={blockedSummaryTooltip(item.blockedReason)}>
-            ⛔ blocked
-          </span>
-        )}
-      </div>
-      <div className="card-grid__name" title={item.name}>
-        {item.name}
-      </div>
-      <p className="card-grid__desc">{item.description}</p>
-      {summary !== null && (
-        <p
-          className="card-grid__desc card-grid__desc--needs"
-          title={blockedSummaryTooltip(item.blockedReason)}
-        >
-          <span className="card-grid__needs-icon" aria-hidden="true">
-            ⛔
-          </span>{" "}
-          {summary}
-        </p>
-      )}
-      <div className="card-grid__footer">
-        <div className="card-grid__meta">
-          <span className="card-grid__version">v{item.version}</span>
-          {(item.skillsCount > 0 || item.mcpsCount > 0) && (
-            <>
-              <span className="card-grid__sep">·</span>
-              {item.skillsCount > 0 && (
-                <span>
-                  {item.skillsCount} skill{item.skillsCount === 1 ? "" : "s"}
-                </span>
-              )}
-              {item.skillsCount > 0 && item.mcpsCount > 0 && (
-                <span className="card-grid__sep">·</span>
-              )}
-              {item.mcpsCount > 0 && (
-                <span>
-                  {item.mcpsCount} MCP{item.mcpsCount === 1 ? "" : "s"}
-                </span>
-              )}
-            </>
-          )}
-        </div>
+      <div className="card-grid__header">
+        <span className="card-grid__kind">
+          <span aria-hidden="true">{KIND_ICON[kind]}</span> {KIND_LABEL[kind]}
+        </span>
         <button
           type="button"
-          className="card-grid__action"
+          className="card-grid__action card-grid__action--icon"
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
@@ -182,8 +179,36 @@ function EntryCard({
           title={`Remove ${item.name}`}
         >
           <TrashIcon />
-          <span>Remove</span>
         </button>
+      </div>
+      <div className="card-grid__title" title={item.name}>
+        {namespace !== "" && <span className="card-grid__namespace">{namespace}</span>}
+        <span className="card-grid__short">{short}</span>
+      </div>
+      <p className="card-grid__desc">{item.description}</p>
+      {summary !== null && (
+        <p className="card-grid__reason" title={blockedSummaryTooltip(item.blockedReason)}>
+          <span aria-hidden="true">⚠</span> Blocked: {summary}
+        </p>
+      )}
+      <div className="card-grid__footer">
+        <span className="card-grid__meta-item">v{item.version}</span>
+        <span className="card-grid__meta-sep" aria-hidden="true" />
+        <span className="card-grid__meta-item">
+          {item.skillsCount} skill{item.skillsCount === 1 ? "" : "s"}
+        </span>
+        <span className="card-grid__meta-sep" aria-hidden="true" />
+        <span className="card-grid__meta-item">
+          {item.mcpsCount} mcp{item.mcpsCount === 1 ? "" : "s"}
+        </span>
+        <span className="card-grid__meta-spacer" />
+        <span
+          className={`card-grid__status card-grid__status--${item.status}`}
+          title={isBlocked ? blockedSummaryTooltip(item.blockedReason) : "All checks passed"}
+        >
+          <span className="card-grid__status-dot" aria-hidden="true" />
+          {item.status === "ready" ? "Ready" : "Blocked"}
+        </span>
       </div>
     </div>
   );

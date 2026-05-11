@@ -287,6 +287,7 @@ export function CatalogPage({
 
           {tab === "agents" && (
             <EntryGrid
+              kind="agent"
               items={filteredAgents.map((a) => ({
                 name: a.agent.fqn,
                 description: a.agent.description,
@@ -310,6 +311,7 @@ export function CatalogPage({
 
           {tab === "skills" && (
             <EntryGrid
+              kind="skill"
               items={filteredSkills.map((s) => ({
                 name: s.skill.fqn,
                 description: s.skill.description,
