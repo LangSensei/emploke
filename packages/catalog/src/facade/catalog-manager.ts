@@ -161,6 +161,32 @@ export interface CatalogPlan {
 }
 
 /**
+ * One row inside {@link CatalogInstallResult.installed}. The base info
+ * (`kind` + `fqn`) is always present; for skill / agent installs we
+ * also surface the post-install `prereqs` text and `prereqsAck` flag
+ * so callers (HTTP clients, dashboard) can prompt the user to set up
+ * and acknowledge prereqs without making a follow-up GET.
+ *
+ * Conventions:
+ *  - `prereqs` is omitted when the entry has no non-empty prereqs.
+ *  - `prereqsAck` is omitted for mcps (mcps have no prereqs concept).
+ *  - For skills/agents without prereqs, `prereqsAck` is `true`
+ *    (nothing to acknowledge).
+ *  - For skills/agents WITH prereqs:
+ *      - fresh install        → `prereqs` set, `prereqsAck = false`
+ *      - sync, text unchanged → `prereqs` set, `prereqsAck = true`  (preserved)
+ *      - sync, text changed   → `prereqs` set, `prereqsAck = false` (reset)
+ *
+ * Frontend rule: `if (entry.prereqs && entry.prereqsAck === false) prompt`.
+ */
+export interface CatalogInstalledEntry {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  readonly prereqs?: string;
+  readonly prereqsAck?: boolean;
+}
+
+/**
  * Per-entity result row inside {@link CatalogInstallResult.failed}.
  * `error` is a wire-safe `{ name, message }` projection — `Error`
  * instances would lose their non-enumerable `name`/`message`/`stack`
@@ -193,7 +219,7 @@ export interface CatalogInstallSkip {
 }
 
 export interface CatalogInstallResult {
-  readonly installed: readonly { kind: "mcp" | "skill" | "agent"; fqn: string }[];
+  readonly installed: readonly CatalogInstalledEntry[];
   readonly skipped: readonly CatalogInstallSkip[];
   readonly failed: readonly CatalogInstallFailure[];
 }
@@ -601,7 +627,7 @@ export class CatalogManager {
   // ─── Install ──────────────────────────────────────────
 
   async install(plan: CatalogPlan): Promise<CatalogInstallResult> {
-    const installed: { kind: "mcp" | "skill" | "agent"; fqn: string }[] = [];
+    const installed: CatalogInstalledEntry[] = [];
     const failed: CatalogInstallFailure[] = [];
     const skipped: CatalogInstallSkip[] = plan.alreadyInstalled.map((n) => ({
       kind: n.kind,
@@ -629,8 +655,8 @@ export class CatalogManager {
         continue;
       }
       try {
-        await this.installNode(planNode);
-        installed.push({ kind: planNode.kind, fqn });
+        const persisted = await this.installNode(planNode);
+        installed.push(toInstalledEntry(planNode.kind, fqn, persisted));
       } catch (err) {
         failed.push({ kind: planNode.kind, fqn, error: errorToWire(err) });
         poisoned.add(origin);
@@ -1323,14 +1349,14 @@ export class CatalogManager {
 
   // ─── Internals: install dispatch ───────────────────────
 
-  private async installNode(planNode: CatalogPlanNode): Promise<void> {
+  private async installNode(planNode: CatalogPlanNode): Promise<Skill | Agent | Mcp> {
     if (planNode.kind === "skill") {
-      await this.skill.install(planNode.node);
-    } else if (planNode.kind === "agent") {
-      await this.agent.install(planNode.node);
-    } else {
-      await this.mcp.install(planNode.node.fqn, planNode.node.origin, planNode.node.content);
+      return this.skill.install(planNode.node);
     }
+    if (planNode.kind === "agent") {
+      return this.agent.install(planNode.node);
+    }
+    return this.mcp.install(planNode.node.fqn, planNode.node.origin, planNode.node.content);
   }
 }
 
@@ -1576,6 +1602,35 @@ function buildAgentEntry(a: Agent, ctx: CascadeContext): AgentEntry {
   const out: AgentEntry = { agent, status: "blocked", blockedReason: reason };
   if (reason.missingDeps !== undefined) {
     return { ...out, missingDeps: reason.missingDeps };
+  }
+  return out;
+}
+
+/**
+ * Project a persisted entity into the lightweight
+ * {@link CatalogInstalledEntry} shape used in install responses.
+ *
+ * For mcps: just kind+fqn (mcps have no prereqs).
+ * For skills/agents: include `prereqs` iff the entry has non-empty
+ * prereqs text, plus the post-install `prereqsAck` flag so callers
+ * can prompt the user when an ack is pending.
+ */
+function toInstalledEntry(
+  kind: "mcp" | "skill" | "agent",
+  fqn: string,
+  entity: Skill | Agent | Mcp,
+): CatalogInstalledEntry {
+  if (kind === "mcp") return { kind, fqn };
+  // Both Skill and Agent expose `prereqs` and `prereqsAck`.
+  const e = entity as Skill | Agent;
+  const prereqs = e.prereqs;
+  const out: CatalogInstalledEntry = {
+    kind,
+    fqn,
+    prereqsAck: e.prereqsAck,
+  };
+  if (prereqs !== undefined && prereqs.trim().length > 0) {
+    return { ...out, prereqs };
   }
   return out;
 }

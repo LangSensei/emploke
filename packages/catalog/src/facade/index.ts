@@ -1,5 +1,6 @@
 export {
   type CatalogConflict,
+  type CatalogInstalledEntry,
   type CatalogInstallFailure,
   type CatalogInstallResult,
   type CatalogInstallSkip,

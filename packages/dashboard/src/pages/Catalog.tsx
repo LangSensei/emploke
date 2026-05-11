@@ -106,13 +106,41 @@ export function CatalogPage({
     return 0;
   }, [tab, skills, mcps]);
 
+  /**
+   * Set after a successful install/sync. Each entry needs the user to
+   * follow its prereqs and click Acknowledge before the entity will run.
+   * Rendered as a sticky alert until the user dismisses it.
+   */
+  const [pendingPrereqs, setPendingPrereqs] = useState<
+    { kind: "skill" | "agent"; fqn: string; prereqs: string }[]
+  >([]);
+
   const doInstall = async (src: InstallSource) => {
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents") await installAgent(src);
-      else if (tab === "skills") await installSkill(src);
-      else await installMcp(src);
+      const result =
+        tab === "agents"
+          ? await installAgent(src)
+          : tab === "skills"
+            ? await installSkill(src)
+            : await installMcp(src);
+      // Surface any newly-installed (or sync-touched) skill/agent that
+      // has prereqs the user hasn't acknowledged yet — frontend
+      // contract spelled out on `CatalogInstalledEntry`.
+      const pending = result.installed.filter(
+        (e): e is typeof e & { prereqs: string } =>
+          (e.kind === "skill" || e.kind === "agent") &&
+          e.prereqs !== undefined &&
+          e.prereqsAck === false,
+      );
+      setPendingPrereqs(
+        pending.map((e) => ({
+          kind: e.kind as "skill" | "agent",
+          fqn: e.fqn,
+          prereqs: e.prereqs,
+        })),
+      );
       setInstallOpen(false);
       onChanged();
     } catch (e) {
@@ -266,6 +294,47 @@ export function CatalogPage({
             </div>
           )}
 
+          {pendingPrereqs.length > 0 && (
+            <div className="alert alert--warn" style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <strong>
+                  {pendingPrereqs.length}{" "}
+                  {pendingPrereqs.length === 1 ? "entry needs" : "entries need"} prereqs setup
+                </strong>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setPendingPrereqs([])}
+                >
+                  Dismiss
+                </button>
+              </div>
+              <p style={{ marginTop: 4, marginBottom: 8, fontSize: 13 }}>
+                Follow the prereqs below, then click each entry's <strong>Acknowledge</strong>{" "}
+                button to mark it ready.
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {pendingPrereqs.map((p) => (
+                  <li key={`${p.kind}:${p.fqn}`} style={{ marginBottom: 6 }}>
+                    <code>{p.fqn}</code> ({p.kind}):
+                    <pre
+                      style={{
+                        margin: "4px 0 0 0",
+                        padding: 8,
+                        background: "var(--surface-alt, #f5f5f5)",
+                        borderRadius: 4,
+                        fontSize: 12,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {p.prereqs}
+                    </pre>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {tab === "agents" && (
             <EntryGrid
               items={filteredAgents.map((a) => ({
@@ -364,7 +433,24 @@ export function CatalogPage({
               <DetailDialog
                 target={{ kind: edit.kind, name: edit.name }}
                 onClose={() => setEdit(null)}
-                onSynced={() => {
+                onSynced={(syncResult) => {
+                  if (syncResult !== undefined) {
+                    const pending = syncResult.installed.filter(
+                      (e): e is typeof e & { prereqs: string } =>
+                        (e.kind === "skill" || e.kind === "agent") &&
+                        e.prereqs !== undefined &&
+                        e.prereqsAck === false,
+                    );
+                    if (pending.length > 0) {
+                      setPendingPrereqs(
+                        pending.map((e) => ({
+                          kind: e.kind as "skill" | "agent",
+                          fqn: e.fqn,
+                          prereqs: e.prereqs,
+                        })),
+                      );
+                    }
+                  }
                   setEdit(null);
                   onChanged();
                 }}

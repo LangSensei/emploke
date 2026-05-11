@@ -146,20 +146,50 @@ export interface InstallSource {
   location: string;
 }
 
-export const installAgent = (src: InstallSource) =>
-  mutate(`${catalogPrefix()}/agents`, jsonInit("POST", src));
+/**
+ * Wire mirror of `@emploke/catalog` ``CatalogInstalledEntry``. Each
+ * row in `installed[]` carries enough info for the dashboard to
+ * prompt the user about pending prereqs without a follow-up GET.
+ */
+export interface InstalledEntry {
+  kind: "skill" | "agent" | "mcp";
+  fqn: string;
+  /** Frontmatter prereqs text. Absent for mcps and for entries with no prereqs. */
+  prereqs?: string;
+  /** Per-installation ack flag. Absent for mcps. False iff prereqs is set and pending ack. */
+  prereqsAck?: boolean;
+}
+
+/** Wire mirror of `@emploke/catalog` ``CatalogInstallResult``. */
+export interface InstallResult {
+  installed: InstalledEntry[];
+  skipped: { kind: "skill" | "agent" | "mcp"; fqn: string; reason: string }[];
+  failed: {
+    kind: "skill" | "agent" | "mcp";
+    fqn: string;
+    error: { name: string; message: string };
+  }[];
+}
+
+/** Wire mirror of `@emploke/catalog` ``CatalogSyncResult``. */
+export interface SyncResult extends InstallResult {
+  orphansFlagged: { kind: "skill" | "mcp"; fqn: string; origin: string }[];
+}
+
+export const installAgent = (src: InstallSource): Promise<InstallResult> =>
+  mutateJson<InstallResult>(`${catalogPrefix()}/agents`, jsonInit("POST", src));
 
 /** See {@link installAgent}. */
-export const installSkill = (src: InstallSource) =>
-  mutate(`${catalogPrefix()}/skills`, jsonInit("POST", src));
+export const installSkill = (src: InstallSource): Promise<InstallResult> =>
+  mutateJson<InstallResult>(`${catalogPrefix()}/skills`, jsonInit("POST", src));
 
 /**
  * Install an MCP. The MCP's spec FQN is recovered from the fetched
  * JSON's `_meta.name` at install time, so callers don't need to
  * supply a name.
  */
-export const installMcp = (src: InstallSource) =>
-  mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
+export const installMcp = (src: InstallSource): Promise<InstallResult> =>
+  mutateJson<InstallResult>(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
 
 /**
  * Resolve manifest returned by `POST /catalog/{kind}/resolve` (install)
@@ -265,14 +295,20 @@ export const resolveMcpSync = (name: string): Promise<ResolveManifest> =>
   });
 
 /** Apply a previously-previewed sync. Server recomputes the plan from current local origin. */
-export const applySkillSync = (fqn: string) =>
-  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync`, { method: "POST" });
+export const applySkillSync = (fqn: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync`, {
+    method: "POST",
+  });
 
-export const applyAgentSync = (fqn: string) =>
-  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync`, { method: "POST" });
+export const applyAgentSync = (fqn: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync`, {
+    method: "POST",
+  });
 
-export const applyMcpSync = (name: string) =>
-  mutate(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync`, { method: "POST" });
+export const applyMcpSync = (name: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync`, {
+    method: "POST",
+  });
 
 /** Acknowledge prereqs: flips `prereqsAck=true` so the entry can run again. */
 export const acknowledgeSkillPrereqs = (fqn: string) =>

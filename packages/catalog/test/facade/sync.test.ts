@@ -338,6 +338,73 @@ describe("install — prereq default", () => {
   });
 });
 
+describe("install / sync result — prereqs surfaced on installed[]", () => {
+  it("installed[] for a new skill with prereqs surfaces prereqs + prereqsAck=false", async () => {
+    fakes.setSkill("file:/abs/tool", {
+      "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
+    });
+    const result = await mgr.installSkill("file:/abs/tool");
+    expect(result.installed).toHaveLength(1);
+    const entry = result.installed[0];
+    expect(entry?.kind).toBe("skill");
+    expect(entry?.fqn).toBe("public/tool");
+    expect(entry?.prereqs).toBe("install foo");
+    expect(entry?.prereqsAck).toBe(false);
+  });
+
+  it("installed[] for a skill without prereqs omits the prereqs field", async () => {
+    fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
+    const result = await mgr.installSkill("file:/abs/tool");
+    const entry = result.installed[0];
+    expect(entry?.prereqs).toBeUndefined();
+    expect(entry?.prereqsAck).toBe(true);
+  });
+
+  it("installed[] for an mcp omits prereqs and prereqsAck", async () => {
+    fakes.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
+    const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x");
+    const entry = result.installed[0];
+    expect(entry?.kind).toBe("mcp");
+    expect(entry?.prereqs).toBeUndefined();
+    expect(entry?.prereqsAck).toBeUndefined();
+  });
+
+  it("sync re-ack: changing prereqs text resets prereqsAck and surfaces it on installed[]", async () => {
+    fakes.setSkill("file:/abs/tool", {
+      "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
+    });
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
+
+    fakes.setSkill("file:/abs/tool", {
+      "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo AND bar'"),
+    });
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    const result = await mgr.applySync(plan);
+    const entry = result.installed.find((e) => e.fqn === "public/tool");
+    expect(entry?.prereqs).toBe("install foo AND bar");
+    expect(entry?.prereqsAck).toBe(false);
+  });
+
+  it("sync with unchanged prereqs text preserves prereqsAck=true on installed[]", async () => {
+    fakes.setSkill("file:/abs/tool", {
+      "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
+    });
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
+
+    // Bump version but keep prereqs identical
+    fakes.setSkill("file:/abs/tool", {
+      "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo'"),
+    });
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    const result = await mgr.applySync(plan);
+    const entry = result.installed.find((e) => e.fqn === "public/tool");
+    expect(entry?.prereqs).toBe("install foo");
+    expect(entry?.prereqsAck).toBe(true);
+  });
+});
+
 describe("recursive cascade computeStatus", () => {
   it("agent is blocked when its skill dep is blocked due to prereqs", async () => {
     fakes.setSkill("file:/abs/tool", {

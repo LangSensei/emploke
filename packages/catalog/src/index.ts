@@ -86,6 +86,7 @@ export * as facade from "./facade/index.js";
 // ─── Top-level facade ───────────────────────────────────
 export {
   type CatalogConflict,
+  type CatalogInstalledEntry,
   type CatalogInstallFailure,
   type CatalogInstallResult,
   type CatalogInstallSkip,

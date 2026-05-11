@@ -51,8 +51,12 @@ import { ResolveTree } from "./ResolveTree";
 export interface DetailDialogProps {
   target: { kind: "skill" | "agent" | "mcp"; name: string };
   onClose: () => void;
-  /** Called after a successful Sync / Acknowledge / Enable / Disable; parent re-fetches catalog list. */
-  onSynced: () => void;
+  /**
+   * Called after a successful Sync / Acknowledge / Enable / Disable;
+   * parent re-fetches catalog list. Sync passes the install result so
+   * the parent can surface entries with pending prereqs in a notice.
+   */
+  onSynced: (syncResult?: import("../api").SyncResult) => void;
 }
 
 interface LoadedDetail {
@@ -141,10 +145,13 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     setSyncStage("applying");
     setError(null);
     try {
-      if (target.kind === "skill") await applySkillSync(target.name);
-      else if (target.kind === "agent") await applyAgentSync(target.name);
-      else await applyMcpSync(target.name);
-      onSynced();
+      const result =
+        target.kind === "skill"
+          ? await applySkillSync(target.name)
+          : target.kind === "agent"
+            ? await applyAgentSync(target.name)
+            : await applyMcpSync(target.name);
+      onSynced(result);
     } catch (e) {
       setError((e as Error).message);
       setSyncStage("preview");
