@@ -1754,19 +1754,6 @@ button {
   margin-right: auto;
 }
 
-/*
- * Inline cluster for footer-left lifecycle actions (e.g. Acknowledge
- * + Disable in DetailDialog). The wrapper itself takes the
- * margin-right: auto so everything inside stays grouped on the left
- * and the primary CTA (Sync, Save) keeps its bottom-right slot.
- */
-.modal__footer-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-right: auto;
-}
-
 /* ─── Form fields (used inside modal) ───────────────────────────── */
 
 .form-field {

@@ -40,9 +40,11 @@ import { ResolveTree } from "./ResolveTree";
  *    (description, origin, version, status, deps, prereqs).
  *  - Source tab: full anchor file contents (SKILL.md / AGENTS.md /
  *    mcp.json), no collapse.
- *  - Footer: Sync from upstream + Close. While the user is in the
- *    sync resolve flow, the footer switches to the standard
- *    Back / Cancel / Apply triad.
+ *  - Footer: Sync from upstream (left, ghost) — primary CTA slot on
+ *    the right is reserved for the most-actionable lifecycle button:
+ *    Acknowledge prereqs (when needed) or Disable/Enable agent. While
+ *    the user is in the sync resolve flow, the footer switches to the
+ *    standard Back / Apply triad.
  *
  * Pure read view: NO disabled inputs, NO toggle between form/source
  * modes, NO Save button. Ergonomics for "I want to inspect what's
@@ -198,6 +200,14 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   // the footer render the buttons even when a different tab is active.
   const showAcknowledge = target.kind !== "mcp" && detail?.blockedReason?.needsPrereqsAck === true;
   const showAgentToggle = target.kind === "agent";
+  // When a lifecycle button (Acknowledge / Disable / Enable) is
+  // visible, Sync demotes to a left-anchored ghost; otherwise Sync
+  // owns the right-side primary CTA slot. Computed once so the
+  // footer JSX stays declarative.
+  const hasLifecycleCta = showAcknowledge || showAgentToggle;
+  const syncButtonClass = hasLifecycleCta
+    ? "btn btn--ghost modal__footer-secondary"
+    : "btn btn--primary";
 
   // Hero header — rich title block. While the user is in the sync
   // flow we keep the same hero (so context never disappears) but mute
@@ -290,64 +300,63 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
         {!inSync && detail && (
           <>
             {/*
-             * Convention across the dashboard: the bottom-right slot
-             * holds the dialog's primary action. For DetailDialog
-             * (immutable entries) that's always Sync from upstream;
-             * EditDialog (mutable entries) puts Save there. Lifecycle
-             * actions (Acknowledge, Disable/Enable) stay on the left
-             * as secondary affordances. Dismiss is handled by the
-             * modal header (×) — a footer Close would just compete
-             * with the primary action.
+             * Footer convention: the bottom-RIGHT slot is the primary
+             * CTA. When a lifecycle button (Acknowledge prereqs,
+             * Disable/Enable agent) is visible it owns that slot —
+             * those actions are more time-sensitive than re-pulling
+             * upstream — and Sync demotes to a ghost on the LEFT.
+             * When no lifecycle button is shown, Sync IS the primary
+             * action and stays on the right.
+             *
+             * Dismiss is handled by the modal header (×); a footer
+             * Close would just compete with whichever CTA is anchored
+             * on the right.
              */}
-            {(showAcknowledge || showAgentToggle) && (
-              <div className="modal__footer-actions">
-                {showAcknowledge && (
-                  // Primary styling — acknowledging is the most
-                  // urgent action when the entry is blocked-by-
-                  // prereqs (it's the only thing standing between the
-                  // user and a usable entry). It still goes on the
-                  // left to keep Sync's position predictable.
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={handleAcknowledge}
-                    disabled={actionBusy}
-                    title="Mark prereqs as acknowledged so this entry can be used."
-                  >
-                    Acknowledge prereqs
-                  </button>
-                )}
-                {showAgentToggle && (
-                  // Always available on agents, regardless of computed
-                  // status — disabling a `ready` agent is the user's
-                  // primary path to pausing it without uninstalling.
-                  // The label flips so the toggle is reversible from
-                  // the same place.
-                  <button
-                    type="button"
-                    className="btn btn--ghost"
-                    onClick={() => handleToggleAgent(detail.disabledByUser ?? false)}
-                    disabled={actionBusy}
-                    title={
-                      detail.disabledByUser
-                        ? "Mark this agent active. Status will recompute."
-                        : "Pause this agent. New dispatches will be refused until re-enabled."
-                    }
-                  >
-                    {detail.disabledByUser ? "Enable agent" : "Disable agent"}
-                  </button>
-                )}
-              </div>
-            )}
             <button
               type="button"
-              className="btn btn--primary"
+              className={syncButtonClass}
               onClick={handlePreviewSync}
               disabled={actionBusy}
               title="Preview the upstream diff before applying"
             >
               Sync from upstream
             </button>
+            {showAgentToggle && (
+              // Always available on agents, regardless of computed
+              // status — disabling a `ready` agent is the user's
+              // primary path to pausing it without uninstalling. The
+              // label flips so the toggle is reversible from the same
+              // place. Demoted to ghost when Acknowledge is also
+              // visible so the structural-fix button stands out.
+              <button
+                type="button"
+                className={showAcknowledge ? "btn btn--ghost" : "btn btn--primary"}
+                onClick={() => handleToggleAgent(detail.disabledByUser ?? false)}
+                disabled={actionBusy}
+                title={
+                  detail.disabledByUser
+                    ? "Mark this agent active. Status will recompute."
+                    : "Pause this agent. New dispatches will be refused until re-enabled."
+                }
+              >
+                {detail.disabledByUser ? "Enable agent" : "Disable agent"}
+              </button>
+            )}
+            {showAcknowledge && (
+              // Right-most primary CTA when shown — acknowledging is
+              // the most urgent action while the entry is blocked-
+              // by-prereqs (it's the only thing standing between the
+              // user and a usable entry).
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={handleAcknowledge}
+                disabled={actionBusy}
+                title="Mark prereqs as acknowledged so this entry can be used."
+              >
+                Acknowledge prereqs
+              </button>
+            )}
           </>
         )}
       </div>
