@@ -56,15 +56,6 @@ export interface McpRepository {
   findAll(): Promise<Mcp[]>;
 
   /**
-   * Update only the per-installation `orphaned` flag without touching
-   * content. No-op if the entry is absent.
-   */
-  setFlags(name: string, flags: { orphaned?: boolean }): Promise<void>;
-
-  /** Bulk variant of {@link setFlags} for `orphaned`; see SkillRepository.setOrphanedBulk. */
-  setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void>;
-
-  /**
    * Release any resources held by the repository (DB handles, file
    * locks). Optional: in-memory implementations have nothing to release.
    * Idempotent — implementations should tolerate being called twice.

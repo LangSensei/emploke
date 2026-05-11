@@ -423,15 +423,23 @@ export class CatalogManager {
   }
 
   /**
-   * Apply a sync plan: run the regular install pass, then mark any
-   * detected orphans, then recompute the orphan flags graph-wide so
-   * any entries that gained reverse-deps clear their orphan flag.
+   * Apply a sync plan: run the regular install pass.
    *
    * For an `identity-changed` plan, atomically deletes the old fqn row
    * before the new install runs (in a single transaction-ish window —
    * SQLite's per-statement durability + the entity-service's atomic
    * `add` give us the practical guarantee that we never end up with
    * two rows sharing one origin).
+   *
+   * Orphan handling: `plan.orphans` is informational — sync no longer
+   * sets a persisted `orphaned` flag on dropped deps. Orphan status is
+   * derived live from the catalog dep graph at projection time
+   * (`projectSkillPojo`, `projectMcpPojo`), so any entry that lost its
+   * last reverse-dep — whether through a sync diff, an explicit
+   * `removeAgent`, or an edit that drops a dep — is automatically
+   * reflected in subsequent reads. The list is still returned in
+   * `orphansFlagged` so the dashboard's sync preview can highlight
+   * "FYI, these went orphan because of this sync".
    */
   async applySync(plan: CatalogPlan): Promise<CatalogSyncResult> {
     if (plan.identityChange !== undefined) {
@@ -443,71 +451,7 @@ export class CatalogManager {
       else await this.mcp.delete(ic.oldFqn);
     }
     const result = await this.install(plan);
-    if (plan.orphans.length > 0) {
-      // Mark the dropped deps orphaned (kept on disk per issue #57's
-      // non-destructive policy — manual delete is the only way out).
-      const skillOrphans = new Map<string, boolean>();
-      const mcpOrphans = new Map<string, boolean>();
-      for (const o of plan.orphans) {
-        if (o.kind === "skill") skillOrphans.set(o.fqn, true);
-        else mcpOrphans.set(o.fqn, true);
-      }
-      if (skillOrphans.size > 0) await this.skill.setOrphanedBulk(skillOrphans);
-      if (mcpOrphans.size > 0) await this.mcp.setOrphanedBulk(mcpOrphans);
-    }
-    // Always recompute the orphan flags after sync — entries that just
-    // gained a reverse-dep should have their orphan flag auto-cleared.
-    await this.recomputeOrphans();
     return { ...result, orphansFlagged: plan.orphans };
-  }
-
-  /**
-   * Recompute the `orphaned` flag for every skill and mcp by walking
-   * all installed agents and skills. Runs after every install / sync
-   * to **auto-clear** stale orphan markers — entries that gained a
-   * reverse-dep since they were marked orphaned.
-   *
-   * Crucially this does NOT mark new orphans. Marking is the explicit
-   * job of `applySync` based on the dep diff. A standalone-installed
-   * skill or mcp legitimately has zero reverse-deps but is not
-   * "orphaned" — the user installed it deliberately and it's still
-   * available for new agents to depend on.
-   *
-   * Pure read-modify-write per row: rows already in the desired state
-   * stay untouched (no write traffic).
-   */
-  async recomputeOrphans(): Promise<void> {
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    const referencedSkillOrigins = new Set<string>();
-    const referencedMcpOrigins = new Set<string>();
-    for (const a of agents) {
-      for (const o of a.dependencies.skills) referencedSkillOrigins.add(o);
-      for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
-    }
-    for (const s of skills) {
-      for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
-      for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
-    }
-    // Only auto-clear: drop the orphan flag from any entry that now
-    // has a reverse-dep. New orphan markers are set only by applySync.
-    const skillUpdates = new Map<string, boolean>();
-    for (const s of skills) {
-      if (s.orphaned && referencedSkillOrigins.has(s.origin)) {
-        skillUpdates.set(s.fqn, false);
-      }
-    }
-    const mcpUpdates = new Map<string, boolean>();
-    for (const m of mcps) {
-      if (m.orphaned && referencedMcpOrigins.has(m.origin)) {
-        mcpUpdates.set(m.name, false);
-      }
-    }
-    if (skillUpdates.size > 0) await this.skill.setOrphanedBulk(skillUpdates);
-    if (mcpUpdates.size > 0) await this.mcp.setOrphanedBulk(mcpUpdates);
   }
 
   /**
@@ -600,7 +544,8 @@ export class CatalogManager {
   /** Acknowledge the prereqs of a skill. Idempotent. */
   async acknowledgeSkillPrereqs(fqn: string): Promise<SkillPojo> {
     const updated = await this.skill.acknowledgePrereqs(fqn);
-    return projectSkillPojo(updated);
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
   }
 
   /** Acknowledge the prereqs of an agent. Idempotent. */
@@ -663,15 +608,6 @@ export class CatalogManager {
       }
     }
 
-    // After any install pass that actually wrote rows, recompute the
-    // graph-wide orphan flags so newly-introduced reverse-deps clear
-    // any stale orphan markers. Sync's `applySync` calls this again
-    // to handle the marking-side; the install path only needs the
-    // clearing-side, but recomputing both is the same cost.
-    if (installed.length > 0) {
-      await this.recomputeOrphans();
-    }
-
     return { installed, skipped, failed };
   }
 
@@ -701,7 +637,8 @@ export class CatalogManager {
     if (installed === null) {
       throw new Error(`installSkillFromOrigin: no entity persisted for ${origin}`);
     }
-    return installed.toJSON() as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(installed, ctx);
   }
 
   async installAgentFromOrigin(origin: string, _opts: InstallEntryOpts = {}): Promise<AgentPojo> {
@@ -718,7 +655,7 @@ export class CatalogManager {
     if (installed === null) {
       throw new Error(`installAgentFromOrigin: no entity persisted for ${origin}`);
     }
-    return installed.toJSON() as unknown as AgentPojo;
+    return projectAgentPojo(installed);
   }
 
   async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
@@ -738,77 +675,39 @@ export class CatalogManager {
   // ─── Reads ────────────────────────────────────────────
 
   async listSkillEntries(): Promise<SkillEntry[]> {
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    const ctx = newCascadeContext(skills, agents, mcps);
-    return skills.map((s) => buildSkillEntry(s, ctx));
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.skillByOrigin.values()].map((s) => buildSkillEntry(s, ctx));
   }
 
   async listAgentEntries(): Promise<AgentEntry[]> {
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    const ctx = newCascadeContext(skills, agents, mcps);
+    const [agents, ctx] = await Promise.all([this.agent.list(), this.loadCascadeContext()]);
     return agents.map((a) => buildAgentEntry(a, ctx));
   }
 
   async listMcps(): Promise<McpMetadata[]> {
-    const mcps = await this.mcp.list();
-    return mcps.map(
-      (m) =>
-        ({
-          ...(m.toJSON() as object),
-          mutable: isOriginMutable(m.origin),
-        }) as unknown as McpMetadata,
-    );
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.mcpByOrigin.values()].map((m) => projectMcpMetadata(m, ctx));
   }
   async listSkills(): Promise<SkillPojo[]> {
-    const skills = await this.skill.list();
-    return skills.map(
-      (s) =>
-        ({
-          ...(s.toJSON() as object),
-          mutable: isOriginMutable(s.origin),
-        }) as unknown as SkillPojo,
-    );
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.skillByOrigin.values()].map((s) => projectSkillPojo(s, ctx));
   }
   async listAgents(): Promise<AgentPojo[]> {
     const agents = await this.agent.list();
-    return agents.map(
-      (a) =>
-        ({
-          ...(a.toJSON() as object),
-          mutable: isOriginMutable(a.origin),
-        }) as unknown as AgentPojo,
-    );
+    return agents.map((a) => projectAgentPojo(a));
   }
 
   async getSkillEntry(fqn: string): Promise<SkillEntry | null> {
     const s = await this.skill.get(fqn);
     if (s === null) return null;
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    const ctx = newCascadeContext(skills, agents, mcps);
+    const ctx = await this.loadCascadeContext();
     return buildSkillEntry(s, ctx);
   }
 
   async getAgentEntry(fqn: string): Promise<AgentEntry | null> {
     const a = await this.agent.get(fqn);
     if (a === null) return null;
-    const [skills, agents, mcps] = await Promise.all([
-      this.skill.list(),
-      this.agent.list(),
-      this.mcp.list(),
-    ]);
-    const ctx = newCascadeContext(skills, agents, mcps);
+    const ctx = await this.loadCascadeContext();
     return buildAgentEntry(a, ctx);
   }
 
@@ -833,46 +732,34 @@ export class CatalogManager {
   async getSkill(fqn: string): Promise<SkillPojo | null> {
     const s = await this.skill.get(fqn);
     if (s === null) return null;
-    return {
-      ...(s.toJSON() as object),
-      mutable: isOriginMutable(s.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(s, ctx);
   }
 
   async getAgent(fqn: string): Promise<AgentPojo | null> {
     const a = await this.agent.get(fqn);
     if (a === null) return null;
-    return {
-      ...(a.toJSON() as object),
-      mutable: isOriginMutable(a.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(a);
   }
 
   async getMcp(name: string): Promise<McpMetadata | null> {
     const m = await this.mcp.get(name);
     if (m === null) return null;
-    return {
-      ...(m.toJSON() as object),
-      mutable: isOriginMutable(m.origin),
-    } as unknown as McpMetadata;
+    const ctx = await this.loadCascadeContext();
+    return projectMcpMetadata(m, ctx);
   }
 
   // ─── Mutations: legacy compat API ──
 
   async updateSkillContent(fqn: string, content: string): Promise<SkillPojo> {
     const updated = await this.skill.updateAnchor(fqn, content);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
   }
 
   async updateAgentContent(fqn: string, content: string): Promise<AgentPojo> {
     const updated = await this.agent.updateAnchor(fqn, content);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(updated);
   }
 
   async updateMcpContent(name: string, content: string): Promise<void> {
@@ -881,18 +768,13 @@ export class CatalogManager {
 
   async updateSkillMetadata(fqn: string, patch: SkillMetadataPatch): Promise<SkillPojo> {
     const updated = await this.skill.updateMetadata(fqn, patch as Record<string, unknown>);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
   }
 
   async updateAgentMetadata(fqn: string, patch: AgentMetadataPatch): Promise<AgentPojo> {
     const updated = await this.agent.updateMetadata(fqn, patch as Record<string, unknown>);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(updated);
   }
 
   async removeSkill(fqn: string): Promise<void> {
@@ -942,8 +824,7 @@ export class CatalogManager {
     const agent = agents.find((a) => a.fqn === fqn);
     if (agent === undefined) throw new AgentNotFoundError(fqn);
 
-    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
+    const ctx = newCascadeContext(skills, agents, mcps);
 
     const visited = new Set<string>();
     const orderedSkills: Skill[] = [];
@@ -951,13 +832,13 @@ export class CatalogManager {
 
     const walk = (skillOrigins: readonly string[], mcpOrigins: readonly string[]): void => {
       for (const o of mcpOrigins) {
-        const m = mcpByOrigin.get(o);
+        const m = ctx.mcpByOrigin.get(o);
         if (m !== undefined) mcpFqns.add(m.name);
       }
       for (const o of skillOrigins) {
         if (visited.has(o)) continue;
         visited.add(o);
-        const skill = skillByOrigin.get(o);
+        const skill = ctx.skillByOrigin.get(o);
         if (skill === undefined) continue;
         walk(skill.dependencies.skills, skill.dependencies.mcps);
         orderedSkills.push(skill);
@@ -967,18 +848,21 @@ export class CatalogManager {
     walk(agent.dependencies.skills, agent.dependencies.mcps);
 
     return {
-      agent: agent.toJSON() as unknown as AgentPojo,
-      skills: orderedSkills.map((s) => ({ skill: s.toJSON() as unknown as SkillPojo })),
+      agent: projectAgentPojo(agent),
+      skills: orderedSkills.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
       mcps: [...mcpFqns].map((name) => ({ name })),
     };
   }
 
   async resolveSkillFromCatalog(fqn: string): Promise<SkillResolveResult> {
-    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
     const root = skills.find((s) => s.fqn === fqn);
     if (root === undefined) throw new SkillNotFoundError(fqn);
-    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
+    const ctx = newCascadeContext(skills, agents, mcps);
     const visited = new Set<string>();
     const ordered: Skill[] = [];
     const mcpFqns = new Set<string>();
@@ -986,10 +870,10 @@ export class CatalogManager {
     const walk = (origin: string): void => {
       if (visited.has(origin)) return;
       visited.add(origin);
-      const skill = skillByOrigin.get(origin);
+      const skill = ctx.skillByOrigin.get(origin);
       if (skill === undefined) return;
       for (const o of skill.dependencies.mcps) {
-        const m = mcpByOrigin.get(o);
+        const m = ctx.mcpByOrigin.get(o);
         if (m !== undefined) mcpFqns.add(m.name);
       }
       for (const o of skill.dependencies.skills) walk(o);
@@ -998,8 +882,8 @@ export class CatalogManager {
     walk(root.origin);
 
     return {
-      skill: root.toJSON() as unknown as SkillPojo,
-      skills: ordered.map((s) => ({ skill: s.toJSON() as unknown as SkillPojo })),
+      skill: projectSkillPojo(root, ctx),
+      skills: ordered.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
       mcps: [...mcpFqns].map((name) => ({ name })),
     };
   }
@@ -1358,6 +1242,24 @@ export class CatalogManager {
     }
     return this.mcp.install(planNode.node.fqn, planNode.node.origin, planNode.node.content);
   }
+
+  /**
+   * Load every installed entity and bundle them into a {@link
+   * CascadeContext} for status / orphan derivation. Used by every
+   * facade method that needs to project a wire DTO carrying derived
+   * `orphaned`. Three full-list reads (skills, agents, mcps) — at
+   * catalog scale (<100 entries) the cost is negligible and well
+   * below the price of the SQL round-trip we'd need to maintain a
+   * normalised dep table on every write instead.
+   */
+  private async loadCascadeContext(): Promise<CascadeContext> {
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
+    return newCascadeContext(skills, agents, mcps);
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -1440,10 +1342,11 @@ function setMinus(a: ReadonlySet<string>, b: ReadonlySet<string>): Set<string> {
   return out;
 }
 
-function projectSkillPojo(s: Skill): SkillPojo {
+function projectSkillPojo(s: Skill, ctx: CascadeContext): SkillPojo {
   return {
     ...(s.toJSON() as object),
     mutable: isOriginMutable(s.origin),
+    orphaned: !ctx.referencedSkillOrigins.has(s.origin),
   } as unknown as SkillPojo;
 }
 
@@ -1454,11 +1357,24 @@ function projectAgentPojo(a: Agent): AgentPojo {
   } as unknown as AgentPojo;
 }
 
+function projectMcpMetadata(m: Mcp, ctx: CascadeContext): McpMetadata {
+  return {
+    ...(m.toJSON() as object),
+    mutable: isOriginMutable(m.origin),
+    orphaned: !ctx.referencedMcpOrigins.has(m.origin),
+  } as unknown as McpMetadata;
+}
+
 /**
  * Per-list cascade-status context. Built once per `listSkillEntries` /
  * `listAgentEntries` call; the recursive `computeEntry` walks the
  * in-memory dep graph with memoisation, so each entity's status is
  * computed at most once even with extensive cross-references.
+ *
+ * Also carries the reverse-dep index (`referenced{Skill,Mcp}Origins`)
+ * so derived `orphaned` can be projected with a single `Set.has` per
+ * entity at no extra cost — both status and orphan share the same
+ * single in-memory walk.
  */
 interface CascadeContext {
   readonly skillByOrigin: ReadonlyMap<string, Skill>;
@@ -1467,6 +1383,14 @@ interface CascadeContext {
   readonly skillCache: Map<string, ComputedStatus>;
   /** Origins currently being computed — used to defensively short-circuit cycles. */
   readonly inFlight: Set<string>;
+  /**
+   * Set of skill origins referenced by at least one installed agent or
+   * skill. Membership ↔ "has a reverse-dep" ↔ "not orphan". Built
+   * once at ctx-construction time from the agents+skills lists.
+   */
+  readonly referencedSkillOrigins: ReadonlySet<string>;
+  /** Same as {@link referencedSkillOrigins}, but for mcp dep refs. */
+  readonly referencedMcpOrigins: ReadonlySet<string>;
 }
 
 interface ComputedStatus {
@@ -1474,13 +1398,25 @@ interface ComputedStatus {
   readonly reason?: BlockedReason;
 }
 
-function newCascadeContext(skills: Skill[], _agents: Agent[], mcps: Mcp[]): CascadeContext {
+function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): CascadeContext {
+  const referencedSkillOrigins = new Set<string>();
+  const referencedMcpOrigins = new Set<string>();
+  for (const a of agents) {
+    for (const o of a.dependencies.skills) referencedSkillOrigins.add(o);
+    for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
+  }
+  for (const s of skills) {
+    for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
+    for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
+  }
   return {
     skillByOrigin: new Map(skills.map((s) => [s.origin, s] as const)),
     mcpByOrigin: new Map(mcps.map((m) => [m.origin, m] as const)),
     mcpByName: new Map(mcps.map((m) => [m.name, m] as const)),
     skillCache: new Map(),
     inFlight: new Set(),
+    referencedSkillOrigins,
+    referencedMcpOrigins,
   };
 }
 
@@ -1499,7 +1435,10 @@ function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
     {
       prereqs: skill.prereqs,
       prereqsAck: skill.prereqsAck,
-      orphaned: skill.orphaned,
+      // Derived live from the dep graph: a skill with zero reverse-deps
+      // is orphan. No more stale-flag scenarios — the answer is always
+      // a fact about the current catalog state.
+      orphaned: !ctx.referencedSkillOrigins.has(skill.origin),
       disabledByUser: false,
     },
     skill.dependencies,
@@ -1568,12 +1507,13 @@ function computeWithDeps(
     const child = ctx.mcpByOrigin.get(mcpOrigin);
     if (child === undefined) {
       missing.push({ kind: "mcp", name: mcpOrigin });
-      continue;
     }
-    if (child.orphaned) {
-      // mcps have no deps; orphan is the only mcp blocker.
-      blocked.push({ kind: "mcp", fqn: child.name });
-    }
+    // No mcp cascade-block: an mcp that THIS entry depends on is by
+    // definition not orphan (the dep itself is a reverse-dep). The
+    // old stored-flag model could yield a stale "orphan" mcp despite
+    // a live ref; the derived model can't, so the cascade case is
+    // unreachable. Mcps are leaves: missing-dep above is the only
+    // way they contribute to the parent's blockedReason.
   }
   if (missing.length > 0) reason.missingDeps = missing;
   if (blocked.length > 0) reason.blockedDeps = blocked;
@@ -1583,7 +1523,7 @@ function computeWithDeps(
 }
 
 function buildSkillEntry(s: Skill, ctx: CascadeContext): SkillEntry {
-  const skill = projectSkillPojo(s);
+  const skill = projectSkillPojo(s, ctx);
   const computed = computeSkillStatus(s, ctx);
   if (computed.status === "ready") return { skill, status: "ready" };
   const reason = computed.reason as BlockedReason;

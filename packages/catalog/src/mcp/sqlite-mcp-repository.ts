@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { addColumnIfMissing } from "../skill/sqlite-skill-repository.js";
+import { dropColumnIfPresent } from "../skill/sqlite-skill-repository.js";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
@@ -20,14 +20,17 @@ import type { McpRepository } from "./mcp-repository.js";
  *   CREATE TABLE mcp (
  *     name      TEXT PRIMARY KEY,
  *     origin    TEXT NOT NULL,
- *     content   TEXT NOT NULL,
- *     orphaned  INTEGER NOT NULL DEFAULT 0
+ *     content   TEXT NOT NULL
  *   );
  *
  * The `name` column is the catalog FQN (`<namespace>/<short>`); the
  * `origin` column is the install-source URI; `content` is the entity's
- * full bytes (with `_meta` injected by `Mcp.create`); `orphaned` is
- * the per-installation orphan flag. All map 1:1 to the `Mcp` entity.
+ * full bytes (with `_meta` injected by `Mcp.create`). All map 1:1 to
+ * the `Mcp` entity.
+ *
+ * Note: an earlier schema persisted an `orphaned INTEGER` column. That
+ * flag is now derived from the catalog dep graph at projection time;
+ * we drop the column on open via the migration helper (idempotent).
  *
  * Concurrency: opens with `journal_mode=WAL` so concurrent readers
  * don't block writers and vice versa. WAL also gives crash safety
@@ -55,11 +58,12 @@ export class SqliteMcpRepository implements McpRepository {
       CREATE TABLE IF NOT EXISTS mcp (
         name      TEXT PRIMARY KEY NOT NULL,
         origin    TEXT NOT NULL,
-        content   TEXT NOT NULL,
-        orphaned  INTEGER NOT NULL DEFAULT 0
+        content   TEXT NOT NULL
       )
     `);
-    addColumnIfMissing(this.db, "mcp", "orphaned", "INTEGER NOT NULL DEFAULT 0");
+    // Retire the legacy `orphaned` column on existing DBs — orphan
+    // is now derived from the dep graph, not stored. Idempotent.
+    dropColumnIfPresent(this.db, "mcp", "orphaned");
   }
 
   /** Close the database. Idempotent. */
@@ -74,29 +78,28 @@ export class SqliteMcpRepository implements McpRepository {
     // then calls `add`); the repo just stores what it's given.
     this.db
       .prepare(
-        `INSERT INTO mcp (name, origin, content, orphaned) VALUES (?, ?, ?, ?)
+        `INSERT INTO mcp (name, origin, content) VALUES (?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            origin = excluded.origin,
-           content = excluded.content,
-           orphaned = excluded.orphaned`,
+           content = excluded.content`,
       )
-      .run(mcp.name, mcp.origin, mcp.content, mcp.orphaned ? 1 : 0);
+      .run(mcp.name, mcp.origin, mcp.content);
   }
 
   async findByName(name: string): Promise<Mcp | null> {
-    const row = this.db
-      .prepare("SELECT origin, content, orphaned FROM mcp WHERE name = ?")
-      .get(name) as { origin: string; content: string; orphaned: number } | undefined;
+    const row = this.db.prepare("SELECT origin, content FROM mcp WHERE name = ?").get(name) as
+      | { origin: string; content: string }
+      | undefined;
     if (row === undefined) return null;
-    return Mcp.fromStored(name, row.origin, row.content, row.orphaned !== 0);
+    return Mcp.fromStored(name, row.origin, row.content);
   }
 
   async findByOrigin(origin: string): Promise<Mcp | null> {
     const row = this.db
-      .prepare("SELECT name, content, orphaned FROM mcp WHERE origin = ? LIMIT 1")
-      .get(origin) as { name: string; content: string; orphaned: number } | undefined;
+      .prepare("SELECT name, content FROM mcp WHERE origin = ? LIMIT 1")
+      .get(origin) as { name: string; content: string } | undefined;
     if (row === undefined) return null;
-    return Mcp.fromStored(row.name, origin, row.content, row.orphaned !== 0);
+    return Mcp.fromStored(row.name, origin, row.content);
   }
 
   async delete(name: string): Promise<void> {
@@ -104,13 +107,15 @@ export class SqliteMcpRepository implements McpRepository {
   }
 
   async findAll(): Promise<Mcp[]> {
-    const rows = this.db
-      .prepare("SELECT name, origin, content, orphaned FROM mcp ORDER BY name")
-      .all() as { name: string; origin: string; content: string; orphaned: number }[];
+    const rows = this.db.prepare("SELECT name, origin, content FROM mcp ORDER BY name").all() as {
+      name: string;
+      origin: string;
+      content: string;
+    }[];
     const out: Mcp[] = [];
     for (const row of rows) {
       try {
-        out.push(Mcp.fromStored(row.name, row.origin, row.content, row.orphaned !== 0));
+        out.push(Mcp.fromStored(row.name, row.origin, row.content));
       } catch (cause) {
         // Name failed validation (legacy import, manual edit). Skip
         // and surface a structured warning so operators can spot a
@@ -124,25 +129,5 @@ export class SqliteMcpRepository implements McpRepository {
       }
     }
     return out;
-  }
-
-  async setFlags(name: string, flags: { orphaned?: boolean }): Promise<void> {
-    if (flags.orphaned === undefined) return;
-    this.db.prepare("UPDATE mcp SET orphaned = ? WHERE name = ?").run(flags.orphaned ? 1 : 0, name);
-  }
-
-  async setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void> {
-    if (updates.size === 0) return;
-    const stmt = this.db.prepare("UPDATE mcp SET orphaned = ? WHERE name = ?");
-    this.db.exec("BEGIN");
-    try {
-      for (const [name, orphaned] of updates) {
-        stmt.run(orphaned ? 1 : 0, name);
-      }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
   }
 }

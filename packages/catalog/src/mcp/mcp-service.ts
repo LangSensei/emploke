@@ -60,19 +60,16 @@ export class McpService {
    *      normalisation), throw {@link McpOriginConflictError}
    *   3. atomically persist via `repo.add`
    *
-   * The orphan flag is preserved across re-installs (the catalog
-   * facade's post-install orphan recompute pass will fix it up).
-   *
-   * Returns the persisted entity.
+   * Re-install over an existing entry with the same name overwrites
+   * the row's content/origin atomically. There's no flag to preserve
+   * — orphan status is derived from the catalog dep graph at
+   * projection time, not stored on the row.
    */
   async install(name: string, origin: string, rawContent: string): Promise<Mcp> {
-    let entity = Mcp.create(name, origin, rawContent);
+    const entity = Mcp.create(name, origin, rawContent);
     const existing = await this.repo.findByName(entity.name);
     if (existing && !sameOrigin(existing.origin, entity.origin)) {
       throw new McpOriginConflictError(entity.name, existing.origin, entity.origin);
-    }
-    if (existing) {
-      entity = entity.withState({ orphaned: existing.orphaned });
     }
     await this.repo.add(entity);
     return entity;
@@ -145,14 +142,6 @@ export class McpService {
 
   async has(name: string): Promise<boolean> {
     return (await this.repo.findByName(name)) !== null;
-  }
-
-  async setFlags(name: string, flags: { orphaned?: boolean }): Promise<void> {
-    await this.repo.setFlags(name, flags);
-  }
-
-  async setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void> {
-    await this.repo.setOrphanedBulk(updates);
   }
 
   /** Release the underlying repository's resources. Idempotent. */

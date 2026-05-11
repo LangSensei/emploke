@@ -60,13 +60,17 @@ function mountApp() {
 
 /**
  * Write a SKILL.md fixture under `<scratch>/fixtures/<name>/SKILL.md`.
- * Returns the file:// origin URL the install endpoint expects.
+ * Returns the file:// origin URL the install endpoint expects, with
+ * forward-slash separators so the same string can be embedded
+ * verbatim into another fixture's `dependencies` ref (Windows
+ * `path.join` returns backslashes, which the file-URI parser rejects
+ * when it sees them downstream).
  */
 async function writeSkillFixture(name: string, body: string): Promise<string> {
   const dir = path.join(scratch, "fixtures", name);
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, "SKILL.md"), body, "utf8");
-  return `file:${dir}`;
+  return `file:${dir.replaceAll("\\", "/")}`;
 }
 
 const SKILL_MD = (name: string, version = "1.0.0", extra = "") => `---
@@ -109,25 +113,36 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
 
   it("POST /catalog/skills/:fqn/acknowledge-prereqs flips prereqsAck", async () => {
     const ws = await ensureWorkspace("alpha");
-    const origin = await writeSkillFixture(
+    const toolOrigin = await writeSkillFixture(
       "tool",
       SKILL_MD("tool", "1.0.0", "prereqs: 'do something'"),
     );
+    // Install a PARENT skill that depends on the tool skill so the
+    // tool has a reverse-dep — without this it would be orphaned
+    // (zero refs in the catalog) and stay blocked even after ack.
+    // Orphan is now derived live from the dep graph rather than
+    // stored on the row, so any standalone-installed entry is
+    // by definition orphan; an ack alone can't make it ready.
+    const parentOrigin = await writeSkillFixture(
+      "parent",
+      SKILL_MD("parent", "1.0.0", `dependencies:\n  skills:\n    - "${toolOrigin}"`),
+    );
     const app = mountApp();
-
-    await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
+    const installRes = await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ provider: "file", location: parentOrigin.slice("file:".length) }),
     });
+    expect(installRes.status).toBe(201);
 
-    // Before ack: prereqsAck=false, status=blocked
+    // Before ack: prereqsAck=false, status=blocked (needsPrereqsAck).
     const before = await app.request(
       `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}`,
     );
     const beforeBody = (await before.json()) as { skill: Skill; status: string };
     expect(beforeBody.skill.prereqsAck).toBe(false);
     expect(beforeBody.status).toBe("blocked");
+    expect(beforeBody.skill.orphaned).toBe(false);
 
     const ack = await app.request(
       `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/acknowledge-prereqs`,
@@ -189,31 +204,44 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
 
   it("overview counts include orphaned entries after a dropped-dep sync", async () => {
     const ws = await ensureWorkspace("alpha");
-    // Skill that depends on an MCP. Install both via the skill (which
-    // brings the MCP in transitively), then sync after dropping the dep.
+    // Install via an agent that depends on a skill that depends on
+    // an MCP. Agents are roots that are never orphan, so the only
+    // entries that can drop to orphan after the sync are the MCP
+    // (which loses its only ref when the dep is removed) — the skill
+    // itself stays referenced by the agent.
+    //
+    // Without an agent root, every standalone-installed skill /
+    // mcp would also count as orphan in the new derived-orphan model
+    // (zero reverse-deps), inflating the count past what this test
+    // is exercising.
     const mcpDir = path.join(scratch, "fixtures", "mcp-x");
     await mkdir(mcpDir, { recursive: true });
-    // file: URIs use forward slashes regardless of OS — backslashes in
-    // a `file:C:\...` URI fail to parse.
     const mcpUri = `file:${mcpDir.replaceAll("\\", "/")}`;
     await writeFile(
       path.join(mcpDir, "mcp.json"),
       JSON.stringify({ _meta: { name: "vendor/x", origin: mcpUri } }),
       "utf8",
     );
-    const origin = await writeSkillFixture(
+    const toolOrigin = await writeSkillFixture(
       "tool",
       SKILL_MD("tool", "1.0.0", `dependencies:\n  mcps:\n    - "${mcpUri}"`),
     );
+    const agentDir = path.join(scratch, "fixtures", "uses-tool-2");
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(
+      path.join(agentDir, "AGENTS.md"),
+      `---\nname: uses-tool-2\ndescription: x\nversion: 1.0.0\ndependencies:\n  skills:\n    - "${toolOrigin}"\n---\n# Body\n`,
+      "utf8",
+    );
     const app = mountApp();
-    const installRes = await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
+    const installRes = await app.request(`/api/workspaces/${ws.id}/catalog/agents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ provider: "file", location: agentDir }),
     });
     expect(installRes.status).toBe(201);
 
-    // Drop the dep + bump the version, then sync
+    // Drop the dep + bump the version, then sync the inner tool.
     await writeFile(
       path.join(scratch, "fixtures", "tool", "SKILL.md"),
       SKILL_MD("tool", "1.1.0"),

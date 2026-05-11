@@ -177,21 +177,24 @@ export class SkillService {
       throw new SkillOriginConflictError(entity.fqn, existing.origin, entity.origin);
     }
 
-    // Per-installation-flag carry-over rules:
-    //  - prereqsAck:
-    //      - existing entry, prereqs text unchanged → preserve previous ack
-    //      - existing entry, prereqs text changed (added / modified / removed)
-    //        → recompute from scratch (ack iff new prereqs is empty)
-    //      - no existing entry → use the create()-time default
-    //        (ack iff entity has no prereqs)
-    //  - orphaned: preserve previous flag if any; the post-install
-    //    orphan recompute (in the catalog facade) will fix it up.
+    // Per-installation-flag carry-over rule:
+    //   prereqsAck:
+    //     - existing entry, prereqs text unchanged → preserve previous ack
+    //     - existing entry, prereqs text changed (added / modified / removed)
+    //       → recompute from scratch (ack iff new prereqs is empty)
+    //     - no existing entry → use the create()-time default
+    //       (ack iff entity has no prereqs)
+    //
+    // Orphan status was previously preserved here too. It's now
+    // derived from the catalog dep graph at projection time, so
+    // there's no flag to carry over — the new graph gives the
+    // current answer.
     if (existing !== null) {
       const prereqsAck =
         (existing.prereqs ?? "") === (entity.prereqs ?? "")
           ? existing.prereqsAck
           : entity.prereqsAck;
-      entity = entity.withState({ prereqsAck, orphaned: existing.orphaned });
+      entity = entity.withState({ prereqsAck });
     }
 
     await this.repo.add(entity, files);
@@ -288,12 +291,8 @@ export class SkillService {
     return updated;
   }
 
-  async setFlags(fqn: string, flags: { prereqsAck?: boolean; orphaned?: boolean }): Promise<void> {
+  async setFlags(fqn: string, flags: { prereqsAck?: boolean }): Promise<void> {
     await this.repo.setFlags(fqn, flags);
-  }
-
-  async setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void> {
-    await this.repo.setOrphanedBulk(updates);
   }
 
   /** Release the underlying repository's resources. Idempotent. */

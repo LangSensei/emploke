@@ -61,19 +61,24 @@ export class SqliteSkillRepository implements SkillRepository {
         prereqs        TEXT,
         deps_json      TEXT NOT NULL,
         anchor_content TEXT NOT NULL,
-        prereqs_ack    INTEGER NOT NULL DEFAULT 1,
-        orphaned       INTEGER NOT NULL DEFAULT 0
+        prereqs_ack    INTEGER NOT NULL DEFAULT 1
       )
     `);
     this.db.exec("CREATE INDEX IF NOT EXISTS skill_origin ON skill(origin)");
-    // Migrations for tables that pre-date the prereqs_ack / orphaned
-    // columns. `ALTER TABLE … ADD COLUMN` with a constant default
-    // grandfathers existing rows to "ack-ed, not-orphaned" — the sync
-    // path will reset prereqs_ack on entries whose upstream prereqs
-    // text actually changes, and the orphan recompute will set
-    // orphaned correctly on the next install / sync.
+    // Migrations:
+    //  - `prereqs_ack` was added after the initial schema. Pre-1.0 we
+    //    grandfather existing rows to "ack-ed"; the sync path resets
+    //    it to false on entries whose upstream prereqs text changes.
+    //  - `orphaned` USED to be a stored flag, but is now derived from
+    //    the dep graph at projection time. Existing DBs may still have
+    //    the column; SQLite tolerates extra columns on SELECT (we
+    //    explicitly enumerate the ones we care about), so leaving it
+    //    in place is harmless. We drop it best-effort to keep the
+    //    schema clean — `DROP COLUMN` is supported on SQLite ≥ 3.35
+    //    (Node 22 ships ≥ 3.46) and the column is unindexed so the
+    //    drop is cheap.
     addColumnIfMissing(this.db, "skill", "prereqs_ack", "INTEGER NOT NULL DEFAULT 1");
-    addColumnIfMissing(this.db, "skill", "orphaned", "INTEGER NOT NULL DEFAULT 0");
+    dropColumnIfPresent(this.db, "skill", "orphaned");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS skill_file (
         skill_fqn  TEXT NOT NULL REFERENCES skill(fqn) ON DELETE CASCADE,
@@ -95,8 +100,8 @@ export class SqliteSkillRepository implements SkillRepository {
       );
     }
     const upsertSkill = this.db.prepare(
-      `INSERT INTO skill (fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, orphaned)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO skill (fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fqn) DO UPDATE SET
          origin = excluded.origin,
          scope = excluded.scope,
@@ -106,8 +111,7 @@ export class SqliteSkillRepository implements SkillRepository {
          prereqs = excluded.prereqs,
          deps_json = excluded.deps_json,
          anchor_content = excluded.anchor_content,
-         prereqs_ack = excluded.prereqs_ack,
-         orphaned = excluded.orphaned`,
+         prereqs_ack = excluded.prereqs_ack`,
     );
     const deleteFiles = this.db.prepare("DELETE FROM skill_file WHERE skill_fqn = ?");
     const insertFile = this.db.prepare(
@@ -127,7 +131,6 @@ export class SqliteSkillRepository implements SkillRepository {
         JSON.stringify(skill.dependencies),
         skill.anchorContent,
         skill.prereqsAck ? 1 : 0,
-        skill.orphaned ? 1 : 0,
       );
       deleteFiles.run(skill.fqn);
       for (const [relPath, content] of files) {
@@ -143,7 +146,7 @@ export class SqliteSkillRepository implements SkillRepository {
   async findByFqn(fqn: string): Promise<Skill | null> {
     const row = this.db
       .prepare(
-        "SELECT origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, orphaned FROM skill WHERE fqn = ?",
+        "SELECT origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill WHERE fqn = ?",
       )
       .get(fqn) as SkillRow | undefined;
     if (row === undefined) return null;
@@ -153,7 +156,7 @@ export class SqliteSkillRepository implements SkillRepository {
   async findByOrigin(origin: string): Promise<Skill | null> {
     const row = this.db
       .prepare(
-        "SELECT fqn, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, orphaned FROM skill WHERE origin = ? LIMIT 1",
+        "SELECT fqn, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill WHERE origin = ? LIMIT 1",
       )
       .get(origin) as (SkillRow & { fqn: string }) | undefined;
     if (row === undefined) return null;
@@ -168,14 +171,13 @@ export class SqliteSkillRepository implements SkillRepository {
       dependencies: parseDeps(row.deps_json),
       anchorContent: row.anchor_content,
       prereqsAck: row.prereqs_ack !== 0,
-      orphaned: row.orphaned !== 0,
     });
   }
 
   async findAll(): Promise<Skill[]> {
     const rows = this.db
       .prepare(
-        "SELECT fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, orphaned FROM skill ORDER BY fqn",
+        "SELECT fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill ORDER BY fqn",
       )
       .all() as unknown as (SkillRow & { fqn: string })[];
     const out: Skill[] = [];
@@ -193,7 +195,6 @@ export class SqliteSkillRepository implements SkillRepository {
             dependencies: parseDeps(row.deps_json),
             anchorContent: row.anchor_content,
             prereqsAck: row.prereqs_ack !== 0,
-            orphaned: row.orphaned !== 0,
           }),
         );
       } catch (cause) {
@@ -227,35 +228,11 @@ export class SqliteSkillRepository implements SkillRepository {
     }
   }
 
-  async setFlags(fqn: string, flags: { prereqsAck?: boolean; orphaned?: boolean }): Promise<void> {
-    const sets: string[] = [];
-    const args: (number | string)[] = [];
-    if (flags.prereqsAck !== undefined) {
-      sets.push("prereqs_ack = ?");
-      args.push(flags.prereqsAck ? 1 : 0);
-    }
-    if (flags.orphaned !== undefined) {
-      sets.push("orphaned = ?");
-      args.push(flags.orphaned ? 1 : 0);
-    }
-    if (sets.length === 0) return;
-    args.push(fqn);
-    this.db.prepare(`UPDATE skill SET ${sets.join(", ")} WHERE fqn = ?`).run(...args);
-  }
-
-  async setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void> {
-    if (updates.size === 0) return;
-    const stmt = this.db.prepare("UPDATE skill SET orphaned = ? WHERE fqn = ?");
-    this.db.exec("BEGIN");
-    try {
-      for (const [fqn, orphaned] of updates) {
-        stmt.run(orphaned ? 1 : 0, fqn);
-      }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
+  async setFlags(fqn: string, flags: { prereqsAck?: boolean }): Promise<void> {
+    if (flags.prereqsAck === undefined) return;
+    this.db
+      .prepare("UPDATE skill SET prereqs_ack = ? WHERE fqn = ?")
+      .run(flags.prereqsAck ? 1 : 0, fqn);
   }
 }
 
@@ -269,7 +246,6 @@ interface SkillRow {
   deps_json: string;
   anchor_content: string;
   prereqs_ack: number;
-  orphaned: number;
 }
 
 function rowToSkill(fqn: string, row: SkillRow): Skill {
@@ -284,7 +260,6 @@ function rowToSkill(fqn: string, row: SkillRow): Skill {
     dependencies: parseDeps(row.deps_json),
     anchorContent: row.anchor_content,
     prereqsAck: row.prereqs_ack !== 0,
-    orphaned: row.orphaned !== 0,
   });
 }
 
@@ -334,4 +309,21 @@ export function addColumnIfMissing(
   if (cols.length === 0) return;
   if (cols.some((c) => c.name === colName)) return;
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colDef}`);
+}
+
+/**
+ * Drop `colName` from `tableName` iff the column is present. Used to
+ * retire columns whose meaning has moved to derived state (e.g. the
+ * `orphaned` flag, now computed from the dep graph at projection
+ * time). `DROP COLUMN` requires SQLite ≥ 3.35; Node 22 ships ≥ 3.46
+ * so it's available in all our targets.
+ *
+ * No-op if the table doesn't exist or the column is already gone —
+ * idempotent on every run.
+ */
+export function dropColumnIfPresent(db: DatabaseSync, tableName: string, colName: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (cols.length === 0) return;
+  if (!cols.some((c) => c.name === colName)) return;
+  db.exec(`ALTER TABLE ${tableName} DROP COLUMN ${colName}`);
 }

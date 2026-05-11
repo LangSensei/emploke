@@ -28,12 +28,14 @@ import { makeFqn, validateFqn } from "./validate.js";
  * Files: this entity does NOT hold the skill's file tree (siblings of
  * SKILL.md). The repository exposes `streamFiles(fqn)` for that.
  *
- * Per-installation flags (NOT in frontmatter — local opt-ins):
+ * Per-installation flag (NOT in frontmatter — local opt-in):
  *   - `prereqsAck`: user has acknowledged the entry's `prereqs` text
  *     (or the entry has none). Default at fresh install is computed
  *     from `meta.prereqs`: empty / undefined → `true`, else `false`.
- *   - `orphaned`: this entry has zero reverse-deps; system-computed
- *     after every install / sync, never user-controlled.
+ *
+ * Note: orphan-status (zero reverse-deps) is NOT a property of the
+ * entity — it's a derived fact over the full catalog dep graph. The
+ * facade computes it lazily at projection time via the cascade context.
  */
 export class Skill {
   private constructor(
@@ -47,7 +49,6 @@ export class Skill {
     private readonly _dependencies: SkillDependencies,
     private readonly _anchorContent: string,
     private readonly _prereqsAck: boolean,
-    private readonly _orphaned: boolean,
   ) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
@@ -68,7 +69,6 @@ export class Skill {
       normaliseDeps(meta.dependencies),
       rawSkillMd,
       prereqsAck,
-      false,
     );
   }
 
@@ -87,7 +87,6 @@ export class Skill {
     dependencies: SkillDependencies;
     anchorContent: string;
     prereqsAck: boolean;
-    orphaned: boolean;
   }): Skill {
     validateFqn(args.fqn);
     return new Skill(
@@ -101,7 +100,6 @@ export class Skill {
       normaliseDeps(args.dependencies),
       args.anchorContent,
       args.prereqsAck,
-      args.orphaned,
     );
   }
 
@@ -135,9 +133,6 @@ export class Skill {
   }
   get prereqsAck(): boolean {
     return this._prereqsAck;
-  }
-  get orphaned(): boolean {
-    return this._orphaned;
   }
 
   /**
@@ -174,6 +169,10 @@ export class Skill {
    * Plain JSON projection of the entity. JSON.stringify() picks this
    * up automatically — the rich getters live on the prototype and
    * wouldn't otherwise serialise.
+   *
+   * `orphaned` is intentionally NOT projected here; it's a derived
+   * fact over the full catalog dep graph and is added by the facade's
+   * pojo projection helpers, not by the entity in isolation.
    */
   toJSON(): Record<string, unknown> {
     return {
@@ -184,7 +183,6 @@ export class Skill {
       description: this._description,
       version: this._version,
       prereqsAck: this._prereqsAck,
-      orphaned: this._orphaned,
       ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
@@ -206,7 +204,7 @@ export class Skill {
    * scope or shortName, throws — callers must delete + reinstall to
    * change identity.
    *
-   * Per-installation flags (`prereqsAck`, `orphaned`) are preserved.
+   * Per-installation flag `prereqsAck` is preserved.
    */
   withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
@@ -228,7 +226,6 @@ export class Skill {
       normaliseDeps(meta.dependencies),
       rawSkillMd,
       this._prereqsAck,
-      this._orphaned,
     );
   }
 
@@ -236,7 +233,7 @@ export class Skill {
    * Return a new entity with one or more per-installation flags
    * replaced. Identity and frontmatter are preserved.
    */
-  withState(state: { prereqsAck?: boolean; orphaned?: boolean }): Skill {
+  withState(state: { prereqsAck?: boolean }): Skill {
     return new Skill(
       this._fqn,
       this._origin,
@@ -248,7 +245,6 @@ export class Skill {
       this._dependencies,
       this._anchorContent,
       state.prereqsAck ?? this._prereqsAck,
-      state.orphaned ?? this._orphaned,
     );
   }
 }

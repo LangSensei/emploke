@@ -278,6 +278,35 @@ describe("sync resolve — orphan detection", () => {
     const restored = await mgr.getMcp("vendor/x");
     expect(restored?.orphaned).toBe(false);
   });
+
+  it("removing an agent flips its dep skill to orphan (live derivation, no flag write)", async () => {
+    // Regression for the gap where `removeAgent` did not propagate
+    // orphan status to the skills it depended on. Under the new
+    // derived model the answer is computed from the live dep graph
+    // each time a wire DTO is projected, so the right thing happens
+    // automatically — no flag-marking pass needed.
+    fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.0.0") });
+    fakes.setAgent("file:/abs/agent", {
+      "AGENTS.md": AGENT_ANCHOR(
+        "writer",
+        "1.0.0",
+        `dependencies:\n  skills:\n    - "file:/abs/tool"`,
+      ),
+    });
+    await mgr.installAgent("file:/abs/agent");
+
+    // While the agent exists, the tool skill has a reverse-dep and
+    // is not orphan.
+    let tool = await mgr.getSkill("public/tool");
+    expect(tool?.orphaned).toBe(false);
+
+    await mgr.removeAgent("public/writer");
+
+    // Removing the agent leaves the tool with zero reverse-deps —
+    // it should now read as orphan from the very next projection.
+    tool = await mgr.getSkill("public/tool");
+    expect(tool?.orphaned).toBe(true);
+  });
 });
 
 describe("sync resolve — prereq carry-over", () => {
