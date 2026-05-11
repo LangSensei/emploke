@@ -23,4 +23,10 @@ export interface AgentRepository {
   findAll(): Promise<Agent[]>;
   delete(fqn: string): Promise<void>;
   streamFiles(fqn: string): AsyncIterable<AgentFile>;
+  /**
+   * Release any resources held by the repository (DB handles, file
+   * locks). Optional: in-memory implementations have nothing to release.
+   * Idempotent — implementations should tolerate being called twice.
+   */
+  close?(): void;
 }

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { tableHasLegacyShape } from "../skill/sqlite-skill-repository.js";
 import { Agent, type AgentDependencies } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
@@ -9,9 +10,11 @@ import type { AgentFile, AgentRepository } from "./agent-repository.js";
  */
 export class SqliteAgentRepository implements AgentRepository {
   private readonly db: DatabaseSync;
+  private readonly logger: Logger;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts?: { logger?: Logger }) {
     this.db = new DatabaseSync(dbPath);
+    this.logger = opts?.logger ?? silentLogger;
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
@@ -144,8 +147,13 @@ export class SqliteAgentRepository implements AgentRepository {
             anchorContent: row.anchor_content,
           }),
         );
-      } catch {
-        // Skip rows with FQNs that fail validation.
+      } catch (cause) {
+        // Skip rows with FQNs that fail validation. See
+        // SqliteSkillRepository.findAll for rationale.
+        this.logger.warn("catalog/agent: skipping row that failed validation", {
+          fqn: row.fqn ?? null,
+          cause: (cause as Error).message,
+        });
       }
     }
     return out;

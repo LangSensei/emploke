@@ -72,4 +72,11 @@ export interface SkillRepository {
    * not depend on it.
    */
   streamFiles(fqn: string): AsyncIterable<SkillFile>;
+
+  /**
+   * Release any resources held by the repository (DB handles, file
+   * locks). Optional: in-memory implementations have nothing to release.
+   * Idempotent — implementations should tolerate being called twice.
+   */
+  close?(): void;
 }

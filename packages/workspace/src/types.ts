@@ -42,11 +42,13 @@ export interface Workspace {
     readonly agent?: string;
   };
   /**
-   * Absolute filesystem path the agents work under. User-provided at
-   * `init`-time; never re-derived. The conventional sub-paths
-   * (`<workdir>/tasks/<id>/`, `<workdir>/sessions/<id>/`, etc.) are
-   * computed by `workspaceLayout` for downstream consumers — they are
-   * NOT part of the domain type.
+   * Absolute filesystem path the agents work under. Provided at
+   * `init`-time (the HTTP route may default it to
+   * `$EMPLOKE_HOME/workspaces/<id>/` when the caller omits it; the
+   * manager itself always receives a concrete path). Never re-derived
+   * after init. The conventional sub-paths (`<workdir>/tasks/<id>/`,
+   * `<workdir>/sessions/<id>/`, etc.) are computed by `workspaceLayout`
+   * for downstream consumers — they are NOT part of the domain type.
    */
   readonly workdir: string;
 }

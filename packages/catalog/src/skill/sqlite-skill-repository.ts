@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { Skill, type SkillDependencies } from "./skill-entity.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
 
@@ -32,9 +33,11 @@ import type { SkillFile, SkillRepository } from "./skill-repository.js";
  */
 export class SqliteSkillRepository implements SkillRepository {
   private readonly db: DatabaseSync;
+  private readonly logger: Logger;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts?: { logger?: Logger }) {
     this.db = new DatabaseSync(dbPath);
+    this.logger = opts?.logger ?? silentLogger;
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
@@ -175,8 +178,16 @@ export class SqliteSkillRepository implements SkillRepository {
             anchorContent: row.anchor_content,
           }),
         );
-      } catch {
-        // Skip rows with FQNs that fail validation.
+      } catch (cause) {
+        // Skip rows with FQNs that fail validation. Surface a structured
+        // warning so operators can spot a corrupted SQLite catalog
+        // without trawling every dashboard list — the row stays in the
+        // DB (deletion is a separate operation) and is hidden from
+        // listings until the user repairs it.
+        this.logger.warn("catalog/skill: skipping row that failed validation", {
+          fqn: row.fqn ?? null,
+          cause: (cause as Error).message,
+        });
       }
     }
     return out;

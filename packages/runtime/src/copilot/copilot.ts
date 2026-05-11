@@ -7,7 +7,8 @@ import {
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
-import type { LaunchCommand, Runtime, Session, TaskHandle } from "../types.js";
+import type { PlaceholderContext } from "../placeholders.js";
+import type { LaunchCommand, ProvisionContext, Runtime, Session, TaskHandle } from "../types.js";
 import {
   type DispatchCopilotTaskDeps,
   type DispatchCopilotTaskOpts,
@@ -21,6 +22,7 @@ import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
 const DEFAULT_COPILOT_CONFIG_PATH = path.join(homedir(), ".copilot", "config.json");
+const DEFAULT_GLOBAL_DIR = path.join(homedir(), ".emploke", "shared");
 
 export interface CopilotRuntimeConfig {
   /**
@@ -44,6 +46,18 @@ export interface CopilotRuntimeConfig {
    * file (see class jsdoc for the per-mode trust matrix).
    */
   readonly copilotConfigPath?: string;
+  /**
+   * Override the directory exposed to spec authors as `${globalDir}` in
+   * placeholder substitution. Defaults to `~/.emploke/shared`. Server
+   * bootstrap normally derives this from `EMPLOKE_HOME` and passes it
+   * explicitly so the value tracks any `EMPLOKE_HOME` override.
+   *
+   * Per-workspace state should NOT live here — spec authors use
+   * `${workspaceDir}` for that. This dir is for state that is shared
+   * across every workspace + session + task on the machine
+   * (e.g. one playwright login the user wants every project to reuse).
+   */
+  readonly globalDir?: string;
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -128,12 +142,14 @@ export class CopilotRuntime implements Runtime {
 
   private readonly copilotStateDir: string;
   private readonly copilotConfigPath: string;
+  private readonly globalDir: string;
   private readonly randomUUID: () => string;
   private readonly dispatchDeps: Partial<DispatchCopilotTaskDeps>;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
+    this.globalDir = config.globalDir ?? DEFAULT_GLOBAL_DIR;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
     this.dispatchDeps = config.dispatchDeps ?? {};
   }
@@ -142,9 +158,14 @@ export class CopilotRuntime implements Runtime {
     workdir: string,
     agent: AgentResolveResult,
     catalog: CatalogManager,
+    ctx: ProvisionContext,
   ): Promise<{ runtimeSessionId: string }> {
+    const placeholders: PlaceholderContext = {
+      workspaceDir: ctx.workspaceDir,
+      globalDir: this.globalDir,
+    };
     try {
-      await provisionCopilotWorkdir(workdir, agent, catalog);
+      await provisionCopilotWorkdir(workdir, agent, catalog, placeholders);
     } catch (err) {
       throw new RuntimeProvisionFailed(this.kind, workdir, err as Error);
     }
@@ -228,6 +249,7 @@ export class CopilotRuntime implements Runtime {
   async dispatchTask(opts: DispatchCopilotTaskOpts): Promise<TaskHandle> {
     return dispatchCopilotTask(opts, {
       copilotStateDir: this.copilotStateDir,
+      globalDir: this.globalDir,
       randomUUID: this.randomUUID,
       ...this.dispatchDeps,
     });

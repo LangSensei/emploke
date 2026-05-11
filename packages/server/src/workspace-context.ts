@@ -216,7 +216,10 @@ export class WorkspaceContextCache {
     if (!workspace) return null;
 
     const layout = workspaceLayout(workspace.workdir);
-    const catalog = await CatalogManager.open({ catalogDir: layout.catalog });
+    const catalog = await CatalogManager.open({
+      catalogDir: layout.catalog,
+      logger: this.logger,
+    });
 
     const sessions = new SessionManager({
       catalog,
@@ -230,6 +233,7 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
+      workspaceDir: workspace.workdir,
       logger: this.logger,
     });
     // Sweep persisted tasks marked `running` from a previous server lifetime

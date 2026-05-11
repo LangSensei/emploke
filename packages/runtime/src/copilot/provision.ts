@@ -6,6 +6,11 @@ import {
   type CatalogManager,
   stripMcpMeta,
 } from "@emploke/catalog";
+import {
+  type PlaceholderContext,
+  substitutePlaceholdersDeep,
+  UnknownPlaceholderError,
+} from "../placeholders.js";
 import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
@@ -71,6 +76,11 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  *   .github/skills/<flatname>/…     — each skill's content (excluding hooks/copilot/)
  *   .github/hooks/<flatname>__<file> — merged from each skill's hooks/copilot/
  *
+ * `placeholders.workspaceDir` and `placeholders.globalDir` are required;
+ * they're substituted into MCP `args` / `env` / nested string fields so
+ * marketplace-shareable specs can refer to per-workspace and per-machine
+ * state without baking absolute host paths into JSON.
+ *
  * Note: no `git init` is run. Copilot CLI loads hooks from
  * `<cwd>/.github/hooks/*.json` directly — it does not require a `.git/`
  * directory and does not walk up to find a git root (per the official
@@ -107,10 +117,11 @@ export async function provisionCopilotWorkdir(
   workdir: string,
   agent: AgentResolveResult,
   catalog: CatalogManager,
+  placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
   await materializeAgent(workdir, agent.agent.fqn, catalog);
-  await writeMcpConfig(workdir, agent.mcps, catalog);
+  await writeMcpConfig(workdir, agent.mcps, catalog, placeholders);
   await materializeSkills(workdir, agent.skills, catalog);
 }
 
@@ -156,6 +167,19 @@ async function materializeAgent(
  * keyed by MCP name. We strip the inline `_meta` block from each MCP body
  * before writing — Copilot CLI shouldn't see emploke's metadata.
  *
+ * String fields inside each MCP server config (anywhere in `args`,
+ * `env`, or nested objects) get emploke's placeholder grammar resolved
+ * via {@link substitutePlaceholdersDeep}. This is what lets a marketplace
+ * MCP spec say `"--storage-state ${workspaceDir}/playwright/state.json"`
+ * and end up with a real per-workspace path on disk — no `bash -c` shell
+ * trickery, no `$HOME` env-var reliance, works on Windows.
+ *
+ * A typo in a placeholder (`${workspceDir}`) surfaces as
+ * {@link UnknownPlaceholderError} → wrapped as {@link InvalidMcpJson}
+ * here so the caller treats it the same as any other malformed-spec
+ * failure. The error's `.message` carries the offending MCP name +
+ * placeholder so the dashboard can show the user where to fix.
+ *
  * Keys in `.mcp.json` use the FULL MCP-spec name (e.g. `azure/mcp`, with
  * `/`). Copilot CLI accepts `/` in mcpServers keys (verified empirically),
  * so we don't need to flatten — keeping the spec name verbatim is the
@@ -165,17 +189,29 @@ async function writeMcpConfig(
   workdir: string,
   mcps: readonly { readonly name: string }[],
   catalog: CatalogManager,
+  placeholders: PlaceholderContext,
 ): Promise<void> {
   if (mcps.length === 0) return;
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
     const raw = await catalog.getMcpContent(mcp.name);
+    let stripped: unknown;
     try {
-      const stripped = stripMcpMeta(raw, `mcps:${mcp.name}`);
-      mcpServers[mcp.name] = stripped;
+      stripped = stripMcpMeta(raw, `mcps:${mcp.name}`);
     } catch (cause) {
       throw new InvalidMcpJson(mcp.name, cause as Error);
+    }
+    try {
+      mcpServers[mcp.name] = substitutePlaceholdersDeep(stripped, placeholders, `mcps:${mcp.name}`);
+    } catch (cause) {
+      // UnknownPlaceholderError or similar — treat as a malformed spec.
+      // Wrapping in InvalidMcpJson keeps the route-side error mapping
+      // the same as other MCP parse failures.
+      if (cause instanceof UnknownPlaceholderError) {
+        throw new InvalidMcpJson(mcp.name, cause);
+      }
+      throw cause;
     }
   }
 

@@ -226,6 +226,11 @@ export class AgentService {
     if (existing === null) throw new AgentNotFoundError(fqn);
     await this.repo.delete(fqn);
   }
+
+  /** Release the underlying repository's resources. Idempotent. */
+  close(): void {
+    this.repo.close?.();
+  }
 }
 
 function sameOrigin(a: string, b: string): boolean {

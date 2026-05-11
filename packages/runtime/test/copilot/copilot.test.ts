@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+﻿import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -71,10 +71,10 @@ describe("CopilotRuntime", () => {
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       const { agent, catalog } = await buildAgent();
-      const r = await rt.provision(workdir, agent, catalog);
+      const r = await rt.provision(workdir, agent, catalog, { workspaceDir: scratch });
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
-      // No `.git/` is planted — Copilot CLI loads hooks from
+      // No `.git/` is planted â€” Copilot CLI loads hooks from
       // `<cwd>/.github/hooks/*.json` directly, so a git repo is not
       // needed for any runtime feature. See provision.ts docstring.
       expect(await exists(path.join(workdir, ".git"))).toBe(false);
@@ -85,7 +85,7 @@ describe("CopilotRuntime", () => {
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       // Force a provision failure by handing the runtime a fabricated
-      // `AgentResolveResult` whose agent name doesn't exist in the catalog —
+      // `AgentResolveResult` whose agent name doesn't exist in the catalog â€”
       // catalog.agentEntries() will throw NotFound, which provision wraps
       // as RuntimeProvisionFailed.
       const { catalog } = await buildAgent();
@@ -94,16 +94,16 @@ describe("CopilotRuntime", () => {
         skills: [],
         mcps: [],
       };
-      await expect(rt.provision(workdir, broken, catalog)).rejects.toBeInstanceOf(
-        RuntimeProvisionFailed,
-      );
+      await expect(
+        rt.provision(workdir, broken, catalog, { workspaceDir: scratch }),
+      ).rejects.toBeInstanceOf(RuntimeProvisionFailed);
     });
 
     it("does NOT touch the Copilot config file (trust handled by buildLaunch preflight)", async () => {
       const sp = path.join(scratch, "copilot-config.json");
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const { agent, catalog } = await buildAgent();
-      await rt.provision(workdir, agent, catalog);
+      await rt.provision(workdir, agent, catalog, { workspaceDir: scratch });
       expect(await exists(sp)).toBe(false);
     });
   });
@@ -113,7 +113,7 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime();
       // The method was removed in favour of per-launch preflight inside
       // buildLaunch (see class jsdoc: per-mode trust matrix). Verifying
-      // the absence here pins the design choice — anyone re-adding it
+      // the absence here pins the design choice â€” anyone re-adding it
       // should think twice and update both this test and the jsdoc.
       expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
     });
@@ -210,7 +210,7 @@ describe("CopilotRuntime", () => {
     it("is a no-op when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       await rt.deleteState(fakeSession({ runtimeSessionId: null }));
-      // No throw, no fs effect — pass.
+      // No throw, no fs effect â€” pass.
     });
 
     it("removes the copilot state directory for the id", async () => {
@@ -229,7 +229,7 @@ describe("CopilotRuntime", () => {
 
     it("wraps unexpected fs errors in RuntimeStateDeletionFailed", async () => {
       // Simulate by passing a copilotStateDir that points at a non-directory
-      // file path so that path.join → rm hits a weird shape. On many systems
+      // file path so that path.join â†’ rm hits a weird shape. On many systems
       // rm with force:true tolerates this; if it does, this test simply
       // passes the no-op path. Keep as a smoke check that the error class
       // construction is wired correctly.

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
@@ -33,14 +34,16 @@ import type { McpRepository } from "./mcp-repository.js";
  */
 export class SqliteMcpRepository implements McpRepository {
   private readonly db: DatabaseSync;
+  private readonly logger: Logger;
 
   /**
    * Open (and initialise if needed) the SQLite database at `dbPath`.
    * Special path `:memory:` keeps the database in RAM — useful for
    * tests. Pass `dbPath = "/abs/path/to/catalog.db"` for production.
    */
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts?: { logger?: Logger }) {
     this.db = new DatabaseSync(dbPath);
+    this.logger = opts?.logger ?? silentLogger;
     // WAL gives concurrent readers + crash safety. NORMAL sync is the
     // standard WAL companion (FULL is overkill for a local catalog).
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -103,9 +106,16 @@ export class SqliteMcpRepository implements McpRepository {
     for (const row of rows) {
       try {
         out.push(Mcp.fromStored(row.name, row.origin, row.content));
-      } catch {
+      } catch (cause) {
         // Name failed validation (legacy import, manual edit). Skip
-        // silently for now — surface as scan issue later.
+        // and surface a structured warning so operators can spot a
+        // corrupted SQLite catalog without trawling every dashboard
+        // list — the row stays in the DB (deletion is a separate
+        // operation) and is hidden from listings until repaired.
+        this.logger.warn("catalog/mcp: skipping row that failed validation", {
+          name: row.name ?? null,
+          cause: (cause as Error).message,
+        });
       }
     }
     return out;

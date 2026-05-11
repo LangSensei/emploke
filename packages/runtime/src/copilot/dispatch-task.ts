@@ -4,6 +4,7 @@ import { mkdir as nodeMkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { RuntimeDispatchTaskFailed, RuntimeProvisionFailed } from "../errors.js";
+import type { PlaceholderContext } from "../placeholders.js";
 import type { TaskExit, TaskHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
 import { provisionCopilotWorkdir } from "./provision.js";
@@ -44,6 +45,14 @@ export interface DispatchCopilotTaskDeps {
    * write its first event.
    */
   readonly copilotStateDir: string;
+  /**
+   * Absolute path resolved as `${globalDir}` during provision-time
+   * placeholder substitution in MCP specs. Required so non-interactive
+   * task dispatch reaches the same per-machine shared dir as interactive
+   * provision; the copilot runtime threads the value from
+   * `CopilotRuntimeConfig.globalDir`.
+   */
+  readonly globalDir: string;
   /** Path to the `copilot` executable. Defaults to bare `"copilot"` (PATH lookup). */
   readonly copilotBin?: string;
   /** Test seam for id generation. */
@@ -84,6 +93,12 @@ export interface DispatchCopilotTaskOpts {
   readonly agent: AgentResolveResult;
   readonly catalog: CatalogManager;
   readonly prompt: string;
+  /**
+   * Absolute path of the workspace this task lives under. Forwarded to
+   * `provisionCopilotWorkdir` as `${workspaceDir}` for placeholder
+   * substitution in MCP specs.
+   */
+  readonly workspaceDir: string;
 }
 
 /**
@@ -118,8 +133,12 @@ export async function dispatchCopilotTask(
   deps: DispatchCopilotTaskDeps,
 ): Promise<TaskHandle> {
   // Step 1: provision. Distinguishable from spawn failures via error type.
+  const placeholders: PlaceholderContext = {
+    workspaceDir: opts.workspaceDir,
+    globalDir: deps.globalDir,
+  };
   try {
-    await provisionCopilotWorkdir(opts.taskDir, opts.agent, opts.catalog);
+    await provisionCopilotWorkdir(opts.taskDir, opts.agent, opts.catalog, placeholders);
   } catch (cause) {
     throw new RuntimeProvisionFailed("copilot", opts.taskDir, cause as Error);
   }

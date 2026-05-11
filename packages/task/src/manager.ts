@@ -103,6 +103,7 @@ export class TaskManager {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly tasksDir: string;
+  private readonly workspaceDir: string;
   private readonly repository: TaskRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -148,6 +149,7 @@ export class TaskManager {
     this.runtimeRegistry = config.runtimeRegistry;
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
+    this.workspaceDir = path.resolve(config.workspaceDir);
     this.repository = config.repository ?? new FsTaskRepository({ tasksDir: this.tasksDir });
     this.logger = config.logger ?? silentLogger;
     this.now = config.now ?? (() => new Date());
@@ -284,6 +286,7 @@ export class TaskManager {
         agent: resolveResult,
         catalog: this.catalog,
         prompt: instructions,
+        workspaceDir: this.workspaceDir,
       });
     } catch (err) {
       await safeRm(workdir, this.logger);

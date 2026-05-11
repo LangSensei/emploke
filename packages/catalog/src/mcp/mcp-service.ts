@@ -140,6 +140,11 @@ export class McpService {
   async has(name: string): Promise<boolean> {
     return (await this.repo.findByName(name)) !== null;
   }
+
+  /** Release the underlying repository's resources. Idempotent. */
+  close(): void {
+    this.repo.close?.();
+  }
 }
 
 /**

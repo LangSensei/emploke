@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+﻿import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogManager } from "@emploke/catalog";
@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
 import { flattenSkillName, InvalidMcpJson } from "../../src/index.js";
 import { makeTestCatalog, type TestCatalogFixtures } from "./test-catalog.js";
+
+const TEST_PLACEHOLDERS = { workspaceDir: "/test/workspace", globalDir: "/test/global" } as const;
 
 let scratch: string;
 
@@ -34,7 +36,7 @@ const targetDir = (): string => path.join(scratch, "target");
  * ready to pass to `provisionCopilotWorkdir`.
  *
  * `agent.body` defaults to a minimal valid AGENTS.md. `agent.siblings`
- * lets a test stuff sibling files into the agent dir — this is the new
+ * lets a test stuff sibling files into the agent dir â€” this is the new
  * multi-file-agent shape.
  */
 async function setup(opts: {
@@ -52,7 +54,7 @@ async function setup(opts: {
 }): Promise<{ catalog: CatalogManager; agentName: string }> {
   const agentShortName = opts.agent?.name ?? "demo-agent";
   // Pre-create the source root so we know absolute origin URIs in
-  // advance — they're embedded in frontmatter dep refs as bare URI
+  // advance â€” they're embedded in frontmatter dep refs as bare URI
   // strings (the post-rename Phase 2 contract).
   const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -165,18 +167,18 @@ async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
     },
     sourceRoot,
   );
-  // Now corrupt the MCP's bytes — the catalog still believes it
+  // Now corrupt the MCP's bytes â€” the catalog still believes it
   // exists (it was valid at scan time).
   await corruptMcp(specName, "{not-json");
   return { catalog, agentName: `public/${agentShortName}`, mcpName: specName };
 }
 
-describe("provisionCopilotWorkdir — basics", () => {
+describe("provisionCopilotWorkdir â€” basics", () => {
   it("creates the target directory if it does not exist", async () => {
     const t = targetDir();
     expect(await exists(t)).toBe(false);
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(t)).toBe(true);
   });
 
@@ -193,7 +195,7 @@ describe("provisionCopilotWorkdir — basics", () => {
       "",
     ].join("\n");
     const { catalog, agentName } = await setup({ agent: { name: "code-reviewer", body } });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
   });
 
@@ -202,7 +204,7 @@ describe("provisionCopilotWorkdir — basics", () => {
     const configPath = path.join(scratch, "copilot-config.json");
     expect(await exists(configPath)).toBe(false);
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(configPath)).toBe(false);
   });
 
@@ -220,7 +222,7 @@ describe("provisionCopilotWorkdir — basics", () => {
         },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, "prompt.txt"), "utf8")).toBe("extra prompt fragment");
     expect(await readFile(path.join(t, "scripts", "run.sh"), "utf8")).toBe("#!/bin/sh\necho hi\n");
   });
@@ -233,7 +235,7 @@ describe("provisionCopilotWorkdir — basics", () => {
         siblings: { "hooks/copilot/preTool.js": "// agent hook\n" },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, ".github", "hooks", "preTool.js"), "utf8")).toBe(
       "// agent hook\n",
     );
@@ -254,10 +256,10 @@ describe("flattenSkillName", () => {
   });
 });
 
-describe("provisionCopilotWorkdir — path-traversal hardening", () => {
+describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
   it("refuses to write a catalog entry whose relPath escapes the workdir", async () => {
     // Catalog walker rejects symlinks and only yields readdir-segment
-    // names (no `..` possible), so this is defense-in-depth — but a
+    // names (no `..` possible), so this is defense-in-depth â€” but a
     // malicious / corrupted SQLite-backed catalog row could still
     // hand back `relPath: "../escape"`. provision must refuse.
     const t = targetDir();
@@ -276,15 +278,21 @@ describe("provisionCopilotWorkdir — path-traversal hardening", () => {
       },
     };
     await expect(
-      // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogManager surface
-      provisionCopilotWorkdir(t, malicious.resolveAgent("x") as any, malicious as any),
+      provisionCopilotWorkdir(
+        t,
+        // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentResolveResult surface
+        malicious.resolveAgent("x") as any,
+        // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogManager surface
+        malicious as any,
+        TEST_PLACEHOLDERS,
+      ),
     ).rejects.toMatchObject({ message: expect.stringContaining("outside workdir") });
     // No file written outside the workdir.
     expect(await exists(path.join(scratch, "escape.txt"))).toBe(false);
   });
 });
 
-describe("provisionCopilotWorkdir — MCP config", () => {
+describe("provisionCopilotWorkdir â€” MCP config", () => {
   it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers (spec FQN keys, _meta stripped)", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({
@@ -293,12 +301,12 @@ describe("provisionCopilotWorkdir — MCP config", () => {
         "swat/cli": JSON.stringify({ command: "swat" }),
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
     // Phase 2: keys are the FULL MCP-spec FQN with `/` (Copilot CLI
-    // accepts `/` — verified empirically). The `_meta` block is stripped
-    // from each MCP body before writing — Copilot CLI shouldn't see
+    // accepts `/` â€” verified empirically). The `_meta` block is stripped
+    // from each MCP body before writing â€” Copilot CLI shouldn't see
     // emploke's metadata.
     expect(written).toEqual({
       mcpServers: {
@@ -311,7 +319,7 @@ describe("provisionCopilotWorkdir — MCP config", () => {
   it("does not write .mcp.json when there are no MCPs", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(path.join(t, ".mcp.json"))).toBe(false);
   });
 
@@ -319,7 +327,12 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     const t = targetDir();
     const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
     await expect(
-      provisionCopilotWorkdir(t, dirty.catalog.resolveAgent(dirty.agentName), dirty.catalog),
+      provisionCopilotWorkdir(
+        t,
+        dirty.catalog.resolveAgent(dirty.agentName),
+        dirty.catalog,
+        TEST_PLACEHOLDERS,
+      ),
     ).rejects.toBeInstanceOf(InvalidMcpJson);
   });
 
@@ -327,7 +340,12 @@ describe("provisionCopilotWorkdir — MCP config", () => {
     const t = targetDir();
     const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
     try {
-      await provisionCopilotWorkdir(t, dirty.catalog.resolveAgent(dirty.agentName), dirty.catalog);
+      await provisionCopilotWorkdir(
+        t,
+        dirty.catalog.resolveAgent(dirty.agentName),
+        dirty.catalog,
+        TEST_PLACEHOLDERS,
+      );
       expect.fail("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(InvalidMcpJson);
@@ -338,13 +356,13 @@ describe("provisionCopilotWorkdir — MCP config", () => {
   });
 });
 
-describe("provisionCopilotWorkdir — skills copy", () => {
+describe("provisionCopilotWorkdir â€” skills copy", () => {
   it("copies SKILL.md to .github/skills/<name>/SKILL.md", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({
       skills: { foo: { body: "---\nname: foo\ndescription: f\nversion: 0.0.1\n---\n# Foo\n" } },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, ".github/skills/foo/SKILL.md"), "utf8")).toContain(
       "# Foo\n",
     );
@@ -357,7 +375,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
         foo: { extras: { "assets/logo.png": "PNG", "templates/main.tmpl": "TMPL" } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, ".github/skills/foo/assets/logo.png"), "utf8")).toBe("PNG");
     expect(await readFile(path.join(t, ".github/skills/foo/templates/main.tmpl"), "utf8")).toBe(
       "TMPL",
@@ -369,7 +387,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
     const { catalog, agentName } = await setup({
       skills: { foo: { hooks: { "h.sh": "#!/bin/sh\n" } } },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(path.join(t, ".github/skills/foo/hooks"))).toBe(false);
   });
 
@@ -386,7 +404,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
         },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(
       await readFile(path.join(t, ".github/skills/langsensei__weather/SKILL.md"), "utf8"),
     ).toContain("# Weather\n");
@@ -394,7 +412,7 @@ describe("provisionCopilotWorkdir — skills copy", () => {
   });
 });
 
-describe("provisionCopilotWorkdir — hooks composition", () => {
+describe("provisionCopilotWorkdir â€” hooks composition", () => {
   it("merges hooks/copilot/* from each skill into .github/hooks/", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({
@@ -403,7 +421,7 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
         b: { hooks: { "b.sh": "B\n", "shared/cfg.json": '{"x":1}' } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     // Skill hooks are prefixed `<flattenedFqn>__` so two skills sharing a
     // short name can't collide on a hook filename. The implicit `local/`
     // scope is stripped, so `local/a` flattens to `a`.
@@ -417,7 +435,7 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
   it("does not create .github/hooks/ when no skill contributes copilot hooks", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({ skills: { foo: {} } });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(path.join(t, ".github/hooks"))).toBe(false);
   });
 
@@ -428,14 +446,14 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
         // `later` depends on `earlier` so the topological order is
         // [earlier, later] in the resolve result. Hook filenames are
         // prefixed per-skill, so a true cross-skill collision actually
-        // can't happen post-#39 — but if `later` were authored to ship
+        // can't happen post-#39 â€” but if `later` were authored to ship
         // a hook that overrode `earlier`'s contribution, the prefixed
         // names ensure the writer rewrites only its own slot.
         earlier: { hooks: { "shared.sh": "first\n" } },
         later: { deps: { skills: ["earlier"] }, hooks: { "shared.sh": "second\n" } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await readFile(path.join(t, ".github/hooks/earlier__shared.sh"), "utf8")).toBe(
       "first\n",
     );
@@ -443,21 +461,21 @@ describe("provisionCopilotWorkdir — hooks composition", () => {
   });
 });
 
-describe("provisionCopilotWorkdir — workdir prep", () => {
+describe("provisionCopilotWorkdir â€” workdir prep", () => {
   // Pin the contract that we do NOT plant a .git/ directory. Copilot CLI
   // loads hooks from <cwd>/.github/hooks/*.json directly (per the
-  // official hooks reference) — no git repo required. Skipping `git
+  // official hooks reference) â€” no git repo required. Skipping `git
   // init` removes a hard dependency on the host's `git` binary and
   // keeps purge cheap.
   it("does NOT initialise a git repository in the target directory", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
     expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });
 
-describe("provisionCopilotWorkdir — end-to-end shape", () => {
+describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
   it("produces the documented layout for a full agent definition", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({
@@ -471,17 +489,17 @@ describe("provisionCopilotWorkdir — end-to-end shape", () => {
       },
       mcps: { "hello/world": JSON.stringify({ command: "hello" }) },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog);
+    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
 
     expect(await exists(path.join(t, "AGENTS.md"))).toBe(true);
     expect(await exists(path.join(t, "prompt.md"))).toBe(true);
     expect(await exists(path.join(t, ".mcp.json"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/SKILL.md"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/rules.json"))).toBe(true);
-    // dev__lint__post-write.sh — skill hooks ARE prefixed (cross-skill
+    // dev__lint__post-write.sh â€” skill hooks ARE prefixed (cross-skill
     // collision-prevention); see provision.ts SCOPE_FLATTEN_SEP doc.
     expect(await exists(path.join(t, ".github/hooks/dev__lint__post-write.sh"))).toBe(true);
-    // No .git/ — see the workdir-prep describe block above.
+    // No .git/ â€” see the workdir-prep describe block above.
     expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });

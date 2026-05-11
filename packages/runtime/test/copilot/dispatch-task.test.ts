@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+﻿import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -91,9 +91,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "hello" },
+      { taskDir, agent, catalog, prompt: "hello", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -107,9 +108,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "hi" },
+      { taskDir, agent, catalog, prompt: "hi", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -124,9 +126,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "do thing" },
+      { taskDir, agent, catalog, prompt: "do thing", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -155,9 +158,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         copilotBin: "C:\\fake\\copilot.exe",
@@ -170,9 +174,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -186,9 +191,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -202,9 +208,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -218,9 +225,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -234,9 +242,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -253,9 +262,10 @@ describe("dispatchCopilotTask", () => {
       throw new Error("ESRCH");
     };
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -273,9 +283,10 @@ describe("dispatchCopilotTask", () => {
     }) as SpawnFn;
     await expect(
       dispatchCopilotTask(
-        { taskDir, agent, catalog, prompt: "x" },
+        { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
+          globalDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn,
         },
@@ -298,9 +309,10 @@ describe("dispatchCopilotTask", () => {
       return child as unknown as ReturnType<SpawnFn>;
     }) as SpawnFn;
     const promise = dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn,
         spawnTimeoutMs: 50,
@@ -326,9 +338,17 @@ describe("dispatchCopilotTask", () => {
     const fake = makeFakeSpawn();
     await expect(
       dispatchCopilotTask(
-        { taskDir, agent: badAgent, prompt: "x" },
+        {
+          taskDir,
+          agent: badAgent,
+          // biome-ignore lint/suspicious/noExplicitAny: this test exercises provision's badAgent path; catalog is unused on that codepath
+          catalog: undefined as any,
+          prompt: "x",
+          workspaceDir: scratch,
+        },
         {
           copilotStateDir: stateDir,
+          globalDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
@@ -344,9 +364,10 @@ describe("dispatchCopilotTask", () => {
     }) as unknown as typeof mkdir;
     await expect(
       dispatchCopilotTask(
-        { taskDir, agent, catalog, prompt: "x" },
+        { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
+          globalDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
           mkdir: failingMkdir,
@@ -359,9 +380,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -379,16 +401,17 @@ describe("dispatchCopilotTask", () => {
 
   it("mirrors child stdout to <taskDir>/stdout.log", async () => {
     // Stdout is piped (not 'ignore') so the child's `process.stdout`
-    // flush has a real file handle on Windows, where 'ignore' →
-    // NUL → FlushFileBuffers fails with "Incorrect function." We
+    // flush has a real file handle on Windows, where 'ignore' â†’
+    // NUL â†’ FlushFileBuffers fails with "Incorrect function." We
     // assert both that the file is created and that pushed bytes
     // land in it.
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -417,9 +440,10 @@ describe("dispatchCopilotTask", () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(
-      { taskDir, agent, catalog, prompt: "x" },
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
+        globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         resolveBin: NOOP_RESOLVE_BIN,
@@ -434,7 +458,7 @@ describe("dispatchCopilotTask", () => {
     fake.child.emit("error", new Error("late child error"));
 
     // The synthetic child-side error should still settle the exit
-    // promise (per the JSDoc — we synthesise a {code:null, signal:null}
+    // promise (per the JSDoc â€” we synthesise a {code:null, signal:null}
     // exit so the manager doesn't hang).
     const result = await handle.exit;
     expect(result).toEqual({ code: null, signal: null });

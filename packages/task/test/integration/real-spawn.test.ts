@@ -142,6 +142,7 @@ const makeManager = (catalog: CatalogManager, runtime: Runtime): TaskManager => 
     catalog,
     runtimeRegistry: reg,
     tasksDir,
+    workspaceDir: tasksDir,
   });
 };
 

@@ -1,4 +1,23 @@
 import {
+  AgentFrontmatterError,
+  AgentNameInvalidError,
+  AgentNotFoundError,
+  AgentOriginConflictError,
+  AgentPlanStaleError,
+  HasDependentsError,
+  ImmutableOriginError,
+  McpInvalidJsonError,
+  McpNameInvalidError,
+  McpNotFoundError,
+  McpOriginConflictError,
+  OriginParseError,
+  PlanStaleError,
+  SkillFrontmatterError,
+  SkillNameInvalidError,
+  SkillNotFoundError,
+  SkillOriginConflictError,
+} from "@emploke/catalog";
+import {
   RuntimeDispatchTaskFailed,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
@@ -12,30 +31,26 @@ import { errorBody, statusForCatalogError } from "../src/routes/_shared.js";
 // other error (generic Error, FS errors, third-party library errors)
 // flattens to the opaque "internal error" so host paths and stack
 // traces never reach the dashboard.
-
-class FakeNotFound extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NotFound";
-  }
-}
-
-class FakeNameInvalid extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NameInvalid";
-  }
-}
+//
+// The `statusForCatalogError` block below MUST instantiate REAL catalog
+// errors (not `new Error(); err.name = "..."`). The catalog's abstract
+// base class sets `this.name = new.target.name`, so an instance carries
+// `.name === "SkillNotFoundError"` not `"NotFound"`. Earlier versions
+// of this suite faked the name and silently passed while production
+// fell through every case to 500 — see #52 review.
 
 describe("errorBody", () => {
   it("exposes message + code for known typed catalog errors", () => {
-    expect(errorBody(new FakeNotFound('skill not found: "foo"'))).toEqual({
-      error: 'skill not found: "foo"',
-      code: "NotFound",
+    const notFound = new SkillNotFoundError("public/foo");
+    expect(errorBody(notFound)).toEqual({
+      error: notFound.message,
+      code: "SkillNotFoundError",
     });
-    expect(errorBody(new FakeNameInvalid("invalid name: bad/.."))).toEqual({
-      error: "invalid name: bad/..",
-      code: "NameInvalid",
+
+    const nameInvalid = new SkillNameInvalidError("bad/name", "must be kebab-case");
+    expect(errorBody(nameInvalid)).toEqual({
+      error: nameInvalid.message,
+      code: "SkillNameInvalidError",
     });
   });
 
@@ -83,16 +98,29 @@ describe("errorBody", () => {
       "NoTerminalFoundError",
       "TerminalSpawnFailedError",
       "UnsupportedPlatformError",
-      // catalog
+      // catalog (real per-entity class names; aliases like
+      // "NotFound"/"NameInvalid"/"FrontmatterError" are intentionally
+      // absent — the catalog never emits instances with those names)
       "CatalogError",
       "CatalogStateError",
       "CycleDetected",
-      "FrontmatterError",
-      "HasDependents",
+      "AgentFrontmatterError",
+      "SkillFrontmatterError",
+      "HasDependentsError",
       "ImmutableOriginError",
+      "McpInvalidJsonError",
+      "McpNameInvalidError",
       "MissingDependencies",
-      "NameInvalid",
-      "NotFound",
+      "SkillNameInvalidError",
+      "AgentNameInvalidError",
+      "SkillNotFoundError",
+      "McpNotFoundError",
+      "SkillOriginConflictError",
+      "AgentOriginConflictError",
+      "McpOriginConflictError",
+      "OriginParseError",
+      "PlanStaleError",
+      "AgentPlanStaleError",
       // workspace
       "RegistryCorruptedError",
       "RegistryError",
@@ -121,18 +149,69 @@ describe("errorBody", () => {
 });
 
 describe("statusForCatalogError", () => {
-  it.each([
-    ["NameInvalid", 400],
-    ["FrontmatterError", 400],
-    ["MissingDependencies", 400],
-    ["CycleDetected", 400],
-    ["NotFound", 404],
-    ["ImmutableOriginError", 405],
-    ["HasDependents", 409],
-  ])("maps %s to %d", (name, status) => {
-    const e = new Error("x");
-    e.name = name;
-    expect(statusForCatalogError(e)).toBe(status);
+  // Real instances only — mapping must work against `err.name` as set by
+  // the catalog's abstract base class (`this.name = new.target.name`).
+  // Tests that fake `err.name` would silently pass while production fell
+  // through every case to 500 — that's exactly the regression this suite
+  // is here to catch.
+  const cases: Array<[label: string, err: Error, status: number]> = [
+    ["SkillNameInvalidError", new SkillNameInvalidError("bad", "must be kebab"), 400],
+    ["AgentNameInvalidError", new AgentNameInvalidError("bad", "must be kebab"), 400],
+    ["McpNameInvalidError", new McpNameInvalidError("bad", "must be kebab"), 400],
+    ["SkillFrontmatterError", new SkillFrontmatterError("source", "missing version"), 400],
+    ["AgentFrontmatterError", new AgentFrontmatterError("source", "missing version"), 400],
+    ["McpInvalidJsonError", new McpInvalidJsonError("source", "trailing comma"), 400],
+    ["OriginParseError", new OriginParseError("garbage://x", "unsupported scheme"), 400],
+    ["PlanStaleError", new PlanStaleError("public/foo", "file:/x", "abc", "def"), 400],
+    ["AgentPlanStaleError", new AgentPlanStaleError("public/foo", "file:/x", "abc", "def"), 400],
+
+    ["SkillNotFoundError", new SkillNotFoundError("public/foo"), 404],
+    ["AgentNotFoundError", new AgentNotFoundError("public/foo"), 404],
+    ["McpNotFoundError", new McpNotFoundError("a/b"), 404],
+
+    ["ImmutableOriginError", new ImmutableOriginError("public/foo", "github://x"), 405],
+
+    [
+      "HasDependentsError",
+      new HasDependentsError("public/foo", [{ kind: "skill", name: "public/bar" }]),
+      409,
+    ],
+    [
+      "SkillOriginConflictError",
+      new SkillOriginConflictError("public/foo", "file:/old", "file:/new"),
+      409,
+    ],
+    [
+      "AgentOriginConflictError",
+      new AgentOriginConflictError("public/foo", "file:/old", "file:/new"),
+      409,
+    ],
+    ["McpOriginConflictError", new McpOriginConflictError("a/b", "file:/old", "file:/new"), 409],
+  ];
+
+  it.each(cases)("maps real %s to %d", (_label, err, status) => {
+    expect(statusForCatalogError(err)).toBe(status);
+  });
+
+  it("maps FetchError name to 502", () => {
+    // FetchError is exported from @emploke/catalog-fetcher (via the
+    // catalog re-export); we synthesize one to keep the test isolated
+    // from the network.
+    const e = new Error("connect ECONNREFUSED");
+    e.name = "FetchError";
+    expect(statusForCatalogError(e)).toBe(502);
+  });
+
+  it("maps MissingDependencies/CycleDetected/UnsupportedCatalogVersionError by name", () => {
+    for (const [n, expected] of [
+      ["MissingDependencies", 400],
+      ["CycleDetected", 400],
+      ["UnsupportedCatalogVersionError", 500],
+    ] as const) {
+      const e = new Error("x");
+      e.name = n;
+      expect(statusForCatalogError(e)).toBe(expected);
+    }
   });
 
   it("returns null for unknown error class names", () => {
@@ -145,6 +224,24 @@ describe("statusForCatalogError", () => {
     expect(statusForCatalogError("string")).toBeNull();
     expect(statusForCatalogError(null)).toBeNull();
     expect(statusForCatalogError(undefined)).toBeNull();
+  });
+
+  it("rejects legacy alias names (regression guard for #52 review)", () => {
+    // Pre-#52 the switch keyed off these aliases. Real instances never
+    // matched. Pin that we do NOT accept them so nobody silently brings
+    // the bug back.
+    for (const alias of [
+      "NotFound",
+      "NameInvalid",
+      "FrontmatterError",
+      "OriginConflictError",
+      "InvalidMcpJsonError",
+      "HasDependents",
+    ]) {
+      const e = new Error("x");
+      e.name = alias;
+      expect(statusForCatalogError(e)).toBeNull();
+    }
   });
 });
 

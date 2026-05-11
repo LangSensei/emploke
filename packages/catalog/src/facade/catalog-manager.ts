@@ -4,6 +4,7 @@ import {
   type EntryFile,
   type FetcherRegistry,
 } from "@emploke/catalog-fetcher";
+import { type Logger, silentLogger } from "@emploke/logger";
 import type { Agent } from "../agent/agent-entity.js";
 import { type AgentResolvedNode, AgentService } from "../agent/agent-service.js";
 import { AgentNotFoundError } from "../agent/errors.js";
@@ -106,6 +107,14 @@ export interface CatalogInstallResult {
 export interface CatalogOptions {
   readonly catalogDir: string;
   readonly fetchers?: FetcherRegistry;
+  /**
+   * Optional logger. Threaded into each per-entity repository so
+   * structured warnings (skipped corrupt rows, future scan issues)
+   * land in the same log stream as the rest of the server. Defaults
+   * to {@link silentLogger} when omitted — the right choice for
+   * unit tests and short-lived CLIs.
+   */
+  readonly logger?: Logger;
 }
 
 export type McpResolveAdapter = (origin: string) => Promise<{
@@ -135,11 +144,12 @@ export class CatalogManager {
    */
   static async open(opts: CatalogOptions): Promise<CatalogManager> {
     const fetchers = opts.fetchers ?? defaultFetcherRegistry();
+    const logger = opts.logger ?? silentLogger;
     const dbPath = join(opts.catalogDir, "catalog.db");
 
-    const mcpRepo = new SqliteMcpRepository(dbPath);
-    const skillRepo = new SqliteSkillRepository(dbPath);
-    const agentRepo = new SqliteAgentRepository(dbPath);
+    const mcpRepo = new SqliteMcpRepository(dbPath, { logger });
+    const skillRepo = new SqliteSkillRepository(dbPath, { logger });
+    const agentRepo = new SqliteAgentRepository(dbPath, { logger });
 
     const mcpFetcher: McpFetcher = (origin) => fetchers.dispatch(origin);
     const skillFetcher: SkillFetcher = {
@@ -195,18 +205,9 @@ export class CatalogManager {
   // ─── Lifecycle ────────────────────────────────────────
 
   close(): void {
-    if (this.skill instanceof SkillService) {
-      const repo = (this.skill as unknown as { repo: { close?: () => void } }).repo;
-      repo.close?.();
-    }
-    if (this.agent instanceof AgentService) {
-      const repo = (this.agent as unknown as { repo: { close?: () => void } }).repo;
-      repo.close?.();
-    }
-    if (this.mcp instanceof McpService) {
-      const repo = (this.mcp as unknown as { repo: { close?: () => void } }).repo;
-      repo.close?.();
-    }
+    this.skill.close();
+    this.agent.close();
+    this.mcp.close();
   }
 
   // ─── Resolve (cross-entity walk) ──────────────────────

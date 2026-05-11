@@ -484,11 +484,15 @@ export const setServerCurrentWorkspace = (id: string): Promise<void> =>
  */
 export type CreatedWorkspace = WorkspaceListItem;
 
-export const addWorkspace = async (
-  workdir: string,
-  opts: { name: string; defaults?: WorkspaceListItem["defaults"] },
-): Promise<CreatedWorkspace> => {
-  const body: Record<string, unknown> = { workdir, name: opts.name };
+export const addWorkspace = async (opts: {
+  name: string;
+  /** Optional. When omitted, the server creates a fresh
+   *  `<EMPLOKE_HOME>/workspaces/<uuid>/` directory. */
+  workdir?: string;
+  defaults?: WorkspaceListItem["defaults"];
+}): Promise<CreatedWorkspace> => {
+  const body: Record<string, unknown> = { name: opts.name };
+  if (opts.workdir !== undefined && opts.workdir !== "") body.workdir = opts.workdir;
   if (opts.defaults !== undefined) body.defaults = opts.defaults;
   return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };

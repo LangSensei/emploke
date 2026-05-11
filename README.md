@@ -29,9 +29,13 @@ Then open <http://127.0.0.1:8787> in your browser.
 The first time you run `emploke`, the dashboard's landing page is empty.
 Walk through:
 
-1. **Add a workspace** — pick any directory on disk; emploke creates
-   `workspace.json` plus standard subdirs (`sessions/`, `tasks/`, `catalog/`)
-   inside it. Existing files in that directory are left alone.
+1. **Add a workspace** — give it a display name. Optionally pick a directory
+   on disk; if you don't, emploke creates one under
+   `$EMPLOKE_HOME/workspaces/<uuid>/` so the workspace id and the on-disk
+   directory share the same name. Either way emploke writes
+   `workspace.json` plus standard subdirs (`sessions/`, `tasks/`,
+   `catalog/`) inside; existing files in a user-supplied directory are
+   left alone.
 2. **Install an agent** in the Catalog tab — point at any directory containing
    an `AGENTS.md` (a [Claude-style agent](https://www.claude.com/news/agent-skills);
    any directory with valid frontmatter works). Skills + MCPs the agent

@@ -18,7 +18,14 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.get("/", (c) => {
     const catalog = getCatalog(c);
-    return c.json(catalog.listMcps().map((name) => ({ name })));
+    // listMcps() already returns McpMetadata[] (`{ name, origin, mutable }`)
+    // — return as-is. The dashboard's `McpItem` is the same shape. The
+    // previous `.map((name) => ({ name }))` was a leftover from the
+    // pre-PR-#52 catalog where `listMcps()` returned `string[]`; against
+    // the new metadata shape it produced `{ name: { name, origin, mutable } }`
+    // and crashed the dashboard's React render with "Objects are not
+    // valid as a React child".
+    return c.json(catalog.listMcps());
   });
 
   app.get("/:name{.+}", async (c) => {

@@ -1,10 +1,12 @@
 # @emploke/workspace
 
-Per-project root abstraction. A *workspace* is a user-chosen directory
-that holds emploke's per-project state (sessions, tasks, catalog,
-workflows, logs) plus a self-describing `workspace.json`. The
-`$EMPLOKE_HOME/workspaces.json` registry maps opaque UUIDs to absolute
-workspace paths.
+Per-project root abstraction. A *workspace* is a directory that holds
+emploke's per-project state (sessions, tasks, catalog, workflows, logs)
+plus a self-describing `workspace.json`. The directory is normally
+user-chosen but can also be auto-allocated under
+`$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
+(see `Quick start` below). The `$EMPLOKE_HOME/workspaces.json` registry
+maps opaque UUIDs to absolute workspace paths.
 
 ## Concepts
 
@@ -38,6 +40,12 @@ const ws = await workspaces.init({
 });
 // → creates /Users/me/code/acme/{workspace.json,sessions,tasks,catalog,workflows,logs}
 // → adds {id, workdir} to the index
+
+// `workdir` is always required at the manager layer — defaulting it
+// to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
+// HTTP route (`POST /api/workspaces`), which owns the policy decision
+// of where to put auto-allocated workspaces. The manager stays a
+// pure persistence boundary.
 
 const all = await workspaces.list();
 const back = await workspaces.read(ws.id);

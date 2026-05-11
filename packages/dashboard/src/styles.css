@@ -1361,6 +1361,15 @@ button {
   color: var(--color-text);
 }
 
+/* Inline "(optional)" hint sitting beside a form field's label. Lighter
+   weight + muted colour so the field still reads as primary while the
+   optionality is visible at a glance. */
+.form-label-aside {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
 .form-field input,
 .form-field textarea,
 .form-field select {

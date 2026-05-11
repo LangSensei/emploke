@@ -26,10 +26,16 @@ export {
 } from "@emploke/catalog-fetcher";
 // ─── Compat: errors (preserve legacy names) ──────────
 //
-// Old code imports things like `NotFound`, `FrontmatterError`,
-// `OriginConflictError`, etc. We re-export the per-entity errors with
-// these aliases so HTTP error-status mapping in server/_shared.ts
-// keeps working.
+// Old code imports per-entity errors directly. We re-export them
+// at the top level so HTTP error-status mapping in
+// server/_shared.ts can name them.
+//
+// Note: short alias names like `NotFound`, `OriginConflictError`,
+// `NameInvalid`, `FrontmatterError`, `InvalidMcpJsonError` were
+// removed. They masqueraded as cross-entity types but were Skill-only
+// aliases, and the abstract base error sets `.name = new.target.name`
+// — so any `switch (err.name)` keyed off the alias would never match a
+// real instance. Use the per-entity class names instead.
 export {
   AgentFrontmatterError,
   AgentNameInvalidError,
@@ -89,7 +95,6 @@ export {
 } from "./facade/index.js";
 export {
   McpInvalidJsonError,
-  McpInvalidJsonError as InvalidMcpJsonError,
   McpNameInvalidError,
   McpNotFoundError,
   McpOriginConflictError,
@@ -113,13 +118,9 @@ export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
 export {
   PlanStaleError,
   SkillFrontmatterError,
-  SkillFrontmatterError as FrontmatterError,
   SkillNameInvalidError,
-  SkillNameInvalidError as NameInvalid,
   SkillNotFoundError,
-  SkillNotFoundError as NotFound,
   SkillOriginConflictError,
-  SkillOriginConflictError as OriginConflictError,
 } from "./skill/errors.js";
 export type { SkillFetcher } from "./skill/index.js";
 export * as skill from "./skill/index.js";

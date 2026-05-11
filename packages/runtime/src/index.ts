@@ -35,10 +35,19 @@ export {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "./errors.js";
+export {
+  PLACEHOLDER_NAMES,
+  type PlaceholderContext,
+  type PlaceholderName,
+  substitutePlaceholders,
+  substitutePlaceholdersDeep,
+  UnknownPlaceholderError,
+} from "./placeholders.js";
 export { RuntimeRegistry } from "./registry.js";
 export type {
   DispatchTaskOpts,
   LaunchCommand,
+  ProvisionContext,
   Runtime,
   Session,
   TaskExit,

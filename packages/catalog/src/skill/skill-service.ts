@@ -255,6 +255,11 @@ export class SkillService {
     if (existing === null) throw new SkillNotFoundError(fqn);
     await this.repo.delete(fqn);
   }
+
+  /** Release the underlying repository's resources. Idempotent. */
+  close(): void {
+    this.repo.close?.();
+  }
 }
 
 function sameOrigin(a: string, b: string): boolean {

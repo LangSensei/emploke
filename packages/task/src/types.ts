@@ -131,6 +131,13 @@ export interface TaskManagerConfig {
   readonly runtimeRegistry: RuntimeRegistry;
   /** Absolute path to the directory holding per-task workdirs. */
   readonly tasksDir: string;
+  /**
+   * Absolute path of the workspace this manager belongs to. Threaded
+   * to `runtime.dispatchTask` as `workspaceDir` so MCP placeholder
+   * substitution at provision-time can resolve `${workspaceDir}` to a
+   * path that is shared across every session/task in this workspace.
+   */
+  readonly workspaceDir: string;
   /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
   /**

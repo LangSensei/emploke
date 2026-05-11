@@ -49,11 +49,19 @@ export interface Runtime {
    * `catalog.getMcpContent`) instead of resolving on-disk catalog paths. This
    * keeps the runtime backend-agnostic so a future SQLite-backed catalog
    * works without code changes here.
+   *
+   * `ctx.workspaceDir` is the absolute path of the workspace this session
+   * lives under (the parent of `<workspaceDir>/sessions/<id>/...`). Runtimes
+   * use it to resolve `${workspaceDir}` placeholders in MCP / agent specs so
+   * marketplace-shareable configs can refer to per-workspace state without
+   * encoding machine paths. See {@link substitutePlaceholders} for the
+   * vocabulary.
    */
   provision(
     workdir: string,
     agent: AgentResolveResult,
     catalog: CatalogManager,
+    ctx: ProvisionContext,
   ): Promise<{
     runtimeSessionId: string | null;
   }>;
@@ -161,12 +169,28 @@ export interface Runtime {
  *
  * `catalog` carries the byte-source for skill / agent / mcp content, see
  * the docstring on {@link Runtime.provision} for rationale.
+ *
+ * `workspaceDir` lets the runtime resolve `${workspaceDir}` placeholders
+ * in MCP / agent specs the same way `provision` does (see
+ * {@link Runtime.provision} for the vocabulary).
  */
 export interface DispatchTaskOpts {
   readonly taskDir: string;
   readonly agent: AgentResolveResult;
   readonly catalog: CatalogManager;
   readonly prompt: string;
+  readonly workspaceDir: string;
+}
+
+/**
+ * Cross-runtime context handed to {@link Runtime.provision}. Keeps the
+ * positional arg list short while leaving room for future per-call
+ * fields (e.g. a per-session env override) without churning every
+ * runtime adapter.
+ */
+export interface ProvisionContext {
+  /** Absolute path of the workspace this session/task belongs to. */
+  readonly workspaceDir: string;
 }
 
 /**
