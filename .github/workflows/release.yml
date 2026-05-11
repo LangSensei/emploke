@@ -47,10 +47,18 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       # npm Trusted Publishing requires npm 11.5.1 or newer; Node 22
-      # currently ships npm 10.x. Pin to 11.x latest for OIDC support.
+      # currently ships npm 10.x. Pin to a known-good 11.x with --force.
+      #
+      # Why --force + pinned version (not `npm@latest`): Node 22's
+      # bundled npm 10.9.7 has a self-upgrade race where arborist
+      # nukes its own transitive deps mid-install, leaving npm in a
+      # broken state with `Cannot find module 'promise-retry'`. The
+      # `--force` flag skips the rebuild path that triggers the race.
+      # Pinning the version (rather than `@latest`) also makes
+      # release builds reproducible.
       - name: Upgrade npm
         run: |
-          npm install -g npm@latest
+          npm install -g --force npm@11.5.1
           # Sanity check: --provenance silently no-ops on npm < 11.5.1, so
           # we want a loud failure here rather than publishing a release
           # without an attestation.

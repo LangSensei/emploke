@@ -13,19 +13,66 @@ no long-lived token).
 
 ## Cutting a release
 
+`main` is branch-protected — direct pushes are refused. The
+`npm version` shortcut documented in many node-project READMEs assumes
+you can push the bump commit straight to `main`, which doesn't apply
+here. Use the two-step flow below.
+
+### Step 1: bump `package.json` via PR
+
 ```sh
-npm version patch        # bumps package.json + creates v<X.Y.Z> tag + commit
-git push --follow-tags   # pushes commit + tag → workflow runs → npm publish
+git checkout main && git pull
+git checkout -b chore/release-vX.Y.Z
+npm version <patch|minor|major> --no-git-tag-version
+#   ^ writes the new version into package.json but does NOT commit
+#     and does NOT create a tag — those happen later, on main.
+git commit -am "chore(release): vX.Y.Z"
+git push -u origin chore/release-vX.Y.Z
+gh pr create --title "chore(release): vX.Y.Z" --base main
+# review + merge the PR through normal channels
 ```
 
-Use `minor` / `major` instead of `patch` per [semver](https://semver.org/)
-as appropriate.
+### Step 2: tag the merge commit, push the tag
+
+```sh
+git checkout main && git pull
+git tag vX.Y.Z          # e.g. v0.2.0 — no `npm version` here, just git tag
+git push origin vX.Y.Z
+```
+
+The tag push triggers `release.yml`, which:
+
+1. Verifies the tag's version matches `package.json` (would catch a typo).
+2. Builds the bundle (`prepublishOnly: pnpm bundle` in root `package.json`).
+3. Publishes via `npm publish --provenance --access public` over OIDC.
+
+If you forget step 2 after step 1, nothing breaks — the bumped
+`package.json` is on `main` but no release happens until a tag is
+pushed. The next attempt to bump (`npm version` from the new state)
+would compute the next version up.
+
+### Why two steps?
+
+The `npm version <patch|minor|major>` shortcut tries to do bump +
+commit + tag + push in one shot. Two of those (commit + push) are
+blocked by `main`'s branch protection, and the third (tag) needs to
+point at the *merged* commit, not the local one. Splitting the steps
+keeps the tag pointing at the actual commit that ships, which is what
+the npm provenance attestation will record.
 
 ## Prereleases
 
 ```sh
-npm version prerelease --preid=rc   # 0.2.0 → 0.2.1-rc.0
-git push --follow-tags
+git checkout main && git pull
+git checkout -b chore/release-vX.Y.Z-rc.0
+npm version prerelease --preid=rc --no-git-tag-version   # 0.2.0 → 0.2.1-rc.0
+git commit -am "chore(release): vX.Y.Z-rc.0"
+git push -u origin chore/release-vX.Y.Z-rc.0
+gh pr create --base main
+# merge, then:
+git checkout main && git pull
+git tag vX.Y.Z-rc.0
+git push origin vX.Y.Z-rc.0
 ```
 
 Versions containing a `-` (e.g. `0.2.1-rc.0`) are published with the `next`
@@ -40,6 +87,33 @@ keeps installing the stable line.
 - [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
   is enabled, so the package page links back to the exact commit + workflow
   run that built each release.
+
+## Recovering from a botched release
+
+If the release workflow fails on a tag push (npm registry hiccup, transient
+CI issue, the v0.2.0 npm self-upgrade race that bit us once), the tag
+exists on the remote but the package wasn't published. Two recovery paths:
+
+### Same version, fixed workflow
+
+If the fix is in the workflow itself (or any non-source file) and you want
+to reuse the same version number:
+
+```sh
+# 1. PR + merge the workflow fix to main
+# 2. Move the tag to the merge commit
+git tag -d vX.Y.Z                       # delete local
+git push origin :refs/tags/vX.Y.Z       # delete remote
+git checkout main && git pull
+git tag vX.Y.Z                          # re-tag at the new HEAD
+git push origin vX.Y.Z                  # triggers workflow again
+```
+
+### Bump to a new version
+
+If the source itself is broken, just cut a fresh release with a higher
+version following the normal two-step flow above. Don't try to re-publish
+the same version with different bytes — npm forbids overwrite.
 
 ## One-time setup (already done)
 
