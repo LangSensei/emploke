@@ -941,13 +941,16 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   }, [taskId]);
 
   useEffect(() => {
-    if (!taskId) {
-      setTask(null);
-      setActivity(null);
-      setEvents(null);
-      setEventsError(null);
-      return;
-    }
+    // Always reset the per-task fetched state when the URL switches
+    // tasks. Without this, switching from task A (which had loaded
+    // events) to task B leaves A's events in state — and the lazy
+    // events effect below would then short-circuit on `events !== null`
+    // and never fetch B's events, showing A's bytes under B's header.
+    setTask(null);
+    setActivity(null);
+    setEvents(null);
+    setEventsError(null);
+    if (!taskId) return;
     void refreshDetail();
   }, [taskId, refreshDetail]);
 

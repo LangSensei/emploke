@@ -7,6 +7,8 @@ import type { ListSessionStateOpts, SessionRepository, SessionState } from "./re
 
 const SESSION_FILE_NAME = "session.json";
 const CURRENT_SCHEMA_VERSION = 2;
+/** Lowest on-disk schemaVersion the current code can still read. */
+const MIN_SUPPORTED_SCHEMA_VERSION = 1;
 
 /**
  * Filesystem implementation of `SessionRepository`. Each session
@@ -100,7 +102,11 @@ function parseSessionState(id: string, raw: unknown): SessionState {
   // they stay v1 on disk until the next save() promotes them. This
   // keeps reads cheap and avoids touching files the user hasn't
   // interacted with.
-  if (obj.schemaVersion !== 1 && obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+  if (
+    typeof obj.schemaVersion !== "number" ||
+    obj.schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION ||
+    obj.schemaVersion > CURRENT_SCHEMA_VERSION
+  ) {
     throw new SessionCorruptedError(id, schemaMismatchReason(obj.schemaVersion));
   }
   if (typeof obj.runtime !== "string" || obj.runtime.length === 0) {
@@ -129,10 +135,10 @@ function parseSessionState(id: string, raw: unknown): SessionState {
 function schemaMismatchReason(onDisk: unknown): string {
   if (typeof onDisk === "number" && Number.isFinite(onDisk)) {
     if (onDisk > CURRENT_SCHEMA_VERSION) {
-      return `session.json was written by a newer emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`;
+      return `session.json was written by a newer emploke (schemaVersion ${onDisk}; this server supports up to ${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`;
     }
-    if (onDisk < CURRENT_SCHEMA_VERSION) {
-      return `session.json was written by an older emploke (schemaVersion ${onDisk}; this server supports ${CURRENT_SCHEMA_VERSION}). Migration from older versions is not yet implemented.`;
+    if (onDisk < MIN_SUPPORTED_SCHEMA_VERSION) {
+      return `session.json schemaVersion ${onDisk} was never supported by this emploke (minimum is ${MIN_SUPPORTED_SCHEMA_VERSION}).`;
     }
   }
   return `unsupported schemaVersion: ${JSON.stringify(onDisk)}`;

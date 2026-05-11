@@ -91,12 +91,12 @@ describe("FsSessionRepository", () => {
     });
   });
 
-  it("read throws on older schemaVersion (migration hint)", async () => {
+  it("read throws on schemaVersion below the supported minimum", async () => {
     const repo = new FsSessionRepository({ sessionsDir });
     await writeWire(ID, { schemaVersion: 0, ...sample });
     await expect(repo.read(ID)).rejects.toMatchObject({
       constructor: SessionCorruptedError,
-      reason: expect.stringContaining("Migration from older versions"),
+      reason: expect.stringContaining("never supported"),
     });
   });
 
