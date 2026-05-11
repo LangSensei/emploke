@@ -74,6 +74,22 @@ export interface SkillRepository {
   streamFiles(fqn: string): AsyncIterable<SkillFile>;
 
   /**
+   * Update only the per-installation flags (`prereqsAck`, `orphaned`)
+   * without touching frontmatter / files / anchor content. No-op if
+   * the entry is absent. Either flag may be omitted to preserve the
+   * existing value.
+   */
+  setFlags(fqn: string, flags: { prereqsAck?: boolean; orphaned?: boolean }): Promise<void>;
+
+  /**
+   * Bulk-update `orphaned` flags. The map's keys are skill fqns; each
+   * value is the desired `orphaned` value. Used by the orphan recompute
+   * pass after every install / sync. No-op for keys that don't exist
+   * in the table.
+   */
+  setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void>;
+
+  /**
    * Release any resources held by the repository (DB handles, file
    * locks). Optional: in-memory implementations have nothing to release.
    * Idempotent — implementations should tolerate being called twice.

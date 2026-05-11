@@ -5,6 +5,8 @@
  * narrow with `instanceof`.
  */
 
+import type { BlockedReason } from "@emploke/catalog";
+
 export class TaskError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -72,6 +74,40 @@ export class RuntimeDoesNotSupportTasksError extends TaskError {
   constructor(public readonly runtime: string) {
     super(`runtime ${JSON.stringify(runtime)} does not support task dispatch`);
   }
+}
+
+/**
+ * Thrown by `TaskManager.dispatch` when the agent (or one of its
+ * transitive deps) is currently `blocked` — typically because:
+ *   - the agent's prereqs haven't been acknowledged yet
+ *   - the agent has been disabled by the user
+ *   - a transitive skill / mcp is missing or itself blocked
+ *
+ * Carries the structured `BlockedReason` so callers (HTTP handlers,
+ * CLI) can render a useful "here's what to fix" message.
+ */
+export class EntryNotReadyError extends TaskError {
+  constructor(
+    public readonly agent: string,
+    public readonly reason: BlockedReason | undefined,
+  ) {
+    super(`agent ${JSON.stringify(agent)} is not ready: ${summariseReason(reason)}`);
+  }
+}
+
+function summariseReason(r: BlockedReason | undefined): string {
+  if (r === undefined) return "blocked";
+  const parts: string[] = [];
+  if (r.disabledByUser) parts.push("disabled by user");
+  if (r.needsPrereqsAck) parts.push("prereqs not acknowledged");
+  if (r.orphaned) parts.push("orphaned");
+  if (r.missingDeps && r.missingDeps.length > 0) {
+    parts.push(`missing deps (${r.missingDeps.length})`);
+  }
+  if (r.blockedDeps && r.blockedDeps.length > 0) {
+    parts.push(`blocked deps: ${r.blockedDeps.map((d: { fqn: string }) => d.fqn).join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : "blocked";
 }
 
 /**

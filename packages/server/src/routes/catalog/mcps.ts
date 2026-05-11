@@ -2,6 +2,7 @@ import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody } from "./helpers.js";
+import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
@@ -49,6 +50,34 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       const result = await catalog.installMcpFromOrigin(parsed.origin);
       const status = result.failed.length > 0 ? 207 : 201;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/sync/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncMcp(name);
+      const local = await catalog.getMcp(name);
+      return c.json(planToManifest(plan, local?.origin ?? ""));
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/sync", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncMcp(name);
+      const result = await catalog.applySync(plan);
+      const status = result.failed.length > 0 ? 207 : 200;
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
     } catch (e: unknown) {

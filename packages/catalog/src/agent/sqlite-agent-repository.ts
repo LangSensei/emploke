@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { tableHasLegacyShape } from "../skill/sqlite-skill-repository.js";
+import { addColumnIfMissing, tableHasLegacyShape } from "../skill/sqlite-skill-repository.js";
 import { Agent, type AgentDependencies } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 
@@ -26,17 +26,25 @@ export class SqliteAgentRepository implements AgentRepository {
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent (
-        fqn            TEXT PRIMARY KEY NOT NULL,
-        origin         TEXT NOT NULL,
-        scope          TEXT NOT NULL,
-        short_name     TEXT NOT NULL,
-        description    TEXT NOT NULL,
-        version        TEXT NOT NULL,
-        deps_json      TEXT NOT NULL,
-        anchor_content TEXT NOT NULL
+        fqn              TEXT PRIMARY KEY NOT NULL,
+        origin           TEXT NOT NULL,
+        scope            TEXT NOT NULL,
+        short_name       TEXT NOT NULL,
+        description      TEXT NOT NULL,
+        version          TEXT NOT NULL,
+        prereqs          TEXT,
+        deps_json        TEXT NOT NULL,
+        anchor_content   TEXT NOT NULL,
+        prereqs_ack      INTEGER NOT NULL DEFAULT 1,
+        disabled_by_user INTEGER NOT NULL DEFAULT 0
       )
     `);
     this.db.exec("CREATE INDEX IF NOT EXISTS agent_origin ON agent(origin)");
+    // Additive migrations for tables that pre-date these columns;
+    // see SqliteSkillRepository for rationale.
+    addColumnIfMissing(this.db, "agent", "prereqs", "TEXT");
+    addColumnIfMissing(this.db, "agent", "prereqs_ack", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(this.db, "agent", "disabled_by_user", "INTEGER NOT NULL DEFAULT 0");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_file (
         agent_fqn  TEXT NOT NULL REFERENCES agent(fqn) ON DELETE CASCADE,
@@ -58,16 +66,19 @@ export class SqliteAgentRepository implements AgentRepository {
       );
     }
     const upsertAgent = this.db.prepare(
-      `INSERT INTO agent (fqn, origin, scope, short_name, description, version, deps_json, anchor_content)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO agent (fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, disabled_by_user)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fqn) DO UPDATE SET
          origin = excluded.origin,
          scope = excluded.scope,
          short_name = excluded.short_name,
          description = excluded.description,
          version = excluded.version,
+         prereqs = excluded.prereqs,
          deps_json = excluded.deps_json,
-         anchor_content = excluded.anchor_content`,
+         anchor_content = excluded.anchor_content,
+         prereqs_ack = excluded.prereqs_ack,
+         disabled_by_user = excluded.disabled_by_user`,
     );
     const deleteFiles = this.db.prepare("DELETE FROM agent_file WHERE agent_fqn = ?");
     const insertFile = this.db.prepare(
@@ -83,8 +94,11 @@ export class SqliteAgentRepository implements AgentRepository {
         agent.shortName,
         agent.description,
         agent.version,
+        agent.prereqs ?? null,
         JSON.stringify(agent.dependencies),
         agent.anchorContent,
+        agent.prereqsAck ? 1 : 0,
+        agent.disabledByUser ? 1 : 0,
       );
       deleteFiles.run(agent.fqn);
       for (const [relPath, content] of files) {
@@ -100,7 +114,7 @@ export class SqliteAgentRepository implements AgentRepository {
   async findByFqn(fqn: string): Promise<Agent | null> {
     const row = this.db
       .prepare(
-        "SELECT origin, scope, short_name, description, version, deps_json, anchor_content FROM agent WHERE fqn = ?",
+        "SELECT origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, disabled_by_user FROM agent WHERE fqn = ?",
       )
       .get(fqn) as AgentRow | undefined;
     if (row === undefined) return null;
@@ -110,7 +124,7 @@ export class SqliteAgentRepository implements AgentRepository {
   async findByOrigin(origin: string): Promise<Agent | null> {
     const row = this.db
       .prepare(
-        "SELECT fqn, scope, short_name, description, version, deps_json, anchor_content FROM agent WHERE origin = ? LIMIT 1",
+        "SELECT fqn, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, disabled_by_user FROM agent WHERE origin = ? LIMIT 1",
       )
       .get(origin) as (AgentRow & { fqn: string }) | undefined;
     if (row === undefined) return null;
@@ -121,15 +135,18 @@ export class SqliteAgentRepository implements AgentRepository {
       shortName: row.short_name,
       description: row.description,
       version: row.version,
+      prereqs: row.prereqs ?? undefined,
       dependencies: parseDeps(row.deps_json),
       anchorContent: row.anchor_content,
+      prereqsAck: row.prereqs_ack !== 0,
+      disabledByUser: row.disabled_by_user !== 0,
     });
   }
 
   async findAll(): Promise<Agent[]> {
     const rows = this.db
       .prepare(
-        "SELECT fqn, origin, scope, short_name, description, version, deps_json, anchor_content FROM agent ORDER BY fqn",
+        "SELECT fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack, disabled_by_user FROM agent ORDER BY fqn",
       )
       .all() as unknown as (AgentRow & { fqn: string })[];
     const out: Agent[] = [];
@@ -143,8 +160,11 @@ export class SqliteAgentRepository implements AgentRepository {
             shortName: row.short_name,
             description: row.description,
             version: row.version,
+            prereqs: row.prereqs ?? undefined,
             dependencies: parseDeps(row.deps_json),
             anchorContent: row.anchor_content,
+            prereqsAck: row.prereqs_ack !== 0,
+            disabledByUser: row.disabled_by_user !== 0,
           }),
         );
       } catch (cause) {
@@ -174,6 +194,25 @@ export class SqliteAgentRepository implements AgentRepository {
       };
     }
   }
+
+  async setFlags(
+    fqn: string,
+    flags: { prereqsAck?: boolean; disabledByUser?: boolean },
+  ): Promise<void> {
+    const sets: string[] = [];
+    const args: (number | string)[] = [];
+    if (flags.prereqsAck !== undefined) {
+      sets.push("prereqs_ack = ?");
+      args.push(flags.prereqsAck ? 1 : 0);
+    }
+    if (flags.disabledByUser !== undefined) {
+      sets.push("disabled_by_user = ?");
+      args.push(flags.disabledByUser ? 1 : 0);
+    }
+    if (sets.length === 0) return;
+    args.push(fqn);
+    this.db.prepare(`UPDATE agent SET ${sets.join(", ")} WHERE fqn = ?`).run(...args);
+  }
 }
 
 interface AgentRow {
@@ -182,8 +221,11 @@ interface AgentRow {
   short_name: string;
   description: string;
   version: string;
+  prereqs: string | null;
   deps_json: string;
   anchor_content: string;
+  prereqs_ack: number;
+  disabled_by_user: number;
 }
 
 function rowToAgent(fqn: string, row: AgentRow): Agent {
@@ -194,8 +236,11 @@ function rowToAgent(fqn: string, row: AgentRow): Agent {
     shortName: row.short_name,
     description: row.description,
     version: row.version,
+    prereqs: row.prereqs ?? undefined,
     dependencies: parseDeps(row.deps_json),
     anchorContent: row.anchor_content,
+    prereqsAck: row.prereqs_ack !== 0,
+    disabledByUser: row.disabled_by_user !== 0,
   });
 }
 

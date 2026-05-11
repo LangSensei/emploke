@@ -9,9 +9,15 @@ import { makeFqn, validateFqn } from "./validate.js";
  * Identity = (fqn, origin), both immutable. See {@link Skill} for the
  * fqn-vs-name rationale. Differences from skills:
  *   - anchor file is `AGENTS.md`, not `SKILL.md`
- *   - no `prereqs` field
  *   - agents are "root" entities — never dep-referenced; only have
  *     outgoing deps (skills + mcps)
+ *
+ * Per-installation flags (NOT in frontmatter — local opt-ins):
+ *   - `prereqsAck`: user has acknowledged the entry's `prereqs` text
+ *     (or the entry has none).
+ *   - `disabledByUser`: user explicitly disabled this agent. Skills
+ *     and mcps don't have this flag — only agents are user-launchable
+ *     units worth pausing.
  */
 export class Agent {
   private constructor(
@@ -21,8 +27,11 @@ export class Agent {
     private readonly _shortName: string,
     private readonly _description: string,
     private readonly _version: string,
+    private readonly _prereqs: string | undefined,
     private readonly _dependencies: AgentDependencies,
     private readonly _anchorContent: string,
+    private readonly _prereqsAck: boolean,
+    private readonly _disabledByUser: boolean,
   ) {}
 
   static create(rawAgentMd: string, origin: string, sourceLabel: string): Agent {
@@ -31,6 +40,7 @@ export class Agent {
     }
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
+    const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     return new Agent(
       fqn,
       origin,
@@ -38,8 +48,11 @@ export class Agent {
       meta.shortName,
       meta.description,
       meta.version,
+      meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawAgentMd,
+      prereqsAck,
+      false,
     );
   }
 
@@ -50,8 +63,11 @@ export class Agent {
     shortName: string;
     description: string;
     version: string;
+    prereqs: string | undefined;
     dependencies: AgentDependencies;
     anchorContent: string;
+    prereqsAck: boolean;
+    disabledByUser: boolean;
   }): Agent {
     validateFqn(args.fqn);
     return new Agent(
@@ -61,8 +77,11 @@ export class Agent {
       args.shortName,
       args.description,
       args.version,
+      args.prereqs,
       normaliseDeps(args.dependencies),
       args.anchorContent,
+      args.prereqsAck,
+      args.disabledByUser,
     );
   }
 
@@ -84,11 +103,20 @@ export class Agent {
   get version(): string {
     return this._version;
   }
+  get prereqs(): string | undefined {
+    return this._prereqs;
+  }
   get dependencies(): AgentDependencies {
     return this._dependencies;
   }
   get anchorContent(): string {
     return this._anchorContent;
+  }
+  get prereqsAck(): boolean {
+    return this._prereqsAck;
+  }
+  get disabledByUser(): boolean {
+    return this._disabledByUser;
   }
 
   get frontmatterSha256(): string {
@@ -101,6 +129,7 @@ export class Agent {
       scope: this._scope,
       description: this._description,
       version: this._version,
+      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
             dependencies: {
@@ -122,6 +151,9 @@ export class Agent {
       origin: this._origin,
       description: this._description,
       version: this._version,
+      prereqsAck: this._prereqsAck,
+      disabledByUser: this._disabledByUser,
+      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
             dependencies: {
@@ -151,8 +183,31 @@ export class Agent {
       meta.shortName,
       meta.description,
       meta.version,
+      meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawAgentMd,
+      this._prereqsAck,
+      this._disabledByUser,
+    );
+  }
+
+  /**
+   * Return a new entity with one or more per-installation flags
+   * replaced. Identity and frontmatter are preserved.
+   */
+  withState(state: { prereqsAck?: boolean; disabledByUser?: boolean }): Agent {
+    return new Agent(
+      this._fqn,
+      this._origin,
+      this._scope,
+      this._shortName,
+      this._description,
+      this._version,
+      this._prereqs,
+      this._dependencies,
+      this._anchorContent,
+      state.prereqsAck ?? this._prereqsAck,
+      state.disabledByUser ?? this._disabledByUser,
     );
   }
 }
@@ -174,6 +229,11 @@ function normaliseDeps(
     skills: deps?.skills ?? [],
     mcps: deps?.mcps ?? [],
   };
+}
+
+/** True iff `prereqs` is a non-empty, non-whitespace-only string. */
+export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
+  return prereqs !== undefined && prereqs.trim().length > 0;
 }
 
 export function canonicalFrontmatterSha(meta: AgentFrontmatter): string {

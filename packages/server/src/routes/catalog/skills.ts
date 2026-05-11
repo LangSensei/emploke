@@ -64,6 +64,47 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     }
   });
 
+  app.post("/:name{.+}/sync/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncSkill(name);
+      // rootOrigin = local origin (server reads it from the row)
+      const local = await catalog.getSkill(name);
+      return c.json(planToManifest(plan, local?.origin ?? ""));
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/sync", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncSkill(name);
+      const result = await catalog.applySync(plan);
+      const status = result.failed.length > 0 ? 207 : 200;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/acknowledge-prereqs", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const skill = await catalog.acknowledgeSkillPrereqs(name);
+      return c.json(skill);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
   app.put("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");

@@ -46,12 +46,24 @@ dependencies:
 });
 
 describe("AgentFormat.parse — agent-specific schema", () => {
-  it("rejects `prereqs` field (skill-only)", () => {
+  it("accepts `prereqs` field", () => {
     const src = `---
 name: researcher
 description: x
 version: 1.0.0
 prereqs: 'do something'
+---
+`;
+    const { meta } = AgentFormat.parse(src, LABEL);
+    expect(meta.prereqs).toBe("do something");
+  });
+
+  it("rejects non-string `prereqs`", () => {
+    const src = `---
+name: researcher
+description: x
+version: 1.0.0
+prereqs: 42
 ---
 `;
     expect(() => AgentFormat.parse(src, LABEL)).toThrow(AgentFrontmatterError);

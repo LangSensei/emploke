@@ -61,6 +61,70 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     }
   });
 
+  app.post("/:name{.+}/sync/resolve", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncAgent(name);
+      const local = await catalog.getAgent(name);
+      return c.json(planToManifest(plan, local?.origin ?? ""));
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/sync", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const plan = await catalog.resolveSyncAgent(name);
+      const result = await catalog.applySync(plan);
+      const status = result.failed.length > 0 ? 207 : 200;
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(result, status as any);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/acknowledge-prereqs", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const agent = await catalog.acknowledgeAgentPrereqs(name);
+      return c.json(agent);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/disable", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const agent = await catalog.disableAgent(name);
+      return c.json(agent);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
+  app.post("/:name{.+}/enable", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const agent = await catalog.enableAgent(name);
+      return c.json(agent);
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
   app.put("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");

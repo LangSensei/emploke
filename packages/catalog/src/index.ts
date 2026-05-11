@@ -65,6 +65,8 @@ export type {
   AgentEntry,
   AgentMetadataPatch,
   AgentResolveResult,
+  BlockedDep,
+  BlockedReason,
   CatalogKind,
   DependencyKind,
   DependencyRef,

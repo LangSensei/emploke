@@ -1,4 +1,4 @@
-import type { MissingDep } from "@emploke/catalog";
+import type { BlockedReason, MissingDep } from "@emploke/catalog";
 import type { ReactNode } from "react";
 import { TrashIcon } from "./Icons";
 
@@ -6,7 +6,8 @@ export interface EntryCardItem {
   name: string;
   description: string;
   version: string;
-  status: "ready" | "disabled";
+  status: "ready" | "blocked";
+  blockedReason?: BlockedReason;
   missingDeps?: readonly MissingDep[];
   skillsCount: number;
   mcpsCount: number;
@@ -61,6 +62,21 @@ function NeedsLine({ deps }: { deps: readonly MissingDep[] }) {
   );
 }
 
+/**
+ * Project a {@link BlockedReason} into a single user-facing badge label.
+ * Self causes are listed first, then dep-cascade causes — the order
+ * matches the dashboard's CTA priority (fix self before fixing deps).
+ */
+function blockedBadgeLabel(reason: BlockedReason | undefined): string {
+  if (reason === undefined) return "blocked";
+  if (reason.disabledByUser) return "disabled";
+  if (reason.needsPrereqsAck) return "needs ack";
+  if (reason.orphaned) return "orphaned";
+  if (reason.missingDeps && reason.missingDeps.length > 0) return "missing deps";
+  if (reason.blockedDeps && reason.blockedDeps.length > 0) return "blocked deps";
+  return "blocked";
+}
+
 function EntryCard({
   item,
   onEdit,
@@ -70,11 +86,11 @@ function EntryCard({
   onEdit: () => void;
   onRemove: () => void;
 }) {
-  const isDisabled = item.status === "disabled";
+  const isBlocked = item.status === "blocked";
   return (
     // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
-      className={`card-grid__item${isDisabled ? " card-grid__item--disabled" : ""}`}
+      className={`card-grid__item${isBlocked ? " card-grid__item--disabled" : ""}`}
       role="button"
       tabIndex={0}
       onClick={onEdit}
@@ -93,10 +109,10 @@ function EntryCard({
         {item.status === "ready" ? (
           <span className="badge badge--ready">✓ ready</span>
         ) : (
-          <span className="badge badge--disabled">⛔ disabled</span>
+          <span className="badge badge--disabled">⛔ {blockedBadgeLabel(item.blockedReason)}</span>
         )}
       </div>
-      {isDisabled && item.missingDeps && item.missingDeps.length > 0 ? (
+      {isBlocked && item.missingDeps && item.missingDeps.length > 0 ? (
         <NeedsLine deps={item.missingDeps} />
       ) : (
         <p className="card-grid__desc">{item.description}</p>

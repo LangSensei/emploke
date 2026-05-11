@@ -24,6 +24,13 @@ export interface AgentRepository {
   delete(fqn: string): Promise<void>;
   streamFiles(fqn: string): AsyncIterable<AgentFile>;
   /**
+   * Update only the per-installation flags (`prereqsAck`,
+   * `disabledByUser`) without touching frontmatter / files / anchor.
+   * Each flag may be omitted to preserve its existing value. No-op if
+   * the entry is absent.
+   */
+  setFlags(fqn: string, flags: { prereqsAck?: boolean; disabledByUser?: boolean }): Promise<void>;
+  /**
    * Release any resources held by the repository (DB handles, file
    * locks). Optional: in-memory implementations have nothing to release.
    * Idempotent — implementations should tolerate being called twice.

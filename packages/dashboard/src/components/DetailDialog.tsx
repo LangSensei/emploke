@@ -1,17 +1,25 @@
 import { useEffect, useState } from "react";
 import {
   type AgentDetail,
+  acknowledgeAgentPrereqs,
+  acknowledgeSkillPrereqs,
+  applyAgentSync,
+  applyMcpSync,
+  applySkillSync,
+  disableAgent,
+  enableAgent,
   getAgent,
   getMcp,
   getSkill,
-  type InstallSource,
-  installAgent,
-  installMcp,
-  installSkill,
   type McpDetail,
+  type ResolveManifest,
+  resolveAgentSync,
+  resolveMcpSync,
+  resolveSkillSync,
   type SkillDetail,
 } from "../api";
 import { Modal } from "./Modal";
+import { ResolveTree } from "./ResolveTree";
 
 /**
  * Read-only detail view for an installed catalog entry.
@@ -21,13 +29,16 @@ import { Modal } from "./Modal";
  * `@emploke/catalog`). Mutable entries still get the full edit form.
  *
  * Layout, top to bottom:
- *  - Status strip: lock + scheme label + Sync button (re-installs from
- *    origin; this is the only "write" the user can do for a remote entry)
+ *  - Status strip: lock + scheme label + Sync from upstream button
+ *    (opens a 2-stage preview/apply dialog rather than the legacy
+ *    one-shot install)
+ *  - Per-entry CTA strip — appears only when the entry is `blocked`:
+ *      - Acknowledge button when prereqs are pending
+ *      - Enable / Disable button (agents only) for the user toggle
  *  - Origin URL row (wraps long URLs cleanly; click-to-copy for
  *    operators forking the upstream)
  *  - Definition list of the entry's metadata (description, version,
- *    deps), each rendered statically — no input fields, since "edit"
- *    isn't the user's verb here
+ *    deps, prereqs), each rendered statically — no input fields
  *  - Collapsible Source section showing the raw anchor file
  *    (SKILL.md / AGENTS.md / mcp.json) for users who want to see what
  *    they actually installed before sync'ing or forking
@@ -36,16 +47,11 @@ import { Modal } from "./Modal";
  * modes, NO Save button. Ergonomics for "I want to inspect what's
  * installed and decide whether to sync" diverge enough from
  * "I want to edit my own entry" that a separate dialog reduces noise.
- *
- * Future (issue #53): the Source section will grow into a per-file
- * browser (sibling files for skills/agents become navigable and
- * viewable). The component is structured so that change is a swap
- * of the Source <details> block for a file tree + content pane.
  */
 export interface DetailDialogProps {
   target: { kind: "skill" | "agent" | "mcp"; name: string };
   onClose: () => void;
-  /** Called after a successful Sync; parent re-fetches catalog list. */
+  /** Called after a successful Sync / Acknowledge / Enable / Disable; parent re-fetches catalog list. */
   onSynced: () => void;
 }
 
@@ -54,6 +60,15 @@ interface LoadedDetail {
   description?: string;
   version?: string;
   prereqs?: string;
+  /** Status from the catalog — drives which CTA buttons show. */
+  status: "ready" | "blocked";
+  /** Reason fields when status is "blocked"; undefined when ready. */
+  blockedReason?: import("@emploke/catalog").BlockedReason;
+  prereqsAck: boolean;
+  /** Agents only; undefined for skills/mcps. */
+  disabledByUser?: boolean;
+  /** Skills/mcps only. */
+  orphaned?: boolean;
   deps: { skills: string[]; mcps: string[] };
   /** Raw anchor content (SKILL.md / AGENTS.md / mcp.json bytes). */
   source: string;
@@ -65,7 +80,11 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<LoadedDetail | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [syncManifest, setSyncManifest] = useState<ResolveManifest | null>(null);
+  const [syncStage, setSyncStage] = useState<"idle" | "previewing" | "preview" | "applying">(
+    "idle",
+  );
+  const [actionBusy, setActionBusy] = useState(false);
   const [showSource, setShowSource] = useState(false);
 
   useEffect(() => {
@@ -100,31 +119,78 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     };
   }, [target]);
 
-  const handleSync = async (): Promise<void> => {
-    if (!detail) return;
-    setSyncing(true);
+  const handlePreviewSync = async (): Promise<void> => {
+    setSyncStage("previewing");
     setError(null);
     try {
-      const src = sourceFromOrigin(detail.origin);
-      if (target.kind === "skill") await installSkill(src);
-      else if (target.kind === "agent") await installAgent(src);
-      else await installMcp(src);
+      const manifest =
+        target.kind === "skill"
+          ? await resolveSkillSync(target.name)
+          : target.kind === "agent"
+            ? await resolveAgentSync(target.name)
+            : await resolveMcpSync(target.name);
+      setSyncManifest(manifest);
+      setSyncStage("preview");
+    } catch (e) {
+      setError((e as Error).message);
+      setSyncStage("idle");
+    }
+  };
+
+  const handleApplySync = async (): Promise<void> => {
+    setSyncStage("applying");
+    setError(null);
+    try {
+      if (target.kind === "skill") await applySkillSync(target.name);
+      else if (target.kind === "agent") await applyAgentSync(target.name);
+      else await applyMcpSync(target.name);
+      onSynced();
+    } catch (e) {
+      setError((e as Error).message);
+      setSyncStage("preview");
+    }
+  };
+
+  const handleAcknowledge = async (): Promise<void> => {
+    if (target.kind === "mcp") return; // mcps have no prereqs
+    setActionBusy(true);
+    setError(null);
+    try {
+      if (target.kind === "skill") await acknowledgeSkillPrereqs(target.name);
+      else await acknowledgeAgentPrereqs(target.name);
       onSynced();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setSyncing(false);
+      setActionBusy(false);
+    }
+  };
+
+  const handleToggleAgent = async (currentlyDisabled: boolean): Promise<void> => {
+    if (target.kind !== "agent") return;
+    setActionBusy(true);
+    setError(null);
+    try {
+      if (currentlyDisabled) await enableAgent(target.name);
+      else await disableAgent(target.name);
+      onSynced();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setActionBusy(false);
     }
   };
 
   const title = `${KIND_LABEL[target.kind]}: ${target.name}`;
   const scheme = detail ? schemeOf(detail.origin) : "";
+  const inSync = syncStage !== "idle";
+  const syncBusy = syncStage === "previewing" || syncStage === "applying";
 
   return (
-    <Modal open onClose={onClose} title={title}>
+    <Modal open onClose={onClose} title={title} size={inSync ? "large" : "default"}>
       <div className="modal__body modal__body--scroll detail-dialog">
         {loading && <p className="form-hint">Loading...</p>}
-        {!loading && detail && (
+        {!loading && detail && !inSync && (
           <>
             <div className="detail-dialog__strip">
               <span className="detail-dialog__strip-label">
@@ -133,13 +199,24 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
               <button
                 type="button"
                 className="btn btn--primary btn--sm"
-                onClick={handleSync}
-                disabled={syncing}
-                title="Re-fetch from upstream and overwrite the local copy"
+                onClick={handlePreviewSync}
+                disabled={actionBusy}
+                title="Preview the upstream diff before applying"
               >
-                {syncing ? "Syncing..." : "Sync from upstream"}
+                Sync from upstream
               </button>
             </div>
+
+            {detail.status === "blocked" && detail.blockedReason && (
+              <BlockedActionStrip
+                reason={detail.blockedReason}
+                kind={target.kind}
+                disabledByUser={detail.disabledByUser ?? false}
+                actionBusy={actionBusy}
+                onAcknowledge={handleAcknowledge}
+                onToggleAgent={handleToggleAgent}
+              />
+            )}
 
             <dl className="detail-dialog__dl">
               <dt>Origin</dt>
@@ -217,16 +294,126 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
           </>
         )}
 
+        {inSync && syncManifest && <ResolveTree manifest={syncManifest} />}
+        {inSync && syncStage === "previewing" && <p className="form-hint">Resolving…</p>}
+
         {error && <div className="alert alert--error">⚠ {error}</div>}
       </div>
 
       <div className="modal__footer">
-        <button type="button" className="btn" onClick={onClose} disabled={syncing}>
-          Close
-        </button>
+        {inSync && (
+          <>
+            <button
+              type="button"
+              className="btn btn--ghost modal__footer-secondary"
+              onClick={() => {
+                setSyncStage("idle");
+                setSyncManifest(null);
+              }}
+              disabled={syncBusy}
+            >
+              ← Back
+            </button>
+            <button type="button" className="btn" onClick={onClose} disabled={syncBusy}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleApplySync}
+              disabled={syncBusy || (syncManifest?.upToDate ?? false)}
+              title={syncManifest?.upToDate ? "Nothing to apply — already up to date" : undefined}
+            >
+              {syncStage === "applying"
+                ? "Syncing…"
+                : syncManifest?.upToDate
+                  ? "Up to date"
+                  : "Apply sync"}
+            </button>
+          </>
+        )}
+        {!inSync && (
+          <button type="button" className="btn" onClick={onClose} disabled={actionBusy}>
+            Close
+          </button>
+        )}
       </div>
     </Modal>
   );
+}
+
+interface BlockedActionStripProps {
+  reason: import("@emploke/catalog").BlockedReason;
+  kind: "skill" | "agent" | "mcp";
+  disabledByUser: boolean;
+  actionBusy: boolean;
+  onAcknowledge: () => void;
+  onToggleAgent: (currentlyDisabled: boolean) => void;
+}
+
+function BlockedActionStrip({
+  reason,
+  kind,
+  disabledByUser,
+  actionBusy,
+  onAcknowledge,
+  onToggleAgent,
+}: BlockedActionStripProps) {
+  return (
+    <div className="alert alert--warn detail-dialog__blocked-strip">
+      <strong>Blocked.</strong> <span>{summariseReason(reason)}</span>
+      {(reason.needsPrereqsAck || (kind === "agent" && disabledByUser)) && (
+        <div className="detail-dialog__blocked-actions" style={{ marginTop: 8 }}>
+          {reason.needsPrereqsAck && kind !== "mcp" && (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={onAcknowledge}
+              disabled={actionBusy}
+            >
+              Acknowledge prereqs
+            </button>
+          )}
+          {kind === "agent" && disabledByUser && (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => onToggleAgent(true)}
+              disabled={actionBusy}
+            >
+              Enable agent
+            </button>
+          )}
+        </div>
+      )}
+      {kind === "agent" && !disabledByUser && (
+        <div className="detail-dialog__blocked-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => onToggleAgent(false)}
+            disabled={actionBusy}
+          >
+            Disable agent
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function summariseReason(r: import("@emploke/catalog").BlockedReason): string {
+  const parts: string[] = [];
+  if (r.disabledByUser) parts.push("disabled by user");
+  if (r.needsPrereqsAck) parts.push("prereqs not acknowledged");
+  if (r.orphaned) parts.push("orphaned");
+  if (r.missingDeps && r.missingDeps.length > 0) {
+    parts.push(`missing deps: ${r.missingDeps.map((d) => d.name).join(", ")}`);
+  }
+  if (r.blockedDeps && r.blockedDeps.length > 0) {
+    parts.push(`blocked deps: ${r.blockedDeps.map((d) => d.fqn).join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : "unknown reason";
 }
 
 const KIND_LABEL: Record<"skill" | "agent" | "mcp", string> = {
@@ -253,24 +440,6 @@ function schemeOf(origin: string): string {
   return origin.slice(0, colon);
 }
 
-/**
- * Reverse {@link InstallSource} from a stored origin URI. Used by Sync
- * (which has the origin in hand from the catalog and needs to feed it
- * back through the install API in the new structured form).
- *
- *   - github URL          → { provider: "github", location: <url> }
- *   - file:<abs>          → { provider: "file",   location: <abs> }
- *
- * Anything we don't recognise falls through as github (the API will
- * 400 on an unsupported scheme; better than swallowing).
- */
-function sourceFromOrigin(origin: string): InstallSource {
-  if (origin.startsWith("file:")) {
-    return { provider: "file", location: origin.slice("file:".length) };
-  }
-  return { provider: "github", location: origin };
-}
-
 function hrefForOrigin(origin: string): string {
   // Only http(s) URLs are click-safe; everything else (file:, future
   // npm:/oci:) goes through href="#" so the link is informational.
@@ -285,6 +454,10 @@ function projectSkill(d: SkillDetail): LoadedDetail {
     description: meta.description,
     version: meta.version,
     prereqs: meta.prereqs,
+    status: d.status,
+    ...(d.blockedReason !== undefined ? { blockedReason: d.blockedReason } : {}),
+    prereqsAck: meta.prereqsAck,
+    orphaned: meta.orphaned,
     deps: {
       skills: [...(meta.dependencies?.skills ?? [])],
       mcps: [...(meta.dependencies?.mcps ?? [])],
@@ -300,6 +473,11 @@ function projectAgent(d: AgentDetail): LoadedDetail {
     origin: meta.origin,
     description: meta.description,
     version: meta.version,
+    prereqs: meta.prereqs,
+    status: d.status,
+    ...(d.blockedReason !== undefined ? { blockedReason: d.blockedReason } : {}),
+    prereqsAck: meta.prereqsAck,
+    disabledByUser: meta.disabledByUser,
     deps: {
       skills: [...(meta.dependencies?.skills ?? [])],
       mcps: [...(meta.dependencies?.mcps ?? [])],
@@ -312,6 +490,10 @@ function projectAgent(d: AgentDetail): LoadedDetail {
 function projectMcp(d: McpDetail): LoadedDetail {
   return {
     origin: d.origin,
+    status: d.orphaned ? "blocked" : "ready",
+    ...(d.orphaned ? { blockedReason: { orphaned: true as const } } : {}),
+    prereqsAck: true,
+    orphaned: d.orphaned,
     deps: { skills: [], mcps: [] },
     source: d.content,
     sourceLanguage: "json",

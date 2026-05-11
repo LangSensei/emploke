@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { McpInvalidJsonError } from "./errors.js";
 
 /**
@@ -146,4 +147,42 @@ export function stripMeta(content: string, sourceLabel: string): Record<string, 
   }
   const { _meta: _drop, ...rest } = parsed as Record<string, unknown>;
   return rest;
+}
+
+/**
+ * Canonical SHA-256 digest of the MCP content with `_meta` stripped.
+ *
+ * Used by the sync resolve path to detect "no upstream change" — we
+ * deliberately ignore `_meta` so re-injecting `_meta.origin` (which
+ * `writeMeta` does on every install) doesn't show as a spurious diff.
+ *
+ * `null` if the content is unparseable; callers treat that as "always
+ * different" so a parse-failed upstream still falls into the will-sync
+ * branch (and surfaces its parse error properly).
+ */
+export function contentDigestExcludingMeta(content: string, sourceLabel: string): string | null {
+  let stripped: Record<string, unknown>;
+  try {
+    stripped = stripMeta(content, sourceLabel);
+  } catch {
+    return null;
+  }
+  const canonical = JSON.stringify(canonicalise(stripped));
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+function canonicalise(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map(canonicalise);
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const sortedKeys = Object.keys(obj).sort();
+    const out: Record<string, unknown> = {};
+    for (const k of sortedKeys) {
+      const v = obj[k];
+      if (v !== undefined) out[k] = canonicalise(v);
+    }
+    return out;
+  }
+  return value;
 }

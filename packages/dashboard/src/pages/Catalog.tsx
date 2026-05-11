@@ -1,5 +1,5 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   getAgent,
   getMcp,
@@ -71,6 +71,40 @@ export function CatalogPage({
   const [edit, setEdit] = useState<EditTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "blocked" | "orphaned">("all");
+
+  // Filter the per-tab list down according to the status pill row.
+  // `orphaned` only meaningful for skills + mcps (agents can't be
+  // orphaned — they're root entities), so the filter is hidden when
+  // the agents tab is active.
+  const filteredAgents = useMemo(() => {
+    if (statusFilter === "all") return agents;
+    if (statusFilter === "ready") return agents.filter((a) => a.status === "ready");
+    if (statusFilter === "blocked") return agents.filter((a) => a.status === "blocked");
+    return agents; // orphaned doesn't apply
+  }, [agents, statusFilter]);
+
+  const filteredSkills = useMemo(() => {
+    if (statusFilter === "all") return skills;
+    if (statusFilter === "ready") return skills.filter((s) => s.status === "ready");
+    if (statusFilter === "blocked") return skills.filter((s) => s.status === "blocked");
+    return skills.filter((s) => s.skill.orphaned);
+  }, [skills, statusFilter]);
+
+  const filteredMcps = useMemo(() => {
+    if (statusFilter === "all") return mcps;
+    // mcps don't carry status; only orphaned applies. Treat ready as
+    // "not orphaned" and blocked as "orphaned" to keep the pill set
+    // consistent across tabs.
+    if (statusFilter === "ready") return mcps.filter((m) => !m.orphaned);
+    return mcps.filter((m) => m.orphaned);
+  }, [mcps, statusFilter]);
+
+  const orphanCount = useMemo(() => {
+    if (tab === "skills") return skills.filter((s) => s.skill.orphaned).length;
+    if (tab === "mcps") return mcps.filter((m) => m.orphaned).length;
+    return 0;
+  }, [tab, skills, mcps]);
 
   const doInstall = async (src: InstallSource) => {
     setBusy(true);
@@ -99,6 +133,38 @@ export function CatalogPage({
       onChanged();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRemoveAllOrphans = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (tab === "skills") {
+        const orphans = skills.filter((s) => s.skill.orphaned);
+        for (const s of orphans) {
+          try {
+            await removeSkill(s.skill.fqn);
+          } catch (e) {
+            // HasDependentsError shouldn't happen by definition (orphans
+            // have zero reverse-deps), but if it does, surface and continue
+            // — best-effort bulk delete shouldn't abort halfway.
+            setError(`failed to remove ${s.skill.fqn}: ${(e as Error).message}`);
+          }
+        }
+      } else if (tab === "mcps") {
+        const orphans = mcps.filter((m) => m.orphaned);
+        for (const m of orphans) {
+          try {
+            await removeMcp(m.name);
+          } catch (e) {
+            setError(`failed to remove ${m.name}: ${(e as Error).message}`);
+          }
+        }
+      }
+      onChanged();
     } finally {
       setBusy(false);
     }
@@ -152,6 +218,48 @@ export function CatalogPage({
             </div>
           </div>
 
+          <div
+            className="section-tabs"
+            style={{ marginBottom: 16, display: "flex", gap: 8, alignItems: "center" }}
+          >
+            <FilterPill
+              label="All"
+              active={statusFilter === "all"}
+              onClick={() => setStatusFilter("all")}
+            />
+            <FilterPill
+              label="Ready"
+              active={statusFilter === "ready"}
+              onClick={() => setStatusFilter("ready")}
+            />
+            {tab !== "mcps" && (
+              <FilterPill
+                label="Blocked"
+                active={statusFilter === "blocked"}
+                onClick={() => setStatusFilter("blocked")}
+              />
+            )}
+            {tab !== "agents" && (
+              <FilterPill
+                label={`Orphaned${orphanCount > 0 ? ` (${orphanCount})` : ""}`}
+                active={statusFilter === "orphaned"}
+                onClick={() => setStatusFilter("orphaned")}
+              />
+            )}
+            {statusFilter === "orphaned" && orphanCount > 0 && tab !== "agents" && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={doRemoveAllOrphans}
+                disabled={busy}
+                style={{ marginLeft: "auto" }}
+                title="Delete every orphaned entry. Each delete is guarded against accidentally removing one with dependents."
+              >
+                {busy ? "Removing…" : `Remove all (${orphanCount})`}
+              </button>
+            )}
+          </div>
+
           {error && !installOpen && !confirmRemove && (
             <div className="alert alert--error" style={{ marginBottom: 16 }}>
               ⚠ {error}
@@ -160,11 +268,12 @@ export function CatalogPage({
 
           {tab === "agents" && (
             <EntryGrid
-              items={agents.map((a) => ({
+              items={filteredAgents.map((a) => ({
                 name: a.agent.fqn,
                 description: a.agent.description,
                 version: a.agent.version,
                 status: a.status,
+                ...(a.blockedReason !== undefined ? { blockedReason: a.blockedReason } : {}),
                 missingDeps: a.missingDeps,
                 skillsCount: a.agent.dependencies?.skills?.length ?? 0,
                 mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
@@ -182,11 +291,12 @@ export function CatalogPage({
 
           {tab === "skills" && (
             <EntryGrid
-              items={skills.map((s) => ({
+              items={filteredSkills.map((s) => ({
                 name: s.skill.fqn,
                 description: s.skill.description,
                 version: s.skill.version,
                 status: s.status,
+                ...(s.blockedReason !== undefined ? { blockedReason: s.blockedReason } : {}),
                 missingDeps: s.missingDeps,
                 skillsCount: s.skill.dependencies?.skills?.length ?? 0,
                 mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
@@ -204,7 +314,7 @@ export function CatalogPage({
 
           {tab === "mcps" && (
             <McpGrid
-              mcps={mcps}
+              mcps={filteredMcps}
               onEdit={(name) => {
                 setError(null);
                 const m = mcps.find((x) => x.name === name);
@@ -449,6 +559,35 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ─── FilterPill ────────────────────────────────────────────────────
+
+interface FilterPillProps {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}
+
+function FilterPill({ label, active, onClick }: FilterPillProps) {
+  return (
+    <button
+      type="button"
+      className={active ? "active" : ""}
+      onClick={onClick}
+      style={{
+        padding: "4px 12px",
+        borderRadius: 999,
+        border: "1px solid var(--border, #ddd)",
+        background: active ? "var(--accent, #2c5fb5)" : "transparent",
+        color: active ? "white" : "inherit",
+        cursor: "pointer",
+        fontSize: 13,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

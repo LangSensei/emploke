@@ -37,9 +37,11 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
         skills: skills.length,
         agents: agents.length,
         mcps: mcps.length,
-        disabled:
-          skills.filter((s) => s.status === "disabled").length +
-          agents.filter((a) => a.status === "disabled").length,
+        blocked:
+          skills.filter((s) => s.status === "blocked").length +
+          agents.filter((a) => a.status === "blocked").length,
+        orphaned:
+          skills.filter((s) => s.skill.orphaned).length + mcps.filter((m) => m.orphaned).length,
       },
     });
   });

@@ -69,7 +69,7 @@ describe("workspace-scoped catalog routes", () => {
     const res = await mountApp().request(`/api/workspaces/${ws.id}/catalog/overview`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { counts: Record<string, number> };
-    expect(body.counts).toEqual({ skills: 0, agents: 0, mcps: 0, disabled: 0 });
+    expect(body.counts).toEqual({ skills: 0, agents: 0, mcps: 0, blocked: 0, orphaned: 0 });
   });
 
   it("GET agents/skills/mcps return empty arrays for a fresh workspace", async () => {

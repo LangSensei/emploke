@@ -161,7 +161,7 @@ export class SkillService {
       );
     }
 
-    const entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
+    let entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
 
     if (entity.frontmatterSha256 !== node.frontmatterSha256) {
       throw new PlanStaleError(
@@ -175,6 +175,23 @@ export class SkillService {
     const existing = await this.repo.findByFqn(entity.fqn);
     if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
       throw new SkillOriginConflictError(entity.fqn, existing.origin, entity.origin);
+    }
+
+    // Per-installation-flag carry-over rules:
+    //  - prereqsAck:
+    //      - existing entry, prereqs text unchanged → preserve previous ack
+    //      - existing entry, prereqs text changed (added / modified / removed)
+    //        → recompute from scratch (ack iff new prereqs is empty)
+    //      - no existing entry → use the create()-time default
+    //        (ack iff entity has no prereqs)
+    //  - orphaned: preserve previous flag if any; the post-install
+    //    orphan recompute (in the catalog facade) will fix it up.
+    if (existing !== null) {
+      const prereqsAck =
+        (existing.prereqs ?? "") === (entity.prereqs ?? "")
+          ? existing.prereqsAck
+          : entity.prereqsAck;
+      entity = entity.withState({ prereqsAck, orphaned: existing.orphaned });
     }
 
     await this.repo.add(entity, files);
@@ -254,6 +271,29 @@ export class SkillService {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
     await this.repo.delete(fqn);
+  }
+
+  /**
+   * Flip `prereqsAck` to `true`. No-op if the entry has no prereqs
+   * (it's already true). Throws if the skill doesn't exist.
+   */
+  async acknowledgePrereqs(fqn: string): Promise<Skill> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (existing === null) throw new SkillNotFoundError(fqn);
+    if (!existing.prereqsAck) {
+      await this.repo.setFlags(fqn, { prereqsAck: true });
+    }
+    const updated = await this.repo.findByFqn(fqn);
+    if (updated === null) throw new SkillNotFoundError(fqn);
+    return updated;
+  }
+
+  async setFlags(fqn: string, flags: { prereqsAck?: boolean; orphaned?: boolean }): Promise<void> {
+    await this.repo.setFlags(fqn, flags);
+  }
+
+  async setOrphanedBulk(updates: ReadonlyMap<string, boolean>): Promise<void> {
+    await this.repo.setOrphanedBulk(updates);
   }
 
   /** Release the underlying repository's resources. Idempotent. */

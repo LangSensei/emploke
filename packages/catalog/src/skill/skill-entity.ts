@@ -27,6 +27,13 @@ import { makeFqn, validateFqn } from "./validate.js";
  *
  * Files: this entity does NOT hold the skill's file tree (siblings of
  * SKILL.md). The repository exposes `streamFiles(fqn)` for that.
+ *
+ * Per-installation flags (NOT in frontmatter — local opt-ins):
+ *   - `prereqsAck`: user has acknowledged the entry's `prereqs` text
+ *     (or the entry has none). Default at fresh install is computed
+ *     from `meta.prereqs`: empty / undefined → `true`, else `false`.
+ *   - `orphaned`: this entry has zero reverse-deps; system-computed
+ *     after every install / sync, never user-controlled.
  */
 export class Skill {
   private constructor(
@@ -39,6 +46,8 @@ export class Skill {
     private readonly _prereqs: string | undefined,
     private readonly _dependencies: SkillDependencies,
     private readonly _anchorContent: string,
+    private readonly _prereqsAck: boolean,
+    private readonly _orphaned: boolean,
   ) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
@@ -47,6 +56,7 @@ export class Skill {
     }
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
+    const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     return new Skill(
       fqn,
       origin,
@@ -57,6 +67,8 @@ export class Skill {
       meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawSkillMd,
+      prereqsAck,
+      false,
     );
   }
 
@@ -74,6 +86,8 @@ export class Skill {
     prereqs: string | undefined;
     dependencies: SkillDependencies;
     anchorContent: string;
+    prereqsAck: boolean;
+    orphaned: boolean;
   }): Skill {
     validateFqn(args.fqn);
     return new Skill(
@@ -86,6 +100,8 @@ export class Skill {
       args.prereqs,
       normaliseDeps(args.dependencies),
       args.anchorContent,
+      args.prereqsAck,
+      args.orphaned,
     );
   }
 
@@ -116,6 +132,12 @@ export class Skill {
   /** Raw bytes of SKILL.md (frontmatter + body). */
   get anchorContent(): string {
     return this._anchorContent;
+  }
+  get prereqsAck(): boolean {
+    return this._prereqsAck;
+  }
+  get orphaned(): boolean {
+    return this._orphaned;
   }
 
   /**
@@ -161,6 +183,8 @@ export class Skill {
       origin: this._origin,
       description: this._description,
       version: this._version,
+      prereqsAck: this._prereqsAck,
+      orphaned: this._orphaned,
       ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
@@ -181,6 +205,8 @@ export class Skill {
    * yields the same FQN. If the new frontmatter declares a different
    * scope or shortName, throws — callers must delete + reinstall to
    * change identity.
+   *
+   * Per-installation flags (`prereqsAck`, `orphaned`) are preserved.
    */
   withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
@@ -201,6 +227,28 @@ export class Skill {
       meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawSkillMd,
+      this._prereqsAck,
+      this._orphaned,
+    );
+  }
+
+  /**
+   * Return a new entity with one or more per-installation flags
+   * replaced. Identity and frontmatter are preserved.
+   */
+  withState(state: { prereqsAck?: boolean; orphaned?: boolean }): Skill {
+    return new Skill(
+      this._fqn,
+      this._origin,
+      this._scope,
+      this._shortName,
+      this._description,
+      this._version,
+      this._prereqs,
+      this._dependencies,
+      this._anchorContent,
+      state.prereqsAck ?? this._prereqsAck,
+      state.orphaned ?? this._orphaned,
     );
   }
 }
@@ -228,6 +276,11 @@ function normaliseDeps(
     skills: deps?.skills ?? [],
     mcps: deps?.mcps ?? [],
   };
+}
+
+/** True iff `prereqs` is a non-empty, non-whitespace-only string. */
+export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
+  return prereqs !== undefined && prereqs.trim().length > 0;
 }
 
 /**

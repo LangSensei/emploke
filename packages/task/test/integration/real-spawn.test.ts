@@ -114,6 +114,10 @@ const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
       if (!agentNames.includes(name)) throw new Error(`unknown agent: ${name}`);
       return fakeAgentResolve(name);
     },
+    async getAgentEntry(name: string) {
+      if (!agentNames.includes(name)) return null;
+      return { agent: { fqn: name } as unknown, status: "ready" } as unknown;
+    },
   }) as unknown as CatalogManager;
 
 // ───────── helpers ────────────────────────────────────────────

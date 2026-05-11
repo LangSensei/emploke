@@ -5,7 +5,8 @@ export interface OverviewData {
     skills: number;
     agents: number;
     mcps: number;
-    disabled: number;
+    blocked: number;
+    orphaned: number;
   };
 }
 
@@ -161,10 +162,14 @@ export const installMcp = (src: InstallSource) =>
   mutate(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
 
 /**
- * Resolve manifest returned by `POST /catalog/{kind}/resolve`. Read-only
- * preview of the dep graph the install will create. Used by the
- * dashboard's two-phase install dialog so the user can preview the
- * tree (status / scope / conflicts) before committing.
+ * Resolve manifest returned by `POST /catalog/{kind}/resolve` (install)
+ * and `POST /catalog/{kind}/:fqn/sync/resolve` (sync). Read-only
+ * preview of the dep graph the operation will create. Used by the
+ * dashboard's two-phase install/sync dialog.
+ *
+ * Sync-only fields (`isSync`, `upToDate`, `identityChange`, `orphans`)
+ * are populated by the sync resolve endpoint; install resolve leaves
+ * them at their no-op defaults.
  */
 export interface ResolveNodeBase {
   kind: "skill" | "agent" | "mcp";
@@ -174,10 +179,13 @@ export interface ResolveNodeBase {
     | "new"
     | "will-sync"
     | "already-installed"
+    | "up-to-date"
+    | "identity-changed"
     | "would-conflict"
     | "fetch-failed"
     | "parse-failed";
   depFqns: string[];
+  identityChange?: { oldFqn: string; newFqn: string };
   error?: { name: string; message: string };
 }
 
@@ -204,8 +212,19 @@ export interface McpResolveNode extends ResolveNodeBase {
 
 export type ResolveNode = SkillResolveNode | AgentResolveNode | McpResolveNode;
 
+export interface OrphanManifestEntry {
+  kind: "skill" | "mcp";
+  fqn: string;
+  origin: string;
+}
+
 export interface ResolveManifest {
+  rootOrigin: string;
   rootFqn: string;
+  isSync: boolean;
+  upToDate: boolean;
+  identityChange?: { kind: "skill" | "agent" | "mcp"; oldFqn: string; newFqn: string };
+  orphans: OrphanManifestEntry[];
   nodes: ResolveNode[];
 }
 
@@ -220,6 +239,59 @@ export const resolveSkillInstall = (src: InstallSource): Promise<ResolveManifest
 export const resolveAgentInstall = (src: InstallSource): Promise<ResolveManifest> =>
   mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", src));
 
+/**
+ * Resolve a sync from upstream for an already-installed entry. The
+ * server reads the entry's local origin from the row; the dashboard
+ * passes only the local fqn / mcp name in the URL.
+ *
+ * Sync resolve emits a richer manifest than install resolve:
+ *  - `upToDate` short-circuits the apply button when nothing changed
+ *  - `identityChange` warns when upstream renamed under the same URL
+ *  - `orphans` lists deps that the new closure dropped
+ */
+export const resolveSkillSync = (fqn: string): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync/resolve`, {
+    method: "POST",
+  });
+
+export const resolveAgentSync = (fqn: string): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync/resolve`, {
+    method: "POST",
+  });
+
+export const resolveMcpSync = (name: string): Promise<ResolveManifest> =>
+  mutateJson<ResolveManifest>(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync/resolve`, {
+    method: "POST",
+  });
+
+/** Apply a previously-previewed sync. Server recomputes the plan from current local origin. */
+export const applySkillSync = (fqn: string) =>
+  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync`, { method: "POST" });
+
+export const applyAgentSync = (fqn: string) =>
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync`, { method: "POST" });
+
+export const applyMcpSync = (name: string) =>
+  mutate(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync`, { method: "POST" });
+
+/** Acknowledge prereqs: flips `prereqsAck=true` so the entry can run again. */
+export const acknowledgeSkillPrereqs = (fqn: string) =>
+  mutate(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/acknowledge-prereqs`, {
+    method: "POST",
+  });
+
+export const acknowledgeAgentPrereqs = (fqn: string) =>
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/acknowledge-prereqs`, {
+    method: "POST",
+  });
+
+/** Disable / enable an agent (user-controlled toggle; agents only). */
+export const disableAgent = (fqn: string) =>
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/disable`, { method: "POST" });
+
+export const enableAgent = (fqn: string) =>
+  mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/enable`, { method: "POST" });
+
 export const removeAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
 
@@ -233,6 +305,7 @@ export interface McpDetail {
   name: string;
   origin: string;
   mutable: boolean;
+  orphaned: boolean;
   /** Raw JSON content as stored on disk (preserves user formatting). */
   content: string;
 }
@@ -249,7 +322,8 @@ export interface MarkdownDetail {
 
 export interface SkillDetail {
   skill: import("@emploke/catalog").SkillPojo;
-  status: "ready" | "disabled";
+  status: "ready" | "blocked";
+  blockedReason?: import("@emploke/catalog").BlockedReason;
   missingDeps?: MissingDep[];
   content: string;
 }
@@ -278,7 +352,8 @@ export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
 
 export interface AgentDetail {
   agent: import("@emploke/catalog").AgentPojo;
-  status: "ready" | "disabled";
+  status: "ready" | "blocked";
+  blockedReason?: import("@emploke/catalog").BlockedReason;
   missingDeps?: MissingDep[];
   content: string;
 }
@@ -292,9 +367,11 @@ export const getAgentContent = (name: string): Promise<string> =>
 export const updateAgentContent = (name: string, content: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, jsonInit("PUT", { content }));
 
+/** PATCH body for updating agent metadata; mirrors @emploke/catalog `AgentMetadataPatch`. */
 export interface AgentMetadataPatch {
   description?: string;
   version?: string;
+  prereqs?: string | null;
   dependencies?: {
     skills?: import("@emploke/catalog").DependencyRef[];
     mcps?: import("@emploke/catalog").DependencyRef[];

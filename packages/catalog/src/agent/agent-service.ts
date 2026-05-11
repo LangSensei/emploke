@@ -145,7 +145,7 @@ export class AgentService {
       );
     }
 
-    const entity = Agent.create(anchorContent, node.origin, `install:${node.origin}`);
+    let entity = Agent.create(anchorContent, node.origin, `install:${node.origin}`);
 
     if (entity.frontmatterSha256 !== node.frontmatterSha256) {
       throw new AgentPlanStaleError(
@@ -159,6 +159,17 @@ export class AgentService {
     const existing = await this.repo.findByFqn(entity.fqn);
     if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
       throw new AgentOriginConflictError(entity.fqn, existing.origin, entity.origin);
+    }
+
+    // Carry-over rules — see SkillService.install for prereqsAck;
+    // disabledByUser is purely user-controlled and ALWAYS preserved
+    // across syncs (system never flips it).
+    if (existing !== null) {
+      const prereqsAck =
+        (existing.prereqs ?? "") === (entity.prereqs ?? "")
+          ? existing.prereqsAck
+          : entity.prereqsAck;
+      entity = entity.withState({ prereqsAck, disabledByUser: existing.disabledByUser });
     }
 
     await this.repo.add(entity, files);
@@ -225,6 +236,46 @@ export class AgentService {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
     await this.repo.delete(fqn);
+  }
+
+  /** See {@link SkillService.acknowledgePrereqs}. */
+  async acknowledgePrereqs(fqn: string): Promise<Agent> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (existing === null) throw new AgentNotFoundError(fqn);
+    if (!existing.prereqsAck) {
+      await this.repo.setFlags(fqn, { prereqsAck: true });
+    }
+    const updated = await this.repo.findByFqn(fqn);
+    if (updated === null) throw new AgentNotFoundError(fqn);
+    return updated;
+  }
+
+  /** Flip `disabled_by_user` to `true`. Idempotent. */
+  async disableByUser(fqn: string): Promise<Agent> {
+    return this.setUserDisabled(fqn, true);
+  }
+
+  /** Flip `disabled_by_user` to `false`. Idempotent. */
+  async enableByUser(fqn: string): Promise<Agent> {
+    return this.setUserDisabled(fqn, false);
+  }
+
+  private async setUserDisabled(fqn: string, value: boolean): Promise<Agent> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (existing === null) throw new AgentNotFoundError(fqn);
+    if (existing.disabledByUser !== value) {
+      await this.repo.setFlags(fqn, { disabledByUser: value });
+    }
+    const updated = await this.repo.findByFqn(fqn);
+    if (updated === null) throw new AgentNotFoundError(fqn);
+    return updated;
+  }
+
+  async setFlags(
+    fqn: string,
+    flags: { prereqsAck?: boolean; disabledByUser?: boolean },
+  ): Promise<void> {
+    await this.repo.setFlags(fqn, flags);
   }
 
   /** Release the underlying repository's resources. Idempotent. */

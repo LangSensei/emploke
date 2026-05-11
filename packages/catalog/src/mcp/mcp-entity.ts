@@ -17,6 +17,10 @@ import { validateMcpName } from "./validate.js";
  *   - {@link Mcp.create} — for fresh installs from raw user bytes.
  *   - {@link Mcp.fromStored} — for reconstitution by the repository.
  *
+ * Per-installation flag (NOT in the JSON content):
+ *   - `orphaned`: this MCP currently has zero reverse-deps. System-
+ *     computed after every install / sync.
+ *
  * Invariants:
  *   - `name` matches MCP spec grammar (validated via `validateMcpName`)
  *   - `origin` is non-empty
@@ -28,6 +32,7 @@ export class Mcp {
     private readonly _name: string,
     private readonly _origin: string,
     private readonly _content: string,
+    private readonly _orphaned: boolean,
   ) {}
 
   static create(name: string, origin: string, rawContent: string): Mcp {
@@ -40,12 +45,12 @@ export class Mcp {
     // Defensive: re-parse so we never construct an entity whose content
     // can't be read back. Catches programmer errors in writeMeta upgrades.
     McpFormat.parse(merged, sourceLabel);
-    return new Mcp(name, origin, merged);
+    return new Mcp(name, origin, merged, false);
   }
 
-  static fromStored(name: string, origin: string, content: string): Mcp {
+  static fromStored(name: string, origin: string, content: string, orphaned: boolean): Mcp {
     validateMcpName(name);
-    return new Mcp(name, origin, content);
+    return new Mcp(name, origin, content, orphaned);
   }
 
   get name(): string {
@@ -60,11 +65,16 @@ export class Mcp {
     return this._content;
   }
 
+  get orphaned(): boolean {
+    return this._orphaned;
+  }
+
   /** Plain JSON projection. */
   toJSON(): Record<string, unknown> {
     return {
       name: this._name,
       origin: this._origin,
+      orphaned: this._orphaned,
     };
   }
 
@@ -75,6 +85,12 @@ export class Mcp {
    * this method; they must delete + reinstall.
    */
   withContent(rawContent: string): Mcp {
-    return Mcp.create(this._name, this._origin, rawContent);
+    const next = Mcp.create(this._name, this._origin, rawContent);
+    return new Mcp(next._name, next._origin, next._content, this._orphaned);
+  }
+
+  /** Return a new entity with the orphaned flag replaced. */
+  withState(state: { orphaned?: boolean }): Mcp {
+    return new Mcp(this._name, this._origin, this._content, state.orphaned ?? this._orphaned);
   }
 }

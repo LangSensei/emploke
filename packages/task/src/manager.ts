@@ -9,6 +9,7 @@ import { create as createTask } from "./create.js";
 import {
   AgentNotFoundError,
   CorruptedTaskError,
+  EntryNotReadyError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
@@ -175,8 +176,25 @@ export class TaskManager {
     }
     let resolveResult: AgentResolveResult;
     try {
+      // Status guard: refuse dispatch on blocked agents. The cascade-
+      // aware status from `getAgentEntry` means we catch:
+      //   - prereqs not acknowledged on the agent itself
+      //   - agent disabled by user
+      //   - any transitive skill missing / blocked
+      // Pre-existing behaviour (silent acceptance) was a footgun — the
+      // runtime would spawn and then fail with a much less clear error.
+      const entry = await this.catalog.getAgentEntry(agentName);
+      if (entry === null) {
+        throw new AgentNotFoundError(agentName);
+      }
+      if (entry.status === "blocked") {
+        throw new EntryNotReadyError(agentName, entry.blockedReason);
+      }
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
+      if (err instanceof AgentNotFoundError || err instanceof EntryNotReadyError) {
+        throw err;
+      }
       throw new AgentNotFoundError(agentName, err as Error);
     }
 
