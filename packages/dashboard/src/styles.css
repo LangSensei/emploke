@@ -968,31 +968,146 @@ button {
   overflow-wrap: anywhere;
 }
 
-.detail-dialog__strip {
+/* ─── Hero header (rich modal title) ────────────────────────────── */
+
+.detail-hero {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-accent-bg);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-4);
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
 }
 
-.detail-dialog__strip-label {
+.detail-hero__icon {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--color-accent);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 20px;
+  line-height: 1;
 }
 
-.detail-dialog__strip-label code {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 1px 6px;
-  border-radius: 3px;
+.detail-hero__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-hero__kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.detail-hero__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.detail-hero__name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.detail-hero__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.detail-hero__status--ready {
+  color: #1f7a3a;
+  background: rgba(31, 122, 58, 0.08);
+  border-color: rgba(31, 122, 58, 0.2);
+}
+
+.detail-hero__status--blocked {
+  color: #b54708;
+  background: rgba(181, 71, 8, 0.08);
+  border-color: rgba(181, 71, 8, 0.2);
+}
+
+.detail-hero__status-dot {
+  font-size: 8px;
+  line-height: 1;
+}
+
+.detail-hero__status-dot--ready {
+  color: #1f7a3a;
+}
+
+.detail-hero__status-dot--blocked {
+  color: #b54708;
+}
+
+.detail-hero__namespace {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 12px;
+  color: var(--color-text-muted);
+  word-break: break-word;
+}
+
+/* ─── Tab nav inside the detail body ────────────────────────────── */
+
+.detail-dialog__tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  margin: calc(-1 * var(--space-2)) 0 0 0;
+}
+
+.detail-dialog__tab {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.detail-dialog__tab:hover {
+  color: var(--color-text);
+}
+
+.detail-dialog__tab--active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+/* ─── Action strip above the metadata dl ────────────────────────── */
+
+.detail-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-2);
 }
 
 .detail-dialog__dl {
@@ -1033,6 +1148,17 @@ button {
 
 .detail-dialog__origin:hover {
   text-decoration: underline;
+}
+
+.detail-dialog__origin-scheme {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.detail-dialog__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .detail-dialog__empty {
@@ -1085,30 +1211,6 @@ button {
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
-}
-
-.detail-dialog__source {
-  margin-top: var(--space-3);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
-}
-
-.detail-dialog__source > summary {
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 13px;
-  user-select: none;
-}
-
-.detail-dialog__source[open] > summary {
-  margin-bottom: var(--space-2);
-}
-
-.detail-dialog__source-hint {
-  color: var(--color-text-muted);
-  font-weight: 400;
-  font-size: 12px;
 }
 
 .detail-dialog__code {
@@ -1591,6 +1693,25 @@ button {
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+/*
+ * Rich-header variant: used by DetailDialog. The hero block has its
+ * own visual weight (icon tile, name, namespace) so we ease back on
+ * vertical padding and align the close button to the top, not center,
+ * to avoid an awkward gap on the right.
+ */
+.modal__header--rich {
+  align-items: flex-start;
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-5);
+}
+
+.modal__close {
+  flex-shrink: 0;
+}
+
+.modal__header--rich .modal__close {
+  margin-top: 4px;
 }
 
 .modal__title {

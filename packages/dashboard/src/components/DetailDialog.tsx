@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   type AgentDetail,
   acknowledgeAgentPrereqs,
@@ -18,7 +18,7 @@ import {
   resolveSkillSync,
   type SkillDetail,
 } from "../api";
-import { KIND_TITLE } from "../kindMeta";
+import { type EntityKind, KIND_ICON, KIND_TAG, KIND_TITLE } from "../kindMeta";
 import { Modal } from "./Modal";
 import { ResolveTree } from "./ResolveTree";
 
@@ -29,20 +29,20 @@ import { ResolveTree } from "./ResolveTree";
  * (currently any non-`file:` scheme — see {@link isOriginMutable} in
  * `@emploke/catalog`). Mutable entries still get the full edit form.
  *
- * Layout, top to bottom:
- *  - Status strip: lock + scheme label + Sync from upstream button
- *    (opens a 2-stage preview/apply dialog rather than the legacy
- *    one-shot install)
- *  - Per-entry CTA strip — appears only when the entry is `blocked`:
- *      - Acknowledge button when prereqs are pending
- *      - Enable / Disable button (agents only) for the user toggle
- *  - Origin URL row (wraps long URLs cleanly; click-to-copy for
- *    operators forking the upstream)
- *  - Definition list of the entry's metadata (description, version,
- *    deps, prereqs), each rendered statically — no input fields
- *  - Collapsible Source section showing the raw anchor file
- *    (SKILL.md / AGENTS.md / mcp.json) for users who want to see what
- *    they actually installed before sync'ing or forking
+ * Layout:
+ *  - Hero header: kind icon tag + KIND label + big fqn (mono) +
+ *    status pill, with namespace breadcrumb on a second line. Close
+ *    button on the right.
+ *  - Tab nav: Overview / Source. Sync, Acknowledge, and Disable/Enable
+ *    actions live in the Overview tab as a contextual action strip
+ *    above the metadata; the source file gets its own dedicated tab.
+ *  - Overview tab: optional action strip + definition-list metadata
+ *    (description, origin, version, status, deps, prereqs).
+ *  - Source tab: full anchor file contents (SKILL.md / AGENTS.md /
+ *    mcp.json), no collapse.
+ *  - Footer: Sync from upstream + Close. While the user is in the
+ *    sync resolve flow, the footer switches to the standard
+ *    Back / Cancel / Apply triad.
  *
  * Pure read view: NO disabled inputs, NO toggle between form/source
  * modes, NO Save button. Ergonomics for "I want to inspect what's
@@ -50,7 +50,7 @@ import { ResolveTree } from "./ResolveTree";
  * "I want to edit my own entry" that a separate dialog reduces noise.
  */
 export interface DetailDialogProps {
-  target: { kind: "skill" | "agent" | "mcp"; name: string };
+  target: { kind: EntityKind; name: string };
   onClose: () => void;
   /** Called after a successful Sync / Acknowledge / Enable / Disable; parent re-fetches catalog list. */
   onSynced: () => void;
@@ -77,6 +77,8 @@ interface LoadedDetail {
   sourceLanguage: "markdown" | "json";
 }
 
+type DetailTab = "overview" | "source";
+
 export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -86,13 +88,14 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     "idle",
   );
   const [actionBusy, setActionBusy] = useState(false);
-  const [showSource, setShowSource] = useState(false);
+  const [activeTab, setActiveTab] = useState<DetailTab>("overview");
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setDetail(null);
+    setActiveTab("overview");
     const load = async (): Promise<void> => {
       if (target.kind === "mcp") {
         const d = await getMcp(target.name);
@@ -186,136 +189,67 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     }
   };
 
-  const title = `${KIND_TITLE[target.kind]}: ${target.name}`;
-  const scheme = detail ? schemeOf(detail.origin) : "";
   const inSync = syncStage !== "idle";
   const syncBusy = syncStage === "previewing" || syncStage === "applying";
 
+  // Hero header — rich title block. While the user is in the sync
+  // flow we keep the same hero (so context never disappears) but mute
+  // the status pill (it would be stale once apply runs anyway).
+  const header = detail ? (
+    <DetailHero target={target} detail={detail} hideStatus={inSync} />
+  ) : (
+    <h3 className="modal__title">{`${KIND_TITLE[target.kind]}: ${target.name}`}</h3>
+  );
+
   return (
-    <Modal open onClose={onClose} title={title} size={inSync ? "large" : "default"}>
+    <Modal
+      open
+      onClose={onClose}
+      title={`${KIND_TITLE[target.kind]}: ${target.name}`}
+      header={header}
+      size={inSync ? "large" : "default"}
+    >
       <div className="modal__body modal__body--scroll detail-dialog">
         {loading && <p className="form-hint">Loading...</p>}
+
         {!loading && detail && !inSync && (
           <>
-            <div className="detail-dialog__strip">
-              <span className="detail-dialog__strip-label">
-                <span aria-hidden="true">🔒</span> Read-only · <code>{scheme}</code>
-              </span>
-              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-                {target.kind === "agent" && (
-                  // Lifecycle toggle is always available on agents,
-                  // regardless of computed status — disabling a `ready`
-                  // agent is the user's primary path to pausing it
-                  // without uninstalling. Disabled-state shows Enable
-                  // so the toggle is reversible from the same place.
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => handleToggleAgent(detail.disabledByUser ?? false)}
-                    disabled={actionBusy}
-                    title={
-                      detail.disabledByUser
-                        ? "Mark this agent active. Status will recompute."
-                        : "Pause this agent. New dispatches will be refused until re-enabled."
-                    }
-                  >
-                    {detail.disabledByUser ? "Enable agent" : "Disable agent"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn--primary btn--sm"
-                  onClick={handlePreviewSync}
-                  disabled={actionBusy}
-                  title="Preview the upstream diff before applying"
-                >
-                  Sync from upstream
-                </button>
-              </div>
+            <div className="detail-dialog__tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "overview"}
+                className={`detail-dialog__tab${activeTab === "overview" ? " detail-dialog__tab--active" : ""}`}
+                onClick={() => setActiveTab("overview")}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "source"}
+                className={`detail-dialog__tab${activeTab === "source" ? " detail-dialog__tab--active" : ""}`}
+                onClick={() => setActiveTab("source")}
+              >
+                {sourceLabel(target.kind)}
+              </button>
             </div>
 
-            {detail.status === "blocked" && detail.blockedReason && (
-              <BlockedActionStrip
-                reason={detail.blockedReason}
-                kind={target.kind}
+            {activeTab === "overview" && (
+              <OverviewTab
+                target={target}
+                detail={detail}
                 actionBusy={actionBusy}
                 onAcknowledge={handleAcknowledge}
+                onToggleAgent={handleToggleAgent}
               />
             )}
 
-            <dl className="detail-dialog__dl">
-              <dt>Origin</dt>
-              <dd>
-                <a
-                  href={hrefForOrigin(detail.origin)}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="detail-dialog__origin"
-                >
-                  {detail.origin}
-                </a>
-              </dd>
-
-              {detail.description && (
-                <>
-                  <dt>Description</dt>
-                  <dd>{detail.description}</dd>
-                </>
-              )}
-
-              {detail.version && (
-                <>
-                  <dt>Version</dt>
-                  <dd>
-                    <code>{detail.version}</code>
-                  </dd>
-                </>
-              )}
-
-              {target.kind !== "mcp" && (
-                <>
-                  <dt>Skills</dt>
-                  <dd>
-                    {detail.deps.skills.length === 0 ? (
-                      <span className="detail-dialog__empty">none</span>
-                    ) : (
-                      <DepList items={detail.deps.skills} />
-                    )}
-                  </dd>
-                  <dt>MCPs</dt>
-                  <dd>
-                    {detail.deps.mcps.length === 0 ? (
-                      <span className="detail-dialog__empty">none</span>
-                    ) : (
-                      <DepList items={detail.deps.mcps} />
-                    )}
-                  </dd>
-                </>
-              )}
-
-              {detail.prereqs && (
-                <>
-                  <dt>Prereqs</dt>
-                  <dd>
-                    <pre className="detail-dialog__prereqs">{detail.prereqs}</pre>
-                  </dd>
-                </>
-              )}
-            </dl>
-
-            <details
-              className="detail-dialog__source"
-              open={showSource}
-              onToggle={(e) => setShowSource((e.target as HTMLDetailsElement).open)}
-            >
-              <summary>
-                {sourceLabel(target.kind)} ·{" "}
-                <span className="detail-dialog__source-hint">({detail.source.length} bytes)</span>
-              </summary>
+            {activeTab === "source" && (
               <pre className={`detail-dialog__code lang-${detail.sourceLanguage}`}>
                 {detail.source}
               </pre>
-            </details>
+            )}
           </>
         )}
 
@@ -358,47 +292,226 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
           </>
         )}
         {!inSync && (
-          <button type="button" className="btn" onClick={onClose} disabled={actionBusy}>
-            Close
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn--primary modal__footer-secondary"
+              onClick={handlePreviewSync}
+              disabled={actionBusy || !detail}
+              title="Preview the upstream diff before applying"
+            >
+              Sync from upstream
+            </button>
+            <button type="button" className="btn" onClick={onClose} disabled={actionBusy}>
+              Close
+            </button>
+          </>
         )}
       </div>
     </Modal>
   );
 }
 
-interface BlockedActionStripProps {
-  reason: import("@emploke/catalog").BlockedReason;
-  kind: "skill" | "agent" | "mcp";
-  actionBusy: boolean;
-  onAcknowledge: () => void;
+interface DetailHeroProps {
+  target: { kind: EntityKind; name: string };
+  detail: LoadedDetail;
+  hideStatus: boolean;
 }
 
 /**
- * Inline alert that surfaces only when an entry is `blocked`. Carries
- * the Acknowledge action for self-blocking via prereqs; cascade
- * blockers (missingDeps / blockedDeps) are shown in the message but
- * resolved by acting on the dep itself, not from this strip. Agent
- * Enable/Disable is OWNED BY THE TOP STRIP — keeping it there means
- * the user can pause a `ready` agent too, not just unpause a blocked one.
+ * Top-of-modal hero block. Mirrors the v0 mockup: a kind icon tile on
+ * the left, KIND label + big mono fqn stacked next to it, an optional
+ * namespace breadcrumb beneath, and a status pill on the right.
  */
-function BlockedActionStrip({ reason, kind, actionBusy, onAcknowledge }: BlockedActionStripProps) {
+function DetailHero({ target, detail, hideStatus }: DetailHeroProps) {
+  const { namespace, short } = splitFqn(target.name);
   return (
-    <div className="alert alert--warn detail-dialog__blocked-strip">
-      <strong>Blocked.</strong> <span>{summariseReason(reason)}</span>
-      {reason.needsPrereqsAck && kind !== "mcp" && (
-        <div className="detail-dialog__blocked-actions" style={{ marginTop: 8 }}>
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            onClick={onAcknowledge}
-            disabled={actionBusy}
-          >
-            Acknowledge prereqs
-          </button>
+    <div className="detail-hero">
+      <span className="detail-hero__icon" aria-hidden="true">
+        {KIND_ICON[target.kind]}
+      </span>
+      <div className="detail-hero__text">
+        <div className="detail-hero__kind">{KIND_TAG[target.kind]}</div>
+        <div className="detail-hero__title">
+          <span className="detail-hero__name">{short}</span>
+          {!hideStatus && (
+            <span
+              className={`detail-hero__status detail-hero__status--${detail.status}`}
+              title={
+                detail.status === "ready"
+                  ? "Ready to use"
+                  : detail.blockedReason
+                    ? summariseReason(detail.blockedReason)
+                    : "Blocked"
+              }
+            >
+              <span className="detail-hero__status-dot" aria-hidden="true">
+                ●
+              </span>
+              {detail.status === "ready" ? "Ready" : "Blocked"}
+            </span>
+          )}
+        </div>
+        {namespace && <div className="detail-hero__namespace">{namespace}</div>}
+      </div>
+    </div>
+  );
+}
+
+interface OverviewTabProps {
+  target: { kind: EntityKind; name: string };
+  detail: LoadedDetail;
+  actionBusy: boolean;
+  onAcknowledge: () => void;
+  onToggleAgent: (currentlyDisabled: boolean) => void;
+}
+
+/**
+ * The default tab. Shows the action strip (visible when there is any
+ * action available — Acknowledge for self-blocked-by-prereqs entries
+ * or Enable/Disable for agents), then the metadata definition list.
+ */
+function OverviewTab({
+  target,
+  detail,
+  actionBusy,
+  onAcknowledge,
+  onToggleAgent,
+}: OverviewTabProps) {
+  const showAcknowledge = target.kind !== "mcp" && detail.blockedReason?.needsPrereqsAck === true;
+  const showAgentToggle = target.kind === "agent";
+  const hasActions = showAcknowledge || showAgentToggle;
+
+  return (
+    <>
+      {hasActions && (
+        <div className="detail-dialog__actions">
+          {showAcknowledge && (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={onAcknowledge}
+              disabled={actionBusy}
+              title="Mark prereqs as acknowledged so this entry can be used."
+            >
+              Acknowledge prereqs
+            </button>
+          )}
+          {showAgentToggle && (
+            // Always available on agents, regardless of computed status
+            // — disabling a `ready` agent is the user's primary path
+            // to pausing it without uninstalling. The label flips so
+            // the toggle is reversible from the same place.
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onToggleAgent(detail.disabledByUser ?? false)}
+              disabled={actionBusy}
+              title={
+                detail.disabledByUser
+                  ? "Mark this agent active. Status will recompute."
+                  : "Pause this agent. New dispatches will be refused until re-enabled."
+              }
+            >
+              {detail.disabledByUser ? "Enable agent" : "Disable agent"}
+            </button>
+          )}
         </div>
       )}
-    </div>
+
+      <dl className="detail-dialog__dl">
+        {detail.description && (
+          <>
+            <dt>Description</dt>
+            <dd>{detail.description}</dd>
+          </>
+        )}
+
+        <dt>Origin</dt>
+        <dd>
+          <a
+            href={hrefForOrigin(detail.origin)}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="detail-dialog__origin"
+          >
+            {detail.origin}
+          </a>
+          <span className="detail-dialog__origin-scheme"> · {schemeOf(detail.origin)}</span>
+        </dd>
+
+        {detail.version && (
+          <>
+            <dt>Version</dt>
+            <dd>
+              <code>{detail.version}</code>
+            </dd>
+          </>
+        )}
+
+        <dt>Status</dt>
+        <dd>
+          <StatusLine detail={detail} />
+        </dd>
+
+        {target.kind !== "mcp" && (
+          <>
+            <dt>Skills</dt>
+            <dd>
+              {detail.deps.skills.length === 0 ? (
+                <span className="detail-dialog__empty">None</span>
+              ) : (
+                <DepList items={detail.deps.skills} />
+              )}
+            </dd>
+            <dt>MCPs</dt>
+            <dd>
+              {detail.deps.mcps.length === 0 ? (
+                <span className="detail-dialog__empty">None</span>
+              ) : (
+                <DepList items={detail.deps.mcps} />
+              )}
+            </dd>
+          </>
+        )}
+
+        {detail.prereqs && (
+          <>
+            <dt>Prereqs</dt>
+            <dd>
+              <pre className="detail-dialog__prereqs">{detail.prereqs}</pre>
+            </dd>
+          </>
+        )}
+      </dl>
+    </>
+  );
+}
+
+/**
+ * Status row inside the Overview definition list. Renders the same
+ * coloured dot as the hero pill plus a one-line plain-English summary
+ * (e.g. "All dependencies are available." for ready, or the structured
+ * blocked reason joined into a sentence).
+ */
+function StatusLine({ detail }: { detail: LoadedDetail }): ReactNode {
+  if (detail.status === "ready") {
+    return (
+      <span className="detail-dialog__status">
+        <span className="detail-hero__status-dot detail-hero__status-dot--ready" aria-hidden="true">
+          ●
+        </span>
+        Ready · All dependencies are available.
+      </span>
+    );
+  }
+  return (
+    <span className="detail-dialog__status">
+      <span className="detail-hero__status-dot detail-hero__status-dot--blocked" aria-hidden="true">
+        ●
+      </span>
+      Blocked · {detail.blockedReason ? summariseReason(detail.blockedReason) : "unknown reason"}
+    </span>
   );
 }
 
@@ -416,7 +529,7 @@ function summariseReason(r: import("@emploke/catalog").BlockedReason): string {
   return parts.length > 0 ? parts.join("; ") : "unknown reason";
 }
 
-function sourceLabel(kind: "skill" | "agent" | "mcp"): string {
+function sourceLabel(kind: EntityKind): string {
   switch (kind) {
     case "skill":
       return "SKILL.md";
@@ -439,6 +552,18 @@ function hrefForOrigin(origin: string): string {
   // npm:/oci:) goes through href="#" so the link is informational.
   if (origin.startsWith("https://") || origin.startsWith("http://")) return origin;
   return "#";
+}
+
+/**
+ * Split a fqn like `langsensei/emploke-dev` into namespace + short
+ * name so the hero can render them on two visually distinct lines.
+ * Unscoped entries (no slash) return `namespace = ""` — caller hides
+ * the second line.
+ */
+function splitFqn(fqn: string): { namespace: string; short: string } {
+  const slash = fqn.lastIndexOf("/");
+  if (slash <= 0) return { namespace: "", short: fqn };
+  return { namespace: fqn.slice(0, slash), short: fqn.slice(slash + 1) };
 }
 
 function projectSkill(d: SkillDetail): LoadedDetail {

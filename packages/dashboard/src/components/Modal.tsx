@@ -4,7 +4,20 @@ import { CloseIcon } from "./Icons";
 interface ModalProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * Modal title. Used as the default header content (rendered as an
+   * `<h3 class="modal__title">`). Ignored when `header` is provided —
+   * but it's still required as the dialog's `aria-label` and as a
+   * fallback value for screen readers.
+   */
   title: string;
+  /**
+   * Optional rich header content. When provided, renders in place of
+   * the default `<h3>{title}</h3>` and lets callers compose hero
+   * blocks (kind icon, fqn, status pill, etc.) without breaking the
+   * modal frame. The close button is always appended after.
+   */
+  header?: ReactNode;
   children: ReactNode;
   size?: "default" | "large";
 }
@@ -13,7 +26,7 @@ interface ModalProps {
  * Thin wrapper around the native <dialog> element. Gives us focus trap,
  * ESC-to-close, and backdrop styling without importing any UI library.
  */
-export function Modal({ open, onClose, title, children, size = "default" }: ModalProps) {
+export function Modal({ open, onClose, title, header, children, size = "default" }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -37,11 +50,11 @@ export function Modal({ open, onClose, title, children, size = "default" }: Moda
       }}
     >
       <div className="modal__inner">
-        <div className="modal__header">
-          <h3 className="modal__title">{title}</h3>
+        <div className={`modal__header${header ? " modal__header--rich" : ""}`}>
+          {header ?? <h3 className="modal__title">{title}</h3>}
           <button
             type="button"
-            className="btn btn--ghost btn--icon"
+            className="btn btn--ghost btn--icon modal__close"
             onClick={onClose}
             aria-label="Close"
           >
