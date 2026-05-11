@@ -522,6 +522,67 @@ button {
   gap: var(--space-2);
 }
 
+/* ─── Catalog status filters ──────────────────────────────────────
+ *
+ * Inline status filters embedded in the page toolbar's middle slot.
+ * Rendered as bare buttons (no border, no background) so they read
+ * as secondary navigation next to the primary tab nav. Active state
+ * borrows the accent treatment from `.section-tabs button.active`
+ * for visual continuity, minus the underline (the toolbar already
+ * has its own bottom border). On narrow screens the whole strip
+ * wraps under the tab nav rather than overflowing.
+ */
+.catalog-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 0 var(--space-3);
+  margin-left: var(--space-4);
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.catalog-filters__link {
+  background: transparent;
+  border: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.catalog-filters__link:hover {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.catalog-filters__link--active {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.catalog-filters__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.catalog-filters__link--active .catalog-filters__count {
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+}
+
 /* ─── Cards / panels ────────────────────────────────────────────── */
 
 .card {

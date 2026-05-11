@@ -51,12 +51,8 @@ import { ResolveTree } from "./ResolveTree";
 export interface DetailDialogProps {
   target: { kind: "skill" | "agent" | "mcp"; name: string };
   onClose: () => void;
-  /**
-   * Called after a successful Sync / Acknowledge / Enable / Disable;
-   * parent re-fetches catalog list. Sync passes the install result so
-   * the parent can surface entries with pending prereqs in a notice.
-   */
-  onSynced: (syncResult?: import("../api").SyncResult) => void;
+  /** Called after a successful Sync / Acknowledge / Enable / Disable; parent re-fetches catalog list. */
+  onSynced: () => void;
 }
 
 interface LoadedDetail {
@@ -145,13 +141,14 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     setSyncStage("applying");
     setError(null);
     try {
-      const result =
-        target.kind === "skill"
-          ? await applySkillSync(target.name)
-          : target.kind === "agent"
-            ? await applyAgentSync(target.name)
-            : await applyMcpSync(target.name);
-      onSynced(result);
+      // The sync API returns a `CatalogSyncResult` carrying per-entry
+      // prereqs info, but the dashboard surfaces "needs ack" through
+      // the entry's `blocked` badge + DetailDialog rather than via a
+      // post-sync banner. We only need success vs throw here.
+      if (target.kind === "skill") await applySkillSync(target.name);
+      else if (target.kind === "agent") await applyAgentSync(target.name);
+      else await applyMcpSync(target.name);
+      onSynced();
     } catch (e) {
       setError((e as Error).message);
       setSyncStage("preview");
@@ -203,25 +200,45 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
               <span className="detail-dialog__strip-label">
                 <span aria-hidden="true">🔒</span> Read-only · <code>{scheme}</code>
               </span>
-              <button
-                type="button"
-                className="btn btn--primary btn--sm"
-                onClick={handlePreviewSync}
-                disabled={actionBusy}
-                title="Preview the upstream diff before applying"
-              >
-                Sync from upstream
-              </button>
+              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                {target.kind === "agent" && (
+                  // Lifecycle toggle is always available on agents,
+                  // regardless of computed status — disabling a `ready`
+                  // agent is the user's primary path to pausing it
+                  // without uninstalling. Disabled-state shows Enable
+                  // so the toggle is reversible from the same place.
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => handleToggleAgent(detail.disabledByUser ?? false)}
+                    disabled={actionBusy}
+                    title={
+                      detail.disabledByUser
+                        ? "Mark this agent active. Status will recompute."
+                        : "Pause this agent. New dispatches will be refused until re-enabled."
+                    }
+                  >
+                    {detail.disabledByUser ? "Enable agent" : "Disable agent"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={handlePreviewSync}
+                  disabled={actionBusy}
+                  title="Preview the upstream diff before applying"
+                >
+                  Sync from upstream
+                </button>
+              </div>
             </div>
 
             {detail.status === "blocked" && detail.blockedReason && (
               <BlockedActionStrip
                 reason={detail.blockedReason}
                 kind={target.kind}
-                disabledByUser={detail.disabledByUser ?? false}
                 actionBusy={actionBusy}
                 onAcknowledge={handleAcknowledge}
-                onToggleAgent={handleToggleAgent}
               />
             )}
 
@@ -352,56 +369,31 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
 interface BlockedActionStripProps {
   reason: import("@emploke/catalog").BlockedReason;
   kind: "skill" | "agent" | "mcp";
-  disabledByUser: boolean;
   actionBusy: boolean;
   onAcknowledge: () => void;
-  onToggleAgent: (currentlyDisabled: boolean) => void;
 }
 
-function BlockedActionStrip({
-  reason,
-  kind,
-  disabledByUser,
-  actionBusy,
-  onAcknowledge,
-  onToggleAgent,
-}: BlockedActionStripProps) {
+/**
+ * Inline alert that surfaces only when an entry is `blocked`. Carries
+ * the Acknowledge action for self-blocking via prereqs; cascade
+ * blockers (missingDeps / blockedDeps) are shown in the message but
+ * resolved by acting on the dep itself, not from this strip. Agent
+ * Enable/Disable is OWNED BY THE TOP STRIP — keeping it there means
+ * the user can pause a `ready` agent too, not just unpause a blocked one.
+ */
+function BlockedActionStrip({ reason, kind, actionBusy, onAcknowledge }: BlockedActionStripProps) {
   return (
     <div className="alert alert--warn detail-dialog__blocked-strip">
       <strong>Blocked.</strong> <span>{summariseReason(reason)}</span>
-      {(reason.needsPrereqsAck || (kind === "agent" && disabledByUser)) && (
-        <div className="detail-dialog__blocked-actions" style={{ marginTop: 8 }}>
-          {reason.needsPrereqsAck && kind !== "mcp" && (
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={onAcknowledge}
-              disabled={actionBusy}
-            >
-              Acknowledge prereqs
-            </button>
-          )}
-          {kind === "agent" && disabledByUser && (
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={() => onToggleAgent(true)}
-              disabled={actionBusy}
-            >
-              Enable agent
-            </button>
-          )}
-        </div>
-      )}
-      {kind === "agent" && !disabledByUser && (
+      {reason.needsPrereqsAck && kind !== "mcp" && (
         <div className="detail-dialog__blocked-actions" style={{ marginTop: 8 }}>
           <button
             type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={() => onToggleAgent(false)}
+            className="btn btn--primary btn--sm"
+            onClick={onAcknowledge}
             disabled={actionBusy}
           >
-            Disable agent
+            Acknowledge prereqs
           </button>
         </div>
       )}

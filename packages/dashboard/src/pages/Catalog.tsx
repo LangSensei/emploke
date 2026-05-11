@@ -1,6 +1,8 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  disableAgent,
+  enableAgent,
   getAgent,
   getMcp,
   getSkill,
@@ -106,41 +108,19 @@ export function CatalogPage({
     return 0;
   }, [tab, skills, mcps]);
 
-  /**
-   * Set after a successful install/sync. Each entry needs the user to
-   * follow its prereqs and click Acknowledge before the entity will run.
-   * Rendered as a sticky alert until the user dismisses it.
-   */
-  const [pendingPrereqs, setPendingPrereqs] = useState<
-    { kind: "skill" | "agent"; fqn: string; prereqs: string }[]
-  >([]);
-
   const doInstall = async (src: InstallSource) => {
     setBusy(true);
     setError(null);
     try {
-      const result =
-        tab === "agents"
-          ? await installAgent(src)
-          : tab === "skills"
-            ? await installSkill(src)
-            : await installMcp(src);
-      // Surface any newly-installed (or sync-touched) skill/agent that
-      // has prereqs the user hasn't acknowledged yet — frontend
-      // contract spelled out on `CatalogInstalledEntry`.
-      const pending = result.installed.filter(
-        (e): e is typeof e & { prereqs: string } =>
-          (e.kind === "skill" || e.kind === "agent") &&
-          e.prereqs !== undefined &&
-          e.prereqsAck === false,
-      );
-      setPendingPrereqs(
-        pending.map((e) => ({
-          kind: e.kind as "skill" | "agent",
-          fqn: e.fqn,
-          prereqs: e.prereqs,
-        })),
-      );
+      // The install/sync responses carry a per-entry `prereqs` +
+      // `prereqsAck` payload (see `CatalogInstalledEntry` on the
+      // server) so other clients (CLI, future scripts) can react,
+      // but the dashboard relies on the entry's own `blocked` badge
+      // and DetailDialog to surface the same information rather
+      // than splashing a banner above the grid.
+      if (tab === "agents") await installAgent(src);
+      else if (tab === "skills") await installSkill(src);
+      else await installMcp(src);
       setInstallOpen(false);
       onChanged();
     } catch (e) {
@@ -231,6 +211,59 @@ export function CatalogPage({
                 MCPs <span className="count">{mcps.length}</span>
               </button>
             </nav>
+            <div className="catalog-filters">
+              {/*
+                Status filters live in the same toolbar row as the tabs
+                so the page surface stays at one row of chrome instead
+                of two. Rendered as bare text links (no pill background)
+                — the active one gets a colored underline that mirrors
+                the tab active treatment, so the eye reads them as
+                "secondary controls within the same group".
+
+                The filter set is per-tab:
+                  - agents: All / Ready / Blocked   (agents can never be orphaned)
+                  - skills: All / Ready / Blocked / Orphaned
+                  - mcps:   All / Orphaned          (mcps have no ready/blocked semantics)
+              */}
+              <FilterLink
+                label="All"
+                active={statusFilter === "all"}
+                onClick={() => setStatusFilter("all")}
+              />
+              {tab !== "mcps" && (
+                <FilterLink
+                  label="Ready"
+                  active={statusFilter === "ready"}
+                  onClick={() => setStatusFilter("ready")}
+                />
+              )}
+              {tab !== "mcps" && (
+                <FilterLink
+                  label="Blocked"
+                  active={statusFilter === "blocked"}
+                  onClick={() => setStatusFilter("blocked")}
+                />
+              )}
+              {tab !== "agents" && (
+                <FilterLink
+                  label="Orphaned"
+                  count={orphanCount}
+                  active={statusFilter === "orphaned"}
+                  onClick={() => setStatusFilter("orphaned")}
+                />
+              )}
+              {statusFilter === "orphaned" && orphanCount > 0 && tab !== "agents" && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={doRemoveAllOrphans}
+                  disabled={busy}
+                  title="Delete every orphaned entry. Each delete is guarded against accidentally removing one with dependents."
+                >
+                  {busy ? "Removing…" : `Remove all (${orphanCount})`}
+                </button>
+              )}
+            </div>
             <div className="page-toolbar__actions">
               <button
                 type="button"
@@ -246,92 +279,9 @@ export function CatalogPage({
             </div>
           </div>
 
-          <div
-            className="section-tabs"
-            style={{ marginBottom: 16, display: "flex", gap: 8, alignItems: "center" }}
-          >
-            <FilterPill
-              label="All"
-              active={statusFilter === "all"}
-              onClick={() => setStatusFilter("all")}
-            />
-            <FilterPill
-              label="Ready"
-              active={statusFilter === "ready"}
-              onClick={() => setStatusFilter("ready")}
-            />
-            {tab !== "mcps" && (
-              <FilterPill
-                label="Blocked"
-                active={statusFilter === "blocked"}
-                onClick={() => setStatusFilter("blocked")}
-              />
-            )}
-            {tab !== "agents" && (
-              <FilterPill
-                label={`Orphaned${orphanCount > 0 ? ` (${orphanCount})` : ""}`}
-                active={statusFilter === "orphaned"}
-                onClick={() => setStatusFilter("orphaned")}
-              />
-            )}
-            {statusFilter === "orphaned" && orphanCount > 0 && tab !== "agents" && (
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={doRemoveAllOrphans}
-                disabled={busy}
-                style={{ marginLeft: "auto" }}
-                title="Delete every orphaned entry. Each delete is guarded against accidentally removing one with dependents."
-              >
-                {busy ? "Removing…" : `Remove all (${orphanCount})`}
-              </button>
-            )}
-          </div>
-
           {error && !installOpen && !confirmRemove && (
             <div className="alert alert--error" style={{ marginBottom: 16 }}>
               ⚠ {error}
-            </div>
-          )}
-
-          {pendingPrereqs.length > 0 && (
-            <div className="alert alert--warn" style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <strong>
-                  {pendingPrereqs.length}{" "}
-                  {pendingPrereqs.length === 1 ? "entry needs" : "entries need"} prereqs setup
-                </strong>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => setPendingPrereqs([])}
-                >
-                  Dismiss
-                </button>
-              </div>
-              <p style={{ marginTop: 4, marginBottom: 8, fontSize: 13 }}>
-                Follow the prereqs below, then click each entry's <strong>Acknowledge</strong>{" "}
-                button to mark it ready.
-              </p>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {pendingPrereqs.map((p) => (
-                  <li key={`${p.kind}:${p.fqn}`} style={{ marginBottom: 6 }}>
-                    <code>{p.fqn}</code> ({p.kind}):
-                    <pre
-                      style={{
-                        margin: "4px 0 0 0",
-                        padding: 8,
-                        background: "var(--surface-alt, #f5f5f5)",
-                        borderRadius: 4,
-                        fontSize: 12,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {p.prereqs}
-                    </pre>
-                  </li>
-                ))}
-              </ul>
             </div>
           )}
 
@@ -433,24 +383,7 @@ export function CatalogPage({
               <DetailDialog
                 target={{ kind: edit.kind, name: edit.name }}
                 onClose={() => setEdit(null)}
-                onSynced={(syncResult) => {
-                  if (syncResult !== undefined) {
-                    const pending = syncResult.installed.filter(
-                      (e): e is typeof e & { prereqs: string } =>
-                        (e.kind === "skill" || e.kind === "agent") &&
-                        e.prereqs !== undefined &&
-                        e.prereqsAck === false,
-                    );
-                    if (pending.length > 0) {
-                      setPendingPrereqs(
-                        pending.map((e) => ({
-                          kind: e.kind as "skill" | "agent",
-                          fqn: e.fqn,
-                          prereqs: e.prereqs,
-                        })),
-                      );
-                    }
-                  }
+                onSynced={() => {
                   setEdit(null);
                   onChanged();
                 }}
@@ -648,31 +581,31 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
   );
 }
 
-// ─── FilterPill ────────────────────────────────────────────────────
+// ─── FilterLink ────────────────────────────────────────────────────
 
-interface FilterPillProps {
+interface FilterLinkProps {
   label: string;
   active: boolean;
+  /** Optional count badge after the label. Hidden when 0 or undefined. */
+  count?: number;
   onClick: () => void;
 }
 
-function FilterPill({ label, active, onClick }: FilterPillProps) {
+/**
+ * Bare-text status filter, sized to read as a secondary control next
+ * to the main tab nav. Active state mirrors the tab treatment
+ * (accent color + bold, no underline because the toolbar already
+ * carries one). Styling lives in `.catalog-filters` in styles.css.
+ */
+function FilterLink({ label, active, count, onClick }: FilterLinkProps) {
   return (
     <button
       type="button"
-      className={active ? "active" : ""}
+      className={`catalog-filters__link${active ? " catalog-filters__link--active" : ""}`}
       onClick={onClick}
-      style={{
-        padding: "4px 12px",
-        borderRadius: 999,
-        border: "1px solid var(--border, #ddd)",
-        background: active ? "var(--accent, #2c5fb5)" : "transparent",
-        color: active ? "white" : "inherit",
-        cursor: "pointer",
-        fontSize: 13,
-      }}
     >
       {label}
+      {count !== undefined && count > 0 && <span className="catalog-filters__count">{count}</span>}
     </button>
   );
 }
@@ -741,10 +674,15 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     skills: [],
     mcps: [],
   });
+  // Captured at load time for agents so the lifecycle button knows
+  // which direction the toggle should go. Skills / mcps don't carry
+  // this flag.
+  const [agentDisabledByUser, setAgentDisabledByUser] = useState<boolean>(false);
 
   const [mode, setMode] = useState<EditMode>(target.kind === "mcp" ? "source" : "form");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // EditDialog is only opened for mutable (file: origin) entries —
@@ -779,6 +717,9 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         skills: [...(meta.dependencies?.skills ?? [])],
         mcps: [...(meta.dependencies?.mcps ?? [])],
       });
+      if ("agent" in detail) {
+        setAgentDisabledByUser(detail.agent.disabledByUser);
+      }
     };
     load()
       .catch((e) => {
@@ -836,6 +777,28 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     }
   };
 
+  const handleToggleAgentDisabled = async (): Promise<void> => {
+    if (target.kind !== "agent") return;
+    setToggling(true);
+    setError(null);
+    try {
+      if (agentDisabledByUser) {
+        await enableAgent(target.name);
+        setAgentDisabledByUser(false);
+      } else {
+        await disableAgent(target.name);
+        setAgentDisabledByUser(true);
+      }
+      // Don't close the dialog — toggle is in-place; user may want to
+      // continue editing. The catalog list doesn't refresh until Save
+      // or Close, so flag stays consistent with the displayed state.
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setToggling(false);
+    }
+  };
+
   const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
   const title = `Edit ${kindLabel}: ${target.name}`;
   const isLargeMode = mode === "source" || target.kind === "mcp";
@@ -883,19 +846,40 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             type="button"
             className="btn btn--ghost modal__footer-secondary"
             onClick={() => setMode(mode === "form" ? "source" : "form")}
-            disabled={saving || loading}
+            disabled={saving || loading || toggling}
           >
             {mode === "form" ? "Edit source →" : "← Back to form"}
           </button>
         )}
-        <button type="button" className="btn" onClick={onClose} disabled={saving}>
+        {target.kind === "agent" && (
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={handleToggleAgentDisabled}
+            disabled={saving || loading || toggling}
+            title={
+              agentDisabledByUser
+                ? "Mark this agent active. New dispatches will be allowed."
+                : "Pause this agent. New dispatches will be refused until re-enabled."
+            }
+          >
+            {toggling
+              ? agentDisabledByUser
+                ? "Enabling…"
+                : "Disabling…"
+              : agentDisabledByUser
+                ? "Enable agent"
+                : "Disable agent"}
+          </button>
+        )}
+        <button type="button" className="btn" onClick={onClose} disabled={saving || toggling}>
           Cancel
         </button>
         <button
           type="button"
           className="btn btn--primary"
           onClick={handleSave}
-          disabled={loading || saving}
+          disabled={loading || saving || toggling}
         >
           {saving ? "Saving..." : "Save"}
         </button>
