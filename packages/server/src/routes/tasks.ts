@@ -14,12 +14,14 @@ import {
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
+import type { TaskDispatchBody } from "./manifest.js";
 
-interface DispatchBody {
-  agent?: unknown;
-  instructions?: unknown;
-  runtime?: unknown;
-}
+/**
+ * Defensive parse alias for the dispatch body. See `sessions.ts` for
+ * the rationale — the manifest type is the wire contract for callers,
+ * the *Raw alias keeps runtime guards TS-meaningful.
+ */
+type TaskDispatchBodyRaw = { [K in keyof TaskDispatchBody]?: unknown };
 
 /**
  * Resolver passed in by the mount point so route handlers pull the
@@ -130,7 +132,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
   // continues to run in the background; clients poll `/:tid` (or watch
   // `/:tid/events`) for completion.
   app.post("/", async (c) => {
-    const parsed = await parseJsonBody<DispatchBody>(c);
+    const parsed = await parseJsonBody<TaskDispatchBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
     if (typeof body.agent !== "string" || body.agent.trim() === "") {

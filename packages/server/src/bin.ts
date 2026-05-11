@@ -1,22 +1,28 @@
 /**
  * Bundled binary entry point.
  *
- * The dev/source entry (`./index.ts`) is also reachable via
- * `node packages/server/src/index.ts` and respects an explicit
- * `--serve-static` flag from the command line. The bundled binary is
- * what users get after `npm install -g @langsensei/emploke`, where the
- * dashboard is always shipped alongside the server — so we default
+ * The dev/source entry (`./index.ts`) exports `runServer` for direct use;
+ * this file is the historical foreground bin that gets run by
+ * `node packages/server/dist/index.js` (bundled production binary path
+ * before the CLI takes over) and by the local `pnpm dev` workflow. The
+ * dashboard is always shipped alongside the server, so we default
  * `--serve-static` ON unless the operator explicitly opts out with
  * `--no-serve-static`.
  *
  * Anything else — port, host, API key, EMPLOKE_HOME — is still controlled
- * by environment variables and read inside `./index.ts`.
+ * by environment variables and read inside `runServer`.
+ *
+ * The CLI's `emploke serve` subcommand calls `runServer` directly with
+ * the same default and does not go through this file.
  */
 
-if (!process.argv.includes("--serve-static") && !process.argv.includes("--no-serve-static")) {
-  process.argv.push("--serve-static");
-}
+import { runServer } from "./index.js";
 
-await import("./index.js");
+const serveStatic = !process.argv.includes("--no-serve-static");
 
-export {};
+await runServer({ serveStatic }).catch((err) => {
+  // Boot-time failure: logger may not be alive yet, so fall back to
+  // console.error here.
+  console.error(err instanceof Error ? err.message : err);
+  process.exit(1);
+});
