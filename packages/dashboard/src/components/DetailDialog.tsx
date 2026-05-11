@@ -192,6 +192,13 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   const inSync = syncStage !== "idle";
   const syncBusy = syncStage === "previewing" || syncStage === "applying";
 
+  // Lifecycle action visibility — derived once and reused by both the
+  // footer button cluster and the Overview tab status area. Keeping
+  // these in the parent (rather than recomputing in OverviewTab) lets
+  // the footer render the buttons even when a different tab is active.
+  const showAcknowledge = target.kind !== "mcp" && detail?.blockedReason?.needsPrereqsAck === true;
+  const showAgentToggle = target.kind === "agent";
+
   // Hero header — rich title block. While the user is in the sync
   // flow we keep the same hero (so context never disappears) but mute
   // the status pill (it would be stale once apply runs anyway).
@@ -235,15 +242,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
               </button>
             </div>
 
-            {activeTab === "overview" && (
-              <OverviewTab
-                target={target}
-                detail={detail}
-                actionBusy={actionBusy}
-                onAcknowledge={handleAcknowledge}
-                onToggleAgent={handleToggleAgent}
-              />
-            )}
+            {activeTab === "overview" && <OverviewTab target={target} detail={detail} />}
 
             {activeTab === "source" && (
               <pre className={`detail-dialog__code lang-${detail.sourceLanguage}`}>
@@ -273,9 +272,6 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
             >
               ← Back
             </button>
-            <button type="button" className="btn" onClick={onClose} disabled={syncBusy}>
-              Cancel
-            </button>
             <button
               type="button"
               className="btn btn--primary"
@@ -291,19 +287,66 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
             </button>
           </>
         )}
-        {!inSync && (
+        {!inSync && detail && (
           <>
+            {/*
+             * Convention across the dashboard: the bottom-right slot
+             * holds the dialog's primary action. For DetailDialog
+             * (immutable entries) that's always Sync from upstream;
+             * EditDialog (mutable entries) puts Save there. Lifecycle
+             * actions (Acknowledge, Disable/Enable) stay on the left
+             * as secondary affordances. Dismiss is handled by the
+             * modal header (×) — a footer Close would just compete
+             * with the primary action.
+             */}
+            {(showAcknowledge || showAgentToggle) && (
+              <div className="modal__footer-actions">
+                {showAcknowledge && (
+                  // Primary styling — acknowledging is the most
+                  // urgent action when the entry is blocked-by-
+                  // prereqs (it's the only thing standing between the
+                  // user and a usable entry). It still goes on the
+                  // left to keep Sync's position predictable.
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={handleAcknowledge}
+                    disabled={actionBusy}
+                    title="Mark prereqs as acknowledged so this entry can be used."
+                  >
+                    Acknowledge prereqs
+                  </button>
+                )}
+                {showAgentToggle && (
+                  // Always available on agents, regardless of computed
+                  // status — disabling a `ready` agent is the user's
+                  // primary path to pausing it without uninstalling.
+                  // The label flips so the toggle is reversible from
+                  // the same place.
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => handleToggleAgent(detail.disabledByUser ?? false)}
+                    disabled={actionBusy}
+                    title={
+                      detail.disabledByUser
+                        ? "Mark this agent active. Status will recompute."
+                        : "Pause this agent. New dispatches will be refused until re-enabled."
+                    }
+                  >
+                    {detail.disabledByUser ? "Enable agent" : "Disable agent"}
+                  </button>
+                )}
+              </div>
+            )}
             <button
               type="button"
-              className="btn btn--primary modal__footer-secondary"
+              className="btn btn--primary"
               onClick={handlePreviewSync}
-              disabled={actionBusy || !detail}
+              disabled={actionBusy}
               title="Preview the upstream diff before applying"
             >
               Sync from upstream
-            </button>
-            <button type="button" className="btn" onClick={onClose} disabled={actionBusy}>
-              Close
             </button>
           </>
         )}
@@ -361,64 +404,17 @@ function DetailHero({ target, detail, hideStatus }: DetailHeroProps) {
 interface OverviewTabProps {
   target: { kind: EntityKind; name: string };
   detail: LoadedDetail;
-  actionBusy: boolean;
-  onAcknowledge: () => void;
-  onToggleAgent: (currentlyDisabled: boolean) => void;
 }
 
 /**
- * The default tab. Shows the action strip (visible when there is any
- * action available — Acknowledge for self-blocked-by-prereqs entries
- * or Enable/Disable for agents), then the metadata definition list.
+ * The default tab. Renders the entry metadata as a definition list.
+ * Lifecycle actions (Acknowledge, Disable/Enable) live in the dialog
+ * footer alongside the primary CTA so the body stays purely
+ * informational.
  */
-function OverviewTab({
-  target,
-  detail,
-  actionBusy,
-  onAcknowledge,
-  onToggleAgent,
-}: OverviewTabProps) {
-  const showAcknowledge = target.kind !== "mcp" && detail.blockedReason?.needsPrereqsAck === true;
-  const showAgentToggle = target.kind === "agent";
-  const hasActions = showAcknowledge || showAgentToggle;
-
+function OverviewTab({ target, detail }: OverviewTabProps) {
   return (
     <>
-      {hasActions && (
-        <div className="detail-dialog__actions">
-          {showAcknowledge && (
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={onAcknowledge}
-              disabled={actionBusy}
-              title="Mark prereqs as acknowledged so this entry can be used."
-            >
-              Acknowledge prereqs
-            </button>
-          )}
-          {showAgentToggle && (
-            // Always available on agents, regardless of computed status
-            // — disabling a `ready` agent is the user's primary path
-            // to pausing it without uninstalling. The label flips so
-            // the toggle is reversible from the same place.
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => onToggleAgent(detail.disabledByUser ?? false)}
-              disabled={actionBusy}
-              title={
-                detail.disabledByUser
-                  ? "Mark this agent active. Status will recompute."
-                  : "Pause this agent. New dispatches will be refused until re-enabled."
-              }
-            >
-              {detail.disabledByUser ? "Enable agent" : "Disable agent"}
-            </button>
-          )}
-        </div>
-      )}
-
       <dl className="detail-dialog__dl">
         {detail.description && (
           <>
