@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  EntryNotReadyError,
   InvalidTaskIdError,
   type ListTaskOpts,
   RuntimeDoesNotSupportTasksError,
@@ -36,6 +37,11 @@ function statusForError(err: unknown): number | null {
   if (err instanceof TaskNotFoundError) return 404;
   if (err instanceof AgentNotFoundError) return 400;
   if (err instanceof RuntimeDoesNotSupportTasksError) return 400;
+  // The agent (or one of its transitive deps) is currently `blocked`
+  // — caller-fixable state conflict (acknowledge prereqs, enable the
+  // agent, install the missing dep, etc.). 409 mirrors how
+  // `HasDependentsError` is mapped on the catalog side.
+  if (err instanceof EntryNotReadyError) return 409;
   // Server-side / host faults → 5xx. These match the analogous
   // mappings in sessions.ts (SessionIdAllocationFailedError → 500,
   // RuntimeProvisionFailed → 500). Falling through to the default 400

@@ -4,6 +4,7 @@ import path from "node:path";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  EntryNotReadyError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   type Task,
@@ -218,6 +219,28 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("RuntimeDoesNotSupportTasksError");
+  });
+
+  // Dispatching against a blocked agent must surface the structured
+  // error shape (code + message) so the dashboard / CLI can render
+  // the actionable reason. Pre-fix this fell through to the generic
+  // "internal error" body because EntryNotReadyError wasn't on the
+  // safe-name list.
+  it("POST / maps EntryNotReadyError to 409 with code", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        throw new EntryNotReadyError("public/writer", { needsPrereqsAck: true });
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("EntryNotReadyError");
+    expect(body.error).toContain("not ready");
   });
 
   it("GET /:tid returns task", async () => {
