@@ -100,17 +100,19 @@ describe("errorBody", () => {
       "UnsupportedPlatformError",
       // catalog (real per-entity class names; aliases like
       // "NotFound"/"NameInvalid"/"FrontmatterError" are intentionally
-      // absent — the catalog never emits instances with those names)
-      "CatalogError",
-      "CatalogStateError",
-      "CycleDetected",
+      // absent — the catalog never emits instances with those names.
+      // `CatalogError` itself is abstract; speculative names from
+      // earlier drafts (`CatalogStateError`, `CycleDetected`,
+      // `MissingDependencies`, `UnsupportedCatalogVersionError`) were
+      // dropped because they don't correspond to any real class — the
+      // allowlist is grep-able via `^export class \w+Error` in
+      // `packages/catalog/src/**`.)
       "AgentFrontmatterError",
       "SkillFrontmatterError",
       "HasDependentsError",
       "ImmutableOriginError",
       "McpInvalidJsonError",
       "McpNameInvalidError",
-      "MissingDependencies",
       "SkillNameInvalidError",
       "AgentNameInvalidError",
       "SkillNotFoundError",
@@ -202,18 +204,6 @@ describe("statusForCatalogError", () => {
     expect(statusForCatalogError(e)).toBe(502);
   });
 
-  it("maps MissingDependencies/CycleDetected/UnsupportedCatalogVersionError by name", () => {
-    for (const [n, expected] of [
-      ["MissingDependencies", 400],
-      ["CycleDetected", 400],
-      ["UnsupportedCatalogVersionError", 500],
-    ] as const) {
-      const e = new Error("x");
-      e.name = n;
-      expect(statusForCatalogError(e)).toBe(expected);
-    }
-  });
-
   it("returns null for unknown error class names", () => {
     const e = new Error("x");
     e.name = "WeirdoError";
@@ -224,6 +214,27 @@ describe("statusForCatalogError", () => {
     expect(statusForCatalogError("string")).toBeNull();
     expect(statusForCatalogError(null)).toBeNull();
     expect(statusForCatalogError(undefined)).toBeNull();
+  });
+
+  it("returns null for legacy phantom names that no real class ever produces", () => {
+    // These names lived in the switch from earlier drafts but no class
+    // in the catalog actually carries them at runtime. Keeping the
+    // switch keyed off them risked masking the addition of a new real
+    // class with one of those names without operators noticing the
+    // mapping was already silently in place. Pin that they fall
+    // through to null (→ 500) so a future contributor wiring up a new
+    // class has to make a deliberate decision.
+    for (const name of [
+      "CatalogError",
+      "CatalogStateError",
+      "CycleDetected",
+      "MissingDependencies",
+      "UnsupportedCatalogVersionError",
+    ]) {
+      const e = new Error("x");
+      e.name = name;
+      expect(statusForCatalogError(e)).toBeNull();
+    }
   });
 
   it("rejects legacy alias names (regression guard for #52 review)", () => {

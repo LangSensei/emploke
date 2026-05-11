@@ -38,9 +38,14 @@ export async function parseJsonBody<T = unknown>(
  */
 const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/catalog
-  "CatalogError",
-  "CatalogStateError",
-  "CycleDetected",
+  // Real instances only — the catalog never throws an instance of the
+  // abstract `CatalogError` base class, and previous entries
+  // (`CatalogStateError`, `CycleDetected`, `MissingDependencies`,
+  // `UnsupportedCatalogVersionError`) named classes that don't exist
+  // in the codebase. Adding speculative names here would mask future
+  // typos: an entry on this list looks intentional even when the
+  // referenced class never gets thrown. Update by grepping
+  // `^export class \w+Error` in `packages/catalog/src/**`.
   "FetchError",
   "AgentFrontmatterError",
   "SkillFrontmatterError",
@@ -48,7 +53,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "ImmutableOriginError",
   "McpInvalidJsonError",
   "McpNameInvalidError",
-  "MissingDependencies",
   "SkillNameInvalidError",
   "AgentNameInvalidError",
   "SkillNotFoundError",
@@ -60,7 +64,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "OriginParseError",
   "PlanStaleError",
   "AgentPlanStaleError",
-  "UnsupportedCatalogVersionError",
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",
@@ -162,8 +165,7 @@ export function errorBody(err: unknown): { error: string; code?: string } {
 /**
  * Map an error from the catalog layer to an HTTP status code:
  *   - `*NameInvalidError` / `*FrontmatterError` / `McpInvalidJsonError` /
- *     `MissingDependencies` / `CycleDetected` / `OriginParseError` /
- *     `PlanStaleError` → 400 (caller-fixable input)
+ *     `OriginParseError` / `PlanStaleError` → 400 (caller-fixable input)
  *   - `*NotFoundError` → 404
  *   - `HasDependentsError` / `*OriginConflictError` → 409 (state conflict)
  *   - `ImmutableOriginError` → 405 (mutation against a read-only origin)
@@ -191,8 +193,6 @@ export function statusForCatalogError(err: unknown): number | null {
     case "AgentFrontmatterError":
     case "SkillFrontmatterError":
     case "McpInvalidJsonError":
-    case "MissingDependencies":
-    case "CycleDetected":
     case "OriginParseError":
     case "PlanStaleError":
     case "AgentPlanStaleError":
@@ -210,8 +210,6 @@ export function statusForCatalogError(err: unknown): number | null {
       return 405;
     case "FetchError":
       return 502;
-    case "UnsupportedCatalogVersionError":
-      return 500;
     default:
       return null;
   }
