@@ -1406,7 +1406,16 @@ function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): Casca
     for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
   }
   for (const s of skills) {
-    for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
+    // Skip self-references when populating the reverse-dep index.
+    // Orphan semantics is "no OTHER entity depends on me"; a skill
+    // that lists its own origin in `dependencies.skills` (a degenerate
+    // but legal manifest) shouldn't suppress its own orphan badge.
+    // Mcps can't appear in their own dep set (mcps have no deps), so
+    // the same care isn't needed for `dependencies.mcps`.
+    for (const o of s.dependencies.skills) {
+      if (o === s.origin) continue;
+      referencedSkillOrigins.add(o);
+    }
     for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
   }
   return {
@@ -1424,10 +1433,13 @@ function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
   const cached = ctx.skillCache.get(skill.origin);
   if (cached !== undefined) return cached;
   if (ctx.inFlight.has(skill.origin)) {
-    // Cycle — treat the in-flight node as ready by default to avoid
-    // false-blocking the entire cycle. The cycle is itself a
-    // misconfiguration that should be surfaced elsewhere; we don't
-    // want to hide it under a status flap.
+    // Cycle — treat the in-flight node as ready for the *cascade*
+    // check that's asking about it. The outer call (the one that
+    // added this origin to inFlight) already factored its own
+    // self-causes (orphan, prereqsAck) via `computeWithDeps`, so the
+    // top-level answer for this origin still reflects orphan
+    // correctly; we just don't want a self-cycle to add a noisy
+    // tautological "blocked-by-itself" entry to its own blockedDeps.
     return { status: "ready" };
   }
   ctx.inFlight.add(skill.origin);
@@ -1436,8 +1448,9 @@ function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
       prereqs: skill.prereqs,
       prereqsAck: skill.prereqsAck,
       // Derived live from the dep graph: a skill with zero reverse-deps
-      // is orphan. No more stale-flag scenarios — the answer is always
-      // a fact about the current catalog state.
+      // (excluding self-references) is orphan. No more stale-flag
+      // scenarios — the answer is always a fact about the current
+      // catalog state.
       orphaned: !ctx.referencedSkillOrigins.has(skill.origin),
       disabledByUser: false,
     },

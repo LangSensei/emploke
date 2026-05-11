@@ -307,6 +307,25 @@ describe("sync resolve — orphan detection", () => {
     tool = await mgr.getSkill("public/tool");
     expect(tool?.orphaned).toBe(true);
   });
+
+  it("a skill that only references itself is still orphan (self-ref doesn't count)", async () => {
+    // Edge case raised during code review: a skill listing its own
+    // origin in `dependencies.skills` is degenerate but legal. The
+    // reverse-dep index must skip self-references when determining
+    // orphan-ness — otherwise a self-referencing skill would mask
+    // its own orphan badge and silently look "in use".
+    fakes.setSkill("file:/abs/loner", {
+      "SKILL.md": SKILL_ANCHOR(
+        "loner",
+        "1.0.0",
+        `dependencies:\n  skills:\n    - "file:/abs/loner"`,
+      ),
+    });
+    await mgr.installSkill("file:/abs/loner");
+
+    const loner = await mgr.getSkill("public/loner");
+    expect(loner?.orphaned).toBe(true);
+  });
 });
 
 describe("sync resolve — prereq carry-over", () => {
