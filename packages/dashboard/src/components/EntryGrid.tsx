@@ -1,27 +1,28 @@
 import type { BlockedReason, MissingDep } from "@emploke/catalog";
 import type { ReactNode } from "react";
+import { type EntityKind, KIND_ICON, KIND_TAG } from "../kindMeta";
 import { TrashIcon } from "./Icons";
-
-export type EntryKind = "agent" | "skill" | "mcp";
 
 export interface EntryCardItem {
   name: string;
   description: string;
+  /** Empty string suppresses the `v…` chip in the footer (used by mcp). */
   version: string;
   status: "ready" | "blocked";
   blockedReason?: BlockedReason;
   missingDeps?: readonly MissingDep[];
+  /** Negative suppresses the chip entirely (used by mcp, which has no deps). */
   skillsCount: number;
   mcpsCount: number;
 }
 
 interface EntryGridProps {
   /**
-   * Entity kind shown in this grid. Drives the small uppercase label
-   * + icon in the card header. EntryGrid is single-kind by design;
-   * mcps go through the dedicated McpGrid.
+   * Entity kind shown in this grid. Drives the small uppercase tag
+   * + icon in the card header. EntryGrid is single-kind; the parent
+   * page picks which kind list to render at any time.
    */
-  kind: Exclude<EntryKind, "mcp">;
+  kind: EntityKind;
   items: EntryCardItem[];
   emptyTitle: string;
   emptyHint?: ReactNode;
@@ -117,25 +118,13 @@ function splitFqn(fqn: string): { namespace: string; short: string } {
   return { namespace: fqn.slice(0, slash + 1), short: fqn.slice(slash + 1) };
 }
 
-const KIND_ICON: Record<EntryKind, string> = {
-  agent: "🤖",
-  skill: "🛠",
-  mcp: "🔌",
-};
-
-const KIND_LABEL: Record<EntryKind, string> = {
-  agent: "AGENT",
-  skill: "SKILL",
-  mcp: "MCP",
-};
-
 function EntryCard({
   kind,
   item,
   onEdit,
   onRemove,
 }: {
-  kind: EntryKind;
+  kind: EntityKind;
   item: EntryCardItem;
   onEdit: () => void;
   onRemove: () => void;
@@ -143,11 +132,11 @@ function EntryCard({
   const isBlocked = item.status === "blocked";
   const summary = isBlocked ? blockedSummary(item.blockedReason) : null;
   const { namespace, short } = splitFqn(item.name);
-  // Card chrome: status drives a left-edge color stripe (via
-  // data-status attr → CSS) instead of a corner badge. The badge that
-  // used to fight the title for horizontal space is now a small dot
-  // pill in the footer; the stripe is what the eye picks up while
-  // scanning the grid.
+  const showVersion = item.version !== "";
+  // mcp callers pass negative counts to opt out of the meta chips
+  // (mcps have no deps). agents/skills always show counts including 0.
+  const showSkillsCount = item.skillsCount >= 0;
+  const showMcpsCount = item.mcpsCount >= 0;
   return (
     // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
@@ -162,11 +151,11 @@ function EntryCard({
           onEdit();
         }
       }}
-      title={`Click to edit ${item.name}`}
+      title={`Click to open ${item.name}`}
     >
       <div className="card-grid__header">
         <span className="card-grid__kind">
-          <span aria-hidden="true">{KIND_ICON[kind]}</span> {KIND_LABEL[kind]}
+          <span aria-hidden="true">{KIND_ICON[kind]}</span> {KIND_TAG[kind]}
         </span>
         <button
           type="button"
@@ -182,25 +171,55 @@ function EntryCard({
         </button>
       </div>
       <div className="card-grid__title" title={item.name}>
-        {namespace !== "" && <span className="card-grid__namespace">{namespace}</span>}
+        {/* Namespace row is always rendered (empty span when absent)
+         * so cards with and without a `<scope>/` prefix line up to
+         * the same total height across the grid. */}
+        <span className="card-grid__namespace">{namespace}</span>
         <span className="card-grid__short">{short}</span>
       </div>
+      {/* Description block reserves its 2-line min-height even when
+       * empty (mcp cards) so the footer stays at the same y-offset. */}
       <p className="card-grid__desc">{item.description}</p>
-      {summary !== null && (
-        <p className="card-grid__reason" title={blockedSummaryTooltip(item.blockedReason)}>
-          <span aria-hidden="true">⚠</span> Blocked: {summary}
-        </p>
-      )}
+      {/* Reason banner always rendered so the row's vertical rhythm
+       * is identical between ready and blocked cards. When there's no
+       * reason we fall back to a non-breaking space so the line takes
+       * its natural baseline height; the warn-color is suppressed by
+       * the absence of `--has-reason`. */}
+      <p
+        className={`card-grid__reason${summary !== null ? " card-grid__reason--filled" : ""}`}
+        title={summary !== null ? blockedSummaryTooltip(item.blockedReason) : undefined}
+        aria-hidden={summary === null}
+      >
+        {summary !== null ? (
+          <>
+            <span aria-hidden="true">⚠</span> Blocked: {summary}
+          </>
+        ) : (
+          "\u00A0"
+        )}
+      </p>
       <div className="card-grid__footer">
-        <span className="card-grid__meta-item">v{item.version}</span>
-        <span className="card-grid__meta-sep" aria-hidden="true" />
-        <span className="card-grid__meta-item">
-          {item.skillsCount} skill{item.skillsCount === 1 ? "" : "s"}
-        </span>
-        <span className="card-grid__meta-sep" aria-hidden="true" />
-        <span className="card-grid__meta-item">
-          {item.mcpsCount} mcp{item.mcpsCount === 1 ? "" : "s"}
-        </span>
+        {showVersion && (
+          <>
+            <span className="card-grid__meta-item">v{item.version}</span>
+            {(showSkillsCount || showMcpsCount) && (
+              <span className="card-grid__meta-sep" aria-hidden="true" />
+            )}
+          </>
+        )}
+        {showSkillsCount && (
+          <span className="card-grid__meta-item">
+            {item.skillsCount} skill{item.skillsCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {showSkillsCount && showMcpsCount && (
+          <span className="card-grid__meta-sep" aria-hidden="true" />
+        )}
+        {showMcpsCount && (
+          <span className="card-grid__meta-item">
+            {item.mcpsCount} mcp{item.mcpsCount === 1 ? "" : "s"}
+          </span>
+        )}
         <span className="card-grid__meta-spacer" />
         <span
           className={`card-grid__status card-grid__status--${item.status}`}

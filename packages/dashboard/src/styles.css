@@ -522,50 +522,127 @@ button {
   gap: var(--space-2);
 }
 
-/* ─── Catalog status filters ──────────────────────────────────────
+/* ─── Catalog status filter menu ──────────────────────────────────
  *
- * Inline status filters embedded in the page toolbar's middle slot.
- * Rendered as bare buttons (no border, no background) so they read
- * as secondary navigation next to the primary tab nav. Active state
- * borrows the accent treatment from `.section-tabs button.active`
- * for visual continuity, minus the underline (the toolbar already
- * has its own bottom border). On narrow screens the whole strip
- * wraps under the tab nav rather than overflowing.
+ * Single popover-style button on the toolbar; opens a small panel
+ * with radio-style options. Built on native <details>/<summary> so
+ * close-on-outside-click and ESC-to-close come for free without any
+ * global handler bookkeeping.
+ *
+ * The trigger reuses the .btn .btn--ghost shape so it visually sits
+ * with the other toolbar buttons. When a non-default filter is
+ * active we slide the picked label in beside the icon so the user
+ * knows from the strip alone that the view is constrained.
  */
-.catalog-filters {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 0 var(--space-3);
-  margin-left: var(--space-4);
-  flex-wrap: wrap;
-  flex: 1;
+.filter-menu {
+  position: relative;
+  display: inline-block;
 }
 
-.catalog-filters__link {
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) var(--space-2);
-  font-size: 13px;
-  color: var(--color-text-muted);
-  border-radius: var(--radius-sm, 4px);
+/* Hide the default ▶/▼ disclosure caret — the trigger already reads
+ * as a button so the marker would be visual noise. */
+.filter-menu > summary {
+  list-style: none;
+}
+
+.filter-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filter-menu__trigger {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
 }
 
-.catalog-filters__link:hover {
-  color: var(--color-text);
-  background: var(--color-surface);
+.filter-menu__icon {
+  font-size: 13px;
+  line-height: 1;
 }
 
-.catalog-filters__link--active {
+.filter-menu__sep {
+  color: var(--color-text-subtle);
+  margin: 0 2px;
+}
+
+.filter-menu__current {
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.filter-menu__trigger--active {
+  /* Subtle indicator that a filter is constraining the view; the
+   * visible "Status: Blocked" label in the trigger does most of the
+   * work, but the dot reinforces the same signal at a glance. */
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+}
+
+.filter-menu__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.filter-menu__group-label {
+  padding: var(--space-1) var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.filter-menu__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.filter-menu__option:hover {
+  background: var(--color-surface-hover);
+}
+
+.filter-menu__option--active {
   color: var(--color-accent);
   font-weight: 600;
 }
 
-.catalog-filters__count {
+.filter-menu__radio {
+  font-size: 12px;
+  width: 14px;
+  text-align: center;
+  color: var(--color-text-subtle);
+}
+
+.filter-menu__option--active .filter-menu__radio {
+  color: var(--color-accent);
+}
+
+.filter-menu__option-label {
+  flex: 1;
+}
+
+.filter-menu__option-count {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -576,11 +653,6 @@ button {
   color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 500;
-}
-
-.catalog-filters__link--active .catalog-filters__count {
-  background: var(--color-accent-bg);
-  color: var(--color-accent);
 }
 
 /* ─── Cards / panels ────────────────────────────────────────────── */
@@ -1233,6 +1305,10 @@ button {
   letter-spacing: -0.01em;
   line-height: 1.2;
   word-break: break-all;
+  /* Reserve the line height even when there's no namespace prefix so
+   * cards without a scope (legacy / unscoped names) line up vertically
+   * with scoped ones in the same grid row. */
+  min-height: calc(11px * 1.2);
 }
 
 .card-grid__short {
@@ -1266,15 +1342,25 @@ button {
 
 /* Inline blocked-reason banner: muted warn color, no heavy background.
  * Sits between description and footer. */
+/* Inline blocked-reason banner: reserved as a fixed-height row even
+ * when empty so blocked and ready cards have the same total height
+ * regardless of which reasons (if any) are populated. The `--filled`
+ * modifier paints the warn color text; the unfilled state just holds
+ * the slot with a non-breaking space. */
 .card-grid__reason {
   margin: 0;
   padding: var(--space-1) 0;
   font-size: 12px;
-  color: var(--color-warn);
+  color: transparent;
   line-height: 1.4;
   display: flex;
   align-items: baseline;
   gap: 4px;
+  min-height: calc(12px * 1.4 + var(--space-1) * 2);
+}
+
+.card-grid__reason--filled {
+  color: var(--color-warn);
 }
 
 /* Footer: meta items separated by thin vertical bars; status pill far right.

@@ -18,6 +18,7 @@ import {
   resolveSkillSync,
   type SkillDetail,
 } from "../api";
+import { KIND_TITLE } from "../kindMeta";
 import { Modal } from "./Modal";
 import { ResolveTree } from "./ResolveTree";
 
@@ -185,7 +186,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     }
   };
 
-  const title = `${KIND_LABEL[target.kind]}: ${target.name}`;
+  const title = `${KIND_TITLE[target.kind]}: ${target.name}`;
   const scheme = detail ? schemeOf(detail.origin) : "";
   const inSync = syncStage !== "idle";
   const syncBusy = syncStage === "previewing" || syncStage === "applying";
@@ -414,12 +415,6 @@ function summariseReason(r: import("@emploke/catalog").BlockedReason): string {
   }
   return parts.length > 0 ? parts.join("; ") : "unknown reason";
 }
-
-const KIND_LABEL: Record<"skill" | "agent" | "mcp", string> = {
-  skill: "Skill",
-  agent: "Agent",
-  mcp: "MCP",
-};
 
 function sourceLabel(kind: "skill" | "agent" | "mcp"): string {
   switch (kind) {

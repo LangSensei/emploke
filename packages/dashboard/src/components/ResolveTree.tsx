@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { OrphanManifestEntry, ResolveManifest, ResolveNode } from "../api";
+import { KIND_ICON } from "../kindMeta";
 
 /**
  * Two-phase install / sync preview tree.
@@ -227,14 +228,7 @@ function StatusPill({ status }: { status: ResolveNode["status"] }) {
 }
 
 function kindIcon(kind: ResolveNode["kind"]): string {
-  switch (kind) {
-    case "skill":
-      return "🛠";
-    case "agent":
-      return "🤖";
-    case "mcp":
-      return "🔌";
-  }
+  return KIND_ICON[kind];
 }
 
 function statusLabel(status: ResolveNode["status"]): string {

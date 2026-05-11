@@ -32,6 +32,7 @@ import { McpGrid } from "../components/McpGrid";
 import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
 import { Modal } from "../components/Modal";
 import { ResolveTree } from "../components/ResolveTree";
+import { KIND_TITLE } from "../kindMeta";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
 
@@ -46,10 +47,15 @@ interface CatalogProps {
   onChanged: () => void;
 }
 
+/**
+ * Mirror of `KIND_TITLE` keyed by the page's plural tab key.
+ * Catalog uses the plural form for legacy URL stability; everywhere
+ * else uses singular via {@link KIND_TITLE} / {@link KIND_TAG}.
+ */
 const KIND_LABEL: Record<CatalogTab, string> = {
-  agents: "Agent",
-  skills: "Skill",
-  mcps: "MCP",
+  agents: KIND_TITLE.agent,
+  skills: KIND_TITLE.skill,
+  mcps: KIND_TITLE.mcp,
 };
 
 type DialogTarget =
@@ -73,7 +79,15 @@ export function CatalogPage({
   const [edit, setEdit] = useState<EditTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "blocked" | "orphaned">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  // Reset the filter when the tab changes — switching from Skills
+  // (where "Blocked" is valid) to MCPs (where it isn't) would leave
+  // an unreachable filter selected.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setStatusFilter is stable; tab change is the trigger
+  useEffect(() => {
+    setStatusFilter("all");
+  }, [tab]);
 
   // Filter the per-tab list down according to the status pill row.
   // `orphaned` only meaningful for skills + mcps (agents can't be
@@ -211,47 +225,27 @@ export function CatalogPage({
                 MCPs <span className="count">{mcps.length}</span>
               </button>
             </nav>
-            <div className="catalog-filters">
+            <div className="page-toolbar__actions">
               {/*
-                Status filters live in the same toolbar row as the tabs
-                so the page surface stays at one row of chrome instead
-                of two. Rendered as bare text links (no pill background)
-                — the active one gets a colored underline that mirrors
-                the tab active treatment, so the eye reads them as
-                "secondary controls within the same group".
+                Status filter is a popover-style button rather than a
+                row of inline pills. The pills approach used to occupy
+                a slice of the toolbar that competed with the kind tabs
+                and the install button; collapsing them into one
+                "Filters" button keeps the toolbar to a single row and
+                gives us room to add sort / search controls later
+                without redesigning the strip again.
 
-                The filter set is per-tab:
-                  - agents: All / Ready / Blocked   (agents can never be orphaned)
-                  - skills: All / Ready / Blocked / Orphaned
-                  - mcps:   All / Orphaned          (mcps have no ready/blocked semantics)
+                When the active filter is anything other than "All",
+                the button title shows the picked value and a small
+                indicator dot so it's still obvious from a glance that
+                a filter is constraining the view.
               */}
-              <FilterLink
-                label="All"
-                active={statusFilter === "all"}
-                onClick={() => setStatusFilter("all")}
+              <FilterMenu
+                tab={tab}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                orphanCount={orphanCount}
               />
-              {tab !== "mcps" && (
-                <FilterLink
-                  label="Ready"
-                  active={statusFilter === "ready"}
-                  onClick={() => setStatusFilter("ready")}
-                />
-              )}
-              {tab !== "mcps" && (
-                <FilterLink
-                  label="Blocked"
-                  active={statusFilter === "blocked"}
-                  onClick={() => setStatusFilter("blocked")}
-                />
-              )}
-              {tab !== "agents" && (
-                <FilterLink
-                  label="Orphaned"
-                  count={orphanCount}
-                  active={statusFilter === "orphaned"}
-                  onClick={() => setStatusFilter("orphaned")}
-                />
-              )}
               {statusFilter === "orphaned" && orphanCount > 0 && tab !== "agents" && (
                 <button
                   type="button"
@@ -263,8 +257,6 @@ export function CatalogPage({
                   {busy ? "Removing…" : `Remove all (${orphanCount})`}
                 </button>
               )}
-            </div>
-            <div className="page-toolbar__actions">
               <button
                 type="button"
                 className="btn btn--primary"
@@ -583,32 +575,129 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
   );
 }
 
-// ─── FilterLink ────────────────────────────────────────────────────
+// ─── FilterMenu ────────────────────────────────────────────────────
 
-interface FilterLinkProps {
-  label: string;
-  active: boolean;
-  /** Optional count badge after the label. Hidden when 0 or undefined. */
-  count?: number;
-  onClick: () => void;
+type StatusFilter = "all" | "ready" | "blocked" | "orphaned";
+
+interface FilterMenuProps {
+  /** Which catalog tab is active — drives which options are valid. */
+  tab: CatalogTab;
+  value: StatusFilter;
+  onChange: (next: StatusFilter) => void;
+  /** Surfaced as a count next to the Orphaned option. */
+  orphanCount: number;
 }
 
+interface FilterOption {
+  readonly value: StatusFilter;
+  readonly label: string;
+  /** Optional count to render as a small chip after the label. */
+  readonly count?: number;
+}
+
+const FILTER_LABEL: Record<StatusFilter, string> = {
+  all: "All",
+  ready: "Ready",
+  blocked: "Blocked",
+  orphaned: "Orphaned",
+};
+
 /**
- * Bare-text status filter, sized to read as a secondary control next
- * to the main tab nav. Active state mirrors the tab treatment
- * (accent color + bold, no underline because the toolbar already
- * carries one). Styling lives in `.catalog-filters` in styles.css.
+ * Per-tab filter menu, opened from a single toolbar button so the
+ * top strip stays at one row of chrome regardless of how many filter
+ * dimensions we add later.
+ *
+ * Built on `<details>` + `<summary>` rather than a custom popover
+ * primitive so closing on outside-click and keyboard ESC come for free
+ * — no global click handler bookkeeping.
+ *
+ * Per-tab option set:
+ *   - agents: All / Ready / Blocked         (agents can never be orphaned)
+ *   - skills: All / Ready / Blocked / Orphaned
+ *   - mcps:   All / Orphaned                (mcps have no ready/blocked semantics)
+ *
+ * If the active tab doesn't support the current filter (e.g. user was
+ * on Skills with "Blocked" and switches to Mcps), the parent caller
+ * is responsible for resetting the value on tab change.
  */
-function FilterLink({ label, active, count, onClick }: FilterLinkProps) {
+function FilterMenu({ tab, value, onChange, orphanCount }: FilterMenuProps) {
+  const options: FilterOption[] = [{ value: "all", label: FILTER_LABEL.all }];
+  if (tab !== "mcps") {
+    options.push(
+      { value: "ready", label: FILTER_LABEL.ready },
+      { value: "blocked", label: FILTER_LABEL.blocked },
+    );
+  }
+  if (tab !== "agents") {
+    options.push({
+      value: "orphaned",
+      label: FILTER_LABEL.orphaned,
+      ...(orphanCount > 0 ? { count: orphanCount } : {}),
+    });
+  }
+
+  const activeLabel = FILTER_LABEL[value];
+  const isFiltered = value !== "all";
+
   return (
-    <button
-      type="button"
-      className={`catalog-filters__link${active ? " catalog-filters__link--active" : ""}`}
-      onClick={onClick}
+    // biome-ignore lint/a11y/noStaticElementInteractions: details/summary handles focus + ESC natively; no extra handlers needed
+    <details
+      className="filter-menu"
+      onToggle={(e) => {
+        // Auto-close after a selection so the popover doesn't linger.
+        // We can't use `useState({open})` here because the native
+        // <details> already owns the open state; this just ensures
+        // re-renders triggered by `onChange` don't accidentally
+        // reset open to true.
+        e.stopPropagation();
+      }}
     >
-      {label}
-      {count !== undefined && count > 0 && <span className="catalog-filters__count">{count}</span>}
-    </button>
+      <summary
+        className={`btn btn--ghost filter-menu__trigger${isFiltered ? " filter-menu__trigger--active" : ""}`}
+        title={isFiltered ? `Showing ${activeLabel} only` : "Filter by status"}
+      >
+        <span className="filter-menu__icon" aria-hidden="true">
+          ⚙
+        </span>
+        Filters
+        {isFiltered && (
+          <>
+            <span className="filter-menu__sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="filter-menu__current">{activeLabel}</span>
+          </>
+        )}
+      </summary>
+      <div className="filter-menu__panel" role="menu">
+        <div className="filter-menu__group-label">Status</div>
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="menuitemradio"
+            aria-checked={value === opt.value}
+            className={`filter-menu__option${value === opt.value ? " filter-menu__option--active" : ""}`}
+            onClick={(e) => {
+              onChange(opt.value);
+              // Close the popover after picking — find the parent
+              // <details> and clear `open`. Built-in details don't
+              // close on inner clicks by default.
+              const details = (e.currentTarget as HTMLElement).closest("details");
+              if (details) details.removeAttribute("open");
+            }}
+          >
+            <span className="filter-menu__radio" aria-hidden="true">
+              {value === opt.value ? "●" : "○"}
+            </span>
+            <span className="filter-menu__option-label">{opt.label}</span>
+            {opt.count !== undefined && (
+              <span className="filter-menu__option-count">{opt.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 
