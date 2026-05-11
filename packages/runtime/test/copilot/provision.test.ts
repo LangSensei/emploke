@@ -1,4 +1,4 @@
-﻿import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogManager } from "@emploke/catalog";
@@ -178,7 +178,12 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     const t = targetDir();
     expect(await exists(t)).toBe(false);
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(t)).toBe(true);
   });
 
@@ -195,7 +200,12 @@ describe("provisionCopilotWorkdir â€” basics", () => {
       "",
     ].join("\n");
     const { catalog, agentName } = await setup({ agent: { name: "code-reviewer", body } });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
   });
 
@@ -204,7 +214,12 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     const configPath = path.join(scratch, "copilot-config.json");
     expect(await exists(configPath)).toBe(false);
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(configPath)).toBe(false);
   });
 
@@ -222,7 +237,12 @@ describe("provisionCopilotWorkdir â€” basics", () => {
         },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, "prompt.txt"), "utf8")).toBe("extra prompt fragment");
     expect(await readFile(path.join(t, "scripts", "run.sh"), "utf8")).toBe("#!/bin/sh\necho hi\n");
   });
@@ -235,7 +255,12 @@ describe("provisionCopilotWorkdir â€” basics", () => {
         siblings: { "hooks/copilot/preTool.js": "// agent hook\n" },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, ".github", "hooks", "preTool.js"), "utf8")).toBe(
       "// agent hook\n",
     );
@@ -265,7 +290,7 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
     const t = targetDir();
     const fakeAgent = { name: "demo", description: "d", version: "0.0.1" };
     const malicious = {
-      resolveAgent: (_n: string) => ({ agent: fakeAgent, skills: [], mcps: [] }),
+      resolveAgent: async (_n: string) => ({ agent: fakeAgent, skills: [], mcps: [] }),
       agentEntries: async function* (_n: string) {
         yield { relPath: "AGENTS.md", content: Buffer.from("ok") };
         yield { relPath: "../escape.txt", content: Buffer.from("PWNED") };
@@ -281,7 +306,7 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
       provisionCopilotWorkdir(
         t,
         // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentResolveResult surface
-        malicious.resolveAgent("x") as any,
+        (await malicious.resolveAgent("x")) as any,
         // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogManager surface
         malicious as any,
         TEST_PLACEHOLDERS,
@@ -301,7 +326,12 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
         "swat/cli": JSON.stringify({ command: "swat" }),
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
     // Phase 2: keys are the FULL MCP-spec FQN with `/` (Copilot CLI
@@ -319,7 +349,12 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
   it("does not write .mcp.json when there are no MCPs", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(path.join(t, ".mcp.json"))).toBe(false);
   });
 
@@ -329,7 +364,7 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
     await expect(
       provisionCopilotWorkdir(
         t,
-        dirty.catalog.resolveAgent(dirty.agentName),
+        await dirty.catalog.resolveAgent(dirty.agentName),
         dirty.catalog,
         TEST_PLACEHOLDERS,
       ),
@@ -342,7 +377,7 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
     try {
       await provisionCopilotWorkdir(
         t,
-        dirty.catalog.resolveAgent(dirty.agentName),
+        await dirty.catalog.resolveAgent(dirty.agentName),
         dirty.catalog,
         TEST_PLACEHOLDERS,
       );
@@ -362,7 +397,12 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
     const { catalog, agentName } = await setup({
       skills: { foo: { body: "---\nname: foo\ndescription: f\nversion: 0.0.1\n---\n# Foo\n" } },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, ".github/skills/foo/SKILL.md"), "utf8")).toContain(
       "# Foo\n",
     );
@@ -375,7 +415,12 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
         foo: { extras: { "assets/logo.png": "PNG", "templates/main.tmpl": "TMPL" } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, ".github/skills/foo/assets/logo.png"), "utf8")).toBe("PNG");
     expect(await readFile(path.join(t, ".github/skills/foo/templates/main.tmpl"), "utf8")).toBe(
       "TMPL",
@@ -387,7 +432,12 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
     const { catalog, agentName } = await setup({
       skills: { foo: { hooks: { "h.sh": "#!/bin/sh\n" } } },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(path.join(t, ".github/skills/foo/hooks"))).toBe(false);
   });
 
@@ -404,7 +454,12 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
         },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(
       await readFile(path.join(t, ".github/skills/langsensei__weather/SKILL.md"), "utf8"),
     ).toContain("# Weather\n");
@@ -421,7 +476,12 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
         b: { hooks: { "b.sh": "B\n", "shared/cfg.json": '{"x":1}' } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     // Skill hooks are prefixed `<flattenedFqn>__` so two skills sharing a
     // short name can't collide on a hook filename. The implicit `local/`
     // scope is stripped, so `local/a` flattens to `a`.
@@ -435,7 +495,12 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
   it("does not create .github/hooks/ when no skill contributes copilot hooks", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({ skills: { foo: {} } });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(path.join(t, ".github/hooks"))).toBe(false);
   });
 
@@ -453,7 +518,12 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
         later: { deps: { skills: ["earlier"] }, hooks: { "shared.sh": "second\n" } },
       },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await readFile(path.join(t, ".github/hooks/earlier__shared.sh"), "utf8")).toBe(
       "first\n",
     );
@@ -470,7 +540,12 @@ describe("provisionCopilotWorkdir â€” workdir prep", () => {
   it("does NOT initialise a git repository in the target directory", async () => {
     const t = targetDir();
     const { catalog, agentName } = await setup({});
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
     expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });
@@ -489,7 +564,12 @@ describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
       },
       mcps: { "hello/world": JSON.stringify({ command: "hello" }) },
     });
-    await provisionCopilotWorkdir(t, catalog.resolveAgent(agentName), catalog, TEST_PLACEHOLDERS);
+    await provisionCopilotWorkdir(
+      t,
+      await catalog.resolveAgent(agentName),
+      catalog,
+      TEST_PLACEHOLDERS,
+    );
 
     expect(await exists(path.join(t, "AGENTS.md"))).toBe(true);
     expect(await exists(path.join(t, "prompt.md"))).toBe(true);

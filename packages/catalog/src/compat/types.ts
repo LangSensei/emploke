@@ -112,17 +112,6 @@ export interface SkillResolveResult {
   readonly mcps: readonly ResolvedMcp[];
 }
 
-/**
- * Diagnostic surface for entries the catalog couldn't reconstruct
- * (parse failed, name validation failed, etc.). Populated by
- * `rescan()`. Usually empty for SQLite-backed catalogs since the
- * write path validates upfront — kept for API compatibility.
- */
-export interface ScanIssue {
-  readonly path: string;
-  readonly reason: string;
-}
-
 /** Per-call options for {@link CatalogManager.installSkillFromOrigin}. */
 export interface InstallEntryOpts {
   readonly origin?: string;

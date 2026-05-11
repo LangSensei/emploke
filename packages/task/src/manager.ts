@@ -175,7 +175,7 @@ export class TaskManager {
     }
     let resolveResult: AgentResolveResult;
     try {
-      resolveResult = this.catalog.resolveAgent(agentName);
+      resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
       throw new AgentNotFoundError(agentName, err as Error);
     }

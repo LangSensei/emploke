@@ -7,10 +7,6 @@ export interface OverviewData {
     mcps: number;
     disabled: number;
   };
-  issues: {
-    path: string;
-    reason: string;
-  }[];
 }
 
 /**

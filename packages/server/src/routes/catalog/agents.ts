@@ -17,7 +17,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
-  app.get("/", (c) => c.json(getCatalog(c).listAgentEntries()));
+  app.get("/", async (c) => c.json(await getCatalog(c).listAgentEntries()));
 
   app.post("/resolve", async (c) => {
     const catalog = getCatalog(c);
@@ -36,7 +36,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const entry = catalog.getAgentEntry(name);
+      const entry = await catalog.getAgentEntry(name);
       if (!entry) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getAgentContent(name);
       return c.json({ ...entry, content });

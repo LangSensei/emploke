@@ -68,9 +68,9 @@ export class SessionManager {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    let resolveResult: ReturnType<CatalogManager["resolveAgent"]>;
+    let resolveResult: Awaited<ReturnType<CatalogManager["resolveAgent"]>>;
     try {
-      resolveResult = this.catalog.resolveAgent(agentName);
+      resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
       throw new AgentNotFoundError(agentName, err as Error);
     }

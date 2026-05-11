@@ -21,28 +21,17 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
-  // Refresh in-memory state from disk if it's older than the throttle
-  // window. Mutations always update memory synchronously, so this is a
-  // best-effort sync to catch external writes (vim, git pull). Throttled
-  // (5s by default) so a dashboard mount firing four parallel GETs only
-  // triggers one disk scan. Mounted before sub-routes so it applies to
-  // every catalog endpoint.
-  app.use("/*", async (c, next) => {
-    if (c.req.method === "GET") {
-      await getCatalog(c).rescanIfStale();
-    }
-    await next();
-  });
-
   app.route("/skills", skillsRoutes(getCatalog));
   app.route("/agents", agentsRoutes(getCatalog));
   app.route("/mcps", mcpsRoutes(getCatalog));
 
-  app.get("/overview", (c) => {
+  app.get("/overview", async (c) => {
     const catalog = getCatalog(c);
-    const skills = catalog.listSkillEntries();
-    const agents = catalog.listAgentEntries();
-    const mcps = catalog.listMcps();
+    const [skills, agents, mcps] = await Promise.all([
+      catalog.listSkillEntries(),
+      catalog.listAgentEntries(),
+      catalog.listMcps(),
+    ]);
     return c.json({
       counts: {
         skills: skills.length,
@@ -52,7 +41,6 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
           skills.filter((s) => s.status === "disabled").length +
           agents.filter((a) => a.status === "disabled").length,
       },
-      issues: catalog.scanIssues,
     });
   });
 
