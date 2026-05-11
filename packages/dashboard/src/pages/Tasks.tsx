@@ -1,13 +1,17 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  type ActivityItem,
   deleteTask,
   dispatchTask,
+  fetchTaskActivity,
   fetchTaskEvents,
   getTask,
   listRuntimes,
   listTasks,
   type ServerConfig,
+  type TaskActivity,
   type TaskRecord,
   type TaskStatus,
 } from "../api";
@@ -15,6 +19,7 @@ import { PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
 import { usePollWithBackoff } from "../hooks/usePollWithBackoff";
 import { serverNow } from "../serverClock";
+import { formatAbsolute, formatDuration, formatRelative } from "../utils/time";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -95,13 +100,34 @@ function presetToSinceMs(preset: TimePreset): number | null {
  * detail view. Mirrors Sessions's filter+toolbar UX so users can move
  * between the two pages without re-learning the layout.
  *
- * Layout uses a true split-pane: the list scrolls independently of the
- * detail panel (each gets its own `overflow: auto` container with
- * `align-self: start`), so a long event log on the right doesn't make
- * left-side rows balloon. Selecting a row binds the detail panel; closing
- * the detail leaves the list untouched.
+ * Layout is a true split-pane with collapsible detail. Selection is
+ * URL-driven (`/workspaces/<wsId>/tasks/<taskId>`), so refreshes,
+ * shared links, and the browser back button all preserve "which task
+ * am I looking at". The right panel collapses when no task is selected
+ * (URL = `/workspaces/<wsId>/tasks`), giving the list the full width.
+ *
+ * The list scrolls independently of the detail panel (each gets its
+ * own `overflow: auto` container with `align-self: start`), so a long
+ * event log on the right doesn't make left-side rows balloon.
  */
 export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
+  // URL-driven selection. The router declares /workspaces/:wsId/:section/:tab,
+  // so for tasks the `tab` slot carries the task id. We read it via the
+  // params hook (which always returns the current URL state, even after
+  // browser back/forward) and write it via navigate(); the local state
+  // mirror is just for derived computations that don't want to re-call
+  // useParams on every render.
+  const params = useParams<{ wsId: string; section?: string; tab?: string }>();
+  const navigate = useNavigate();
+  const selectedId = params.tab ?? null;
+  const setSelectedId = useCallback(
+    (id: string | null) => {
+      const ws = encodeURIComponent(currentWorkspaceId ?? "");
+      navigate(id === null ? `/workspaces/${ws}/tasks` : `/workspaces/${ws}/tasks/${id}`);
+    },
+    [navigate, currentWorkspaceId],
+  );
+
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -109,8 +135,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const [error, setError] = useState<string | null>(null);
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TaskRecord | null>(null);
+
+  // Re-run-prefill state: when set, opens the DispatchModal pre-filled
+  // with these values so "re-run" is one click + Enter rather than a
+  // copy-paste between detail and create modal.
+  const [rerunFrom, setRerunFrom] = useState<TaskRecord | null>(null);
 
   // Filter state — all client-side, since /tasks returns the full list and
   // the list is small enough that filtering in JS is cheaper than a round-trip.
@@ -198,8 +228,8 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   useEffect(() => {
     let cancelled = false;
     listRuntimes()
-      .then((kinds) => {
-        if (!cancelled) setRuntimes(kinds);
+      .then((rts) => {
+        if (!cancelled) setRuntimes(rts.map((r) => r.kind));
       })
       .catch(() => {
         // Non-fatal.
@@ -231,6 +261,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       const created = await dispatchTask(agent, instructions, runtime);
       if (!mountedRef.current) return;
       setDispatchOpen(false);
+      setRerunFrom(null);
       setSelectedId(created.id);
       await refresh();
     } catch (e) {
@@ -259,6 +290,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     }
   };
 
+  /** Open the dispatch modal pre-populated with another task's params. */
+  const onRerun = (source: TaskRecord) => {
+    setRerunFrom(source);
+    setDispatchOpen(true);
+  };
+
   const readyAgents = agents.filter((a) => a.status === "ready");
 
   // Memoize so re-renders triggered by polling don't re-allocate the array
@@ -274,14 +311,19 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     return tasks.filter((t) => t.id.toLowerCase().includes(q));
   }, [tasks, idQuery]);
 
-  // Drop the selected task from view if it's no longer in the visible set
-  // (e.g. user typed a filter that excludes it). Keeps the detail pane in
-  // sync with what the user can actually see.
+  // Drop the URL-bound selection if the task is truly gone from the
+  // task list (deleted server-side, or never existed when navigating
+  // to a stale link). We deliberately do NOT clear selection just
+  // because client-side `idQuery` filters it out — the user typed a
+  // filter to *narrow the list*, not to discard the panel they're
+  // reading. Only kicks in once `loaded` so we don't blow away a
+  // valid deep-link before the first list fetch resolves.
   useEffect(() => {
-    if (selectedId !== null && !visibleTasks.some((t) => t.id === selectedId)) {
+    if (!loaded) return;
+    if (selectedId !== null && !tasks.some((t) => t.id === selectedId)) {
       setSelectedId(null);
     }
-  }, [selectedId, visibleTasks]);
+  }, [loaded, selectedId, tasks, setSelectedId]);
 
   // Distinct agent / runtime values that actually appear in the task list,
   // unioned with the catalog list so users can filter to an agent that
@@ -424,26 +466,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
           </p>
         </div>
       ) : (
-        // Split-pane: independent scroll containers anchored to the top
-        // (`alignItems: start`) so a tall right panel doesn't push the left
-        // list down and vice versa. Each child caps its own height to the
-        // viewport-minus-toolbar so the page itself never grows scrollbars.
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(360px, 520px)",
-            gap: 16,
-            alignItems: "start",
-          }}
-        >
-          <div
-            style={{
-              maxHeight: "calc(100vh - 220px)",
-              overflow: "auto",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-md, 8px)",
-            }}
-          >
+        // Split-pane: list scrolls independently; right panel collapses
+        // when no task is selected (URL = /workspaces/.../tasks). Each
+        // pane caps its own height to viewport-minus-toolbar so the
+        // page itself never grows scrollbars regardless of content.
+        <div className={`tasks-pane${selectedId ? "" : " tasks-pane--list-only"}`}>
+          <div className="tasks-pane__list">
             <ul
               className="task-list"
               // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox pattern requires role on ul
@@ -462,11 +490,14 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
             </ul>
           </div>
 
-          <TaskDetailPanel
-            taskId={selectedId}
-            onClose={() => setSelectedId(null)}
-            pollIntervalMs={pollIntervalMs}
-          />
+          {selectedId && (
+            <TaskDetailPanel
+              taskId={selectedId}
+              onClose={() => setSelectedId(null)}
+              onRerun={onRerun}
+              pollIntervalMs={pollIntervalMs}
+            />
+          )}
         </div>
       )}
 
@@ -475,7 +506,11 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         agents={readyAgents}
         runtimes={runtimes}
         busy={busy}
-        onClose={() => setDispatchOpen(false)}
+        prefill={rerunFrom}
+        onClose={() => {
+          setDispatchOpen(false);
+          setRerunFrom(null);
+        }}
         onDispatch={onDispatched}
       />
 
@@ -483,8 +518,8 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         <Modal open={true} onClose={() => setDeleteTarget(null)} title="Delete task" size="default">
           <div className="modal__body">
             <p>
-              Delete task <code>{shortId(deleteTarget.id)}</code>? This kills the subprocess if it's
-              still running and removes the workdir.
+              Delete task <code>{deleteTarget.id}</code>? This kills the subprocess if it's still
+              running and removes the workdir.
             </p>
           </div>
           <div className="modal__footer">
@@ -522,18 +557,36 @@ interface TaskListItemProps {
  * One row of the task list. Renders as a card-ish flex row so a tall
  * detail panel on the right never stretches it (which is what the table
  * layout was doing — table rows in a grid cell take the cell's height).
+ *
+ * Two-row visual hierarchy:
+ *   row 1: status pill · agent chip · runtime chip · — spacer — · delete
+ *   row 2: instructions (title-prominent) · full id (mono, muted)
+ *   row 3: relative time / duration (muted)
+ *
+ * Instructions are the actual *content* of a task — the id is a
+ * disambiguator, not a name. So instructions get the title role and id
+ * gets relegated to the subtitle, matching how GitHub Issues shows
+ * "title #42" rather than "#42 with title".
  */
 function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
+  const isRunning = task.status === "running" || task.status === "not_started";
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
-  // Single-line excerpt: collapse whitespace, slice, and trust the CSS
-  // ellipsis to handle the visual cut-off so we don't second-guess the
-  // column width.
-  const excerpt = task.instructions.replace(/\s+/g, " ").trim();
+  // Pull the first non-empty line of instructions as the headline.
+  // Multi-line instructions usually start with the gist on line 1 and
+  // expand below; rendering only the gist keeps row height predictable
+  // and CSS ellipsis handles overflow.
+  const headline =
+    task.instructions
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((s) => s.length > 0) ?? "(empty instructions)";
   return (
     <li
-      className={`task-list__item${selected ? " task-list__item--selected" : ""}`}
+      className={`task-list__item${selected ? " task-list__item--selected" : ""}${
+        isRunning ? " task-list__item--running" : ""
+      }`}
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -547,22 +600,10 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
       aria-selected={selected}
     >
       <div className="task-list__item-head">
-        <code className="task-list__id" title={task.id}>
-          {shortId(task.id)}
-        </code>
-        <span className={`badge badge--${tone}`}>{STATUS_LABEL[task.status]}</span>
-        <span className="agent-tag" title={`Agent: ${task.agent}`}>
-          {task.agent}
-        </span>
-        {runtime && (
-          <span className="agent-tag" title={`Runtime: ${runtime}`}>
-            {runtime}
-          </span>
-        )}
-        <span className="task-list__spacer" />
+        <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
         <button
           type="button"
-          className="btn btn--ghost btn--icon"
+          className="btn btn--ghost btn--icon task-list__item-remove"
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -573,13 +614,91 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
           <TrashIcon />
         </button>
       </div>
-      <div className="task-list__item-meta muted" title={excerpt}>
-        {excerpt}
+      <div className="task-list__item-headline" title={task.instructions}>
+        {headline}
       </div>
-      <div className="task-list__item-time muted">
-        {task.startedAt ? formatTime(task.startedAt) : `created ${formatTime(task.createdAt)}`}
+      {/* Footer is plain muted text, not chips. Agent + runtime are
+          already filterable via the page toolbar; repeating them as
+          chips here added visual weight without information value
+          and made narrow columns wrap badly. Showing them as inline
+          muted text wraps gracefully (looks like a sentence, not a
+          broken UI). The id gets its own line at the bottom because
+          it's a mono token of fixed size that pairs awkwardly with
+          variable-width labels. */}
+      <div className="task-list__item-meta muted">
+        <span title={`Agent: ${task.agent}`}>{task.agent}</span>
+        {runtime && (
+          <>
+            <span className="task-list__sep">·</span>
+            <span title={`Runtime: ${runtime}`}>{runtime}</span>
+          </>
+        )}
+        <span className="task-list__sep">·</span>
+        <TaskRelativeTime task={task} />
       </div>
+      <code className="task-list__id" title={task.id}>
+        {task.id}
+      </code>
     </li>
+  );
+}
+
+/**
+ * Status badge with optional pulsing dot for "running" / "not started"
+ * tasks. The pulse animates via CSS keyframes (.badge__pulse-dot) and
+ * stops as soon as the task transitions to a terminal status.
+ */
+function StatusBadge({
+  status,
+  tone,
+  pulse,
+}: {
+  status: TaskStatus;
+  tone: string;
+  pulse: boolean;
+}) {
+  return (
+    <span className={`badge badge--${tone}${pulse ? " badge--with-pulse" : ""}`}>
+      {pulse && <span className="badge__pulse-dot" aria-hidden="true" />}
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/**
+ * Smart relative-time line for a task row. Shows the most informative
+ * timestamp for each lifecycle stage:
+ *   - not_started: "queued 2m ago"
+ *   - running: "running for 1m 23s"  (live elapsed)
+ *   - terminal: "ran 5m 12s · ended 2h ago"
+ * Tooltip carries the absolute timestamp for forensic precision.
+ */
+function TaskRelativeTime({ task }: { task: TaskRecord }) {
+  if (task.status === "not_started") {
+    return (
+      <span className="muted" title={formatAbsolute(task.createdAt)}>
+        queued {formatRelative(task.createdAt)}
+      </span>
+    );
+  }
+  if (task.status === "running" && task.startedAt) {
+    return (
+      <span className="muted" title={formatAbsolute(task.startedAt)}>
+        running for {formatDuration(task.startedAt, null)}
+      </span>
+    );
+  }
+  if (task.endedAt && task.startedAt) {
+    return (
+      <span className="muted" title={formatAbsolute(task.endedAt)}>
+        ran {formatDuration(task.startedAt, task.endedAt)} · ended {formatRelative(task.endedAt)}
+      </span>
+    );
+  }
+  return (
+    <span className="muted" title={formatAbsolute(task.createdAt)}>
+      created {formatRelative(task.createdAt)}
+    </span>
   );
 }
 
@@ -588,23 +707,45 @@ interface DispatchModalProps {
   agents: AgentEntry[];
   runtimes: string[];
   busy: boolean;
+  /** Pre-fill values from a previous task ("re-run"). null = blank form. */
+  prefill: TaskRecord | null;
   onClose: () => void;
   onDispatch: (agent: string, instructions: string, runtime: string | undefined) => void;
 }
 
-function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: DispatchModalProps) {
+function DispatchModal({
+  open,
+  agents,
+  runtimes,
+  busy,
+  prefill,
+  onClose,
+  onDispatch,
+}: DispatchModalProps) {
   const [agent, setAgent] = useState<string>("");
   const [runtime, setRuntime] = useState<string>("");
   const [instructions, setInstructions] = useState("");
 
-  // Reset form on open so re-opening doesn't replay the previous dispatch.
+  // Reset form on open. When `prefill` is set we seed from the source
+  // task — useful for re-dispatching a failed task with the same params
+  // (or with a small tweak before submitting). Otherwise we start blank
+  // with the catalog's first ready agent.
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (prefill) {
+      setAgent(prefill.agent);
+      const prefRuntime =
+        typeof prefill.metadata?.runtime === "string"
+          ? (prefill.metadata.runtime as string)
+          : (runtimes[0] ?? "");
+      setRuntime(prefRuntime);
+      setInstructions(prefill.instructions);
+    } else {
       setAgent(agents[0]?.agent.fqn ?? "");
       setRuntime(runtimes[0] ?? "");
       setInstructions("");
     }
-  }, [open, agents, runtimes]);
+  }, [open, agents, runtimes, prefill]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -613,7 +754,12 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Dispatch task" size="default">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={prefill ? "Re-run task" : "Dispatch task"}
+      size="default"
+    >
       <form onSubmit={onSubmit}>
         <div className="modal__body">
           <label htmlFor="task-agent">
@@ -682,7 +828,7 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
             className="btn btn--primary"
             disabled={busy || !agent || !instructions.trim()}
           >
-            {busy ? "Dispatching…" : "Dispatch"}
+            {busy ? (prefill ? "Re-running…" : "Dispatching…") : prefill ? "Re-run" : "Dispatch"}
           </button>
         </div>
       </form>
@@ -693,28 +839,30 @@ function DispatchModal({ open, agents, runtimes, busy, onClose, onDispatch }: Di
 interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
+  onRerun: (task: TaskRecord) => void;
   /** Auto-refresh cadence while the displayed task is running (ms). */
   pollIntervalMs: number;
 }
 
-type DetailTab = "events" | "metadata";
+type DetailTab = "activity" | "events" | "metadata";
 
-function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelProps) {
+function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetailPanelProps) {
   const [task, setTask] = useState<TaskRecord | null>(null);
+  const [activity, setActivity] = useState<TaskActivity | null>(null);
   const [events, setEvents] = useState<string | null>(null);
   const [eventsError, setEventsError] = useState<string | null>(null);
-  const [tab, setTab] = useState<DetailTab>("events");
+  const [tab, setTab] = useState<DetailTab>("activity");
   const [loading, setLoading] = useState(false);
 
   // Race guards mirroring the list view (see TasksPage.refresh):
   //   * `mountedRef` for the standard unmount-during-fetch case
   //   * `taskTokenRef` to drop the response when the user clicks task A
-  //     then task B before A's two-step fetch (getTask + fetchTaskEvents)
-  //     completes — without this guard A's payload would land under B's
-  //     header
+  //     then task B before A's three-step fetch (getTask + activity +
+  //     events) completes — without this guard A's payload would land
+  //     under B's header
   //   * `inFlightRef` to keep the auto-poll from stacking when a refresh
   //     outlives `pollIntervalMs` (a real risk on the detail panel
-  //     because each cycle fires two serial fetches)
+  //     because each cycle fires three serial fetches)
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -724,6 +872,13 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   }, []);
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
+  // Tab in a ref so the polled `refreshDetail` callback can read the
+  // current tab without itself being a state dep (which would re-bind
+  // the polling loop on every tab switch).
+  const tabRef = useRef<DetailTab>(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
 
   const refreshDetail = useCallback(async () => {
     if (!taskId) return;
@@ -733,19 +888,46 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
     taskTokenRef.current = token;
     setLoading(true);
     try {
-      const t = await getTask(taskId);
-      if (!mountedRef.current || token !== taskTokenRef.current) return;
-      setTask(t);
-      try {
-        const ev = await fetchTaskEvents(taskId);
-        if (!mountedRef.current || token !== taskTokenRef.current) return;
-        setEvents(ev);
-        setEventsError(null);
-      } catch (e) {
-        if (!mountedRef.current || token !== taskTokenRef.current) return;
-        setEventsError((e as Error).message);
-        setEvents(null);
+      // Always fetch:
+      //   - task metadata (cheap; drives status badge, header, result fallback)
+      //   - activity timeline (small parsed JSON; drives Activity tab + Result panel)
+      // Lazy:
+      //   - raw events (potentially MB-class on long-running tasks);
+      //     only refetched when the user is currently looking at the
+      //     Raw events tab. Switching to that tab fires a one-shot
+      //     fetch (see the separate effect below) so the user never
+      //     sees a stale "click Raw events to load" placeholder.
+      const promises: Promise<void>[] = [
+        getTask(taskId).then((t) => {
+          if (!mountedRef.current || token !== taskTokenRef.current) return;
+          setTask(t);
+        }),
+        fetchTaskActivity(taskId)
+          .then((a) => {
+            if (!mountedRef.current || token !== taskTokenRef.current) return;
+            setActivity(a);
+          })
+          .catch(() => {
+            if (!mountedRef.current || token !== taskTokenRef.current) return;
+            setActivity(null);
+          }),
+      ];
+      if (tabRef.current === "events") {
+        promises.push(
+          fetchTaskEvents(taskId)
+            .then((ev) => {
+              if (!mountedRef.current || token !== taskTokenRef.current) return;
+              setEvents(ev);
+              setEventsError(null);
+            })
+            .catch((e) => {
+              if (!mountedRef.current || token !== taskTokenRef.current) return;
+              setEvents(null);
+              setEventsError((e as Error).message);
+            }),
+        );
       }
+      await Promise.all(promises);
     } catch (e) {
       if (!mountedRef.current || token !== taskTokenRef.current) return;
       setTask(null);
@@ -759,14 +941,45 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   }, [taskId]);
 
   useEffect(() => {
-    if (!taskId) {
-      setTask(null);
-      setEvents(null);
-      setEventsError(null);
-      return;
-    }
+    // Always reset the per-task fetched state when the URL switches
+    // tasks. Without this, switching from task A (which had loaded
+    // events) to task B leaves A's events in state — and the lazy
+    // events effect below would then short-circuit on `events !== null`
+    // and never fetch B's events, showing A's bytes under B's header.
+    setTask(null);
+    setActivity(null);
+    setEvents(null);
+    setEventsError(null);
+    if (!taskId) return;
     void refreshDetail();
   }, [taskId, refreshDetail]);
+
+  // One-shot fetch when the user first switches to the Raw events
+  // tab. Subsequent automatic refreshes (if the task is still
+  // running) flow through `refreshDetail` because tabRef now reads
+  // "events". Once the task reaches a terminal status the events log
+  // is immutable, so no further fetches are needed even if the user
+  // keeps the tab open.
+  useEffect(() => {
+    if (!taskId) return;
+    if (tab !== "events") return;
+    if (events !== null || eventsError !== null) return;
+    let cancelled = false;
+    fetchTaskEvents(taskId)
+      .then((ev) => {
+        if (cancelled || !mountedRef.current) return;
+        setEvents(ev);
+        setEventsError(null);
+      })
+      .catch((e) => {
+        if (cancelled || !mountedRef.current) return;
+        setEventsError((e as Error).message);
+        setEvents(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, taskId, events, eventsError]);
 
   // Auto-poll while running so the runtime's event log + status update
   // without a manual refresh click. Cadence comes from the parent (which
@@ -775,27 +988,14 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
   usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
 
-  // Common box: anchored at top of the right column with its own scroll
-  // container, capped at viewport-minus-toolbar so the page never grows
-  // scrollbars even with a huge event log payload.
-  const boxStyle: React.CSSProperties = {
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-md, 8px)",
-    padding: 16,
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    maxHeight: "calc(100vh - 220px)",
-    overflow: "hidden",
-    background: "var(--color-bg)",
-  };
-
+  // Common box styling lives in CSS now. The right panel anchors at
+  // the top of its grid cell (.tasks-pane__detail), with its own
+  // scroll container and a viewport-capped max-height so the page
+  // never grows scrollbars regardless of event-log size.
   if (!taskId) {
     return (
-      <aside
-        style={{ ...boxStyle, justifyContent: "center", alignItems: "center", minHeight: 240 }}
-      >
-        <p className="muted" style={{ textAlign: "center", margin: 0 }}>
+      <aside className="tasks-pane__detail tasks-pane__detail--empty">
+        <p className="muted" style={{ margin: 0 }}>
           Select a task to view details.
         </p>
       </aside>
@@ -812,75 +1012,134 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
       : undefined;
   const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
+  const isRunning = task && (task.status === "running" || task.status === "not_started");
 
   return (
-    <aside style={boxStyle}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 8,
-        }}
-      >
-        <div>
-          <code style={{ fontSize: 12 }} title={taskId}>
-            {shortId(taskId)}
+    <aside className="tasks-pane__detail">
+      <header className="task-detail__head">
+        <div className="task-detail__head-row">
+          <code className="task-detail__id" title={taskId}>
+            {taskId}
           </code>
           {task && (
-            <span className={`badge badge--${STATUS_TONE[task.status]}`} style={{ marginLeft: 8 }}>
-              {STATUS_LABEL[task.status]}
-            </span>
+            <StatusBadge
+              status={task.status}
+              tone={STATUS_TONE[task.status]}
+              pulse={isRunning ?? false}
+            />
           )}
+          <span className="task-detail__head-spacer" />
+          {task && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => onRerun(task)}
+              title="Re-dispatch with the same agent + instructions"
+            >
+              Re-run
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={refreshDetail}
+            disabled={loading}
+            aria-label="Refresh detail"
+            title="Refresh"
+          >
+            <RefreshIcon className={loading ? "spin" : undefined} />
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={onClose}
+            aria-label="Close detail"
+            title="Close"
+          >
+            ✕
+          </button>
         </div>
+        {task && (
+          <div className="task-detail__statbar">
+            <span title={`Agent: ${task.agent}`}>
+              <span className="task-detail__statbar-key">Agent</span> {task.agent}
+            </span>
+            {runtime && (
+              <span title={`Runtime: ${runtime}`}>
+                <span className="task-detail__statbar-key">Runtime</span> {runtime}
+              </span>
+            )}
+            {task.startedAt && (
+              <span title={formatAbsolute(task.startedAt)}>
+                <span className="task-detail__statbar-key">Started</span>{" "}
+                {formatRelative(task.startedAt)}
+              </span>
+            )}
+            {(task.endedAt || isRunning) && task.startedAt && (
+              <span
+                title={
+                  task.endedAt
+                    ? `Ended ${formatAbsolute(task.endedAt)}`
+                    : "Running, elapsed up to now"
+                }
+              >
+                <span className="task-detail__statbar-key">
+                  {task.endedAt ? "Duration" : "Elapsed"}
+                </span>{" "}
+                {formatDuration(task.startedAt, task.endedAt ?? null)}
+              </span>
+            )}
+          </div>
+        )}
+        {task?.instructions && (
+          <p className="task-detail__instructions" title={task.instructions}>
+            {task.instructions}
+          </p>
+        )}
+        {task?.failure && (
+          <div className="alert alert--error" style={{ margin: 0 }}>
+            <strong>Failure:</strong> {task.failure.error}
+            {exitCode !== undefined && exitCode !== null && <> (exit {exitCode})</>}
+            {exitSignal && <> [signal {exitSignal}]</>}
+          </div>
+        )}
+      </header>
+
+      {/* Result block — the agent's final answer, the headline thing
+          a user wants to see. Falls back gracefully:
+            1. derived `activity.result` (last assistant message) if any
+            2. raw task.result.output if the kernel captured one
+            3. nothing (don't render a noisy empty box) */}
+      {(() => {
+        const headlineResult =
+          activity?.result ??
+          (typeof task?.result?.output === "string" && task.result.output.length > 0
+            ? task.result.output
+            : null);
+        if (!headlineResult) return null;
+        return (
+          <section className="task-detail__result">
+            <h3 className="task-detail__section-title">Result</h3>
+            <p className="task-detail__result-body">{headlineResult}</p>
+          </section>
+        );
+      })()}
+
+      <nav className="pills" style={{ display: "flex", gap: 4 }}>
         <button
           type="button"
-          className="btn btn--ghost btn--icon"
-          onClick={onClose}
-          aria-label="Close detail"
-          title="Close"
+          className={`pills__btn${tab === "activity" ? " pills__btn--active" : ""}`}
+          onClick={() => setTab("activity")}
         >
-          ✕
+          Activity
         </button>
-      </div>
-
-      {task && (
-        <div className="muted" style={{ fontSize: 12, display: "grid", gap: 4 }}>
-          <div>
-            <strong>Agent:</strong> {task.agent}
-          </div>
-          {runtime && (
-            <div>
-              <strong>Runtime:</strong> {runtime}
-            </div>
-          )}
-          {task.startedAt && (
-            <div>
-              <strong>Started:</strong> {formatTime(task.startedAt)}
-            </div>
-          )}
-          {task.endedAt && (
-            <div>
-              <strong>Ended:</strong> {formatTime(task.endedAt)}
-            </div>
-          )}
-          {task.failure && (
-            <div style={{ marginTop: 8, color: "var(--color-warn, #d97706)" }}>
-              <strong>Failure:</strong> {task.failure.error}
-              {exitCode !== undefined && exitCode !== null && <> (exit {exitCode})</>}
-              {exitSignal && <> [signal {exitSignal}]</>}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="pills" style={{ display: "flex", gap: 4 }}>
         <button
           type="button"
           className={`pills__btn${tab === "events" ? " pills__btn--active" : ""}`}
           onClick={() => setTab("events")}
+          title="Raw NDJSON event log (debug)"
         >
-          Events
+          Raw events
         </button>
         <button
           type="button"
@@ -889,21 +1148,16 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
         >
           Metadata
         </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon"
-          onClick={refreshDetail}
-          disabled={loading}
-          aria-label="Refresh detail"
-          title="Refresh"
-          style={{ marginLeft: "auto" }}
-        >
-          <RefreshIcon className={loading ? "spin" : undefined} />
-        </button>
-      </div>
+      </nav>
+
+      {tab === "activity" && (
+        <div className="task-detail__body">
+          <ActivityView activity={activity} eventsError={eventsError} />
+        </div>
+      )}
 
       {tab === "events" && (
-        <div style={{ flex: 1, overflow: "auto", minHeight: 200 }}>
+        <div className="task-detail__body">
           {events === null && eventsError && (
             <p className="muted">
               Events not available yet
@@ -920,23 +1174,14 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
           )}
           {events !== null && events.length === 0 && <p className="muted">No events yet.</p>}
           {events !== null && events.length > 0 && (
-            <pre
-              style={{
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontSize: 11,
-                margin: 0,
-              }}
-            >
-              {formatEventsJsonl(events)}
-            </pre>
+            <pre className="task-detail__events">{formatEventsJsonl(events)}</pre>
           )}
         </div>
       )}
 
       {tab === "metadata" && task && (
-        <div style={{ flex: 1, overflow: "auto", minHeight: 200 }}>
-          <pre style={{ fontSize: 11, margin: 0 }}>
+        <div className="task-detail__body">
+          <pre className="task-detail__events">
             {JSON.stringify(
               {
                 instructions: task.instructions,
@@ -954,22 +1199,122 @@ function TaskDetailPanel({ taskId, onClose, pollIntervalMs }: TaskDetailPanelPro
   );
 }
 
-// ─ helpers ─
-
-function shortId(id: string): string {
-  // Task ids are `YYYYMMDD-xxxxxxxx`. The hex tail is enough to disambiguate
-  // in any reasonable list, and it fits in a narrow column.
-  const dash = id.lastIndexOf("-");
-  return dash >= 0 ? id.slice(dash + 1) : id;
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
+/**
+ * Activity tab — runtime-neutral timeline of user / assistant /
+ * summary entries. The runtime is responsible for filtering out the
+ * low-signal events (handshake, model preference, system prompts);
+ * what arrives here is only the things a person reads.
+ *
+ * Rendered as an ordered list with role-coded headers and content
+ * bodies. Tool calls inside an assistant turn render as a small chip
+ * row underneath the message text.
+ */
+function ActivityView({
+  activity,
+  eventsError,
+}: {
+  activity: TaskActivity | null;
+  eventsError: string | null;
+}) {
+  if (activity === null) {
+    if (eventsError) {
+      return (
+        <p className="muted">
+          Activity not available
+          {eventsError ? `: ${eventsError}` : ""}.
+        </p>
+      );
+    }
+    return <p className="muted">No activity yet.</p>;
   }
+  if (activity.activity.length === 0) {
+    return <p className="muted">No activity yet for this task.</p>;
+  }
+  return (
+    <ol className="activity-list">
+      {activity.activity.map((item) => (
+        // Timestamps are runtime-emitted UUIDs-in-time and are unique
+        // per event; the activity list is append-only (never reordered),
+        // so timestamp-as-key is stable across re-renders.
+        <ActivityRow key={item.timestamp} item={item} />
+      ))}
+    </ol>
+  );
 }
+
+function ActivityRow({ item }: { item: ActivityItem }) {
+  if (item.kind === "summary") {
+    const s = item.summary;
+    const codeChanged = s.linesAdded > 0 || s.linesRemoved > 0 || s.filesModified.length > 0;
+    return (
+      <li className="activity-row activity-row--summary">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--summary">Summary</span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+          </time>
+        </div>
+        <div className="activity-row__summary-grid">
+          {codeChanged ? (
+            <span>
+              <strong>Code:</strong> +{s.linesAdded} −{s.linesRemoved} across{" "}
+              {s.filesModified.length} file{s.filesModified.length === 1 ? "" : "s"}
+            </span>
+          ) : (
+            <span className="muted">No code changes</span>
+          )}
+          {s.premiumRequests > 0 && (
+            <span>
+              <strong>Premium requests:</strong> {s.premiumRequests}
+            </span>
+          )}
+          {(s.inputTokens > 0 || s.outputTokens > 0) && (
+            <span>
+              <strong>Tokens:</strong> {s.inputTokens.toLocaleString()} in /{" "}
+              {s.outputTokens.toLocaleString()} out
+            </span>
+          )}
+          {s.model && (
+            <span>
+              <strong>Model:</strong> {s.model}
+            </span>
+          )}
+        </div>
+      </li>
+    );
+  }
+  return (
+    <li className={`activity-row activity-row--${item.kind}`}>
+      <div className="activity-row__head">
+        <span className={`activity-row__role activity-row__role--${item.kind}`}>
+          {item.kind === "user" ? "User" : "Assistant"}
+        </span>
+        <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+          {formatRelative(item.timestamp)}
+        </time>
+      </div>
+      {item.content.length > 0 && <p className="activity-row__body">{item.content}</p>}
+      {item.kind === "assistant" && item.toolRequests.length > 0 && (
+        <div className="activity-row__tools">
+          {item.toolRequests.map((t) => {
+            // Tool calls within a single assistant message are emitted as
+            // a list; same tool name can repeat, so we hash the args into
+            // the key to keep React happy when the message re-renders
+            // (e.g. during a poll tick that returns the same content).
+            const key = `${t.name}::${JSON.stringify(t.arguments ?? {})}`;
+            return (
+              <span key={key} className="activity-row__tool" title={t.name}>
+                {t.name}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// ─ helpers ─
 
 /**
  * Pretty-print an NDJSON event log payload by parsing each line and showing

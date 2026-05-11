@@ -64,6 +64,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "OriginParseError",
   "PlanStaleError",
   "AgentPlanStaleError",
+  "RuntimeDoesNotSupportRemoteError",
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",

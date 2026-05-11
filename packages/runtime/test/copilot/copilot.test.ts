@@ -53,6 +53,7 @@ function fakeSession(over: Partial<Session> = {}): Session {
     createdAt: "2026-05-08T01:00:00.000Z",
     lastActiveAt: null,
     preview: null,
+    lastLaunchMode: null,
     ...over,
   };
 }

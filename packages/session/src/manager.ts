@@ -15,6 +15,7 @@ import { safeJoinUnderRoot } from "./paths.js";
 import { FsSessionRepository } from "./repositories/fs-session-repository.js";
 import type { SessionRepository, SessionState } from "./repositories/repository.js";
 import type {
+  BuildLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   ListSessionOpts,
@@ -124,6 +125,7 @@ export class SessionManager {
         createdAt,
         lastActiveAt: null,
         preview: null,
+        lastLaunchMode: null,
       };
     } catch (err) {
       await safeRm(workdir, this.logger);
@@ -226,13 +228,39 @@ export class SessionManager {
 
   // ─── buildLaunch ─────────────────────────────────────────
 
-  async buildLaunch(id: string): Promise<LaunchCommand> {
+  async buildLaunch(id: string, opts: BuildLaunchSessionOpts = {}): Promise<LaunchCommand> {
     assertValidSessionId(id);
     const session = await this.loadSession(id);
     if (session === null) throw new SessionNotFoundError(id);
 
     const runtime = this.runtimeRegistry.get(session.runtime);
-    return runtime.buildLaunch(session, this.workspaceDir);
+    const launch = await runtime.buildLaunch(session, this.workspaceDir, {
+      ...(opts.remote === true ? { remote: true } : {}),
+    });
+
+    // Best-effort: remember the user's last intent for this session so
+    // the next dashboard render can default the Resume button. Persisted
+    // only after `buildLaunch` succeeded — if the runtime threw (e.g.
+    // RuntimeDoesNotSupportRemoteError), we shouldn't update intent.
+    // A failed save is logged but does not fail the call: the launch
+    // command is already valid and the worst case is the next page
+    // refresh shows the previous default.
+    const desiredMode: "local" | "remote" = opts.remote === true ? "remote" : "local";
+    if (session.lastLaunchMode !== desiredMode) {
+      try {
+        const prev = await this.repository.read(id);
+        if (prev !== null) {
+          await this.repository.save(id, { ...prev, lastLaunchMode: desiredMode });
+        }
+      } catch (err) {
+        this.logger.warn("sessions: failed to persist lastLaunchMode", {
+          sessionId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return launch;
   }
 
   // ─── internals ───────────────────────────────────────────
@@ -266,6 +294,7 @@ export class SessionManager {
       createdAt: state.createdAt,
       lastActiveAt: null,
       preview: null,
+      lastLaunchMode: state.lastLaunchMode ?? null,
     };
   }
 
@@ -289,11 +318,17 @@ export class SessionManager {
 
     if (refreshed.runtimeSessionId !== draft.runtimeSessionId) {
       try {
-        await this.repository.save(draft.id, {
-          runtime: draft.runtime,
-          createdAt: draft.createdAt,
-          runtimeSessionId: refreshed.runtimeSessionId,
-        });
+        // Read-then-merge so we don't drop other fields the repository
+        // may have persisted (notably `lastLaunchMode`). The runtime
+        // refresh only owns `runtimeSessionId` / preview / lastActiveAt;
+        // everything else must round-trip untouched.
+        const prev = await this.repository.read(draft.id);
+        if (prev !== null) {
+          await this.repository.save(draft.id, {
+            ...prev,
+            runtimeSessionId: refreshed.runtimeSessionId,
+          });
+        }
       } catch (err) {
         this.logger.warn("sessions: failed to persist discovered runtimeSessionId", {
           sessionId: draft.id,

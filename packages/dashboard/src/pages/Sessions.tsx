@@ -10,9 +10,18 @@ import {
   spawnSession,
   type WorkspaceListItem,
 } from "../api";
-import { CopyIcon, PlayIcon, PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
+import {
+  ChevronDownIcon,
+  CopyIcon,
+  GlobeIcon,
+  PlayIcon,
+  PlusIcon,
+  RefreshIcon,
+  TrashIcon,
+} from "../components/Icons";
 import { Modal } from "../components/Modal";
 import { serverNow } from "../serverClock";
+import { formatRelative } from "../utils/time";
 
 interface SessionsProps {
   agents: AgentEntry[];
@@ -154,8 +163,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   useEffect(() => {
     let cancelled = false;
     listRuntimes()
-      .then((kinds) => {
-        if (!cancelled) setRuntimes(kinds);
+      .then((rts) => {
+        if (!cancelled) setRuntimes(rts.map((r) => r.kind));
       })
       .catch(() => {
         // Non-fatal: CreateModal falls back to omitting the runtime field,
@@ -182,7 +191,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
     }
   };
 
-  const onLaunch = async (s: SessionRecord) => {
+  const onLaunch = async (s: SessionRecord, opts: { remote?: boolean } = {}) => {
     if (launchingId !== null) return;
     setLaunchingId(s.id);
     setError(null);
@@ -190,7 +199,11 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
       // Resume vs fresh is decided by the runtime now: if a runtimeSessionId
       // is persisted, buildLaunch will produce a `--resume=<id>` form; if not,
       // it produces a bare launch. Either way the dashboard just asks to spawn.
-      const result = await spawnSession(s.id);
+      // `opts.remote` selects between the two spawn buttons in the row;
+      // server validates against the runtime's capabilities and 400s if
+      // unsupported (defensive — disabled buttons in the UI are the
+      // first line of defence).
+      const result = await spawnSession(s.id, opts);
       if (!mountedRef.current) return;
       if (!result.ok) {
         // Server returned 200 but couldn't spawn a terminal — show the
@@ -382,28 +395,17 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           </p>
         </div>
       ) : (
-        <table className="table table--wide">
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>Agent</th>
-              <th>Runtime</th>
-              <th className="col-activity">Activity</th>
-              <th className="col-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleSessions.map((s) => (
-              <SessionRow
-                key={s.id}
-                session={s}
-                launching={launchingId === s.id}
-                onLaunch={() => onLaunch(s)}
-                onDelete={() => setDeleteModal({ session: s, alsoDeleteRuntimeState: false })}
-              />
-            ))}
-          </tbody>
-        </table>
+        <ul className="session-list" aria-label="Sessions">
+          {visibleSessions.map((s) => (
+            <SessionListItem
+              key={s.id}
+              session={s}
+              launching={launchingId === s.id}
+              onLaunch={(opts) => onLaunch(s, opts)}
+              onDelete={() => setDeleteModal({ session: s, alsoDeleteRuntimeState: false })}
+            />
+          ))}
+        </ul>
       )}
 
       <CreateModal
@@ -455,52 +457,47 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   );
 }
 
-// ─── Row ─────────────────────────────────────────────────────
+// ─── List item ───────────────────────────────────────────────
 
-interface RowProps {
+interface ListItemProps {
   session: SessionRecord;
   launching: boolean;
-  onLaunch: () => void;
+  onLaunch: (opts: { remote?: boolean }) => void;
   onDelete: () => void;
 }
 
-function SessionRow({ session, launching, onLaunch, onDelete }: RowProps) {
+/**
+ * One row of the sessions list. Two-row layout:
+ *
+ *   row 1: id · agent chip · runtime chip · — spacer — · action buttons
+ *   row 2: activity preview · separator · "20m ago" (muted)
+ *
+ * Mirrors the Tasks list's `.task-list__item` shape so the two
+ * primary "running entity" pages read consistently. Replaces the
+ * earlier `<table>` whose fixed columns left the actions cell
+ * widthless and made chip widths jitter across rows.
+ */
+function SessionListItem({ session, launching, onLaunch, onDelete }: ListItemProps) {
   const hasHistory = session.runtimeSessionId !== null && session.lastActiveAt !== null;
-  const launchTitle = launching
-    ? "Opening terminal…"
-    : hasHistory
-      ? "Resume in a new terminal"
-      : "Open in a new terminal";
+  const verb = hasHistory ? "Resume" : "Launch";
+  // Default the primary action to whatever the user picked last for
+  // this session, so a "remote-mostly" session keeps offering remote
+  // as one click. Falls back to local on first launch (the safe and
+  // historically conventional choice).
+  const defaultMode: "local" | "remote" = session.lastLaunchMode ?? "local";
   return (
-    <tr>
-      <td className="col-session" title={session.workdir}>
-        <span className="session-id">{session.id}</span>
-      </td>
-      <td className="col-agent">
-        <span className="agent-tag" title={session.agent}>
+    <li className="session-list__item">
+      <div className="session-list__head">
+        <div className="session-list__headline" title={`Agent: ${session.agent}`}>
           {session.agent}
-        </span>
-      </td>
-      <td className="col-runtime">
-        <span className="agent-tag" title={`Runtime: ${session.runtime}`}>
-          {session.runtime}
-        </span>
-      </td>
-      <td className="col-activity">
-        <ActivityCell session={session} />
-      </td>
-      <td className="col-actions">
-        <div className="row-actions">
-          <button
-            type="button"
-            className="btn btn--primary row-actions__launch"
-            title={launchTitle}
-            disabled={launching}
-            onClick={onLaunch}
-          >
-            {launching ? <RefreshIcon className="spin" /> : <PlayIcon />}
-            <span>{hasHistory ? "Resume" : "Launch"}</span>
-          </button>
+        </div>
+        <div className="session-list__actions">
+          <ResumeSplitButton
+            verb={verb}
+            launching={launching}
+            defaultMode={defaultMode}
+            onLaunch={onLaunch}
+          />
           <CopyPathButton path={session.workdir} />
           <button
             type="button"
@@ -511,12 +508,151 @@ function SessionRow({ session, launching, onLaunch, onDelete }: RowProps) {
             <TrashIcon />
           </button>
         </div>
-      </td>
-    </tr>
+      </div>
+      <div className="session-list__activity">
+        <SessionActivity session={session} />
+      </div>
+      {/* Combined footer: runtime + id on one muted line, matching the
+          Tasks-list pattern. Avoids the previous dedicated-row-per-
+          field layout that wasted vertical space and gave secondary
+          metadata (runtime) the same visual weight as primary
+          metadata (the activity preview). */}
+      <div className="session-list__meta muted">
+        <span title={`Runtime: ${session.runtime}`}>{session.runtime}</span>
+        <span className="session-list__sep">·</span>
+        <code className="session-list__id" title={session.workdir}>
+          {session.id}
+        </code>
+      </div>
+    </li>
   );
 }
 
-function ActivityCell({ session }: { session: SessionRecord }) {
+/**
+ * GitHub-style "Code"-button split control: clicking the main face
+ * launches in `defaultMode`; clicking the chevron opens a small menu
+ * with both modes. The selected option becomes the next default
+ * (persisted server-side as `session.lastLaunchMode`), so this
+ * component only controls *immediate intent* — persistence is the
+ * server's job.
+ *
+ * Why split-button (not two buttons): the visual layout of two equal
+ * buttons gave both modes equal weight, but the dominant case is "I
+ * just want to resume the same way I did last time". The split makes
+ * primary one click while keeping the alternate mode visible (the
+ * chevron is the affordance).
+ */
+function ResumeSplitButton({
+  verb,
+  launching,
+  defaultMode,
+  onLaunch,
+}: {
+  verb: string;
+  launching: boolean;
+  defaultMode: "local" | "remote";
+  onLaunch: (opts: { remote?: boolean }) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Close on outside click / Escape — small ad-hoc dropdown without a
+  // full popover library.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const fire = (mode: "local" | "remote") => {
+    setMenuOpen(false);
+    onLaunch(mode === "remote" ? { remote: true } : {});
+  };
+
+  const mainTitle = launching
+    ? "Opening terminal…"
+    : defaultMode === "remote"
+      ? `${verb} in terminal with remote control (web & mobile)`
+      : `${verb} in a new terminal`;
+
+  return (
+    <div className="resume-split" ref={wrapRef}>
+      <button
+        type="button"
+        className="btn btn--primary resume-split__main"
+        title={mainTitle}
+        disabled={launching}
+        onClick={() => fire(defaultMode)}
+      >
+        {launching ? (
+          <RefreshIcon className="spin" />
+        ) : defaultMode === "remote" ? (
+          <GlobeIcon />
+        ) : (
+          <PlayIcon />
+        )}
+        <span>{defaultMode === "remote" ? `${verb} remote` : verb}</span>
+      </button>
+      <button
+        type="button"
+        className="btn btn--primary resume-split__chevron"
+        title="Choose where to resume"
+        aria-label="Resume options"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        disabled={launching}
+        onClick={() => setMenuOpen((v) => !v)}
+      >
+        <ChevronDownIcon />
+      </button>
+      {menuOpen && (
+        <div className="resume-split__menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            className={`resume-split__menu-item${
+              defaultMode === "local" ? " resume-split__menu-item--active" : ""
+            }`}
+            onClick={() => fire("local")}
+          >
+            <PlayIcon />
+            <div className="resume-split__menu-text">
+              <span className="resume-split__menu-title">{verb} local only</span>
+            </div>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`resume-split__menu-item${
+              defaultMode === "remote" ? " resume-split__menu-item--active" : ""
+            }`}
+            onClick={() => fire("remote")}
+          >
+            <GlobeIcon />
+            <div className="resume-split__menu-text">
+              <span className="resume-split__menu-title">{verb} with remote control</span>
+              <span className="resume-split__menu-hint">Web &amp; mobile</span>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionActivity({ session }: { session: SessionRecord }) {
   if (session.lastActiveAt === null) {
     return <span className="muted">never run</span>;
   }
@@ -526,7 +662,7 @@ function ActivityCell({ session }: { session: SessionRecord }) {
         <>
           {/* No JS-side length cap: CSS (overflow: hidden + text-overflow:
               ellipsis on .activity-cell__count) handles truncation based on
-              the actual column width, so wide screens show more text instead
+              the actual row width, so wide screens show more text instead
               of always cutting at 32 chars. The hover title still shows the
               full preview. */}
           <span className="activity-cell__count">{session.preview}</span>
@@ -814,19 +950,4 @@ function CopyRow({ text }: CopyRowProps) {
       </button>
     </div>
   );
-}
-
-function formatRelative(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "—";
-  const diff = Date.now() - t;
-  const sec = Math.round(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(t).toLocaleDateString();
 }

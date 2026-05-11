@@ -320,6 +320,12 @@ export interface SessionRecord {
   lastActiveAt: string | null;
   /** Short human-readable preview from the runtime, or null. */
   preview: string | null;
+  /**
+   * Mode the user chose for the most recent successful launch of this
+   * session, or null if it has never been launched. Drives the default
+   * action of the Resume split button.
+   */
+  lastLaunchMode: "local" | "remote" | null;
 }
 
 export interface LaunchCommand {
@@ -353,8 +359,20 @@ export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord
   );
 };
 
-export const listRuntimes = (): Promise<string[]> =>
-  fetchJson<string[]>("/api/runtimes", "runtimes");
+/**
+ * Wire shape returned by `GET /api/runtimes`. Mirrors the server's
+ * `RuntimeInfo`. `capabilities` is a free-form bag — known keys today
+ * are `remoteSession?: boolean` (Copilot) but the dashboard treats it
+ * as plain `Record<string, unknown>` so server-side additions don't
+ * require a dashboard rebuild.
+ */
+export interface RuntimeInfo {
+  kind: string;
+  capabilities: Record<string, unknown>;
+}
+
+export const listRuntimes = (): Promise<RuntimeInfo[]> =>
+  fetchJson<RuntimeInfo[]>("/api/runtimes", "runtimes");
 
 export interface ServerConfig {
   emplokeHome: string;
@@ -434,9 +452,14 @@ export interface SpawnFailure {
 
 export type SpawnResult = SpawnSuccess | SpawnFailure;
 
-export const spawnSession = async (id: string): Promise<SpawnResult> =>
+export const spawnSession = async (
+  id: string,
+  opts: { remote?: boolean } = {},
+): Promise<SpawnResult> =>
   mutateJson<SpawnResult>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}/spawn`, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...(opts.remote === true ? { remote: true } : {}) }),
   });
 
 //  Workspaces ─
@@ -627,4 +650,51 @@ export const fetchTaskEvents = async (id: string): Promise<string | null> => {
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(await extractError(r));
   return r.text();
+};
+
+/**
+ * Runtime-neutral activity timeline for a task. The runtime parses
+ * its own event log into the {ActivityItem, ActivitySummary} shapes
+ * exported below; the dashboard renders them without knowing which
+ * runtime produced the underlying log.
+ *
+ * Returns `null` (404 NoEventsYet) when the runtime doesn't implement
+ * structured activity (e.g. a future runtime with no event log) or
+ * when the log isn't on disk yet.
+ */
+export interface ActivityToolRequest {
+  name: string;
+  arguments?: Record<string, unknown>;
+}
+
+export interface ActivitySummary {
+  linesAdded: number;
+  linesRemoved: number;
+  filesModified: string[];
+  premiumRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string | null;
+}
+
+export type ActivityItem =
+  | { kind: "user"; timestamp: string; content: string }
+  | {
+      kind: "assistant";
+      timestamp: string;
+      content: string;
+      toolRequests: ActivityToolRequest[];
+    }
+  | { kind: "summary"; timestamp: string; summary: ActivitySummary };
+
+export interface TaskActivity {
+  activity: ActivityItem[];
+  result: string | null;
+}
+
+export const fetchTaskActivity = async (id: string): Promise<TaskActivity | null> => {
+  const r = await fetch(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity`);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(await extractError(r));
+  return r.json();
 };

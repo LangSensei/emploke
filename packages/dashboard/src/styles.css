@@ -715,6 +715,16 @@ button {
   color: var(--color-text-muted);
 }
 
+.badge--info {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-accent);
+}
+
+.badge--warn {
+  background: rgba(180, 83, 9, 0.1);
+  color: var(--color-warn);
+}
+
 .muted {
   color: var(--color-text-muted);
 }
@@ -1747,6 +1757,15 @@ button {
   background-color: var(--color-bg);
 }
 
+/* Pin the tabs nav inside flex-column parents so it never gets
+   crushed by sibling `flex: 1` containers (e.g. .task-detail__body,
+   which carries its own min-height). The pills' `overflow: hidden`
+   would otherwise mask the shrinkage by clipping the buttons,
+   producing a "thin strip" bug instead of an obvious overflow. */
+.pills {
+  flex-shrink: 0;
+}
+
 .pills__btn {
   appearance: none;
   border: 0;
@@ -2167,6 +2186,197 @@ button {
   color: var(--color-text);
   margin: 0 0 var(--space-2);
 }
+/*  Session list (per-session entries on Sessions page) ─
+
+   Card-row layout: each session is its own card (border + radius +
+   subtle hover-elevate) rather than a row in a table. Single column
+   so the chronological "most-recent-first" reading order survives —
+   sessions are time-ordered, unlike the Catalog grid where items are
+   peers without temporal weight.
+
+   Replaces the earlier `<table>` whose fixed columns left the actions
+   cell width-less and made chip widths jitter across rows depending
+   on the longest agent / runtime name in the visible window. */
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.session-list__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  transition:
+    border-color 0.1s ease,
+    box-shadow 0.1s ease;
+}
+
+.session-list__item:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.session-list__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Headline = the agent name. Sessions don't have a status enum or
+   an instructions string the way Tasks do, so the most identifying
+   thing is "which agent does this session run". Wraps gracefully
+   on narrow columns (long agent names like "langsensei/foo-bar"
+   show on two lines instead of being truncated). */
+.session-list__headline {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.session-list__id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  word-break: break-all;
+}
+
+/* Footer line: runtime + id together, plain muted text. Wraps
+   gracefully — long mono ids on narrow columns break-all to a
+   second line rather than horizontally overflowing. */
+.session-list__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-1);
+  font-size: 12px;
+}
+
+.session-list__sep {
+  color: var(--color-text-muted, var(--color-text-subtle));
+  opacity: 0.5;
+}
+
+.session-list__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.session-list__activity {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*  Resume split button (Sessions list) ─
+
+   GitHub "Code"-button shape: a wide primary face + a narrow chevron
+   face that fall flush against each other. The wrapper is a `position:
+   relative` anchor for the dropdown menu, which uses `position:
+   absolute; right: 0; top: 100%` so it always opens *under* the
+   buttons regardless of which face the user clicked. */
+
+.resume-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.resume-split__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.resume-split__chevron {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
+.resume-split__chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.resume-split__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  min-width: 220px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resume-split__menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s ease;
+}
+
+.resume-split__menu-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.resume-split__menu-item--active {
+  background: var(--color-surface);
+}
+
+.resume-split__menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.resume-split__menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.resume-split__menu-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.resume-split__menu-hint {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+
 /*  Task list (split-pane left column) ─ */
 
 .task-list {
@@ -2205,30 +2415,345 @@ button {
 
 .task-list__item-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.task-list__item-remove {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+/* Footer metadata: plain muted text, not chips. Wraps as a sentence
+   when the column is narrow, looks intentional rather than broken. */
+.task-list__item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-1);
+  font-size: 12px;
+}
+
+.task-list__id {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  /* Long mono ids on narrow columns: break-all is OK because the id
+     is timestamp-prefixed and the visible truncation point doesn't
+     matter — we have the title attribute for the full value. */
+  word-break: break-all;
+}
+
+/*  Two-row body (replaces the old single meta/time pair).
+    The headline IS the task — instructions get the title role and visual
+    weight; the id and time live as footer metadata, matching how GitHub
+    Issues / Linear render "title above id". */
+
+.task-list__item-headline {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  /* Allow up to two lines so the headline isn't truncated mid-word
+     in narrow columns; the third-line+ clamp keeps row heights
+     bounded. The hover title carries the full instructions. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.task-list__sep {
+  color: var(--color-text-muted, var(--color-text-subtle));
+  opacity: 0.5;
+}
+
+/*  Pulsing dot for running / not_started badges.
+    Pure CSS keyframe animation — no JS tick. The dot rides inside the
+    badge so the pulse animates without affecting the badge's own
+    layout. */
+
+.badge--with-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge__pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: badge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+.task-list__item--running .task-list__item-headline {
+  color: var(--color-text);
+}
+
+/*  Split-pane container for the Tasks page.
+    Detail-heavy layout: list is fixed-narrow (~360px), detail eats
+    the rest. Tasks lists rarely need more than 360px (id + chips +
+    headline + delete fit easily); detail content (events, activity
+    timeline, JSON) benefits from every extra px. Inverts the
+    "list-takes-most" pattern that was making the events log wrap
+    badly on 1280-wide screens. */
+
+.tasks-pane {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.tasks-pane--list-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tasks-pane__list {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.tasks-pane__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  max-height: calc(100vh - 220px);
+  overflow: hidden;
+}
+
+.tasks-pane__detail--empty {
+  justify-content: center;
+  align-items: center;
+  min-height: 240px;
+}
+
+/*  Below 1024px the side-by-side layout becomes cramped (the
+    detail panel demands ≥360px and the list ≥360px ≈ 720px just
+    for content; once you add the sidebar that's tight on a 1280
+    laptop). Stack vertically and let the user scroll. */
+
+@media (max-width: 1024px) {
+  .tasks-pane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*  Detail panel chrome */
+
+.task-detail__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.task-detail__head-row {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
 
-.task-list__id {
+.task-detail__id {
+  font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 600;
   color: var(--color-text);
 }
 
-.task-list__spacer {
-  flex: 1;
+.task-detail__head-spacer {
+  flex: 1 1 0;
 }
 
-.task-list__item-meta {
+/*  Stat-bar: agent · runtime · started · duration in a single line of
+    inline-block stats, each with a small grey label key. Wraps on
+    overflow rather than truncating. */
+
+.task-detail__statbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--color-text);
 }
 
-.task-list__item-time {
+.task-detail__statbar-key {
+  color: var(--color-text-subtle);
+  font-weight: 500;
+  margin-right: 2px;
+}
+
+.task-detail__instructions {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-detail__body {
+  flex: 1;
+  overflow: auto;
+  min-height: 200px;
+}
+
+.task-detail__events {
+  white-space: pre-wrap;
+  /* Force long unbreakable JSON tokens (compact strings without
+     spaces) to break at any character. `word-break: break-word` is
+     non-standard; `overflow-wrap: anywhere` is the spec-compliant
+     way to guarantee no horizontal overflow regardless of content. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 11px;
+  margin: 0;
+}
+
+/*  Result panel — the agent's final answer, shown above the tabs as
+    the headline content. Subtle accent border on the left so it
+    visually reads as "the answer to your question" without competing
+    with the events log below. */
+
+.task-detail__section-title {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.task-detail__result {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+
+.task-detail__result-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/*  Activity timeline — runtime-neutral list of user/assistant/summary
+    entries returned by /api/.../tasks/<id>/activity. Each row has a
+    role badge + relative timestamp + body. Tool calls inside an
+    assistant turn render as small chips below the message. */
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.activity-row--user {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.activity-row--summary {
+  background: var(--color-surface-hover);
+}
+
+.activity-row__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.activity-row__role {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.activity-row__role--user {
+  color: var(--color-accent);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.activity-row__role--assistant {
+  color: var(--color-success);
+  background: rgba(21, 128, 61, 0.1);
+}
+
+.activity-row__role--summary {
+  color: var(--color-text-subtle);
+  background: var(--color-surface-hover);
+}
+
+.activity-row__time {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+
+.activity-row__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.activity-row__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 2px;
+}
+
+.activity-row__tool {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-subtle);
+}
+
+.activity-row__summary-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text);
 }
 
 

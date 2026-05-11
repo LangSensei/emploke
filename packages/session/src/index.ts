@@ -14,6 +14,7 @@
 // Re-export runtime errors that callers commonly want to catch alongside
 // session errors.
 export {
+  RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
@@ -36,6 +37,7 @@ export type {
   SessionState,
 } from "./repositories/repository.js";
 export type {
+  BuildLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   LaunchCommand,

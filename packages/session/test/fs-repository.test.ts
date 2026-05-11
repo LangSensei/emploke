@@ -36,8 +36,35 @@ describe("FsSessionRepository", () => {
     expect(back).toEqual(sample);
     // On-disk shape carries schemaVersion (wire format detail).
     const raw = JSON.parse(await readFile(path.join(sessionsDir, ID, "session.json"), "utf8"));
-    expect(raw.schemaVersion).toBe(1);
+    expect(raw.schemaVersion).toBe(2);
     expect(raw.runtime).toBe("copilot");
+  });
+
+  it("save + read round-trip preserves lastLaunchMode", async () => {
+    const repo = new FsSessionRepository({ sessionsDir });
+    await mkdir(path.join(sessionsDir, ID), { recursive: true });
+    await repo.save(ID, { ...sample, lastLaunchMode: "remote" });
+    const back = await repo.read(ID);
+    expect(back).toEqual({ ...sample, lastLaunchMode: "remote" });
+    const raw = JSON.parse(await readFile(path.join(sessionsDir, ID, "session.json"), "utf8"));
+    expect(raw.lastLaunchMode).toBe("remote");
+  });
+
+  it("read accepts legacy schemaVersion 1 (no lastLaunchMode)", async () => {
+    const repo = new FsSessionRepository({ sessionsDir });
+    await writeWire(ID, { schemaVersion: 1, ...sample });
+    const back = await repo.read(ID);
+    expect(back).toEqual(sample);
+    expect(back?.lastLaunchMode).toBeUndefined();
+  });
+
+  it("read rejects invalid lastLaunchMode value", async () => {
+    const repo = new FsSessionRepository({ sessionsDir });
+    await writeWire(ID, { schemaVersion: 2, ...sample, lastLaunchMode: "bogus" });
+    await expect(repo.read(ID)).rejects.toMatchObject({
+      constructor: SessionCorruptedError,
+      reason: expect.stringContaining("lastLaunchMode"),
+    });
   });
 
   it("read returns null for missing session.json", async () => {
@@ -64,12 +91,12 @@ describe("FsSessionRepository", () => {
     });
   });
 
-  it("read throws on older schemaVersion (migration hint)", async () => {
+  it("read throws on schemaVersion below the supported minimum", async () => {
     const repo = new FsSessionRepository({ sessionsDir });
     await writeWire(ID, { schemaVersion: 0, ...sample });
     await expect(repo.read(ID)).rejects.toMatchObject({
       constructor: SessionCorruptedError,
-      reason: expect.stringContaining("Migration from older versions"),
+      reason: expect.stringContaining("never supported"),
     });
   });
 

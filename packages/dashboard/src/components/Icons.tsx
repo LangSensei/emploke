@@ -100,3 +100,11 @@ export const CheckIcon = (p: IconProps) => SVG(<path d="m4.5 12.75 6 6 9-13.5" /
 
 export const ArrowLeftIcon = (p: IconProps) =>
   SVG(<path d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />, p);
+
+export const GlobeIcon = (p: IconProps) =>
+  SVG(
+    <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0a8.949 8.949 0 0 0 4.951-1.488A3.987 3.987 0 0 0 13 16h-1a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.458m12.385-7.512A8.99 8.99 0 0 1 21.542 9H21a2 2 0 0 0-2 2 2 2 0 0 1-2 2 2 2 0 0 0-2 2c0 1.097.602 2.052 1.49 2.563M12 3a8.949 8.949 0 0 0-4.951 1.488A3.987 3.987 0 0 1 11 8h1a2 2 0 0 1 2 2v1" />,
+    p,
+  );
+
+export const ChevronDownIcon = (p: IconProps) => SVG(<path d="m19.5 8.25-7.5 7.5-7.5-7.5" />, p);

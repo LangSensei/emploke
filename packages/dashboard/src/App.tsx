@@ -24,6 +24,7 @@ import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
 import { startClockSync } from "./serverClock";
+import { formatRelative } from "./utils/time";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
@@ -200,7 +201,7 @@ function LandingPage() {
                     </div>
                     <div className="landing__card-footer">
                       <span className="landing__card-meta">
-                        {`Created ${formatLastOpened(ws.createdAt)}`}
+                        {`Created ${formatRelative(ws.createdAt)}`}
                       </span>
                       <button
                         type="button"
@@ -433,20 +434,6 @@ function CatalogIndexRedirect() {
 
 function NotFoundRedirect() {
   return <Navigate to="/" replace />;
-}
-
-function formatLastOpened(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return iso;
-  const diff = Date.now() - then;
-  const min = 60 * 1000;
-  const hour = 60 * min;
-  const day = 24 * hour;
-  if (diff < min) return "just now";
-  if (diff < hour) return `${Math.round(diff / min)} min ago`;
-  if (diff < day) return `${Math.round(diff / hour)} h ago`;
-  if (diff < 7 * day) return `${Math.round(diff / day)} d ago`;
-  return new Date(iso).toLocaleDateString();
 }
 
 /**
