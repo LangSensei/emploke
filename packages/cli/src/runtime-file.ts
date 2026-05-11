@@ -18,6 +18,7 @@
 import { chmod, mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomic } from "@emploke/fs";
+import { RUNTIME_FILE_NAME } from "@emploke/paths";
 
 /**
  * Shape persisted to disk. Bumped together with any breaking change so
@@ -50,9 +51,14 @@ export interface RuntimeFile {
   readonly serverArgs: readonly string[];
 }
 
-/** Resolve `<home>/runtime.json`. Pure: no fs access. */
+/**
+ * Resolve `<home>/runtime.json`. Pure: no fs access. The literal filename
+ * lives in `@emploke/paths` (`RUNTIME_FILE_NAME`) so it stays
+ * single-sourced — callers that already have a resolved `EmplokePaths`
+ * record should prefer `paths.runtimeFile` directly.
+ */
 export function runtimeFilePath(home: string): string {
-  return path.join(home, "runtime.json");
+  return path.join(home, RUNTIME_FILE_NAME);
 }
 
 /**

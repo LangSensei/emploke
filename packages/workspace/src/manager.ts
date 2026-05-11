@@ -38,8 +38,8 @@ export interface WorkspaceUpdatePatch {
 export interface WorkspaceDeleteOpts {
   /**
    * When `true`, also remove every emploke-owned subdirectory under the
-   * workspace's `workdir` (`tasks/`, `sessions/`, `catalog/`,
-   * `workflows/`, `logs/`). The `workdir` itself is **never** removed —
+   * workspace's `workdir` (`tasks/`, `sessions/`, `catalog/`).
+   * The `workdir` itself is **never** removed —
    * it is user-owned and may contain files emploke does not know about.
    *
    * Default `false`: only the workspace metadata is removed; agent
@@ -111,8 +111,6 @@ export class WorkspaceManager {
       mkdir(layout.sessions, { recursive: true }),
       mkdir(layout.tasks, { recursive: true }),
       mkdir(layout.catalog, { recursive: true }),
-      mkdir(layout.workflows, { recursive: true }),
-      mkdir(layout.logs, { recursive: true }),
     ]);
 
     const now = opts.now ?? (() => new Date());
@@ -175,8 +173,6 @@ export class WorkspaceManager {
           rm(layout.sessions, { recursive: true, force: true }),
           rm(layout.tasks, { recursive: true, force: true }),
           rm(layout.catalog, { recursive: true, force: true }),
-          rm(layout.workflows, { recursive: true, force: true }),
-          rm(layout.logs, { recursive: true, force: true }),
         ]);
       }
     }

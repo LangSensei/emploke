@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workspace",
   "version": "0.0.1",
-  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/tasks/workflows, plus a $EMPLOKE_HOME-level registry",
+  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/tasks/catalog, plus a $EMPLOKE_HOME-level registry",
   "license": "MIT",
   "type": "module",
   "engines": {
