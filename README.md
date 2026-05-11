@@ -21,10 +21,15 @@ greater than each part. One process, one terminal, one dashboard.
 
 ```sh
 npm install -g @langsensei/emploke
-emploke
+emploke start
 ```
 
-Then open <http://127.0.0.1:8787> in your browser.
+Then open <http://127.0.0.1:8787> in your browser. `emploke start` runs the
+server as a detached background process so the terminal is free; the rest
+of the lifecycle is `emploke stop`, `emploke restart`, `emploke status`,
+and `emploke logs -f`. Run `emploke help` (or just `emploke`) for the full
+command tree, or `emploke serve` to keep it in the foreground (the legacy
+behaviour, useful for `tmux` panes or `systemd` units).
 
 The first time you run `emploke`, the dashboard's landing page is empty.
 Walk through:
@@ -67,6 +72,71 @@ Pass `--no-serve-static` to run API-only (the dashboard SPA is bundled in
 the npm package by default; serving it from the same port is the only
 deployment mode that makes sense for the local-first model).
 
+## CLI
+
+After `npm install -g @langsensei/emploke` the `emploke` binary exposes
+two layers of commands:
+
+### Lifecycle (talk to the local process)
+
+| Command            | Behaviour                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `emploke`          | Print top-level help (alias for `emploke help`).                                                                                                                         |
+| `emploke help [c]` | Top-level help, or per-subcommand help when `c` is given.                                                                                                                |
+| `emploke serve`    | Run the server in the foreground — current dev behaviour. Honours every env var in the *Configuration* table; flags override env.                                        |
+| `emploke start`    | Spawn the server as a detached background process. Records pid / port / api-key in `<EMPLOKE_HOME>/runtime.json` (mode `0600` when an api-key is set). Idempotent.       |
+| `emploke stop`     | SIGTERM the recorded pid, wait for graceful shutdown (escalates to SIGKILL after 30 s), then delete `runtime.json`. Idempotent. *Windows note:* `process.kill` maps to `TerminateProcess` — there is no graceful equivalent on Windows; the server's atomic-write persistence keeps state consistent regardless. |
+| `emploke restart`  | `stop` then `start` with the same flags.                                                                                                                                 |
+| `emploke status`   | Print one-line health summary. Exit codes: `0` running + healthy, `3` not running, `4` running but `/api/health` not responding. `--json` for scripts.                   |
+| `emploke logs`     | Cat the rolling server log under `<EMPLOKE_HOME>/logs/`. `-f` follows the file as it grows (Ctrl-C to stop).                                                             |
+
+### API client (talk to a running server)
+
+41 commands wrap the server's HTTP routes 1:1; the typed manifest in
+`packages/server/src/routes/manifest.ts` is the single source of truth
+that both the server registers handlers against and the CLI builds
+typed calls from. Adding a route on either side without updating the
+other fails CI.
+
+```sh
+# server connection (default: http://127.0.0.1:8787, picked up from
+# `runtime.json` when `emploke start` has run)
+emploke health
+emploke config --json
+emploke runtime list
+
+# workspaces
+emploke workspace list
+emploke workspace add --name "Sandbox" --workdir ~/code/sandbox
+emploke workspace use <id>
+emploke workspace show <id>
+emploke workspace rm <id> --purge
+
+# sessions and tasks (workspace-scoped; -w/--workspace overrides default)
+emploke session new --agent writer
+emploke session list --agent writer --json
+emploke task dispatch --agent triage --instructions "Scan recent issues"
+emploke task list --status running,success
+emploke task events <tid>     # one-shot dump of the runtime's NDJSON log
+emploke task activity <tid>   # runtime-parsed activity timeline (JSON)
+
+# catalog
+emploke catalog overview
+emploke catalog skill list
+emploke catalog skill install path/to/skill
+emploke catalog agent install github://org/repo/agents/foo
+emploke catalog mcp install <origin> --name namespace/short
+```
+
+Common flags on every API command:
+
+- `--server <url>` — overrides `EMPLOKE_SERVER` and `runtime.json`. Defaults to `http://127.0.0.1:8787`.
+- `--api-key <key>` — overrides `EMPLOKE_API_KEY` and `runtime.json`.
+- `--workspace <id>` — workspace-scoped commands. Overrides `EMPLOKE_WORKSPACE` and the server's `currentWorkspace`.
+- `--output <fmt>` / `--json` — `table` (human-friendly default) or `json` (for scripting).
+
+Exit codes: `0` success, `1` generic error, `2` usage error, `3` server unreachable, `4` server returned a 4xx/5xx.
+
 ## Where this sits
 
 Emploke does not invent a new agent format — it adopts the
@@ -89,7 +159,7 @@ blobs. What emploke adds:
 
 ## Architecture
 
-The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 11 small
+The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 13 small
 TypeScript packages with a strict layering: pure value types at the bottom,
 file-system primitives next, entity managers above (workspace / catalog /
 session / task), then the runtime adapter, then the HTTP server, then the

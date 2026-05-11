@@ -1,0 +1,207 @@
+/**
+ * `emploke start` — spawn the bundled server as a detached child, write
+ * `<EMPLOKE_HOME>/runtime.json`, and block until `/api/health` returns 200
+ * (or the spawn-grace timeout elapses).
+ *
+ * Idempotency rules:
+ *  - alive + healthy already        → exit 0, no-op (print existing)
+ *  - alive but `/api/health` 404/timeout → exit 4 (refuse to overwrite a
+ *    foreign process holding our pid slot)
+ *  - stale (pid dead)               → cleanup runtime.json, proceed
+ *  - absent runtime.json            → proceed
+ *
+ * Test seam: `selfBin` and `nodeArgs` let vitest spawn the source CLI
+ * via `node --import tsx packages/cli/src/bin.ts serve ...` instead of
+ * the bundled binary that doesn't exist during `pnpm test`.
+ */
+
+import { spawn } from "node:child_process";
+import { mkdir, open } from "node:fs/promises";
+import path from "node:path";
+import { resolveEmplokePaths } from "@emploke/paths";
+import { waitForHealth } from "../health-probe.js";
+import type { CommandResult } from "../result.js";
+import {
+  deleteRuntimeFile,
+  isPidAlive,
+  type RuntimeFile,
+  readRuntimeFile,
+  writeRuntimeFile,
+} from "../runtime-file.js";
+import { resolveSelfBin } from "../server-bundle.js";
+
+export interface StartOpts {
+  readonly home?: string;
+  readonly port?: number;
+  readonly host?: string;
+  readonly apiKey?: string;
+  readonly serveStatic?: boolean;
+  readonly staticDir?: string;
+  readonly logLevel?: "debug" | "info" | "warn" | "error";
+  readonly logFormat?: "pretty" | "json";
+  // — test seams —
+  /** Override the script path passed to `node`. Default: `process.argv[1]`. */
+  readonly selfBin?: string;
+  /** Extra args to pass to `node` before the script (e.g. `["--import", "tsx"]`). */
+  readonly nodeArgs?: readonly string[];
+  /** Total budget for `/api/health` polling. Default 5000 ms. */
+  readonly healthTimeoutMs?: number;
+}
+
+export async function start(opts: StartOpts = {}): Promise<CommandResult> {
+  const env = process.env;
+  const paths = resolveEmplokePaths(
+    opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
+  );
+  const home = paths.home;
+  const port = opts.port ?? Number(env.PORT || 8787);
+  const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
+  const apiKey = opts.apiKey ?? env.EMPLOKE_API_KEY;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? 5000;
+
+  // Step 1 — idempotency check.
+  const existing = await readRuntimeFile(home);
+  if (existing && isPidAlive(existing.pid)) {
+    const snap = await waitForHealth({
+      host: existing.host,
+      port: existing.port,
+      totalMs: 1500,
+    });
+    if (snap) {
+      return {
+        exitCode: 0,
+        stdout: `emploke is already running (pid ${existing.pid}, http://${displayHost(existing.host)}:${existing.port})\n`,
+      };
+    }
+    // Pid alive but unresponsive — most likely a foreign process is
+    // holding our pid slot, or our own server is wedged. Don't double-
+    // start; let the operator stop it first.
+    return {
+      exitCode: 4,
+      stderr: `pid ${existing.pid} is alive but /api/health is not responding; refusing to start a sibling. Run \`emploke stop\` first.\n`,
+    };
+  }
+  if (existing && !isPidAlive(existing.pid)) {
+    await deleteRuntimeFile(home);
+  }
+
+  // Step 2 — log destination for the child's stdout/stderr (boot errors
+  // before pino-roll spins up land here; pino's structured logs go to
+  // its own rotated files under <logsDir>).
+  await mkdir(paths.logsDir, { recursive: true });
+  const bootLog = path.join(paths.logsDir, "server-boot.log");
+  const logFh = await open(bootLog, "a");
+  const logFd = logFh.fd;
+
+  // Step 3 — assemble argv for the detached child.
+  //
+  // `EMPLOKE_API_KEY` is intentionally NOT passed as a CLI flag: argv is
+  // visible to other local users via `/proc/<pid>/cmdline` (linux),
+  // `ps aux` (macos), and similar. The env var below is the secret-safe
+  // channel; runServer reads `opts.apiKey ?? env.EMPLOKE_API_KEY` so the
+  // server still picks it up. Same reason `--static-dir` / `--log-*` are
+  // forwarded via env where convenient — argv exposure is the default
+  // hostile surface and we minimise it.
+  const selfBin = opts.selfBin ?? resolveSelfBin();
+  const nodeArgs = opts.nodeArgs ?? [];
+  const childArgs: string[] = [
+    ...nodeArgs,
+    selfBin,
+    "serve",
+    "--port",
+    String(port),
+    "--host",
+    host,
+  ];
+  if (opts.serveStatic === false) childArgs.push("--no-serve-static");
+  if (opts.staticDir !== undefined) childArgs.push("--static-dir", opts.staticDir);
+  if (opts.logLevel !== undefined) childArgs.push("--log-level", opts.logLevel);
+  if (opts.logFormat !== undefined) childArgs.push("--log-format", opts.logFormat);
+
+  // Step 4 — child env. We re-export EMPLOKE_HOME / PORT / EMPLOKE_HOST
+  // so the child sees the same values whether they came from the
+  // operator's env or were passed via flags. EMPLOKE_API_KEY is only
+  // forwarded when set, otherwise we explicitly delete it so the child
+  // doesn't inherit a stale value from the parent shell.
+  const childEnv: NodeJS.ProcessEnv = {
+    ...env,
+    EMPLOKE_HOME: home,
+    PORT: String(port),
+    EMPLOKE_HOST: host,
+  };
+  if (apiKey !== undefined && apiKey !== "") childEnv.EMPLOKE_API_KEY = apiKey;
+  else childEnv.EMPLOKE_API_KEY = undefined;
+  if (opts.staticDir !== undefined) childEnv.EMPLOKE_STATIC_DIR = opts.staticDir;
+  if (opts.logLevel !== undefined) childEnv.EMPLOKE_LOG_LEVEL = opts.logLevel;
+  if (opts.logFormat !== undefined) childEnv.EMPLOKE_LOG_FORMAT = opts.logFormat;
+
+  // Step 5 — detached spawn. `windowsHide: true` keeps a Windows
+  // foreground console from flashing up. `unref` releases the parent's
+  // hold on the child so this CLI can exit immediately after the health
+  // probe succeeds.
+  //
+  // The log fd is wrapped in try/finally so a synchronous spawn failure
+  // (invalid execPath, EMFILE, ...) doesn't leak it.
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(process.execPath, childArgs, {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: childEnv,
+      windowsHide: true,
+    });
+  } finally {
+    await logFh.close();
+  }
+
+  if (typeof child.pid !== "number") {
+    return { exitCode: 4, stderr: "failed to spawn server (no pid returned)\n" };
+  }
+  child.unref();
+
+  // Step 6 — write runtime.json BEFORE the health probe so a Ctrl-C
+  // between probe and write doesn't orphan the child without a
+  // breadcrumb for `stop` to find.
+  const rf: RuntimeFile = {
+    schema: 1,
+    pid: child.pid,
+    host,
+    port,
+    startedAt: new Date().toISOString(),
+    serverArgs: childArgs,
+  };
+  if (apiKey !== undefined && apiKey !== "") {
+    (rf as { apiKey?: string }).apiKey = apiKey;
+  }
+  await writeRuntimeFile(home, rf);
+
+  // Step 7 — wait for the server to actually accept requests.
+  const snap = await waitForHealth({ host, port, totalMs: healthTimeoutMs });
+  if (!snap) {
+    // Boot failed. Best-effort kill, then clean up our breadcrumb so a
+    // re-run of `start` doesn't see a stale + alive pid.
+    try {
+      process.kill(child.pid, "SIGTERM");
+    } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+    if (isPidAlive(child.pid)) {
+      try {
+        process.kill(child.pid, "SIGKILL");
+      } catch {}
+    }
+    await deleteRuntimeFile(home);
+    return {
+      exitCode: 4,
+      stderr: `server did not respond to /api/health within ${healthTimeoutMs}ms. See ${bootLog} for stderr.\n`,
+    };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: `emploke started (pid ${child.pid}, http://${displayHost(host)}:${port}, version ${snap.version})\n`,
+  };
+}
+
+function displayHost(host: string): string {
+  return host === "0.0.0.0" ? "localhost" : host;
+}
