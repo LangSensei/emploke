@@ -258,7 +258,10 @@ describe("sync resolve — orphan detection", () => {
     // Drop the dep + sync
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.1.0") });
     const plan = await mgr.resolveSyncSkill("public/tool");
-    await mgr.applySync(plan);
+    const result = await mgr.applySync(plan);
+    // applySync result includes the orphans surfaced by the diff.
+    expect(result.orphansFlagged).toHaveLength(1);
+    expect(result.orphansFlagged[0]).toMatchObject({ kind: "mcp", fqn: "vendor/x" });
     const orphaned = await mgr.getMcp("vendor/x");
     expect(orphaned?.orphaned).toBe(true);
 

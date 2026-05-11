@@ -323,6 +323,18 @@ describe("CatalogManager.install", () => {
     const result = await mgr.install(mutated);
     expect(result.failed.some((f) => f.kind === "mcp")).toBe(true);
     expect(result.skipped.some((s) => s.kind === "skill" && s.reason === "dep-failed")).toBe(true);
+    // Wire-safety: the failure entry's `error` is a plain `{ name, message }`
+    // payload — not an `Error` instance — so JSON serialization preserves it.
+    const mcpFailure = result.failed.find((f) => f.kind === "mcp");
+    expect(mcpFailure?.error.name).toBeTypeOf("string");
+    expect(mcpFailure?.error.message).toBeTypeOf("string");
+    expect(mcpFailure?.error.message.length).toBeGreaterThan(0);
+    // Round-trip through JSON to confirm clients see the actual fields.
+    const roundTripped = JSON.parse(JSON.stringify(mcpFailure));
+    expect(roundTripped.error).toEqual({
+      name: mcpFailure?.error.name,
+      message: mcpFailure?.error.message,
+    });
   });
 
   it("already-installed deps are skipped, not re-installed", async () => {

@@ -160,18 +160,51 @@ export interface CatalogPlan {
   readonly upToDate: boolean;
 }
 
+/**
+ * Per-entity result row inside {@link CatalogInstallResult.failed}.
+ * `error` is a wire-safe `{ name, message }` projection — `Error`
+ * instances would lose their non-enumerable `name`/`message`/`stack`
+ * properties through `JSON.stringify`, leaving callers with `{}`.
+ *
+ * Callers that need the original `Error` instance should drive
+ * `install()` themselves and inspect the thrown error from `installNode`
+ * — the in-memory shim methods (`installSkillFromOrigin` etc.) keep
+ * the throw path for exactly that reason.
+ */
+export interface CatalogInstallFailure {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  readonly error: { readonly name: string; readonly message: string };
+}
+
+export interface CatalogInstallSkip {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  /**
+   * Why this node didn't run an install.
+   *  - `already-installed`: dep already present locally; we didn't
+   *    re-fetch (non-sync flow).
+   *  - `dep-failed`: a transitive dep this node depends on failed —
+   *    poison propagation.
+   *  - `up-to-date`: SYNC ONLY — fqn+version+content match upstream.
+   *    Never produced by the install path; only `applySync` emits it.
+   */
+  readonly reason: "already-installed" | "dep-failed" | "up-to-date";
+}
+
 export interface CatalogInstallResult {
   readonly installed: readonly { kind: "mcp" | "skill" | "agent"; fqn: string }[];
-  readonly skipped: readonly {
-    kind: "mcp" | "skill" | "agent";
-    fqn: string;
-    reason: "already-installed" | "dep-failed" | "up-to-date";
-  }[];
-  readonly failed: readonly {
-    kind: "mcp" | "skill" | "agent";
-    fqn: string;
-    error: Error;
-  }[];
+  readonly skipped: readonly CatalogInstallSkip[];
+  readonly failed: readonly CatalogInstallFailure[];
+}
+
+/**
+ * Returned by {@link CatalogManager.applySync}. Extends
+ * {@link CatalogInstallResult} with the orphan-diff payload — these
+ * two only ever co-occur (install never produces orphans), so we keep
+ * the install response narrow and add the sync-specific data here.
+ */
+export interface CatalogSyncResult extends CatalogInstallResult {
   readonly orphansFlagged: readonly OrphanedEntry[];
 }
 
@@ -374,7 +407,7 @@ export class CatalogManager {
    * `add` give us the practical guarantee that we never end up with
    * two rows sharing one origin).
    */
-  async applySync(plan: CatalogPlan): Promise<CatalogInstallResult> {
+  async applySync(plan: CatalogPlan): Promise<CatalogSyncResult> {
     if (plan.identityChange !== undefined) {
       const ic = plan.identityChange;
       // Delete the old fqn row first so the new install can take its
@@ -569,12 +602,8 @@ export class CatalogManager {
 
   async install(plan: CatalogPlan): Promise<CatalogInstallResult> {
     const installed: { kind: "mcp" | "skill" | "agent"; fqn: string }[] = [];
-    const failed: { kind: "mcp" | "skill" | "agent"; fqn: string; error: Error }[] = [];
-    const skipped: {
-      kind: "mcp" | "skill" | "agent";
-      fqn: string;
-      reason: "already-installed" | "dep-failed" | "up-to-date";
-    }[] = plan.alreadyInstalled.map((n) => ({
+    const failed: CatalogInstallFailure[] = [];
+    const skipped: CatalogInstallSkip[] = plan.alreadyInstalled.map((n) => ({
       kind: n.kind,
       fqn: n.node.fqn,
       reason: (n.disposition === "up-to-date" ? "up-to-date" : "already-installed") as
@@ -603,7 +632,7 @@ export class CatalogManager {
         await this.installNode(planNode);
         installed.push({ kind: planNode.kind, fqn });
       } catch (err) {
-        failed.push({ kind: planNode.kind, fqn, error: err as Error });
+        failed.push({ kind: planNode.kind, fqn, error: errorToWire(err) });
         poisoned.add(origin);
       }
     }
@@ -617,7 +646,7 @@ export class CatalogManager {
       await this.recomputeOrphans();
     }
 
-    return { installed, skipped, failed, orphansFlagged: [] };
+    return { installed, skipped, failed };
   }
 
   // ─── Single-shot installer convenience ────────────────
@@ -638,7 +667,10 @@ export class CatalogManager {
     if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
       throw conflictToError(plan.conflicts[0] as CatalogConflict);
     }
-    if (result.failed.length > 0) throw result.failed[0]!.error;
+    if (result.failed.length > 0) {
+      const first = result.failed[0]!;
+      throw new Error(`${first.error.name}: ${first.error.message}`);
+    }
     const installed = await this.skill.getByOrigin(origin);
     if (installed === null) {
       throw new Error(`installSkillFromOrigin: no entity persisted for ${origin}`);
@@ -652,7 +684,10 @@ export class CatalogManager {
     if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
       throw conflictToError(plan.conflicts[0] as CatalogConflict);
     }
-    if (result.failed.length > 0) throw result.failed[0]!.error;
+    if (result.failed.length > 0) {
+      const first = result.failed[0]!;
+      throw new Error(`${first.error.name}: ${first.error.message}`);
+    }
     const installed = await this.agent.getByOrigin(origin);
     if (installed === null) {
       throw new Error(`installAgentFromOrigin: no entity persisted for ${origin}`);
@@ -1552,6 +1587,19 @@ function conflictToError(c: CatalogConflict): Error {
       : new Error(`catalog ${c.kind} resolve failed: ${c.reason.kind}`);
   }
   return new Error(`catalog ${c.kind} resolve conflict: ${JSON.stringify(c.reason)}`);
+}
+
+/**
+ * Project a thrown error into the wire-safe `{ name, message }` shape
+ * we put on `CatalogInstallResult.failed[].error`. `Error` instances'
+ * `name` and `message` are non-enumerable, so a naive `JSON.stringify`
+ * yields `{}` and clients lose all signal — this normalisation keeps
+ * the failure information present across the HTTP boundary.
+ */
+function errorToWire(err: unknown): { name: string; message: string } {
+  if (err instanceof Error) return { name: err.name, message: err.message };
+  if (typeof err === "string") return { name: "Error", message: err };
+  return { name: "Error", message: String(err) };
 }
 
 async function readFirstFile(

@@ -35,6 +35,7 @@ import type {
   AgentMetadataPatch,
   Agent as AgentPojo,
   CatalogInstallResult,
+  CatalogSyncResult,
   McpMetadata,
   SkillEntry,
   SkillInstallBody,
@@ -456,7 +457,7 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/catalog/agents/:name/sync/resolve",
   ),
-  "catalog.agents.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogInstallResult>(
+  "catalog.agents.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogSyncResult>(
     "POST",
     "/api/workspaces/:id/catalog/agents/:name/sync",
   ),
@@ -501,7 +502,7 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/catalog/mcps/:name/sync/resolve",
   ),
-  "catalog.mcps.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogInstallResult>(
+  "catalog.mcps.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogSyncResult>(
     "POST",
     "/api/workspaces/:id/catalog/mcps/:name/sync",
   ),

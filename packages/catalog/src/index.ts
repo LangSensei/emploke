@@ -86,13 +86,17 @@ export * as facade from "./facade/index.js";
 // ─── Top-level facade ───────────────────────────────────
 export {
   type CatalogConflict,
+  type CatalogInstallFailure,
   type CatalogInstallResult,
+  type CatalogInstallSkip,
   CatalogManager,
   type CatalogOptions,
   type CatalogPlan,
   type CatalogPlanNode,
+  type CatalogSyncResult,
   HasDependentsError,
   type McpResolvedNode,
+  type OrphanedEntry,
 } from "./facade/index.js";
 export {
   McpInvalidJsonError,
