@@ -327,15 +327,16 @@ describe("sync resolve — orphan detection", () => {
   });
 
   it("rejects a self-referential skill at install time (degenerate cycle)", async () => {
-    // Originally raised during code review as "degenerate but legal".
-    // Subsequent review tightened the contract: emploke now refuses
+    // Originally raised during code review as "degenerate but legal";
+    // subsequent review tightened the contract — emploke refuses
     // cyclic catalog deps at resolve/install (see CyclicDependencyError),
-    // and self-ref is the simplest cycle. The orphan-derivation
-    // self-ref defense in `newCascadeContext` (skipping `o === s.origin`
-    // when building the reverse-dep index) is kept as belt-and-suspenders
-    // for catalogs that somehow end up with a self-ref row via a
-    // bypass path (direct SQLite write, FS edit, future tooling) —
-    // the install path will never produce one.
+    // and self-ref is the simplest cycle. With install-time rejection
+    // in place, the orphan-derivation paths in `newCascadeContext`
+    // and `computeReverseDepIndex` no longer need defensive self-ref
+    // filtering: a self-referencing skill cannot exist in a
+    // well-formed catalog. If a future bypass path (direct SQLite
+    // write, FS edit) ever produces one, the right fix is a
+    // catalog-load integrity check, not patching every consumer.
     fakes.setSkill("file:/abs/loner", {
       "SKILL.md": SKILL_ANCHOR(
         "loner",

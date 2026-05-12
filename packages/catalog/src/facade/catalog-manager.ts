@@ -548,10 +548,15 @@ export class CatalogManager {
    * The root MUST be excluded — otherwise the root's own dropped
    * deps would never qualify as orphans (root just removed them
    * from upstream but its OLD local row still references them
-   * until applySync rewrites it). Excluding self-references is also
-   * necessary for the same reason a degenerate self-loop would
-   * mask its own orphan badge (cycle-detection rejects this at
-   * install time but the catalog can still hold one via bypass).
+   * until applySync rewrites it).
+   *
+   * No self-reference filter is needed: install/sync rejects cycles
+   * (the simplest cycle being a self-loop) at resolve time via
+   * {@link CyclicDependencyError}, so a self-referencing skill
+   * cannot exist in a well-formed catalog. If a bypass path
+   * (direct repo write, FS edit) ever produces one, the right fix
+   * is a catalog-load integrity check, not patching every consumer
+   * of the dep graph.
    */
   private async computeReverseDepIndex(rootOrigin: string): Promise<Set<string>> {
     const [skills, agents] = await Promise.all([this.skill.list(), this.agent.list()]);
@@ -563,10 +568,7 @@ export class CatalogManager {
     }
     for (const s of skills) {
       if (s.origin === rootOrigin) continue;
-      for (const o of s.dependencies.skills) {
-        if (o === s.origin) continue;
-        referenced.add(o);
-      }
+      for (const o of s.dependencies.skills) referenced.add(o);
       for (const o of s.dependencies.mcps) referenced.add(o);
     }
     return referenced;
@@ -1157,16 +1159,13 @@ function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): Casca
     for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
   }
   for (const s of skills) {
-    // Skip self-references when populating the reverse-dep index.
-    // Orphan semantics is "no OTHER entity depends on me"; a skill
-    // that lists its own origin in `dependencies.skills` (a degenerate
-    // but legal manifest) shouldn't suppress its own orphan badge.
-    // Mcps can't appear in their own dep set (mcps have no deps), so
-    // the same care isn't needed for `dependencies.mcps`.
-    for (const o of s.dependencies.skills) {
-      if (o === s.origin) continue;
-      referencedSkillOrigins.add(o);
-    }
+    // No self-reference filter: install/sync rejects cycles (the
+    // simplest cycle being a self-loop) at resolve time via
+    // CyclicDependencyError, so a self-referencing skill cannot
+    // exist in a well-formed catalog. The orphan badge stays
+    // correct because the cycle never makes it into the catalog
+    // in the first place.
+    for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
     for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
   }
   return {
