@@ -5,7 +5,7 @@
  * (e.g. copilot, gemini). The agent name is read from the provisioned
  * `AGENTS.md` frontmatter; runtime + createdAt + runtimeSessionId are
  * persisted via the configured `SessionRepository` (defaults to
- * `FsSessionRepository`, which writes `<workdir>/session.json`).
+ * `SqliteSessionRepository`, which writes to `<sessionsDir>/sessions.db`).
  * Activity (lastActiveAt, preview) is read fresh from the runtime on
  * every list/get call. The package never spawns processes —
  * `buildLaunch()` returns a shell-runnable `LaunchCommand`.
@@ -30,12 +30,12 @@ export {
   SessionsError,
 } from "./errors.js";
 export { SessionManager } from "./manager.js";
-export { FsSessionRepository } from "./repositories/fs-session-repository.js";
 export type {
   ListSessionStateOpts,
   SessionRepository,
   SessionState,
 } from "./repositories/repository.js";
+export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 export type {
   BuildLaunchSessionOpts,
   CreateSessionOpts,

@@ -60,14 +60,7 @@ import {
 import { type StartOpts, start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
-import {
-  taskActivity,
-  taskDispatch,
-  taskEvents,
-  taskList,
-  taskRm,
-  taskShow,
-} from "./commands/task.js";
+import { taskActivity, taskDispatch, taskList, taskRm, taskShow } from "./commands/task.js";
 import {
   workspaceAdd,
   workspaceCurrent,
@@ -358,14 +351,15 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(sessionCmd.command("rm"))
     .argument("<sid>", "Session id")
     .description("Remove a session")
-    .option("--purge", "Also remove the session's workdir contents")
-    .option("--delete-runtime-state", "Also ask the runtime to drop its per-session state")
+    .option(
+      "--purge",
+      "Hard delete: also remove the session workdir and the runtime's per-session state (default is archive — row only)",
+    )
     .action(async (sid: string, opts: Record<string, unknown>) => {
       slot.result = await sessionRm({
         ...parseWorkspaceFlags(opts),
         sid,
         purge: opts.purge === true,
-        deleteRuntimeState: opts.deleteRuntimeState === true,
       });
     });
   withWorkspaceFlags(sessionCmd.command("spawn"))
@@ -423,19 +417,16 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(taskCmd.command("rm"))
     .argument("<tid>", "Task id")
     .description("Remove a task")
-    .option("--purge", "Also remove the task's workdir contents")
+    .option(
+      "--purge",
+      "Hard delete: also remove the task workdir and the runtime's per-task state (default is archive — row only)",
+    )
     .action(async (tid: string, opts: Record<string, unknown>) => {
       slot.result = await taskRm({
         ...parseWorkspaceFlags(opts),
         tid,
         purge: opts.purge === true,
       });
-    });
-  withWorkspaceFlags(taskCmd.command("events"))
-    .argument("<tid>", "Task id")
-    .description("Stream the runtime's NDJSON event log (one-shot)")
-    .action(async (tid: string, opts: Record<string, unknown>) => {
-      slot.result = await taskEvents({ ...parseWorkspaceFlags(opts), tid });
     });
   withWorkspaceFlags(taskCmd.command("activity"))
     .argument("<tid>", "Task id")

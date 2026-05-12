@@ -12,10 +12,10 @@ import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke
  *
  * Reload would `entries.delete(id)` and let the next request lazy-build
  * a fresh context. The fresh `TaskManager`'s `recoverOrphaned` sweep
- * would see the on-disk `task.json` rows still flipped to `running`
- * (because the OLD manager's exit watcher hasn't fired yet) and race
- * to reclassify them as `failure`, even though the subprocess itself
- * is alive and well. To keep that race off the table we refuse the
+ * would see the persisted task rows still flipped to `running` (because
+ * the OLD manager's exit watcher hasn't fired yet) and race to
+ * reclassify them as `failure`, even though the subprocess itself is
+ * alive and well. To keep that race off the table we refuse the
  * reload and surface this typed error to the caller (the route maps
  * it to HTTP 409).
  *
@@ -128,6 +128,16 @@ export class WorkspaceContextCache {
       } catch {
         // best-effort
       }
+      try {
+        cached.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        cached.tasks.close();
+      } catch {
+        // best-effort
+      }
     }
     this.entries.delete(id);
   }
@@ -138,7 +148,7 @@ export class WorkspaceContextCache {
    *
    * Use case: workspace-level state drift the cached managers can't
    * observe themselves. Today that means orphan-task recovery: the
-   * cached `TaskManager` only sweeps `task.json` rows once at first
+   * cached `TaskManager` only sweeps task rows once at first
    * touch, so reload re-runs that sweep against the on-disk truth.
    *
    * Catalog content drift no longer needs reload — `CatalogManager`
@@ -179,6 +189,16 @@ export class WorkspaceContextCache {
       } catch {
         // best-effort
       }
+      try {
+        cached.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        cached.tasks.close();
+      } catch {
+        // best-effort
+      }
     }
     this.entries.delete(id);
     return this.get(id);
@@ -208,6 +228,16 @@ export class WorkspaceContextCache {
     for (const ctx of this.entries.values()) {
       try {
         ctx.catalog.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        ctx.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        ctx.tasks.close();
       } catch {
         // best-effort
       }

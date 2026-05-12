@@ -12,8 +12,8 @@ import {
 } from "./errors.js";
 import { assertValidSessionId, generateSessionId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import { FsSessionRepository } from "./repositories/fs-session-repository.js";
 import type { SessionRepository, SessionState } from "./repositories/repository.js";
+import { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 import type {
   BuildLaunchSessionOpts,
   CreateSessionOpts,
@@ -28,8 +28,8 @@ const MAX_CREATE_RETRIES = 5;
 
 /**
  * Per-session workdir manager, parameterised over a set of CLI runtimes
- * and a `SessionRepository` (defaults to `FsSessionRepository` rooted
- * at `sessionsDir`).
+ * and a `SessionRepository` (defaults to a `SqliteSessionRepository`
+ * opened at `<sessionsDir>/sessions.db`).
  *
  * Each session has two stores: the *repository* holds the persistent
  * state (`runtime`, `createdAt`, `runtimeSessionId`); the *workdir* on
@@ -54,9 +54,12 @@ export class SessionManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.sessionsDir = path.resolve(config.sessionsDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
-    this.repository =
-      config.repository ?? new FsSessionRepository({ sessionsDir: this.sessionsDir });
     this.logger = config.logger ?? silentLogger;
+    this.repository =
+      config.repository ??
+      new SqliteSessionRepository(path.join(this.sessionsDir, "sessions.db"), {
+        logger: this.logger,
+      });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }
@@ -216,16 +219,21 @@ export class SessionManager {
       throw new SessionNotFoundError(id);
     }
 
-    if (opts.deleteRuntimeState) {
+    if (opts.purge === true) {
+      // Full purge: runtime state first (it can fail loudly and we want
+      // to bail before we've started removing things). Only after it
+      // succeeds do we drop the metadata row + workdir.
       const runtime = this.runtimeRegistry.get(session.runtime);
       await runtime.deleteState(session);
-    }
-
-    await this.repository.delete(id);
-    if (opts.purge === true) {
+      await this.repository.delete(id);
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
+      return;
     }
+
+    // Archive (default): forget the entity but leave its files behind so
+    // the user can recover the agent's product or runtime conversation.
+    await this.repository.delete(id);
   }
 
   // ─── buildLaunch ─────────────────────────────────────────
@@ -263,6 +271,28 @@ export class SessionManager {
     }
 
     return launch;
+  }
+
+  // ─── close ───────────────────────────────────────────────
+
+  /**
+   * Release the underlying repository handle. After `close()`, the
+   * manager must not be used. Idempotent: calling twice is a no-op.
+   *
+   * Servers that swap or evict a `SessionManager` (e.g. `WorkspaceContextCache`
+   * on workspace removal / cache reload) must call this so the SQLite
+   * file handle releases — Windows requires it before the workspace
+   * directory can be `rm`-ed.
+   */
+  close(): void {
+    const repo = this.repository as { close?: () => void };
+    if (typeof repo.close === "function") {
+      try {
+        repo.close();
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   // ─── internals ───────────────────────────────────────────

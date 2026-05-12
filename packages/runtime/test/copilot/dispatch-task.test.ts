@@ -104,7 +104,7 @@ describe("dispatchCopilotTask", () => {
     expect(md).toContain("demo");
   });
 
-  it("pre-creates the session-state dir so it can be junctioned immediately", async () => {
+  it("pre-creates the session-state dir so it exists before the first event write", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await dispatchCopilotTask(

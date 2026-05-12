@@ -1,6 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
@@ -12,7 +9,7 @@ import {
   type TaskManager,
   TaskNotFoundError,
 } from "@emploke/task";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tasksRoutes } from "../src/routes/tasks.js";
 
 const sampleTask: Task = {
@@ -38,7 +35,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
     delete: vi.fn(async () => undefined),
     recoverOrphaned: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
-    getTaskEventsPath: vi.fn(async () => null),
+    getTaskActivity: vi.fn(async () => null),
     ...overrides,
   };
   return stub as unknown as TaskManager;
@@ -373,67 +370,44 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(500);
   });
 
-  describe("GET /:tid/events", () => {
-    const tmpRoots: string[] = [];
-    afterEach(async () => {
-      const { rm } = await import("node:fs/promises");
-      await Promise.all(
-        tmpRoots.splice(0).map((p) => rm(p, { recursive: true, force: true }).catch(() => {})),
-      );
-    });
-
-    it("404 NoEventsYet when manager returns null (task missing or no log)", async () => {
-      // After the Y5 refactor the route delegates path lookup to
-      // `TaskManager.getTaskEventsPath`, which collapses both "task
-      // missing" and "runtime declined to provide a path" into a single
-      // null return. The route surfaces that uniformly as
-      // 404 NoEventsYet; the explicit "task missing" 404 lives on
+  describe("GET /:tid/activity", () => {
+    it("404 NoEventsYet when manager returns null (task missing, runtime declines, or no events yet)", async () => {
+      // The route delegates the entire read+parse+derive to
+      // `TaskManager.getTaskActivity`, which itself fans down to
+      // `Runtime.taskActivity`. A `null` return collapses every
+      // "nothing to show" case (task missing, runtime omits the
+      // surface, log file not on disk yet) into a single 404
+      // NoEventsYet. The explicit "task missing" 404 lives on
       // GET /:tid (covered separately).
-      const m = stubManager({ getTaskEventsPath: vi.fn(async () => null) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
+      const m = stubManager({ getTaskActivity: vi.fn(async () => null) });
+      const res = await tasksRoutes(m).request(`/${sampleTask.id}/activity`);
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.code).toBe("NoEventsYet");
     });
 
-    it("404 NoEventsYet when the resolved path doesn't yet exist on disk", async () => {
-      // Manager hands back a path the runtime expects to exist
-      // eventually but the file isn't there yet (agent hasn't written
-      // its first event, or the runtime pre-allocated a parent dir
-      // without the log file).
-      const root = path.join(tmpdir(), `tasks-events-${Date.now()}-${Math.random()}`);
-      await mkdir(root, { recursive: true });
-      tmpRoots.push(root);
-      const ghostPath = path.join(root, "definitely-not-here.jsonl");
-      const m = stubManager({ getTaskEventsPath: vi.fn(async () => ghostPath) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
-      expect(res.status).toBe(404);
-      const body = await res.json();
-      expect(body.code).toBe("NoEventsYet");
-    });
-
-    it("streams the file the manager points us at (runtime-agnostic)", async () => {
-      // The route streams whatever bytes are at the manager-supplied
-      // path — it neither knows nor cares that this happens to be a
-      // Copilot-style NDJSON. A future runtime returning a file with a
-      // different format and extension would hit the same code path
-      // unchanged.
-      const root = path.join(tmpdir(), `tasks-events-${Date.now()}-${Math.random()}`);
-      await mkdir(root, { recursive: true });
-      tmpRoots.push(root);
-      const logPath = path.join(root, "events.jsonl");
-      const lines = [
-        JSON.stringify({ ts: 1, type: "first" }),
-        JSON.stringify({ ts: 2, type: "second" }),
-      ].join("\n");
-      await writeFile(logPath, `${lines}\n`, "utf8");
-      const m = stubManager({ getTaskEventsPath: vi.fn(async () => logPath) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/events`);
+    it("200 forwards the runtime's structured payload as JSON", async () => {
+      // The route is a thin pass-through — it neither knows nor cares
+      // that this happens to be Copilot's `assistant.message` event
+      // model; the runtime owns the read + parse and emits ActivityItems
+      // the dashboard renders without runtime-specific knowledge.
+      const payload = {
+        activity: [
+          { kind: "user" as const, timestamp: "2026-05-09T01:00:00.000Z", content: "hi" },
+          {
+            kind: "assistant" as const,
+            timestamp: "2026-05-09T01:00:01.000Z",
+            content: "ok",
+            toolRequests: [],
+          },
+        ],
+        result: "ok",
+      };
+      const m = stubManager({ getTaskActivity: vi.fn(async () => payload) });
+      const res = await tasksRoutes(m).request(`/${sampleTask.id}/activity`);
       expect(res.status).toBe(200);
-      expect(res.headers.get("content-type")).toMatch(/x-ndjson/);
-      const text = await res.text();
-      expect(text).toContain('"first"');
-      expect(text).toContain('"second"');
+      const body = await res.json();
+      expect(body).toEqual(payload);
     });
   });
 });

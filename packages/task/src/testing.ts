@@ -1,7 +1,17 @@
 /**
- * Test-only entry point: in-memory `TaskRepository` implementation
- * for callers that want to skip filesystem orchestration in their unit
- * tests.
+ * Test-only entry point. The `TaskRepository` is now backed by SQLite
+ * in production; for tests, construct a `SqliteTaskRepository` with the
+ * `":memory:"` path to get an isolated in-memory database that lives
+ * only for the lifetime of the connection.
+ *
+ * ```ts
+ * import { SqliteTaskRepository } from "@emploke/task/testing";
+ *
+ * const repo = new SqliteTaskRepository(":memory:");
+ * await repo.save({ id: "20260101-aaaaaaaa", ... });
+ * ```
+ *
+ * Tests are encouraged to call `repo.close()` in cleanup.
  */
 
-export { InMemoryTaskRepository } from "./repositories/in-memory-task-repository.js";
+export { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";

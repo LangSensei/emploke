@@ -7,40 +7,45 @@
  * but leaves the production-critical chain of
  *
  *   `child_process.spawn` → `child.on('exit')` → `applyTerminal()` →
- *   `writePersistedTask()` → `list()`
+ *   `repository.save()` → `list()`
  *
  * effectively 0% covered. This file plugs that hole with a minimum
  * viable smoke test using `process.execPath -e "process.exit(<code>)"`
  * as a stand-in agent — no dependency on Copilot/Gemini/etc.
  *
  * Scope is deliberately narrow: dispatch a real child, await terminal,
- * confirm the persisted task.json reflects the right status. A fuller
+ * confirm the persisted task row reflects the right status. A fuller
  * integration suite (real `events.jsonl` tail, junctions, cancel
  * semantics, sanitised spawn errors) is tracked in #29.
  */
 
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type DispatchOpts, type Task, TaskManager } from "../../src/index.js";
-
-const TASK_FILE_NAME = "task.json";
-type PersistedTaskWire = { schemaVersion: number } & Task;
+import {
+  type DispatchOpts,
+  SqliteTaskRepository,
+  type Task,
+  TaskManager,
+} from "../../src/index.js";
 
 // ───────── fixture lifecycle ─────────────────────────────────
 
 let tasksDir: string;
+let openRepos: SqliteTaskRepository[] = [];
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-real-spawn-"));
 });
 
 afterEach(async () => {
+  for (const r of openRepos) r.close();
+  openRepos = [];
   await rm(tasksDir, { recursive: true, force: true });
 });
 
@@ -139,15 +144,24 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
   throw new Error(`awaitTerminal: task ${id} did not reach terminal status within ${timeoutMs}ms`);
 }
 
-const makeManager = (catalog: CatalogManager, runtime: Runtime): TaskManager => {
+const makeManager = (
+  catalog: CatalogManager,
+  runtime: Runtime,
+): { m: TaskManager; repo: SqliteTaskRepository } => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
-  return new TaskManager({
+  // Use `:memory:` so the test owns the DB lifecycle (no file to leak,
+  // no Windows EBUSY on cleanup).
+  const repo = new SqliteTaskRepository(":memory:");
+  openRepos.push(repo);
+  const m = new TaskManager({
     catalog,
     runtimeRegistry: reg,
     tasksDir,
     workspaceDir: tasksDir,
+    repository: repo,
   });
+  return { m, repo };
 };
 
 // ───────── tests ──────────────────────────────────────────────
@@ -155,31 +169,27 @@ const makeManager = (catalog: CatalogManager, runtime: Runtime): TaskManager => 
 describe("real-spawn smoke", () => {
   it("dispatch → real child exits 0 → status persists as 'success'", async () => {
     const runtime = new RealNodeRuntime({ "exit-zero": "process.exit(0)" });
-    const m = makeManager(stubCatalog(["exit-zero"]), runtime);
+    const { m, repo } = makeManager(stubCatalog(["exit-zero"]), runtime);
 
     const t = await m.dispatch(dispatchOf({ agent: "exit-zero" }));
     const final = await awaitTerminal(m, t.id);
 
     expect(final.status).toBe("success");
 
-    const persisted: PersistedTaskWire = JSON.parse(
-      await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
-    );
-    expect(persisted.status).toBe("success");
+    const persisted = await repo.read(t.id);
+    expect(persisted?.status).toBe("success");
   });
 
   it("dispatch → real child exits non-zero → status persists as 'failure'", async () => {
     const runtime = new RealNodeRuntime({ "exit-one": "process.exit(1)" });
-    const m = makeManager(stubCatalog(["exit-one"]), runtime);
+    const { m, repo } = makeManager(stubCatalog(["exit-one"]), runtime);
 
     const t = await m.dispatch(dispatchOf({ agent: "exit-one" }));
     const final = await awaitTerminal(m, t.id);
 
     expect(final.status).toBe("failure");
 
-    const persisted: PersistedTaskWire = JSON.parse(
-      await readFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "utf8"),
-    );
-    expect(persisted.status).toBe("failure");
+    const persisted = await repo.read(t.id);
+    expect(persisted?.status).toBe("failure");
   });
 });

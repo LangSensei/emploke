@@ -65,8 +65,15 @@ interface Runtime {
   /** Optional: spawn a one-shot non-interactive worker. */
   dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
 
-  /** Optional: where the runtime writes a per-task event log. */
-  taskEventsPath?(taskWorkdir: string): string | null;
+  /**
+   * Optional: read + parse the runtime's per-task event log into the
+   * runtime-neutral `ActivityItem[]` vocabulary, plus the agent's
+   * headline result. End-to-end: the runtime locates its own log
+   * (using `opts.metadata.runtimeSessionId` or whatever it persisted
+   * in the task metadata bag) and never exposes the path or raw
+   * format up to consumers.
+   */
+  taskActivity?(opts: TaskActivityOpts): Promise<TaskActivityResult | null>;
 }
 ```
 
@@ -159,9 +166,10 @@ Skill order is the topological order the catalog produced.
 3. Implement `dispatchTask` if the CLI supports unattended scripting
    (e.g. Copilot's `-p/--prompt` mode). Wire stdout/stderr to log
    files in the supplied `taskDir`.
-4. Implement `taskEventsPath(taskWorkdir)` if the CLI writes a
-   structured per-session event log; the dashboard streams the bytes
-   opaquely.
+4. Implement `taskActivity(opts)` to read your runtime's per-task log
+   end-to-end and return runtime-neutral `ActivityItem[]` + a derived
+   "headline result" string. The dashboard renders ActivityItems
+   without seeing your log format or storage path.
 5. Register in `packages/server/src/runtime-registry.ts`.
 
 The dashboard adapts automatically — runtimes are listed via

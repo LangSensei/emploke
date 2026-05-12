@@ -2,12 +2,15 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
- * by emploke. It owns four operations against the CLI's on-disk world:
+ * by emploke. It owns operations against the CLI's on-disk world:
  *
  *  - `provision`: bake an agent into a workdir so the CLI can be launched there
  *  - `refresh`: read the CLI's view of activity for an emploke session
  *  - `buildLaunch`: build the shell command that drops the user into the CLI
  *  - `deleteState`: remove the CLI's record of an emploke session
+ *  - `dispatchTask?` / `taskActivity?` / `deleteTaskState?`: the parallel trio
+ *    for autonomous tasks (optional — runtimes that lack a non-interactive
+ *    mode simply omit them)
  *
  * Runtimes are stateless across calls — all per-session data lives either in
  * `Session.runtimeSessionId` (an opaque, runtime-specific id) or in the CLI's
@@ -15,8 +18,8 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
  * return updated values that the caller persists.
  *
  * The interface is deliberately small. Anything CLI-specific that doesn't fit
- * one of these four verbs (e.g. logging, telemetry) is the runtime's private
- * concern and should not leak into emploke's surface.
+ * these verbs (e.g. logging, telemetry) is the runtime's private concern and
+ * should not leak into emploke's surface.
  */
 export interface Runtime {
   /**
@@ -157,81 +160,110 @@ export interface Runtime {
   dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
 
   /**
-   * Optional. Locate the runtime-native event log for a task.
+   * Optional. Remove the runtime's recorded state for a previously-dispatched
+   * task. Mirrors {@link deleteState} for sessions; called by `TaskManager`
+   * when a task is purged so the runtime's per-task event log (Copilot's
+   * `<copilotStateDir>/<runtimeSessionId>/`, etc.) doesn't leak after the
+   * task row + workdir are gone.
    *
-   * Returns the absolute path to the log file the dashboard (or any
-   * other consumer) should stream when the user opens a task's "Events"
-   * view. Returns `null` when the runtime has no concept of a task event
-   * log, or when the log is not yet available (not provisioned, file
-   * not yet created, ...).
+   * `opts.metadata` is the task's open-shape metadata bag (the same
+   * `Task.metadata` shape `dispatchTask` populated, identical to
+   * {@link TaskActivityOpts}). The runtime knows which keys to consult
+   * (typically `runtimeSessionId`) and silently no-ops when the relevant
+   * key is missing or unparseable, the same way {@link deleteState} does
+   * for sessions.
    *
-   * The contract is intentionally narrow: the runtime says *where* the
-   * log lives, not *what's in it*. Each runtime's log format is its own
-   * concern (Copilot writes NDJSON; future runtimes may use plain text,
-   * a different JSON shape, or a directory). Consumers either treat the
-   * file as opaque bytes (current dashboard behaviour) or branch on
-   * `Task.metadata.runtime` to choose a parser. A typed cross-runtime
-   * `TaskEvent` schema is intentionally out of scope for this iteration.
+   * Throws on partial failure (e.g. permission denied removing some files);
+   * the caller (`TaskManager.delete({ purge: true })`) propagates as
+   * `RuntimeStateDeletionFailed` so the user sees a clear failure rather
+   * than a silently-leaked state dir. The order on the manager side is
+   * "runtime first, then local row + workdir" — a runtime failure aborts
+   * before any local removal, mirroring `SessionManager.delete`.
    *
-   * `taskWorkdir` is the manager-side workdir for this task (the same
-   * value `dispatchTask` was handed as `taskDir`). The runtime is free
-   * to either resolve a path beneath the workdir (e.g. via a junction
-   * the manager installed) or compute a path elsewhere on its own
-   * private state directory.
-   *
-   * Runtimes with no event log (or that haven't decided on one yet)
-   * simply omit this method; the server treats absent + `null` returns
-   * the same way (404 NoEventsYet on the events route).
+   * Runtimes whose CLI does not persist per-task state simply omit this
+   * method; the manager treats absence as "nothing to clean up".
    */
-  taskEventsPath?(taskWorkdir: string): string | null;
+  deleteTaskState?(opts: TaskStateOpts): Promise<void>;
 
   /**
-   * Optional. Lift the runtime's raw event log into a runtime-neutral
-   * Activity timeline.
+   * Optional. Fetch the runtime-neutral activity timeline + derived
+   * "result" line for a task — end-to-end:
    *
-   * Each runtime owns its own log schema (Copilot writes NDJSON with
-   * `assistant.message` events; future runtimes may use plain text or
-   * a different shape entirely). Rather than push that knowledge into
-   * every consumer, the runtime translates its own format into the
-   * shared {@link ActivityItem} vocabulary here. The dashboard, MCP
-   * clients, and any future log surface can render the result without
-   * knowing which runtime produced it.
+   *   1. Locate the task's runtime-native event log (the runtime knows
+   *      where its own state lives; the manager doesn't need to).
+   *   2. Read the file (or however the runtime persists its log).
+   *   3. Translate to the shared {@link ActivityItem} vocabulary.
+   *   4. Pick the agent's "final answer" string for the headline.
    *
-   * Returns the activity entries in chronological order (same order as
-   * the source events), filtered to the high-signal ones — `kind:
-   * "user"`, `"assistant"`, `"summary"`. Low-signal events the runtime
-   * emits for its own bookkeeping (handshake, model handshake, system
-   * prompts) are dropped here, never reaching consumers.
+   * Returns `null` when the runtime has no log for this task yet
+   * (task hasn't started, file not yet on disk, runtime didn't
+   * persist anything). Throws on real I/O / parse errors so the
+   * route layer can surface 5xx for genuine faults.
    *
-   * `raw` is the event log file's full byte content. Implementations
-   * are responsible for any format-specific tokenisation (NDJSON
-   * line-splitting, JSON parsing, whatever).
+   * Why one fused method instead of three (`taskEventsPath` +
+   * `parseActivity` + `deriveResult`)?
    *
-   * Runtimes whose CLI doesn't emit a structured log simply omit this
-   * method. Consumers fall back to displaying the raw bytes when no
-   * `parseActivity` is available, so omitting is always safe.
+   *   - The three pieces are always called together by the only
+   *     consumer (the activity route) — splitting them just exposed
+   *     the file-system shape (path, raw bytes) up to the manager
+   *     and route layers, which then leaked across runtimes (Copilot
+   *     stores in a folder; a hypothetical Gemini might store in a
+   *     single file or a SQLite row — the "path → bytes" model
+   *     doesn't generalise).
+   *   - Containing read + parse + derive inside the runtime keeps
+   *     consumers unaware of `events.jsonl`, NDJSON, or any other
+   *     runtime-internal artefact. They get structured ActivityItems
+   *     and never know the source format.
+   *
+   * `opts.metadata` is the task's open-shape metadata bag (the same
+   * `Task.metadata` shape `dispatchTask` populated). The runtime
+   * knows which keys to consult (e.g. Copilot reads
+   * `runtimeSessionId` to find its own state dir). The manager
+   * deliberately does NOT pass a workdir — workdir-based discovery
+   * was the abstraction leak this method closes.
+   *
+   * Runtimes whose CLI doesn't emit a structured log simply omit
+   * this method. The route returns `404 NoEventsYet` in that case.
    */
-  parseActivity?(raw: string): ActivityItem[];
+  taskActivity?(opts: TaskActivityOpts): Promise<TaskActivityResult | null>;
+}
 
+/** Inputs to {@link Runtime.taskActivity}. */
+export interface TaskActivityOpts {
   /**
-   * Optional. Pick the entry that represents "the agent's final
-   * answer" for the task. Almost always the last assistant message
-   * with non-empty text content.
-   *
-   * Surfaced by the dashboard as the "Result" panel — the headline
-   * thing a user wants to see when revisiting a finished task. The
-   * raw event log is still available for forensic diving, but this
-   * gives users the answer without making them grep NDJSON.
-   *
-   * Returns `null` when there is no representative result (task
-   * crashed before any assistant output, runtime doesn't model the
-   * concept, ...). The dashboard handles `null` by showing the raw
-   * `task.result.output` fallback.
-   *
-   * `raw` is the event log file's full byte content, same as
-   * {@link Runtime.parseActivity}.
+   * The task's open-shape metadata bag (`Task.metadata`). The runtime
+   * looks up its own keys (typically `runtimeSessionId`) to find the
+   * log on its own state directory.
    */
-  deriveResult?(raw: string): string | null;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Inputs to {@link Runtime.deleteTaskState}. Same shape as
+ * {@link TaskActivityOpts} — both are "given a task's metadata, do
+ * something runtime-specific with the per-task state dir". Kept as a
+ * separate type so future divergence (e.g. a `force` flag for one but
+ * not the other) doesn't churn both call sites.
+ */
+export interface TaskStateOpts {
+  /**
+   * The task's open-shape metadata bag (`Task.metadata`). The runtime
+   * looks up its own keys (typically `runtimeSessionId`) to locate its
+   * own per-task state dir.
+   */
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Bundled result returned by {@link Runtime.taskActivity}: the
+ * filtered timeline ({@link ActivityItem} entries) plus the derived
+ * headline answer the dashboard renders prominently. `result` is
+ * `null` when the agent never produced a final assistant message
+ * (crashed early, runtime doesn't model the concept, ...).
+ */
+export interface TaskActivityResult {
+  readonly activity: readonly ActivityItem[];
+  readonly result: string | null;
 }
 
 /**
@@ -336,18 +368,22 @@ export interface TaskHandle {
    * discovery-only runtimes leave it undefined and the caller learns it
    * (if at all) by other means.
    *
-   * Persisted by `TaskManager` into `task.json` for later inspection (and
-   * for callers who want to drive the underlying CLI directly, e.g.
-   * `copilot --resume=<id>`).
+   * Persisted by `TaskManager` into the task's `metadata.runtimeSessionId`
+   * column for later inspection (and for callers who want to drive the
+   * underlying CLI directly, e.g. `copilot --resume=<id>`). Also the key
+   * the runtime reads back from `Task.metadata` in `taskActivity` and
+   * `deleteTaskState`.
    */
   readonly runtimeSessionId?: string;
 
   /**
    * Where the runtime is writing its native per-session log directory for
-   * this task. `TaskManager` junctions this into `<taskDir>/session/` so
-   * the dashboard can serve `events.jsonl` (or whatever the runtime calls
-   * its log) without coupling to per-runtime layout. See the type-level
-   * comment above for the Promise rationale.
+   * this task. The runtime owns reads against this directory end-to-end via
+   * `taskActivity` (and removal via `deleteTaskState`) — `TaskManager` does
+   * NOT mirror it back into the task workdir, so consumers (dashboard, CLI)
+   * never need to know per-runtime layout. The Promise lets discovery-only
+   * runtimes resolve the path post-spawn; see the type-level comment above
+   * for the rationale.
    */
   readonly sessionDir: Promise<string>;
 
@@ -409,7 +445,8 @@ export interface LaunchCommand {
 }
 
 /**
- * Runtime-neutral entries returned by {@link Runtime.parseActivity}.
+ * Runtime-neutral entries returned inside {@link TaskActivityResult}
+ * by {@link Runtime.taskActivity}.
  * The vocabulary covers the three things a user actually wants to see
  * in a task's timeline:
  *
@@ -421,8 +458,9 @@ export interface LaunchCommand {
  *
  * Lower-signal events (handshake, model-handshake, system prompts,
  * turn boundaries) are filtered out by the runtime — consumers never
- * see them via this surface. The raw event log remains available
- * (see {@link Runtime.taskEventsPath}) for forensic use.
+ * see them via this surface. Runtimes that want to expose a "raw log"
+ * surface (forensic / debug) can do so behind their own opt-in route
+ * outside this contract.
  */
 export type ActivityItem =
   | { readonly kind: "user"; readonly timestamp: string; readonly content: string }

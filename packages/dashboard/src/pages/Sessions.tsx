@@ -39,7 +39,12 @@ interface FallbackInfo {
 
 interface DeleteModalState {
   session: SessionRecord;
-  alsoDeleteRuntimeState: boolean;
+  /**
+   * `true` = purge mode: also wipe the workdir and the runtime adapter's
+   * per-session state. `false` = archive (default): only the metadata
+   * row is removed; workdir + runtime state are preserved on disk.
+   */
+  purge: boolean;
 }
 
 const ALL_AGENTS = "__all__";
@@ -228,7 +233,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
     setBusy(true);
     setError(null);
     try {
-      await deleteSession(deleteModal.session.id, deleteModal.alsoDeleteRuntimeState);
+      await deleteSession(deleteModal.session.id, { purge: deleteModal.purge });
       if (!mountedRef.current) return;
       setDeleteModal(null);
       await refresh();
@@ -402,7 +407,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
               session={s}
               launching={launchingId === s.id}
               onLaunch={(opts) => onLaunch(s, opts)}
-              onDelete={() => setDeleteModal({ session: s, alsoDeleteRuntimeState: false })}
+              onDelete={() => setDeleteModal({ session: s, purge: false })}
             />
           ))}
         </ul>
@@ -443,11 +448,9 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
         >
           <DeleteModalBody
             session={deleteModal.session}
-            alsoDeleteRuntimeState={deleteModal.alsoDeleteRuntimeState}
+            purge={deleteModal.purge}
             busy={busy}
-            onToggle={(v) =>
-              setDeleteModal((prev) => (prev ? { ...prev, alsoDeleteRuntimeState: v } : prev))
-            }
+            onToggle={(v) => setDeleteModal((prev) => (prev ? { ...prev, purge: v } : prev))}
             onCancel={() => setDeleteModal(null)}
             onConfirm={onConfirmDelete}
           />
@@ -857,7 +860,7 @@ function FallbackModalBody({ display, reason, onClose }: FallbackModalBodyProps)
 
 interface DeleteModalBodyProps {
   session: SessionRecord;
-  alsoDeleteRuntimeState: boolean;
+  purge: boolean;
   busy: boolean;
   onToggle: (v: boolean) => void;
   onCancel: () => void;
@@ -866,7 +869,7 @@ interface DeleteModalBodyProps {
 
 function DeleteModalBody({
   session,
-  alsoDeleteRuntimeState,
+  purge,
   busy,
   onToggle,
   onCancel,
@@ -879,28 +882,33 @@ function DeleteModalBody({
         <p>
           Delete session <code>{session.id}</code> ({session.agent})?
         </p>
-        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          This removes the workdir at <code>{session.workdir}</code>.
+        <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
+          By default, the workdir at <code>{session.workdir}</code>
+          {hasRuntimeState
+            ? ` and the ${session.runtime} runtime state${
+                session.runtimeSessionId ? ` (${session.runtimeSessionId.slice(0, 8)}…)` : ""
+              }`
+            : ""}{" "}
+          {hasRuntimeState ? "are" : "is"} preserved on disk so you can recover later.
         </p>
-        {hasRuntimeState && (
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-            <input
-              type="checkbox"
-              checked={alsoDeleteRuntimeState}
-              onChange={(e) => onToggle(e.target.checked)}
-              disabled={busy}
-            />
-            Also delete the {session.runtime} runtime state
-            {session.runtimeSessionId ? ` (${session.runtimeSessionId.slice(0, 8)}…)` : ""}
-          </label>
-        )}
+        <label
+          style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginTop: 10 }}
+        >
+          <input
+            type="checkbox"
+            checked={purge}
+            onChange={(e) => onToggle(e.target.checked)}
+            disabled={busy}
+          />
+          Also remove files {hasRuntimeState ? "and runtime state " : ""}(cannot be undone)
+        </label>
       </div>
       <div className="modal__footer">
         <button type="button" className="btn btn--ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
         <button type="button" className="btn btn--danger" onClick={onConfirm} disabled={busy}>
-          {busy ? "Deleting…" : "Delete"}
+          {busy ? "Deleting…" : purge ? "Delete and remove files" : "Delete"}
         </button>
       </div>
     </>

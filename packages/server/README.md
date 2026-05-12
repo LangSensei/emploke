@@ -19,12 +19,12 @@ renames.
 /api/workspaces/:id/catalog/{agents,skills,mcps,overview}
                                                 per-workspace catalog
 /api/workspaces/:id/sessions                    list (filters: agent / activeSince) / create
-/api/workspaces/:id/sessions/:sid               get / delete (?purge=1, ?deleteRuntimeState=1)
+/api/workspaces/:id/sessions/:sid               get / delete (?purge=1 = wipe row + workdir + runtime state; default = archive, row only)
 /api/workspaces/:id/sessions/:sid/spawn         hand-off to user terminal
 /api/workspaces/:id/tasks                       list (filters: agent / runtime / status / createdSince)
 /api/workspaces/:id/tasks                       POST: dispatch
 /api/workspaces/:id/tasks/:tid                  get / delete (?purge=1)
-/api/workspaces/:id/tasks/:tid/events           streaming event log
+/api/workspaces/:id/tasks/:tid/activity         runtime-parsed ActivityItem[] (timeline + headline)
 /api/runtimes                                   list registered runtime kinds
 /api/config                                     server-side config snapshot for the dashboard
 ```

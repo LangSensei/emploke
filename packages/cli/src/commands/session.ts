@@ -103,7 +103,6 @@ export async function sessionShow(opts: SessionShowOpts): Promise<CommandResult>
 export interface SessionRmOpts extends CommonFlags {
   readonly sid: string;
   readonly purge?: boolean;
-  readonly deleteRuntimeState?: boolean;
 }
 
 export async function sessionRm(opts: SessionRmOpts): Promise<CommandResult> {
@@ -113,9 +112,8 @@ export async function sessionRm(opts: SessionRmOpts): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts, client);
-    const query: { purge?: "1"; deleteRuntimeState?: "1" } = {};
+    const query: { purge?: "1" } = {};
     if (opts.purge) query.purge = "1";
-    if (opts.deleteRuntimeState) query.deleteRuntimeState = "1";
     await client.call("sessions.delete", { params: { id, sid: opts.sid }, query });
     return { exitCode: 0, stdout: `session ${opts.sid} removed\n` };
   } catch (err) {

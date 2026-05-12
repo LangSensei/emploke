@@ -46,11 +46,10 @@ export {
   generateTaskId,
   TASK_ID_RE,
 } from "./ids.js";
-export { createDirJunction } from "./junction.js";
 export { TaskManager } from "./manager.js";
 export { safeJoinUnderRoot } from "./paths.js";
-export { FsTaskRepository } from "./repositories/fs-task-repository.js";
 export type { TaskRepository } from "./repositories/repository.js";
+export { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
 export { readTaskRuntimeMetadata, type TaskRuntimeMetadata } from "./task-meta.js";
 export type {
   CancelEvent,

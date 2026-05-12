@@ -41,13 +41,16 @@ export type TerminalStatus = "success" | "failure" | "cancelled";
  * `output` semantics under the current **runtime-driven completion model**:
  * the kernel does not interpret what an autonomous agent produced. The
  * substantive output of an agent run lives on the filesystem under
- * `Task.metadata.workdir/` — agent-written files, captured `stdout.log`,
- * and the runtime's per-task event stream junctioned in at `session/`. The
- * `output` string is intentionally minimal and may be empty: today
- * `TaskManager` always writes `""` here. A future, agent-driven completion
- * model (where the agent submits a structured deliverable summary back to
- * the kernel) would carry that summary in this field; the kernel shape is
- * pre-positioned for it.
+ * `Task.metadata.workdir/` — agent-written files and the captured
+ * `stderr.log`. The runtime's per-task event stream lives on the
+ * runtime's own state directory (e.g.
+ * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`) and is read
+ * via `Runtime.taskActivity` rather than mirrored into the workdir.
+ * The `output` string is intentionally minimal and may be empty:
+ * today `TaskManager` always writes `""` here. A future, agent-driven
+ * completion model (where the agent submits a structured deliverable
+ * summary back to the kernel) would carry that summary in this field;
+ * the kernel shape is pre-positioned for it.
  */
 export interface TaskResult {
   readonly output: string;
@@ -142,9 +145,10 @@ export interface TaskManagerConfig {
   readonly defaultRuntime?: string;
   /**
    * Persistence backend for task state. When omitted, the manager
-   * constructs a `FsTaskRepository({ tasksDir })` automatically; tests
-   * can inject an `InMemoryTaskRepository` (from `@emploke/task/testing`)
-   * to skip filesystem orchestration.
+   * constructs a `SqliteTaskRepository` opened at `<tasksDir>/tasks.db`
+   * automatically; tests can inject a `:memory:`-backed
+   * `SqliteTaskRepository` (from `@emploke/task/testing`) to keep
+   * state purely in-process.
    */
   readonly repository?: TaskRepository;
   readonly logger?: _Logger;
@@ -169,10 +173,10 @@ export interface DispatchOpts {
  * `@emploke/session`'s `ListSessionOpts` so callers see a consistent
  * filter API across the two managers.
  *
- * Filters are applied AFTER reading `task.json` (cheap) but the
- * filtered set is still the only thing returned to the caller — server
- * routes can therefore push their own filter inputs down to the
- * manager and avoid serialising entries the dashboard would discard.
+ * Filters are applied server-side by the SQLite repository's indexed
+ * columns; the manager just forwards them. This keeps server routes
+ * able to push their filter inputs down so the dashboard never
+ * serialises rows it'd discard.
  */
 export interface ListTaskOpts {
   /** Filter to tasks whose `agent` matches this exact value. */

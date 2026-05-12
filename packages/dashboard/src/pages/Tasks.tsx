@@ -6,7 +6,6 @@ import {
   deleteTask,
   dispatchTask,
   fetchTaskActivity,
-  fetchTaskEvents,
   getTask,
   listRuntimes,
   listTasks,
@@ -136,6 +135,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRecord | null>(null);
+  /**
+   * `true` = purge mode (also wipe workdir). `false` = archive (default;
+   * only the metadata row goes). Reset to `false` on every new
+   * `setDeleteTarget(...)`.
+   */
+  const [deletePurge, setDeletePurge] = useState(false);
 
   // Re-run-prefill state: when set, opens the DispatchModal pre-filled
   // with these values so "re-run" is one click + Enter rather than a
@@ -277,10 +282,11 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     setBusy(true);
     setError(null);
     try {
-      await deleteTask(deleteTarget.id);
+      await deleteTask(deleteTarget.id, { purge: deletePurge });
       if (!mountedRef.current) return;
       if (selectedId === deleteTarget.id) setSelectedId(null);
       setDeleteTarget(null);
+      setDeletePurge(false);
       await refresh();
     } catch (e) {
       if (!mountedRef.current) return;
@@ -515,18 +521,50 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       />
 
       {deleteTarget && (
-        <Modal open={true} onClose={() => setDeleteTarget(null)} title="Delete task" size="default">
+        <Modal
+          open={true}
+          onClose={() => {
+            setDeleteTarget(null);
+            setDeletePurge(false);
+          }}
+          title="Delete task"
+          size="default"
+        >
           <div className="modal__body">
             <p>
-              Delete task <code>{deleteTarget.id}</code>? This kills the subprocess if it's still
-              running and removes the workdir.
+              Delete task <code>{deleteTarget.id}</code>?
+              {deleteTarget.status === "running" ? " The subprocess will be killed first." : ""}
             </p>
+            <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
+              By default, the workdir is preserved on disk so you can inspect the agent's output
+              (stderr, artifacts, runtime event log) after the fact.
+            </p>
+            <label
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                fontSize: 13,
+                marginTop: 10,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={deletePurge}
+                onChange={(e) => setDeletePurge(e.target.checked)}
+                disabled={busy}
+              />
+              Also remove files (cannot be undone)
+            </label>
           </div>
           <div className="modal__footer">
             <button
               type="button"
               className="btn btn--ghost"
-              onClick={() => setDeleteTarget(null)}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeletePurge(false);
+              }}
               disabled={busy}
             >
               Cancel
@@ -537,7 +575,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
               onClick={onConfirmDelete}
               disabled={busy}
             >
-              {busy ? "Deleting…" : "Delete"}
+              {busy ? "Deleting…" : deletePurge ? "Delete and remove files" : "Delete"}
             </button>
           </div>
         </Modal>
@@ -844,21 +882,20 @@ interface TaskDetailPanelProps {
   pollIntervalMs: number;
 }
 
-type DetailTab = "activity" | "events" | "metadata";
+type DetailTab = "activity" | "raw" | "metadata";
 
 function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetailPanelProps) {
   const [task, setTask] = useState<TaskRecord | null>(null);
   const [activity, setActivity] = useState<TaskActivity | null>(null);
-  const [events, setEvents] = useState<string | null>(null);
-  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [tab, setTab] = useState<DetailTab>("activity");
   const [loading, setLoading] = useState(false);
 
   // Race guards mirroring the list view (see TasksPage.refresh):
   //   * `mountedRef` for the standard unmount-during-fetch case
   //   * `taskTokenRef` to drop the response when the user clicks task A
-  //     then task B before A's three-step fetch (getTask + activity +
-  //     events) completes — without this guard A's payload would land
+  //     then task B before A's two-step fetch (getTask + activity)
+  //     completes — without this guard A's payload would land
   //     under B's header
   //   * `inFlightRef` to keep the auto-poll from stacking when a refresh
   //     outlives `pollIntervalMs` (a real risk on the detail panel
@@ -872,14 +909,9 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   }, []);
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
-  // Tab in a ref so the polled `refreshDetail` callback can read the
-  // current tab without itself being a state dep (which would re-bind
-  // the polling loop on every tab switch).
-  const tabRef = useRef<DetailTab>(tab);
-  useEffect(() => {
-    tabRef.current = tab;
-  }, [tab]);
-
+  // Tab is plain state — no need for a ref since `refreshDetail` no
+  // longer branches on which tab is active (the Raw tab now renders
+  // the same `activity` payload as JSON).
   const refreshDetail = useCallback(async () => {
     if (!taskId) return;
     if (inFlightRef.current) return;
@@ -890,14 +922,10 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     try {
       // Always fetch:
       //   - task metadata (cheap; drives status badge, header, result fallback)
-      //   - activity timeline (small parsed JSON; drives Activity tab + Result panel)
-      // Lazy:
-      //   - raw events (potentially MB-class on long-running tasks);
-      //     only refetched when the user is currently looking at the
-      //     Raw events tab. Switching to that tab fires a one-shot
-      //     fetch (see the separate effect below) so the user never
-      //     sees a stale "click Raw events to load" placeholder.
-      const promises: Promise<void>[] = [
+      //   - activity timeline (small parsed JSON; drives Activity tab,
+      //     Result panel, AND the Raw tab — which now just renders the
+      //     activity payload as JSON, no separate request needed)
+      await Promise.all([
         getTask(taskId).then((t) => {
           if (!mountedRef.current || token !== taskTokenRef.current) return;
           setTask(t);
@@ -906,32 +934,18 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
           .then((a) => {
             if (!mountedRef.current || token !== taskTokenRef.current) return;
             setActivity(a);
+            setActivityError(null);
           })
-          .catch(() => {
+          .catch((e) => {
             if (!mountedRef.current || token !== taskTokenRef.current) return;
             setActivity(null);
+            setActivityError((e as Error).message);
           }),
-      ];
-      if (tabRef.current === "events") {
-        promises.push(
-          fetchTaskEvents(taskId)
-            .then((ev) => {
-              if (!mountedRef.current || token !== taskTokenRef.current) return;
-              setEvents(ev);
-              setEventsError(null);
-            })
-            .catch((e) => {
-              if (!mountedRef.current || token !== taskTokenRef.current) return;
-              setEvents(null);
-              setEventsError((e as Error).message);
-            }),
-        );
-      }
-      await Promise.all(promises);
+      ]);
     } catch (e) {
       if (!mountedRef.current || token !== taskTokenRef.current) return;
       setTask(null);
-      setEventsError((e as Error).message);
+      setActivityError((e as Error).message);
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current && token === taskTokenRef.current) {
@@ -942,44 +956,15 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 
   useEffect(() => {
     // Always reset the per-task fetched state when the URL switches
-    // tasks. Without this, switching from task A (which had loaded
-    // events) to task B leaves A's events in state — and the lazy
-    // events effect below would then short-circuit on `events !== null`
-    // and never fetch B's events, showing A's bytes under B's header.
+    // tasks. Without this, switching from task A to task B leaves A's
+    // activity in state and the next render shows A's payload under B's
+    // header until the new fetch resolves.
     setTask(null);
     setActivity(null);
-    setEvents(null);
-    setEventsError(null);
+    setActivityError(null);
     if (!taskId) return;
     void refreshDetail();
   }, [taskId, refreshDetail]);
-
-  // One-shot fetch when the user first switches to the Raw events
-  // tab. Subsequent automatic refreshes (if the task is still
-  // running) flow through `refreshDetail` because tabRef now reads
-  // "events". Once the task reaches a terminal status the events log
-  // is immutable, so no further fetches are needed even if the user
-  // keeps the tab open.
-  useEffect(() => {
-    if (!taskId) return;
-    if (tab !== "events") return;
-    if (events !== null || eventsError !== null) return;
-    let cancelled = false;
-    fetchTaskEvents(taskId)
-      .then((ev) => {
-        if (cancelled || !mountedRef.current) return;
-        setEvents(ev);
-        setEventsError(null);
-      })
-      .catch((e) => {
-        if (cancelled || !mountedRef.current) return;
-        setEventsError((e as Error).message);
-        setEvents(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, taskId, events, eventsError]);
 
   // Auto-poll while running so the runtime's event log + status update
   // without a manual refresh click. Cadence comes from the parent (which
@@ -1135,11 +1120,11 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         </button>
         <button
           type="button"
-          className={`pills__btn${tab === "events" ? " pills__btn--active" : ""}`}
-          onClick={() => setTab("events")}
-          title="Raw NDJSON event log (debug)"
+          className={`pills__btn${tab === "raw" ? " pills__btn--active" : ""}`}
+          onClick={() => setTab("raw")}
+          title="Same activity payload as the Activity tab, rendered as raw JSON for debugging"
         >
-          Raw events
+          Raw JSON
         </button>
         <button
           type="button"
@@ -1152,29 +1137,28 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 
       {tab === "activity" && (
         <div className="task-detail__body">
-          <ActivityView activity={activity} eventsError={eventsError} />
+          <ActivityView activity={activity} activityError={activityError} />
         </div>
       )}
 
-      {tab === "events" && (
+      {tab === "raw" && (
         <div className="task-detail__body">
-          {events === null && eventsError && (
+          {activity === null && activityError && (
             <p className="muted">
-              Events not available yet
-              {eventsError ? `: ${eventsError}` : ""}.
+              Activity not available yet
+              {activityError ? `: ${activityError}` : ""}.
             </p>
           )}
-          {events === null && !eventsError && (
+          {activity === null && !activityError && (
             // 404 NoEventsYet from the server — the runtime hasn't
-            // produced an event log file yet (common in the first
-            // seconds of a task's life, before the agent's first event).
-            // The list-view auto-poll plus the detail panel's own
-            // poll-while-running will surface events as they appear.
-            <p className="muted">No events yet for this task.</p>
+            // produced any activity yet (common in the first seconds
+            // of a task's life, before the agent's first event). The
+            // poll-while-running loop will surface activity as it
+            // appears.
+            <p className="muted">No activity yet for this task.</p>
           )}
-          {events !== null && events.length === 0 && <p className="muted">No events yet.</p>}
-          {events !== null && events.length > 0 && (
-            <pre className="task-detail__events">{formatEventsJsonl(events)}</pre>
+          {activity !== null && (
+            <pre className="task-detail__events">{JSON.stringify(activity, null, 2)}</pre>
           )}
         </div>
       )}
@@ -1211,17 +1195,17 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
  */
 function ActivityView({
   activity,
-  eventsError,
+  activityError,
 }: {
   activity: TaskActivity | null;
-  eventsError: string | null;
+  activityError: string | null;
 }) {
   if (activity === null) {
-    if (eventsError) {
+    if (activityError) {
       return (
         <p className="muted">
           Activity not available
-          {eventsError ? `: ${eventsError}` : ""}.
+          {activityError ? `: ${activityError}` : ""}.
         </p>
       );
     }
@@ -1315,44 +1299,3 @@ function ActivityRow({ item }: { item: ActivityItem }) {
 }
 
 // ─ helpers ─
-
-/**
- * Pretty-print an NDJSON event log payload by parsing each line and showing
- * the timestamp + type prefix on its own line. Lines that don't parse as
- * JSON are passed through verbatim so we don't lose any information. The
- * NDJSON shape itself is a Copilot-specific assumption; if a future runtime
- * publishes a non-NDJSON log this formatter will fall through to verbatim
- * passthrough and we'll add a runtime-aware renderer when needed.
- */
-function formatEventsJsonl(raw: string): string {
-  // Strip a leading UTF-8 BOM if present. NDJSON producers occasionally
-  // emit one (text-mode writes on Windows, some logging libraries); left
-  // in place it would make the first line fail JSON.parse and fall
-  // through to the verbatim path, dumping the BOM marker into the
-  // rendered pane.
-  const normalized = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-  const lines = normalized.split(/\r?\n/);
-  const out: string[] = [];
-  for (const line of lines) {
-    if (line.trim() === "") continue;
-    try {
-      const obj = JSON.parse(line) as Record<string, unknown>;
-      const ts =
-        typeof obj.timestamp === "string"
-          ? obj.timestamp
-          : typeof obj.ts === "string"
-            ? obj.ts
-            : "";
-      const type =
-        typeof obj.type === "string"
-          ? obj.type
-          : typeof obj.event === "string"
-            ? obj.event
-            : "event";
-      out.push(`${ts} [${type}] ${JSON.stringify(obj)}`);
-    } catch {
-      out.push(line);
-    }
-  }
-  return out.join("\n");
-}

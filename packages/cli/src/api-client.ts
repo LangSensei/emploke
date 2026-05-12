@@ -159,9 +159,9 @@ export class ApiClient {
   /**
    * Issue the request without buffering / parsing the response body.
    * Returns the raw {@link Response} so the caller can stream `res.body`
-   * directly — necessary for endpoints like `tasks.events` that may
-   * deliver an arbitrarily-large NDJSON payload over a long-running
-   * connection. The caller is responsible for:
+   * directly — necessary for endpoints that may deliver an arbitrarily-
+   * large payload over a long-running connection. The caller is
+   * responsible for:
    *   - checking `res.ok` / `res.status`
    *   - draining or piping `res.body`
    *   - throwing {@link ApiError} on non-2xx if that's the desired UX

@@ -55,8 +55,9 @@ export class AgentNotFoundError extends TaskError {
 
 /**
  * Thrown by `TaskManager.get` / `delete` when the requested id has no
- * persisted record (dir missing, task.json missing, or task.json is
- * structurally unusable).
+ * persisted record (no row in `tasks.db` and, in default-archive mode,
+ * the row is unparseable; in `purge: true` mode, the workdir is
+ * absent too).
  */
 export class TaskNotFoundError extends TaskError {
   constructor(public readonly id: string) {
@@ -122,8 +123,8 @@ export class TaskIdAllocationFailedError extends TaskError {
 }
 
 /**
- * Thrown when `TaskRepository.read` finds a `task.json` whose shape or
- * `schemaVersion` is incompatible with the current build. Manager's
+ * Thrown when `TaskRepository.read` finds a persisted row whose shape
+ * or `schemaVersion` is incompatible with the current build. Manager's
  * `recoverOrphaned` may catch and quarantine; direct `read(id)` callers
  * (e.g. the dashboard's "open task" path) propagate it as a 5xx.
  */

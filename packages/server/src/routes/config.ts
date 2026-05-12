@@ -55,10 +55,9 @@ export function configRoutes(deps: {
   /**
    * Optional override for the dashboard task-list poll cadence. Defaults
    * to 4000 ms — chosen as a tradeoff between snappiness and server load
-   * (TaskManager.list() walks the workspace tasks/ dir and reads each
-   * task.json on every call). Operators can lower this for faster UI
-   * feedback at the cost of more reads, or raise it for very large
-   * workspaces.
+   * (TaskManager.list() runs an indexed SELECT on every call). Operators
+   * can lower this for faster UI feedback at the cost of more reads,
+   * or raise it for very large workspaces.
    */
   taskPollIntervalMs?: number;
 }): Hono {

@@ -72,19 +72,20 @@ Three properties matter:
 1. **Domain types are clean.** `Workspace`, `Task`, `Session`, `Skill`,
    `Agent` are flat value types with no `schemaVersion`, no `metadata`
    wrapper, no fs-shaped fields beyond a single `workdir` on `Workspace`.
-   The `schemaVersion` lives only inside the FS repository's wire format
-   (the `task.json` / `workspace.json` on disk wrap the value in
-   `{schemaVersion: N, ...fields}`); the manager strips it on read.
+   The `schemaVersion` lives only inside the repository's wire format
+   (FS-backed entities wrap the value in `{schemaVersion: N, ...fields}`
+   on disk; SQLite-backed entities track it in a `schema_meta` row);
+   the manager strips it on read.
 2. **Repositories are bytes in / bytes out.** They never parse
    frontmatter, build dependency graphs, or maintain caches — those are
    manager concerns. The repository's job is "given an id, return the
    stored value (or null)."
-3. **InMemory implementations exist for tests.** Every entity package
-   exports one at `@emploke/<pkg>/testing`. Test code consumes the same
-   manager class as production but injects the in-memory repo — fast,
-   no `mkdtemp` ritual, and crucially the InMemory impl validates ids
-   the same way the FS impl does so tests can't pass with malformed
-   inputs that production would reject.
+3. **InMemory implementations exist for FS-backed entity tests.** Every
+   FS-backed entity package (today: `workspace`) exports one at
+   `@emploke/<pkg>/testing`. SQLite-backed entities (catalog, session,
+   task) instead expose their `Sqlite*Repository` constructed with
+   `":memory:"` for the same role — isolated, lifetime-of-the-test,
+   validates ids the same way the on-disk DB does.
 
 ## `@emploke/fs`: the atomic IO seam
 
@@ -98,12 +99,101 @@ primitives in [`packages/fs`](../packages/fs):
 | `readJson`              | `readFile` + `JSON.parse` with a 10 MB cap (DoS guard); double-checked post-read to defeat stat/read TOCTOU races.            |
 | `withFileLock`          | Advisory lock backed by an `O_EXCL` lockfile, with PID-aware stale recovery (stuck PID → wait; dead PID → steal).             |
 
-These are the **only** allowed paths to durable state in the repo. A
-catalog `write()`, a workspace registry mutation, a task.json save —
-all flow through these. CI failures and production incidents disappear
-when an entity rewrite forgets to use them; the parameterised
-regression test in `packages/catalog/test/fs-repositories.test.ts`
-spies on `writeFileAtomic` to keep that from happening again.
+These are the **only** allowed paths to durable state in the FS-backed
+repo. A catalog `write()`, a workspace registry mutation, a runtime
+breadcrumb save — all flow through these. CI failures and production
+incidents disappear when an entity rewrite forgets to use them; the
+parameterised regression test in
+`packages/catalog/test/fs-repositories.test.ts` spies on
+`writeFileAtomic` to keep that from happening again. SQLite-backed
+entities (catalog, session, task) get the equivalent guarantees from
+WAL mode + transactions and don't go through this layer.
+
+## Backend selection: when FS, when SQLite
+
+emploke deliberately does **not** abstract over its persistence
+backend. Each entity package picks the storage shape that matches its
+data, and the rule below is the contract every new entity should follow.
+
+**Use FS when ALL of these hold:**
+
+- Data is per-id documents (one row → one file)
+- N per workspace stays small (tens, occasionally low hundreds)
+- Queries are list / read-by-id / single-field filter
+- No BLOB content
+- No cross-entity graph traversal
+- No full-text search
+- Operational benefit from a human-readable on-disk format
+  (debugging, recovery, `git diff`, hand-edits)
+
+Per-id JSON via `@emploke/fs.writeJsonAtomic` + `readJson`. Listing
+scans the directory. Filters apply in memory after read.
+
+**Today:** `workspace` (small N, no complex queries, value of
+hand-editable `workspace.json` outweighs the cost of `readdir` +
+N JSON parses).
+
+**Use SQLite when ANY of these hold:**
+
+- Cross-entity joins or dependency-graph traversal
+- Many rows (1000+) where directory scan + per-row read becomes the
+  bottleneck
+- Filtering / sorting / aggregation queries are primary access patterns
+- BLOB content where holding it all in memory is infeasible
+- Full-text search or indexed range queries
+
+One `*.db` file per **(package, workspace)** pair via `node:sqlite`
+(no external dependency). Each entity package owns its own `*.db`
+file inside its existing per-workspace subdirectory
+(`<workspaceRoot>/<entity>/<entity>.db`). The repository owns the
+schema, migrations, and indexes for that file. The manager holds no
+in-memory snapshot — SQLite is the source of truth and reads run in
+autocommit so external writes are observable on the next request.
+
+**Today:** `catalog` (cross-entity dep graph + BLOB content),
+`session` (status/runtime/time filtering at projected scale of
+thousands of sessions per workspace), `task` (same plus dashboard
+aggregation across workspaces).
+
+### Hybrid: when an entity has both metadata and content
+
+`session` and `task` use a **hybrid** pattern: SQLite owns the
+queryable metadata; FS owns the human-meaningful content. The
+metadata sidecar that used to live on disk (`session.json` /
+`task.json` in the pre-SQLite layout) moves into a row of the
+entity's `*.db`; the workdir directory tree
+(`<workspaceRoot>/sessions/<sid>/...` for session, `.../tasks/<tid>/`
+for task) stays a plain directory of agent-produced files (AGENTS.md,
+artifacts, captured stderr). The default `delete(id)` removes only
+the metadata row (the "archive" mode — matches the workspace-wide
+"purge is opt-in" pattern, giving operators a chance to inspect
+agent output after a delete); `delete(id, { purge: true })`
+additionally removes the workdir AND asks the runtime to wipe its
+own per-entity state (Copilot's `<copilotStateDir>/<id>/` etc.) via
+`Runtime.deleteState` (sessions) / `Runtime.deleteTaskState` (tasks),
+so a hard delete leaves nothing behind across the layers.
+
+This split keeps the workdir-as-product invariant (`cd` into a session
+workdir, find the agent's actual output, grep it, commit it to your
+own git history) while moving the metadata into a shape that scales
+to thousands of rows under filtering / sorting queries.
+
+### Why no unified persistence service
+
+#32 explored a generic `PersistenceService` (Phase 2 of the proposed
+`@emploke/storage`). It was deliberately not built. The shared
+concerns — atomic write, cross-process lock, EPERM retry, TOCTOU
+defence — already live in `@emploke/fs`. Beyond that, each entity's
+repository surface is shaped by its own queries:
+`WorkspaceRepository.getCurrent()`,
+`TaskRepository.list({ statuses, runtime, ... })`,
+`CatalogManager.resolveAgent()` (graph). A unified interface would
+force these into either an `unknown`-typed lowest common denominator
+or a parade of entity-specific extension methods that re-introduce
+the per-entity shape it was meant to remove.
+
+The pattern that works: **shared primitives, per-entity repositories,
+per-entity backend choice driven by data shape.**
 
 ## Unified verb conventions
 
@@ -162,15 +252,17 @@ production deploy fails fast.
 │   ├── agents/<name>/AGENTS.md  + arbitrary sibling files (templates, scripts)
 │   ├── skills/<name>/SKILL.md   + arbitrary sibling files (incl. hooks/copilot/)
 │   └── mcps/<name>.json
-├── sessions/<id>/               agent-baked workdir; `copilot` runs here
-│   ├── AGENTS.md                materialised from catalog at create time
-│   ├── .mcp.json                merged from agent's MCP deps
-│   └── .github/{skills,hooks}/  materialised from catalog
-├── tasks/<id>/                  one-shot autonomous dispatch
-│   ├── task.json                { schemaVersion, ...task fields }
-│   ├── session/                 → junction → runtime's per-task state dir
-│   ├── stderr.log               CLI errors before session dir exists
-│   └── ...                      whatever the agent writes
+├── sessions/
+│   ├── sessions.db              SQLite — one row per session: status, runtime, agent, timings, …
+│   └── <id>/                    agent-baked workdir; `copilot` runs here
+│       ├── AGENTS.md            materialised from catalog at create time
+│       ├── .mcp.json            merged from agent's MCP deps
+│       └── .github/{skills,hooks}/  materialised from catalog
+├── tasks/
+│   ├── tasks.db                 SQLite — one row per task: status, runtime, agent, timings, …
+│   └── <id>/                    one-shot autonomous dispatch — workdir for agent artifacts
+│       ├── stderr.log           CLI errors (the runtime owns its event log via taskActivity, NOT mirrored here)
+│       └── ...                  whatever the agent writes
 └── (workflows/, logs/, schedules/ — added when those entities land)
 ```
 
@@ -203,7 +295,7 @@ interface Runtime {
                                                                 //   preconditions keyed off workspaceDir
   deleteState(session): Promise<void>;                    // remove CLI's per-session state
   dispatchTask?(opts): Promise<TaskHandle>;               // optional: one-shot non-interactive
-  taskEventsPath?(taskWorkdir): string | null;            // optional: where to find task events
+  taskActivity?(opts): Promise<TaskActivityResult|null>;  // optional: read+parse runtime log into ActivityItem[]
 }
 ```
 
@@ -295,8 +387,11 @@ To add e.g. a Gemini adapter:
    Pull agent + skill content from the supplied `catalog` argument
    via `agentEntries` / `skillEntries`; write into the supplied
    `taskDir`. Never resolve catalog paths from the resolve result.
-3. Implement `taskEventsPath` to expose where the CLI writes its
-   per-session event log; the dashboard streams the bytes opaquely.
+3. Implement `taskActivity` to read your runtime's per-task log
+   end-to-end (find file → read → parse → derive headline) and return
+   the runtime-neutral `{ activity: ActivityItem[], result: string|null }`.
+   The dashboard renders ActivityItems without ever seeing your log
+   format or path.
 4. Register the runtime in the `RuntimeRegistry` at
    `packages/server/src/runtime-registry.ts`.
 

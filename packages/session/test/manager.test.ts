@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -14,15 +14,10 @@ import {
   AgentNotFoundError,
   InvalidSessionIdError,
   SessionManager,
+  type SessionManagerConfig,
   SessionNotFoundError,
+  SqliteSessionRepository,
 } from "../src/index.js";
-
-// session.json wire format constants — these used to be exported from
-// @emploke/session but are now FsSessionRepository implementation
-// details. The tests still verify on-disk shape so they redeclare the
-// constants locally.
-const SESSION_FILE_NAME = "session.json";
-const CURRENT_SCHEMA_VERSION = 2;
 
 // ───── helpers ──────────────────────────────────────────────
 
@@ -30,12 +25,39 @@ let sessionsDir: string;
 let scratch: string;
 let catalogDir: string;
 
+/**
+ * Per-test repos that the buildManager helper hands out. Tracked so
+ * afterEach can close them — important on Windows where leaked WAL
+ * sidecar handles would block the temp-dir `rm`. Using `:memory:`
+ * SQLite means there's no on-disk file to leak in the first place,
+ * but we still close to release any internal handles.
+ */
+let openRepos: SqliteSessionRepository[] = [];
+
+function makeRepo(): SqliteSessionRepository {
+  const repo = new SqliteSessionRepository(":memory:");
+  openRepos.push(repo);
+  return repo;
+}
+
+/**
+ * Construct a `SessionManager` with a fresh `:memory:` SQLite
+ * repository injected. Tests that need to inspect the persisted state
+ * can override `opts.repository` with their own repo instance (the
+ * spread order means `opts` wins over the default).
+ */
+function buildManager(opts: SessionManagerConfig): SessionManager {
+  return new SessionManager({ repository: makeRepo(), ...opts });
+}
+
 beforeEach(async () => {
   sessionsDir = await mkdtemp(path.join(tmpdir(), "emploke-sessions-root-"));
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-sessions-scratch-"));
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
+  for (const r of openRepos) r.close();
+  openRepos = [];
   await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });
@@ -167,7 +189,7 @@ const recorder = () => {
 
 describe("SessionManager construction", () => {
   it("constructs with catalog + runtimeRegistry + sessionsDir", () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -180,15 +202,17 @@ describe("SessionManager construction", () => {
 // ───── create ────────────────────────────────────────────────
 
 describe("create()", () => {
-  it("provisions, persists session.json, returns Session shape", async () => {
+  it("provisions, persists state, returns Session shape", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const repo = makeRepo();
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
       randomBytes: seqRandom(),
+      repository: repo,
     });
     const s = await m.create({ agent: "demo" });
 
@@ -200,9 +224,11 @@ describe("create()", () => {
     expect(s.workdir).toBe(path.join(sessionsDir, s.id));
     expect(rt.provisionCalls).toHaveLength(1);
 
-    const persisted = JSON.parse(await readFile(path.join(s.workdir, SESSION_FILE_NAME), "utf8"));
+    // Persisted state lives in the SQLite repository row, not in a
+    // workdir sidecar. Inspect via the same handle the manager wrote
+    // through.
+    const persisted = await repo.read(s.id);
     expect(persisted).toEqual({
-      schemaVersion: CURRENT_SCHEMA_VERSION,
       runtime: "copilot",
       createdAt: "2026-05-08T01:05:00.000Z",
       runtimeSessionId: "12345678-1234-1234-1234-1234567890ab",
@@ -210,7 +236,7 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -220,7 +246,7 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError when catalog rejects", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -230,7 +256,7 @@ describe("create()", () => {
   });
 
   it("throws UnknownRuntimeError when runtime kind is not registered", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime("copilot")),
       sessionsDir,
@@ -245,7 +271,7 @@ describe("create()", () => {
     const claudeRt = new StubRuntime("claude");
     const reg = new RuntimeRegistry();
     reg.register(claudeRt);
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: reg,
       defaultRuntime: "claude",
@@ -259,7 +285,7 @@ describe("create()", () => {
   it("cleans up workdir on provisioner failure", async () => {
     const rt = new StubRuntime();
     rt.provisionError = new RuntimeProvisionFailed("copilot", "/x", new Error("boom"));
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -273,7 +299,7 @@ describe("create()", () => {
   it("supports null runtimeSessionId at create time (gemini-style)", async () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -288,7 +314,7 @@ describe("create()", () => {
 
 describe("list()", () => {
   it("returns empty when sessionsDir does not exist", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir: path.join(sessionsDir, "missing"),
@@ -297,10 +323,10 @@ describe("list()", () => {
     expect(await m.list()).toEqual([]);
   });
 
-  it("ignores dirs without a readable session.json", async () => {
+  it("ignores stray workdirs that have no corresponding state row", async () => {
     const r = recorder();
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -308,35 +334,19 @@ describe("list()", () => {
       logger: r.logger,
     });
     await m.create({ agent: "demo" });
+    // Directories on disk with no SQLite row are invisible to list()
+    // — the repository drives the listing, not a directory scan. The
+    // old FS-backed tests covered the same scenario via "dirs without
+    // session.json"; the SQLite version of the same invariant is
+    // "dirs without a row".
     await mkdir(path.join(sessionsDir, "20260101-deadbeef"), { recursive: true });
     await mkdir(path.join(sessionsDir, "not-a-session"), { recursive: true });
     const out = await m.list();
     expect(out).toHaveLength(1);
   });
 
-  it("ignores dirs whose session.json is corrupted", async () => {
-    const r = recorder();
-    const rt = new StubRuntime();
-    const m = new SessionManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: makeRegistry(rt),
-      sessionsDir,
-      workspaceDir: scratch,
-      logger: r.logger,
-    });
-    await m.create({ agent: "demo" });
-    const stray = path.join(sessionsDir, "20260101-cafebabe");
-    await mkdir(stray, { recursive: true });
-    await writeFile(path.join(stray, SESSION_FILE_NAME), "{not json", "utf8");
-    const out = await m.list();
-    expect(out).toHaveLength(1);
-    // Corruption is logged via FsSessionRepository's list-time drop (no
-    // explicit warn from the manager — the repository swallows the
-    // typed error so the listing keeps working).
-  });
-
   it("filters by agent", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
@@ -354,7 +364,7 @@ describe("list()", () => {
   it("filters by createdSince and skips refresh on excluded sessions", async () => {
     const rt = new StubRuntime();
     let nowMs = Date.UTC(2026, 0, 1); // Jan 1 2026
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -377,7 +387,7 @@ describe("list()", () => {
 
   it("createdSince combined with agent narrows further", async () => {
     let nowMs = Date.UTC(2026, 0, 1);
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
@@ -404,7 +414,7 @@ describe("list()", () => {
       preview: "did stuff",
       runtimeSessionId: rt.provisionId as string,
     };
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -418,7 +428,7 @@ describe("list()", () => {
 
   it("treats null refresh as no activity (lastActiveAt/preview stay null)", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -433,28 +443,33 @@ describe("list()", () => {
   it("warns and skips sessions whose runtime is not registered", async () => {
     const r = recorder();
     // Create a session under "copilot" but then construct a manager whose
-    // registry doesn't know "copilot".
+    // registry doesn't know "copilot". Both managers share the same
+    // SQLite repository so the runtime-mismatch happens at the manager
+    // layer, not at the storage layer.
+    const sharedRepo = makeRepo();
     const rtA = new StubRuntime();
-    const m1 = new SessionManager({
+    const m1 = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
       sessionsDir,
       workspaceDir: scratch,
+      repository: sharedRepo,
     });
     await m1.create({ agent: "demo" });
 
-    const m2 = new SessionManager({
+    const m2 = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime("gemini")),
       sessionsDir,
       workspaceDir: scratch,
       logger: r.logger,
+      repository: sharedRepo,
     });
     expect(await m2.list()).toEqual([]);
     expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
   });
 
-  it("persists discovered runtimeSessionId back to session.json (gemini-style)", async () => {
+  it("persists discovered runtimeSessionId back to the repository (gemini-style)", async () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
     rt.refreshResult = {
@@ -462,22 +477,24 @@ describe("list()", () => {
       preview: null,
       runtimeSessionId: "33333333-3333-3333-3333-333333333333",
     };
-    const m = new SessionManager({
+    const repo = makeRepo();
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
+      repository: repo,
     });
     const s = await m.create({ agent: "demo" });
     const [out] = await m.list();
     expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-    const persisted = JSON.parse(await readFile(path.join(s.workdir, SESSION_FILE_NAME), "utf8"));
-    expect(persisted.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
+    const persisted = await repo.read(s.id);
+    expect(persisted?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
   it("sorts never-launched sessions first, then active by lastActiveAt desc (#43)", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -505,7 +522,7 @@ describe("list()", () => {
 
   it("activeSince filter drops sessions whose lastActiveAt is null or older than the cutoff", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -540,7 +557,7 @@ describe("list()", () => {
     // createdAt for such sessions, otherwise the dashboard hides every
     // brand-new session behind its default time filter.
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -561,7 +578,7 @@ describe("list()", () => {
 
 describe("get()", () => {
   it("returns the record by id", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -573,7 +590,7 @@ describe("get()", () => {
   });
 
   it("returns null for valid-but-unknown id", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -583,7 +600,7 @@ describe("get()", () => {
   });
 
   it("throws InvalidSessionIdError for malformed id", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -597,7 +614,7 @@ describe("get()", () => {
 
 describe("delete()", () => {
   it("removes the metadata; workdir is preserved by default", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -613,7 +630,7 @@ describe("delete()", () => {
   });
 
   it("removes the workdir when purge=true", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -625,7 +642,7 @@ describe("delete()", () => {
   });
 
   it("throws SessionNotFoundError for unknown id", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -635,7 +652,7 @@ describe("delete()", () => {
   });
 
   it("validates id format", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -644,40 +661,45 @@ describe("delete()", () => {
     await expect(m.delete("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 
-  it("with deleteRuntimeState=true: calls runtime.deleteState before rm", async () => {
+  it("with purge=true: calls runtime.deleteState before removing row + workdir", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    await m.delete(s.id, { deleteRuntimeState: true });
+    await m.delete(s.id, { purge: true });
     expect(rt.deleteStateCalls).toHaveLength(1);
     expect(rt.deleteStateCalls[0]?.id).toBe(s.id);
+    // workdir gone
+    await expect(stat(s.workdir)).rejects.toThrow();
   });
 
-  it("with deleteRuntimeState=true: surfaces failure and leaves workdir intact", async () => {
+  it("with purge=true: runtime failure leaves both row and workdir intact", async () => {
     const rt = new StubRuntime();
     rt.deleteStateError = new RuntimeStateDeletionFailed("copilot", "anyid", new Error("EBUSY"));
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    await expect(m.delete(s.id, { deleteRuntimeState: true })).rejects.toBeInstanceOf(
+    await expect(m.delete(s.id, { purge: true })).rejects.toBeInstanceOf(
       RuntimeStateDeletionFailed,
     );
+    // workdir survives — caller can retry without partial state
     const st = await stat(s.workdir);
     expect(st.isDirectory()).toBe(true);
+    // row also survives — m.get(...) still finds it
+    expect(await m.get(s.id)).not.toBeNull();
   });
 
-  it("without deleteRuntimeState: does not call runtime.deleteState", async () => {
+  it("default (archive): does NOT call runtime.deleteState and preserves workdir", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -686,6 +708,11 @@ describe("delete()", () => {
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id);
     expect(rt.deleteStateCalls).toEqual([]);
+    // workdir preserved on disk for recovery / inspection
+    const st = await stat(s.workdir);
+    expect(st.isDirectory()).toBe(true);
+    // but the row is gone — m.get(...) returns null
+    expect(await m.get(s.id)).toBeNull();
   });
 });
 
@@ -694,7 +721,7 @@ describe("delete()", () => {
 describe("buildLaunch()", () => {
   it("returns launch command for a real session", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -721,7 +748,7 @@ describe("buildLaunch()", () => {
       preview: null,
       runtimeSessionId: "abcdef12-3456-7890-abcd-ef1234567890",
     };
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -733,7 +760,7 @@ describe("buildLaunch()", () => {
   });
 
   it("throws SessionNotFoundError for unknown", async () => {
-    const m = new SessionManager({
+    const m = buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,

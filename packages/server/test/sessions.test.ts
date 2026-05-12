@@ -283,28 +283,22 @@ describe("sessionsRoutes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("DELETE /:id?deleteRuntimeState=1 propagates option (purge defaults to false)", async () => {
+  it("DELETE /:id?purge=1 propagates the purge flag (full wipe)", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?deleteRuntimeState=1", {
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", {
-      deleteRuntimeState: true,
-      purge: false,
-    });
+    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", { purge: true });
   });
 
-  it("DELETE /:id?purge=1 propagates the purge flag", async () => {
+  it("DELETE /:id without ?purge=1 archives (purge defaults to false)", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", { method: "DELETE" });
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05", { method: "DELETE" });
     expect(res.status).toBe(204);
-    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", {
-      deleteRuntimeState: false,
-      purge: true,
-    });
+    expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", { purge: false });
   });
 
   it("DELETE /:id maps RuntimeStateDeletionFailed to 409", async () => {
@@ -313,7 +307,7 @@ describe("sessionsRoutes", () => {
         throw new RuntimeStateDeletionFailed("copilot", "20260508-9dfbdf05", new Error("EBUSY"));
       }),
     });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?deleteRuntimeState=1", {
+    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(409);
@@ -430,7 +424,7 @@ describe("sessionsRoutes", () => {
         method: "DELETE",
       });
       expect(res.status).toBe(204);
-      expect(del).toHaveBeenCalledWith(sid, { deleteRuntimeState: false, purge: false });
+      expect(del).toHaveBeenCalledWith(sid, { purge: false });
       // Negative assertion: the workspace UUID must never reach the manager.
       expect(del).not.toHaveBeenCalledWith(wsId, expect.anything());
     });

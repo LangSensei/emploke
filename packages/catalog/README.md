@@ -26,12 +26,23 @@ The layout is hard-coded:
 
 ```
 <root>/
+├── catalog.db               ← SQLite source of truth (agents, skills, mcps, files BLOBs, dep graph)
 ├── skills/
 │   └── <name>/
-│       └── SKILL.md          ← frontmatter + Markdown body, full file preserved on install
+│       └── SKILL.md         ← frontmatter + Markdown body, also mirrored into catalog.db on install
 └── mcps/
-    └── <name>.json           ← single JSON file, content opaque to emploke
+    └── <name>.json          ← single JSON file, content opaque to emploke
 ```
+
+`catalog.db` is the source of truth — the loose files in `skills/` and
+`mcps/` are written for human inspection and are re-derived from the
+DB on any read path that wants them.
+
+> Why SQLite for catalog?
+> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
+> for the project-wide decision rule. Catalog has cross-entity
+> dependency-graph queries (`resolveAgent`) and BLOB content streams,
+> which are exactly the cases the rule says SQLite owns.
 
 ## Quick start
 

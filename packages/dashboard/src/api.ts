@@ -561,16 +561,15 @@ export const createSession = async (agent: string, runtime?: string): Promise<Se
   return mutateJson<SessionRecord>(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
 };
 
-export const deleteSession = (id: string, deleteRuntimeState = false) => {
-  // Sessions are sandbox dirs (only emploke-managed contents) — the
-  // dashboard "delete" action removes both metadata and workdir.
-  // `?purge=1` enables the workdir removal; the manager defaults to
-  // metadata-only so the API matches workspace/task semantics. A
-  // future "archive" mode (preserve workdir) would expose this as a
-  // checkbox in the confirm modal.
-  const params: string[] = ["purge=1"];
-  if (deleteRuntimeState) params.push("deleteRuntimeState=1");
-  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}?${params.join("&")}`, {
+export const deleteSession = (id: string, opts?: { purge?: boolean }) => {
+  // Default ("archive") removes only the session metadata row — workdir
+  // contents (AGENTS.md + agent-produced files) and the runtime
+  // adapter's per-session state both stay on disk so the user can
+  // recover or inspect them later. `{ purge: true }` is the hard-delete
+  // path: row + workdir + runtime state, all gone. The confirm modal
+  // exposes this as a single checkbox.
+  const qs = opts?.purge ? "?purge=1" : "";
+  return mutate(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}${qs}`, {
     method: "DELETE",
   });
 };
@@ -684,10 +683,10 @@ export const updateWorkspaceMetadata = async (
 // A Task is an autonomous one-shot agent invocation: dispatch a brief +
 // instructions, the runtime spawns the agent, and the dashboard polls for
 // terminal status. Each runtime publishes its own native event log; the
-// server resolves the path via the runtime's `taskEventsPath` surface and
-// streams the bytes opaquely. Filename, format, and on-disk layout are
-// runtime-specific (today the Copilot adapter writes NDJSON; future
-// runtimes may differ).
+// server fetches the parsed timeline via the runtime's `taskActivity`
+// surface (`/api/.../tasks/:tid/activity`) which returns runtime-neutral
+// `ActivityItem[]`. Filename, format, and on-disk layout of the underlying
+// log stay inside the runtime adapter; the dashboard never sees them.
 
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
@@ -763,31 +762,17 @@ export const dispatchTask = async (
   return mutateJson<TaskRecord>(`${workspacePrefix()}/tasks`, jsonInit("POST", body));
 };
 
-export const deleteTask = (id: string) =>
-  // Tasks are sandbox dirs — `?purge=1` ensures both metadata and
-  // workdir are removed so the dashboard "delete" UI behaves as the
-  // user expects (no leftover files). A future "archive" mode would
-  // toggle this off.
-  mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}?purge=1`, { method: "DELETE" });
-
-/**
- * Build the URL to the task event stream. The server resolves the
- * underlying file via `Runtime.taskEventsPath` and returns its bytes as
- * `application/x-ndjson` (today, since the only runtime is Copilot's
- * NDJSON; future runtimes may serve other formats and the dashboard
- * will need to branch on `task.metadata.runtime` to render them). We
- * fetch the whole file with `fetch().text()` rather than EventSource
- * because the route is a one-shot read, not SSE; the polling loop on
- * the detail page handles "tail" semantics.
- */
-export const taskEventsUrl = (id: string): string =>
-  `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/events`;
-
-export const fetchTaskEvents = async (id: string): Promise<string | null> => {
-  const r = await fetch(taskEventsUrl(id));
-  if (r.status === 404) return null;
-  if (!r.ok) throw new Error(await extractError(r));
-  return r.text();
+export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
+  // Default ("archive") removes only the task metadata row — workdir
+  // contents (stderr.log, agent artifacts) stay on disk so the user
+  // can inspect the run after the fact; the runtime's own per-task
+  // state (Copilot's events.jsonl / session-state dir) is also
+  // preserved. `{ purge: true }` is the hard-delete path: row +
+  // workdir + runtime state all go, in that order — runtime first
+  // so a runtime failure aborts before any local removal (mirrors
+  // session-delete semantics).
+  const qs = opts?.purge ? "?purge=1" : "";
+  return mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
 };
 
 /**
