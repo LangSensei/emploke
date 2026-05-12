@@ -263,13 +263,18 @@ export class SessionManager {
     // A failed save is logged but does not fail the call: the launch
     // command is already valid and the worst case is the next page
     // refresh shows the previous default.
+    //
+    // Uses `patchLastLaunchMode` (a single-statement UPDATE) instead
+    // of `read → save({...prev, lastLaunchMode})` so two concurrent
+    // `buildLaunch` calls for the same session id (e.g. "Resume Local"
+    // in tab A and "Resume Remote" in tab B fired within the same
+    // event-loop tick) cannot lose each other's writes to OTHER
+    // persisted fields. Last writer of `lastLaunchMode` itself still
+    // wins, which is the intended UX. See issue #56.
     const desiredMode: "local" | "remote" = opts.remote === true ? "remote" : "local";
     if (session.lastLaunchMode !== desiredMode) {
       try {
-        const prev = await this.repository.read(id);
-        if (prev !== null) {
-          await this.repository.save(id, { ...prev, lastLaunchMode: desiredMode });
-        }
+        await this.repository.patchLastLaunchMode(id, desiredMode);
       } catch (err) {
         this.logger.warn("sessions: failed to persist lastLaunchMode", {
           sessionId: id,

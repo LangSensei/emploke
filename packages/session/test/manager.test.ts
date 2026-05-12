@@ -797,6 +797,54 @@ describe("buildLaunch()", () => {
     });
     await expect(m.buildLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
   });
+
+  it("persists lastLaunchMode after a successful launch", async () => {
+    const rt = new StubRuntime();
+    const repo = makeRepo();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      repository: repo,
+    });
+    const s = await m.create({ agent: "demo" });
+    await m.buildLaunch(s.id, { remote: true });
+    expect((await repo.read(s.id))?.lastLaunchMode).toBe("remote");
+    await m.buildLaunch(s.id, { remote: false });
+    expect((await repo.read(s.id))?.lastLaunchMode).toBe("local");
+  });
+
+  it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {
+    // Reproduces issue #56's interlock: while `buildLaunch` is in
+    // flight, a parallel writer (e.g. a future discovery-runtime's
+    // `refreshSession` save, or any other `repository.save` path)
+    // updates `runtimeSessionId`. The old read-merge-save in
+    // `buildLaunch` would silently overwrite that update with the
+    // value it had read at the start. The new `patchLastLaunchMode`
+    // path scopes its write to a single column, so both updates
+    // survive.
+    const rt = new StubRuntime();
+    const repo = makeRepo();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      repository: repo,
+    });
+    const s = await m.create({ agent: "demo" });
+    const before = await repo.read(s.id);
+    if (before === null) throw new Error("session row missing after create");
+    // Fire both writes concurrently.
+    await Promise.all([
+      m.buildLaunch(s.id, { remote: true }),
+      repo.save(s.id, { ...before, runtimeSessionId: "from-parallel-writer" }),
+    ]);
+    const after = await repo.read(s.id);
+    expect(after?.runtimeSessionId).toBe("from-parallel-writer");
+    expect(after?.lastLaunchMode).toBe("remote");
+  });
 });
 
 // Suppress unused imports warning for vi (kept available for future tests).

@@ -65,10 +65,21 @@ export interface ListSessionStateOpts {
  * instantiate one repository per workspace; the cache layer
  * (`WorkspaceContextCache`) does this implicitly.
  *
- * Concurrency: per-id writes don't need cross-process serialisation in
- * practice (`SessionManager` already serialises via its `live` map and
- * the FSM). The FS implementation does atomic file writes (tmpfile +
- * rename + EPERM retry), which is enough on its own.
+ * Concurrency: implementations must guarantee that each *individual*
+ * operation here is atomic from a concurrent reader's perspective —
+ * partial states must never be observable. The SQLite implementation
+ * relies on the database's own internal serialisation; there is no
+ * higher-level lock in `SessionManager` (the docstring used to claim
+ * a `live` map / FSM did this — there isn't one; only `TaskManager`
+ * has that).
+ *
+ * Multi-step read-merge-save sequences in *callers* are NOT covered by
+ * this contract. Two callers that each `read → mutate → save` the same
+ * id concurrently can clobber each other's field updates (last writer
+ * wins, regardless of the field they each touched). For field-scoped
+ * updates that need to survive concurrency, use a dedicated patch
+ * method like {@link SessionRepository.patchLastLaunchMode} instead of
+ * read-merge-save. See issue #56 for the historical analysis.
  */
 export interface SessionRepository {
   /**
@@ -84,6 +95,25 @@ export interface SessionRepository {
    * or the new one, never partial bytes.
    */
   save(id: string, state: SessionState): Promise<void>;
+
+  /**
+   * Atomically update *only* the `lastLaunchMode` column for `id`,
+   * leaving every other persisted field untouched. No-op when the row
+   * does not exist (mirrors `delete`'s idempotent semantics — callers
+   * should not have to pre-check existence just to record a UI hint).
+   *
+   * This exists as a field-scoped escape hatch from the read-merge-save
+   * race in `SessionManager.buildLaunch`: two concurrent
+   * `buildLaunch(id, { remote })` calls (e.g. user clicks "Resume Local"
+   * in tab A and "Resume Remote" in tab B) used to lose one another's
+   * `lastLaunchMode` write, and could in principle also clobber any
+   * other field that some third path was concurrently updating. With
+   * this method the column is updated in a single SQL statement, so
+   * concurrent calls just resolve last-writer-wins on the column itself
+   * without affecting `runtimeSessionId` / `runtime` / `createdAt`.
+   * See issue #56.
+   */
+  patchLastLaunchMode(id: string, mode: "local" | "remote"): Promise<void>;
 
   /**
    * Remove the session's state. Idempotent: deleting a missing id is a

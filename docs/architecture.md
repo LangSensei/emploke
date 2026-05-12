@@ -322,6 +322,66 @@ replace the FS repo without changing a line of runtime code — rows
 have no on-disk path to give back, but they have content streams just
 fine.
 
+## Filesystem contract
+
+Everything emploke writes under `<EMPLOKE_HOME>` (default `~/.emploke`)
+and a workspace's `<workdir>/` is **server-internal state**. The layout
+described in [`Per-workspace layout`](#per-workspace-layout) above plus
+the per-home paths below (file names, JSON shapes, SQLite schemas,
+sidecar files) is implementation detail; clients — dashboard, CLI,
+future MCP server — interact strictly through the HTTP API and never
+read those paths directly. Reading by hand for inspection is fine;
+**writes / hand-edits / `rm` by anything other than emploke are
+unsupported and may be detected as corruption.**
+
+### Per-home paths
+
+Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
+
+| Path | Owner | Notes |
+| ---- | ----- | ----- |
+| `workspaces.json`  | server               | Workspace registry (id → workdir + currentId). |
+| `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
+| `logs/`            | server               | Rotated server logs (pino-roll). |
+| `shared/`          | runtime adapters     | `${globalDir}` placeholder root for MCP specs. |
+
+### Ownership boundaries
+
+The per-workspace layout has three distinct owners — each with a
+different "what hand-editing does" story:
+
+- **emploke** owns `workspace.json`, the SQLite databases
+  (`sessions/sessions.db`, `tasks/tasks.db`, `catalog/catalog.db` and
+  their `-wal` / `-shm` sidecars), and the `catalog/agents/`,
+  `catalog/skills/`, `catalog/mcps/` source-file subdirs. Add or
+  remove catalog entries through `emploke catalog ...` or the
+  dashboard so the SQLite index stays in sync with the on-disk
+  sources; do not edit by hand.
+- **the agent** owns the contents of `<workspace>/sessions/<id>/` and
+  `<workspace>/tasks/<id>/` after emploke creates the directory and
+  bakes `AGENTS.md` from the catalog. Files the agent writes,
+  captured stderr — agent's responsibility. Deleting an entire
+  `<id>/` directory by hand is supported (the next `list` call drops
+  the orphan row from the manager's view); editing the baked
+  `AGENTS.md` reaches the agent on the next launch but bypasses
+  catalog versioning.
+- **the runtime adapter** owns its own per-session / per-task state
+  outside the workdir entirely (Copilot:
+  `~/.copilot/<runtimeSessionId>/`). Emploke never reads it as a
+  filesystem path; the typed `Runtime.refresh()` /
+  `Runtime.taskActivity()` API surface is the only bridge.
+
+### Why the contract matters
+
+This boundary is what gives the storage layer freedom to evolve. Schema
+migrations, additional sidecars, JSON → SQLite transitions, even
+relocating a file — none of these are breaking changes as long as the
+HTTP API surface stays stable. A future runtime that ships its log as
+a SQLite row or streams it over a socket fits the same contract
+without any change on the emploke side. If you hand-edit a managed
+file and break it, that's a `git restore` away (if you're lucky) or a
+`rm <file> && emploke restart` away — not a bug report.
+
 ## Tech stack
 
 - **TypeScript** (≥ 5.7) with strict + `exactOptionalPropertyTypes`.
