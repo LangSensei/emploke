@@ -91,24 +91,30 @@ may change between versions. Reading these files for inspection is fine;
 | `<workspace>/workspace.json`                             | Per-workspace metadata (name, createdAt, defaults). |
 | `<workspace>/sessions/sessions.db` (+ `-wal` / `-shm`)   | Session metadata (SQLite WAL). |
 | `<workspace>/tasks/tasks.db` (+ `-wal` / `-shm`)         | Task metadata (SQLite WAL). |
-| `<workspace>/catalog/`                                   | Installed agents / skills / MCPs. Add or remove entries through `emploke catalog ...` or the dashboard, never by hand. |
+| `<workspace>/catalog/catalog.db` (+ `-wal` / `-shm`)     | Catalog index (single SQLite DB with agents / skills / MCPs tables). |
+| `<workspace>/catalog/agents/`, `skills/`, `mcps/`        | Source files for installed entries. Add or remove entries through `emploke catalog ...` or the dashboard so the index stays in sync; do not edit by hand. |
 
 ### Owned by the agent inside its workdir
 
 Each session and task gets a dedicated workdir at
 `<workspace>/sessions/<id>/` or `<workspace>/tasks/<id>/`. Emploke creates
-the directory and bakes `AGENTS.md` into it from the catalog; everything
-the agent writes after that — files it produces, captured stderr — is the
-agent's. You can delete an entire `<id>/` directory by hand to forget the
-artifacts (the next `list` call drops the orphan row); modifying the baked
-`AGENTS.md` in place is unsupported.
+the directory and bakes `AGENTS.md` into it from the catalog at
+provision time; everything the agent writes after that — files it
+produces, captured stderr — is the agent's. You can delete an entire
+`<id>/` directory by hand to forget the artifacts (the next `list` call
+drops the orphan row); editing the baked `AGENTS.md` in place will
+reach the agent on the next launch but bypasses catalog versioning.
 
 ### Owned by the runtime
 
-Per-session and per-task runtime state (e.g. Copilot's events log) lives
-under the runtime adapter's own state directory and is junctioned in at
-`<workdir>/session/`. The runtime owns its layout entirely — emploke
-neither reads nor writes inside the junction.
+Per-session and per-task runtime state (e.g. Copilot's `events.jsonl`)
+lives under the runtime adapter's own state directory (Copilot:
+`~/.copilot/<runtimeSessionId>/`) and is exposed to the dashboard / CLI
+through the runtime API surface — `Runtime.refresh()` for sessions,
+`Runtime.taskActivity()` for tasks. Emploke never reads or writes
+inside that directory as a filesystem path; a future runtime that
+stores its log as a SQLite row or streams it over a socket fits the
+same contract without any change on the emploke side.
 
 ### Why the contract exists
 
