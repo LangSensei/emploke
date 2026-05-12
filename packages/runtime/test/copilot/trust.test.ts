@@ -229,7 +229,12 @@ describe("ensureDirTrusted", () => {
     const before = Date.now();
     await ensureDirTrusted(t, sp);
     const elapsed = Date.now() - before;
-    expect(elapsed).toBeLessThan(2000);
+    // The point of this assertion is "fast PID-dead steal vs the 30s
+    // LOCK_STALE_MS mtime fallback", not "completes inside 2s". A
+    // tight 2000ms threshold proved brittle on slow Windows runners
+    // (observed 2628ms in CI); 5000ms still demonstrates the
+    // order-of-magnitude difference the test actually cares about.
+    expect(elapsed).toBeLessThan(5000);
     const written = JSON.parse(await readFile(sp, "utf8"));
     expect(written.trustedFolders).toEqual([path.resolve(t)]);
   });
