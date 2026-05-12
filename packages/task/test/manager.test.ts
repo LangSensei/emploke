@@ -8,7 +8,6 @@ import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
-  CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
   InvalidTaskIdError,
@@ -605,33 +604,42 @@ describe("get / list", () => {
     expect(all.map((t) => t.id)).toEqual([t3.id, t2.id, t1.id]);
   });
 
-  it("list() skips and warns when the repository can't load a task", async () => {
-    // Wrap the real :memory: repo with one that throws CorruptedTaskError
-    // on a chosen id. Asserts the manager-level skip+warn invariant
-    // (which is now wholly storage-shape-agnostic).
-    const rt = new StubRuntime();
+  it("list() silently skips rows that fail validation and warns via the repo's logger", async () => {
+    // The repo emits the corruption-skip warn now (was the manager
+    // before, when each list iteration went through loadTask). Inject
+    // the recorder logger into the repo and bypass the public save()
+    // by reaching into the underlying DatabaseSync to forge a row
+    // with an invalid status enum that rowToTask rejects.
     const r = recorder();
-    const baseRepo = makeRepo();
-    const corruptIds = new Set<string>();
-    const repo = new Proxy(baseRepo, {
-      get(target, prop, receiver) {
-        if (prop === "read") {
-          return async (id: string): Promise<Task | null> => {
-            if (corruptIds.has(id)) {
-              throw new CorruptedTaskError(id, "synthesised corruption (test)");
-            }
-            return target.read(id);
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as SqliteTaskRepository;
-    const { m } = makeManager({ runtime: rt, logger: r.logger, repository: repo });
-    const t = await m.dispatch(dispatchOf());
-    corruptIds.add(t.id);
+    const repo = new SqliteTaskRepository(":memory:", { logger: r.logger });
+    openRepos.push(repo);
+    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    await m.dispatch(dispatchOf()); // good row through public API
+
+    // Forge a row whose status is outside the closed enum; rowToTask
+    // throws CorruptedTaskError → repo.list catches, drops, warns.
+    const rawDb = (
+      repo as unknown as {
+        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
+      }
+    ).db;
+    rawDb
+      .prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "20260101-deadbeef",
+        "demo",
+        "copilot",
+        "bogus_status",
+        "i",
+        "2026-01-01T00:00:00.000Z",
+        "{}",
+      );
 
     const all = await m.list();
-    expect(all).toEqual([]);
+    expect(all).toHaveLength(1); // good row survives, bogus is dropped
     expect(r.calls.some((c) => c.msg.includes("corrupted task.json"))).toBe(true);
   });
 

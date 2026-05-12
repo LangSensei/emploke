@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { InvalidSessionIdError, SessionCorruptedError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
 import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";
@@ -45,6 +46,7 @@ interface SessionRow {
  */
 export class SqliteSessionRepository implements SessionRepository {
   private readonly db: DatabaseSync;
+  private readonly logger: Logger;
 
   /**
    * Open or create a sessions database at `dbPath`.
@@ -52,12 +54,17 @@ export class SqliteSessionRepository implements SessionRepository {
    * Pass `":memory:"` for tests — the in-memory DB lives only as long
    * as the connection. The parent directory of `dbPath` is created
    * recursively if it doesn't already exist (no-op for `:memory:`).
+   *
+   * `opts.logger` (optional) receives `warn` when `list()` drops a row
+   * that fails validation — the manager passes its own logger here so
+   * operators see per-row corruption without `list()` failing.
    */
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts?: { logger?: Logger }) {
     if (dbPath !== ":memory:") {
       mkdirSync(path.dirname(dbPath), { recursive: true });
     }
     this.db = new DatabaseSync(dbPath);
+    this.logger = opts?.logger ?? silentLogger;
     try {
       this.db.exec("PRAGMA journal_mode = WAL");
       this.db.exec("PRAGMA synchronous = NORMAL");
@@ -138,10 +145,16 @@ export class SqliteSessionRepository implements SessionRepository {
     for (const row of rows) {
       try {
         out.push({ id: row.id, state: rowToState(row.id, row) });
-      } catch {
+      } catch (err) {
         // Corrupted row — drop from list. Matches the old
         // FsSessionRepository.list behaviour (silently skip a single
-        // corrupted entry rather than fail the whole call).
+        // corrupted entry rather than fail the whole call). We warn
+        // via the injected logger so operators can see the bad row
+        // without `list` itself failing.
+        this.logger.warn("sessions: skipping corrupted session row", {
+          sessionId: row.id ?? null,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     return out;
@@ -177,21 +190,35 @@ export class SqliteSessionRepository implements SessionRepository {
   }
 
   private createSchema(): void {
-    this.db.exec(`
-      CREATE TABLE schema_meta (
-        version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
-      );
-      INSERT INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
-      CREATE TABLE sessions (
-        id                  TEXT PRIMARY KEY,
-        runtime             TEXT NOT NULL,
-        created_at          TEXT NOT NULL,
-        runtime_session_id  TEXT,
-        last_launch_mode    TEXT
-      );
-      CREATE INDEX sessions_runtime_idx    ON sessions(runtime);
-      CREATE INDEX sessions_created_at_idx ON sessions(created_at);
-    `);
+    // Bootstrap inside a transaction so a crash mid-DDL leaves an empty
+    // db (caller treats that as "fresh, recreate") rather than a
+    // half-built one (schema_meta present but `sessions` missing → reads
+    // fail confusingly). `IF NOT EXISTS` + `INSERT OR IGNORE` makes
+    // the bootstrap race-safe across concurrent first-opens of the
+    // same dbPath (rare in practice — one server per workspace — but
+    // free defence).
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_meta (
+          version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
+        );
+        INSERT OR IGNORE INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
+        CREATE TABLE IF NOT EXISTS sessions (
+          id                  TEXT PRIMARY KEY,
+          runtime             TEXT NOT NULL,
+          created_at          TEXT NOT NULL,
+          runtime_session_id  TEXT,
+          last_launch_mode    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS sessions_runtime_idx    ON sessions(runtime);
+        CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions(created_at);
+      `);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
 import type { ListTaskOpts, Task, TaskStatus } from "../types.js";
@@ -70,6 +71,7 @@ interface TaskRow {
  */
 export class SqliteTaskRepository implements TaskRepository {
   private readonly db: DatabaseSync;
+  private readonly logger: Logger;
 
   /**
    * Open or create a tasks database at `dbPath`.
@@ -77,12 +79,17 @@ export class SqliteTaskRepository implements TaskRepository {
    * Pass `":memory:"` for tests. The parent directory of `dbPath` is
    * created recursively if it doesn't already exist (no-op for
    * `:memory:`).
+   *
+   * `opts.logger` (optional) receives `warn` when `list()` drops a row
+   * that fails validation — the manager passes its own logger here so
+   * operators see per-row corruption without `list()` failing.
    */
-  constructor(dbPath: string) {
+  constructor(dbPath: string, opts?: { logger?: Logger }) {
     if (dbPath !== ":memory:") {
       mkdirSync(path.dirname(dbPath), { recursive: true });
     }
     this.db = new DatabaseSync(dbPath);
+    this.logger = opts?.logger ?? silentLogger;
     try {
       this.db.exec("PRAGMA journal_mode = WAL");
       this.db.exec("PRAGMA synchronous = NORMAL");
@@ -123,11 +130,21 @@ export class SqliteTaskRepository implements TaskRepository {
   async save(task: Task): Promise<void> {
     if (!TASK_ID_RE.test(task.id)) throw new InvalidTaskIdError(task.id);
     const meta = task.metadata ?? {};
-    const runtime = typeof meta.runtime === "string" ? meta.runtime : null;
-    // Strip `runtime` from the JSON bag so it's not stored twice. All
-    // other open-shape keys round-trip verbatim.
-    const { runtime: _r, ...metaRest } = meta as Record<string, unknown>;
-    const metaJson = JSON.stringify(metaRest);
+    // Only promote `runtime` to its own column when it's a string
+    // (the Task type permits `unknown` here). When it's anything else
+    // (number, object, undefined explicitly set, ...), keep it inside
+    // the JSON `metadata` blob so `read()` round-trips the original
+    // value verbatim — silently dropping it would violate the
+    // "open-shape keys round-trip verbatim" guarantee `Task.metadata`
+    // makes to runtime adapters.
+    let runtime: string | null = null;
+    let metaForJson: Record<string, unknown> = meta as Record<string, unknown>;
+    if (typeof meta.runtime === "string") {
+      runtime = meta.runtime;
+      const { runtime: _r, ...rest } = meta as Record<string, unknown>;
+      metaForJson = rest;
+    }
+    const metaJson = JSON.stringify(metaForJson);
     this.db
       .prepare(
         `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, started_at,
@@ -194,9 +211,15 @@ export class SqliteTaskRepository implements TaskRepository {
     for (const row of rows) {
       try {
         out.push(rowToTask(row.id, row));
-      } catch {
+      } catch (err) {
         // Corrupted row — drop from list. Matches the old
-        // FsTaskRepository.list behaviour.
+        // FsTaskRepository.list behaviour. We warn via the injected
+        // logger so operators can see the bad row without `list`
+        // itself failing — the manager hooks its own logger here.
+        this.logger.warn("tasks: skipping corrupted task.json", {
+          taskId: row.id ?? null,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     return out;
@@ -232,29 +255,43 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   private createSchema(): void {
-    this.db.exec(`
-      CREATE TABLE schema_meta (
-        version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
-      );
-      INSERT INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
-      CREATE TABLE tasks (
-        id              TEXT PRIMARY KEY,
-        agent           TEXT NOT NULL,
-        runtime         TEXT,
-        status          TEXT NOT NULL,
-        instructions    TEXT NOT NULL,
-        created_at      TEXT NOT NULL,
-        started_at      TEXT,
-        ended_at        TEXT,
-        result_output   TEXT,
-        failure_error   TEXT,
-        metadata        TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE INDEX tasks_status_idx     ON tasks(status);
-      CREATE INDEX tasks_runtime_idx    ON tasks(runtime);
-      CREATE INDEX tasks_agent_idx      ON tasks(agent);
-      CREATE INDEX tasks_created_at_idx ON tasks(created_at);
-    `);
+    // Bootstrap inside a transaction so a crash mid-DDL leaves an empty
+    // db (caller treats that as "fresh, recreate") rather than a
+    // half-built one (schema_meta present but `tasks` missing → reads
+    // fail confusingly). `IF NOT EXISTS` + `INSERT OR IGNORE` makes
+    // the bootstrap race-safe across concurrent first-opens of the
+    // same dbPath (rare in practice — one server per workspace — but
+    // free defence).
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_meta (
+          version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
+        );
+        INSERT OR IGNORE INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
+        CREATE TABLE IF NOT EXISTS tasks (
+          id              TEXT PRIMARY KEY,
+          agent           TEXT NOT NULL,
+          runtime         TEXT,
+          status          TEXT NOT NULL,
+          instructions    TEXT NOT NULL,
+          created_at      TEXT NOT NULL,
+          started_at      TEXT,
+          ended_at        TEXT,
+          result_output   TEXT,
+          failure_error   TEXT,
+          metadata        TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
+        CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
+        CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
+        CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
+      `);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 

@@ -54,9 +54,12 @@ export class SessionManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.sessionsDir = path.resolve(config.sessionsDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
-    this.repository =
-      config.repository ?? new SqliteSessionRepository(path.join(this.sessionsDir, "sessions.db"));
     this.logger = config.logger ?? silentLogger;
+    this.repository =
+      config.repository ??
+      new SqliteSessionRepository(path.join(this.sessionsDir, "sessions.db"), {
+        logger: this.logger,
+      });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

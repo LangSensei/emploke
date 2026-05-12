@@ -159,7 +159,10 @@ metadata sidecar (`session.json` / `task.json`) moves into a row of
 the entity's `*.db`; the workdir directory tree
 (`<workspaceRoot>/sessions/<sid>/...` for session, `.../tasks/<tid>/`
 for task) stays a plain directory of agent-produced files (AGENTS.md,
-artifacts, runtime junctions). Deleting the entity removes both.
+artifacts, runtime junctions). The default `delete(id)` removes only
+the metadata row (matches the workspace-wide "purge is opt-in" pattern,
+giving operators a chance to inspect agent output after a delete);
+`delete(id, { purge: true })` additionally removes the workdir.
 
 This split keeps the workdir-as-product invariant (`cd` into a session
 workdir, find the agent's actual output, grep it, commit it to your

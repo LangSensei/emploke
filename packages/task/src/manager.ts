@@ -1,5 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
@@ -14,7 +14,7 @@ import {
   TaskIdAllocationFailedError,
   TaskNotFoundError,
 } from "./errors.js";
-import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
+import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { createDirJunction } from "./junction.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
@@ -151,9 +151,10 @@ export class TaskManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
-    this.repository =
-      config.repository ?? new SqliteTaskRepository(path.join(this.tasksDir, "tasks.db"));
     this.logger = config.logger ?? silentLogger;
+    this.repository =
+      config.repository ??
+      new SqliteTaskRepository(path.join(this.tasksDir, "tasks.db"), { logger: this.logger });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }
@@ -442,40 +443,28 @@ export class TaskManager {
    * 95% of the workspace's tasks across the wire on every poll).
    */
   async list(opts: ListTaskOpts = {}): Promise<Task[]> {
-    let entries: import("node:fs").Dirent[];
+    // Push every filter (status, agent, runtime, createdSince) down to
+    // the SQLite repository so the dashboard's filter UI hits a single
+    // indexed query instead of the old O(N) `readdir` + per-row read +
+    // JS filter pattern. The repository's own list silently drops
+    // corrupted rows and warns via our injected logger, so callers see
+    // the same "skip-and-warn" semantics they had under the FS impl —
+    // just emitted from one layer down.
+    let tasks: Task[];
     try {
-      entries = await readdir(this.tasksDir, { withFileTypes: true });
-    } catch {
+      tasks = await this.repository.list(opts);
+    } catch (err) {
+      this.logger.warn("tasks: repository.list failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
 
-    const drafts = await Promise.all(
-      entries
-        .filter((e) => e.isDirectory() && TASK_ID_RE.test(e.name))
-        .map(async (e) => {
-          const id = e.name;
-          const workdir = safeJoinUnderRoot(this.tasksDir, id);
-          return this.loadTask(id, workdir);
-        }),
-    );
-
-    const statusSet = opts.statuses ? new Set<TaskStatus>(opts.statuses) : null;
-    const tasks: Task[] = [];
-    for (const t of drafts) {
-      if (t === null) continue;
-      if (opts.agent !== undefined && t.agent !== opts.agent) continue;
-      // ISO 8601 strings (Z-suffixed) sort lexicographically as dates.
-      if (opts.createdSince !== undefined && t.createdAt < opts.createdSince) continue;
-      if (opts.runtime !== undefined) {
-        const runtimeMeta = readTaskRuntimeMetadata(t).runtime;
-        if (runtimeMeta !== opts.runtime) continue;
-      }
-      if (statusSet !== null && !statusSet.has(t.status)) continue;
-      tasks.push(t);
-    }
-
-    // Newest first. createdAt is ISO 8601 → lexicographic sort. Id is the
-    // deterministic tiebreaker for tasks created in the same millisecond.
+    // Newest first. createdAt is ISO 8601 → lexicographic sort. Id is
+    // the deterministic tiebreaker for tasks created in the same
+    // millisecond. (We sort here rather than in the repository so the
+    // sort order is owned by one place and stays consistent across
+    // future repo backends.)
     tasks.sort((a, b) => {
       const d = b.createdAt.localeCompare(a.createdAt);
       return d !== 0 ? d : b.id.localeCompare(a.id);
@@ -715,49 +704,53 @@ export class TaskManager {
    *     matching pre-PID-probe behaviour.
    */
   async recoverOrphaned(): Promise<void> {
-    let entries: import("node:fs").Dirent[];
+    // The DB row is the source of truth for "this task exists in
+    // emploke's view of the world". A workdir on disk without a row
+    // is a stray dir (typical cause: dispatch crashed before the
+    // first save), not an orphan task — `recoverOrphaned` deliberately
+    // leaves those for a separate cleanup. So a single SQL query for
+    // status='running' is the complete candidate set.
+    let candidates: Task[];
     try {
-      entries = await readdir(this.tasksDir, { withFileTypes: true });
-    } catch {
+      candidates = await this.repository.list({ statuses: ["running"] });
+    } catch (err) {
+      this.logger.warn("tasks: recoverOrphaned repository.list failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return;
     }
 
     await Promise.all(
-      entries
-        .filter((e) => e.isDirectory() && TASK_ID_RE.test(e.name))
-        .map(async (e) => {
-          const id = e.name;
-          const workdir = safeJoinUnderRoot(this.tasksDir, id);
-          const task = await this.loadTask(id, workdir);
-          if (task === null) return;
-          if (task.status !== "running") return;
+      candidates.map(async (task) => {
+        const id = task.id;
+        const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
-          const pid = readTaskRuntimeMetadata(task).pid;
-          if (typeof pid === "number" && isProcessAlive(pid)) {
-            this.logger.warn(
-              "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
-              { taskId: id, pid },
-            );
-            return;
-          }
+        const pid = readTaskRuntimeMetadata(task).pid;
+        if (typeof pid === "number" && isProcessAlive(pid)) {
+          this.logger.warn(
+            "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
+            { taskId: id, pid },
+          );
+          return;
+        }
 
-          try {
-            const failed = apply(
-              task,
-              {
-                type: "fail",
-                error: "orphaned (server crashed before this task ended)",
-              },
-              this.now().toISOString(),
-            );
-            await this.persist(workdir, failed);
-          } catch (err) {
-            this.logger.warn("tasks: failed to mark orphaned task as failure", {
-              taskId: id,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }),
+        try {
+          const failed = apply(
+            task,
+            {
+              type: "fail",
+              error: "orphaned (server crashed before this task ended)",
+            },
+            this.now().toISOString(),
+          );
+          await this.persist(workdir, failed);
+        } catch (err) {
+          this.logger.warn("tasks: failed to mark orphaned task as failure", {
+            taskId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }),
     );
   }
 
