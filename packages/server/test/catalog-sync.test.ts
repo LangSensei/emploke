@@ -105,10 +105,16 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
       isSync: boolean;
       upToDate: boolean;
       orphans: unknown[];
+      planToken: string;
     };
     expect(manifest.isSync).toBe(true);
     expect(manifest.upToDate).toBe(true);
     expect(manifest.orphans).toEqual([]);
+    // /sync/resolve must always return a single-use planToken so the
+    // dashboard can apply the previewed plan via /sync without the
+    // server having to re-resolve.
+    expect(typeof manifest.planToken).toBe("string");
+    expect(manifest.planToken.length).toBeGreaterThan(0);
   });
 
   it("POST /catalog/skills/:fqn/acknowledge-prereqs flips prereqsAck", async () => {
@@ -247,14 +253,107 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
       SKILL_MD("tool", "1.1.0"),
       "utf8",
     );
+    // Two-step apply: preview to get a plan token, then trade it in.
+    // The server caches the previewed plan so apply replays the
+    // exact closure (no fresh re-resolve, no preview/apply drift).
+    const previewRes = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync/resolve`,
+      { method: "POST" },
+    );
+    expect(previewRes.status).toBe(200);
+    const { planToken } = (await previewRes.json()) as { planToken: string };
     const syncRes = await app.request(
       `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planToken }),
+      },
     );
     expect(syncRes.status).toBe(200);
 
     const overviewRes = await app.request(`/api/workspaces/${ws.id}/catalog/overview`);
     const overview = (await overviewRes.json()) as { counts: Record<string, number> };
     expect(overview.counts.orphaned).toBe(1);
+  });
+
+  it("POST /catalog/skills/:fqn/sync without a body returns 400", async () => {
+    const ws = await ensureWorkspace("alpha");
+    const origin = await writeSkillFixture("tool", SKILL_MD("tool"));
+    const app = mountApp();
+    await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+    });
+
+    // No body — apply requires a planToken minted by /sync/resolve.
+    const res = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync`,
+      { method: "POST" },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /catalog/skills/:fqn/sync with an unknown planToken returns 410 PlanTokenInvalid", async () => {
+    const ws = await ensureWorkspace("alpha");
+    const origin = await writeSkillFixture("tool", SKILL_MD("tool"));
+    const app = mountApp();
+    await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+    });
+
+    const res = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planToken: "not-a-real-token" }),
+      },
+    );
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("PlanTokenInvalid");
+  });
+
+  it("planToken is single-use — second apply with same token returns 410", async () => {
+    const ws = await ensureWorkspace("alpha");
+    const origin = await writeSkillFixture("tool", SKILL_MD("tool"));
+    const app = mountApp();
+    await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+    });
+
+    const previewRes = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync/resolve`,
+      { method: "POST" },
+    );
+    const { planToken } = (await previewRes.json()) as { planToken: string };
+
+    const apply1 = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planToken }),
+      },
+    );
+    expect(apply1.status).toBe(200);
+
+    // Same token, second apply — token was consumed on first call.
+    // Defends against UI double-click re-running the install.
+    const apply2 = await app.request(
+      `/api/workspaces/${ws.id}/catalog/skills/${encodeURIComponent("public/tool")}/sync`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planToken }),
+      },
+    );
+    expect(apply2.status).toBe(410);
   });
 });

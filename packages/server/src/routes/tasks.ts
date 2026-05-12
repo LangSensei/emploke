@@ -160,6 +160,26 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     } catch (err) {
       const status = statusForError(err) ?? 400;
       if (status >= 500) logServerError(err);
+      // EntryNotReadyError carries a structured `BlockedReason` on
+      // the instance; surface it on the wire so the dashboard can
+      // render typed UI (the catalog list already uses the same
+      // `blockedReason` shape — see CatalogManager.getAgentEntry).
+      // Without this branch the body collapses to `{error, code}`
+      // and the dashboard would be stuck parsing a human string to
+      // figure out which CTA (Acknowledge prereqs / Enable agent /
+      // Install missing dep) applies.
+      if (err instanceof EntryNotReadyError) {
+        return c.json(
+          {
+            error: err.message,
+            code: err.name,
+            agent: err.agent,
+            ...(err.reason !== undefined ? { reason: err.reason } : {}),
+          },
+          // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
+          status as any,
+        );
+      }
       // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
       return c.json(errorBody(err), status as any);
     }

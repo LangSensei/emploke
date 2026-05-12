@@ -26,6 +26,17 @@ export interface ResolveManifest {
   /** True iff this manifest was produced via a sync resolve, not a fresh install. */
   readonly isSync: boolean;
   /**
+   * Single-use token returned only by sync resolves. Carries the
+   * preview-time `CatalogPlan` server-side; the dashboard ships this
+   * back on `POST .../sync` so the apply step replays the exact plan
+   * the user just previewed instead of doing a fresh re-resolve. TTL
+   * is server-controlled (currently 5 minutes).
+   *
+   * Absent on install resolves — the install path takes an origin and
+   * is naturally idempotent.
+   */
+  readonly planToken?: string;
+  /**
    * True iff this is a sync, the root and all transitive deps are
    * unchanged upstream, and no orphan candidates were detected. The
    * dashboard renders "Already up to date" and disables apply.
@@ -97,13 +108,18 @@ export type ResolveManifestNode = SkillManifestNode | AgentManifestNode | McpMan
 /**
  * Project a `CatalogPlan` into the dashboard wire shape.
  *
- * `rootOrigin` is the request's input origin. The matching node's
- * fqn (if found in the plan) becomes `rootFqn`; if the input origin
- * is in the conflicts bucket (e.g. relative path → fetch-failed),
- * `rootFqn` falls back to empty string so the dashboard's "n nodes to
- * install" header still renders.
+ * `rootOrigin` is read from the plan itself (set at resolve time —
+ * the user-supplied install origin or the local row's origin for
+ * sync). The matching node's fqn (if found in the plan) becomes
+ * `rootFqn`; if the input origin is in the conflicts bucket
+ * (e.g. relative path → fetch-failed), `rootFqn` falls back to
+ * empty string so the dashboard's "n nodes to install" header
+ * still renders.
+ *
+ * `planToken` is sync-only and threaded through by the route layer
+ * (after caching the plan); install-resolve callers pass `undefined`.
  */
-export function planToManifest(plan: CatalogPlan, rootOrigin: string): ResolveManifest {
+export function planToManifest(plan: CatalogPlan, planToken?: string): ResolveManifest {
   const nodes: ResolveManifestNode[] = [];
   for (const planNode of plan.toInstall) {
     nodes.push(planNodeToManifest(planNode, statusFromDisposition(planNode)));
@@ -120,12 +136,13 @@ export function planToManifest(plan: CatalogPlan, rootOrigin: string): ResolveMa
     nodes.push(conflictToManifest(conflict));
   }
 
-  const rootNode = nodes.find((n) => n.origin === rootOrigin);
+  const rootNode = nodes.find((n) => n.origin === plan.rootOrigin);
   return {
-    rootOrigin,
+    rootOrigin: plan.rootOrigin,
     rootFqn: rootNode?.fqn ?? "",
     isSync: plan.isSync,
     upToDate: plan.upToDate,
+    ...(planToken !== undefined ? { planToken } : {}),
     ...(plan.identityChange !== undefined ? { identityChange: plan.identityChange } : {}),
     orphans: plan.orphans.map((o) => ({ kind: o.kind, fqn: o.fqn, origin: o.origin })),
     nodes,

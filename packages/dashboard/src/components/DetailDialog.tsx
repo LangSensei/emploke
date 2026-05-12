@@ -144,6 +144,17 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   };
 
   const handleApplySync = async (): Promise<void> => {
+    // The token comes from the manifest the dashboard previewed.
+    // Server-side, this trades back for the exact preview-time plan
+    // (single-use, 5-min TTL) — no re-resolve, no preview/apply
+    // closure drift. Without a token we'd be back to the old
+    // "server re-resolves and silently applies a fresh plan" hole.
+    const planToken = syncManifest?.planToken;
+    if (planToken === undefined) {
+      setError("internal: missing plan token (re-preview required)");
+      setSyncStage("idle");
+      return;
+    }
     setSyncStage("applying");
     setError(null);
     try {
@@ -151,9 +162,9 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
       // prereqs info, but the dashboard surfaces "needs ack" through
       // the entry's `blocked` badge + DetailDialog rather than via a
       // post-sync banner. We only need success vs throw here.
-      if (target.kind === "skill") await applySkillSync(target.name);
-      else if (target.kind === "agent") await applyAgentSync(target.name);
-      else await applyMcpSync(target.name);
+      if (target.kind === "skill") await applySkillSync(target.name, planToken);
+      else if (target.kind === "agent") await applyAgentSync(target.name, planToken);
+      else await applyMcpSync(target.name, planToken);
       onSynced();
     } catch (e) {
       setError((e as Error).message);
@@ -200,14 +211,6 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
   // the footer render the buttons even when a different tab is active.
   const showAcknowledge = target.kind !== "mcp" && detail?.blockedReason?.needsPrereqsAck === true;
   const showAgentToggle = target.kind === "agent";
-  // When a lifecycle button (Acknowledge / Disable / Enable) is
-  // visible, Sync demotes to a left-anchored ghost; otherwise Sync
-  // owns the right-side primary CTA slot. Computed once so the
-  // footer JSX stays declarative.
-  const hasLifecycleCta = showAcknowledge || showAgentToggle;
-  const syncButtonClass = hasLifecycleCta
-    ? "btn btn--ghost modal__footer-secondary"
-    : "btn btn--primary";
 
   // Hero header — rich title block. While the user is in the sync
   // flow we keep the same hero (so context never disappears) but mute
@@ -300,13 +303,16 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
         {!inSync && detail && (
           <>
             {/*
-             * Footer convention: the bottom-RIGHT slot is the primary
-             * CTA. When a lifecycle button (Acknowledge prereqs,
-             * Disable/Enable agent) is visible it owns that slot —
-             * those actions are more time-sensitive than re-pulling
-             * upstream — and Sync demotes to a ghost on the LEFT.
-             * When no lifecycle button is shown, Sync IS the primary
-             * action and stays on the right.
+             * Footer convention:
+             *  - LEFT (ghost, `modal__footer-secondary`): "Sync from
+             *    upstream". Always anchored here so its position never
+             *    shifts as the entry's status changes — a stable button
+             *    location matters more than a one-off primary-CTA promotion.
+             *  - RIGHT (primary): the lifecycle CTA when one applies
+             *    — Acknowledge prereqs (skills + agents) or
+             *    Disable/Enable (agents). When no lifecycle CTA is
+             *    relevant the right slot is intentionally empty;
+             *    Sync stays on the left.
              *
              * Dismiss is handled by the modal header (×); a footer
              * Close would just compete with whichever CTA is anchored
@@ -314,7 +320,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
              */}
             <button
               type="button"
-              className={syncButtonClass}
+              className="btn btn--ghost modal__footer-secondary"
               onClick={handlePreviewSync}
               disabled={actionBusy}
               title="Preview the upstream diff before applying"

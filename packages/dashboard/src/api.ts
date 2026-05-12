@@ -252,6 +252,20 @@ export interface ResolveManifest {
   rootOrigin: string;
   rootFqn: string;
   isSync: boolean;
+  /**
+   * Single-use token returned only by sync resolves. The dashboard
+   * stores it across the preview-then-apply UX and ships it back on
+   * `apply*Sync(fqn, planToken)`; the server replays the exact
+   * preview-time plan rather than re-resolving (which would silently
+   * apply a fresh, possibly-different closure).
+   *
+   * Server TTL is currently 5 min. If the user lets the preview sit
+   * too long, apply returns 410 and the dashboard should re-preview.
+   *
+   * Absent on install resolves — install is naturally idempotent
+   * since the user re-supplies the same origin.
+   */
+  planToken?: string;
   upToDate: boolean;
   identityChange?: { kind: "skill" | "agent" | "mcp"; oldFqn: string; newFqn: string };
   orphans: OrphanManifestEntry[];
@@ -294,21 +308,32 @@ export const resolveMcpSync = (name: string): Promise<ResolveManifest> =>
     method: "POST",
   });
 
-/** Apply a previously-previewed sync. Server recomputes the plan from current local origin. */
-export const applySkillSync = (fqn: string): Promise<SyncResult> =>
-  mutateJson<SyncResult>(`${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync`, {
-    method: "POST",
-  });
+/**
+ * Apply a previously-previewed sync. The `planToken` MUST come from
+ * the matching `resolve*Sync` response — the server replays that
+ * exact plan instead of re-resolving (otherwise upstream drift
+ * between preview and apply would silently change what gets
+ * installed). Token is single-use; a 410 means it expired (default
+ * 5 min) or was already consumed, and the dashboard should
+ * re-preview.
+ */
+export const applySkillSync = (fqn: string, planToken: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(
+    `${catalogPrefix()}/skills/${encodeURIComponent(fqn)}/sync`,
+    jsonInit("POST", { planToken }),
+  );
 
-export const applyAgentSync = (fqn: string): Promise<SyncResult> =>
-  mutateJson<SyncResult>(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync`, {
-    method: "POST",
-  });
+export const applyAgentSync = (fqn: string, planToken: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(
+    `${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/sync`,
+    jsonInit("POST", { planToken }),
+  );
 
-export const applyMcpSync = (name: string): Promise<SyncResult> =>
-  mutateJson<SyncResult>(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync`, {
-    method: "POST",
-  });
+export const applyMcpSync = (name: string, planToken: string): Promise<SyncResult> =>
+  mutateJson<SyncResult>(
+    `${catalogPrefix()}/mcps/${encodeURIComponent(name)}/sync`,
+    jsonInit("POST", { planToken }),
+  );
 
 /** Acknowledge prereqs: flips `prereqsAck=true` so the entry can run again. */
 export const acknowledgeSkillPrereqs = (fqn: string) =>
