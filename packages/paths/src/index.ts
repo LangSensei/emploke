@@ -66,6 +66,24 @@ export const SHARED_SUBDIR = "shared";
 export const WORKSPACES_PARENT_SUBDIR = "workspaces";
 
 /**
+ * Stable text written to the `_readme` field of every server-managed
+ * JSON metadata file (`workspaces.json`, `<workspace>/workspace.json`,
+ * `<home>/runtime.json`). Visible to anyone who `cat`s the file,
+ * silently ignored on read by every emploke parser.
+ *
+ * Its only audience is a human inspecting the file by hand: the field
+ * exists so they immediately see this is server-managed state and find
+ * the contract that explains why hand-editing is unsupported. Keep the
+ * sentence short — it ships in every metadata file.
+ *
+ * Single-sourced here so `@emploke/workspace` and `@emploke/cli`
+ * (today's two writers) emit the same text without depending on each
+ * other. Bump only when the README anchor or the URL moves.
+ */
+export const SERVER_MANAGED_README =
+  "managed by emploke; do not edit by hand — see https://github.com/LangSensei/emploke#filesystem-contract";
+
+/**
  * Resolved emploke paths derived from environment. All paths are absolute
  * (`path.resolve`-d) so callers don't have to worry about cwd-relative input
  * sneaking in via env.

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { SERVER_MANAGED_README } from "@emploke/paths";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   deleteRuntimeFile,
@@ -36,7 +37,19 @@ describe("runtime-file", () => {
     };
     await writeRuntimeFile(home, payload);
     const read = await readRuntimeFile(home);
-    expect(read).toEqual(payload);
+    // The on-disk file gains a `_readme` audit field (visible to a hand
+    // `cat`) that's silently included on read; assert it's there but
+    // doesn't displace any typed field.
+    expect(read).toMatchObject(payload);
+  });
+
+  it("write injects the SERVER_MANAGED_README field on disk", async () => {
+    await writeRuntimeFile(home, makePayload());
+    const raw = JSON.parse(await readFile(runtimeFilePath(home), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(raw._readme).toBe(SERVER_MANAGED_README);
   });
 
   it("write tightens permissions to 0600 when an apiKey is recorded", async () => {

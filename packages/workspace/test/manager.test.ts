@@ -322,6 +322,63 @@ describe("FsWorkspaceRepository — corruption / schema mismatch", () => {
   });
 });
 
+describe("FsWorkspaceRepository — _readme audit field", () => {
+  it("workspaces.json carries the SERVER_MANAGED_README marker", async () => {
+    // Anyone who hand-cats workspaces.json should immediately see this
+    // is server-managed state and find the README pointer. The parser
+    // must ignore it on read (covered by the round-trip in the next test).
+    const { SERVER_MANAGED_README } = await import("@emploke/paths");
+    const m = newFsManager();
+    await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const fs = await import("node:fs/promises");
+    const raw = JSON.parse(await fs.readFile(indexFile, "utf8")) as Record<string, unknown>;
+    expect(raw._readme).toBe(SERVER_MANAGED_README);
+  });
+
+  it("per-workspace workspace.json carries the SERVER_MANAGED_README marker", async () => {
+    const { SERVER_MANAGED_README } = await import("@emploke/paths");
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const fs = await import("node:fs/promises");
+    const raw = JSON.parse(
+      await fs.readFile(path.join(ws.workdir, "workspace.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(raw._readme).toBe(SERVER_MANAGED_README);
+  });
+
+  it("the parsers tolerate the _readme field round-trip (read after write)", async () => {
+    // Belt-and-braces: even though the parsers only check known fields,
+    // assert end-to-end that the field we just wrote does not break
+    // a subsequent read. Catches a future regression where someone
+    // tightens validation to "no unknown keys" without realising _readme
+    // is one.
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    expect(await m.read(UUID_A)).toEqual(ws);
+    expect((await m.list())[0]).toEqual(ws);
+  });
+
+  it("a hand-edited workspace.json that drops _readme still loads (forward-compat)", async () => {
+    // Users who hand-cat the file might delete the audit field; the
+    // parser must keep working. (This is implicitly true today because
+    // _readme isn't validated, but pinning it as a test stops a future
+    // refactor that requires it from silently breaking older files.)
+    const m = newFsManager();
+    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    await writeFile(
+      path.join(ws.workdir, "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "X",
+        createdAt: ws.createdAt,
+      }),
+      "utf8",
+    );
+    const back = await m.read(UUID_A);
+    expect(back?.name).toBe("X");
+  });
+});
+
 describe("WorkspaceManager (InMemoryWorkspaceRepository) — sanity", () => {
   it("init / list / read / delete round-trip without touching the fs", async () => {
     const m = newInMemoryManager();

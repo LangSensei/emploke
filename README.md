@@ -72,6 +72,57 @@ Pass `--no-serve-static` to run API-only (the dashboard SPA is bundled in
 the npm package by default; serving it from the same port is the only
 deployment mode that makes sense for the local-first model).
 
+## Filesystem contract
+
+`<EMPLOKE_HOME>` (default `~/.emploke`) and the workspaces emploke writes
+hold **server-internal state**. The on-disk layout — file names, JSON
+shapes, SQLite schemas, sidecar files — is an implementation detail that
+may change between versions. Reading these files for inspection is fine;
+**anything else is unsupported.**
+
+Every server-managed JSON file carries a `_readme` field pointing back at
+this section so a `cat` of the file is self-explanatory.
+
+### Owned by emploke
+
+| Path | Notes |
+| ---- | ----- |
+| `<EMPLOKE_HOME>/workspaces.json`                         | Workspace registry (id → workdir + currentId). |
+| `<EMPLOKE_HOME>/runtime.json`                            | CLI lifecycle breadcrumb written by `emploke start`; pid + port + apiKey. |
+| `<EMPLOKE_HOME>/logs/`                                   | Rotated server logs. |
+| `<EMPLOKE_HOME>/shared/`                                 | `${globalDir}` placeholder root for MCP specs. |
+| `<workspace>/workspace.json`                             | Per-workspace metadata (name, createdAt, defaults). |
+| `<workspace>/sessions/sessions.db` (+ `-wal` / `-shm`)   | Session metadata (SQLite WAL). |
+| `<workspace>/tasks/tasks.db` (+ `-wal` / `-shm`)         | Task metadata (SQLite WAL). |
+| `<workspace>/catalog/`                                   | Installed agents / skills / MCPs. Add or remove entries through `emploke catalog ...` or the dashboard, never by hand. |
+
+### Owned by the agent inside its workdir
+
+Each session and task gets a dedicated workdir at
+`<workspace>/sessions/<id>/` or `<workspace>/tasks/<id>/`. Emploke creates
+the directory and bakes `AGENTS.md` into it from the catalog; everything
+the agent writes after that — files it produces, captured stderr — is the
+agent's. You can delete an entire `<id>/` directory by hand to forget the
+artifacts (the next `list` call drops the orphan row); modifying the baked
+`AGENTS.md` in place is unsupported.
+
+### Owned by the runtime
+
+Per-session and per-task runtime state (e.g. Copilot's events log) lives
+under the runtime adapter's own state directory and is junctioned in at
+`<workdir>/session/`. The runtime owns its layout entirely — emploke
+neither reads nor writes inside the junction.
+
+### Why the contract exists
+
+Emploke is the only writer so the storage layer can change (schema
+migrations, new sidecar files, JSON → SQLite, ...) without breaking any
+client. Clients — dashboard, CLI, future MCP server — interact strictly
+through the HTTP API; nothing reads `<EMPLOKE_HOME>/` directly. If you
+hand-edit a managed file and break it, that's a `git restore` away (if
+you're lucky) or a `rm <file> && emploke restart` away — not a bug
+report.
+
 ## CLI
 
 After `npm install -g @langsensei/emploke` the `emploke` binary exposes

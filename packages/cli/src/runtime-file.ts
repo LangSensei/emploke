@@ -18,7 +18,7 @@
 import { chmod, mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomic } from "@emploke/fs";
-import { RUNTIME_FILE_NAME } from "@emploke/paths";
+import { RUNTIME_FILE_NAME, SERVER_MANAGED_README } from "@emploke/paths";
 
 /**
  * Shape persisted to disk. Bumped together with any breaking change so
@@ -86,11 +86,23 @@ export async function readRuntimeFile(home: string): Promise<RuntimeFile | null>
  * user may have wiped it between sessions. When `apiKey` is present, the
  * file is `chmod 0600` (best-effort: the chmod is a no-op for ACLs on
  * Windows, but the Windows `<home>` is already per-user).
+ *
+ * The on-disk payload carries an extra `_readme` field (silently ignored
+ * by `readRuntimeFile`'s shape) so a hand `cat` of the file makes it
+ * obvious this is server-managed state and points the operator at the
+ * README's filesystem-contract section.
  */
 export async function writeRuntimeFile(home: string, value: RuntimeFile): Promise<void> {
   await mkdir(home, { recursive: true });
   const p = runtimeFilePath(home);
-  await writeJsonAtomic(p, value);
+  // Lead with `_readme` so it's the first key a reader sees in the file.
+  // Cast away the readonly on the spread so we can prepend the field;
+  // the on-disk shape is a strict superset of `RuntimeFile`.
+  const onDisk: { _readme: string } & RuntimeFile = {
+    _readme: SERVER_MANAGED_README,
+    ...value,
+  };
+  await writeJsonAtomic(p, onDisk);
   if (value.apiKey !== undefined && value.apiKey !== "") {
     try {
       await chmod(p, 0o600);

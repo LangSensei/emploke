@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/fs";
+import { SERVER_MANAGED_README } from "@emploke/paths";
 import { CURRENT_SCHEMA_VERSION, WORKSPACE_FILE } from "../constants.js";
 import {
   RegistryCorruptedError,
@@ -85,6 +86,8 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
     const resolvedWorkdir = path.resolve(workspace.workdir);
     const metadataFile = path.join(resolvedWorkdir, WORKSPACE_FILE);
     const persistedMetadata = {
+      // _readme leads so a hand `cat` of the file finds it first.
+      _readme: SERVER_MANAGED_README,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       name: workspace.name,
       createdAt: workspace.createdAt,
@@ -130,6 +133,7 @@ export class FsWorkspaceRepository implements WorkspaceRepository {
     const resolvedWorkdir = path.resolve(workspace.workdir);
     const metadataFile = path.join(resolvedWorkdir, WORKSPACE_FILE);
     const persistedMetadata = {
+      _readme: SERVER_MANAGED_README,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       name: workspace.name,
       createdAt: workspace.createdAt,
@@ -291,6 +295,7 @@ interface IndexState {
 }
 
 interface PersistedIndex {
+  readonly _readme: string;
   readonly schemaVersion: number;
   readonly entries: readonly IndexEntry[];
   readonly currentId?: string;
@@ -298,6 +303,7 @@ interface PersistedIndex {
 
 function serializeIndex(state: IndexState): PersistedIndex {
   return {
+    _readme: SERVER_MANAGED_README,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     entries: state.entries,
     ...(state.currentId !== undefined ? { currentId: state.currentId } : {}),
