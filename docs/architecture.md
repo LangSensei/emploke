@@ -171,8 +171,7 @@ production deploy fails fast.
 │   ├── session/                 → junction → runtime's per-task state dir
 │   ├── stderr.log               CLI errors before session dir exists
 │   └── ...                      whatever the agent writes
-├── workflows/<id>/              placeholder
-└── logs/                        placeholder
+└── (workflows/, logs/, schedules/ — added when those entities land)
 ```
 
 The conventional sub-paths are computed by `workspaceLayout(workdir)`,

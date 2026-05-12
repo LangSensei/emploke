@@ -2,8 +2,8 @@
  * @emploke/workspace — per-project workspace abstraction.
  *
  * A *workspace* is the user-chosen working directory that holds
- * emploke's per-workspace state (sessions, tasks, workflows, catalog,
- * logs) plus whatever the user has under it. Each workspace is
+ * emploke's per-workspace state (sessions, tasks, catalog)
+ * plus whatever the user has under it. Each workspace is
  * identified by an opaque UUID `id` (the URL routing key) and lives at
  * an absolute filesystem `workdir`. Its user-facing display name is
  * stored as part of the workspace's metadata and may be changed at any
@@ -23,11 +23,9 @@
 export {
   CATALOG_SUBDIR,
   CURRENT_SCHEMA_VERSION,
-  LOGS_SUBDIR,
   MAX_DISPLAY_NAME_LENGTH,
   SESSIONS_SUBDIR,
   TASKS_SUBDIR,
-  WORKFLOWS_SUBDIR,
   WORKSPACE_FILE,
 } from "./constants.js";
 export {

@@ -43,7 +43,7 @@ describe("WorkspaceManager (FsWorkspaceRepository) — init", () => {
     expect(ws.workdir).toBe(path.resolve(wsDir));
     // Standard subdirs were created.
     const fsImport = await import("node:fs/promises");
-    for (const sub of ["sessions", "tasks", "catalog", "workflows", "logs"]) {
+    for (const sub of ["sessions", "tasks", "catalog"]) {
       const st = await fsImport.stat(path.join(wsDir, sub));
       expect(st.isDirectory()).toBe(true);
     }
@@ -185,8 +185,12 @@ describe("WorkspaceManager — delete", () => {
 
     await m.delete(UUID_A, { purge: true });
     expect(await m.read(UUID_A)).toBeNull();
-    // sessions subdir gone
+    // every emploke-owned subdir gone — pin all three so a future
+    // accidental drop from the purge list (or a layout addition that
+    // forgets a corresponding rm) gets caught.
     await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
+    await expect(fs.stat(path.join(ws.workdir, "tasks"))).rejects.toThrow();
+    await expect(fs.stat(path.join(ws.workdir, "catalog"))).rejects.toThrow();
     // workdir itself preserved
     const st = await fs.stat(ws.workdir);
     expect(st.isDirectory()).toBe(true);
