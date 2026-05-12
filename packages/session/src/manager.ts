@@ -178,15 +178,17 @@ export class SessionManager {
           })
         : refreshed;
 
-    // Sort by lastActiveAt desc, with never-launched sessions
-    // (lastActiveAt === null) ALWAYS at the bottom regardless of their
-    // createdAt. Among never-launched sessions, secondary sort by
-    // createdAt desc; among active sessions, ties broken by id desc for
-    // stability.
+    // Never-launched sessions (lastActiveAt === null) ALWAYS sort first
+    // regardless of their createdAt — a freshly created session must be
+    // immediately findable at the top of the list so the user can launch
+    // it without scrolling past stale active sessions. Among never-launched
+    // sessions, secondary sort by createdAt desc (newest first). Active
+    // sessions sort below by lastActiveAt desc, ties broken by id desc
+    // for stability.
     filtered.sort((a, b) => {
       const aNull = a.lastActiveAt === null;
       const bNull = b.lastActiveAt === null;
-      if (aNull !== bNull) return aNull ? 1 : -1;
+      if (aNull !== bNull) return aNull ? -1 : 1;
       if (aNull && bNull) {
         const d = b.createdAt.localeCompare(a.createdAt);
         return d !== 0 ? d : b.id.localeCompare(a.id);
