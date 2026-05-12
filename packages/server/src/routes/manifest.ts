@@ -199,6 +199,19 @@ export interface TaskDeleteQuery {
   readonly purge?: "1";
 }
 
+/**
+ * POST /api/workspaces/:id/catalog/{kind}/:name/sync body. The
+ * `planToken` is minted by the matching `/sync/resolve` (returned
+ * inside the `ResolveManifest`) and is single-use + 5-min TTL on
+ * the server. See {@link CatalogManager.cachePlan} / `takePlan`
+ * for the rationale: the apply step replays the exact preview-time
+ * plan rather than re-resolving (which would silently apply a
+ * fresh, possibly-different closure).
+ */
+export interface CatalogSyncBody {
+  readonly planToken: string;
+}
+
 /** GET /api/workspaces/:id/catalog/overview response. */
 export interface CatalogOverview {
   readonly counts: {
@@ -415,10 +428,10 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/catalog/skills/:name/sync/resolve",
   ),
-  "catalog.skills.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogInstallResult>(
-    "POST",
-    "/api/workspaces/:id/catalog/skills/:name/sync",
-  ),
+  "catalog.skills.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/skills/:name/sync"),
   "catalog.skills.acknowledgePrereqs": defineRoute<
     { params: CatalogResourcePathParams },
     SkillPojo
@@ -457,10 +470,10 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/catalog/agents/:name/sync/resolve",
   ),
-  "catalog.agents.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogSyncResult>(
-    "POST",
-    "/api/workspaces/:id/catalog/agents/:name/sync",
-  ),
+  "catalog.agents.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/agents/:name/sync"),
   "catalog.agents.acknowledgePrereqs": defineRoute<
     { params: CatalogResourcePathParams },
     AgentPojo
@@ -502,10 +515,10 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/catalog/mcps/:name/sync/resolve",
   ),
-  "catalog.mcps.sync": defineRoute<{ params: CatalogResourcePathParams }, CatalogSyncResult>(
-    "POST",
-    "/api/workspaces/:id/catalog/mcps/:name/sync",
-  ),
+  "catalog.mcps.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/mcps/:name/sync"),
 } as const satisfies Record<string, RouteSpec<RouteRequest, unknown>>;
 
 /** Union of every key in {@link ROUTES}. Use as the generic param of `ApiClient.call`. */
