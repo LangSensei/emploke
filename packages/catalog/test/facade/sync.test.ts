@@ -207,6 +207,27 @@ describe("sync resolve — version short-circuit", () => {
     expect(plan.upToDate).toBe(false);
     expect(plan.toInstall.find((n) => n.node.fqn === "public/tool")?.disposition).toBe("will-sync");
   });
+
+  it("MCP up-to-date check uses content digest (no `version` field on MCPs)", async () => {
+    // MCPs don't carry a `version` field — author contract for
+    // "did anything change" is the file content itself, hashed
+    // with `_meta` stripped (so install-time stamping of
+    // `_meta.name` doesn't show as a spurious diff). Same upstream
+    // bytes → up-to-date. Different bytes → will-sync.
+    fakes.setMcp("file:/abs/mcp/x", "vendor/x", '{"command": "node", "args": ["v1.js"]}');
+    await mgr.installMcpFromOrigin("file:/abs/mcp/x");
+
+    // Same content — sync should report up-to-date.
+    let plan = await mgr.resolveSyncMcp("vendor/x");
+    expect(plan.upToDate).toBe(true);
+    expect(plan.toInstall).toHaveLength(0);
+
+    // Drift the upstream content (without changing the spec name).
+    fakes.setMcp("file:/abs/mcp/x", "vendor/x", '{"command": "node", "args": ["v2.js"]}');
+    plan = await mgr.resolveSyncMcp("vendor/x");
+    expect(plan.upToDate).toBe(false);
+    expect(plan.toInstall.find((n) => n.node.fqn === "vendor/x")?.disposition).toBe("will-sync");
+  });
 });
 
 describe("sync resolve — orphan detection", () => {
@@ -306,15 +327,16 @@ describe("sync resolve — orphan detection", () => {
   });
 
   it("rejects a self-referential skill at install time (degenerate cycle)", async () => {
-    // Originally raised during code review as "degenerate but legal".
-    // Subsequent review tightened the contract: emploke now refuses
+    // Originally raised during code review as "degenerate but legal";
+    // subsequent review tightened the contract — emploke refuses
     // cyclic catalog deps at resolve/install (see CyclicDependencyError),
-    // and self-ref is the simplest cycle. The orphan-derivation
-    // self-ref defense in `newCascadeContext` (skipping `o === s.origin`
-    // when building the reverse-dep index) is kept as belt-and-suspenders
-    // for catalogs that somehow end up with a self-ref row via a
-    // bypass path (direct SQLite write, FS edit, future tooling) —
-    // the install path will never produce one.
+    // and self-ref is the simplest cycle. With install-time rejection
+    // in place, the orphan-derivation paths in `newCascadeContext`
+    // and `computeReverseDepIndex` no longer need defensive self-ref
+    // filtering: a self-referencing skill cannot exist in a
+    // well-formed catalog. If a future bypass path (direct SQLite
+    // write, FS edit) ever produces one, the right fix is a
+    // catalog-load integrity check, not patching every consumer.
     fakes.setSkill("file:/abs/loner", {
       "SKILL.md": SKILL_ANCHOR(
         "loner",
