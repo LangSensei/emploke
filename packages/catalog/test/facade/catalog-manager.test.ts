@@ -13,6 +13,7 @@ import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
 
@@ -240,6 +241,101 @@ describe("CatalogManager.resolveSkill", () => {
     expect(plan.conflicts[0]?.reason.kind).toBe("fetch-failed");
     // Parent itself still resolves
     expect(plan.toInstall.some((n) => n.node.fqn === "public/parent")).toBe(true);
+  });
+
+  it("rejects a self-referential skill (A depends on A)", async () => {
+    // Direct self-loop is the simplest cycle case.
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    await expect(mgr.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
+  });
+
+  it("rejects a two-skill cycle (A → B → A)", async () => {
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    const err = await mgr.resolveSkill("file:/abs/a").then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(CyclicDependencyError);
+    // The path includes both nodes plus the back-edge target so the
+    // user can read the cycle off the message.
+    expect((err as CyclicDependencyError).cycle).toEqual([
+      "file:/abs/a",
+      "file:/abs/b",
+      "file:/abs/a",
+    ]);
+  });
+
+  it("rejects a longer cycle (A → B → C → A) with the full path", async () => {
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/c"`),
+    });
+    fetchers.setSkill("file:/abs/c", {
+      "SKILL.md": SKILL_ANCHOR("c", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    const err = await mgr.resolveSkill("file:/abs/a").then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(CyclicDependencyError);
+    expect((err as CyclicDependencyError).cycle).toEqual([
+      "file:/abs/a",
+      "file:/abs/b",
+      "file:/abs/c",
+      "file:/abs/a",
+    ]);
+  });
+
+  it("accepts a diamond (A → B, A → C, B → C) — same fqn via two paths is NOT a cycle", async () => {
+    // Classic shape: C is a shared dep of A and B, and A also
+    // depends on C directly. The previous regression ("dedupes
+    // shared deps") covered the simpler diamond via dedupe, but
+    // this test is specifically about the cycle-detection split:
+    // C is reached as a dep of B (currently in DFS stack) but
+    // C itself never sits on a path leading back to A or B.
+    fetchers.setSkill("file:/abs/c", { "SKILL.md": SKILL_ANCHOR("c") });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/c"`),
+    });
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR(
+        "a",
+        `dependencies:\n  skills:\n    - "file:/abs/b"\n    - "file:/abs/c"`,
+      ),
+    });
+    const plan = await mgr.resolveSkill("file:/abs/a");
+    // C, B, A — dep-first, C deduped to a single entry.
+    expect(plan.toInstall.map((n) => n.node.fqn)).toEqual(["public/c", "public/b", "public/a"]);
+    expect(plan.conflicts).toEqual([]);
+  });
+
+  it("cycle inside an agent's transitive skill graph propagates as CyclicDependencyError", async () => {
+    // Cycles can only form among skills (mcps have no deps,
+    // agents are never dep-referenced). An agent whose deps
+    // happen to reach a cycle still surfaces the error from
+    // walkSkill — the catch-it-once pattern in walkAgent doesn't
+    // get a chance to swallow it.
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    fetchers.setAgent("file:/abs/agent", {
+      "AGENTS.md": AGENT_ANCHOR("agent", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    await expect(mgr.resolveAgentFromOrigin("file:/abs/agent")).rejects.toBeInstanceOf(
+      CyclicDependencyError,
+    );
   });
 });
 

@@ -11,6 +11,7 @@ import {
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
 
@@ -304,12 +305,16 @@ describe("sync resolve — orphan detection", () => {
     expect(tool?.orphaned).toBe(true);
   });
 
-  it("a skill that only references itself is still orphan (self-ref doesn't count)", async () => {
-    // Edge case raised during code review: a skill listing its own
-    // origin in `dependencies.skills` is degenerate but legal. The
-    // reverse-dep index must skip self-references when determining
-    // orphan-ness — otherwise a self-referencing skill would mask
-    // its own orphan badge and silently look "in use".
+  it("rejects a self-referential skill at install time (degenerate cycle)", async () => {
+    // Originally raised during code review as "degenerate but legal".
+    // Subsequent review tightened the contract: emploke now refuses
+    // cyclic catalog deps at resolve/install (see CyclicDependencyError),
+    // and self-ref is the simplest cycle. The orphan-derivation
+    // self-ref defense in `newCascadeContext` (skipping `o === s.origin`
+    // when building the reverse-dep index) is kept as belt-and-suspenders
+    // for catalogs that somehow end up with a self-ref row via a
+    // bypass path (direct SQLite write, FS edit, future tooling) —
+    // the install path will never produce one.
     fakes.setSkill("file:/abs/loner", {
       "SKILL.md": SKILL_ANCHOR(
         "loner",
@@ -317,10 +322,7 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  skills:\n    - "file:/abs/loner"`,
       ),
     });
-    await mgr.installSkill("file:/abs/loner");
-
-    const loner = await mgr.getSkill("public/loner");
-    expect(loner?.orphaned).toBe(true);
+    await expect(mgr.installSkill("file:/abs/loner")).rejects.toBeInstanceOf(CyclicDependencyError);
   });
 });
 

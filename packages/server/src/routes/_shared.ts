@@ -49,6 +49,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "FetchError",
   "AgentFrontmatterError",
   "SkillFrontmatterError",
+  "CyclicDependencyError",
   "HasDependentsError",
   "ImmutableOriginError",
   "McpInvalidJsonError",
@@ -198,6 +199,7 @@ export function statusForCatalogError(err: unknown): number | null {
     case "OriginParseError":
     case "PlanStaleError":
     case "AgentPlanStaleError":
+    case "CyclicDependencyError":
       return 400;
     case "SkillNotFoundError":
     case "AgentNotFoundError":

@@ -122,6 +122,7 @@ export { splitMcpName, validateMcpName } from "./mcp/validate.js";
 // ─── Origin mutability ──────────────────────────────
 export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
 export {
+  CyclicDependencyError,
   PlanStaleError,
   SkillFrontmatterError,
   SkillNameInvalidError,

@@ -35,7 +35,7 @@ import * as McpFormat from "../mcp/mcp-format.js";
 import { type McpFetcher, McpService } from "../mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../mcp/sqlite-mcp-repository.js";
 import { isOriginMutable } from "../origin-mutability.js";
-import { SkillNotFoundError } from "../skill/errors.js";
+import { CyclicDependencyError, SkillNotFoundError } from "../skill/errors.js";
 import type { Skill } from "../skill/skill-entity.js";
 import { type SkillFetcher, type SkillResolvedNode, SkillService } from "../skill/skill-service.js";
 import { SqliteSkillRepository } from "../skill/sqlite-skill-repository.js";
@@ -982,113 +982,138 @@ export class CatalogManager {
   // ─── Internals: cross-entity resolve walkers ──────
 
   private async walkSkill(origin: string, ctx: ResolveContext, isRoot: boolean): Promise<void> {
+    // Back-edge detection (cycle): this origin is already on the
+    // current DFS path. Emploke doesn't support cyclic catalog
+    // deps — without this guard the cycle would be silently
+    // dedupe-swallowed by the visited check below and re-emerge
+    // as poisoned cache entries in computeSkillStatus's recursive
+    // pass. See {@link CyclicDependencyError} for the longer story.
+    //
+    // Note we check this BEFORE visited: a back-edge target may
+    // also be visited (if a previous independent walk happened to
+    // process it), but for the current DFS the inStack membership
+    // is the cycle signal.
+    if (ctx.inStack.has(origin)) {
+      throw new CyclicDependencyError([...ctx.inStack, origin]);
+    }
+    // Diamond dedupe: same origin reached via a different path
+    // whose subtree has already finished — its plan slot is
+    // already pushed, nothing to do.
     if (ctx.visited.has(origin)) return;
-    ctx.visited.add(origin);
+    ctx.inStack.add(origin);
+    try {
+      // Check whether this origin is already installed locally. For DEPS
+      // (isRoot=false), already-installed entries short-circuit the fetch
+      // unless we're in a sync (then we still re-resolve so version/up-to-date
+      // can be computed). For ROOT we always re-fetch — the explicit "give
+      // me this URL" semantics mean the user wants a refresh.
+      const localExisting = await this.skill.getByOrigin(origin);
+      if (!isRoot && localExisting !== null && !ctx.isSync) {
+        // Dep already on disk; non-sync flow just records it (we did NOT
+        // fetch upstream, so we can't claim it's up-to-date — reuse the
+        // legacy `already-installed` semantics by leaving disposition
+        // unset).
+        ctx.alreadyInstalled.push({
+          kind: "skill",
+          node: localToSkillResolvedNode(localExisting),
+          wasAlreadyInstalled: true,
+        });
+        return;
+      }
 
-    // Check whether this origin is already installed locally. For DEPS
-    // (isRoot=false), already-installed entries short-circuit the fetch
-    // unless we're in a sync (then we still re-resolve so version/up-to-date
-    // can be computed). For ROOT we always re-fetch — the explicit "give
-    // me this URL" semantics mean the user wants a refresh.
-    const localExisting = await this.skill.getByOrigin(origin);
-    if (!isRoot && localExisting !== null && !ctx.isSync) {
-      // Dep already on disk; non-sync flow just records it (we did NOT
-      // fetch upstream, so we can't claim it's up-to-date — reuse the
-      // legacy `already-installed` semantics by leaving disposition
-      // unset).
-      ctx.alreadyInstalled.push({
-        kind: "skill",
-        node: localToSkillResolvedNode(localExisting),
-        wasAlreadyInstalled: true,
-      });
-      return;
-    }
+      const plan = await this.skill.resolve(origin);
+      if (plan.conflict !== null) {
+        ctx.conflicts.push({
+          kind: "skill",
+          origin: plan.conflict.origin,
+          fqn: plan.conflict.fqn,
+          reason: plan.conflict.reason,
+        });
+        return;
+      }
+      if (plan.node === null) return;
 
-    const plan = await this.skill.resolve(origin);
-    if (plan.conflict !== null) {
-      ctx.conflicts.push({
-        kind: "skill",
-        origin: plan.conflict.origin,
-        fqn: plan.conflict.fqn,
-        reason: plan.conflict.reason,
-      });
-      return;
-    }
-    if (plan.node === null) return;
+      // Identity check at the root of a sync: if upstream's fqn differs,
+      // bail and emit a single identity-changed root node — no dep walk.
+      if (isRoot && ctx.isSync && localExisting !== null && localExisting.fqn !== plan.node.fqn) {
+        ctx.identityChange = {
+          kind: "skill",
+          oldFqn: localExisting.fqn,
+          newFqn: plan.node.fqn,
+        };
+        ctx.toInstall.push({
+          kind: "skill",
+          node: plan.node,
+          wasAlreadyInstalled: true,
+          disposition: "identity-changed",
+          identityChange: { oldFqn: localExisting.fqn, newFqn: plan.node.fqn },
+        });
+        return;
+      }
 
-    // Identity check at the root of a sync: if upstream's fqn differs,
-    // bail and emit a single identity-changed root node — no dep walk.
-    if (isRoot && ctx.isSync && localExisting !== null && localExisting.fqn !== plan.node.fqn) {
-      ctx.identityChange = {
-        kind: "skill",
-        oldFqn: localExisting.fqn,
-        newFqn: plan.node.fqn,
-      };
-      ctx.toInstall.push({
-        kind: "skill",
-        node: plan.node,
-        wasAlreadyInstalled: true,
-        disposition: "identity-changed",
-        identityChange: { oldFqn: localExisting.fqn, newFqn: plan.node.fqn },
-      });
-      return;
-    }
+      // Up-to-date check: same fqn AND same `version` → upstream is
+      // unchanged (per the authoring contract — see Skill class doc).
+      // Goes to alreadyInstalled with disposition `up-to-date`.
+      if (
+        localExisting !== null &&
+        localExisting.fqn === plan.node.fqn &&
+        localExisting.version === plan.node.version
+      ) {
+        // Walk deps anyway so the manifest's overall up-to-date is
+        // accurate (a dep change should mark the root as will-sync).
+        let anyDepChanged = false;
+        const depBaselineCount = ctx.toInstall.length;
+        for (const mcpOrigin of plan.node.depsRefs.mcps) {
+          await this.walkMcp(mcpOrigin, ctx, false);
+        }
+        for (const skillOrigin of plan.node.depsRefs.skills) {
+          await this.walkSkill(skillOrigin, ctx, false);
+        }
+        // If any dep ended up in toInstall as new/will-sync, the root
+        // is no longer truly up-to-date — re-fetching its tree may
+        // not change anything but the user-facing sync should still
+        // show "will sync" so deps come along.
+        anyDepChanged = ctx.toInstall.length > depBaselineCount;
+        if (!anyDepChanged) {
+          ctx.alreadyInstalled.push({
+            kind: "skill",
+            node: plan.node,
+            wasAlreadyInstalled: true,
+            disposition: "up-to-date",
+          });
+          return;
+        }
+        // Root joins toInstall with disposition `will-sync` — its own
+        // anchor will be re-written to keep the on-disk view consistent.
+        ctx.toInstall.push({
+          kind: "skill",
+          node: plan.node,
+          wasAlreadyInstalled: true,
+          disposition: "will-sync",
+        });
+        return;
+      }
 
-    // Up-to-date check: same fqn AND same `version` → upstream is
-    // unchanged (per the authoring contract — see Skill class doc).
-    // Goes to alreadyInstalled with disposition `up-to-date`.
-    if (
-      localExisting !== null &&
-      localExisting.fqn === plan.node.fqn &&
-      localExisting.version === plan.node.version
-    ) {
-      // Walk deps anyway so the manifest's overall up-to-date is
-      // accurate (a dep change should mark the root as will-sync).
-      let anyDepChanged = false;
-      const depBaselineCount = ctx.toInstall.length;
       for (const mcpOrigin of plan.node.depsRefs.mcps) {
         await this.walkMcp(mcpOrigin, ctx, false);
       }
       for (const skillOrigin of plan.node.depsRefs.skills) {
         await this.walkSkill(skillOrigin, ctx, false);
       }
-      // If any dep ended up in toInstall as new/will-sync, the root
-      // is no longer truly up-to-date — re-fetching its tree may
-      // not change anything but the user-facing sync should still
-      // show "will sync" so deps come along.
-      anyDepChanged = ctx.toInstall.length > depBaselineCount;
-      if (!anyDepChanged) {
-        ctx.alreadyInstalled.push({
-          kind: "skill",
-          node: plan.node,
-          wasAlreadyInstalled: true,
-          disposition: "up-to-date",
-        });
-        return;
-      }
-      // Root joins toInstall with disposition `will-sync` — its own
-      // anchor will be re-written to keep the on-disk view consistent.
       ctx.toInstall.push({
         kind: "skill",
         node: plan.node,
-        wasAlreadyInstalled: true,
-        disposition: "will-sync",
+        ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+        disposition: localExisting !== null ? "will-sync" : "new",
       });
-      return;
+    } finally {
+      // Out of the active DFS path either way (return or throw). We
+      // flip to BLACK on the way out so a later sibling diamond hit
+      // is correctly classified as "subtree already done" rather
+      // than "cycle".
+      ctx.inStack.delete(origin);
+      ctx.visited.add(origin);
     }
-
-    for (const mcpOrigin of plan.node.depsRefs.mcps) {
-      await this.walkMcp(mcpOrigin, ctx, false);
-    }
-    for (const skillOrigin of plan.node.depsRefs.skills) {
-      await this.walkSkill(skillOrigin, ctx, false);
-    }
-    ctx.toInstall.push({
-      kind: "skill",
-      node: plan.node,
-      ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
-      disposition: localExisting !== null ? "will-sync" : "new",
-    });
   }
 
   private async walkAgent(origin: string, ctx: ResolveContext): Promise<void> {
@@ -1359,7 +1384,19 @@ export class CatalogManager {
 
 interface ResolveContext {
   rootOrigin: string;
+  /**
+   * Standard DFS-coloring split. `visited` is BLACK (subtree
+   * fully walked); `inStack` is GRAY (currently being walked, on
+   * the active DFS path). Re-entering an inStack origin = back
+   * edge = cycle. Re-entering a visited origin = diamond, no-op.
+   *
+   * Conflating the two (a single Set) silently swallows cycles —
+   * the second visit just returns, the manifest lacks one edge,
+   * and the cascade-status pass later dereferences a half-computed
+   * cache slot. Hence the split.
+   */
   visited: Set<string>;
+  inStack: Set<string>;
   toInstall: CatalogPlanNode[];
   alreadyInstalled: CatalogPlanNode[];
   conflicts: CatalogConflict[];
@@ -1373,6 +1410,7 @@ function newResolveContext(rootOrigin: string): ResolveContext {
   return {
     rootOrigin,
     visited: new Set(),
+    inStack: new Set(),
     toInstall: [],
     alreadyInstalled: [],
     conflicts: [],
@@ -1529,13 +1567,19 @@ function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
   const cached = ctx.skillCache.get(skill.origin);
   if (cached !== undefined) return cached;
   if (ctx.inFlight.has(skill.origin)) {
-    // Cycle — treat the in-flight node as ready for the *cascade*
-    // check that's asking about it. The outer call (the one that
-    // added this origin to inFlight) already factored its own
-    // self-causes (orphan, prereqsAck) via `computeWithDeps`, so the
-    // top-level answer for this origin still reflects orphan
-    // correctly; we just don't want a self-cycle to add a noisy
-    // tautological "blocked-by-itself" entry to its own blockedDeps.
+    // Defensive only: install/sync now reject cyclic dep graphs at
+    // resolve time (see `walkSkill` + `CyclicDependencyError`), so
+    // a well-formed catalog should never bottom out here. Kept as
+    // a safe fallback for two reasons:
+    //   1. Bypassed install paths (direct repo writes, FS edits,
+    //      future tools) could leave a cycle on disk.
+    //   2. Without the short-circuit a cycle would infinite-recurse.
+    // The "ready" answer here only suppresses the cycle-internal
+    // cascade contribution; the outer call still factors its own
+    // self-causes correctly. The cached result (set below after
+    // the recursive call returns) is therefore self-consistent for
+    // any non-cyclic caller; cyclic callers see the same defensive
+    // ready value as the inner call would.
     return { status: "ready" };
   }
   ctx.inFlight.add(skill.origin);
