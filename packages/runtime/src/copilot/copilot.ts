@@ -22,6 +22,8 @@ import type {
   TaskActivityResult,
   TaskActivityStreamOpts,
   TaskHandle,
+  TaskMetadataOpts,
+  TaskRuntimeDisplayMetadata,
   TaskStateOpts,
   TruncationInfo,
 } from "../types.js";
@@ -38,7 +40,7 @@ import {
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
 import { provisionCopilotWorkdir } from "./provision.js";
-import { readCopilotSessionState } from "./state.js";
+import { readCopilotSessionState, readCopilotWorkspaceYaml } from "./state.js";
 import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
@@ -304,6 +306,33 @@ export class CopilotRuntime implements Runtime {
     } catch (err) {
       throw new RuntimeStateDeletionFailed(this.kind, id, err as Error);
     }
+  }
+
+  /**
+   * Read Copilot's task display metadata from `workspace.yaml`.
+   * Surfaces the same `name` / `summary` / `user_named` /
+   * `updated_at` fields the session refresh path consumes —
+   * shared via {@link readCopilotWorkspaceYaml} — but typed as a
+   * task-shaped {@link TaskRuntimeDisplayMetadata} so callers
+   * don't conflate the two entity surfaces.
+   *
+   * Returns null when `runtimeSessionId` is missing/invalid or
+   * when the yaml file isn't on disk yet (task hasn't received
+   * its first turn). Caller (TaskManager) treats null as "no
+   * runtime title available, fall through to instructions".
+   */
+  async taskMetadata(opts: TaskMetadataOpts): Promise<TaskRuntimeDisplayMetadata | null> {
+    const sessionId = opts.metadata.runtimeSessionId;
+    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
+      return null;
+    }
+    const meta = await readCopilotWorkspaceYaml(this.copilotStateDir, sessionId);
+    if (meta === null) return null;
+    return {
+      title: meta.title,
+      userTitled: meta.userTitled,
+      lastActiveAt: meta.lastActiveAt,
+    };
   }
 
   /**

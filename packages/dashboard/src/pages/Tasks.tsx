@@ -612,15 +612,23 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
   const isRunning = task.status === "running" || task.status === "not_started";
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
-  // Pull the first non-empty line of instructions as the headline.
-  // Multi-line instructions usually start with the gist on line 1 and
-  // expand below; rendering only the gist keeps row height predictable
-  // and CSS ellipsis handles overflow.
+  // Pull the first non-empty line of instructions as the headline,
+  // unless the runtime has supplied a shorter display title (Copilot's
+  // workspace.yaml `name` / `summary`). Runtime-derived titles are 5-7
+  // words sized for list rendering; they're stable (set once when the
+  // CLI generates them, then preserved unless the user renames) so
+  // they don't shift on poll. Falls through to the instructions
+  // first-line for tasks where no title is available yet.
+  const runtimeTitle =
+    typeof task.metadata?.title === "string" && task.metadata.title.length > 0
+      ? (task.metadata.title as string)
+      : null;
   const headline =
-    task.instructions
+    runtimeTitle ??
+    (task.instructions
       .split(/\r?\n/)
       .map((s) => s.trim())
-      .find((s) => s.length > 0) ?? "(empty instructions)";
+      .find((s) => s.length > 0) ?? "(empty instructions)");
   return (
     <li
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${

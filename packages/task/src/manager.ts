@@ -443,7 +443,13 @@ export class TaskManager {
       const d = b.createdAt.localeCompare(a.createdAt);
       return d !== 0 ? d : b.id.localeCompare(a.id);
     });
-    return tasks;
+
+    // Enrich with runtime-supplied display metadata (title, etc.) in
+    // parallel. Each call is one small file read on the runtime's
+    // own state dir; we Promise.all so a list of N tasks pays
+    // O(1) wall-clock instead of O(N). Failures are silent — title
+    // is a nice-to-have, the dashboard falls through to instructions.
+    return Promise.all(tasks.map((t) => this.enrichWithRuntimeMetadata(t)));
   }
 
   // ─── get ─────────────────────────────────────────────────
@@ -451,7 +457,9 @@ export class TaskManager {
   async get(id: string): Promise<Task | null> {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
-    return this.loadTask(id, workdir);
+    const task = await this.loadTask(id, workdir);
+    if (task === null) return null;
+    return this.enrichWithRuntimeMetadata(task);
   }
 
   // ─── getTaskActivity / getTaskActivityStream ─────────────
@@ -859,6 +867,63 @@ export class TaskManager {
       });
     }
     return task;
+  }
+
+  /**
+   * Fold runtime-supplied display metadata (title, etc.) into a
+   * loaded task. Returns the same task object when:
+   *   - the runtime is unknown / unregistered (silent)
+   *   - the runtime doesn't implement `taskMetadata` (silent)
+   *   - the runtime returns null (no title available yet)
+   *   - the runtime call throws (logged at debug; we fall back to
+   *     the persisted view)
+   *
+   * On success, returns a NEW task object with `metadata.title`
+   * (and `metadata.userTitled` / `metadata.lastActiveAtRuntime`)
+   * merged in. Pure — never mutates the input task.
+   *
+   * Does NOT persist. Title is derived from the runtime's own
+   * source of truth (Copilot's `workspace.yaml`); persisting our
+   * snapshot would just duplicate state that the runtime can
+   * regenerate on demand. The dashboard / CLI sees the latest
+   * value on every list/get call without a write loop.
+   *
+   * Honours the runtime's `userTitled` flag: when true, the user
+   * has explicitly renamed via the runtime CLI, so consumers
+   * SHOULD treat the title as authoritative even if a future
+   * regenerate path tries to overwrite. We surface the flag so
+   * the dashboard's own rename UX (when added) can defer to it.
+   */
+  private async enrichWithRuntimeMetadata(task: Task): Promise<Task> {
+    const runtimeName = task.metadata.runtime;
+    if (typeof runtimeName !== "string") return task;
+    let runtime: Runtime;
+    try {
+      runtime = this.runtimeRegistry.get(runtimeName);
+    } catch {
+      return task;
+    }
+    if (typeof runtime.taskMetadata !== "function") return task;
+    let meta: Awaited<ReturnType<NonNullable<Runtime["taskMetadata"]>>>;
+    try {
+      meta = await runtime.taskMetadata({ metadata: task.metadata });
+    } catch (err) {
+      // Title is best-effort; don't break list/get on a runtime fault.
+      this.logger.warn("tasks: taskMetadata read failed", {
+        taskId: task.id,
+        runtime: runtimeName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return task;
+    }
+    if (meta === null) return task;
+    // Open-shape merge — only set the keys we care about, preserve
+    // everything else verbatim.
+    const enriched: Record<string, unknown> = { ...task.metadata };
+    if (meta.title !== null) enriched.title = meta.title;
+    enriched.userTitled = meta.userTitled;
+    if (meta.lastActiveAt !== null) enriched.lastActiveAtRuntime = meta.lastActiveAt;
+    return { ...task, metadata: enriched };
   }
 
   /** Atomic write of the persisted record. */

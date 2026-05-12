@@ -16,6 +16,31 @@ export interface CopilotSessionState {
 }
 
 /**
+ * Subset of the parsed `workspace.yaml` shape that's useful for
+ * runtime-neutral display ({@link Runtime.taskMetadata} via
+ * {@link readCopilotWorkspaceYaml}). Kept separate from
+ * {@link CopilotSessionState} so the session-shaped surface
+ * (preview / lastActiveAt) doesn't leak into the task-shaped one.
+ */
+export interface CopilotWorkspaceMetadata {
+  /**
+   * Short display label: `summary` if Copilot has generated one
+   * (multi-turn rolling summary), else `name` (single-line title
+   * generated from the first user prompt), else null.
+   */
+  readonly title: string | null;
+  /**
+   * True iff Copilot's `user_named` is true — meaning the user
+   * has explicitly renamed the session via the CLI's `/rename`
+   * (or equivalent), so consumers should NOT overwrite the title
+   * even if they regenerate one.
+   */
+  readonly userTitled: boolean;
+  /** ISO string from `updated_at` ?? `created_at`, or null. */
+  readonly lastActiveAt: string | null;
+}
+
+/**
  * Read a single copilot session's state by id. Returns `null` if:
  *
  *   - the directory doesn't exist (user hasn't launched copilot yet)
@@ -34,6 +59,26 @@ export async function readCopilotSessionState(
   copilotStateDir: string,
   runtimeSessionId: string,
 ): Promise<CopilotSessionState | null> {
+  const meta = await readCopilotWorkspaceYaml(copilotStateDir, runtimeSessionId);
+  if (meta === null || meta.lastActiveAt === null) return null;
+  return { runtimeSessionId, lastActiveAt: meta.lastActiveAt, preview: meta.title };
+}
+
+/**
+ * Parse `<copilotStateDir>/<id>/workspace.yaml` into the runtime-
+ * neutral metadata shape. Shared by {@link readCopilotSessionState}
+ * (session refresh) and `CopilotRuntime.taskMetadata` (task
+ * metadata enrichment) so both code paths see exactly the same
+ * `title` field with no per-call divergence.
+ *
+ * Returns null only when the file can't be read or parsed; an
+ * empty/missing `name`/`summary` returns `{ title: null, ... }`
+ * (caller distinguishes "no title" from "no state").
+ */
+export async function readCopilotWorkspaceYaml(
+  copilotStateDir: string,
+  runtimeSessionId: string,
+): Promise<CopilotWorkspaceMetadata | null> {
   const yamlPath = path.join(copilotStateDir, runtimeSessionId, "workspace.yaml");
   let raw: string;
   try {
@@ -53,13 +98,17 @@ export async function readCopilotSessionState(
   const updatedAt = parseIsoLike(obj.updated_at);
   const createdAt = parseIsoLike(obj.created_at);
   const lastActiveAt = updatedAt ?? createdAt;
-  if (lastActiveAt === null) return null;
 
   const summary = typeof obj.summary === "string" && obj.summary.length > 0 ? obj.summary : null;
   const name = typeof obj.name === "string" && obj.name.length > 0 ? obj.name : null;
-  const preview = summary ?? name;
+  const title = summary ?? name;
 
-  return { runtimeSessionId, lastActiveAt, preview };
+  // user_named is Copilot's flag set when the user has explicitly
+  // renamed the session via the CLI's rename command. If absent or
+  // not a boolean, default to false (treat as AI-generated).
+  const userTitled = obj.user_named === true;
+
+  return { title, userTitled, lastActiveAt };
 }
 
 /**

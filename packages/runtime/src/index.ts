@@ -64,6 +64,8 @@ export type {
   TaskActivityStreamOpts,
   TaskExit,
   TaskHandle,
+  TaskMetadataOpts,
+  TaskRuntimeDisplayMetadata,
   TaskStateOpts,
   ThinkingItem,
   TokenUsage,
