@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -16,6 +16,8 @@ import type {
   Runtime,
   RuntimeCapabilities,
   Session,
+  TaskActivityOpts,
+  TaskActivityResult,
   TaskHandle,
 } from "../types.js";
 import { deriveCopilotResult, parseCopilotActivity } from "./activity.js";
@@ -290,36 +292,33 @@ export class CopilotRuntime implements Runtime {
   }
 
   /**
-   * Locate the Copilot per-task event log. `TaskManager` installs a
-   * directory junction at `<taskWorkdir>/session/` pointing at the
-   * runtime's per-task state dir, and Copilot's NDJSON stream lives at
-   * `events.jsonl` inside that. We compose the path from the manager's
-   * convention (the junction name `session`) and Copilot's convention
-   * (`events.jsonl`) here so the server doesn't have to know either.
+   * Read + parse + derive — end-to-end. Reads `events.jsonl` from
+   * `<copilotStateDir>/<runtimeSessionId>/`, lifts to ActivityItem[],
+   * picks the headline result. Returns `null` if the file isn't on
+   * disk yet (task hasn't emitted its first event).
    *
-   * Note we do NOT stat the file: the route that consumes this checks
-   * existence and returns `NoEventsYet` itself, so a synchronous,
-   * always-cheap return keeps this method usable from any context.
+   * The runtime owns the path discovery so consumers (server route,
+   * dashboard) never see Copilot's internal `events.jsonl` shape or
+   * its `~/.copilot/session-state/` layout.
    */
-  taskEventsPath(taskWorkdir: string): string {
-    return path.join(taskWorkdir, "session", "events.jsonl");
-  }
-
-  /**
-   * Lift Copilot's NDJSON event log into the runtime-neutral
-   * {@link ActivityItem} vocabulary. See
-   * `./activity.ts` for the event taxonomy we consume vs drop.
-   */
-  parseActivity(raw: string) {
-    return parseCopilotActivity(raw);
-  }
-
-  /**
-   * Pick the last assistant message as the run's "result" line.
-   * See {@link Runtime.deriveResult} for the contract.
-   */
-  deriveResult(raw: string): string | null {
-    return deriveCopilotResult(raw);
+  async taskActivity(opts: TaskActivityOpts): Promise<TaskActivityResult | null> {
+    const sessionId = opts.metadata.runtimeSessionId;
+    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
+      return null;
+    }
+    const eventsPath = path.join(this.copilotStateDir, sessionId, "events.jsonl");
+    let raw: string;
+    try {
+      raw = await readFile(eventsPath, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return null;
+      throw err;
+    }
+    return {
+      activity: parseCopilotActivity(raw),
+      result: deriveCopilotResult(raw),
+    };
   }
 }
 

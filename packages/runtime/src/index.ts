@@ -55,6 +55,8 @@ export type {
   Runtime,
   RuntimeCapabilities,
   Session,
+  TaskActivityOpts,
+  TaskActivityResult,
   TaskExit,
   TaskHandle,
   ToolRequest,

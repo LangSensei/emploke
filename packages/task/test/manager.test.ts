@@ -361,34 +361,6 @@ describe("dispatch — happy path", () => {
     expect(persisted?.status).toBe("running");
     expect(persisted?.id).toBe(t.id);
   });
-
-  it("installs <workdir>/session/ junction targeting handle.sessionDir", async () => {
-    const rt = new StubRuntime();
-    // Create a real target dir so the symlink/junction has something to point at.
-    const targetDir = await mkdtemp(path.join(tmpdir(), "emploke-runtime-state-"));
-    try {
-      rt.nextSessionDir = { mode: "resolve", value: targetDir };
-      const { m } = makeManager({ runtime: rt });
-      const t = await m.dispatch(dispatchOf());
-
-      // The junction install runs in the background — flush microtasks
-      // until the symlink either appears or we time out.
-      const link = path.join(tasksDir, t.id, "session");
-      await waitFor(async () => {
-        try {
-          await stat(link);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-
-      const st = await stat(link);
-      expect(st.isDirectory()).toBe(true);
-    } finally {
-      await rm(targetDir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("dispatch — error paths", () => {
@@ -842,50 +814,6 @@ describe("delete", () => {
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
-  });
-});
-
-describe("getTaskEventsPath", () => {
-  it("returns the runtime's path when implemented", async () => {
-    class WithEvents extends StubRuntime {
-      taskEventsPath(workdir: string): string {
-        return path.join(workdir, "session", "events.jsonl");
-      }
-    }
-    const rt = new WithEvents();
-    const { m } = makeManager({ runtime: rt });
-    const t = await m.dispatch(dispatchOf());
-    const p = await m.getTaskEventsPath(t.id);
-    expect(p).toBe(path.join(tasksDir, t.id, "session", "events.jsonl"));
-  });
-
-  it("returns null when the runtime omits taskEventsPath", async () => {
-    // The default StubRuntime has no taskEventsPath method.
-    const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
-    const t = await m.dispatch(dispatchOf());
-    expect(await m.getTaskEventsPath(t.id)).toBeNull();
-  });
-
-  it("returns null when the task doesn't exist", async () => {
-    const { m } = makeManager();
-    expect(await m.getTaskEventsPath("20260101-cafebabe")).toBeNull();
-  });
-
-  // A buggy or partially-installed runtime can throw from
-  // `taskEventsPath`. The facade swallows this and returns null so the
-  // server route surfaces 404 NoEventsYet (a recoverable degradation in
-  // the dashboard) instead of leaking a 500 to the client.
-  it("returns null when the runtime's taskEventsPath throws", async () => {
-    class Throws extends StubRuntime {
-      taskEventsPath(): string {
-        throw new Error("boom");
-      }
-    }
-    const rt = new Throws();
-    const { m } = makeManager({ runtime: rt });
-    const t = await m.dispatch(dispatchOf());
-    expect(await m.getTaskEventsPath(t.id)).toBeNull();
   });
 });
 

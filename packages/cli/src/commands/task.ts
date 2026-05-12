@@ -1,13 +1,12 @@
 /**
  * `emploke task …` — 5 subcommands wrapping the workspace-scoped tasks
- * HTTP surface (list / dispatch / show / rm / events).
+ * HTTP surface (list / dispatch / show / rm / activity).
  *
- * `events` is a one-shot dump of the runtime's NDJSON event log — the
- * server endpoint is also one-shot (no SSE / follow). Real follow mode
- * needs server-side support; tracked as a follow-up issue in plan.md.
+ * `activity` returns the runtime-parsed `ActivityItem[]` timeline as
+ * JSON — runtime-neutral, so multi-runtime futures work without the
+ * client needing to know how each CLI persists its log.
  */
 
-import { ApiError } from "../api-client.js";
 import { makeClient, resolveWorkspace } from "../connect.js";
 import { formatError, formatJson, formatRecord, formatTable, pickFormat } from "../output.js";
 import type { CommandResult } from "../result.js";
@@ -128,56 +127,6 @@ export async function taskRm(opts: TaskRmOpts): Promise<CommandResult> {
     if (opts.purge) query.purge = "1";
     await client.call("tasks.delete", { params: { id, tid: opts.tid }, query });
     return { exitCode: 0, stdout: `task ${opts.tid} removed\n` };
-  } catch (err) {
-    return formatError(err);
-  }
-}
-
-// ─── events ────────────────────────────────────────────────────────────
-export interface TaskEventsOpts extends CommonFlags {
-  readonly tid: string;
-  /** Test seam: write destination for streamed bytes. Defaults to `process.stdout`. */
-  readonly out?: NodeJS.WritableStream;
-}
-
-export async function taskEvents(opts: TaskEventsOpts): Promise<CommandResult> {
-  if (typeof opts.tid !== "string" || opts.tid.trim() === "") {
-    return { exitCode: 2, stderr: "task id is required\n" };
-  }
-  const out = opts.out ?? process.stdout;
-  const client = await makeClient(opts);
-  try {
-    const id = await resolveWorkspace(opts, client);
-    // Use callRaw so the NDJSON body is streamed directly to stdout —
-    // events logs can be megabytes for long-running tasks; buffering
-    // through `call` would consume RAM proportional to log size and
-    // delay any output until the server closes the connection.
-    const res = await client.callRaw("tasks.events", { params: { id, tid: opts.tid } });
-    if (!res.ok) {
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        body = await res.text();
-      }
-      throw new ApiError(res.status, `HTTP ${res.status}`, body);
-    }
-    if (res.body !== null) {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          out.write(decoder.decode(value, { stream: true }));
-        }
-        const tail = decoder.decode();
-        if (tail) out.write(tail);
-      } finally {
-        reader.releaseLock();
-      }
-    }
-    return { exitCode: 0 };
   } catch (err) {
     return formatError(err);
   }

@@ -219,16 +219,21 @@ export class SessionManager {
       throw new SessionNotFoundError(id);
     }
 
-    if (opts.deleteRuntimeState) {
+    if (opts.purge === true) {
+      // Full purge: runtime state first (it can fail loudly and we want
+      // to bail before we've started removing things). Only after it
+      // succeeds do we drop the metadata row + workdir.
       const runtime = this.runtimeRegistry.get(session.runtime);
       await runtime.deleteState(session);
-    }
-
-    await this.repository.delete(id);
-    if (opts.purge === true) {
+      await this.repository.delete(id);
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
+      return;
     }
+
+    // Archive (default): forget the entity but leave its files behind so
+    // the user can recover the agent's product or runtime conversation.
+    await this.repository.delete(id);
   }
 
   // ─── buildLaunch ─────────────────────────────────────────

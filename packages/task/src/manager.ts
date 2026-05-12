@@ -1,5 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
@@ -15,40 +15,14 @@ import {
   TaskNotFoundError,
 } from "./errors.js";
 import { assertValidTaskId, generateTaskId } from "./ids.js";
-import { createDirJunction } from "./junction.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
 import { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
-import type {
-  DispatchOpts,
-  ListTaskOpts,
-  Logger,
-  Task,
-  TaskManagerConfig,
-  TaskStatus,
-} from "./types.js";
+import type { DispatchOpts, ListTaskOpts, Logger, Task, TaskManagerConfig } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
-
-/**
- * Subdirectory under each task workdir that links to the runtime's per-task
- * state directory.
- *
- * Naming note: kept as the singular `session` rather than the more literal
- * `runtime-state` (or the plural `sessions`, which would collide visually
- * with the workspace's `<workspace>/sessions/` directory holding interactive
- * Session workdirs). The link points at what each Runtime impl already calls
- * a "session" internally — the CLI's per-id unit of state, exposed as
- * `Session.runtimeSessionId` and Copilot's `<copilotStateDir>/<id>/`. Mirroring
- * that vocabulary keeps cross-file reading natural; the singular vs plural
- * disambiguates from the workspace's interactive-session directory.
- *
- * If we ever introduce a second runtime whose native term is not "session",
- * revisit and consider renaming to a runtime-neutral noun (e.g. `runtime-state`).
- */
-const SESSION_LINK = "session";
 
 /**
  * In-memory record for a task whose subprocess we still own. Once the
@@ -383,21 +357,13 @@ export class TaskManager {
       settled: undefined as unknown as Promise<void>,
     };
     const settled = (async () => {
-      // 7a. Junction the runtime's session dir. Best-effort: if the
-      //     runtime can't tell us where it lives, or symlink fails (e.g.
-      //     Windows without the right perms), we log and move on. The
-      //     dashboard's events tab will 404 NoEventsYet, which is a
-      //     recoverable degradation (the runtime's event log path
-      //     resolves through `Runtime.taskEventsPath`; with no junction
-      //     installed that path doesn't exist on disk yet).
-      this.installSessionJunction(workdir, handle).catch((err) => {
-        this.logger.warn("tasks: failed to install session junction", {
-          taskId: id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-
-      // 7b. Wait for exit + apply terminal status.
+      // 7a. Wait for exit + apply terminal status. The runtime owns
+      //     its own per-task state dir (Copilot puts events.jsonl in
+      //     `<copilotStateDir>/<runtimeSessionId>/`); we no longer
+      //     mirror it via a junction inside the task workdir. The
+      //     dashboard fetches the parsed activity through
+      //     `Runtime.taskActivity`, which reads the runtime's native
+      //     log directly without going through the manager.
       let exitInfo: Awaited<TaskHandle["exit"]>;
       try {
         exitInfo = await handle.exit;
@@ -480,121 +446,40 @@ export class TaskManager {
     return this.loadTask(id, workdir);
   }
 
-  // ─── getTaskEventsPath ───────────────────────────────────
+  // ─── getTaskActivity ─────────────────────────────────────
 
   /**
-   * Resolve the absolute path to the runtime-native event log for a
-   * task, or `null` if no log is available (task missing, runtime
-   * doesn't implement the optional surface, or runtime returned `null`
-   * to signal "not yet").
+   * Fetch a task's activity timeline + derived headline result via
+   * the runtime's structured activity surface. Returns `null` when:
+   *   - the task is missing or its metadata is corrupted,
+   *   - the runtime is no longer registered,
+   *   - the runtime doesn't implement `taskActivity` (no structured
+   *     log support),
+   *   - the runtime has no log for this task yet (task hasn't started,
+   *     or started but hasn't emitted its first event).
    *
-   * This is a thin facade over `Runtime.taskEventsPath`: it locates the
-   * task, looks up the runtime by `metadata.runtime`, and forwards the
-   * task's workdir. The route layer can then `stat` + stream the file
-   * without depending on `@emploke/runtime` directly.
+   * The route layer maps `null` to 404 NoEventsYet.
    *
-   * Note: this method does not check whether the file exists on disk;
-   * the runtime path may resolve to a file the agent hasn't written yet.
-   * Callers that want a 404-vs-200 distinction should `stat` the
-   * returned path themselves.
+   * Read errors after the runtime found its log (e.g. permission
+   * error mid-read) propagate; they're true server faults and should
+   * surface as 500.
    */
-  async getTaskEventsPath(id: string): Promise<string | null> {
+  async getTaskActivity(id: string): Promise<import("@emploke/runtime").TaskActivityResult | null> {
     const task = await this.get(id);
     if (task === null) return null;
     const meta = readTaskRuntimeMetadata(task);
-    if (typeof meta.workdir !== "string" || typeof meta.runtime !== "string") {
-      return null;
-    }
+    if (typeof meta.runtime !== "string") return null;
     let runtime: import("@emploke/runtime").Runtime;
     try {
       runtime = this.runtimeRegistry.get(meta.runtime);
     } catch {
       // The recorded runtime is no longer registered. Treat as "no
-      // events available" rather than surfacing a 5xx — the dashboard
-      // will render NoEventsYet, which is the right UX for an
-      // unrecoverable task.
+      // events available" — dashboard renders NoEventsYet, the right
+      // UX for an unrecoverable task.
       return null;
     }
-    if (typeof runtime.taskEventsPath !== "function") return null;
-    try {
-      return runtime.taskEventsPath(meta.workdir);
-    } catch {
-      // Runtime impls are not contractually required to be infallible
-      // here — a buggy or partially-installed runtime could throw. Treat
-      // it the same as the other "no events available" branches so the
-      // route surfaces 404 NoEventsYet instead of 500. The dashboard
-      // already renders that as a recoverable degradation.
-      return null;
-    }
-  }
-
-  // ─── getTaskActivity ─────────────────────────────────────
-
-  /**
-   * Read + parse a task's runtime-native event log into the
-   * runtime-neutral {@link import("@emploke/runtime").ActivityItem}
-   * vocabulary, plus a derived "result" string (the headline answer
-   * the agent produced).
-   *
-   * Returns `null` when:
-   *   - the task is missing or its metadata is corrupted,
-   *   - the runtime is no longer registered,
-   *   - the runtime doesn't implement `parseActivity` (no structured
-   *     log support),
-   *   - the event log file isn't on disk yet (task hasn't started, or
-   *     started but hasn't emitted its first event).
-   *
-   * The route layer maps `null` to 404 NoEventsYet — same shape as
-   * `getTaskEventsPath`, so the dashboard can fail through to the raw
-   * NDJSON view if it wants.
-   *
-   * Read errors after the file has been stat'd (e.g. permission error
-   * mid-read) propagate; they're true server faults and should
-   * surface as 500.
-   */
-  async getTaskActivity(id: string): Promise<{
-    activity: import("@emploke/runtime").ActivityItem[];
-    result: string | null;
-  } | null> {
-    const task = await this.get(id);
-    if (task === null) return null;
-    const meta = readTaskRuntimeMetadata(task);
-    if (typeof meta.workdir !== "string" || typeof meta.runtime !== "string") {
-      return null;
-    }
-    let runtime: import("@emploke/runtime").Runtime;
-    try {
-      runtime = this.runtimeRegistry.get(meta.runtime);
-    } catch {
-      return null;
-    }
-    if (
-      typeof runtime.taskEventsPath !== "function" ||
-      typeof runtime.parseActivity !== "function"
-    ) {
-      return null;
-    }
-    let eventsPath: string | null;
-    try {
-      eventsPath = runtime.taskEventsPath(meta.workdir);
-    } catch {
-      return null;
-    }
-    if (eventsPath === null) return null;
-    let raw: string;
-    try {
-      raw = await readFile(eventsPath, "utf8");
-    } catch (err) {
-      // ENOENT means the agent hasn't written its first event yet —
-      // the route surfaces this as 404 NoEventsYet, matching the
-      // /events streaming route's behaviour. Other errors propagate.
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return null;
-      throw err;
-    }
-    const activity = runtime.parseActivity(raw);
-    const result = typeof runtime.deriveResult === "function" ? runtime.deriveResult(raw) : null;
-    return { activity, result };
+    if (typeof runtime.taskActivity !== "function") return null;
+    return runtime.taskActivity({ metadata: task.metadata });
   }
 
   // ─── delete ──────────────────────────────────────────────
@@ -876,24 +761,6 @@ export class TaskManager {
   /** Atomic write of the persisted record. */
   private async persist(_workdir: string, task: Task): Promise<void> {
     await this.repository.save(task);
-  }
-
-  /**
-   * Wait for `handle.sessionDir` and create a junction at
-   * `<workdir>/session/`. If the link already exists (re-run, recovery),
-   * leave it alone. Throws on hard failures so the caller can log.
-   */
-  private async installSessionJunction(workdir: string, handle: TaskHandle): Promise<void> {
-    const target = await handle.sessionDir;
-    const link = path.join(workdir, SESSION_LINK);
-    try {
-      await stat(link);
-      // Already exists — assume it's correct (same target). Don't replace.
-      return;
-    } catch {
-      // ENOENT — create it below.
-    }
-    await createDirJunction(target, link);
   }
 
   /** Apply the terminal event to a running task and persist. */

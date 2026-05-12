@@ -167,7 +167,7 @@ export async function dispatchCopilotTask(
   // we'll never deliver. `--output-format json` makes stdout a JSONL of
   // events. We don't currently consume that stream — the canonical event
   // log lives at `<sessionDir>/events.jsonl` and the dashboard reads it
-  // through the runtime's `taskEventsPath` surface — but the flag stays
+  // through the runtime's `taskActivity` surface — but the flag stays
   // on so a future progress-streaming UI can attach to stdout without
   // changing the spawn arguments. `-C` is redundant with `cwd` but
   // belt-and-suspenders for tools that introspect argv.

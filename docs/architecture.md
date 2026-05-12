@@ -284,7 +284,7 @@ interface Runtime {
                                                                 //   preconditions keyed off workspaceDir
   deleteState(session): Promise<void>;                    // remove CLI's per-session state
   dispatchTask?(opts): Promise<TaskHandle>;               // optional: one-shot non-interactive
-  taskEventsPath?(taskWorkdir): string | null;            // optional: where to find task events
+  taskActivity?(opts): Promise<TaskActivityResult|null>;  // optional: read+parse runtime log into ActivityItem[]
 }
 ```
 
@@ -376,8 +376,11 @@ To add e.g. a Gemini adapter:
    Pull agent + skill content from the supplied `catalog` argument
    via `agentEntries` / `skillEntries`; write into the supplied
    `taskDir`. Never resolve catalog paths from the resolve result.
-3. Implement `taskEventsPath` to expose where the CLI writes its
-   per-session event log; the dashboard streams the bytes opaquely.
+3. Implement `taskActivity` to read your runtime's per-task log
+   end-to-end (find file → read → parse → derive headline) and return
+   the runtime-neutral `{ activity: ActivityItem[], result: string|null }`.
+   The dashboard renders ActivityItems without ever seeing your log
+   format or path.
 4. Register the runtime in the `RuntimeRegistry` at
    `packages/server/src/runtime-registry.ts`.
 

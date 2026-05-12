@@ -113,21 +113,22 @@ export interface ListSessionOpts {
 /** Options for SessionManager.delete. */
 export interface DeleteSessionOpts {
   /**
-   * If true, ask the runtime to also remove its own per-session state (e.g.
-   * for copilot, this is `~/.copilot/session-state/<runtimeSessionId>/`).
-   * Performed *before* the workdir is removed; a runtime failure leaves
-   * the workdir intact so the user can retry.
-   */
-  readonly deleteRuntimeState?: boolean;
-  /**
-   * If true, also remove the entire per-session workdir under
-   * `<sessionsDir>/<id>/` (including AGENTS.md, agent-produced files,
-   * etc.). Defaults to `false`: only the metadata is removed; the
-   * workdir contents are preserved for archival.
+   * If `true`, perform a full purge: remove the session's metadata
+   * row, the per-session workdir under `<sessionsDir>/<id>/`
+   * (AGENTS.md, agent-produced files, ...), AND ask the runtime
+   * adapter to drop its own per-session state (e.g. for copilot,
+   * `~/.copilot/session-state/<runtimeSessionId>/`).
    *
-   * Same semantics as `WorkspaceManager.delete({ purge })` and
+   * Defaults to `false` ("archive"): only the metadata row is removed
+   * — workdir contents and runtime state are preserved on disk so the
+   * user can recover or inspect them later. Same default semantics as
+   * `WorkspaceManager.delete({ purge })` and
    * `TaskManager.delete({ purge })` — a single verb across all the
    * entity managers.
+   *
+   * The runtime-state cleanup runs *before* the workdir is removed; a
+   * runtime failure leaves both the workdir AND the metadata row
+   * intact so the user can retry without partial state.
    */
   readonly purge?: boolean;
 }

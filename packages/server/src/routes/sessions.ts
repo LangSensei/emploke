@@ -181,17 +181,22 @@ export function sessionsRoutes(
     }
   });
 
-  // Delete a session. Default behaviour removes only the session's
-  // metadata; the workdir contents (AGENTS.md, agent-produced files)
-  // are preserved for archival. Pass `?purge=1` to also rm the entire
-  // workdir. Pass `?deleteRuntimeState=1` to also ask the runtime to
-  // remove its per-session state (e.g. ~/.copilot/session-state/<id>/).
+  // Delete a session.
+  //
+  // Default ("archive"): only the metadata row is removed; the workdir
+  // (AGENTS.md, agent-produced files) AND the runtime adapter's
+  // per-session state (e.g. ~/.copilot/session-state/<id>/) are
+  // preserved for inspection / recovery.
+  //
+  // `?purge=1` ("hard delete"): row + workdir + runtime state, all
+  // gone. Mirrors what `WorkspaceManager.delete` and
+  // `TaskManager.delete` mean by `purge` — single verb across the
+  // entity managers.
   app.delete("/:sid", async (c) => {
     const id = c.req.param("sid");
-    const deleteRuntimeState = c.req.query("deleteRuntimeState") === "1";
     const purge = c.req.query("purge") === "1";
     try {
-      await getManager(c).delete(id, { deleteRuntimeState, purge });
+      await getManager(c).delete(id, { purge });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;

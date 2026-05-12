@@ -1,5 +1,3 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
@@ -13,7 +11,6 @@ import {
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
-import { stream } from "hono/streaming";
 import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
 import type { TaskDispatchBody } from "./manifest.js";
 
@@ -219,72 +216,17 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     }
   });
 
-  // Stream the runtime's events log for a task. The path is resolved
-  // by the runtime via `Runtime.taskEventsPath` (looked up through
-  // `TaskManager.getTaskEventsPath` so this route doesn't depend on
-  // `@emploke/runtime` directly), so each runtime is free to put its
-  // log wherever and call it whatever it wants. We still treat the
-  // file's contents as opaque bytes here — clients parse per-runtime
-  // (today the Copilot adapter writes NDJSON; future runtimes may
-  // differ). The Content-Type stays `application/x-ndjson` because
-  // that's the only format the dashboard knows how to render right now;
-  // a typed cross-runtime event stream is tracked separately.
-  //
-  // Returns:
-  //   - 404 if the task doesn't exist
-  //   - 404 with code=NoEventsYet if the runtime has no event log,
-  //     hasn't created it yet, or doesn't implement the optional
-  //     `taskEventsPath` surface
-  //   - 200 application/x-ndjson otherwise
-  app.get("/:tid/events", async (c) => {
-    const id = c.req.param("tid");
-    let eventsPath: string | null;
-    try {
-      eventsPath = await getManager(c).getTaskEventsPath(id);
-    } catch (err) {
-      const status = statusForError(err) ?? 400;
-      // biome-ignore lint/suspicious/noExplicitAny: see above.
-      return c.json(errorBody(err), status as any);
-    }
-    if (eventsPath === null) {
-      // Either the task is missing or the runtime declined to provide a
-      // path. The dashboard surfaces both as the same NoEventsYet state;
-      // the explicit 404 for a genuinely-missing task is left to GET /:tid.
-      return c.json({ error: "no event log is available for this task", code: "NoEventsYet" }, 404);
-    }
-    try {
-      await stat(eventsPath);
-    } catch {
-      return c.json(
-        { error: "event log file is not yet present on disk", code: "NoEventsYet" },
-        404,
-      );
-    }
-
-    c.header("Content-Type", "application/x-ndjson; charset=utf-8");
-    c.header("Cache-Control", "no-store");
-    return stream(c, async (s) => {
-      const rs = createReadStream(eventsPath, { encoding: "utf8" });
-      try {
-        for await (const chunk of rs) {
-          await s.write(chunk as string);
-        }
-      } finally {
-        rs.close();
-      }
-    });
-  });
-
-  // Runtime-neutral activity timeline for a task. The runtime parses
-  // its own event log into the {ActivityItem, ActivitySummary} vocabulary
-  // declared in @emploke/runtime; this route just forwards that result
-  // as JSON. Consumers (dashboard, future MCP clients) render without
-  // knowing which runtime produced the underlying log.
+  // Runtime-neutral activity timeline for a task. The runtime
+  // end-to-end owns reading + parsing its own event log into the
+  // {ActivityItem, TaskActivityResult} vocabulary; this route just
+  // forwards that result as JSON. Consumers (dashboard, future MCP
+  // clients) render without knowing which runtime produced the
+  // underlying log or where it lives on disk.
   //
   // Returns:
   //   - 404 if the task doesn't exist
   //   - 404 with code=NoEventsYet if the runtime doesn't implement
-  //     parseActivity, or the log file isn't on disk yet
+  //     `taskActivity`, or has no log for this task yet
   //   - 200 application/json `{ activity: ActivityItem[], result: string|null }` otherwise
   app.get("/:tid/activity", async (c) => {
     const id = c.req.param("tid");

@@ -164,7 +164,6 @@ export interface SessionCreateBody {
 /** DELETE /api/workspaces/:id/sessions/:sid query params. `1` = enabled. */
 export interface SessionDeleteQuery {
   readonly purge?: "1";
-  readonly deleteRuntimeState?: "1";
 }
 
 /** POST /api/workspaces/:id/sessions/:sid/spawn body. */
@@ -369,20 +368,12 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid",
   ),
   /**
-   * Streams the runtime's NDJSON event log. The response body is opaque
-   * `application/x-ndjson` bytes — `string` here means "raw text".
-   * Clients parse line-by-line per their runtime's contract.
-   */
-  "tasks.events": defineRoute<{ params: TaskPathParams }, string>(
-    "GET",
-    "/api/workspaces/:id/tasks/:tid/events",
-  ),
-  /**
    * Runtime-neutral activity timeline: the runtime parses its own
    * event log into the {ActivityItem, ActivitySummary} vocabulary
-   * declared in `@emploke/runtime`. The route returns 404 when the
-   * runtime hasn't produced events yet (mapped here as the only
-   * 200 shape; absent payload surfaces as a thrown ApiError).
+   * declared in `@emploke/runtime` (end-to-end via
+   * `Runtime.taskActivity` — the route never sees a path or raw
+   * bytes). 404 NoEventsYet when the runtime hasn't produced events
+   * yet (or doesn't implement the activity surface).
    */
   "tasks.activity": defineRoute<
     { params: TaskPathParams },

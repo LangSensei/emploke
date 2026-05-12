@@ -661,7 +661,7 @@ describe("delete()", () => {
     await expect(m.delete("../escape")).rejects.toBeInstanceOf(InvalidSessionIdError);
   });
 
-  it("with deleteRuntimeState=true: calls runtime.deleteState before rm", async () => {
+  it("with purge=true: calls runtime.deleteState before removing row + workdir", async () => {
     const rt = new StubRuntime();
     const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -670,12 +670,14 @@ describe("delete()", () => {
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    await m.delete(s.id, { deleteRuntimeState: true });
+    await m.delete(s.id, { purge: true });
     expect(rt.deleteStateCalls).toHaveLength(1);
     expect(rt.deleteStateCalls[0]?.id).toBe(s.id);
+    // workdir gone
+    await expect(stat(s.workdir)).rejects.toThrow();
   });
 
-  it("with deleteRuntimeState=true: surfaces failure and leaves workdir intact", async () => {
+  it("with purge=true: runtime failure leaves both row and workdir intact", async () => {
     const rt = new StubRuntime();
     rt.deleteStateError = new RuntimeStateDeletionFailed("copilot", "anyid", new Error("EBUSY"));
     const m = buildManager({
@@ -685,14 +687,17 @@ describe("delete()", () => {
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    await expect(m.delete(s.id, { deleteRuntimeState: true })).rejects.toBeInstanceOf(
+    await expect(m.delete(s.id, { purge: true })).rejects.toBeInstanceOf(
       RuntimeStateDeletionFailed,
     );
+    // workdir survives — caller can retry without partial state
     const st = await stat(s.workdir);
     expect(st.isDirectory()).toBe(true);
+    // row also survives — m.get(...) still finds it
+    expect(await m.get(s.id)).not.toBeNull();
   });
 
-  it("without deleteRuntimeState: does not call runtime.deleteState", async () => {
+  it("default (archive): does NOT call runtime.deleteState and preserves workdir", async () => {
     const rt = new StubRuntime();
     const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -703,6 +708,11 @@ describe("delete()", () => {
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id);
     expect(rt.deleteStateCalls).toEqual([]);
+    // workdir preserved on disk for recovery / inspection
+    const st = await stat(s.workdir);
+    expect(st.isDirectory()).toBe(true);
+    // but the row is gone — m.get(...) returns null
+    expect(await m.get(s.id)).toBeNull();
   });
 });
 
