@@ -72,6 +72,20 @@ Pass `--no-serve-static` to run API-only (the dashboard SPA is bundled in
 the npm package by default; serving it from the same port is the only
 deployment mode that makes sense for the local-first model).
 
+## Filesystem contract
+
+Everything emploke writes under `<EMPLOKE_HOME>` (default `~/.emploke`)
+and per-workspace internals is **server-internal state**. The layout —
+file names, JSON shapes, SQLite schemas, sidecar files — is implementation
+detail and may change between versions. Reading these files for inspection
+is fine; **anything else (writes, hand-edits, `rm`) is unsupported and
+may be detected as corruption.**
+
+For the path-by-path layout (what emploke owns vs the agent vs the
+runtime adapter) and the rationale for keeping clients out of
+`<EMPLOKE_HOME>/`, see [`docs/architecture.md` →
+Filesystem contract](./docs/architecture.md#filesystem-contract).
+
 ## CLI
 
 After `npm install -g @langsensei/emploke` the `emploke` binary exposes

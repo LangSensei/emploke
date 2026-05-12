@@ -126,6 +126,25 @@ export class SqliteSessionRepository implements SessionRepository {
       );
   }
 
+  async patchLastLaunchMode(id: string, mode: "local" | "remote"): Promise<void> {
+    // Defensive id validation matches `read`/`save` — keeps the
+    // namespace contract explicit even though parameter binding makes
+    // injection harmless.
+    if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
+    // Single-statement UPDATE: SQLite serialises this against any
+    // concurrent `save`/`patchLastLaunchMode` on the same connection,
+    // so two parallel callers (e.g. multi-tab "Resume Local" /
+    // "Resume Remote") cannot lose each other's *other* fields the
+    // way the old `read → save({...prev, lastLaunchMode})` path did.
+    // Last writer of the column itself still wins — that's the
+    // intended UX for "what mode did I last pick?".
+    //
+    // Missing-row case is a silent no-op: the manager has no
+    // session-row to update yet (e.g. it was just deleted between
+    // `loadSession` and here), and there's nothing useful to do.
+    this.db.prepare("UPDATE sessions SET last_launch_mode = ? WHERE id = ?").run(mode, id);
+  }
+
   async delete(id: string): Promise<void> {
     // Idempotent: invalid ids cannot match anything in the table anyway.
     // Returning silently mirrors `SqliteTaskRepository.delete`.
