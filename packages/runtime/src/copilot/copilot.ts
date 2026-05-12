@@ -14,8 +14,8 @@ import type {
   ActivityItem,
   ActivityResult,
   BuildInteractiveLaunchOpts,
-  LaunchHeadlessOpts,
   LaunchCommand,
+  LaunchHeadlessOpts,
   ProvisionContext,
   ReadActivityOpts,
   Runtime,
@@ -30,13 +30,13 @@ import {
   deriveCopilotResult,
   parseCopilotActivity,
 } from "./activity.js";
+import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
+import { buildCopilotLaunchCommand } from "./launch.js";
 import {
   type LaunchCopilotHeadlessDeps,
   type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
 } from "./launch-headless.js";
-import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
-import { buildCopilotLaunchCommand } from "./launch.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { readCopilotSessionState, readCopilotWorkspaceYaml } from "./state.js";
 import { ensureDirTrusted } from "./trust.js";

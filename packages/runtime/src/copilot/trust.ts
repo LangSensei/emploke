@@ -66,7 +66,7 @@ import { TrustRegistrationFailed } from "./errors.js";
  * `configPath` is normally `~/.copilot/config.json` — see the module
  * jsdoc for why this file (and not `settings.json`) is the correct
  * authority for `trustedFolders`. The Copilot `-p --yolo` mode used by
- * `dispatchTask` has no folder-trust gate at all and therefore does
+ * `launchCopilotHeadless` has no folder-trust gate at all and therefore does
  * NOT call this function.
  *
  * Coverage rules (see `isPathCovered`):

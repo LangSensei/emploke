@@ -127,7 +127,11 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      const c = await rt.buildInteractiveLaunch(
+        null,
+        fakeSession({ runtimeSessionId: null }).workdir,
+        ws,
+      );
       expect(c.cmd).toBe("copilot");
       expect(c.args).toEqual(["--yolo"]);
     });
@@ -298,7 +302,11 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws-mal");
       await mkdir(ws, { recursive: true });
       for (const id of MALICIOUS_IDS) {
-        const c = await rt.buildInteractiveLaunch(id, fakeSession({ runtimeSessionId: id }).workdir, ws);
+        const c = await rt.buildInteractiveLaunch(
+          id,
+          fakeSession({ runtimeSessionId: id }).workdir,
+          ws,
+        );
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
         expect(c.display).not.toContain("--resume");

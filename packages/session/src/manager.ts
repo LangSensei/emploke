@@ -241,7 +241,10 @@ export class SessionManager {
 
   // ─── buildInteractiveLaunch ─────────────────────────────────────────
 
-  async buildInteractiveLaunch(id: string, opts: BuildInteractiveLaunchSessionOpts = {}): Promise<LaunchCommand> {
+  async buildInteractiveLaunch(
+    id: string,
+    opts: BuildInteractiveLaunchSessionOpts = {},
+  ): Promise<LaunchCommand> {
     assertValidSessionId(id);
     const session = await this.loadSession(id);
     if (session === null) throw new SessionNotFoundError(id);

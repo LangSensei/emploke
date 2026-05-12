@@ -4,14 +4,6 @@ export type { CopilotRuntimeConfig } from "./copilot/copilot.js";
 // Copilot runtime
 export { CopilotRuntime } from "./copilot/copilot.js";
 export {
-  COPILOT_STDERR_LOG,
-  COPILOT_STDOUT_LOG,
-  type LaunchCopilotHeadlessDeps,
-  type LaunchCopilotHeadlessOpts,
-  launchCopilotHeadless,
-  type SpawnFn,
-} from "./copilot/launch-headless.js";
-export {
   InvalidMcpJson,
   TrustRegistrationFailed,
 } from "./copilot/errors.js";
@@ -20,6 +12,14 @@ export {
   generateCopilotSessionId,
   isCopilotSessionId,
 } from "./copilot/ids.js";
+export {
+  COPILOT_STDERR_LOG,
+  COPILOT_STDOUT_LOG,
+  type LaunchCopilotHeadlessDeps,
+  type LaunchCopilotHeadlessOpts,
+  launchCopilotHeadless,
+  type SpawnFn,
+} from "./copilot/launch-headless.js";
 export { flattenSkillName } from "./copilot/provision.js";
 export {
   type CopilotBinResolutionReason,
@@ -51,8 +51,8 @@ export type {
   AssistantItem,
   Attachment,
   BuildInteractiveLaunchOpts,
-  LaunchHeadlessOpts,
   LaunchCommand,
+  LaunchHeadlessOpts,
   ProvisionContext,
   ReadActivityOpts,
   Runtime,

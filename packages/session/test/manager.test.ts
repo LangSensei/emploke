@@ -794,7 +794,9 @@ describe("buildInteractiveLaunch()", () => {
       sessionsDir,
       workspaceDir: scratch,
     });
-    await expect(m.buildInteractiveLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
+    await expect(m.buildInteractiveLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(
+      SessionNotFoundError,
+    );
   });
 
   it("persists lastLaunchMode after a successful launch", async () => {
