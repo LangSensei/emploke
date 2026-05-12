@@ -133,7 +133,7 @@ describe("route manifest", () => {
   it("listRoutes returns 42 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
-    expect(listRoutes()).toHaveLength(42);
+    expect(listRoutes()).toHaveLength(52);
   });
 });
 

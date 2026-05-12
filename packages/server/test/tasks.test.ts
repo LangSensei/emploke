@@ -4,6 +4,7 @@ import path from "node:path";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  EntryNotReadyError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   type Task,
@@ -218,6 +219,76 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("RuntimeDoesNotSupportTasksError");
+  });
+
+  // Dispatching against a blocked agent must surface the structured
+  // error shape (code + message + reason) so the dashboard / CLI can
+  // render the actionable reason. Pre-fix this fell through to the
+  // generic "internal error" body because EntryNotReadyError wasn't
+  // on the safe-name list; pre-I2 it surfaced only `{error, code}`,
+  // forcing the dashboard to parse the human message to know which
+  // CTA to show.
+  it("POST / maps EntryNotReadyError to 409 with code, agent, and structured reason", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        throw new EntryNotReadyError("public/writer", { needsPrereqsAck: true });
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("EntryNotReadyError");
+    expect(body.error).toContain("not ready");
+    // The structured reason is what lets the dashboard render the
+    // right CTA (here: Acknowledge prereqs) without string parsing.
+    expect(body.agent).toBe("public/writer");
+    expect(body.reason).toEqual({ needsPrereqsAck: true });
+  });
+
+  it("POST / EntryNotReadyError surfaces blockedDeps cascade (real BlockedReason shape)", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        throw new EntryNotReadyError("public/writer", {
+          blockedDeps: [{ kind: "skill", fqn: "public/missing-prereq" }],
+        });
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.reason).toEqual({
+      blockedDeps: [{ kind: "skill", fqn: "public/missing-prereq" }],
+    });
+  });
+
+  it("POST / EntryNotReadyError without a reason still emits the agent field (defensive)", async () => {
+    const m = stubManager({
+      dispatch: vi.fn(async () => {
+        // Defensive path: even if the catalog produced no structured
+        // reason (shouldn't happen in practice — getAgentEntry always
+        // populates blockedReason on a `blocked` status — but the
+        // type allows undefined), the wire body must still carry the
+        // agent name so the dashboard can deep-link to that entry.
+        throw new EntryNotReadyError("public/writer", undefined);
+      }),
+    });
+    const res = await tasksRoutes(m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.agent).toBe("public/writer");
+    expect(body.reason).toBeUndefined();
   });
 
   it("GET /:tid returns task", async () => {

@@ -65,6 +65,8 @@ export type {
   AgentEntry,
   AgentMetadataPatch,
   AgentResolveResult,
+  BlockedDep,
+  BlockedReason,
   CatalogKind,
   DependencyKind,
   DependencyRef,
@@ -84,13 +86,18 @@ export * as facade from "./facade/index.js";
 // ─── Top-level facade ───────────────────────────────────
 export {
   type CatalogConflict,
+  type CatalogInstalledEntry,
+  type CatalogInstallFailure,
   type CatalogInstallResult,
+  type CatalogInstallSkip,
   CatalogManager,
   type CatalogOptions,
   type CatalogPlan,
   type CatalogPlanNode,
+  type CatalogSyncResult,
   HasDependentsError,
   type McpResolvedNode,
+  type OrphanedEntry,
 } from "./facade/index.js";
 export {
   McpInvalidJsonError,
@@ -115,6 +122,7 @@ export { splitMcpName, validateMcpName } from "./mcp/validate.js";
 // ─── Origin mutability ──────────────────────────────
 export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
 export {
+  CyclicDependencyError,
   PlanStaleError,
   SkillFrontmatterError,
   SkillNameInvalidError,

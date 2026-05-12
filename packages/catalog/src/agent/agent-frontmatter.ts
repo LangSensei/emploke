@@ -4,12 +4,10 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
 
 /**
  * AGENTS.md frontmatter codec. See SKILL.md format for the general
- * shape; agents differ in:
- *   - no `prereqs` field (skill-only)
- *   - else identical structure
- *
- * Dep refs are bare origin strings (de-centralised model — see
- * skill-frontmatter for rationale).
+ * shape; the structure is identical (including the optional `prereqs`
+ * field — agents accept it for the same reason skills do: declare
+ * setup steps the operator must complete before the entry is allowed
+ * to run).
  */
 
 /** A dep reference is just an origin URI string. */
@@ -20,6 +18,7 @@ export interface AgentFrontmatter {
   readonly scope: string;
   readonly description: string;
   readonly version: string;
+  readonly prereqs?: string;
   readonly dependencies?: {
     readonly skills?: readonly AgentDependencyRef[];
     readonly mcps?: readonly AgentDependencyRef[];
@@ -62,7 +61,7 @@ export function parse(content: string, sourceLabel: string): ParsedAgentMd {
 }
 
 function projectFrontmatter(data: Record<string, unknown>, sourceLabel: string): AgentFrontmatter {
-  const { name, scope, description, version, dependencies } = data;
+  const { name, scope, description, version, prereqs, dependencies } = data;
 
   if (typeof name !== "string" || name.length === 0) {
     throw new AgentFrontmatterError(sourceLabel, "missing or non-string `name`");
@@ -78,11 +77,8 @@ function projectFrontmatter(data: Record<string, unknown>, sourceLabel: string):
   if (typeof version !== "string" || version.length === 0) {
     throw new AgentFrontmatterError(sourceLabel, "missing or empty `version`");
   }
-  if (data.prereqs !== undefined) {
-    throw new AgentFrontmatterError(
-      sourceLabel,
-      "agents do not support `prereqs`; embed setup guidance in the body instead",
-    );
+  if (prereqs !== undefined && typeof prereqs !== "string") {
+    throw new AgentFrontmatterError(sourceLabel, "`prereqs` must be a string when present");
   }
   const deps = parseDependencies(dependencies, sourceLabel);
 
@@ -91,6 +87,7 @@ function projectFrontmatter(data: Record<string, unknown>, sourceLabel: string):
     scope: resolvedScope,
     description,
     version,
+    ...(prereqs !== undefined ? { prereqs } : {}),
     ...(deps !== undefined ? { dependencies: deps } : {}),
   };
 }
@@ -162,6 +159,7 @@ function serializeFrontmatter(meta: AgentFrontmatter): string {
     description: meta.description,
     version: meta.version,
   };
+  if (meta.prereqs !== undefined) obj.prereqs = meta.prereqs;
   if (meta.dependencies !== undefined) obj.dependencies = meta.dependencies;
   return yaml.dump(obj, { lineWidth: -1, noRefs: true });
 }

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { dropColumnIfPresent } from "../skill/sqlite-skill-repository.js";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
@@ -17,15 +18,19 @@ import type { McpRepository } from "./mcp-repository.js";
  *
  * Schema (single table):
  *   CREATE TABLE mcp (
- *     name    TEXT PRIMARY KEY,
- *     origin  TEXT NOT NULL,
- *     content TEXT NOT NULL
+ *     name      TEXT PRIMARY KEY,
+ *     origin    TEXT NOT NULL,
+ *     content   TEXT NOT NULL
  *   );
  *
  * The `name` column is the catalog FQN (`<namespace>/<short>`); the
  * `origin` column is the install-source URI; `content` is the entity's
- * full bytes (with `_meta` injected by `Mcp.create`). All three map
- * 1:1 to the `Mcp` entity's fields, so reconstitution is trivial.
+ * full bytes (with `_meta` injected by `Mcp.create`). All map 1:1 to
+ * the `Mcp` entity.
+ *
+ * Note: an earlier schema persisted an `orphaned INTEGER` column. That
+ * flag is now derived from the catalog dep graph at projection time;
+ * we drop the column on open via the migration helper (idempotent).
  *
  * Concurrency: opens with `journal_mode=WAL` so concurrent readers
  * don't block writers and vice versa. WAL also gives crash safety
@@ -51,11 +56,14 @@ export class SqliteMcpRepository implements McpRepository {
     this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS mcp (
-        name    TEXT PRIMARY KEY NOT NULL,
-        origin  TEXT NOT NULL,
-        content TEXT NOT NULL
+        name      TEXT PRIMARY KEY NOT NULL,
+        origin    TEXT NOT NULL,
+        content   TEXT NOT NULL
       )
     `);
+    // Retire the legacy `orphaned` column on existing DBs — orphan
+    // is now derived from the dep graph, not stored. Idempotent.
+    dropColumnIfPresent(this.db, "mcp", "orphaned");
   }
 
   /** Close the database. Idempotent. */
@@ -71,7 +79,9 @@ export class SqliteMcpRepository implements McpRepository {
     this.db
       .prepare(
         `INSERT INTO mcp (name, origin, content) VALUES (?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET origin = excluded.origin, content = excluded.content`,
+         ON CONFLICT(name) DO UPDATE SET
+           origin = excluded.origin,
+           content = excluded.content`,
       )
       .run(mcp.name, mcp.origin, mcp.content);
   }

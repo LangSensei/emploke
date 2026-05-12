@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
   type DispatchOpts,
+  EntryNotReadyError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
@@ -43,10 +44,18 @@ afterEach(async () => {
 interface StubCatalogOpts {
   agents?: Record<string, AgentResolveResult>;
   resolveError?: Error;
+  /**
+   * Map of agent name → blockedReason. When `getAgentEntry` is called
+   * for one of these names it returns `status: "blocked"` so dispatch
+   * surfaces `EntryNotReadyError`. Used to test the status guard added
+   * in the issue #57 rework.
+   */
+  blockedAgents?: Record<string, import("@emploke/catalog").BlockedReason>;
 }
 
 function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
   const agents = opts.agents ?? {};
+  const blocked = opts.blockedAgents ?? {};
   return {
     catalogDir: "/tmp/catalog",
     async resolveAgent(name: string): Promise<AgentResolveResult> {
@@ -54,6 +63,28 @@ function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
       const a = agents[name];
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
+    },
+    // Status guard added in PR #57: dispatch refuses blocked agents.
+    // Stub returns a `ready` entry for known agents and `null` for
+    // unknown ones (which dispatch translates to AgentNotFoundError).
+    async getAgentEntry(name: string) {
+      if (opts.resolveError) throw opts.resolveError;
+      if (!(name in agents)) return null;
+      const reason = blocked[name];
+      if (reason !== undefined) {
+        return {
+          agent: { fqn: name } as unknown,
+          status: "blocked" as const,
+          blockedReason: reason,
+        } as unknown as ReturnType<CatalogManager["getAgentEntry"]> extends Promise<infer T>
+          ? T
+          : never;
+      }
+      return { agent: { fqn: name } as unknown, status: "ready" as const } as unknown as ReturnType<
+        CatalogManager["getAgentEntry"]
+      > extends Promise<infer T>
+        ? T
+        : never;
     },
   } as unknown as CatalogManager;
 }
@@ -387,6 +418,56 @@ describe("dispatch — error paths", () => {
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
     const entries = await safeReaddir(tasksDir);
     expect(entries).toEqual([]);
+  });
+
+  it("EntryNotReadyError when the agent is blocked due to prereqs", async () => {
+    const m = makeManager({
+      catalog: stubCatalog({
+        agents: { demo: fakeAgentResolve("demo") },
+        blockedAgents: { demo: { needsPrereqsAck: true } },
+      }),
+    });
+    const err = await m.dispatch(dispatchOf({ agent: "demo" })).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(EntryNotReadyError);
+    expect((err as EntryNotReadyError).agent).toBe("demo");
+    expect((err as EntryNotReadyError).reason?.needsPrereqsAck).toBe(true);
+    // No dir created — guard fires before workdir reservation.
+    const entries = await safeReaddir(tasksDir);
+    expect(entries).toEqual([]);
+  });
+
+  it("EntryNotReadyError when the agent is blocked because it was disabled by user", async () => {
+    const m = makeManager({
+      catalog: stubCatalog({
+        agents: { demo: fakeAgentResolve("demo") },
+        blockedAgents: { demo: { disabledByUser: true } },
+      }),
+    });
+    await expect(m.dispatch(dispatchOf({ agent: "demo" }))).rejects.toBeInstanceOf(
+      EntryNotReadyError,
+    );
+  });
+
+  it("EntryNotReadyError when a transitive dep is blocked (cascade)", async () => {
+    const m = makeManager({
+      catalog: stubCatalog({
+        agents: { demo: fakeAgentResolve("demo") },
+        blockedAgents: {
+          demo: { blockedDeps: [{ kind: "skill", fqn: "public/tool" }] },
+        },
+      }),
+    });
+    const err = await m.dispatch(dispatchOf({ agent: "demo" })).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(EntryNotReadyError);
+    expect((err as EntryNotReadyError).reason?.blockedDeps).toEqual([
+      { kind: "skill", fqn: "public/tool" },
+    ]);
   });
 });
 

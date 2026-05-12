@@ -8,34 +8,40 @@ describe("Mcp.create", () => {
     const m = Mcp.create("azure/mcp", "file:/abs/azure", '{"command":"node"}');
     expect(m.name).toBe("azure/mcp");
     expect(m.origin).toBe("file:/abs/azure");
-    // Content is the merged form (with _meta injected)
+    // Content is the merged form (with _meta.name injected; origin is
+    // NOT carried in the file).
     const { meta, body } = McpFormat.parse(m.content, "test");
-    expect(meta).toEqual({ name: "azure/mcp", origin: "file:/abs/azure" });
+    expect(meta).toEqual({ name: "azure/mcp" });
     expect(body.command).toBe("node");
   });
 
-  it("injects _meta when input lacks one", () => {
+  it("injects _meta.name when input lacks one (and does not introduce _meta.origin)", () => {
     const m = Mcp.create("x/y", "file:/abs/x", '{"command":"node"}');
     const parsed = JSON.parse(m.content);
-    expect(parsed._meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    expect(parsed._meta).toEqual({ name: "x/y" });
+    expect("origin" in parsed._meta).toBe(false);
     expect(parsed.command).toBe("node");
   });
 
-  it("overwrites _meta.{name,origin} when input has stale ones", () => {
+  it("overwrites _meta.name when input has a stale one (origin is left as foreign data)", () => {
     const input = JSON.stringify({
       command: "node",
       _meta: { name: "old/name", origin: "file:/abs/old" },
     });
     const m = Mcp.create("new/name", "file:/abs/new", input);
     const parsed = JSON.parse(m.content);
-    expect(parsed._meta).toEqual({ name: "new/name", origin: "file:/abs/new" });
+    expect(parsed._meta.name).toBe("new/name");
+    // Pre-existing _meta.origin is preserved untouched (writeMeta
+    // doesn't manage origin); the entity's authoritative origin
+    // lives on `m.origin` regardless.
+    expect(parsed._meta.origin).toBe("file:/abs/old");
+    expect(m.origin).toBe("file:/abs/new");
   });
 
   it("preserves foreign _meta.* keys", () => {
     const input = JSON.stringify({
       _meta: {
         name: "x/y",
-        origin: "file:/abs/x",
         "io.modelcontextprotocol.registry/extra": { tag: "v1" },
       },
     });
@@ -67,14 +73,14 @@ describe("Mcp.create", () => {
   it("accepts empty content (creates fresh _meta-only object)", () => {
     const m = Mcp.create("x/y", "file:/abs/x", "");
     const parsed = JSON.parse(m.content);
-    expect(parsed._meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    expect(parsed._meta).toEqual({ name: "x/y" });
     expect(Object.keys(parsed)).toEqual(["_meta"]);
   });
 });
 
 describe("Mcp.fromStored", () => {
   it("trusts persisted content (no parse, no inject)", () => {
-    const stored = '{"raw":"stored","_meta":{"name":"x/y","origin":"file:/abs/x"}}\n';
+    const stored = '{"raw":"stored","_meta":{"name":"x/y"}}\n';
     const m = Mcp.fromStored("x/y", "file:/abs/x", stored);
     expect(m.content).toBe(stored); // byte-exact, no re-stringify
   });
@@ -106,7 +112,7 @@ describe("Mcp.withContent", () => {
     expect(m2.origin).toBe(m1.origin);
   });
 
-  it("re-injects entity's stable identity into new _meta", () => {
+  it("re-injects entity's stable name into new _meta (and ignores caller's _meta.origin)", () => {
     const m1 = Mcp.create("x/y", "file:/abs/x", "{}");
     // Caller tries to sneak in different identity via _meta in update
     const m2 = m1.withContent(
@@ -117,7 +123,10 @@ describe("Mcp.withContent", () => {
     );
     const parsed = JSON.parse(m2.content);
     expect(parsed._meta.name).toBe("x/y"); // ignored, entity wins
-    expect(parsed._meta.origin).toBe("file:/abs/x"); // ignored, entity wins
+    // Entity's authoritative origin is unchanged regardless of what
+    // the caller tries to put in _meta.origin (writeMeta no longer
+    // manages origin, and origin is read from the SQLite row).
+    expect(m2.origin).toBe("file:/abs/x");
     expect(parsed.v).toBe(2); // user data preserved
   });
 

@@ -62,6 +62,23 @@ export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | {
   }
 }
 
+/**
+ * POST /catalog/{kind}/{fqn}/sync body: `{ planToken: string }`. The
+ * token is issued by the matching `/sync/resolve` and trades for the
+ * cached preview-time `CatalogPlan`. Required — there is no fallback
+ * "re-resolve and apply" path: the dashboard always previews first.
+ */
+export async function readPlanTokenBody(
+  c: Context,
+): Promise<{ planToken: string } | { error: string }> {
+  const parsed = await parseJsonBody<{ planToken?: unknown }>(c);
+  if (!parsed.ok) return { error: parsed.error };
+  if (typeof parsed.body.planToken !== "string" || parsed.body.planToken.length === 0) {
+    return { error: "body must be { planToken: string } from a prior /sync/resolve response" };
+  }
+  return { planToken: parsed.body.planToken };
+}
+
 /** PUT body for updating a resource's content: `{ content: string }`. */
 export async function readContentBody(
   c: Context,

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import type { SkillFrontmatter } from "./skill-frontmatter.js";
 import * as SkillFormat from "./skill-frontmatter.js";
 import { makeFqn, validateFqn } from "./validate.js";
 
@@ -27,6 +25,25 @@ import { makeFqn, validateFqn } from "./validate.js";
  *
  * Files: this entity does NOT hold the skill's file tree (siblings of
  * SKILL.md). The repository exposes `streamFiles(fqn)` for that.
+ *
+ * Per-installation flag (NOT in frontmatter — local opt-in):
+ *   - `prereqsAck`: user has acknowledged the entry's `prereqs` text
+ *     (or the entry has none). Default at fresh install is computed
+ *     from `meta.prereqs`: empty / undefined → `true`, else `false`.
+ *
+ * Note: orphan-status (zero reverse-deps) is NOT a property of the
+ * entity — it's a derived fact over the full catalog dep graph. The
+ * facade computes it lazily at projection time via the cascade context.
+ *
+ * **Authoring contract — `version` is the source of truth for change.**
+ * Sync from upstream and the resolve-vs-install staleness check both
+ * key off `version` alone: any meaningful edit to SKILL.md (frontmatter
+ * or body) MUST be paired with a `version` bump. Edits without a bump
+ * are treated as no-ops by emploke and will not propagate to installed
+ * catalogs. We do not byte-hash the file because (a) the grammar of
+ * "what counts as a meaningful change" is the author's call, not
+ * emploke's, and (b) hashing would surface noise (line endings,
+ * trailing whitespace, key reordering) as spurious diffs.
  */
 export class Skill {
   private constructor(
@@ -39,6 +56,7 @@ export class Skill {
     private readonly _prereqs: string | undefined,
     private readonly _dependencies: SkillDependencies,
     private readonly _anchorContent: string,
+    private readonly _prereqsAck: boolean,
   ) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
@@ -47,6 +65,7 @@ export class Skill {
     }
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
+    const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     return new Skill(
       fqn,
       origin,
@@ -57,6 +76,7 @@ export class Skill {
       meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawSkillMd,
+      prereqsAck,
     );
   }
 
@@ -74,6 +94,7 @@ export class Skill {
     prereqs: string | undefined;
     dependencies: SkillDependencies;
     anchorContent: string;
+    prereqsAck: boolean;
   }): Skill {
     validateFqn(args.fqn);
     return new Skill(
@@ -86,6 +107,7 @@ export class Skill {
       args.prereqs,
       normaliseDeps(args.dependencies),
       args.anchorContent,
+      args.prereqsAck,
     );
   }
 
@@ -117,41 +139,18 @@ export class Skill {
   get anchorContent(): string {
     return this._anchorContent;
   }
-
-  /**
-   * Canonical SHA-256 of the entity's frontmatter — used for stale-plan
-   * detection. Body bytes are intentionally NOT hashed: emploke's
-   * contract requires authors to bump `version` on any meaningful
-   * change.
-   */
-  get frontmatterSha256(): string {
-    return canonicalFrontmatterSha(this.frontmatterView);
-  }
-
-  private get frontmatterView(): SkillFrontmatter {
-    return {
-      shortName: this._shortName,
-      scope: this._scope,
-      description: this._description,
-      version: this._version,
-      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
-      ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
-        ? {
-            dependencies: {
-              ...(this._dependencies.skills.length > 0
-                ? { skills: this._dependencies.skills }
-                : {}),
-              ...(this._dependencies.mcps.length > 0 ? { mcps: this._dependencies.mcps } : {}),
-            },
-          }
-        : {}),
-    };
+  get prereqsAck(): boolean {
+    return this._prereqsAck;
   }
 
   /**
    * Plain JSON projection of the entity. JSON.stringify() picks this
    * up automatically — the rich getters live on the prototype and
    * wouldn't otherwise serialise.
+   *
+   * `orphaned` is intentionally NOT projected here; it's a derived
+   * fact over the full catalog dep graph and is added by the facade's
+   * pojo projection helpers, not by the entity in isolation.
    */
   toJSON(): Record<string, unknown> {
     return {
@@ -161,6 +160,7 @@ export class Skill {
       origin: this._origin,
       description: this._description,
       version: this._version,
+      prereqsAck: this._prereqsAck,
       ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
@@ -181,6 +181,8 @@ export class Skill {
    * yields the same FQN. If the new frontmatter declares a different
    * scope or shortName, throws — callers must delete + reinstall to
    * change identity.
+   *
+   * Per-installation flag `prereqsAck` is preserved.
    */
   withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
@@ -201,6 +203,26 @@ export class Skill {
       meta.prereqs,
       normaliseDeps(meta.dependencies),
       rawSkillMd,
+      this._prereqsAck,
+    );
+  }
+
+  /**
+   * Return a new entity with one or more per-installation flags
+   * replaced. Identity and frontmatter are preserved.
+   */
+  withState(state: { prereqsAck?: boolean }): Skill {
+    return new Skill(
+      this._fqn,
+      this._origin,
+      this._scope,
+      this._shortName,
+      this._description,
+      this._version,
+      this._prereqs,
+      this._dependencies,
+      this._anchorContent,
+      state.prereqsAck ?? this._prereqsAck,
     );
   }
 }
@@ -230,28 +252,7 @@ function normaliseDeps(
   };
 }
 
-/**
- * Canonical SHA-256 of a frontmatter view. Two frontmatter values
- * with the same fields in different key order produce the same hash;
- * any difference in field values produces a different hash.
- */
-export function canonicalFrontmatterSha(meta: SkillFrontmatter): string {
-  const canonical = JSON.stringify(canonicalise(meta));
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-function canonicalise(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(canonicalise);
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const sortedKeys = Object.keys(obj).sort();
-    const out: Record<string, unknown> = {};
-    for (const k of sortedKeys) {
-      const v = obj[k];
-      if (v !== undefined) out[k] = canonicalise(v);
-    }
-    return out;
-  }
-  return value;
+/** True iff `prereqs` is a non-empty, non-whitespace-only string. */
+export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
+  return prereqs !== undefined && prereqs.trim().length > 0;
 }

@@ -154,7 +154,7 @@ export async function taskEvents(opts: TaskEventsOpts): Promise<CommandResult> {
     // delay any output until the server closes the connection.
     const res = await client.callRaw("tasks.events", { params: { id, tid: opts.tid } });
     if (!res.ok) {
-      let body: unknown = undefined;
+      let body: unknown;
       try {
         body = await res.json();
       } catch {

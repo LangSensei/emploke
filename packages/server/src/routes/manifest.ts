@@ -33,11 +33,14 @@ import type {
   AgentEntry,
   AgentInstallBody,
   AgentMetadataPatch,
+  Agent as AgentPojo,
   CatalogInstallResult,
+  CatalogSyncResult,
   McpMetadata,
   SkillEntry,
   SkillInstallBody,
   SkillMetadataPatch,
+  Skill as SkillPojo,
 } from "@emploke/catalog";
 import type { ActivityItem } from "@emploke/runtime";
 import type { Session, SessionRecord } from "@emploke/session";
@@ -196,13 +199,27 @@ export interface TaskDeleteQuery {
   readonly purge?: "1";
 }
 
+/**
+ * POST /api/workspaces/:id/catalog/{kind}/:name/sync body. The
+ * `planToken` is minted by the matching `/sync/resolve` (returned
+ * inside the `ResolveManifest`) and is single-use + 5-min TTL on
+ * the server. See {@link CatalogManager.cachePlan} / `takePlan`
+ * for the rationale: the apply step replays the exact preview-time
+ * plan rather than re-resolving (which would silently apply a
+ * fresh, possibly-different closure).
+ */
+export interface CatalogSyncBody {
+  readonly planToken: string;
+}
+
 /** GET /api/workspaces/:id/catalog/overview response. */
 export interface CatalogOverview {
   readonly counts: {
     readonly skills: number;
     readonly agents: number;
     readonly mcps: number;
-    readonly disabled: number;
+    readonly blocked: number;
+    readonly orphaned: number;
   };
 }
 
@@ -407,6 +424,18 @@ export const ROUTES = {
     "DELETE",
     "/api/workspaces/:id/catalog/skills/:name",
   ),
+  "catalog.skills.syncResolve": defineRoute<{ params: CatalogResourcePathParams }, ResolveManifest>(
+    "POST",
+    "/api/workspaces/:id/catalog/skills/:name/sync/resolve",
+  ),
+  "catalog.skills.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/skills/:name/sync"),
+  "catalog.skills.acknowledgePrereqs": defineRoute<
+    { params: CatalogResourcePathParams },
+    SkillPojo
+  >("POST", "/api/workspaces/:id/catalog/skills/:name/acknowledge-prereqs"),
 
   // ── catalog agents ─────────────────────────────────────────────────
   "catalog.agents.list": defineRoute<{ params: WorkspacePathParams }, readonly AgentEntry[]>(
@@ -437,6 +466,26 @@ export const ROUTES = {
     "DELETE",
     "/api/workspaces/:id/catalog/agents/:name",
   ),
+  "catalog.agents.syncResolve": defineRoute<{ params: CatalogResourcePathParams }, ResolveManifest>(
+    "POST",
+    "/api/workspaces/:id/catalog/agents/:name/sync/resolve",
+  ),
+  "catalog.agents.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/agents/:name/sync"),
+  "catalog.agents.acknowledgePrereqs": defineRoute<
+    { params: CatalogResourcePathParams },
+    AgentPojo
+  >("POST", "/api/workspaces/:id/catalog/agents/:name/acknowledge-prereqs"),
+  "catalog.agents.disable": defineRoute<{ params: CatalogResourcePathParams }, AgentPojo>(
+    "POST",
+    "/api/workspaces/:id/catalog/agents/:name/disable",
+  ),
+  "catalog.agents.enable": defineRoute<{ params: CatalogResourcePathParams }, AgentPojo>(
+    "POST",
+    "/api/workspaces/:id/catalog/agents/:name/enable",
+  ),
 
   // ── catalog mcps (no resolve, no metadata patch) ───────────────────
   "catalog.mcps.list": defineRoute<{ params: WorkspacePathParams }, readonly McpMetadata[]>(
@@ -462,6 +511,14 @@ export const ROUTES = {
     "DELETE",
     "/api/workspaces/:id/catalog/mcps/:name",
   ),
+  "catalog.mcps.syncResolve": defineRoute<{ params: CatalogResourcePathParams }, ResolveManifest>(
+    "POST",
+    "/api/workspaces/:id/catalog/mcps/:name/sync/resolve",
+  ),
+  "catalog.mcps.sync": defineRoute<
+    { params: CatalogResourcePathParams; body: CatalogSyncBody },
+    CatalogSyncResult
+  >("POST", "/api/workspaces/:id/catalog/mcps/:name/sync"),
 } as const satisfies Record<string, RouteSpec<RouteRequest, unknown>>;
 
 /** Union of every key in {@link ROUTES}. Use as the generic param of `ApiClient.call`. */

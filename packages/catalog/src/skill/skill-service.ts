@@ -53,7 +53,13 @@ export interface SkillResolvedNode {
   readonly fqn: string;
   readonly origin: string;
   readonly anchorContent: string;
-  readonly frontmatterSha256: string;
+  /**
+   * Upstream-declared `version` — the staleness key. Emploke's
+   * authoring contract says a meaningful change MUST bump version;
+   * `install` rejects with {@link PlanStaleError} if the version
+   * differs at install time.
+   */
+  readonly version: string;
   readonly depsRefs: {
     /** Origin URIs of dep skills. The facade fans these out to resolve. */
     readonly skills: readonly string[];
@@ -121,7 +127,7 @@ export class SkillService {
       fqn: entity.fqn,
       origin: entity.origin,
       anchorContent: entity.anchorContent,
-      frontmatterSha256: entity.frontmatterSha256,
+      version: entity.version,
       depsRefs: {
         skills: [...entity.dependencies.skills],
         mcps: [...entity.dependencies.mcps],
@@ -161,20 +167,35 @@ export class SkillService {
       );
     }
 
-    const entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
+    let entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
 
-    if (entity.frontmatterSha256 !== node.frontmatterSha256) {
-      throw new PlanStaleError(
-        node.fqn,
-        node.origin,
-        node.frontmatterSha256,
-        entity.frontmatterSha256,
-      );
+    if (entity.version !== node.version) {
+      throw new PlanStaleError(node.fqn, node.origin, node.version, entity.version);
     }
 
     const existing = await this.repo.findByFqn(entity.fqn);
     if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
       throw new SkillOriginConflictError(entity.fqn, existing.origin, entity.origin);
+    }
+
+    // Per-installation-flag carry-over rule:
+    //   prereqsAck:
+    //     - existing entry, prereqs text unchanged → preserve previous ack
+    //     - existing entry, prereqs text changed (added / modified / removed)
+    //       → recompute from scratch (ack iff new prereqs is empty)
+    //     - no existing entry → use the create()-time default
+    //       (ack iff entity has no prereqs)
+    //
+    // Orphan status was previously preserved here too. It's now
+    // derived from the catalog dep graph at projection time, so
+    // there's no flag to carry over — the new graph gives the
+    // current answer.
+    if (existing !== null) {
+      const prereqsAck =
+        (existing.prereqs ?? "") === (entity.prereqs ?? "")
+          ? existing.prereqsAck
+          : entity.prereqsAck;
+      entity = entity.withState({ prereqsAck });
     }
 
     await this.repo.add(entity, files);
@@ -254,6 +275,25 @@ export class SkillService {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
     await this.repo.delete(fqn);
+  }
+
+  /**
+   * Flip `prereqsAck` to `true`. No-op if the entry has no prereqs
+   * (it's already true). Throws if the skill doesn't exist.
+   */
+  async acknowledgePrereqs(fqn: string): Promise<Skill> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (existing === null) throw new SkillNotFoundError(fqn);
+    if (!existing.prereqsAck) {
+      await this.repo.setFlags(fqn, { prereqsAck: true });
+    }
+    const updated = await this.repo.findByFqn(fqn);
+    if (updated === null) throw new SkillNotFoundError(fqn);
+    return updated;
+  }
+
+  async setFlags(fqn: string, flags: { prereqsAck?: boolean }): Promise<void> {
+    await this.repo.setFlags(fqn, flags);
   }
 
   /** Release the underlying repository's resources. Idempotent. */

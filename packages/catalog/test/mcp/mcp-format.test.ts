@@ -9,10 +9,10 @@ describe("McpFormat.parse", () => {
     const content = JSON.stringify({
       command: "node",
       args: ["server.js"],
-      _meta: { name: "azure/mcp", origin: "file:/abs/azure" },
+      _meta: { name: "azure/mcp" },
     });
     const { meta, body } = McpFormat.parse(content, LABEL);
-    expect(meta).toEqual({ name: "azure/mcp", origin: "file:/abs/azure" });
+    expect(meta).toEqual({ name: "azure/mcp" });
     expect(body.command).toBe("node");
     expect(body._meta).toBeDefined();
   });
@@ -21,7 +21,6 @@ describe("McpFormat.parse", () => {
     const content = JSON.stringify({
       _meta: {
         name: "x/y",
-        origin: "file:/abs/x",
         "io.modelcontextprotocol.registry/extra": { tag: "v1" },
       },
       env: { TOKEN: "secret" },
@@ -33,6 +32,18 @@ describe("McpFormat.parse", () => {
       tag: "v1",
     });
     expect(body.env).toEqual({ TOKEN: "secret" });
+  });
+
+  it("ignores _meta.origin when present (origin lives on the entity, not in the file)", () => {
+    // Legacy installs and third-party tooling may bake `_meta.origin`
+    // into the file; parse must accept it without error and must NOT
+    // surface it on the typed meta view (callers should treat origin
+    // as an install-time fact, not a declared field).
+    const content = JSON.stringify({ _meta: { name: "x/y", origin: "file:/abs/x" } });
+    const { meta, body } = McpFormat.parse(content, LABEL);
+    expect(meta).toEqual({ name: "x/y" });
+    // Body still carries the raw _meta block verbatim.
+    expect((body._meta as Record<string, unknown>).origin).toBe("file:/abs/x");
   });
 
   it("throws on invalid JSON", () => {
@@ -52,18 +63,17 @@ describe("McpFormat.parse", () => {
   });
 
   it("throws when _meta.name is missing or empty", () => {
-    expect(() =>
-      McpFormat.parse(JSON.stringify({ _meta: { origin: "file:/abs/x" } }), LABEL),
-    ).toThrow(McpInvalidJsonError);
-    expect(() =>
-      McpFormat.parse(JSON.stringify({ _meta: { name: "", origin: "file:/abs/x" } }), LABEL),
-    ).toThrow(McpInvalidJsonError);
-  });
-
-  it("throws when _meta.origin is missing or empty", () => {
-    expect(() => McpFormat.parse(JSON.stringify({ _meta: { name: "x/y" } }), LABEL)).toThrow(
+    expect(() => McpFormat.parse(JSON.stringify({ _meta: {} }), LABEL)).toThrow(
       McpInvalidJsonError,
     );
+    expect(() => McpFormat.parse(JSON.stringify({ _meta: { name: "" } }), LABEL)).toThrow(
+      McpInvalidJsonError,
+    );
+  });
+
+  it("accepts _meta with only name (origin is not required)", () => {
+    const { meta } = McpFormat.parse(JSON.stringify({ _meta: { name: "x/y" } }), LABEL);
+    expect(meta).toEqual({ name: "x/y" });
   });
 
   it("includes the source label in error messages", () => {
@@ -79,28 +89,24 @@ describe("McpFormat.parse", () => {
 
 describe("McpFormat.writeMeta", () => {
   it("creates a fresh _meta block when input is empty", () => {
-    const out = McpFormat.writeMeta("", { name: "x/y", origin: "file:/abs/x" }, LABEL);
+    const out = McpFormat.writeMeta("", { name: "x/y" }, LABEL);
     const parsed = JSON.parse(out);
-    expect(parsed._meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    expect(parsed._meta).toEqual({ name: "x/y" });
   });
 
   it("creates a fresh _meta block when input is whitespace", () => {
-    const out = McpFormat.writeMeta("   \n\t  ", { name: "x/y", origin: "file:/abs/x" }, LABEL);
-    expect(JSON.parse(out)._meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    const out = McpFormat.writeMeta("   \n\t  ", { name: "x/y" }, LABEL);
+    expect(JSON.parse(out)._meta).toEqual({ name: "x/y" });
   });
 
   it("adds _meta to a JSON object that lacks one", () => {
-    const out = McpFormat.writeMeta(
-      JSON.stringify({ command: "node" }),
-      { name: "x/y", origin: "file:/abs/x" },
-      LABEL,
-    );
+    const out = McpFormat.writeMeta(JSON.stringify({ command: "node" }), { name: "x/y" }, LABEL);
     const parsed = JSON.parse(out);
     expect(parsed.command).toBe("node");
-    expect(parsed._meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    expect(parsed._meta).toEqual({ name: "x/y" });
   });
 
-  it("merges _meta, preserving foreign keys", () => {
+  it("merges _meta, overwriting name and preserving foreign keys (including legacy origin)", () => {
     const original = JSON.stringify({
       command: "node",
       _meta: {
@@ -109,39 +115,42 @@ describe("McpFormat.writeMeta", () => {
         "io.modelcontextprotocol.registry/extra": { tag: "v1" },
       },
     });
-    const out = McpFormat.writeMeta(original, { name: "new/name", origin: "file:/abs/new" }, LABEL);
+    const out = McpFormat.writeMeta(original, { name: "new/name" }, LABEL);
     const parsed = JSON.parse(out);
     expect(parsed._meta.name).toBe("new/name");
-    expect(parsed._meta.origin).toBe("file:/abs/new");
+    // Origin is foreign data — writeMeta no longer manages it, so a
+    // pre-existing value survives untouched. New installs (with empty
+    // input or no _meta.origin) won't introduce it at all.
+    expect(parsed._meta.origin).toBe("file:/abs/old");
     expect(parsed._meta["io.modelcontextprotocol.registry/extra"]).toEqual({ tag: "v1" });
     expect(parsed.command).toBe("node");
   });
 
+  it("does not introduce _meta.origin when input lacks it", () => {
+    const out = McpFormat.writeMeta(JSON.stringify({ command: "node" }), { name: "x/y" }, LABEL);
+    const parsed = JSON.parse(out);
+    expect("origin" in parsed._meta).toBe(false);
+  });
+
   it("throws on invalid JSON input", () => {
-    expect(() =>
-      McpFormat.writeMeta("{not json", { name: "x/y", origin: "file:/abs/x" }, LABEL),
-    ).toThrow(McpInvalidJsonError);
+    expect(() => McpFormat.writeMeta("{not json", { name: "x/y" }, LABEL)).toThrow(
+      McpInvalidJsonError,
+    );
   });
 
   it("throws on non-object input", () => {
-    expect(() =>
-      McpFormat.writeMeta("[1,2]", { name: "x/y", origin: "file:/abs/x" }, LABEL),
-    ).toThrow(McpInvalidJsonError);
+    expect(() => McpFormat.writeMeta("[1,2]", { name: "x/y" }, LABEL)).toThrow(McpInvalidJsonError);
   });
 
   it("ends output with a newline", () => {
-    const out = McpFormat.writeMeta("", { name: "x/y", origin: "file:/abs/x" }, LABEL);
+    const out = McpFormat.writeMeta("", { name: "x/y" }, LABEL);
     expect(out.endsWith("\n")).toBe(true);
   });
 
   it("output is parseable by parse()", () => {
-    const out = McpFormat.writeMeta(
-      JSON.stringify({ command: "node" }),
-      { name: "x/y", origin: "file:/abs/x" },
-      LABEL,
-    );
+    const out = McpFormat.writeMeta(JSON.stringify({ command: "node" }), { name: "x/y" }, LABEL);
     const { meta, body } = McpFormat.parse(out, LABEL);
-    expect(meta).toEqual({ name: "x/y", origin: "file:/abs/x" });
+    expect(meta).toEqual({ name: "x/y" });
     expect(body.command).toBe("node");
   });
 });
@@ -149,7 +158,7 @@ describe("McpFormat.writeMeta", () => {
 describe("McpFormat.stripMeta", () => {
   it("removes the _meta key", () => {
     const stripped = McpFormat.stripMeta(
-      JSON.stringify({ command: "node", _meta: { name: "x/y", origin: "file:/abs/x" } }),
+      JSON.stringify({ command: "node", _meta: { name: "x/y" } }),
       LABEL,
     );
     expect(stripped).toEqual({ command: "node" });

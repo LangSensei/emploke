@@ -1,6 +1,8 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  disableAgent,
+  enableAgent,
   getAgent,
   getMcp,
   getSkill,
@@ -30,6 +32,7 @@ import { McpGrid } from "../components/McpGrid";
 import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
 import { Modal } from "../components/Modal";
 import { ResolveTree } from "../components/ResolveTree";
+import { KIND_TITLE } from "../kindMeta";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
 
@@ -44,10 +47,15 @@ interface CatalogProps {
   onChanged: () => void;
 }
 
+/**
+ * Mirror of `KIND_TITLE` keyed by the page's plural tab key.
+ * Catalog uses the plural form for legacy URL stability; everywhere
+ * else uses singular via {@link KIND_TITLE} / {@link KIND_TAG}.
+ */
 const KIND_LABEL: Record<CatalogTab, string> = {
-  agents: "Agent",
-  skills: "Skill",
-  mcps: "MCP",
+  agents: KIND_TITLE.agent,
+  skills: KIND_TITLE.skill,
+  mcps: KIND_TITLE.mcp,
 };
 
 type DialogTarget =
@@ -71,11 +79,59 @@ export function CatalogPage({
   const [edit, setEdit] = useState<EditTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  // Reset the filter when the tab changes — switching from Skills
+  // (where "Blocked" is valid) to MCPs (where it isn't) would leave
+  // an unreachable filter selected.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setStatusFilter is stable; tab change is the trigger
+  useEffect(() => {
+    setStatusFilter("all");
+  }, [tab]);
+
+  // Filter the per-tab list down according to the status pill row.
+  // `orphaned` only meaningful for skills + mcps (agents can't be
+  // orphaned — they're root entities), so the filter is hidden when
+  // the agents tab is active.
+  const filteredAgents = useMemo(() => {
+    if (statusFilter === "all") return agents;
+    if (statusFilter === "ready") return agents.filter((a) => a.status === "ready");
+    if (statusFilter === "blocked") return agents.filter((a) => a.status === "blocked");
+    return agents; // orphaned doesn't apply
+  }, [agents, statusFilter]);
+
+  const filteredSkills = useMemo(() => {
+    if (statusFilter === "all") return skills;
+    if (statusFilter === "ready") return skills.filter((s) => s.status === "ready");
+    if (statusFilter === "blocked") return skills.filter((s) => s.status === "blocked");
+    return skills.filter((s) => s.skill.orphaned);
+  }, [skills, statusFilter]);
+
+  const filteredMcps = useMemo(() => {
+    if (statusFilter === "all") return mcps;
+    // mcps don't carry status; only orphaned applies. Treat ready as
+    // "not orphaned" and blocked as "orphaned" to keep the pill set
+    // consistent across tabs.
+    if (statusFilter === "ready") return mcps.filter((m) => !m.orphaned);
+    return mcps.filter((m) => m.orphaned);
+  }, [mcps, statusFilter]);
+
+  const orphanCount = useMemo(() => {
+    if (tab === "skills") return skills.filter((s) => s.skill.orphaned).length;
+    if (tab === "mcps") return mcps.filter((m) => m.orphaned).length;
+    return 0;
+  }, [tab, skills, mcps]);
 
   const doInstall = async (src: InstallSource) => {
     setBusy(true);
     setError(null);
     try {
+      // The install/sync responses carry a per-entry `prereqs` +
+      // `prereqsAck` payload (see `CatalogInstalledEntry` on the
+      // server) so other clients (CLI, future scripts) can react,
+      // but the dashboard relies on the entry's own `blocked` badge
+      // and DetailDialog to surface the same information rather
+      // than splashing a banner above the grid.
       if (tab === "agents") await installAgent(src);
       else if (tab === "skills") await installSkill(src);
       else await installMcp(src);
@@ -99,6 +155,38 @@ export function CatalogPage({
       onChanged();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRemoveAllOrphans = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (tab === "skills") {
+        const orphans = skills.filter((s) => s.skill.orphaned);
+        for (const s of orphans) {
+          try {
+            await removeSkill(s.skill.fqn);
+          } catch (e) {
+            // HasDependentsError shouldn't happen by definition (orphans
+            // have zero reverse-deps), but if it does, surface and continue
+            // — best-effort bulk delete shouldn't abort halfway.
+            setError(`failed to remove ${s.skill.fqn}: ${(e as Error).message}`);
+          }
+        }
+      } else if (tab === "mcps") {
+        const orphans = mcps.filter((m) => m.orphaned);
+        for (const m of orphans) {
+          try {
+            await removeMcp(m.name);
+          } catch (e) {
+            setError(`failed to remove ${m.name}: ${(e as Error).message}`);
+          }
+        }
+      }
+      onChanged();
     } finally {
       setBusy(false);
     }
@@ -138,6 +226,37 @@ export function CatalogPage({
               </button>
             </nav>
             <div className="page-toolbar__actions">
+              {/*
+                Status filter is a popover-style button rather than a
+                row of inline pills. The pills approach used to occupy
+                a slice of the toolbar that competed with the kind tabs
+                and the install button; collapsing them into one
+                "Filters" button keeps the toolbar to a single row and
+                gives us room to add sort / search controls later
+                without redesigning the strip again.
+
+                When the active filter is anything other than "All",
+                the button title shows the picked value and a small
+                indicator dot so it's still obvious from a glance that
+                a filter is constraining the view.
+              */}
+              <FilterMenu
+                tab={tab}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                orphanCount={orphanCount}
+              />
+              {statusFilter === "orphaned" && orphanCount > 0 && tab !== "agents" && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={doRemoveAllOrphans}
+                  disabled={busy}
+                  title="Delete every orphaned entry. Each delete is guarded against accidentally removing one with dependents."
+                >
+                  {busy ? "Removing…" : `Remove all (${orphanCount})`}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn--primary"
@@ -160,11 +279,13 @@ export function CatalogPage({
 
           {tab === "agents" && (
             <EntryGrid
-              items={agents.map((a) => ({
+              kind="agent"
+              items={filteredAgents.map((a) => ({
                 name: a.agent.fqn,
                 description: a.agent.description,
                 version: a.agent.version,
                 status: a.status,
+                ...(a.blockedReason !== undefined ? { blockedReason: a.blockedReason } : {}),
                 missingDeps: a.missingDeps,
                 skillsCount: a.agent.dependencies?.skills?.length ?? 0,
                 mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
@@ -182,11 +303,13 @@ export function CatalogPage({
 
           {tab === "skills" && (
             <EntryGrid
-              items={skills.map((s) => ({
+              kind="skill"
+              items={filteredSkills.map((s) => ({
                 name: s.skill.fqn,
                 description: s.skill.description,
                 version: s.skill.version,
                 status: s.status,
+                ...(s.blockedReason !== undefined ? { blockedReason: s.blockedReason } : {}),
                 missingDeps: s.missingDeps,
                 skillsCount: s.skill.dependencies?.skills?.length ?? 0,
                 mcpsCount: s.skill.dependencies?.mcps?.length ?? 0,
@@ -204,7 +327,7 @@ export function CatalogPage({
 
           {tab === "mcps" && (
             <McpGrid
-              mcps={mcps}
+              mcps={filteredMcps}
               onEdit={(name) => {
                 setError(null);
                 const m = mcps.find((x) => x.name === name);
@@ -452,6 +575,132 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
   );
 }
 
+// ─── FilterMenu ────────────────────────────────────────────────────
+
+type StatusFilter = "all" | "ready" | "blocked" | "orphaned";
+
+interface FilterMenuProps {
+  /** Which catalog tab is active — drives which options are valid. */
+  tab: CatalogTab;
+  value: StatusFilter;
+  onChange: (next: StatusFilter) => void;
+  /** Surfaced as a count next to the Orphaned option. */
+  orphanCount: number;
+}
+
+interface FilterOption {
+  readonly value: StatusFilter;
+  readonly label: string;
+  /** Optional count to render as a small chip after the label. */
+  readonly count?: number;
+}
+
+const FILTER_LABEL: Record<StatusFilter, string> = {
+  all: "All",
+  ready: "Ready",
+  blocked: "Blocked",
+  orphaned: "Orphaned",
+};
+
+/**
+ * Per-tab filter menu, opened from a single toolbar button so the
+ * top strip stays at one row of chrome regardless of how many filter
+ * dimensions we add later.
+ *
+ * Built on `<details>` + `<summary>` rather than a custom popover
+ * primitive so closing on outside-click and keyboard ESC come for free
+ * — no global click handler bookkeeping.
+ *
+ * Per-tab option set:
+ *   - agents: All / Ready / Blocked         (agents can never be orphaned)
+ *   - skills: All / Ready / Blocked / Orphaned
+ *   - mcps:   All / Orphaned                (mcps have no ready/blocked semantics)
+ *
+ * If the active tab doesn't support the current filter (e.g. user was
+ * on Skills with "Blocked" and switches to Mcps), the parent caller
+ * is responsible for resetting the value on tab change.
+ */
+function FilterMenu({ tab, value, onChange, orphanCount }: FilterMenuProps) {
+  const options: FilterOption[] = [{ value: "all", label: FILTER_LABEL.all }];
+  if (tab !== "mcps") {
+    options.push(
+      { value: "ready", label: FILTER_LABEL.ready },
+      { value: "blocked", label: FILTER_LABEL.blocked },
+    );
+  }
+  if (tab !== "agents") {
+    options.push({
+      value: "orphaned",
+      label: FILTER_LABEL.orphaned,
+      ...(orphanCount > 0 ? { count: orphanCount } : {}),
+    });
+  }
+
+  const activeLabel = FILTER_LABEL[value];
+  const isFiltered = value !== "all";
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: details/summary handles focus + ESC natively; no extra handlers needed
+    <details
+      className="filter-menu"
+      onToggle={(e) => {
+        // Auto-close after a selection so the popover doesn't linger.
+        // We can't use `useState({open})` here because the native
+        // <details> already owns the open state; this just ensures
+        // re-renders triggered by `onChange` don't accidentally
+        // reset open to true.
+        e.stopPropagation();
+      }}
+    >
+      <summary
+        className={`btn btn--ghost filter-menu__trigger${isFiltered ? " filter-menu__trigger--active" : ""}`}
+        title={isFiltered ? `Showing ${activeLabel} only` : "Filter by status"}
+      >
+        <span className="filter-menu__icon" aria-hidden="true">
+          ⚙
+        </span>
+        Filters
+        {isFiltered && (
+          <>
+            <span className="filter-menu__sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="filter-menu__current">{activeLabel}</span>
+          </>
+        )}
+      </summary>
+      <div className="filter-menu__panel" role="menu">
+        <div className="filter-menu__group-label">Status</div>
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="menuitemradio"
+            aria-checked={value === opt.value}
+            className={`filter-menu__option${value === opt.value ? " filter-menu__option--active" : ""}`}
+            onClick={(e) => {
+              onChange(opt.value);
+              // Close the popover after picking — find the parent
+              // <details> and clear `open`. Built-in details don't
+              // close on inner clicks by default.
+              const details = (e.currentTarget as HTMLElement).closest("details");
+              if (details) details.removeAttribute("open");
+            }}
+          >
+            <span className="filter-menu__radio" aria-hidden="true">
+              {value === opt.value ? "●" : "○"}
+            </span>
+            <span className="filter-menu__option-label">{opt.label}</span>
+            {opt.count !== undefined && (
+              <span className="filter-menu__option-count">{opt.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 // ─── ConfirmRemoveDialog ──────────────────────────────────────────
 
 interface ConfirmRemoveDialogProps {
@@ -516,10 +765,15 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     skills: [],
     mcps: [],
   });
+  // Captured at load time for agents so the lifecycle button knows
+  // which direction the toggle should go. Skills / mcps don't carry
+  // this flag.
+  const [agentDisabledByUser, setAgentDisabledByUser] = useState<boolean>(false);
 
   const [mode, setMode] = useState<EditMode>(target.kind === "mcp" ? "source" : "form");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // EditDialog is only opened for mutable (file: origin) entries —
@@ -554,6 +808,9 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         skills: [...(meta.dependencies?.skills ?? [])],
         mcps: [...(meta.dependencies?.mcps ?? [])],
       });
+      if ("agent" in detail) {
+        setAgentDisabledByUser(detail.agent.disabledByUser);
+      }
     };
     load()
       .catch((e) => {
@@ -611,6 +868,28 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     }
   };
 
+  const handleToggleAgentDisabled = async (): Promise<void> => {
+    if (target.kind !== "agent") return;
+    setToggling(true);
+    setError(null);
+    try {
+      if (agentDisabledByUser) {
+        await enableAgent(target.name);
+        setAgentDisabledByUser(false);
+      } else {
+        await disableAgent(target.name);
+        setAgentDisabledByUser(true);
+      }
+      // Don't close the dialog — toggle is in-place; user may want to
+      // continue editing. The catalog list doesn't refresh until Save
+      // or Close, so flag stays consistent with the displayed state.
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setToggling(false);
+    }
+  };
+
   const kindLabel = KIND_LABEL[(target.kind === "mcp" ? "mcps" : `${target.kind}s`) as CatalogTab];
   const title = `Edit ${kindLabel}: ${target.name}`;
   const isLargeMode = mode === "source" || target.kind === "mcp";
@@ -658,19 +937,40 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             type="button"
             className="btn btn--ghost modal__footer-secondary"
             onClick={() => setMode(mode === "form" ? "source" : "form")}
-            disabled={saving || loading}
+            disabled={saving || loading || toggling}
           >
             {mode === "form" ? "Edit source →" : "← Back to form"}
           </button>
         )}
-        <button type="button" className="btn" onClick={onClose} disabled={saving}>
+        {target.kind === "agent" && (
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={handleToggleAgentDisabled}
+            disabled={saving || loading || toggling}
+            title={
+              agentDisabledByUser
+                ? "Mark this agent active. New dispatches will be allowed."
+                : "Pause this agent. New dispatches will be refused until re-enabled."
+            }
+          >
+            {toggling
+              ? agentDisabledByUser
+                ? "Enabling…"
+                : "Disabling…"
+              : agentDisabledByUser
+                ? "Enable agent"
+                : "Disable agent"}
+          </button>
+        )}
+        <button type="button" className="btn" onClick={onClose} disabled={saving || toggling}>
           Cancel
         </button>
         <button
           type="button"
           className="btn btn--primary"
           onClick={handleSave}
-          disabled={loading || saving}
+          disabled={loading || saving || toggling}
         >
           {saving ? "Saving..." : "Save"}
         </button>

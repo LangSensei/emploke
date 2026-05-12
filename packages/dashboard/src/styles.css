@@ -522,6 +522,139 @@ button {
   gap: var(--space-2);
 }
 
+/* ─── Catalog status filter menu ──────────────────────────────────
+ *
+ * Single popover-style button on the toolbar; opens a small panel
+ * with radio-style options. Built on native <details>/<summary> so
+ * close-on-outside-click and ESC-to-close come for free without any
+ * global handler bookkeeping.
+ *
+ * The trigger reuses the .btn .btn--ghost shape so it visually sits
+ * with the other toolbar buttons. When a non-default filter is
+ * active we slide the picked label in beside the icon so the user
+ * knows from the strip alone that the view is constrained.
+ */
+.filter-menu {
+  position: relative;
+  display: inline-block;
+}
+
+/* Hide the default ▶/▼ disclosure caret — the trigger already reads
+ * as a button so the marker would be visual noise. */
+.filter-menu > summary {
+  list-style: none;
+}
+
+.filter-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filter-menu__trigger {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.filter-menu__icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.filter-menu__sep {
+  color: var(--color-text-subtle);
+  margin: 0 2px;
+}
+
+.filter-menu__current {
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.filter-menu__trigger--active {
+  /* Subtle indicator that a filter is constraining the view; the
+   * visible "Status: Blocked" label in the trigger does most of the
+   * work, but the dot reinforces the same signal at a glance. */
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+}
+
+.filter-menu__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.filter-menu__group-label {
+  padding: var(--space-1) var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.filter-menu__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.filter-menu__option:hover {
+  background: var(--color-surface-hover);
+}
+
+.filter-menu__option--active {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.filter-menu__radio {
+  font-size: 12px;
+  width: 14px;
+  text-align: center;
+  color: var(--color-text-subtle);
+}
+
+.filter-menu__option--active .filter-menu__radio {
+  color: var(--color-accent);
+}
+
+.filter-menu__option-label {
+  flex: 1;
+}
+
+.filter-menu__option-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
 /* ─── Cards / panels ────────────────────────────────────────────── */
 
 .card {
@@ -835,31 +968,136 @@ button {
   overflow-wrap: anywhere;
 }
 
-.detail-dialog__strip {
+/* ─── Hero header (rich modal title) ────────────────────────────── */
+
+.detail-hero {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-accent-bg);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-4);
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
 }
 
-.detail-dialog__strip-label {
+.detail-hero__icon {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--color-accent);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 20px;
+  line-height: 1;
 }
 
-.detail-dialog__strip-label code {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 1px 6px;
-  border-radius: 3px;
+.detail-hero__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-hero__kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.detail-hero__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.detail-hero__name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.detail-hero__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.detail-hero__status--ready {
+  color: #1f7a3a;
+  background: rgba(31, 122, 58, 0.08);
+  border-color: rgba(31, 122, 58, 0.2);
+}
+
+.detail-hero__status--blocked {
+  color: #b54708;
+  background: rgba(181, 71, 8, 0.08);
+  border-color: rgba(181, 71, 8, 0.2);
+}
+
+.detail-hero__status-dot {
+  font-size: 8px;
+  line-height: 1;
+}
+
+.detail-hero__status-dot--ready {
+  color: #1f7a3a;
+}
+
+.detail-hero__status-dot--blocked {
+  color: #b54708;
+}
+
+.detail-hero__namespace {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 12px;
+  color: var(--color-text-muted);
+  word-break: break-word;
+}
+
+/* ─── Tab nav inside the detail body ────────────────────────────── */
+
+.detail-dialog__tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  margin: calc(-1 * var(--space-2)) 0 0 0;
+}
+
+.detail-dialog__tab {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.detail-dialog__tab:hover {
+  color: var(--color-text);
+}
+
+.detail-dialog__tab--active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
 }
 
 .detail-dialog__dl {
@@ -900,6 +1138,17 @@ button {
 
 .detail-dialog__origin:hover {
   text-decoration: underline;
+}
+
+.detail-dialog__origin-scheme {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.detail-dialog__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .detail-dialog__empty {
@@ -952,30 +1201,6 @@ button {
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
-}
-
-.detail-dialog__source {
-  margin-top: var(--space-3);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
-}
-
-.detail-dialog__source > summary {
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 13px;
-  user-select: none;
-}
-
-.detail-dialog__source[open] > summary {
-  margin-bottom: var(--space-2);
-}
-
-.detail-dialog__source-hint {
-  color: var(--color-text-muted);
-  font-weight: 400;
-  font-size: 12px;
 }
 
 .detail-dialog__code {
@@ -1082,6 +1307,7 @@ button {
 }
 
 .card-grid__item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -1090,10 +1316,24 @@ button {
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   cursor: pointer;
+  /* Status stripe lives on the left edge as a 3px inset border. The
+   * status pill in the footer keeps the explicit text label, but the
+   * stripe is what the eye picks up while scanning the grid — much
+   * calmer than a corner badge competing with the title for space. */
+  border-left-width: 3px;
   transition:
     border-color 0.1s ease,
     box-shadow 0.1s ease,
     transform 0.1s ease;
+}
+
+.card-grid__item[data-status="ready"] {
+  border-left-color: var(--color-success);
+}
+
+.card-grid__item[data-status="blocked"] {
+  border-left-color: var(--color-warn);
+  background: var(--color-surface);
 }
 
 .card-grid__item:hover {
@@ -1101,16 +1341,80 @@ button {
   box-shadow: var(--shadow-md);
 }
 
+/* Re-apply the status stripe after the hover rule (border-color is a
+ * shorthand-friendly target so the hover rule above also touched the
+ * left edge). */
+.card-grid__item[data-status="ready"]:hover {
+  border-left-color: var(--color-success);
+}
+
+.card-grid__item[data-status="blocked"]:hover {
+  border-left-color: var(--color-warn);
+}
+
 .card-grid__item:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
-.card-grid__item--disabled {
-  background: var(--color-surface);
-  opacity: 0.85;
+/* Header strip: small kind tag (uppercase + icon) on the left, hidden
+ * Remove icon on the right that fades in on hover. The Remove action
+ * is intentionally low-visibility — the primary path is click-card-to-
+ * edit, and a permanent "Remove" button creates visual clutter. */
+.card-grid__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 18px;
 }
 
+.card-grid__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+/* Two-line title: small muted namespace prefix above a bigger sans-serif
+ * short name. Replaces the old single mono fqn that lost the eye in
+ * `langsensei/longish-name` style identifiers. The full fqn is on the
+ * parent's `title` attribute for tooltip + a11y. */
+.card-grid__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-1);
+}
+
+.card-grid__namespace {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  word-break: break-all;
+  /* Reserve the line height even when there's no namespace prefix so
+   * cards without a scope (legacy / unscoped names) line up vertically
+   * with scoped ones in the same grid row. */
+  min-height: calc(11px * 1.2);
+}
+
+.card-grid__short {
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  line-height: 1.25;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Legacy single-row title strip + .card-grid__name — kept so any callers
+ * we missed don't visually regress. New code uses .card-grid__title. */
 .card-grid__top {
   display: flex;
   align-items: center;
@@ -1118,42 +1422,125 @@ button {
 }
 
 .card-grid__name {
-  flex: 1;
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 14px;
   letter-spacing: -0.01em;
   color: var(--color-text);
-  /* Long scoped names: allow word-break so the whole name shows wrapped
-     instead of being cut off; tooltip still has the full string. */
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.35;
 }
 
-/* Footer: meta on left, Remove button on right. */
+/* Inline blocked-reason banner: muted warn color, no heavy background.
+ * Sits between description and footer. */
+/* Inline blocked-reason banner: reserved as a fixed-height row even
+ * when empty so blocked and ready cards have the same total height
+ * regardless of which reasons (if any) are populated. The `--filled`
+ * modifier paints the warn color text; the unfilled state just holds
+ * the slot with a non-breaking space. */
+.card-grid__reason {
+  margin: 0;
+  padding: var(--space-1) 0;
+  font-size: 12px;
+  color: transparent;
+  line-height: 1.4;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-height: calc(12px * 1.4 + var(--space-1) * 2);
+}
+
+.card-grid__reason--filled {
+  color: var(--color-warn);
+}
+
+/* Footer: meta items separated by thin vertical bars; status pill far right.
+ * Single-line, fixed-height so cards line up cleanly. */
 .card-grid__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-subtle);
-  font-family: var(--font-mono);
   margin-top: auto;
   padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
 }
 
-.card-grid__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.card-grid__meta-item {
+  font-family: var(--font-mono);
+}
+
+.card-grid__meta-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--color-border);
+}
+
+.card-grid__meta-spacer {
   flex: 1;
-  min-width: 0;
-  flex-wrap: wrap;
 }
 
-/* Remove button — bottom-right of card, subtle gray, reddens on hover. */
+/* Status pill in footer: dot + word, color follows status. */
+.card-grid__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.card-grid__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.card-grid__status--ready {
+  color: var(--color-success);
+}
+
+.card-grid__status--blocked {
+  color: var(--color-warn);
+}
+
+/* Remove icon button — invisible until card hover, then fades in. */
+.card-grid__action--icon {
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.1s ease,
+    background 0.1s ease,
+    color 0.1s ease;
+  flex-shrink: 0;
+}
+
+.card-grid__item:hover .card-grid__action--icon,
+.card-grid__action--icon:focus-visible {
+  opacity: 1;
+}
+
+.card-grid__action--icon:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.card-grid__action--icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Legacy .card-grid__action (text-button form) — kept for any non-grid
+ * callers that haven't migrated to the icon form. */
 .card-grid__action {
   display: inline-flex;
   align-items: center;
@@ -1166,15 +1553,7 @@ button {
   font-family: var(--font-sans);
   font-size: 12px;
   cursor: pointer;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease;
   flex-shrink: 0;
-}
-
-.card-grid__action svg {
-  width: 13px;
-  height: 13px;
 }
 
 .card-grid__action:hover {
@@ -1187,7 +1566,6 @@ button {
   font-size: 13px;
   color: var(--color-text-muted);
   line-height: 1.45;
-  /* Clamp to 2 lines with ellipsis; reserve 2 lines so cards stay aligned. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1198,7 +1576,6 @@ button {
 .card-grid__desc--mono {
   font-family: var(--font-mono);
   font-size: 12px;
-  /* MCP paths are single-line so just ellipsize. */
   display: block;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1212,6 +1589,7 @@ button {
   color: var(--color-text-muted);
 }
 
+/* Legacy classes kept for non-grid uses (search results panel etc.). */
 .card-grid__desc--needs {
   color: var(--color-text);
   -webkit-line-clamp: 2;
@@ -1305,6 +1683,25 @@ button {
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+/*
+ * Rich-header variant: used by DetailDialog. The hero block has its
+ * own visual weight (icon tile, name, namespace) so we ease back on
+ * vertical padding and align the close button to the top, not center,
+ * to avoid an awkward gap on the right.
+ */
+.modal__header--rich {
+  align-items: flex-start;
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-5);
+}
+
+.modal__close {
+  flex-shrink: 0;
+}
+
+.modal__header--rich .modal__close {
+  margin-top: 4px;
 }
 
 .modal__title {

@@ -26,19 +26,6 @@ describe("Agent.create", () => {
     expect(a.anchorContent).toBe(MIN_VALID);
   });
 
-  it("computes a stable canonical SHA-256 of the frontmatter (NOT body)", () => {
-    const a1 = Agent.create(MIN_VALID, "file:/abs/x", "test");
-    const a2 = Agent.create(MIN_VALID + "\nextra body", "file:/abs/x", "test");
-    expect(a2.frontmatterSha256).toBe(a1.frontmatterSha256);
-    expect(a1.frontmatterSha256).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  it("version change DOES change the frontmatter SHA", () => {
-    const a1 = Agent.create(MIN_VALID, "file:/abs/x", "test");
-    const a2 = Agent.create(MIN_VALID.replace("1.0.0", "2.0.0"), "file:/abs/x", "test");
-    expect(a2.frontmatterSha256).not.toBe(a1.frontmatterSha256);
-  });
-
   it("rejects empty origin", () => {
     expect(() => Agent.create(MIN_VALID, "", "test")).toThrow(TypeError);
   });

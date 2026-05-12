@@ -77,10 +77,10 @@ describe("SkillService.resolve", () => {
     expect(plan.node!.depsRefs.mcps).toEqual([]);
   });
 
-  it("captures frontmatter SHA-256 (canonical hash)", async () => {
+  it("captures the upstream version on the resolved node", async () => {
     fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") });
     const plan = await svc.resolve("file:/abs/tool");
-    expect(plan.node!.frontmatterSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(plan.node!.version).toBe("1.0.0");
   });
 
   it("surfaces dep refs (does NOT recurse — facade's job)", async () => {
@@ -182,7 +182,7 @@ describe("SkillService.install", () => {
     await expect(svc.install("file:/abs/b")).rejects.toThrow(SkillOriginConflictError);
   });
 
-  it("throws PlanStaleError when frontmatter changes between resolve and install", async () => {
+  it("throws PlanStaleError when version changes between resolve and install", async () => {
     fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") });
     const plan = await svc.resolve("file:/abs/tool");
     fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool").replace("1.0.0", "2.0.0") });
@@ -195,6 +195,23 @@ describe("SkillService.install", () => {
     fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") + "\nNew body content.\n" });
     const s = await svc.install(plan.node!);
     expect(s.fqn).toBe("public/tool");
+  });
+
+  it("frontmatter-edit-without-version-bump does NOT trigger PlanStaleError (author contract)", async () => {
+    // Per the version-as-truth contract, even a frontmatter edit
+    // (e.g. tweaking description) without a version bump is a
+    // contributor bug — emploke treats it as a no-op rather than
+    // racing on it.
+    fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") });
+    const plan = await svc.resolve("file:/abs/tool");
+    const tweaked = ANCHOR("tool").replace("description: x", "description: tweaked");
+    fetcher.set("file:/abs/tool", { "SKILL.md": tweaked });
+    const s = await svc.install(plan.node!);
+    expect(s.fqn).toBe("public/tool");
+    // The installed entity carries the freshly-fetched description —
+    // the staleness check is the only gate, not a "reject if anything
+    // changed" check.
+    expect(s.description).toBe("tweaked");
   });
 
   it("install fails when fetched tree has no SKILL.md", async () => {

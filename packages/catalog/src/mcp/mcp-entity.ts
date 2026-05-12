@@ -17,11 +17,16 @@ import { validateMcpName } from "./validate.js";
  *   - {@link Mcp.create} — for fresh installs from raw user bytes.
  *   - {@link Mcp.fromStored} — for reconstitution by the repository.
  *
+ * Note: orphan-status (zero reverse-deps) is NOT a property of the
+ * entity — it's a derived fact over the full catalog dep graph. The
+ * facade computes it lazily at projection time via the cascade context.
+ *
  * Invariants:
  *   - `name` matches MCP spec grammar (validated via `validateMcpName`)
  *   - `origin` is non-empty
- *   - `content` is JSON parseable as `{ _meta: { name, origin }, ... }`
- *     where `_meta.name === this.name` and `_meta.origin === this.origin`
+ *   - `content` is JSON parseable as `{ _meta: { name }, ... }`
+ *     where `_meta.name === this.name`. Origin is NOT carried in
+ *     the file — it lives on the entity / SQLite row only.
  */
 export class Mcp {
   private constructor(
@@ -36,7 +41,7 @@ export class Mcp {
       throw new TypeError("Mcp.create requires a non-empty origin string");
     }
     const sourceLabel = `mcps:${name}`;
-    const merged = McpFormat.writeMeta(rawContent, { name, origin }, sourceLabel);
+    const merged = McpFormat.writeMeta(rawContent, { name }, sourceLabel);
     // Defensive: re-parse so we never construct an entity whose content
     // can't be read back. Catches programmer errors in writeMeta upgrades.
     McpFormat.parse(merged, sourceLabel);
@@ -70,11 +75,13 @@ export class Mcp {
 
   /**
    * Return a new entity with replaced content. Identity (name, origin)
-   * is preserved — the entity's stable name/origin are re-injected
-   * into the new content's `_meta`. Callers cannot change identity via
-   * this method; they must delete + reinstall.
+   * is preserved — the entity's stable name is re-injected into the
+   * new content's `_meta`. Origin is never written to the file (it
+   * lives on the entity / SQLite row only). Callers cannot change
+   * identity via this method; they must delete + reinstall.
    */
   withContent(rawContent: string): Mcp {
-    return Mcp.create(this._name, this._origin, rawContent);
+    const next = Mcp.create(this._name, this._origin, rawContent);
+    return new Mcp(next._name, next._origin, next._content);
   }
 }

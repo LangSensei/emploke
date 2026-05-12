@@ -33,6 +33,7 @@ export { type CreateParams, create } from "./create.js";
 export {
   AgentNotFoundError,
   CorruptedTaskError,
+  EntryNotReadyError,
   InvalidTaskIdError,
   InvalidTransition,
   RuntimeDoesNotSupportTasksError,

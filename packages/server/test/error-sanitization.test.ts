@@ -4,6 +4,7 @@ import {
   AgentNotFoundError,
   AgentOriginConflictError,
   AgentPlanStaleError,
+  CyclicDependencyError,
   HasDependentsError,
   ImmutableOriginError,
   McpInvalidJsonError,
@@ -123,6 +124,7 @@ describe("errorBody", () => {
       "OriginParseError",
       "PlanStaleError",
       "AgentPlanStaleError",
+      "CyclicDependencyError",
       // workspace
       "RegistryCorruptedError",
       "RegistryError",
@@ -166,6 +168,11 @@ describe("statusForCatalogError", () => {
     ["OriginParseError", new OriginParseError("garbage://x", "unsupported scheme"), 400],
     ["PlanStaleError", new PlanStaleError("public/foo", "file:/x", "abc", "def"), 400],
     ["AgentPlanStaleError", new AgentPlanStaleError("public/foo", "file:/x", "abc", "def"), 400],
+    [
+      "CyclicDependencyError",
+      new CyclicDependencyError(["file:/abs/a", "file:/abs/b", "file:/abs/a"]),
+      400,
+    ],
 
     ["SkillNotFoundError", new SkillNotFoundError("public/foo"), 404],
     ["AgentNotFoundError", new AgentNotFoundError("public/foo"), 404],

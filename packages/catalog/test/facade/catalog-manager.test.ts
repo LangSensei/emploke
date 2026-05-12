@@ -13,6 +13,7 @@ import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
 
@@ -83,10 +84,10 @@ function makeFakeFetchers(): {
       return { node: null, conflict };
     }
     // Mirror production: parse _meta.name from content to recover FQN,
-    // then re-inject our own origin to scrub stale upstream values.
+    // then re-stamp `name` (origin is NOT carried in the file).
     const parsed = McpFormat.parse(store.content, `resolve:${origin}`);
     const name = parsed.meta.name;
-    const merged = McpFormat.writeMeta(store.content, { name, origin }, `resolve:${origin}`);
+    const merged = McpFormat.writeMeta(store.content, { name }, `resolve:${origin}`);
     const node: McpResolvedNode = { fqn: name, origin, content: merged };
     return { node, conflict: null };
   };
@@ -110,7 +111,7 @@ function makeFakeFetchers(): {
       // Pre-merge _meta.name into the stored content so resolveMcp can
       // derive the FQN by parsing — mirrors how a real fetcher would
       // serve a manifest with `_meta.name` baked in.
-      const merged = McpFormat.writeMeta(content, { name, origin }, `seed:${origin}`);
+      const merged = McpFormat.writeMeta(content, { name }, `seed:${origin}`);
       mcpStore.set(origin, { origin, content: merged });
       // Also stash in trees so McpService.install (which uses the
       // tree-based fetcher) can read it back.
@@ -241,6 +242,101 @@ describe("CatalogManager.resolveSkill", () => {
     // Parent itself still resolves
     expect(plan.toInstall.some((n) => n.node.fqn === "public/parent")).toBe(true);
   });
+
+  it("rejects a self-referential skill (A depends on A)", async () => {
+    // Direct self-loop is the simplest cycle case.
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    await expect(mgr.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
+  });
+
+  it("rejects a two-skill cycle (A → B → A)", async () => {
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    const err = await mgr.resolveSkill("file:/abs/a").then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(CyclicDependencyError);
+    // The path includes both nodes plus the back-edge target so the
+    // user can read the cycle off the message.
+    expect((err as CyclicDependencyError).cycle).toEqual([
+      "file:/abs/a",
+      "file:/abs/b",
+      "file:/abs/a",
+    ]);
+  });
+
+  it("rejects a longer cycle (A → B → C → A) with the full path", async () => {
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/c"`),
+    });
+    fetchers.setSkill("file:/abs/c", {
+      "SKILL.md": SKILL_ANCHOR("c", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    const err = await mgr.resolveSkill("file:/abs/a").then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(CyclicDependencyError);
+    expect((err as CyclicDependencyError).cycle).toEqual([
+      "file:/abs/a",
+      "file:/abs/b",
+      "file:/abs/c",
+      "file:/abs/a",
+    ]);
+  });
+
+  it("accepts a diamond (A → B, A → C, B → C) — same fqn via two paths is NOT a cycle", async () => {
+    // Classic shape: C is a shared dep of A and B, and A also
+    // depends on C directly. The previous regression ("dedupes
+    // shared deps") covered the simpler diamond via dedupe, but
+    // this test is specifically about the cycle-detection split:
+    // C is reached as a dep of B (currently in DFS stack) but
+    // C itself never sits on a path leading back to A or B.
+    fetchers.setSkill("file:/abs/c", { "SKILL.md": SKILL_ANCHOR("c") });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/c"`),
+    });
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR(
+        "a",
+        `dependencies:\n  skills:\n    - "file:/abs/b"\n    - "file:/abs/c"`,
+      ),
+    });
+    const plan = await mgr.resolveSkill("file:/abs/a");
+    // C, B, A — dep-first, C deduped to a single entry.
+    expect(plan.toInstall.map((n) => n.node.fqn)).toEqual(["public/c", "public/b", "public/a"]);
+    expect(plan.conflicts).toEqual([]);
+  });
+
+  it("cycle inside an agent's transitive skill graph propagates as CyclicDependencyError", async () => {
+    // Cycles can only form among skills (mcps have no deps,
+    // agents are never dep-referenced). An agent whose deps
+    // happen to reach a cycle still surfaces the error from
+    // walkSkill — the catch-it-once pattern in walkAgent doesn't
+    // get a chance to swallow it.
+    fetchers.setSkill("file:/abs/a", {
+      "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
+    });
+    fetchers.setSkill("file:/abs/b", {
+      "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    fetchers.setAgent("file:/abs/agent", {
+      "AGENTS.md": AGENT_ANCHOR("agent", `dependencies:\n  skills:\n    - "file:/abs/a"`),
+    });
+    await expect(mgr.resolveAgentFromOrigin("file:/abs/agent")).rejects.toBeInstanceOf(
+      CyclicDependencyError,
+    );
+  });
 });
 
 // ─── resolveAgent: cross-entity walking ─────────────────
@@ -323,6 +419,18 @@ describe("CatalogManager.install", () => {
     const result = await mgr.install(mutated);
     expect(result.failed.some((f) => f.kind === "mcp")).toBe(true);
     expect(result.skipped.some((s) => s.kind === "skill" && s.reason === "dep-failed")).toBe(true);
+    // Wire-safety: the failure entry's `error` is a plain `{ name, message }`
+    // payload — not an `Error` instance — so JSON serialization preserves it.
+    const mcpFailure = result.failed.find((f) => f.kind === "mcp");
+    expect(mcpFailure?.error.name).toBeTypeOf("string");
+    expect(mcpFailure?.error.message).toBeTypeOf("string");
+    expect(mcpFailure?.error.message.length).toBeGreaterThan(0);
+    // Round-trip through JSON to confirm clients see the actual fields.
+    const roundTripped = JSON.parse(JSON.stringify(mcpFailure));
+    expect(roundTripped.error).toEqual({
+      name: mcpFailure?.error.name,
+      message: mcpFailure?.error.message,
+    });
   });
 
   it("already-installed deps are skipped, not re-installed", async () => {
@@ -427,6 +535,38 @@ describe("CatalogManager — single-shot installers", () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
     const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
     expect(result.installed[0]?.fqn).toBe("vendor/x");
+  });
+});
+
+// ─── Plan token cache (preview/apply UX backbone) ────────────
+
+describe("CatalogManager plan token cache", () => {
+  it("cachePlan returns a single-use token that takePlan trades for the plan", async () => {
+    fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
+    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const token = mgr.cachePlan(plan);
+    expect(typeof token).toBe("string");
+    expect(token.length).toBeGreaterThan(0);
+    // First take returns the same plan instance.
+    expect(mgr.takePlan(token)).toBe(plan);
+    // Single-use: second take returns null even though the call shape
+    // is identical. Defends against UI double-click re-running install.
+    expect(mgr.takePlan(token)).toBeNull();
+  });
+
+  it("takePlan returns null for an unknown token (no false-positive on similar UUID)", () => {
+    expect(mgr.takePlan("00000000-0000-0000-0000-000000000000")).toBeNull();
+  });
+
+  it("each cachePlan call mints a fresh token (no aliasing on identical plans)", async () => {
+    fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
+    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const token1 = mgr.cachePlan(plan);
+    const token2 = mgr.cachePlan(plan);
+    expect(token1).not.toBe(token2);
+    // Both tokens are independently consumable.
+    expect(mgr.takePlan(token1)).toBe(plan);
+    expect(mgr.takePlan(token2)).toBe(plan);
   });
 });
 

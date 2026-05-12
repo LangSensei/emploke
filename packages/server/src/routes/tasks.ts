@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  EntryNotReadyError,
   InvalidTaskIdError,
   type ListTaskOpts,
   RuntimeDoesNotSupportTasksError,
@@ -36,6 +37,11 @@ function statusForError(err: unknown): number | null {
   if (err instanceof TaskNotFoundError) return 404;
   if (err instanceof AgentNotFoundError) return 400;
   if (err instanceof RuntimeDoesNotSupportTasksError) return 400;
+  // The agent (or one of its transitive deps) is currently `blocked`
+  // — caller-fixable state conflict (acknowledge prereqs, enable the
+  // agent, install the missing dep, etc.). 409 mirrors how
+  // `HasDependentsError` is mapped on the catalog side.
+  if (err instanceof EntryNotReadyError) return 409;
   // Server-side / host faults → 5xx. These match the analogous
   // mappings in sessions.ts (SessionIdAllocationFailedError → 500,
   // RuntimeProvisionFailed → 500). Falling through to the default 400
@@ -154,6 +160,26 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     } catch (err) {
       const status = statusForError(err) ?? 400;
       if (status >= 500) logServerError(err);
+      // EntryNotReadyError carries a structured `BlockedReason` on
+      // the instance; surface it on the wire so the dashboard can
+      // render typed UI (the catalog list already uses the same
+      // `blockedReason` shape — see CatalogManager.getAgentEntry).
+      // Without this branch the body collapses to `{error, code}`
+      // and the dashboard would be stuck parsing a human string to
+      // figure out which CTA (Acknowledge prereqs / Enable agent /
+      // Install missing dep) applies.
+      if (err instanceof EntryNotReadyError) {
+        return c.json(
+          {
+            error: err.message,
+            code: err.name,
+            agent: err.agent,
+            ...(err.reason !== undefined ? { reason: err.reason } : {}),
+          },
+          // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
+          status as any,
+        );
+      }
       // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
       return c.json(errorBody(err), status as any);
     }

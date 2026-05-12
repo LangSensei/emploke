@@ -49,6 +49,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "FetchError",
   "AgentFrontmatterError",
   "SkillFrontmatterError",
+  "CyclicDependencyError",
   "HasDependentsError",
   "ImmutableOriginError",
   "McpInvalidJsonError",
@@ -85,6 +86,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "TaskNotFoundError",
   "TaskIdAllocationFailedError",
   "RuntimeDoesNotSupportTasksError",
+  "EntryNotReadyError",
   "TaskError",
   "InvalidTransition",
   // @emploke/terminal (surface via /:id/spawn)
@@ -197,6 +199,7 @@ export function statusForCatalogError(err: unknown): number | null {
     case "OriginParseError":
     case "PlanStaleError":
     case "AgentPlanStaleError":
+    case "CyclicDependencyError":
       return 400;
     case "SkillNotFoundError":
     case "AgentNotFoundError":

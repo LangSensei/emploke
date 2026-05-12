@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   defaultFetcherRegistry,
@@ -14,6 +15,8 @@ import type {
   AgentMetadataPatch,
   Agent as AgentPojo,
   AgentResolveResult,
+  BlockedDep,
+  BlockedReason,
   EntryStatus,
   InstallEntryOpts,
   InstallMcpOpts,
@@ -32,7 +35,7 @@ import * as McpFormat from "../mcp/mcp-format.js";
 import { type McpFetcher, McpService } from "../mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../mcp/sqlite-mcp-repository.js";
 import { isOriginMutable } from "../origin-mutability.js";
-import { SkillNotFoundError } from "../skill/errors.js";
+import { CyclicDependencyError, SkillNotFoundError } from "../skill/errors.js";
 import type { Skill } from "../skill/skill-entity.js";
 import { type SkillFetcher, type SkillResolvedNode, SkillService } from "../skill/skill-service.js";
 import { SqliteSkillRepository } from "../skill/sqlite-skill-repository.js";
@@ -74,10 +77,45 @@ import { HasDependentsError } from "./errors.js";
 
 // ─── Plan shape ─────────────────────────────────────────────
 
+/**
+ * Tag describing the disposition of a node in a sync resolve plan.
+ *
+ *  - `new`              — fresh install; no local row at this origin
+ *  - `will-sync`        — local row exists; upstream changed; will overwrite
+ *  - `up-to-date`       — local row exists; upstream identical (skipped)
+ *  - `identity-changed` — root only; upstream `fqn` differs from local
+ *  - `removed`          — sync-only; this dep was previously referenced
+ *                         but isn't anymore (orphan candidate)
+ */
+export type PlanNodeDisposition =
+  | "new"
+  | "will-sync"
+  | "up-to-date"
+  | "identity-changed"
+  | "removed";
+
 export type CatalogPlanNode =
-  | { kind: "mcp"; node: McpResolvedNode; wasAlreadyInstalled?: boolean }
-  | { kind: "skill"; node: SkillResolvedNode; wasAlreadyInstalled?: boolean }
-  | { kind: "agent"; node: AgentResolvedNode; wasAlreadyInstalled?: boolean };
+  | {
+      kind: "mcp";
+      node: McpResolvedNode;
+      wasAlreadyInstalled?: boolean;
+      disposition?: PlanNodeDisposition;
+      identityChange?: { oldFqn: string; newFqn: string };
+    }
+  | {
+      kind: "skill";
+      node: SkillResolvedNode;
+      wasAlreadyInstalled?: boolean;
+      disposition?: PlanNodeDisposition;
+      identityChange?: { oldFqn: string; newFqn: string };
+    }
+  | {
+      kind: "agent";
+      node: AgentResolvedNode;
+      wasAlreadyInstalled?: boolean;
+      disposition?: PlanNodeDisposition;
+      identityChange?: { oldFqn: string; newFqn: string };
+    };
 
 export interface McpResolvedNode {
   /** MCP spec FQN (mcps don't have a separate `fqn` concept; name IS fqn). */
@@ -96,24 +134,113 @@ export type CatalogConflict = {
     | { kind: "origin-conflict"; existingOrigin: string };
 };
 
+/**
+ * One entry that the sync would orphan (the previously-referenced dep
+ * isn't in the new closure, and no other installed entity references it).
+ *
+ * `orphans` always carries entries already present in the local catalog
+ * — this is the diff payload, not a fetch plan.
+ */
+export interface OrphanedEntry {
+  readonly kind: "skill" | "mcp";
+  readonly fqn: string;
+  readonly origin: string;
+}
+
 export interface CatalogPlan {
   readonly toInstall: readonly CatalogPlanNode[];
   readonly alreadyInstalled: readonly CatalogPlanNode[];
   readonly conflicts: readonly CatalogConflict[];
+  /**
+   * The origin URI that drives this plan — the user-requested install
+   * origin (for `resolveSkill` / `resolveAgent` / `resolveMcp`) or the
+   * local row's origin (for `resolveSync*`). Always populated so the
+   * server's manifest projection can identify the "root" node without
+   * a second catalog lookup.
+   */
+  readonly rootOrigin: string;
+  /** True iff this plan was produced via a sync resolve (not a fresh install). */
+  readonly isSync: boolean;
+  /** Populated on sync-resolve when the upstream `fqn` differs from local. */
+  readonly identityChange?: { kind: "skill" | "agent" | "mcp"; oldFqn: string; newFqn: string };
+  /** Sync-only: deps the new closure dropped that have no remaining reverse-deps. */
+  readonly orphans: readonly OrphanedEntry[];
+  /** True iff every node short-circuits to `up-to-date` and there are no orphans. */
+  readonly upToDate: boolean;
+}
+
+/**
+ * One row inside {@link CatalogInstallResult.installed}. The base info
+ * (`kind` + `fqn`) is always present; for skill / agent installs we
+ * also surface the post-install `prereqs` text and `prereqsAck` flag
+ * so callers (HTTP clients, dashboard) can prompt the user to set up
+ * and acknowledge prereqs without making a follow-up GET.
+ *
+ * Conventions:
+ *  - `prereqs` is omitted when the entry has no non-empty prereqs.
+ *  - `prereqsAck` is omitted for mcps (mcps have no prereqs concept).
+ *  - For skills/agents without prereqs, `prereqsAck` is `true`
+ *    (nothing to acknowledge).
+ *  - For skills/agents WITH prereqs:
+ *      - fresh install        → `prereqs` set, `prereqsAck = false`
+ *      - sync, text unchanged → `prereqs` set, `prereqsAck = true`  (preserved)
+ *      - sync, text changed   → `prereqs` set, `prereqsAck = false` (reset)
+ *
+ * Frontend rule: `if (entry.prereqs && entry.prereqsAck === false) prompt`.
+ */
+export interface CatalogInstalledEntry {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  readonly prereqs?: string;
+  readonly prereqsAck?: boolean;
+}
+
+/**
+ * Per-entity result row inside {@link CatalogInstallResult.failed}.
+ * `error` is a wire-safe `{ name, message }` projection — `Error`
+ * instances would lose their non-enumerable `name`/`message`/`stack`
+ * properties through `JSON.stringify`, leaving callers with `{}`.
+ *
+ * Callers that need the original `Error` instance should drive
+ * `install()` themselves and inspect the thrown error from `installNode`
+ * — the in-memory shim methods (`installSkillFromOrigin` etc.) keep
+ * the throw path for exactly that reason.
+ */
+export interface CatalogInstallFailure {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  readonly error: { readonly name: string; readonly message: string };
+}
+
+export interface CatalogInstallSkip {
+  readonly kind: "mcp" | "skill" | "agent";
+  readonly fqn: string;
+  /**
+   * Why this node didn't run an install.
+   *  - `already-installed`: dep already present locally; we didn't
+   *    re-fetch (non-sync flow).
+   *  - `dep-failed`: a transitive dep this node depends on failed —
+   *    poison propagation.
+   *  - `up-to-date`: SYNC ONLY — fqn+version+content match upstream.
+   *    Never produced by the install path; only `applySync` emits it.
+   */
+  readonly reason: "already-installed" | "dep-failed" | "up-to-date";
 }
 
 export interface CatalogInstallResult {
-  readonly installed: readonly { kind: "mcp" | "skill" | "agent"; fqn: string }[];
-  readonly skipped: readonly {
-    kind: "mcp" | "skill" | "agent";
-    fqn: string;
-    reason: "already-installed" | "dep-failed";
-  }[];
-  readonly failed: readonly {
-    kind: "mcp" | "skill" | "agent";
-    fqn: string;
-    error: Error;
-  }[];
+  readonly installed: readonly CatalogInstalledEntry[];
+  readonly skipped: readonly CatalogInstallSkip[];
+  readonly failed: readonly CatalogInstallFailure[];
+}
+
+/**
+ * Returned by {@link CatalogManager.applySync}. Extends
+ * {@link CatalogInstallResult} with the orphan-diff payload — these
+ * two only ever co-occur (install never produces orphans), so we keep
+ * the install response narrow and add the sync-specific data here.
+ */
+export interface CatalogSyncResult extends CatalogInstallResult {
+  readonly orphansFlagged: readonly OrphanedEntry[];
 }
 
 export interface CatalogOptions {
@@ -134,7 +261,38 @@ export type McpResolveAdapter = (origin: string) => Promise<{
   conflict: CatalogConflict | null;
 }>;
 
+/**
+ * Single entry in {@link CatalogManager}'s plan token cache. Holds the
+ * `CatalogPlan` produced by a `resolveSync*` call and an absolute
+ * expiry timestamp. The cache is the binding between the dashboard's
+ * preview-then-apply two-step UX and the server's apply path: the
+ * dashboard receives a token from `/sync/resolve`, ships it back on
+ * `/sync`, and the server replays the exact preview-time plan instead
+ * of re-resolving (which would discard the user's previewed manifest).
+ */
+interface CachedPlan {
+  readonly plan: CatalogPlan;
+  /** Epoch ms; entries past this are evicted on next `cachePlan` call. */
+  readonly expiresAt: number;
+}
+
+/**
+ * TTL for cached resolve plans, in milliseconds. Picked to be short
+ * enough that abandoned previews don't accumulate (single-user local
+ * server), long enough for the user to read the preview and confirm.
+ */
+const PLAN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export class CatalogManager {
+  /**
+   * Single-use plan cache for the preview/apply UX. See {@link
+   * CachedPlan}. Lazy-evicted on every `cachePlan` write, no
+   * background interval — the cache stays small in practice and the
+   * eviction sweep is O(n) where n is "in-flight previews", typically
+   * < 5 for a single user.
+   */
+  private readonly planCache = new Map<string, CachedPlan>();
+
   constructor(
     private readonly mcp: McpService,
     private readonly skill: SkillService,
@@ -191,8 +349,12 @@ export class CatalogManager {
         // anchor's _meta.name field.
         const parsed = McpFormat.parse(content, `resolve:${origin}`);
         const name = parsed.meta.name;
-        // Re-inject our origin in case the upstream had a stale value.
-        const merged = McpFormat.writeMeta(content, { name, origin }, `resolve:${origin}`);
+        // Stamp our `name` onto _meta so downstream consumers see a
+        // consistent fqn regardless of what the upstream file
+        // declared. Origin is NOT stamped — it lives on the SQLite
+        // row, not in the file (any pre-existing `_meta.origin` is
+        // preserved as foreign data but never read).
+        const merged = McpFormat.writeMeta(content, { name }, `resolve:${origin}`);
         return { node: { fqn: name, origin, content: merged }, conflict: null };
       } catch (cause) {
         return {
@@ -221,36 +383,294 @@ export class CatalogManager {
   // ─── Resolve (cross-entity walk) ──────────────────────
 
   async resolveSkill(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkSkill(origin, ctx, true);
     return finaliseResolveContext(ctx);
   }
 
   async resolveAgentFromOrigin(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkAgent(origin, ctx);
     return finaliseResolveContext(ctx);
   }
 
   async resolveMcp(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkMcp(origin, ctx, true);
     return finaliseResolveContext(ctx);
+  }
+
+  // ─── Sync resolve / apply ─────────────────────────────
+
+  /**
+   * Cache a freshly-resolved plan and return a single-use token. The
+   * dashboard's preview-then-apply flow ships this token back on
+   * `/sync` so the server can replay the exact preview-time plan
+   * instead of re-resolving (which would discard the user's
+   * previewed manifest and silently apply a fresh — potentially
+   * different — closure).
+   *
+   * Single-use: {@link takePlan} deletes on read so a double-click
+   * Apply can't re-run the install. The dashboard can request a
+   * fresh preview if it needs to retry.
+   *
+   * Eviction is lazy (runs here on every cache write). For a
+   * single-user local server the cache stays small (≤ ~5 in-flight
+   * previews), so the O(n) sweep is negligible.
+   */
+  cachePlan(plan: CatalogPlan): string {
+    this.evictExpiredPlans();
+    const token = randomUUID();
+    this.planCache.set(token, { plan, expiresAt: Date.now() + PLAN_CACHE_TTL_MS });
+    return token;
+  }
+
+  /**
+   * Trade a token issued by {@link cachePlan} for the original plan.
+   * Returns `null` if the token is unknown, already taken, or
+   * expired — callers should map that to a 410 Gone with a "preview
+   * expired, please re-preview" message so the user knows to rerun
+   * the resolve step.
+   *
+   * Single-use: deletes the entry on read regardless of expiry,
+   * preventing double-apply on UI double-click.
+   */
+  takePlan(token: string): CatalogPlan | null {
+    const entry = this.planCache.get(token);
+    if (entry === undefined) return null;
+    this.planCache.delete(token);
+    return entry.expiresAt < Date.now() ? null : entry.plan;
+  }
+
+  private evictExpiredPlans(): void {
+    const now = Date.now();
+    for (const [token, entry] of this.planCache) {
+      if (entry.expiresAt < now) this.planCache.delete(token);
+    }
+  }
+
+  /**
+   * Sync resolve: compute the install delta for an already-installed
+   * skill, plus the dep diff (orphans) and identity-change check.
+   *
+   * Differences from {@link resolveSkill}:
+   *   - input is the local fqn (origin is read from the row)
+   *   - the manifest carries `isSync = true`
+   *   - on identity change (upstream fqn ≠ local fqn) the walk emits a
+   *     single root node tagged `identity-changed` and stops there;
+   *     dep walk is deferred until the user confirms
+   *   - on no upstream change AND no orphans, the manifest's `upToDate`
+   *     is `true` and apply is a no-op
+   *   - removed deps appear in `orphans` (not `nodes`) so existing
+   *     ResolveTree renderers don't need a special case
+   */
+  async resolveSyncSkill(fqn: string): Promise<CatalogPlan> {
+    const local = await this.skill.get(fqn);
+    if (local === null) throw new SkillNotFoundError(fqn);
+    return this.resolveSync({ kind: "skill", fqn: local.fqn, origin: local.origin });
+  }
+
+  async resolveSyncAgent(fqn: string): Promise<CatalogPlan> {
+    const local = await this.agent.get(fqn);
+    if (local === null) throw new AgentNotFoundError(fqn);
+    return this.resolveSync({ kind: "agent", fqn: local.fqn, origin: local.origin });
+  }
+
+  async resolveSyncMcp(name: string): Promise<CatalogPlan> {
+    const local = await this.mcp.get(name);
+    if (local === null) throw new McpNotFoundError(name);
+    return this.resolveSync({ kind: "mcp", fqn: local.name, origin: local.origin });
+  }
+
+  private async resolveSync(target: {
+    kind: "skill" | "agent" | "mcp";
+    fqn: string;
+    origin: string;
+  }): Promise<CatalogPlan> {
+    const ctx = newResolveContext(target.origin);
+    ctx.isSync = true;
+    ctx.syncTarget = target;
+    if (target.kind === "skill") {
+      await this.walkSkill(target.origin, ctx, true);
+    } else if (target.kind === "agent") {
+      await this.walkAgent(target.origin, ctx);
+    } else {
+      await this.walkMcp(target.origin, ctx, true);
+    }
+
+    // Compute dep diff: walk the LOCAL graph for the old closure, diff
+    // against the NEW closure (everything in toInstall/alreadyInstalled).
+    // Only relevant for skill/agent (mcps have no deps).
+    if (target.kind !== "mcp" && ctx.identityChange === undefined) {
+      const newClosure = collectClosureOrigins(ctx);
+      const oldClosure = await this.collectLocalClosureOrigins(target);
+      const removed = setMinus(oldClosure, newClosure);
+      if (removed.size > 0) {
+        ctx.orphans = await this.findOrphansAmong(removed, /* excludingRoot= */ target.fqn);
+      }
+    }
+
+    return finaliseResolveContext(ctx);
+  }
+
+  /**
+   * Apply a sync plan: run the regular install pass.
+   *
+   * For an `identity-changed` plan, atomically deletes the old fqn row
+   * before the new install runs (in a single transaction-ish window —
+   * SQLite's per-statement durability + the entity-service's atomic
+   * `add` give us the practical guarantee that we never end up with
+   * two rows sharing one origin).
+   *
+   * Orphan handling: `plan.orphans` is informational — sync no longer
+   * sets a persisted `orphaned` flag on dropped deps. Orphan status is
+   * derived live from the catalog dep graph at projection time
+   * (`projectSkillPojo`, `projectMcpPojo`), so any entry that lost its
+   * last reverse-dep — whether through a sync diff, an explicit
+   * `removeAgent`, or an edit that drops a dep — is automatically
+   * reflected in subsequent reads. The list is still returned in
+   * `orphansFlagged` so the dashboard's sync preview can highlight
+   * "FYI, these went orphan because of this sync".
+   */
+  async applySync(plan: CatalogPlan): Promise<CatalogSyncResult> {
+    if (plan.identityChange !== undefined) {
+      const ic = plan.identityChange;
+      // Delete the old fqn row first so the new install can take its
+      // place without `findByOrigin` returning the stale row.
+      if (ic.kind === "skill") await this.skill.delete(ic.oldFqn);
+      else if (ic.kind === "agent") await this.agent.delete(ic.oldFqn);
+      else await this.mcp.delete(ic.oldFqn);
+    }
+    const result = await this.install(plan);
+    return { ...result, orphansFlagged: plan.orphans };
+  }
+
+  /**
+   * Collect the transitive dep origins of a locally-installed entity.
+   * Walks the in-memory list once via Map lookups — no per-dep round
+   * trip to the repo.
+   */
+  private async collectLocalClosureOrigins(target: {
+    kind: "skill" | "agent" | "mcp";
+    fqn: string;
+    origin: string;
+  }): Promise<Set<string>> {
+    if (target.kind === "mcp") return new Set();
+    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const skillByOrigin = new Map(skills.map((s) => [s.origin, s] as const));
+    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m] as const));
+    const out = new Set<string>();
+    const visit = (skillOrigins: readonly string[], mcpOrigins: readonly string[]): void => {
+      for (const o of mcpOrigins) {
+        if (out.has(o)) continue;
+        out.add(o);
+        // mcps have no further deps — leaf
+      }
+      for (const o of skillOrigins) {
+        if (out.has(o)) continue;
+        out.add(o);
+        const child = skillByOrigin.get(o);
+        if (child !== undefined) visit(child.dependencies.skills, child.dependencies.mcps);
+      }
+    };
+    if (target.kind === "agent") {
+      const a = await this.agent.get(target.fqn);
+      if (a !== null) visit(a.dependencies.skills, a.dependencies.mcps);
+    } else {
+      const s = await this.skill.get(target.fqn);
+      if (s !== null) visit(s.dependencies.skills, s.dependencies.mcps);
+    }
+    // Also include the root itself (so caller can compute the diff
+    // including the root). Caller will decide how to treat root.
+    out.add(target.origin);
+    return out;
+  }
+
+  /**
+   * For each origin in `removedOrigins`, check whether any installed
+   * entity OTHER THAN `excludingRoot` still references it. If not, it's
+   * an orphan candidate.
+   */
+  private async findOrphansAmong(
+    removedOrigins: ReadonlySet<string>,
+    excludingRoot: string,
+  ): Promise<OrphanedEntry[]> {
+    if (removedOrigins.size === 0) return [];
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
+    const referencedSkillOrigins = new Set<string>();
+    const referencedMcpOrigins = new Set<string>();
+    for (const a of agents) {
+      if (a.fqn === excludingRoot) continue;
+      for (const o of a.dependencies.skills) referencedSkillOrigins.add(o);
+      for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
+    }
+    for (const s of skills) {
+      if (s.fqn === excludingRoot) continue;
+      for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
+      for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
+    }
+    const skillByOrigin = new Map(skills.map((s) => [s.origin, s] as const));
+    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m] as const));
+    const out: OrphanedEntry[] = [];
+    for (const origin of removedOrigins) {
+      const s = skillByOrigin.get(origin);
+      if (s !== undefined && !referencedSkillOrigins.has(origin) && s.fqn !== excludingRoot) {
+        out.push({ kind: "skill", fqn: s.fqn, origin });
+        continue;
+      }
+      const m = mcpByOrigin.get(origin);
+      if (m !== undefined && !referencedMcpOrigins.has(origin)) {
+        out.push({ kind: "mcp", fqn: m.name, origin });
+      }
+    }
+    return out;
+  }
+
+  // ─── Enable / disable / acknowledge (per-entry flags) ──────────
+
+  /** Acknowledge the prereqs of a skill. Idempotent. */
+  async acknowledgeSkillPrereqs(fqn: string): Promise<SkillPojo> {
+    const updated = await this.skill.acknowledgePrereqs(fqn);
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
+  }
+
+  /** Acknowledge the prereqs of an agent. Idempotent. */
+  async acknowledgeAgentPrereqs(fqn: string): Promise<AgentPojo> {
+    const updated = await this.agent.acknowledgePrereqs(fqn);
+    return projectAgentPojo(updated);
+  }
+
+  /**
+   * Flip an agent's `disabled_by_user` flag to `true`. Skills cannot
+   * be user-disabled (use `delete` or edit deps instead).
+   */
+  async disableAgent(fqn: string): Promise<AgentPojo> {
+    const updated = await this.agent.disableByUser(fqn);
+    return projectAgentPojo(updated);
+  }
+
+  /** Flip an agent's `disabled_by_user` flag to `false`. */
+  async enableAgent(fqn: string): Promise<AgentPojo> {
+    const updated = await this.agent.enableByUser(fqn);
+    return projectAgentPojo(updated);
   }
 
   // ─── Install ──────────────────────────────────────────
 
   async install(plan: CatalogPlan): Promise<CatalogInstallResult> {
-    const installed: { kind: "mcp" | "skill" | "agent"; fqn: string }[] = [];
-    const failed: { kind: "mcp" | "skill" | "agent"; fqn: string; error: Error }[] = [];
-    const skipped: {
-      kind: "mcp" | "skill" | "agent";
-      fqn: string;
-      reason: "already-installed" | "dep-failed";
-    }[] = plan.alreadyInstalled.map((n) => ({
+    const installed: CatalogInstalledEntry[] = [];
+    const failed: CatalogInstallFailure[] = [];
+    const skipped: CatalogInstallSkip[] = plan.alreadyInstalled.map((n) => ({
       kind: n.kind,
       fqn: n.node.fqn,
-      reason: "already-installed" as const,
+      reason: (n.disposition === "up-to-date" ? "up-to-date" : "already-installed") as
+        | "already-installed"
+        | "up-to-date",
     }));
 
     const poisoned = new Set<string>(); // keyed by origin
@@ -262,6 +682,8 @@ export class CatalogManager {
     for (const planNode of plan.toInstall) {
       const fqn = planNode.node.fqn;
       const origin = planNode.node.origin;
+      // up-to-date nodes never appear in toInstall (they go to
+      // alreadyInstalled), so we don't need a special case here.
       const failedDep = (depsByOrigin.get(origin) ?? []).find((dep) => poisoned.has(dep));
       if (failedDep !== undefined) {
         skipped.push({ kind: planNode.kind, fqn, reason: "dep-failed" });
@@ -269,10 +691,10 @@ export class CatalogManager {
         continue;
       }
       try {
-        await this.installNode(planNode);
-        installed.push({ kind: planNode.kind, fqn });
+        const persisted = await this.installNode(planNode);
+        installed.push(toInstalledEntry(planNode.kind, fqn, persisted));
       } catch (err) {
-        failed.push({ kind: planNode.kind, fqn, error: err as Error });
+        failed.push({ kind: planNode.kind, fqn, error: errorToWire(err) });
         poisoned.add(origin);
       }
     }
@@ -298,12 +720,16 @@ export class CatalogManager {
     if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
       throw conflictToError(plan.conflicts[0] as CatalogConflict);
     }
-    if (result.failed.length > 0) throw result.failed[0]!.error;
+    if (result.failed.length > 0) {
+      const first = result.failed[0]!;
+      throw new Error(`${first.error.name}: ${first.error.message}`);
+    }
     const installed = await this.skill.getByOrigin(origin);
     if (installed === null) {
       throw new Error(`installSkillFromOrigin: no entity persisted for ${origin}`);
     }
-    return installed.toJSON() as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(installed, ctx);
   }
 
   async installAgentFromOrigin(origin: string, _opts: InstallEntryOpts = {}): Promise<AgentPojo> {
@@ -312,12 +738,15 @@ export class CatalogManager {
     if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
       throw conflictToError(plan.conflicts[0] as CatalogConflict);
     }
-    if (result.failed.length > 0) throw result.failed[0]!.error;
+    if (result.failed.length > 0) {
+      const first = result.failed[0]!;
+      throw new Error(`${first.error.name}: ${first.error.message}`);
+    }
     const installed = await this.agent.getByOrigin(origin);
     if (installed === null) {
       throw new Error(`installAgentFromOrigin: no entity persisted for ${origin}`);
     }
-    return installed.toJSON() as unknown as AgentPojo;
+    return projectAgentPojo(installed);
   }
 
   async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
@@ -337,104 +766,40 @@ export class CatalogManager {
   // ─── Reads ────────────────────────────────────────────
 
   async listSkillEntries(): Promise<SkillEntry[]> {
-    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
-    const installedMcps = new Set(mcps.map((m) => m.name));
-    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
-    const installedMcpOrigins = mcps.map((m) => m.origin);
-    const out: SkillEntry[] = [];
-    for (const s of skills) {
-      const { status, missingDeps } = computeStatus(
-        s.dependencies,
-        installedSkillOrigins,
-        installedMcps,
-        installedMcpOrigins,
-      );
-      out.push(buildSkillEntry(s, status, missingDeps));
-    }
-    return out;
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.skillByOrigin.values()].map((s) => buildSkillEntry(s, ctx));
   }
 
   async listAgentEntries(): Promise<AgentEntry[]> {
-    const [agents, skills, mcps] = await Promise.all([
-      this.agent.list(),
-      this.skill.list(),
-      this.mcp.list(),
-    ]);
-    const installedMcps = new Set(mcps.map((m) => m.name));
-    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
-    const installedMcpOrigins = mcps.map((m) => m.origin);
-    const out: AgentEntry[] = [];
-    for (const a of agents) {
-      const { status, missingDeps } = computeStatus(
-        a.dependencies,
-        installedSkillOrigins,
-        installedMcps,
-        installedMcpOrigins,
-      );
-      out.push(buildAgentEntry(a, status, missingDeps));
-    }
-    return out;
+    const [agents, ctx] = await Promise.all([this.agent.list(), this.loadCascadeContext()]);
+    return agents.map((a) => buildAgentEntry(a, ctx));
   }
 
   async listMcps(): Promise<McpMetadata[]> {
-    const mcps = await this.mcp.list();
-    return mcps.map(
-      (m) =>
-        ({
-          ...(m.toJSON() as object),
-          mutable: isOriginMutable(m.origin),
-        }) as unknown as McpMetadata,
-    );
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.mcpByOrigin.values()].map((m) => projectMcpMetadata(m, ctx));
   }
   async listSkills(): Promise<SkillPojo[]> {
-    const skills = await this.skill.list();
-    return skills.map(
-      (s) =>
-        ({
-          ...(s.toJSON() as object),
-          mutable: isOriginMutable(s.origin),
-        }) as unknown as SkillPojo,
-    );
+    const ctx = await this.loadCascadeContext();
+    return [...ctx.skillByOrigin.values()].map((s) => projectSkillPojo(s, ctx));
   }
   async listAgents(): Promise<AgentPojo[]> {
     const agents = await this.agent.list();
-    return agents.map(
-      (a) =>
-        ({
-          ...(a.toJSON() as object),
-          mutable: isOriginMutable(a.origin),
-        }) as unknown as AgentPojo,
-    );
+    return agents.map((a) => projectAgentPojo(a));
   }
 
   async getSkillEntry(fqn: string): Promise<SkillEntry | null> {
     const s = await this.skill.get(fqn);
     if (s === null) return null;
-    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
-    const installedMcps = new Set(mcps.map((m) => m.name));
-    const installedSkillOrigins = new Set(skills.map((x) => x.origin));
-    const { status, missingDeps } = computeStatus(
-      s.dependencies,
-      installedSkillOrigins,
-      installedMcps,
-      mcps.map((m) => m.origin),
-    );
-    return buildSkillEntry(s, status, missingDeps);
+    const ctx = await this.loadCascadeContext();
+    return buildSkillEntry(s, ctx);
   }
 
   async getAgentEntry(fqn: string): Promise<AgentEntry | null> {
     const a = await this.agent.get(fqn);
     if (a === null) return null;
-    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
-    const installedMcps = new Set(mcps.map((m) => m.name));
-    const installedSkillOrigins = new Set(skills.map((s) => s.origin));
-    const { status, missingDeps } = computeStatus(
-      a.dependencies,
-      installedSkillOrigins,
-      installedMcps,
-      mcps.map((m) => m.origin),
-    );
-    return buildAgentEntry(a, status, missingDeps);
+    const ctx = await this.loadCascadeContext();
+    return buildAgentEntry(a, ctx);
   }
 
   async getSkillContent(fqn: string): Promise<string> {
@@ -458,46 +823,34 @@ export class CatalogManager {
   async getSkill(fqn: string): Promise<SkillPojo | null> {
     const s = await this.skill.get(fqn);
     if (s === null) return null;
-    return {
-      ...(s.toJSON() as object),
-      mutable: isOriginMutable(s.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(s, ctx);
   }
 
   async getAgent(fqn: string): Promise<AgentPojo | null> {
     const a = await this.agent.get(fqn);
     if (a === null) return null;
-    return {
-      ...(a.toJSON() as object),
-      mutable: isOriginMutable(a.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(a);
   }
 
   async getMcp(name: string): Promise<McpMetadata | null> {
     const m = await this.mcp.get(name);
     if (m === null) return null;
-    return {
-      ...(m.toJSON() as object),
-      mutable: isOriginMutable(m.origin),
-    } as unknown as McpMetadata;
+    const ctx = await this.loadCascadeContext();
+    return projectMcpMetadata(m, ctx);
   }
 
   // ─── Mutations: legacy compat API ──
 
   async updateSkillContent(fqn: string, content: string): Promise<SkillPojo> {
     const updated = await this.skill.updateAnchor(fqn, content);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
   }
 
   async updateAgentContent(fqn: string, content: string): Promise<AgentPojo> {
     const updated = await this.agent.updateAnchor(fqn, content);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(updated);
   }
 
   async updateMcpContent(name: string, content: string): Promise<void> {
@@ -506,18 +859,13 @@ export class CatalogManager {
 
   async updateSkillMetadata(fqn: string, patch: SkillMetadataPatch): Promise<SkillPojo> {
     const updated = await this.skill.updateMetadata(fqn, patch as Record<string, unknown>);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as SkillPojo;
+    const ctx = await this.loadCascadeContext();
+    return projectSkillPojo(updated, ctx);
   }
 
   async updateAgentMetadata(fqn: string, patch: AgentMetadataPatch): Promise<AgentPojo> {
     const updated = await this.agent.updateMetadata(fqn, patch as Record<string, unknown>);
-    return {
-      ...(updated.toJSON() as object),
-      mutable: isOriginMutable(updated.origin),
-    } as unknown as AgentPojo;
+    return projectAgentPojo(updated);
   }
 
   async removeSkill(fqn: string): Promise<void> {
@@ -567,8 +915,7 @@ export class CatalogManager {
     const agent = agents.find((a) => a.fqn === fqn);
     if (agent === undefined) throw new AgentNotFoundError(fqn);
 
-    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
+    const ctx = newCascadeContext(skills, agents, mcps);
 
     const visited = new Set<string>();
     const orderedSkills: Skill[] = [];
@@ -576,13 +923,13 @@ export class CatalogManager {
 
     const walk = (skillOrigins: readonly string[], mcpOrigins: readonly string[]): void => {
       for (const o of mcpOrigins) {
-        const m = mcpByOrigin.get(o);
+        const m = ctx.mcpByOrigin.get(o);
         if (m !== undefined) mcpFqns.add(m.name);
       }
       for (const o of skillOrigins) {
         if (visited.has(o)) continue;
         visited.add(o);
-        const skill = skillByOrigin.get(o);
+        const skill = ctx.skillByOrigin.get(o);
         if (skill === undefined) continue;
         walk(skill.dependencies.skills, skill.dependencies.mcps);
         orderedSkills.push(skill);
@@ -592,18 +939,21 @@ export class CatalogManager {
     walk(agent.dependencies.skills, agent.dependencies.mcps);
 
     return {
-      agent: agent.toJSON() as unknown as AgentPojo,
-      skills: orderedSkills.map((s) => ({ skill: s.toJSON() as unknown as SkillPojo })),
+      agent: projectAgentPojo(agent),
+      skills: orderedSkills.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
       mcps: [...mcpFqns].map((name) => ({ name })),
     };
   }
 
   async resolveSkillFromCatalog(fqn: string): Promise<SkillResolveResult> {
-    const [skills, mcps] = await Promise.all([this.skill.list(), this.mcp.list()]);
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
     const root = skills.find((s) => s.fqn === fqn);
     if (root === undefined) throw new SkillNotFoundError(fqn);
-    const skillByOrigin = new Map(skills.map((s) => [s.origin, s]));
-    const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m]));
+    const ctx = newCascadeContext(skills, agents, mcps);
     const visited = new Set<string>();
     const ordered: Skill[] = [];
     const mcpFqns = new Set<string>();
@@ -611,10 +961,10 @@ export class CatalogManager {
     const walk = (origin: string): void => {
       if (visited.has(origin)) return;
       visited.add(origin);
-      const skill = skillByOrigin.get(origin);
+      const skill = ctx.skillByOrigin.get(origin);
       if (skill === undefined) return;
       for (const o of skill.dependencies.mcps) {
-        const m = mcpByOrigin.get(o);
+        const m = ctx.mcpByOrigin.get(o);
         if (m !== undefined) mcpFqns.add(m.name);
       }
       for (const o of skill.dependencies.skills) walk(o);
@@ -623,8 +973,8 @@ export class CatalogManager {
     walk(root.origin);
 
     return {
-      skill: root.toJSON() as unknown as SkillPojo,
-      skills: ordered.map((s) => ({ skill: s.toJSON() as unknown as SkillPojo })),
+      skill: projectSkillPojo(root, ctx),
+      skills: ordered.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
       mcps: [...mcpFqns].map((name) => ({ name })),
     };
   }
@@ -632,57 +982,138 @@ export class CatalogManager {
   // ─── Internals: cross-entity resolve walkers ──────
 
   private async walkSkill(origin: string, ctx: ResolveContext, isRoot: boolean): Promise<void> {
+    // Back-edge detection (cycle): this origin is already on the
+    // current DFS path. Emploke doesn't support cyclic catalog
+    // deps — without this guard the cycle would be silently
+    // dedupe-swallowed by the visited check below and re-emerge
+    // as poisoned cache entries in computeSkillStatus's recursive
+    // pass. See {@link CyclicDependencyError} for the longer story.
+    //
+    // Note we check this BEFORE visited: a back-edge target may
+    // also be visited (if a previous independent walk happened to
+    // process it), but for the current DFS the inStack membership
+    // is the cycle signal.
+    if (ctx.inStack.has(origin)) {
+      throw new CyclicDependencyError([...ctx.inStack, origin]);
+    }
+    // Diamond dedupe: same origin reached via a different path
+    // whose subtree has already finished — its plan slot is
+    // already pushed, nothing to do.
     if (ctx.visited.has(origin)) return;
-    ctx.visited.add(origin);
+    ctx.inStack.add(origin);
+    try {
+      // Check whether this origin is already installed locally. For DEPS
+      // (isRoot=false), already-installed entries short-circuit the fetch
+      // unless we're in a sync (then we still re-resolve so version/up-to-date
+      // can be computed). For ROOT we always re-fetch — the explicit "give
+      // me this URL" semantics mean the user wants a refresh.
+      const localExisting = await this.skill.getByOrigin(origin);
+      if (!isRoot && localExisting !== null && !ctx.isSync) {
+        // Dep already on disk; non-sync flow just records it (we did NOT
+        // fetch upstream, so we can't claim it's up-to-date — reuse the
+        // legacy `already-installed` semantics by leaving disposition
+        // unset).
+        ctx.alreadyInstalled.push({
+          kind: "skill",
+          node: localToSkillResolvedNode(localExisting),
+          wasAlreadyInstalled: true,
+        });
+        return;
+      }
 
-    // Check whether this origin is already installed locally. For DEPS
-    // (isRoot=false), already-installed entries short-circuit the fetch:
-    // we surface them in `alreadyInstalled` and don't re-resolve. For ROOT,
-    // we still re-fetch (a same-origin reinstall acts as a sync from
-    // upstream — the user explicitly asked for this URL). The fact that
-    // it was already installed is recorded on the plan node so the
-    // dashboard can swap "Install" for "Sync from upstream" in the UI.
-    const localExisting = await this.skill.getByOrigin(origin);
-    if (!isRoot && localExisting !== null) {
-      ctx.alreadyInstalled.push({
+      const plan = await this.skill.resolve(origin);
+      if (plan.conflict !== null) {
+        ctx.conflicts.push({
+          kind: "skill",
+          origin: plan.conflict.origin,
+          fqn: plan.conflict.fqn,
+          reason: plan.conflict.reason,
+        });
+        return;
+      }
+      if (plan.node === null) return;
+
+      // Identity check at the root of a sync: if upstream's fqn differs,
+      // bail and emit a single identity-changed root node — no dep walk.
+      if (isRoot && ctx.isSync && localExisting !== null && localExisting.fqn !== plan.node.fqn) {
+        ctx.identityChange = {
+          kind: "skill",
+          oldFqn: localExisting.fqn,
+          newFqn: plan.node.fqn,
+        };
+        ctx.toInstall.push({
+          kind: "skill",
+          node: plan.node,
+          wasAlreadyInstalled: true,
+          disposition: "identity-changed",
+          identityChange: { oldFqn: localExisting.fqn, newFqn: plan.node.fqn },
+        });
+        return;
+      }
+
+      // Up-to-date check: same fqn AND same `version` → upstream is
+      // unchanged (per the authoring contract — see Skill class doc).
+      // Goes to alreadyInstalled with disposition `up-to-date`.
+      if (
+        localExisting !== null &&
+        localExisting.fqn === plan.node.fqn &&
+        localExisting.version === plan.node.version
+      ) {
+        // Walk deps anyway so the manifest's overall up-to-date is
+        // accurate (a dep change should mark the root as will-sync).
+        let anyDepChanged = false;
+        const depBaselineCount = ctx.toInstall.length;
+        for (const mcpOrigin of plan.node.depsRefs.mcps) {
+          await this.walkMcp(mcpOrigin, ctx, false);
+        }
+        for (const skillOrigin of plan.node.depsRefs.skills) {
+          await this.walkSkill(skillOrigin, ctx, false);
+        }
+        // If any dep ended up in toInstall as new/will-sync, the root
+        // is no longer truly up-to-date — re-fetching its tree may
+        // not change anything but the user-facing sync should still
+        // show "will sync" so deps come along.
+        anyDepChanged = ctx.toInstall.length > depBaselineCount;
+        if (!anyDepChanged) {
+          ctx.alreadyInstalled.push({
+            kind: "skill",
+            node: plan.node,
+            wasAlreadyInstalled: true,
+            disposition: "up-to-date",
+          });
+          return;
+        }
+        // Root joins toInstall with disposition `will-sync` — its own
+        // anchor will be re-written to keep the on-disk view consistent.
+        ctx.toInstall.push({
+          kind: "skill",
+          node: plan.node,
+          wasAlreadyInstalled: true,
+          disposition: "will-sync",
+        });
+        return;
+      }
+
+      for (const mcpOrigin of plan.node.depsRefs.mcps) {
+        await this.walkMcp(mcpOrigin, ctx, false);
+      }
+      for (const skillOrigin of plan.node.depsRefs.skills) {
+        await this.walkSkill(skillOrigin, ctx, false);
+      }
+      ctx.toInstall.push({
         kind: "skill",
-        node: {
-          fqn: localExisting.fqn,
-          origin: localExisting.origin,
-          anchorContent: localExisting.anchorContent,
-          frontmatterSha256: localExisting.frontmatterSha256,
-          depsRefs: {
-            skills: [...localExisting.dependencies.skills],
-            mcps: [...localExisting.dependencies.mcps],
-          },
-        },
+        node: plan.node,
+        ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+        disposition: localExisting !== null ? "will-sync" : "new",
       });
-      return;
+    } finally {
+      // Out of the active DFS path either way (return or throw). We
+      // flip to BLACK on the way out so a later sibling diamond hit
+      // is correctly classified as "subtree already done" rather
+      // than "cycle".
+      ctx.inStack.delete(origin);
+      ctx.visited.add(origin);
     }
-
-    const plan = await this.skill.resolve(origin);
-    if (plan.conflict !== null) {
-      ctx.conflicts.push({
-        kind: "skill",
-        origin: plan.conflict.origin,
-        fqn: plan.conflict.fqn,
-        reason: plan.conflict.reason,
-      });
-      return;
-    }
-    if (plan.node === null) return;
-
-    for (const mcpOrigin of plan.node.depsRefs.mcps) {
-      await this.walkMcp(mcpOrigin, ctx, false);
-    }
-    for (const skillOrigin of plan.node.depsRefs.skills) {
-      await this.walkSkill(skillOrigin, ctx, false);
-    }
-    ctx.toInstall.push({
-      kind: "skill",
-      node: plan.node,
-      ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
-    });
   }
 
   private async walkAgent(origin: string, ctx: ResolveContext): Promise<void> {
@@ -707,6 +1138,53 @@ export class CatalogManager {
     }
     if (plan.node === null) return;
 
+    if (ctx.isSync && localExisting !== null && localExisting.fqn !== plan.node.fqn) {
+      ctx.identityChange = {
+        kind: "agent",
+        oldFqn: localExisting.fqn,
+        newFqn: plan.node.fqn,
+      };
+      ctx.toInstall.push({
+        kind: "agent",
+        node: plan.node,
+        wasAlreadyInstalled: true,
+        disposition: "identity-changed",
+        identityChange: { oldFqn: localExisting.fqn, newFqn: plan.node.fqn },
+      });
+      return;
+    }
+
+    if (
+      localExisting !== null &&
+      localExisting.fqn === plan.node.fqn &&
+      localExisting.version === plan.node.version
+    ) {
+      const depBaselineCount = ctx.toInstall.length;
+      for (const mcpOrigin of plan.node.depsRefs.mcps) {
+        await this.walkMcp(mcpOrigin, ctx, false);
+      }
+      for (const skillOrigin of plan.node.depsRefs.skills) {
+        await this.walkSkill(skillOrigin, ctx, false);
+      }
+      const anyDepChanged = ctx.toInstall.length > depBaselineCount;
+      if (!anyDepChanged) {
+        ctx.alreadyInstalled.push({
+          kind: "agent",
+          node: plan.node,
+          wasAlreadyInstalled: true,
+          disposition: "up-to-date",
+        });
+        return;
+      }
+      ctx.toInstall.push({
+        kind: "agent",
+        node: plan.node,
+        wasAlreadyInstalled: true,
+        disposition: "will-sync",
+      });
+      return;
+    }
+
     for (const mcpOrigin of plan.node.depsRefs.mcps) {
       await this.walkMcp(mcpOrigin, ctx, false);
     }
@@ -717,6 +1195,7 @@ export class CatalogManager {
       kind: "agent",
       node: plan.node,
       ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+      disposition: localExisting !== null ? "will-sync" : "new",
     });
   }
 
@@ -725,7 +1204,7 @@ export class CatalogManager {
     ctx.visited.add(origin);
 
     const localExisting = await this.mcp.getByOrigin(origin);
-    if (!isRoot && localExisting !== null) {
+    if (!isRoot && localExisting !== null && !ctx.isSync) {
       ctx.alreadyInstalled.push({
         kind: "mcp",
         node: {
@@ -733,6 +1212,7 @@ export class CatalogManager {
           origin: localExisting.origin,
           content: localExisting.content,
         },
+        wasAlreadyInstalled: true,
       });
       return;
     }
@@ -743,10 +1223,51 @@ export class CatalogManager {
       return;
     }
     if (result.node === null) return;
+
+    if (isRoot && ctx.isSync && localExisting !== null && localExisting.name !== result.node.fqn) {
+      ctx.identityChange = {
+        kind: "mcp",
+        oldFqn: localExisting.name,
+        newFqn: result.node.fqn,
+      };
+      ctx.toInstall.push({
+        kind: "mcp",
+        node: result.node,
+        wasAlreadyInstalled: true,
+        disposition: "identity-changed",
+        identityChange: { oldFqn: localExisting.name, newFqn: result.node.fqn },
+      });
+      return;
+    }
+
+    // Up-to-date check via canonicalised content digest (excluding `_meta`
+    // so install-time stamping of `_meta.name` and any registry-injected
+    // sub-objects don't show as spurious diffs).
+    if (localExisting !== null && localExisting.name === result.node.fqn) {
+      const localDigest = McpFormat.contentDigestExcludingMeta(
+        localExisting.content,
+        `local:${localExisting.name}`,
+      );
+      const upstreamDigest = McpFormat.contentDigestExcludingMeta(
+        result.node.content,
+        `upstream:${result.node.fqn}`,
+      );
+      if (localDigest !== null && upstreamDigest !== null && localDigest === upstreamDigest) {
+        ctx.alreadyInstalled.push({
+          kind: "mcp",
+          node: result.node,
+          wasAlreadyInstalled: true,
+          disposition: "up-to-date",
+        });
+        return;
+      }
+    }
+
     ctx.toInstall.push({
       kind: "mcp",
       node: result.node,
       ...(localExisting !== null ? { wasAlreadyInstalled: true } : {}),
+      disposition: localExisting !== null ? "will-sync" : "new",
     });
   }
 
@@ -830,35 +1351,91 @@ export class CatalogManager {
 
   // ─── Internals: install dispatch ───────────────────────
 
-  private async installNode(planNode: CatalogPlanNode): Promise<void> {
+  private async installNode(planNode: CatalogPlanNode): Promise<Skill | Agent | Mcp> {
     if (planNode.kind === "skill") {
-      await this.skill.install(planNode.node);
-    } else if (planNode.kind === "agent") {
-      await this.agent.install(planNode.node);
-    } else {
-      await this.mcp.install(planNode.node.fqn, planNode.node.origin, planNode.node.content);
+      return this.skill.install(planNode.node);
     }
+    if (planNode.kind === "agent") {
+      return this.agent.install(planNode.node);
+    }
+    return this.mcp.install(planNode.node.fqn, planNode.node.origin, planNode.node.content);
+  }
+
+  /**
+   * Load every installed entity and bundle them into a {@link
+   * CascadeContext} for status / orphan derivation. Used by every
+   * facade method that needs to project a wire DTO carrying derived
+   * `orphaned`. Three full-list reads (skills, agents, mcps) — at
+   * catalog scale (<100 entries) the cost is negligible and well
+   * below the price of the SQL round-trip we'd need to maintain a
+   * normalised dep table on every write instead.
+   */
+  private async loadCascadeContext(): Promise<CascadeContext> {
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
+    return newCascadeContext(skills, agents, mcps);
   }
 }
 
 // ─── Helpers ────────────────────────────────────────────────
 
 interface ResolveContext {
+  rootOrigin: string;
+  /**
+   * Standard DFS-coloring split. `visited` is BLACK (subtree
+   * fully walked); `inStack` is GRAY (currently being walked, on
+   * the active DFS path). Re-entering an inStack origin = back
+   * edge = cycle. Re-entering a visited origin = diamond, no-op.
+   *
+   * Conflating the two (a single Set) silently swallows cycles —
+   * the second visit just returns, the manifest lacks one edge,
+   * and the cascade-status pass later dereferences a half-computed
+   * cache slot. Hence the split.
+   */
   visited: Set<string>;
+  inStack: Set<string>;
   toInstall: CatalogPlanNode[];
   alreadyInstalled: CatalogPlanNode[];
   conflicts: CatalogConflict[];
+  isSync: boolean;
+  syncTarget?: { kind: "skill" | "agent" | "mcp"; fqn: string; origin: string };
+  identityChange?: { kind: "skill" | "agent" | "mcp"; oldFqn: string; newFqn: string };
+  orphans: OrphanedEntry[];
 }
 
-function newResolveContext(): ResolveContext {
-  return { visited: new Set(), toInstall: [], alreadyInstalled: [], conflicts: [] };
+function newResolveContext(rootOrigin: string): ResolveContext {
+  return {
+    rootOrigin,
+    visited: new Set(),
+    inStack: new Set(),
+    toInstall: [],
+    alreadyInstalled: [],
+    conflicts: [],
+    isSync: false,
+    orphans: [],
+  };
 }
 
 function finaliseResolveContext(ctx: ResolveContext): CatalogPlan {
+  // upToDate iff every plan slot is up-to-date AND no orphans AND no
+  // identity change AND no conflicts AND nothing in toInstall (which
+  // would require fetching) other than will-sync nodes that ended up
+  // re-syncing only because of dep churn — strictly nothing in toInstall.
+  const noFetchNeeded =
+    ctx.toInstall.length === 0 && ctx.conflicts.length === 0 && ctx.identityChange === undefined;
+  const upToDate = ctx.isSync && noFetchNeeded && ctx.orphans.length === 0;
   return {
     toInstall: ctx.toInstall,
     alreadyInstalled: ctx.alreadyInstalled,
     conflicts: ctx.conflicts,
+    rootOrigin: ctx.rootOrigin,
+    isSync: ctx.isSync,
+    ...(ctx.identityChange !== undefined ? { identityChange: ctx.identityChange } : {}),
+    orphans: ctx.orphans,
+    upToDate,
   };
 }
 
@@ -873,60 +1450,282 @@ function planRefs(planNode: CatalogPlanNode): string[] {
   return [...planNode.node.depsRefs.skills, ...planNode.node.depsRefs.mcps];
 }
 
-function buildSkillEntry(
-  s: Skill,
-  status: EntryStatus,
-  missingDeps: MissingDep[] | undefined,
-): SkillEntry {
-  const skill = {
-    ...(s.toJSON() as object),
-    mutable: isOriginMutable(s.origin),
-  } as unknown as SkillPojo;
-  if (missingDeps !== undefined && missingDeps.length > 0) {
-    return { skill, status, missingDeps };
-  }
-  return { skill, status };
+function localToSkillResolvedNode(local: Skill): SkillResolvedNode {
+  return {
+    fqn: local.fqn,
+    origin: local.origin,
+    anchorContent: local.anchorContent,
+    version: local.version,
+    depsRefs: {
+      skills: [...local.dependencies.skills],
+      mcps: [...local.dependencies.mcps],
+    },
+  };
 }
 
-function buildAgentEntry(
-  a: Agent,
-  status: EntryStatus,
-  missingDeps: MissingDep[] | undefined,
-): AgentEntry {
-  const agent = {
+function collectClosureOrigins(ctx: ResolveContext): Set<string> {
+  const out = new Set<string>();
+  for (const n of ctx.toInstall) out.add(n.node.origin);
+  for (const n of ctx.alreadyInstalled) out.add(n.node.origin);
+  return out;
+}
+
+function setMinus(a: ReadonlySet<string>, b: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  for (const x of a) if (!b.has(x)) out.add(x);
+  return out;
+}
+
+function projectSkillPojo(s: Skill, ctx: CascadeContext): SkillPojo {
+  return {
+    ...(s.toJSON() as object),
+    mutable: isOriginMutable(s.origin),
+    orphaned: !ctx.referencedSkillOrigins.has(s.origin),
+  } as unknown as SkillPojo;
+}
+
+function projectAgentPojo(a: Agent): AgentPojo {
+  return {
     ...(a.toJSON() as object),
     mutable: isOriginMutable(a.origin),
   } as unknown as AgentPojo;
-  if (missingDeps !== undefined && missingDeps.length > 0) {
-    return { agent, status, missingDeps };
-  }
-  return { agent, status };
+}
+
+function projectMcpMetadata(m: Mcp, ctx: CascadeContext): McpMetadata {
+  return {
+    ...(m.toJSON() as object),
+    mutable: isOriginMutable(m.origin),
+    orphaned: !ctx.referencedMcpOrigins.has(m.origin),
+  } as unknown as McpMetadata;
 }
 
 /**
- * Compute "ready" / "disabled" status. Dep refs are origin URIs; we
- * check whether each origin has a corresponding installed entity.
+ * Per-list cascade-status context. Built once per `listSkillEntries` /
+ * `listAgentEntries` call; the recursive `computeEntry` walks the
+ * in-memory dep graph with memoisation, so each entity's status is
+ * computed at most once even with extensive cross-references.
+ *
+ * Also carries the reverse-dep index (`referenced{Skill,Mcp}Origins`)
+ * so derived `orphaned` can be projected with a single `Set.has` per
+ * entity at no extra cost — both status and orphan share the same
+ * single in-memory walk.
  */
-function computeStatus(
+interface CascadeContext {
+  readonly skillByOrigin: ReadonlyMap<string, Skill>;
+  readonly mcpByOrigin: ReadonlyMap<string, Mcp>;
+  readonly mcpByName: ReadonlyMap<string, Mcp>;
+  readonly skillCache: Map<string, ComputedStatus>;
+  /** Origins currently being computed — used to defensively short-circuit cycles. */
+  readonly inFlight: Set<string>;
+  /**
+   * Set of skill origins referenced by at least one installed agent or
+   * skill. Membership ↔ "has a reverse-dep" ↔ "not orphan". Built
+   * once at ctx-construction time from the agents+skills lists.
+   */
+  readonly referencedSkillOrigins: ReadonlySet<string>;
+  /** Same as {@link referencedSkillOrigins}, but for mcp dep refs. */
+  readonly referencedMcpOrigins: ReadonlySet<string>;
+}
+
+interface ComputedStatus {
+  readonly status: EntryStatus;
+  readonly reason?: BlockedReason;
+}
+
+function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): CascadeContext {
+  const referencedSkillOrigins = new Set<string>();
+  const referencedMcpOrigins = new Set<string>();
+  for (const a of agents) {
+    for (const o of a.dependencies.skills) referencedSkillOrigins.add(o);
+    for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
+  }
+  for (const s of skills) {
+    // Skip self-references when populating the reverse-dep index.
+    // Orphan semantics is "no OTHER entity depends on me"; a skill
+    // that lists its own origin in `dependencies.skills` (a degenerate
+    // but legal manifest) shouldn't suppress its own orphan badge.
+    // Mcps can't appear in their own dep set (mcps have no deps), so
+    // the same care isn't needed for `dependencies.mcps`.
+    for (const o of s.dependencies.skills) {
+      if (o === s.origin) continue;
+      referencedSkillOrigins.add(o);
+    }
+    for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
+  }
+  return {
+    skillByOrigin: new Map(skills.map((s) => [s.origin, s] as const)),
+    mcpByOrigin: new Map(mcps.map((m) => [m.origin, m] as const)),
+    mcpByName: new Map(mcps.map((m) => [m.name, m] as const)),
+    skillCache: new Map(),
+    inFlight: new Set(),
+    referencedSkillOrigins,
+    referencedMcpOrigins,
+  };
+}
+
+function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
+  const cached = ctx.skillCache.get(skill.origin);
+  if (cached !== undefined) return cached;
+  if (ctx.inFlight.has(skill.origin)) {
+    // Defensive only: install/sync now reject cyclic dep graphs at
+    // resolve time (see `walkSkill` + `CyclicDependencyError`), so
+    // a well-formed catalog should never bottom out here. Kept as
+    // a safe fallback for two reasons:
+    //   1. Bypassed install paths (direct repo writes, FS edits,
+    //      future tools) could leave a cycle on disk.
+    //   2. Without the short-circuit a cycle would infinite-recurse.
+    // The "ready" answer here only suppresses the cycle-internal
+    // cascade contribution; the outer call still factors its own
+    // self-causes correctly. The cached result (set below after
+    // the recursive call returns) is therefore self-consistent for
+    // any non-cyclic caller; cyclic callers see the same defensive
+    // ready value as the inner call would.
+    return { status: "ready" };
+  }
+  ctx.inFlight.add(skill.origin);
+  const result = computeWithDeps(
+    {
+      prereqs: skill.prereqs,
+      prereqsAck: skill.prereqsAck,
+      // Derived live from the dep graph: a skill with zero reverse-deps
+      // (excluding self-references) is orphan. No more stale-flag
+      // scenarios — the answer is always a fact about the current
+      // catalog state.
+      orphaned: !ctx.referencedSkillOrigins.has(skill.origin),
+      disabledByUser: false,
+    },
+    skill.dependencies,
+    ctx,
+  );
+  ctx.inFlight.delete(skill.origin);
+  ctx.skillCache.set(skill.origin, result);
+  return result;
+}
+
+function computeAgentStatus(agent: Agent, ctx: CascadeContext): ComputedStatus {
+  return computeWithDeps(
+    {
+      prereqs: agent.prereqs,
+      prereqsAck: agent.prereqsAck,
+      orphaned: false,
+      disabledByUser: agent.disabledByUser,
+    },
+    agent.dependencies,
+    ctx,
+  );
+}
+
+interface SelfConditions {
+  readonly prereqs: string | undefined;
+  readonly prereqsAck: boolean;
+  readonly orphaned: boolean;
+  readonly disabledByUser: boolean;
+}
+
+function computeWithDeps(
+  self: SelfConditions,
   deps: { skills: readonly string[]; mcps: readonly string[] },
-  installedSkillOrigins: ReadonlySet<string>,
-  _installedMcpFqns: ReadonlySet<string>,
-  installedMcpOrigins: readonly string[],
-): { status: EntryStatus; missingDeps: MissingDep[] | undefined } {
+  ctx: CascadeContext,
+): ComputedStatus {
+  // Self causes — these don't depend on the dep graph.
+  const reason: {
+    needsPrereqsAck?: true;
+    disabledByUser?: true;
+    orphaned?: true;
+    missingDeps?: MissingDep[];
+    blockedDeps?: BlockedDep[];
+  } = {};
+  if (!self.prereqsAck && (self.prereqs ?? "").trim().length > 0) {
+    reason.needsPrereqsAck = true;
+  }
+  if (self.disabledByUser) reason.disabledByUser = true;
+  if (self.orphaned) reason.orphaned = true;
+
+  // Cascade: walk direct deps, recurse for skills, leaf-check for mcps.
   const missing: MissingDep[] = [];
+  const blocked: BlockedDep[] = [];
+
   for (const skillOrigin of deps.skills) {
-    if (!installedSkillOrigins.has(skillOrigin)) {
+    const child = ctx.skillByOrigin.get(skillOrigin);
+    if (child === undefined) {
       missing.push({ kind: "skill", name: skillOrigin });
+      continue;
+    }
+    const childStatus = computeSkillStatus(child, ctx);
+    if (childStatus.status === "blocked") {
+      blocked.push({ kind: "skill", fqn: child.fqn });
     }
   }
-  const installedMcpOriginSet = new Set(installedMcpOrigins);
   for (const mcpOrigin of deps.mcps) {
-    if (!installedMcpOriginSet.has(mcpOrigin)) {
+    const child = ctx.mcpByOrigin.get(mcpOrigin);
+    if (child === undefined) {
       missing.push({ kind: "mcp", name: mcpOrigin });
     }
+    // No mcp cascade-block: an mcp that THIS entry depends on is by
+    // definition not orphan (the dep itself is a reverse-dep). The
+    // old stored-flag model could yield a stale "orphan" mcp despite
+    // a live ref; the derived model can't, so the cascade case is
+    // unreachable. Mcps are leaves: missing-dep above is the only
+    // way they contribute to the parent's blockedReason.
   }
-  if (missing.length === 0) return { status: "ready", missingDeps: undefined };
-  return { status: "disabled", missingDeps: missing };
+  if (missing.length > 0) reason.missingDeps = missing;
+  if (blocked.length > 0) reason.blockedDeps = blocked;
+
+  if (Object.keys(reason).length === 0) return { status: "ready" };
+  return { status: "blocked", reason: reason as BlockedReason };
+}
+
+function buildSkillEntry(s: Skill, ctx: CascadeContext): SkillEntry {
+  const skill = projectSkillPojo(s, ctx);
+  const computed = computeSkillStatus(s, ctx);
+  if (computed.status === "ready") return { skill, status: "ready" };
+  const reason = computed.reason as BlockedReason;
+  const out: SkillEntry = { skill, status: "blocked", blockedReason: reason };
+  if (reason.missingDeps !== undefined) {
+    return { ...out, missingDeps: reason.missingDeps };
+  }
+  return out;
+}
+
+function buildAgentEntry(a: Agent, ctx: CascadeContext): AgentEntry {
+  const agent = projectAgentPojo(a);
+  const computed = computeAgentStatus(a, ctx);
+  if (computed.status === "ready") return { agent, status: "ready" };
+  const reason = computed.reason as BlockedReason;
+  const out: AgentEntry = { agent, status: "blocked", blockedReason: reason };
+  if (reason.missingDeps !== undefined) {
+    return { ...out, missingDeps: reason.missingDeps };
+  }
+  return out;
+}
+
+/**
+ * Project a persisted entity into the lightweight
+ * {@link CatalogInstalledEntry} shape used in install responses.
+ *
+ * For mcps: just kind+fqn (mcps have no prereqs).
+ * For skills/agents: include `prereqs` iff the entry has non-empty
+ * prereqs text, plus the post-install `prereqsAck` flag so callers
+ * can prompt the user when an ack is pending.
+ */
+function toInstalledEntry(
+  kind: "mcp" | "skill" | "agent",
+  fqn: string,
+  entity: Skill | Agent | Mcp,
+): CatalogInstalledEntry {
+  if (kind === "mcp") return { kind, fqn };
+  // Both Skill and Agent expose `prereqs` and `prereqsAck`.
+  const e = entity as Skill | Agent;
+  const prereqs = e.prereqs;
+  const out: CatalogInstalledEntry = {
+    kind,
+    fqn,
+    prereqsAck: e.prereqsAck,
+  };
+  if (prereqs !== undefined && prereqs.trim().length > 0) {
+    return { ...out, prereqs };
+  }
+  return out;
 }
 
 function conflictToError(c: CatalogConflict): Error {
@@ -936,6 +1735,19 @@ function conflictToError(c: CatalogConflict): Error {
       : new Error(`catalog ${c.kind} resolve failed: ${c.reason.kind}`);
   }
   return new Error(`catalog ${c.kind} resolve conflict: ${JSON.stringify(c.reason)}`);
+}
+
+/**
+ * Project a thrown error into the wire-safe `{ name, message }` shape
+ * we put on `CatalogInstallResult.failed[].error`. `Error` instances'
+ * `name` and `message` are non-enumerable, so a naive `JSON.stringify`
+ * yields `{}` and clients lose all signal — this normalisation keeps
+ * the failure information present across the HTTP boundary.
+ */
+function errorToWire(err: unknown): { name: string; message: string } {
+  if (err instanceof Error) return { name: err.name, message: err.message };
+  if (typeof err === "string") return { name: "Error", message: err };
+  return { name: "Error", message: String(err) };
 }
 
 async function readFirstFile(

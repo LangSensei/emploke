@@ -74,6 +74,17 @@ export interface SkillRepository {
   streamFiles(fqn: string): AsyncIterable<SkillFile>;
 
   /**
+   * Update only the per-installation flag `prereqsAck` without
+   * touching frontmatter / files / anchor content. No-op if the entry
+   * is absent.
+   *
+   * `orphaned` is no longer a stored flag — it's derived from the
+   * full catalog dep graph at projection time, so there's no setter
+   * for it on the repository.
+   */
+  setFlags(fqn: string, flags: { prereqsAck?: boolean }): Promise<void>;
+
+  /**
    * Release any resources held by the repository (DB handles, file
    * locks). Optional: in-memory implementations have nothing to release.
    * Idempotent — implementations should tolerate being called twice.

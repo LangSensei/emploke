@@ -1,4 +1,5 @@
 export {
+  CyclicDependencyError,
   PlanStaleError,
   SkillFrontmatterError,
   SkillNameInvalidError,

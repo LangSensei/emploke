@@ -60,11 +60,11 @@ for (const backend of BACKENDS) {
         expect(await svc.list()).toHaveLength(1);
       });
 
-      it("injects _meta.{name, origin} into the stored content", async () => {
+      it("injects _meta.name into the stored content (origin lives on the entity, not in the file)", async () => {
         await svc.install("azure/mcp", "file:/abs/azure", '{"command":"node","args":["s.js"]}');
         const content = await svc.getContent("azure/mcp");
         const { meta, body } = McpFormat.parse(content, "test");
-        expect(meta).toEqual({ name: "azure/mcp", origin: "file:/abs/azure" });
+        expect(meta).toEqual({ name: "azure/mcp" });
         expect(body.command).toBe("node");
       });
 
@@ -80,7 +80,7 @@ for (const backend of BACKENDS) {
         await svc.install("new/name", "file:/abs/new", input);
         const stored = await svc.getContent("new/name");
         const { meta, body } = McpFormat.parse(stored, "test");
-        expect(meta).toEqual({ name: "new/name", origin: "file:/abs/new" });
+        expect(meta).toEqual({ name: "new/name" });
         expect(
           (body._meta as Record<string, unknown>)["io.modelcontextprotocol.registry/extra"],
         ).toEqual({
@@ -161,12 +161,12 @@ for (const backend of BACKENDS) {
         const updated = await svc.updateContent("x/y", '{"v":2,"updated":true}');
         expect(updated.origin).toBe("file:/abs/x");
         const { meta, body } = McpFormat.parse(updated.content, "test");
-        expect(meta.origin).toBe("file:/abs/x");
+        expect(meta.name).toBe("x/y");
         expect(body.v).toBe(2);
         expect(body.updated).toBe(true);
       });
 
-      it("ignores any _meta in update payload (entity wins)", async () => {
+      it("ignores any _meta in update payload (entity wins for name; origin is read from row)", async () => {
         await svc.install("x/y", "file:/abs/x", "{}");
         const updated = await svc.updateContent(
           "x/y",
@@ -174,7 +174,8 @@ for (const backend of BACKENDS) {
         );
         const { meta } = McpFormat.parse(updated.content, "test");
         expect(meta.name).toBe("x/y");
-        expect(meta.origin).toBe("file:/abs/x");
+        // Origin lives on the entity / SQLite row, never the file.
+        expect(updated.origin).toBe("file:/abs/x");
       });
 
       it("throws NotFound when updating a missing entry", async () => {

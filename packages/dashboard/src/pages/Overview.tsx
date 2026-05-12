@@ -14,7 +14,8 @@ export function OverviewPage({ overview }: OverviewProps) {
         <Stat label="Agents" value={overview.counts.agents} />
         <Stat label="Skills" value={overview.counts.skills} />
         <Stat label="MCPs" value={overview.counts.mcps} />
-        <Stat label="Disabled" value={overview.counts.disabled} warn />
+        <Stat label="Blocked" value={overview.counts.blocked} warn />
+        <Stat label="Orphaned" value={overview.counts.orphaned} warn />
       </div>
     </div>
   );
