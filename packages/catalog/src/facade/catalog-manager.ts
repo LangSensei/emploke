@@ -516,11 +516,29 @@ export class CatalogManager {
   /**
    * Apply a sync plan: run the regular install pass.
    *
-   * For an `identity-changed` plan, atomically deletes the old fqn row
-   * before the new install runs (in a single transaction-ish window —
-   * SQLite's per-statement durability + the entity-service's atomic
-   * `add` give us the practical guarantee that we never end up with
-   * two rows sharing one origin).
+   * For an `identity-changed` plan, deletes the old fqn row before
+   * the new install runs.
+   *
+   * **Known limitation — not atomic across delete + install.** The
+   * delete commits before the install fetches the upstream tree. If
+   * the install fails mid-flight (network blip, parse error, or a
+   * pre-existing entry collision at the new fqn), the old row is
+   * gone and the new one never lands. We accept this tradeoff
+   * because in practice:
+   *   - the delete and install hit the same origin within a few ms
+   *     of each other; the install's fetchTree almost always
+   *     succeeds when the resolve's fetchAnchor just succeeded
+   *   - emploke entries are local mirrors of upstream — recovery is
+   *     a one-shot `installSkill(origin)` away (the only thing that
+   *     leaks is per-installation flags like `prereqsAck`, which
+   *     the user can re-acknowledge)
+   *   - making it actually atomic requires either fetch-first-into-
+   *     memory (~80 lines, restructures the install path) or a
+   *     SQLite write transaction spanning network I/O (holds the
+   *     workspace's write lock across `fetchTree`, regressing other
+   *     writers' latency).
+   * If a real-world report of data loss surfaces, revisit; until
+   * then the code-comment is the documentation.
    *
    * Orphan handling: `plan.orphans` is informational — sync no longer
    * sets a persisted `orphaned` flag on dropped deps. Orphan status is
@@ -535,8 +553,8 @@ export class CatalogManager {
   async applySync(plan: CatalogPlan): Promise<CatalogSyncResult> {
     if (plan.identityChange !== undefined) {
       const ic = plan.identityChange;
-      // Delete the old fqn row first so the new install can take its
-      // place without `findByOrigin` returning the stale row.
+      // Non-atomic with the install below — see jsdoc above for the
+      // known data-loss window and why we accept it.
       if (ic.kind === "skill") await this.skill.delete(ic.oldFqn);
       else if (ic.kind === "agent") await this.agent.delete(ic.oldFqn);
       else await this.mcp.delete(ic.oldFqn);
