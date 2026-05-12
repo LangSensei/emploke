@@ -29,7 +29,7 @@ function toFqn(name: string): string {
   return name.includes("/") ? name : `public/${name}`;
 }
 
-function ensureMcpMeta(content: string, fqn: string, origin: string): string {
+function ensureMcpMeta(content: string, fqn: string): string {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -42,7 +42,7 @@ function ensureMcpMeta(content: string, fqn: string, origin: string): string {
     obj._meta !== null && typeof obj._meta === "object" && !Array.isArray(obj._meta)
       ? (obj._meta as Record<string, unknown>)
       : {};
-  obj._meta = { ...existing, name: fqn, origin: existing.origin ?? origin };
+  obj._meta = { ...existing, name: fqn };
   return JSON.stringify(obj);
 }
 
@@ -78,7 +78,7 @@ export async function makeTestCatalog(
     const filePath = path.join(sourceRoot, "mcps", `${fqn.replace("/", "_")}.json`);
     await mkdir(path.dirname(filePath), { recursive: true });
     const origin = `file:${filePath}`;
-    await writeFile(filePath, ensureMcpMeta(content, fqn, origin), "utf8");
+    await writeFile(filePath, ensureMcpMeta(content, fqn), "utf8");
     await catalog.installMcpFromOrigin(origin);
   }
   for (const [shortOrFqn, files] of Object.entries(fixtures.skills ?? {})) {

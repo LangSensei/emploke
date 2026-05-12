@@ -53,7 +53,13 @@ export interface SkillResolvedNode {
   readonly fqn: string;
   readonly origin: string;
   readonly anchorContent: string;
-  readonly frontmatterSha256: string;
+  /**
+   * Upstream-declared `version` — the staleness key. Emploke's
+   * authoring contract says a meaningful change MUST bump version;
+   * `install` rejects with {@link PlanStaleError} if the version
+   * differs at install time.
+   */
+  readonly version: string;
   readonly depsRefs: {
     /** Origin URIs of dep skills. The facade fans these out to resolve. */
     readonly skills: readonly string[];
@@ -121,7 +127,7 @@ export class SkillService {
       fqn: entity.fqn,
       origin: entity.origin,
       anchorContent: entity.anchorContent,
-      frontmatterSha256: entity.frontmatterSha256,
+      version: entity.version,
       depsRefs: {
         skills: [...entity.dependencies.skills],
         mcps: [...entity.dependencies.mcps],
@@ -163,13 +169,8 @@ export class SkillService {
 
     let entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
 
-    if (entity.frontmatterSha256 !== node.frontmatterSha256) {
-      throw new PlanStaleError(
-        node.fqn,
-        node.origin,
-        node.frontmatterSha256,
-        entity.frontmatterSha256,
-      );
+    if (entity.version !== node.version) {
+      throw new PlanStaleError(node.fqn, node.origin, node.version, entity.version);
     }
 
     const existing = await this.repo.findByFqn(entity.fqn);

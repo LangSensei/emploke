@@ -80,11 +80,7 @@ function makeFakes(): Fakes {
       return { node: null, conflict };
     }
     const parsed = McpFormat.parse(s.content, `resolve:${origin}`);
-    const merged = McpFormat.writeMeta(
-      s.content,
-      { name: parsed.meta.name, origin },
-      `resolve:${origin}`,
-    );
+    const merged = McpFormat.writeMeta(s.content, { name: parsed.meta.name }, `resolve:${origin}`);
     const node: McpResolvedNode = { fqn: parsed.meta.name, origin, content: merged };
     return { node, conflict: null };
   };
@@ -104,7 +100,7 @@ function makeFakes(): Fakes {
       trees.set(o, m);
     },
     setMcp(o, name, content) {
-      const merged = McpFormat.writeMeta(content, { name, origin: o }, `seed:${o}`);
+      const merged = McpFormat.writeMeta(content, { name }, `seed:${o}`);
       mcpStore.set(o, { origin: o, content: merged });
       const m = new Map<string, Buffer>();
       m.set("mcp.json", Buffer.from(merged, "utf8"));

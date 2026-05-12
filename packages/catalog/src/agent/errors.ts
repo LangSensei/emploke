@@ -63,19 +63,21 @@ export class AgentFrontmatterError extends AgentError {
 
 /**
  * Thrown by `install` when the resolve plan is stale — i.e. the
- * upstream anchor's frontmatter SHA-256 changed between resolve and
- * install. Caller should re-resolve before retrying.
+ * upstream anchor's `version` changed between resolve and install.
+ * Caller should re-resolve before retrying. See {@link
+ * PlanStaleError} (skill counterpart) for the version-not-hash
+ * rationale.
  */
 export class AgentPlanStaleError extends AgentError {
   constructor(
     public readonly agentName: string,
     public readonly origin: string,
-    public readonly expectedSha: string,
-    public readonly actualSha: string,
+    public readonly expectedVersion: string,
+    public readonly actualVersion: string,
   ) {
     super(
       `plan stale for agent "${agentName}" @ ${origin}: ` +
-        `frontmatter SHA changed from ${expectedSha.slice(0, 12)} to ${actualSha.slice(0, 12)}. ` +
+        `version changed from ${expectedVersion} to ${actualVersion}. ` +
         "Re-resolve before installing.",
     );
   }

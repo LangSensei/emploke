@@ -63,19 +63,26 @@ export class SkillFrontmatterError extends SkillError {
 
 /**
  * Thrown by `install` when the resolve plan is stale — i.e. the
- * upstream anchor's SHA-256 changed between resolve and install.
+ * upstream anchor's `version` changed between resolve and install.
  * Caller should re-resolve before retrying.
+ *
+ * Why version? Emploke's authoring contract says any meaningful
+ * change to SKILL.md MUST bump `version`; without a bump we treat
+ * the file as unchanged. Using version (not a byte hash) keeps the
+ * detection in the contract's own vocabulary — a contributor who
+ * edited the file without bumping is, by contract, not making a
+ * change emploke needs to react to.
  */
 export class PlanStaleError extends SkillError {
   constructor(
     public readonly skillName: string,
     public readonly origin: string,
-    public readonly expectedSha: string,
-    public readonly actualSha: string,
+    public readonly expectedVersion: string,
+    public readonly actualVersion: string,
   ) {
     super(
       `plan stale for "${skillName}" @ ${origin}: ` +
-        `anchor SHA changed from ${expectedSha.slice(0, 12)} to ${actualSha.slice(0, 12)}. ` +
+        `version changed from ${expectedVersion} to ${actualVersion}. ` +
         "Re-resolve before installing.",
     );
   }

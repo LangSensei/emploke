@@ -83,10 +83,10 @@ function makeFakeFetchers(): {
       return { node: null, conflict };
     }
     // Mirror production: parse _meta.name from content to recover FQN,
-    // then re-inject our own origin to scrub stale upstream values.
+    // then re-stamp `name` (origin is NOT carried in the file).
     const parsed = McpFormat.parse(store.content, `resolve:${origin}`);
     const name = parsed.meta.name;
-    const merged = McpFormat.writeMeta(store.content, { name, origin }, `resolve:${origin}`);
+    const merged = McpFormat.writeMeta(store.content, { name }, `resolve:${origin}`);
     const node: McpResolvedNode = { fqn: name, origin, content: merged };
     return { node, conflict: null };
   };
@@ -110,7 +110,7 @@ function makeFakeFetchers(): {
       // Pre-merge _meta.name into the stored content so resolveMcp can
       // derive the FQN by parsing — mirrors how a real fetcher would
       // serve a manifest with `_meta.name` baked in.
-      const merged = McpFormat.writeMeta(content, { name, origin }, `seed:${origin}`);
+      const merged = McpFormat.writeMeta(content, { name }, `seed:${origin}`);
       mcpStore.set(origin, { origin, content: merged });
       // Also stash in trees so McpService.install (which uses the
       // tree-based fetcher) can read it back.
@@ -439,6 +439,38 @@ describe("CatalogManager — single-shot installers", () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
     const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
     expect(result.installed[0]?.fqn).toBe("vendor/x");
+  });
+});
+
+// ─── Plan token cache (preview/apply UX backbone) ────────────
+
+describe("CatalogManager plan token cache", () => {
+  it("cachePlan returns a single-use token that takePlan trades for the plan", async () => {
+    fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
+    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const token = mgr.cachePlan(plan);
+    expect(typeof token).toBe("string");
+    expect(token.length).toBeGreaterThan(0);
+    // First take returns the same plan instance.
+    expect(mgr.takePlan(token)).toBe(plan);
+    // Single-use: second take returns null even though the call shape
+    // is identical. Defends against UI double-click re-running install.
+    expect(mgr.takePlan(token)).toBeNull();
+  });
+
+  it("takePlan returns null for an unknown token (no false-positive on similar UUID)", () => {
+    expect(mgr.takePlan("00000000-0000-0000-0000-000000000000")).toBeNull();
+  });
+
+  it("each cachePlan call mints a fresh token (no aliasing on identical plans)", async () => {
+    fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
+    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const token1 = mgr.cachePlan(plan);
+    const token2 = mgr.cachePlan(plan);
+    expect(token1).not.toBe(token2);
+    // Both tokens are independently consumable.
+    expect(mgr.takePlan(token1)).toBe(plan);
+    expect(mgr.takePlan(token2)).toBe(plan);
   });
 });
 

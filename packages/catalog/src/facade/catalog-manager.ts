@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   defaultFetcherRegistry,
@@ -150,6 +151,14 @@ export interface CatalogPlan {
   readonly toInstall: readonly CatalogPlanNode[];
   readonly alreadyInstalled: readonly CatalogPlanNode[];
   readonly conflicts: readonly CatalogConflict[];
+  /**
+   * The origin URI that drives this plan — the user-requested install
+   * origin (for `resolveSkill` / `resolveAgent` / `resolveMcp`) or the
+   * local row's origin (for `resolveSync*`). Always populated so the
+   * server's manifest projection can identify the "root" node without
+   * a second catalog lookup.
+   */
+  readonly rootOrigin: string;
   /** True iff this plan was produced via a sync resolve (not a fresh install). */
   readonly isSync: boolean;
   /** Populated on sync-resolve when the upstream `fqn` differs from local. */
@@ -252,7 +261,38 @@ export type McpResolveAdapter = (origin: string) => Promise<{
   conflict: CatalogConflict | null;
 }>;
 
+/**
+ * Single entry in {@link CatalogManager}'s plan token cache. Holds the
+ * `CatalogPlan` produced by a `resolveSync*` call and an absolute
+ * expiry timestamp. The cache is the binding between the dashboard's
+ * preview-then-apply two-step UX and the server's apply path: the
+ * dashboard receives a token from `/sync/resolve`, ships it back on
+ * `/sync`, and the server replays the exact preview-time plan instead
+ * of re-resolving (which would discard the user's previewed manifest).
+ */
+interface CachedPlan {
+  readonly plan: CatalogPlan;
+  /** Epoch ms; entries past this are evicted on next `cachePlan` call. */
+  readonly expiresAt: number;
+}
+
+/**
+ * TTL for cached resolve plans, in milliseconds. Picked to be short
+ * enough that abandoned previews don't accumulate (single-user local
+ * server), long enough for the user to read the preview and confirm.
+ */
+const PLAN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export class CatalogManager {
+  /**
+   * Single-use plan cache for the preview/apply UX. See {@link
+   * CachedPlan}. Lazy-evicted on every `cachePlan` write, no
+   * background interval — the cache stays small in practice and the
+   * eviction sweep is O(n) where n is "in-flight previews", typically
+   * < 5 for a single user.
+   */
+  private readonly planCache = new Map<string, CachedPlan>();
+
   constructor(
     private readonly mcp: McpService,
     private readonly skill: SkillService,
@@ -309,8 +349,12 @@ export class CatalogManager {
         // anchor's _meta.name field.
         const parsed = McpFormat.parse(content, `resolve:${origin}`);
         const name = parsed.meta.name;
-        // Re-inject our origin in case the upstream had a stale value.
-        const merged = McpFormat.writeMeta(content, { name, origin }, `resolve:${origin}`);
+        // Stamp our `name` onto _meta so downstream consumers see a
+        // consistent fqn regardless of what the upstream file
+        // declared. Origin is NOT stamped — it lives on the SQLite
+        // row, not in the file (any pre-existing `_meta.origin` is
+        // preserved as foreign data but never read).
+        const merged = McpFormat.writeMeta(content, { name }, `resolve:${origin}`);
         return { node: { fqn: name, origin, content: merged }, conflict: null };
       } catch (cause) {
         return {
@@ -339,24 +383,71 @@ export class CatalogManager {
   // ─── Resolve (cross-entity walk) ──────────────────────
 
   async resolveSkill(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkSkill(origin, ctx, true);
     return finaliseResolveContext(ctx);
   }
 
   async resolveAgentFromOrigin(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkAgent(origin, ctx);
     return finaliseResolveContext(ctx);
   }
 
   async resolveMcp(origin: string): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(origin);
     await this.walkMcp(origin, ctx, true);
     return finaliseResolveContext(ctx);
   }
 
   // ─── Sync resolve / apply ─────────────────────────────
+
+  /**
+   * Cache a freshly-resolved plan and return a single-use token. The
+   * dashboard's preview-then-apply flow ships this token back on
+   * `/sync` so the server can replay the exact preview-time plan
+   * instead of re-resolving (which would discard the user's
+   * previewed manifest and silently apply a fresh — potentially
+   * different — closure).
+   *
+   * Single-use: {@link takePlan} deletes on read so a double-click
+   * Apply can't re-run the install. The dashboard can request a
+   * fresh preview if it needs to retry.
+   *
+   * Eviction is lazy (runs here on every cache write). For a
+   * single-user local server the cache stays small (≤ ~5 in-flight
+   * previews), so the O(n) sweep is negligible.
+   */
+  cachePlan(plan: CatalogPlan): string {
+    this.evictExpiredPlans();
+    const token = randomUUID();
+    this.planCache.set(token, { plan, expiresAt: Date.now() + PLAN_CACHE_TTL_MS });
+    return token;
+  }
+
+  /**
+   * Trade a token issued by {@link cachePlan} for the original plan.
+   * Returns `null` if the token is unknown, already taken, or
+   * expired — callers should map that to a 410 Gone with a "preview
+   * expired, please re-preview" message so the user knows to rerun
+   * the resolve step.
+   *
+   * Single-use: deletes the entry on read regardless of expiry,
+   * preventing double-apply on UI double-click.
+   */
+  takePlan(token: string): CatalogPlan | null {
+    const entry = this.planCache.get(token);
+    if (entry === undefined) return null;
+    this.planCache.delete(token);
+    return entry.expiresAt < Date.now() ? null : entry.plan;
+  }
+
+  private evictExpiredPlans(): void {
+    const now = Date.now();
+    for (const [token, entry] of this.planCache) {
+      if (entry.expiresAt < now) this.planCache.delete(token);
+    }
+  }
 
   /**
    * Sync resolve: compute the install delta for an already-installed
@@ -396,7 +487,7 @@ export class CatalogManager {
     fqn: string;
     origin: string;
   }): Promise<CatalogPlan> {
-    const ctx = newResolveContext();
+    const ctx = newResolveContext(target.origin);
     ctx.isSync = true;
     ctx.syncTarget = target;
     if (target.kind === "skill") {
@@ -943,12 +1034,13 @@ export class CatalogManager {
       return;
     }
 
-    // Up-to-date check: same fqn AND same frontmatter sha → upstream is
-    // unchanged. Goes to alreadyInstalled with disposition `up-to-date`.
+    // Up-to-date check: same fqn AND same `version` → upstream is
+    // unchanged (per the authoring contract — see Skill class doc).
+    // Goes to alreadyInstalled with disposition `up-to-date`.
     if (
       localExisting !== null &&
       localExisting.fqn === plan.node.fqn &&
-      localExisting.frontmatterSha256 === plan.node.frontmatterSha256
+      localExisting.version === plan.node.version
     ) {
       // Walk deps anyway so the manifest's overall up-to-date is
       // accurate (a dep change should mark the root as will-sync).
@@ -1040,7 +1132,7 @@ export class CatalogManager {
     if (
       localExisting !== null &&
       localExisting.fqn === plan.node.fqn &&
-      localExisting.frontmatterSha256 === plan.node.frontmatterSha256
+      localExisting.version === plan.node.version
     ) {
       const depBaselineCount = ctx.toInstall.length;
       for (const mcpOrigin of plan.node.depsRefs.mcps) {
@@ -1124,7 +1216,8 @@ export class CatalogManager {
     }
 
     // Up-to-date check via canonicalised content digest (excluding `_meta`
-    // so re-injecting `_meta.origin` doesn't show as a spurious diff).
+    // so install-time stamping of `_meta.name` and any registry-injected
+    // sub-objects don't show as spurious diffs).
     if (localExisting !== null && localExisting.name === result.node.fqn) {
       const localDigest = McpFormat.contentDigestExcludingMeta(
         localExisting.content,
@@ -1265,6 +1358,7 @@ export class CatalogManager {
 // ─── Helpers ────────────────────────────────────────────────
 
 interface ResolveContext {
+  rootOrigin: string;
   visited: Set<string>;
   toInstall: CatalogPlanNode[];
   alreadyInstalled: CatalogPlanNode[];
@@ -1275,8 +1369,9 @@ interface ResolveContext {
   orphans: OrphanedEntry[];
 }
 
-function newResolveContext(): ResolveContext {
+function newResolveContext(rootOrigin: string): ResolveContext {
   return {
+    rootOrigin,
     visited: new Set(),
     toInstall: [],
     alreadyInstalled: [],
@@ -1298,6 +1393,7 @@ function finaliseResolveContext(ctx: ResolveContext): CatalogPlan {
     toInstall: ctx.toInstall,
     alreadyInstalled: ctx.alreadyInstalled,
     conflicts: ctx.conflicts,
+    rootOrigin: ctx.rootOrigin,
     isSync: ctx.isSync,
     ...(ctx.identityChange !== undefined ? { identityChange: ctx.identityChange } : {}),
     orphans: ctx.orphans,
@@ -1321,7 +1417,7 @@ function localToSkillResolvedNode(local: Skill): SkillResolvedNode {
     fqn: local.fqn,
     origin: local.origin,
     anchorContent: local.anchorContent,
-    frontmatterSha256: local.frontmatterSha256,
+    version: local.version,
     depsRefs: {
       skills: [...local.dependencies.skills],
       mcps: [...local.dependencies.mcps],

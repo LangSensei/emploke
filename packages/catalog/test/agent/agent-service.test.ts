@@ -77,10 +77,10 @@ describe("AgentService.resolve", () => {
     expect(plan.node!.depsRefs.mcps).toEqual([]);
   });
 
-  it("captures frontmatter SHA-256", async () => {
+  it("captures the upstream version on the resolved node", async () => {
     fetcher.set("file:/abs/agent", { "AGENTS.md": ANCHOR("agent") });
     const plan = await svc.resolve("file:/abs/agent");
-    expect(plan.node!.frontmatterSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(plan.node!.version).toBe("1.0.0");
   });
 
   it("surfaces dep refs (does NOT recurse — facade's job)", async () => {
@@ -158,7 +158,7 @@ describe("AgentService.install", () => {
     await expect(svc.install("file:/abs/b")).rejects.toThrow(AgentOriginConflictError);
   });
 
-  it("throws PlanStaleError when frontmatter changes between resolve and install", async () => {
+  it("throws AgentPlanStaleError when version changes between resolve and install", async () => {
     fetcher.set("file:/abs/agent", { "AGENTS.md": ANCHOR("agent") });
     const plan = await svc.resolve("file:/abs/agent");
     expect(plan.node).not.toBeNull();

@@ -55,7 +55,7 @@ export class McpService {
    *
    * Steps:
    *   1. construct the entity via `Mcp.create` — this validates name,
-   *      parses content, injects `_meta.{name, origin}`
+   *      parses content, injects `_meta.name`
    *   2. read any existing entry; if the origins disagree (modulo
    *      normalisation), throw {@link McpOriginConflictError}
    *   3. atomically persist via `repo.add`
@@ -91,8 +91,9 @@ export class McpService {
 
   /**
    * Replace an existing MCP's content. The stored origin and name are
-   * preserved (re-injected into the new content's `_meta` by
-   * `Mcp.withContent`); callers can't change identity via update.
+   * preserved (the name is re-injected into the new content's `_meta`
+   * by `Mcp.withContent`; origin lives only on the SQLite row);
+   * callers can't change identity via update.
    */
   async updateContent(name: string, rawContent: string): Promise<Mcp> {
     const existing = await this.repo.findByName(name);

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import type { AgentFrontmatter } from "./agent-frontmatter.js";
 import * as AgentFormat from "./agent-frontmatter.js";
 import { makeFqn, validateFqn } from "./validate.js";
 
@@ -7,7 +5,9 @@ import { makeFqn, validateFqn } from "./validate.js";
  * Rich domain entity representing a single installed agent.
  *
  * Identity = (fqn, origin), both immutable. See {@link Skill} for the
- * fqn-vs-name rationale. Differences from skills:
+ * fqn-vs-name rationale and the **`version` authoring contract** (sync
+ * and staleness keys off `version` alone — body / frontmatter edits
+ * without a bump are no-ops). Differences from skills:
  *   - anchor file is `AGENTS.md`, not `SKILL.md`
  *   - agents are "root" entities — never dep-referenced; only have
  *     outgoing deps (skills + mcps)
@@ -119,30 +119,6 @@ export class Agent {
     return this._disabledByUser;
   }
 
-  get frontmatterSha256(): string {
-    return canonicalFrontmatterSha(this.frontmatterView);
-  }
-
-  private get frontmatterView(): AgentFrontmatter {
-    return {
-      shortName: this._shortName,
-      scope: this._scope,
-      description: this._description,
-      version: this._version,
-      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
-      ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
-        ? {
-            dependencies: {
-              ...(this._dependencies.skills.length > 0
-                ? { skills: this._dependencies.skills }
-                : {}),
-              ...(this._dependencies.mcps.length > 0 ? { mcps: this._dependencies.mcps } : {}),
-            },
-          }
-        : {}),
-    };
-  }
-
   toJSON(): Record<string, unknown> {
     return {
       fqn: this._fqn,
@@ -234,25 +210,4 @@ function normaliseDeps(
 /** True iff `prereqs` is a non-empty, non-whitespace-only string. */
 export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
   return prereqs !== undefined && prereqs.trim().length > 0;
-}
-
-export function canonicalFrontmatterSha(meta: AgentFrontmatter): string {
-  const canonical = JSON.stringify(canonicalise(meta));
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-function canonicalise(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(canonicalise);
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const sortedKeys = Object.keys(obj).sort();
-    const out: Record<string, unknown> = {};
-    for (const k of sortedKeys) {
-      const v = obj[k];
-      if (v !== undefined) out[k] = canonicalise(v);
-    }
-    return out;
-  }
-  return value;
 }

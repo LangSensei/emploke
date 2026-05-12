@@ -10,11 +10,20 @@ import { McpInvalidJsonError } from "./errors.js";
  *
  * The format itself is fixed by the MCP spec convention: an MCP
  * client-config JSON object that may carry a top-level `_meta` block
- * for arbitrary metadata. Emploke claims two reserved keys inside
+ * for arbitrary metadata. Emploke claims a single reserved key inside
  * `_meta`:
  *
- *   - `_meta.name`   — full MCP spec FQN (`<namespace>/<short>`)
- *   - `_meta.origin` — install-source URI (`file:`, `github:`, …)
+ *   - `_meta.name` — full MCP spec FQN (`<namespace>/<short>`).
+ *     Authors must declare it; emploke needs it to derive the FQN
+ *     when the dep ref is origin-only.
+ *
+ * Origin (install-source URI) is NOT carried in `_meta`. It's known
+ * at install time as the fetch URI and persisted on the SQLite row
+ * directly. Files in the wild that happen to carry `_meta.origin`
+ * (legacy installs, third-party tooling) are tolerated: parse ignores
+ * the field, {@link writeMeta} preserves it untouched alongside other
+ * foreign keys, and {@link contentDigestExcludingMeta} strips the
+ * whole `_meta` block so it never affects equality.
  *
  * Any other `_meta.*` keys (e.g., reverse-DNS namespaced sub-objects
  * from `registry.modelcontextprotocol.io`) survive untouched through
@@ -23,7 +32,6 @@ import { McpInvalidJsonError } from "./errors.js";
 
 export interface McpMeta {
   readonly name: string;
-  readonly origin: string;
 }
 
 export interface McpFile {
@@ -39,7 +47,10 @@ export interface McpFile {
  *   - JSON parse failure
  *   - top-level value not an object (array / null / primitive)
  *   - missing or non-string `_meta.name`
- *   - missing or non-string `_meta.origin`
+ *
+ * `_meta.origin` is intentionally NOT validated — origin is an
+ * install-time fact (the URI we fetched from), not part of the file's
+ * declarative contract. Files that carry it pass through unchanged.
  *
  * `sourceLabel` is included verbatim in error messages — pass an
  * on-disk path, a synthetic label like `mcps:azure/mcp`, or `<request>`
@@ -65,31 +76,33 @@ export function parse(content: string, sourceLabel: string): McpFile {
   ) {
     throw new McpInvalidJsonError(
       sourceLabel,
-      "MCP file must include a `_meta` object with `name` and `origin`",
+      "MCP file must include a `_meta` object with a `name` field",
     );
   }
   const meta = metaRaw as Record<string, unknown>;
   if (typeof meta.name !== "string" || meta.name.length === 0) {
     throw new McpInvalidJsonError(sourceLabel, "`_meta.name` must be a non-empty string");
   }
-  if (typeof meta.origin !== "string" || meta.origin.length === 0) {
-    throw new McpInvalidJsonError(sourceLabel, "`_meta.origin` must be a non-empty string");
-  }
-  return { meta: { name: meta.name, origin: meta.origin }, body: obj };
+  return { meta: { name: meta.name }, body: obj };
 }
 
 /**
- * Insert / update emploke's `_meta.{name, origin}` keys in MCP file
- * bytes without disturbing the rest of the JSON.
+ * Insert / update emploke's `_meta.name` key in MCP file bytes
+ * without disturbing the rest of the JSON.
  *
  * Behavior:
  *  - empty / whitespace-only input → returns a fresh
- *    `{ "_meta": { name, origin } }` object
- *  - object with no `_meta` → adds a `_meta` block with both keys
- *  - object with existing `_meta` (e.g., MCP-registry sub-objects) →
- *    shallow-merges: emploke's `name` and `origin` overwrite, all
- *    other top-level keys inside `_meta` survive untouched
+ *    `{ "_meta": { name } }` object
+ *  - object with no `_meta` → adds a `_meta` block with `name`
+ *  - object with existing `_meta` (e.g., MCP-registry sub-objects,
+ *    legacy `_meta.origin`) → shallow-merges: emploke's `name`
+ *    overwrites, all other top-level keys inside `_meta` survive
+ *    untouched
  *  - output is `JSON.stringify(..., null, 2)` with a trailing newline
+ *
+ * Origin is NOT written: the install-time URI lives in the SQLite
+ * `origin` column, not in the file. Authors don't write it; we
+ * don't stamp it.
  *
  * User-authored whitespace inside the input is NOT preserved (a
  * round-trip through parse/stringify is unavoidable when mutating
@@ -121,7 +134,6 @@ export function writeMeta(content: string, meta: McpMeta, sourceLabel: string): 
       ? { ...(existingMeta as Record<string, unknown>) }
       : {};
   mergedMeta.name = meta.name;
-  mergedMeta.origin = meta.origin;
   const out: Record<string, unknown> = { ...body, _meta: mergedMeta };
   return `${JSON.stringify(out, null, 2)}\n`;
 }
@@ -152,9 +164,12 @@ export function stripMeta(content: string, sourceLabel: string): Record<string, 
 /**
  * Canonical SHA-256 digest of the MCP content with `_meta` stripped.
  *
- * Used by the sync resolve path to detect "no upstream change" — we
- * deliberately ignore `_meta` so re-injecting `_meta.origin` (which
- * `writeMeta` does on every install) doesn't show as a spurious diff.
+ * Used by the sync resolve path to detect "no upstream change". We
+ * deliberately strip the entire `_meta` block so install-time
+ * additions (emploke writes `_meta.name`, registry tooling may add
+ * its own sub-objects, legacy `_meta.origin` may linger from older
+ * installs) don't show up as spurious diffs against pristine upstream
+ * bytes.
  *
  * `null` if the content is unparseable; callers treat that as "always
  * different" so a parse-failed upstream still falls into the will-sync

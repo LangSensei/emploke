@@ -43,7 +43,8 @@ export interface AgentResolvedNode {
   readonly fqn: string;
   readonly origin: string;
   readonly anchorContent: string;
-  readonly frontmatterSha256: string;
+  /** See {@link SkillResolvedNode.version} — same staleness contract. */
+  readonly version: string;
   readonly depsRefs: {
     readonly skills: readonly string[];
     readonly mcps: readonly string[];
@@ -107,7 +108,7 @@ export class AgentService {
       fqn: entity.fqn,
       origin: entity.origin,
       anchorContent: entity.anchorContent,
-      frontmatterSha256: entity.frontmatterSha256,
+      version: entity.version,
       depsRefs: {
         skills: [...entity.dependencies.skills],
         mcps: [...entity.dependencies.mcps],
@@ -147,13 +148,8 @@ export class AgentService {
 
     let entity = Agent.create(anchorContent, node.origin, `install:${node.origin}`);
 
-    if (entity.frontmatterSha256 !== node.frontmatterSha256) {
-      throw new AgentPlanStaleError(
-        node.fqn,
-        node.origin,
-        node.frontmatterSha256,
-        entity.frontmatterSha256,
-      );
+    if (entity.version !== node.version) {
+      throw new AgentPlanStaleError(node.fqn, node.origin, node.version, entity.version);
     }
 
     const existing = await this.repo.findByFqn(entity.fqn);
