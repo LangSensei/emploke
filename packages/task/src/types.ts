@@ -142,9 +142,10 @@ export interface TaskManagerConfig {
   readonly defaultRuntime?: string;
   /**
    * Persistence backend for task state. When omitted, the manager
-   * constructs a `FsTaskRepository({ tasksDir })` automatically; tests
-   * can inject an `InMemoryTaskRepository` (from `@emploke/task/testing`)
-   * to skip filesystem orchestration.
+   * constructs a `SqliteTaskRepository` opened at `<tasksDir>/tasks.db`
+   * automatically; tests can inject a `:memory:`-backed
+   * `SqliteTaskRepository` (from `@emploke/task/testing`) to keep
+   * state purely in-process.
    */
   readonly repository?: TaskRepository;
   readonly logger?: _Logger;

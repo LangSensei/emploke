@@ -128,6 +128,16 @@ export class WorkspaceContextCache {
       } catch {
         // best-effort
       }
+      try {
+        cached.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        cached.tasks.close();
+      } catch {
+        // best-effort
+      }
     }
     this.entries.delete(id);
   }
@@ -179,6 +189,16 @@ export class WorkspaceContextCache {
       } catch {
         // best-effort
       }
+      try {
+        cached.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        cached.tasks.close();
+      } catch {
+        // best-effort
+      }
     }
     this.entries.delete(id);
     return this.get(id);
@@ -208,6 +228,16 @@ export class WorkspaceContextCache {
     for (const ctx of this.entries.values()) {
       try {
         ctx.catalog.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        ctx.sessions.close();
+      } catch {
+        // best-effort
+      }
+      try {
+        ctx.tasks.close();
       } catch {
         // best-effort
       }

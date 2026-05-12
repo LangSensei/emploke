@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -8,34 +8,42 @@ import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
+  CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
+  SqliteTaskRepository,
   type Task,
   TaskManager,
   TaskNotFoundError,
 } from "../src/index.js";
 
-// task.json wire-format constants — these used to be exported from
-// @emploke/task but are now FsTaskRepository implementation details.
-// Tests still verify on-disk shape, so the constants are redeclared
-// locally.
-const TASK_FILE_NAME = "task.json";
-const CURRENT_SCHEMA_VERSION = 1;
-
-/** Flat A1 wire shape: schemaVersion + task fields at the same level. */
-type PersistedTaskWire = { schemaVersion: number } & Task;
-
 // ───── filesystem fixture lifecycle ────────────────────────
 
 let tasksDir: string;
+
+/**
+ * Per-test repos that the helper hands out. Tracked so afterEach can
+ * close them — important on Windows so leaked WAL handles don't block
+ * the temp-dir `rm`. With `:memory:` this is mostly defensive (no
+ * file to leak), but stays consistent with the file-backed pattern.
+ */
+let openRepos: SqliteTaskRepository[] = [];
+
+function makeRepo(): SqliteTaskRepository {
+  const repo = new SqliteTaskRepository(":memory:");
+  openRepos.push(repo);
+  return repo;
+}
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-tasks-root-"));
 });
 afterEach(async () => {
+  for (const r of openRepos) r.close();
+  openRepos = [];
   await rm(tasksDir, { recursive: true, force: true });
 });
 
@@ -291,11 +299,6 @@ const flushMicrotasks = async (n = 1) => {
   for (let i = 0; i < n; i++) await Promise.resolve();
 };
 
-const readPersisted = async (workdir: string): Promise<PersistedTaskWire> => {
-  const raw = await readFile(path.join(workdir, TASK_FILE_NAME), "utf8");
-  return JSON.parse(raw) as PersistedTaskWire;
-};
-
 const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
   agent: "demo",
   instructions: "Do the thing.",
@@ -310,11 +313,13 @@ const makeManager = (
     now?: () => Date;
     randomBytes?: (n: number) => Buffer;
     logger?: { warn: (msg: string, meta?: object) => void };
+    repository?: SqliteTaskRepository;
   } = {},
-) => {
+): { m: TaskManager; repo: SqliteTaskRepository } => {
   const rt = overrides.runtime ?? new StubRuntime();
   const registry = overrides.registry ?? makeRegistry(rt);
-  return new TaskManager({
+  const repo = overrides.repository ?? makeRepo();
+  const m = new TaskManager({
     catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
     runtimeRegistry: registry,
     tasksDir,
@@ -322,15 +327,17 @@ const makeManager = (
     now: overrides.now ?? fixedNow("2026-05-08T01:05:00.000Z"),
     randomBytes: overrides.randomBytes ?? seqRandom(),
     logger: overrides.logger,
+    repository: repo,
   });
+  return { m, repo };
 };
 
 // ═════ tests ════════════════════════════════════════════════
 
 describe("dispatch — happy path", () => {
-  it("creates dir, persists running task.json, populates runtime metadata, returns Task", async () => {
+  it("creates dir, persists running task to repository, populates runtime metadata, returns Task", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m, repo } = makeManager({ runtime: rt });
 
     const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "Plant a tree." }));
 
@@ -349,11 +356,11 @@ describe("dispatch — happy path", () => {
     expect(meta.pid).toBe(rt.handles[0].pid);
     expect(meta.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
 
-    // task.json on disk matches the returned in-memory task (flat A1 wire format).
-    const persisted = await readPersisted(meta.workdir as string);
-    expect(persisted.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(persisted.status).toBe("running");
-    expect(persisted.id).toBe(t.id);
+    // The task row in the repository matches the returned in-memory
+    // task. (Replaces the old per-workdir `task.json` round-trip.)
+    const persisted = await repo.read(t.id);
+    expect(persisted?.status).toBe("running");
+    expect(persisted?.id).toBe(t.id);
   });
 
   it("installs <workdir>/session/ junction targeting handle.sessionDir", async () => {
@@ -362,7 +369,7 @@ describe("dispatch — happy path", () => {
     const targetDir = await mkdtemp(path.join(tmpdir(), "emploke-runtime-state-"));
     try {
       rt.nextSessionDir = { mode: "resolve", value: targetDir };
-      const m = makeManager({ runtime: rt });
+      const { m } = makeManager({ runtime: rt });
       const t = await m.dispatch(dispatchOf());
 
       // The junction install runs in the background — flush microtasks
@@ -387,7 +394,7 @@ describe("dispatch — happy path", () => {
 
 describe("dispatch — error paths", () => {
   it("AgentNotFoundError when catalog cannot resolve the agent", async () => {
-    const m = makeManager({
+    const { m } = makeManager({
       catalog: stubCatalog({ resolveError: new Error("nope") }),
     });
     await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(AgentNotFoundError);
@@ -397,14 +404,14 @@ describe("dispatch — error paths", () => {
   });
 
   it("AgentNotFoundError when caller passes empty/invalid agent name", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatchTask", async () => {
     const rt = new StubRuntime();
     rt.dispatchSupported = false;
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(RuntimeDoesNotSupportTasksError);
     const entries = await safeReaddir(tasksDir);
     expect(entries).toEqual([]);
@@ -413,7 +420,7 @@ describe("dispatch — error paths", () => {
   it("rolls back the workdir when the runtime throws during dispatchTask", async () => {
     const rt = new StubRuntime();
     rt.dispatchError = new Error("boom in spawn");
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
 
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
     const entries = await safeReaddir(tasksDir);
@@ -421,7 +428,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when the agent is blocked due to prereqs", async () => {
-    const m = makeManager({
+    const { m } = makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { needsPrereqsAck: true } },
@@ -440,7 +447,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when the agent is blocked because it was disabled by user", async () => {
-    const m = makeManager({
+    const { m } = makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { disabledByUser: true } },
@@ -452,7 +459,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when a transitive dep is blocked (cascade)", async () => {
-    const m = makeManager({
+    const { m } = makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: {
@@ -474,7 +481,7 @@ describe("dispatch — error paths", () => {
 describe("exit watcher", () => {
   it("exit code 0 → status=success, output empty, exitCode=0", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: 0, signal: null });
@@ -488,7 +495,7 @@ describe("exit watcher", () => {
 
   it("exit code != 0 → status=failure, error mentions code", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: 17, signal: null });
@@ -500,7 +507,7 @@ describe("exit watcher", () => {
 
   it("exit by signal → status=failure, error mentions signal", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
@@ -522,13 +529,13 @@ describe("liveCount", () => {
   // the implementation contract itself is exercised end-to-end.
 
   it("returns 0 on a fresh manager with no dispatches", () => {
-    const m = makeManager();
+    const { m } = makeManager();
     expect(m.liveCount()).toBe(0);
   });
 
   it("counts a live task between dispatch and exit, drops back to 0 after terminal", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
 
     expect(m.liveCount()).toBe(0);
     const t = await m.dispatch(dispatchOf());
@@ -553,7 +560,7 @@ describe("liveCount", () => {
     // the leak.
     const rt = new StubRuntime();
     rt.dispatchError = new Error("boom in spawn");
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
 
     expect(m.liveCount()).toBe(0);
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
@@ -563,25 +570,25 @@ describe("liveCount", () => {
 
 describe("get / list", () => {
   it("get() returns null for an id whose dir doesn't exist", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     expect(await m.get("20260101-deadbeef")).toBeNull();
   });
 
   it("get() throws InvalidTaskIdError for malformed ids", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     await expect(m.get("../escape")).rejects.toBeInstanceOf(InvalidTaskIdError);
   });
 
   it("list() returns [] when tasksDir doesn't exist yet", async () => {
     await rm(tasksDir, { recursive: true, force: true });
-    const m = makeManager();
+    const { m } = makeManager();
     expect(await m.list()).toEqual([]);
   });
 
   it("list() returns dispatched tasks newest-first", async () => {
     const rt = new StubRuntime();
     let nowMs = Date.parse("2026-05-08T01:00:00.000Z");
-    const m = makeManager({
+    const { m } = makeManager({
       runtime: rt,
       now: () => new Date(nowMs),
       // Each dispatch uses 2 random buffers (one per id-gen attempt). We
@@ -598,14 +605,30 @@ describe("get / list", () => {
     expect(all.map((t) => t.id)).toEqual([t3.id, t2.id, t1.id]);
   });
 
-  it("list() skips and warns on corrupted task.json", async () => {
+  it("list() skips and warns when the repository can't load a task", async () => {
+    // Wrap the real :memory: repo with one that throws CorruptedTaskError
+    // on a chosen id. Asserts the manager-level skip+warn invariant
+    // (which is now wholly storage-shape-agnostic).
     const rt = new StubRuntime();
     const r = recorder();
-    const m = makeManager({ runtime: rt, logger: r.logger });
+    const baseRepo = makeRepo();
+    const corruptIds = new Set<string>();
+    const repo = new Proxy(baseRepo, {
+      get(target, prop, receiver) {
+        if (prop === "read") {
+          return async (id: string): Promise<Task | null> => {
+            if (corruptIds.has(id)) {
+              throw new CorruptedTaskError(id, "synthesised corruption (test)");
+            }
+            return target.read(id);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as SqliteTaskRepository;
+    const { m } = makeManager({ runtime: rt, logger: r.logger, repository: repo });
     const t = await m.dispatch(dispatchOf());
-
-    // Corrupt the file.
-    await writeFile(path.join(tasksDir, t.id, TASK_FILE_NAME), "not json", "utf8");
+    corruptIds.add(t.id);
 
     const all = await m.list();
     expect(all).toEqual([]);
@@ -614,7 +637,7 @@ describe("get / list", () => {
 
   it("list() ignores directories whose name doesn't match the task id pattern", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     await m.dispatch(dispatchOf());
     await mkdir(path.join(tasksDir, "garbage-dir"), { recursive: true });
 
@@ -628,7 +651,7 @@ describe("get / list", () => {
   describe("list(opts) — server-side filter", () => {
     it("filters by exact agent match", async () => {
       const rt = new StubRuntime();
-      const m = makeManager({
+      const { m } = makeManager({
         runtime: rt,
         catalog: stubCatalog({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
@@ -649,7 +672,7 @@ describe("get / list", () => {
       const reg = new RuntimeRegistry();
       reg.register(copilot);
       reg.register(gemini);
-      const m = makeManager({ registry: reg, runtime: copilot });
+      const { m } = makeManager({ registry: reg, runtime: copilot });
       await m.dispatch(dispatchOf({ runtime: "copilot" }));
       await m.dispatch(dispatchOf({ runtime: "gemini" }));
 
@@ -661,7 +684,7 @@ describe("get / list", () => {
     it("filters by createdSince (lexicographic on ISO 8601)", async () => {
       const rt = new StubRuntime();
       let nowMs = Date.parse("2026-05-08T01:00:00.000Z");
-      const m = makeManager({
+      const { m } = makeManager({
         runtime: rt,
         now: () => new Date(nowMs),
         randomBytes: seqRandom(1),
@@ -679,7 +702,7 @@ describe("get / list", () => {
 
     it("filters by status set (running|success|failure|cancelled|not_started)", async () => {
       const rt = new StubRuntime();
-      const m = makeManager({ runtime: rt });
+      const { m } = makeManager({ runtime: rt });
       const a = await m.dispatch(dispatchOf({ instructions: "a" }));
       void rt.handles[0].exit({ code: 0, signal: null });
       await awaitTerminal(m, a.id);
@@ -699,7 +722,7 @@ describe("get / list", () => {
 
     it("combines multiple filters with AND semantics", async () => {
       const rt = new StubRuntime();
-      const m = makeManager({
+      const { m } = makeManager({
         runtime: rt,
         catalog: stubCatalog({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
@@ -721,7 +744,7 @@ describe("get / list", () => {
 describe("delete", () => {
   it("default delete removes metadata; workdir preserved", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -732,12 +755,11 @@ describe("delete", () => {
     expect(await m.get(t.id)).toBeNull();
     // Workdir preserved (consistent with workspace/session purge=false default).
     expect(await safeStat(path.join(tasksDir, t.id))).not.toBeNull();
-    expect(await safeStat(path.join(tasksDir, t.id, TASK_FILE_NAME))).toBeNull();
   });
 
   it("purge=true removes the entire workdir", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -750,7 +772,7 @@ describe("delete", () => {
   it("kills a live task before removing metadata (purge=true also removes workdir)", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     await m.delete(t.id, { purge: true });
@@ -768,7 +790,7 @@ describe("delete", () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
     const r = recorder();
-    const m = makeManager({ runtime: rt, logger: r.logger });
+    const { m } = makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
 
     await m.delete(t.id, { purge: true });
@@ -780,23 +802,26 @@ describe("delete", () => {
   });
 
   it("throws TaskNotFoundError for an unknown id", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     await expect(m.delete("20260101-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
-  // Without `purge`, a corrupt or schema-mismatched task.json makes the
-  // task undeletable through the public API: loadTask returns null →
-  // delete throws TaskNotFoundError → operators can't clean up. With
-  // `purge: true`, the directory's existence is enough (mirrors `rm -rf`).
-  it("purge: true removes a corrupt task that default delete refuses", async () => {
+  // Without `purge`, a stray workdir whose row was never persisted (or
+  // was wiped) is undeletable through the public API: loadTask returns
+  // null → delete throws TaskNotFoundError → operators can't clean up.
+  // With `purge: true`, the directory's existence is enough (mirrors
+  // `rm -rf`). Reframed from the old "corrupt task.json" version: under
+  // SQLite, the equivalent escape-hatch case is "workdir on disk, no
+  // row in DB" — which is the natural outcome of a row deleted out of
+  // band, or a workdir created by a prior emploke version after wipe.
+  it("purge: true removes a stray workdir even when no task row exists", async () => {
     const id = "20260508-c0ffee01";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    await writeFile(path.join(workdir, TASK_FILE_NAME), "this is not json", "utf8");
 
-    const m = makeManager();
+    const { m } = makeManager();
 
-    // Default mode: task is "missing" (validation rejects task.json).
+    // Default mode: no row → loadTask returns null → not deletable.
     await expect(m.delete(id)).rejects.toBeInstanceOf(TaskNotFoundError);
 
     // purge=true: gone.
@@ -805,7 +830,7 @@ describe("delete", () => {
   });
 
   it("purge: true still returns TaskNotFoundError when the directory truly doesn't exist", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -820,7 +845,7 @@ describe("getTaskEventsPath", () => {
       }
     }
     const rt = new WithEvents();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     const p = await m.getTaskEventsPath(t.id);
     expect(p).toBe(path.join(tasksDir, t.id, "session", "events.jsonl"));
@@ -829,13 +854,13 @@ describe("getTaskEventsPath", () => {
   it("returns null when the runtime omits taskEventsPath", async () => {
     // The default StubRuntime has no taskEventsPath method.
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     expect(await m.getTaskEventsPath(t.id)).toBeNull();
   });
 
   it("returns null when the task doesn't exist", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     expect(await m.getTaskEventsPath("20260101-cafebabe")).toBeNull();
   });
 
@@ -850,7 +875,7 @@ describe("getTaskEventsPath", () => {
       }
     }
     const rt = new Throws();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     expect(await m.getTaskEventsPath(t.id)).toBeNull();
   });
@@ -860,7 +885,7 @@ describe("shutdown", () => {
   it("kills all live tasks and marks them failure with reason 'server shutdown'", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
 
     const t1 = await m.dispatch(dispatchOf({ instructions: "a" }));
     const t2 = await m.dispatch(dispatchOf({ instructions: "b" }));
@@ -877,13 +902,13 @@ describe("shutdown", () => {
 
   it("refuses new dispatch after shutdown is called", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     await m.shutdown();
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/shutting down/);
   });
 
   it("is idempotent — calling shutdown twice doesn't throw", async () => {
-    const m = makeManager();
+    const { m } = makeManager();
     await m.shutdown();
     await m.shutdown();
   });
@@ -895,7 +920,7 @@ describe("shutdown", () => {
   // that beat us to the punch with a clean exit still records `success`.
   it("does not misclassify a self-exiting task as 'server shutdown'", async () => {
     const rt = new StubRuntime();
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     // Trigger the natural success exit BEFORE invoking shutdown. The
@@ -938,7 +963,7 @@ describe("shutdown", () => {
           return original.call(rt, opts);
         },
     });
-    const m = makeManager({ runtime: rt });
+    const { m } = makeManager({ runtime: rt });
     const dispatched = m.dispatch(dispatchOf());
 
     // Flip shutdown while the dispatch is parked inside spawnHold.
@@ -976,13 +1001,9 @@ describe("recoverOrphaned", () => {
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
     };
-    await writeFile(
-      path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
-      "utf8",
-    );
+    const { m, repo } = makeManager();
+    await repo.save(orphan);
 
-    const m = makeManager();
     await m.recoverOrphaned();
 
     const after = await m.get(id);
@@ -1005,13 +1026,9 @@ describe("recoverOrphaned", () => {
       endedAt: "2026-05-08T01:00:02.000Z",
       result: { output: "ok" },
     };
-    await writeFile(
-      path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...done }, null, 2),
-      "utf8",
-    );
+    const { m, repo } = makeManager();
+    await repo.save(done);
 
-    const m = makeManager();
     await m.recoverOrphaned();
 
     const after = await m.get(id);
@@ -1021,7 +1038,7 @@ describe("recoverOrphaned", () => {
 
   it("is a no-op when the tasks directory doesn't exist", async () => {
     await rm(tasksDir, { recursive: true, force: true });
-    const m = makeManager();
+    const { m } = makeManager();
     await expect(m.recoverOrphaned()).resolves.toBeUndefined();
   });
 
@@ -1050,14 +1067,10 @@ describe("recoverOrphaned", () => {
         createdAt: "2026-05-08T01:00:00.000Z",
         startedAt: "2026-05-08T01:00:01.000Z",
       };
-      await writeFile(
-        path.join(workdir, TASK_FILE_NAME),
-        JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
-        "utf8",
-      );
 
       const r = recorder();
-      const m = makeManager({ logger: r.logger });
+      const { m, repo } = makeManager({ logger: r.logger });
+      await repo.save(orphan);
       await m.recoverOrphaned();
 
       const after = await m.get(id);
@@ -1086,13 +1099,9 @@ describe("recoverOrphaned", () => {
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
     };
-    await writeFile(
-      path.join(workdir, TASK_FILE_NAME),
-      JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, ...orphan }, null, 2),
-      "utf8",
-    );
+    const { m, repo } = makeManager();
+    await repo.save(orphan);
 
-    const m = makeManager();
     await m.recoverOrphaned();
 
     const after = await m.get(id);

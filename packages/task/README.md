@@ -102,15 +102,19 @@ delete operation — Task is a history accumulator.
 
 ## On-disk layout
 
+Each task has two stores: queryable metadata in a SQLite row, and an
+on-disk workdir for agent artifacts.
+
 ```
-<workspace>/tasks/<task-id>/
-├── task.json                 # PersistedTask = { schemaVersion: 1, task: Task }
-├── session/                  # junction → runtime's per-task state dir,
-│                             #   e.g. ~/.copilot/session-state/<runtimeSessionId>/
-│                             #   under copilot. The exact target and the files
-│                             #   inside are the runtime adapter's concern.
-├── stderr.log                # bug-out only — runtime CLI errors before session exists
-└── ...                       # whatever the agent writes
+<workspace>/tasks/
+├── tasks.db              # SQLite — one row per task: status, runtime, agent, timings, …
+└── <task-id>/            # workdir for task <task-id>
+    ├── session/          # junction → runtime's per-task state dir, e.g.
+    │                     #   ~/.copilot/session-state/<runtimeSessionId>/
+    │                     #   under copilot. The exact target and the files
+    │                     #   inside are the runtime adapter's concern.
+    ├── stderr.log        # bug-out only — runtime CLI errors before session exists
+    └── …                 # whatever the agent writes
 ```
 
 The runtime adapter exposes the event log path through
@@ -121,8 +125,17 @@ it. Today the only adapter (`@emploke/runtime` Copilot) returns
 log somewhere else, name it differently, or skip the surface entirely
 by omitting the method.
 
-`task.json` writes are atomic (rename-after-write) with EPERM/EACCES retry
-to survive concurrent reads on Windows.
+The workdir contains **no metadata sidecar file** — the directory name
+is the only source of truth for the task ID, and every queryable field
+lives in `tasks.db`. The runtime metadata bag the kernel never reads
+(PID, runtime session id, etc.) is stored as JSON in a `metadata`
+column; the indexed `runtime` field is promoted to a first-class
+column for filtering.
+
+> Why SQLite for task metadata (and FS for the workdir)?
+> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
+> for the project-wide decision rule. Task metadata uses the hybrid
+> pattern: queryable fields in SQLite, agent product on FS.
 
 ## Manager lifecycle
 

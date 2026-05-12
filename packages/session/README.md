@@ -18,9 +18,21 @@ You launch Copilot yourself.
 
 ## Layout
 
-Each session lives at `<sessionsDir>/<id>/` where `<sessionsDir>` is the
-directory the caller passes to `SessionManager` (the server hands through
-`<workspace>/sessions/`) and `<id>` is a short date-prefixed identifier:
+Each session has two stores: queryable metadata in a SQLite row, and
+an on-disk workdir for the agent's actual product.
+
+```
+<sessionsDir>/
+├── sessions.db          # SQLite — one row per session: runtime, createdAt, …
+└── <id>/                # workdir for session <id>
+    ├── AGENTS.md        # baked by the runtime provisioner
+    ├── .github/skills/  # …and whatever else the provisioner wrote
+    └── …                # plus anything the agent itself produces
+```
+
+`<sessionsDir>` is the directory the caller passes to `SessionManager`
+(the server hands through `<workspace>/sessions/`). `<id>` is a short
+date-prefixed identifier:
 
 ```
 YYYYMMDD-xxxxxxxx
@@ -28,12 +40,16 @@ e.g. 20260508-9dfbdf05
 ```
 
 The 8-hex-char suffix gives ~4 billion values per day, more than enough for
-ad-hoc creation. The directory contains exactly what the provisioner wrote
-(`AGENTS.md` with YAML frontmatter, `.github/skills/`, `.mcp.json`, etc.) —
-**no extra metadata file**. The agent name is parsed from the AGENTS.md
-frontmatter at read time; `createdAt` comes from the workdir's birthtime.
+ad-hoc creation. The workdir contains **no metadata sidecar file** — the
+agent name is parsed from `AGENTS.md` frontmatter at read time, and
+`runtime` / `createdAt` / `runtimeSessionId` / `lastLaunchMode` come
+from the row in `sessions.db`. The directory name is the **only source
+of truth for the session ID**.
 
-The directory name is the **only source of truth for the session ID**.
+> Why SQLite for session metadata (and FS for the workdir)?
+> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
+> for the project-wide decision rule. Session metadata uses the
+> hybrid pattern: queryable fields in SQLite, agent product on FS.
 
 ## Usage
 

@@ -12,8 +12,7 @@ maps opaque UUIDs to absolute workspace paths.
 
 - **`Workspace`** — flat domain value: `{ id, name, createdAt, workdir,
   defaults? }`. The `workdir` is the only filesystem field; everything
-  else is pure metadata that survives a backend swap (FS today, SQLite
-  tomorrow).
+  else is pure metadata.
 - **The `id`** is an opaque UUID, the URL routing key in the HTTP API.
   Stable for the lifetime of the registry entry — dashboard URLs
   survive workspace renames.
@@ -21,8 +20,8 @@ maps opaque UUIDs to absolute workspace paths.
   pencil icon. Has no routing significance.
 - **Standard subdirs** — `sessions/`, `tasks/`, `catalog/`. Created
   at `init`; computed from `workdir`
-  by the `workspaceLayout` helper. Not stored on the type so a
-  SQLite-backed repository wouldn't have to round-trip the layout.
+  by the `workspaceLayout` helper. Not stored on the type so the
+  repository contract has no on-disk path coupling.
 
 ## Quick start
 
@@ -104,6 +103,12 @@ Two implementations ship:
   for fast unit tests. Mirrors the FS impl's id validation + path
   conflict semantics so tests can't pass on inputs that production
   would reject.
+
+> Why FS for workspace (and not SQLite)?
+> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
+> for the project-wide decision rule. Workspace data is small N
+> (1–10 entries per user), trivial query surface, and
+> hand-editable JSON has real operational value.
 
 ## On-disk wire format
 

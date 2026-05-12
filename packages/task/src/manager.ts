@@ -17,8 +17,8 @@ import {
 import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
 import { createDirJunction } from "./junction.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import { FsTaskRepository } from "./repositories/fs-task-repository.js";
 import type { TaskRepository } from "./repositories/repository.js";
+import { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
 import type {
   DispatchOpts,
@@ -151,7 +151,8 @@ export class TaskManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
-    this.repository = config.repository ?? new FsTaskRepository({ tasksDir: this.tasksDir });
+    this.repository =
+      config.repository ?? new SqliteTaskRepository(path.join(this.tasksDir, "tasks.db"));
     this.logger = config.logger ?? silentLogger;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
@@ -821,6 +822,33 @@ export class TaskManager {
     // status. The watcher reads `liveEntry.killedByUs` AT exit time to
     // decide between "server shutdown" and the natural exit reason.
     await Promise.allSettled(snapshot.map((l) => l.settled));
+  }
+
+  // ─── close ───────────────────────────────────────────────
+
+  /**
+   * Release the underlying repository handle. After `close()`, the
+   * manager must not be used. Idempotent.
+   *
+   * Servers that swap or evict a `TaskManager` (e.g. `WorkspaceContextCache`
+   * on workspace removal / cache reload) must call this so the SQLite
+   * file handle releases — Windows requires it before the workspace
+   * directory can be `rm`-ed. `shutdown()` deliberately does NOT call
+   * `close()` because consumers commonly inspect persisted state
+   * (`m.get(id)`) after shutdown to confirm terminal-status writes
+   * completed; closing the DB out from under those reads would defeat
+   * the inspection. Call `close()` separately when you're truly done
+   * with the manager.
+   */
+  close(): void {
+    const repo = this.repository as { close?: () => void };
+    if (typeof repo.close === "function") {
+      try {
+        repo.close();
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   // ─── internals ───────────────────────────────────────────

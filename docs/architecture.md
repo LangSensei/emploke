@@ -105,6 +105,84 @@ when an entity rewrite forgets to use them; the parameterised
 regression test in `packages/catalog/test/fs-repositories.test.ts`
 spies on `writeFileAtomic` to keep that from happening again.
 
+## Backend selection: when FS, when SQLite
+
+emploke deliberately does **not** abstract over its persistence
+backend. Each entity package picks the storage shape that matches its
+data, and the rule below is the contract every new entity should follow.
+
+**Use FS when ALL of these hold:**
+
+- Data is per-id documents (one row → one file)
+- N per workspace stays small (tens, occasionally low hundreds)
+- Queries are list / read-by-id / single-field filter
+- No BLOB content
+- No cross-entity graph traversal
+- No full-text search
+- Operational benefit from a human-readable on-disk format
+  (debugging, recovery, `git diff`, hand-edits)
+
+Per-id JSON via `@emploke/fs.writeJsonAtomic` + `readJson`. Listing
+scans the directory. Filters apply in memory after read.
+
+**Today:** `workspace` (small N, no complex queries, value of
+hand-editable `workspace.json` outweighs the cost of `readdir` +
+N JSON parses).
+
+**Use SQLite when ANY of these hold:**
+
+- Cross-entity joins or dependency-graph traversal
+- Many rows (1000+) where directory scan + per-row read becomes the
+  bottleneck
+- Filtering / sorting / aggregation queries are primary access patterns
+- BLOB content where holding it all in memory is infeasible
+- Full-text search or indexed range queries
+
+One `*.db` file per **(package, workspace)** pair via `node:sqlite`
+(no external dependency). Each entity package owns its own `*.db`
+file inside its existing per-workspace subdirectory
+(`<workspaceRoot>/<entity>/<entity>.db`). The repository owns the
+schema, migrations, and indexes for that file. The manager holds no
+in-memory snapshot — SQLite is the source of truth and reads run in
+autocommit so external writes are observable on the next request.
+
+**Today:** `catalog` (cross-entity dep graph + BLOB content),
+`session` (status/runtime/time filtering at projected scale of
+thousands of sessions per workspace), `task` (same plus dashboard
+aggregation across workspaces).
+
+### Hybrid: when an entity has both metadata and content
+
+`session` and `task` use a **hybrid** pattern: SQLite owns the
+queryable metadata; FS owns the human-meaningful content. The
+metadata sidecar (`session.json` / `task.json`) moves into a row of
+the entity's `*.db`; the workdir directory tree
+(`<workspaceRoot>/sessions/<sid>/...` for session, `.../tasks/<tid>/`
+for task) stays a plain directory of agent-produced files (AGENTS.md,
+artifacts, runtime junctions). Deleting the entity removes both.
+
+This split keeps the workdir-as-product invariant (`cd` into a session
+workdir, find the agent's actual output, grep it, commit it to your
+own git history) while moving the metadata into a shape that scales
+to thousands of rows under filtering / sorting queries.
+
+### Why no unified persistence service
+
+#32 explored a generic `PersistenceService` (Phase 2 of the proposed
+`@emploke/storage`). It was deliberately not built. The shared
+concerns — atomic write, cross-process lock, EPERM retry, TOCTOU
+defence — already live in `@emploke/fs`. Beyond that, each entity's
+repository surface is shaped by its own queries:
+`WorkspaceRepository.getCurrent()`,
+`TaskRepository.list({ statuses, runtime, ... })`,
+`CatalogManager.resolveAgent()` (graph). A unified interface would
+force these into either an `unknown`-typed lowest common denominator
+or a parade of entity-specific extension methods that re-introduce
+the per-entity shape it was meant to remove.
+
+The pattern that works: **shared primitives, per-entity repositories,
+per-entity backend choice driven by data shape.**
+
 ## Unified verb conventions
 
 Two verbs are deliberately consistent across every entity:

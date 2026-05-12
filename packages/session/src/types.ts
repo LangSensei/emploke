@@ -41,9 +41,10 @@ export interface SessionManagerConfig {
   readonly workspaceDir: string;
   /**
    * Persistence backend for session state. When omitted, the manager
-   * constructs a `FsSessionRepository({ sessionsDir })` automatically;
-   * tests can inject an `InMemorySessionRepository` (from
-   * `@emploke/session/testing`) to avoid touching the filesystem.
+   * constructs a `SqliteSessionRepository` opened at
+   * `<sessionsDir>/sessions.db` automatically; tests can inject a
+   * `:memory:`-backed `SqliteSessionRepository` (from
+   * `@emploke/session/testing`) to keep state purely in-process.
    */
   readonly repository?: SessionRepository;
   /** Optional logger. Defaults to silent. */
