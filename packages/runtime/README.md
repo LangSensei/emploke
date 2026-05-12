@@ -3,77 +3,102 @@
 Runtime adapter contract + Copilot CLI implementation.
 
 A *runtime* adapts a third-party CLI (GitHub Copilot, Gemini, Claude
-Code, …) for use by emploke. It owns four operations against the CLI's
-on-disk world: provision a workdir, refresh activity, build a launch
-command, delete state. Plus one optional operation: one-shot
-non-interactive task dispatch.
+Code, …) for use by emploke. The interface is **domain-agnostic** —
+it doesn't know about emploke's `Session` / `Task` value types. It
+exposes two execution modes (`-i` interactive vs `-p` headless) plus
+a uniform observability + maintenance surface that works against
+either:
+
+- **Interactive** — `provision` (bake an agent into a workdir) +
+  `buildLaunch` (build the shell command)
+- **Non-interactive** — `dispatch` (spawn the CLI as a detached
+  worker that consumes a prompt and exits)
+- **Observability** — `readMetadata` (title / lastActiveAt) +
+  `readActivity` (paginated parsed timeline) + `streamActivity`
+  (live SSE tail). All keyed by an opaque `runtimeSessionId` string.
+- **Maintenance** — `deleteState` (rm the runtime's recorded state
+  for one `runtimeSessionId`)
 
 Per-runtime preconditions (folder-trust setup, credential refresh,
 license checks, …) live **inside the adapter**, executed lazily at the
-moment they're needed. There is intentionally no cross-runtime
-"register workspace" hook — different CLIs have wildly different
-gating rules and abstracting them just leaks one runtime's internals
-into the others.
+moment they're needed.
 
 ## The contract
 
 ```ts
 interface Runtime {
   readonly kind: string;              // "copilot", "gemini", "claude-code", ...
+  readonly capabilities?: RuntimeCapabilities;
+
+  // ─── Interactive mode (-i) ─────────────────────────────────────
 
   /**
    * Bake `agent` into `workdir`. The runtime pulls bytes from the
    * supplied `catalog` (via skillEntries / agentEntries / getMcpContent),
-   * not via on-disk catalog paths — so a future SQLite-backed catalog
-   * works without code changes here.
+   * not via on-disk catalog paths.
    *
    * Pre-allocating runtimes (CLI accepts `--resume=<uuid>`) return a
    * freshly minted id; discovery-only runtimes return `null` and rely
-   * on refresh() to learn the id later.
+   * on the caller (or a future per-runtime discovery hook) to learn
+   * the id later.
    */
   provision(
     workdir: string,
     agent: AgentResolveResult,
     catalog: CatalogManager,
+    ctx: ProvisionContext,
   ): Promise<{ runtimeSessionId: string | null }>;
 
-  /** Poll the CLI for activity. `null` = no record of this session. */
-  refresh(session: Session): Promise<{
-    lastActiveAt: string;
-    preview: string | null;
-    runtimeSessionId: string;
-  } | null>;
-
   /**
-   * Build the exact `cmd args cwd` the user runs to drop into a
-   * session. `workspaceDir` is the absolute path of the workspace this
-   * session lives under; runtimes whose interactive mode requires a
-   * per-launch precondition keyed off the workspace root use it to
-   * perform that precondition here, lazily, only when the user
-   * actually launches.
-   *
-   * Async by contract: a runtime may need to do a small amount of
-   * idempotent fs work (write a config, refresh a token) before
-   * returning the launch spec. Pure runtimes simply `return { ... }`
-   * without `await`ing anything.
+   * Build the exact `cmd args cwd` the user runs to drop into a CLI
+   * session. `runtimeSessionId === null` ⇒ no `--resume` flag.
+   * `workspaceDir` is the workspace root; runtimes whose interactive
+   * mode requires a per-launch precondition keyed off the workspace
+   * root use it to perform that precondition here, lazily.
    */
-  buildLaunch(session: Session, workspaceDir: string): Promise<LaunchCommand>;
+  buildLaunch(
+    runtimeSessionId: string | null,
+    workdir: string,
+    workspaceDir: string,
+    opts?: BuildLaunchOpts,
+  ): Promise<LaunchCommand>;
 
-  /** Remove the CLI's per-session state. Throws on partial failure. */
-  deleteState(session: Session): Promise<void>;
+  // ─── Non-interactive mode (-p) ─────────────────────────────────
 
   /** Optional: spawn a one-shot non-interactive worker. */
-  dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
+  dispatch?(opts: DispatchOpts): Promise<RuntimeHandle>;
+
+  // ─── Observability ─────────────────────────────────────────────
 
   /**
-   * Optional: read + parse the runtime's per-task event log into the
-   * runtime-neutral `ActivityItem[]` vocabulary, plus the agent's
-   * headline result. End-to-end: the runtime locates its own log
-   * (using `opts.metadata.runtimeSessionId` or whatever it persisted
-   * in the task metadata bag) and never exposes the path or raw
-   * format up to consumers.
+   * Optional: read the runtime's display metadata for one
+   * `runtimeSessionId` — principally a `title` field the CLI
+   * generates from the first user prompt. Returns `null` when the
+   * runtime has no record of the id.
    */
-  taskActivity?(opts: TaskActivityOpts): Promise<TaskActivityResult | null>;
+  readMetadata?(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null>;
+
+  /**
+   * Optional: read + parse the runtime's per-conversation event log
+   * into the runtime-neutral {@link ActivityItem} discriminated
+   * union (`user | assistant | thinking | tool_call | system | summary`),
+   * plus the agent's headline result. Paginated by `cursor` + `limit`;
+   * surfaces `truncated` when the source had to be capped (e.g. raw
+   * file size exceeded the per-runtime cap).
+   */
+  readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
+
+  /**
+   * Optional: live-tail variant. AsyncIterable that yields
+   * `ActivityItem`s as they're written to the runtime's native log,
+   * until `opts.signal` aborts.
+   */
+  streamActivity?(opts: StreamActivityOpts): AsyncIterable<ActivityItem>;
+
+  // ─── Maintenance ───────────────────────────────────────────────
+
+  /** Remove the runtime's recorded state for one runtimeSessionId. */
+  deleteState(runtimeSessionId: string): Promise<void>;
 }
 ```
 
@@ -82,10 +107,11 @@ doesn't fit one of these verbs (telemetry, logging, custom flags) is
 the runtime's private concern and should not leak into emploke's
 surface.
 
-Runtimes are stateless across calls — all per-session data lives
-either in `Session.runtimeSessionId` (an opaque, runtime-specific id)
-or in the CLI's own storage. Runtimes never mutate the `Session` they
-receive; they return updated values that the caller persists.
+Runtimes are stateless across calls — per-conversation data lives
+either keyed by an opaque `runtimeSessionId` (string) or in the CLI's
+own storage. The Runtime layer never imports `Session` or `Task` —
+managers (`@emploke/session`, `@emploke/task`) translate their
+domain concepts into runtime calls at the call site.
 
 ## CopilotRuntime
 
@@ -109,15 +135,15 @@ Key design points:
   subsequent launches resume it. Eliminates the "scan all sessions
   and match by cwd" dance the old impl needed.
 - **Per-launch trust preflight, not workspace-bootstrap.**
-  `buildLaunch(session, workspaceDir)` runs `ensureDirTrusted` against
-  `~/.copilot/config.json` immediately before returning the launch
-  spec, so trust I/O happens at the moment the user actually launches
-  an interactive session — never eagerly at workspace open. The write
-  is idempotent and ancestor-aware: the first launch in a workspace
-  pays one read+write; every subsequent launch passes `isPathCovered`
-  and short-circuits without writing.
-  `dispatchTask` (`copilot -p --yolo`) does not need trust and never
-  touches the file.
+  `buildLaunch(runtimeSessionId, workdir, workspaceDir, opts)` runs
+  `ensureDirTrusted` against `~/.copilot/config.json` immediately
+  before returning the launch spec, so trust I/O happens at the
+  moment the user actually launches an interactive session — never
+  eagerly at workspace open. The write is idempotent and
+  ancestor-aware: the first launch in a workspace pays one
+  read+write; every subsequent launch passes `isPathCovered` and
+  short-circuits without writing. `dispatch` (`copilot -p --yolo`)
+  does not need trust and never touches the file.
 - **Trust file is `config.json`, NOT `settings.json`.** The Copilot
   CLI (verified against 1.0.44) only reads `trustedFolders` from
   `config.json`; entries in `settings.json` are silently ignored, even
@@ -126,9 +152,15 @@ Key design points:
 - **Defends against malformed `runtimeSessionId`.** Every method that
   would compose the id into a filesystem path or `--resume=<id>`
   argument runs it through `isCopilotSessionId` first. Tampered
-  `session.json` with `"../../etc"` degrades gracefully — refresh
-  returns "no activity", deleteState is a no-op, buildLaunch produces
-  a fresh launch (no `--resume`).
+  persisted state with `"../../etc"` degrades gracefully — `readMetadata`
+  returns null, `deleteState` is a no-op, `buildLaunch` produces a
+  fresh launch (no `--resume`).
+- **Activity reads share an internal helper.** `readMetadata` and the
+  legacy session-state reader both go through `readCopilotWorkspaceYaml`
+  so workspace.yaml parsing has one source of truth. `readActivity`
+  reads `events.jsonl` with a 4 MB cap (tail-reads the last N bytes
+  on overflow, surfaces `truncated.size_limit`); `streamActivity`
+  polls + tails the same file with line-at-a-time parsing.
 
 ## How `provision` materialises an agent
 
@@ -163,14 +195,20 @@ Skill order is the topological order the catalog produced.
 2. Pull agent content from the supplied `CatalogManager` arg via
    `agentEntries(name)` / `skillEntries(name)` / `getMcpContent(name)`.
    Never resolve catalog paths from the resolve result.
-3. Implement `dispatchTask` if the CLI supports unattended scripting
+3. Implement `dispatch` if the CLI supports unattended scripting
    (e.g. Copilot's `-p/--prompt` mode). Wire stdout/stderr to log
-   files in the supplied `taskDir`.
-4. Implement `taskActivity(opts)` to read your runtime's per-task log
-   end-to-end and return runtime-neutral `ActivityItem[]` + a derived
-   "headline result" string. The dashboard renders ActivityItems
-   without seeing your log format or storage path.
-5. Register in `packages/server/src/runtime-registry.ts`.
+   files in the supplied `opts.workdir`.
+4. Implement `readActivity` (and ideally `streamActivity`) to read
+   your runtime's per-conversation log end-to-end and return
+   runtime-neutral `ActivityItem[]` + a derived "headline result"
+   string. The dashboard / CLI / future MCP consumers render
+   `ActivityItem`s without seeing your log format or storage path.
+   Pagination via `cursor` + `limit` is mandatory for
+   `readActivity`; `streamActivity` honours `opts.signal` for
+   cleanup on HTTP-client disconnect.
+5. Implement `readMetadata` if the CLI surfaces a session-level
+   display title (Copilot's `workspace.yaml.name`).
+6. Register in `packages/server/src/runtime-registry.ts`.
 
 The dashboard adapts automatically — runtimes are listed via
 `/api/runtimes` and the create-session / dispatch-task forms pick
@@ -182,9 +220,9 @@ them up.
 RuntimeError
 ├── RuntimeNotFoundError                — kind not in registry
 ├── RuntimeProvisionFailed              — provision() threw (workdir prep, catalog read)
-├── RuntimeRefreshFailed                — refresh() threw (CLI state corruption)
+├── RuntimeRefreshFailed                — readMetadata() threw (CLI state corruption)
 ├── RuntimeStateDeletionFailed          — deleteState() threw
-├── RuntimeDispatchTaskFailed           — dispatchTask() spawn / pre-spawn failure
+├── RuntimeDispatchTaskFailed           — dispatch() spawn / pre-spawn failure
 └── (Copilot-specific)
     ├── InvalidMcpJson                  — MCP content failed JSON parse during provision
     ├── WorkdirPrepFailed               — git init / mkdir failed
@@ -199,8 +237,9 @@ RuntimeError
 pnpm --filter @emploke/runtime test
 ```
 
-Tests cover Copilot runtime (provision, refresh, buildLaunch,
-deleteState, dispatchTask) plus path-traversal hardening, trust-file
+Tests cover Copilot runtime (provision, readMetadata, buildLaunch,
+deleteState, dispatch, readActivity with cap + pagination,
+streamActivity with abort) plus path-traversal hardening, trust-file
 locking semantics, and Windows-specific spawn timing.
 
 `packages/runtime/test/copilot/test-catalog.ts` is the in-memory

@@ -18,7 +18,6 @@ import {
   SessionNotFoundError,
   SqliteSessionRepository,
 } from "../src/index.js";
-import type { Session } from "../src/types.js";
 
 // ───── helpers ──────────────────────────────────────────────
 

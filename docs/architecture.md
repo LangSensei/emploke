@@ -170,8 +170,9 @@ the metadata row (the "archive" mode — matches the workspace-wide
 agent output after a delete); `delete(id, { purge: true })`
 additionally removes the workdir AND asks the runtime to wipe its
 own per-entity state (Copilot's `<copilotStateDir>/<id>/` etc.) via
-`Runtime.deleteState` (sessions) / `Runtime.deleteTaskState` (tasks),
-so a hard delete leaves nothing behind across the layers.
+`Runtime.deleteState(runtimeSessionId)` — the same verb is used for
+both sessions and tasks because the runtime is domain-agnostic, so
+a hard delete leaves nothing behind across the layers.
 
 This split keeps the workdir-as-product invariant (`cd` into a session
 workdir, find the agent's actual output, grep it, commit it to your
@@ -261,7 +262,7 @@ production deploy fails fast.
 ├── tasks/
 │   ├── tasks.db                 SQLite — one row per task: status, runtime, agent, timings, …
 │   └── <id>/                    one-shot autonomous dispatch — workdir for agent artifacts
-│       ├── stderr.log           CLI errors (the runtime owns its event log via taskActivity, NOT mirrored here)
+│       ├── stderr.log           CLI errors (the runtime owns its event log via readActivity, NOT mirrored here)
 │       └── ...                  whatever the agent writes
 └── (workflows/, logs/, schedules/ — added when those entities land)
 ```
@@ -273,29 +274,37 @@ would persist no on-disk layout, but the manager would still call
 
 ## How runtimes plug in
 
-A runtime adapts a third-party CLI for emploke. The contract lives at
+A runtime adapts a third-party CLI for emploke. The contract is
+**domain-agnostic**: it knows nothing about emploke's `Session` or
+`Task` value types — managers (`@emploke/session`, `@emploke/task`)
+translate their domain into runtime calls at the call site, keyed
+by an opaque `runtimeSessionId` string. The contract lives at
 [`packages/runtime/src/types.ts`](../packages/runtime/src/types.ts):
 
 ```ts
 interface Runtime {
-  readonly kind: string;                                  // "copilot", "gemini", ...
+  readonly kind: string;                                              // "copilot", "gemini", ...
 
-  provision(workdir, agent, catalog): Promise<{          // bake agent into workdir
-    runtimeSessionId: string | null;                      //   pre-allocate? null = discovery-only
+  // Interactive (-i)
+  provision(workdir, agent, catalog, ctx): Promise<{                  // bake agent into workdir
+    runtimeSessionId: string | null;                                  //   pre-allocate? null = discovery-only
   }>;
+  buildLaunch(runtimeSessionId, workdir, workspaceDir, opts?):        // produce the exact `cmd args cwd`,
+    Promise<LaunchCommand>;                                           //   running per-launch preconditions
+                                                                       //   keyed off workspaceDir
 
-  refresh(session): Promise<{                             // poll the CLI for activity
-    lastActiveAt: string;
-    preview: string | null;
-    runtimeSessionId: string;
-  } | null>;
+  // Non-interactive (-p)
+  dispatch?(opts): Promise<RuntimeHandle>;                            // optional: spawn one-shot worker
 
-  buildLaunch(session, workspaceDir): Promise<LaunchCommand>;  // produce the exact `cmd args cwd`,
-                                                                //   optionally running per-launch
-                                                                //   preconditions keyed off workspaceDir
-  deleteState(session): Promise<void>;                    // remove CLI's per-session state
-  dispatchTask?(opts): Promise<TaskHandle>;               // optional: one-shot non-interactive
-  taskActivity?(opts): Promise<TaskActivityResult|null>;  // optional: read+parse runtime log into ActivityItem[]
+  // Observability (uniform across modes; keyed by runtimeSessionId)
+  readMetadata?(runtimeSessionId):                                    // optional: title / lastActiveAt
+    Promise<RuntimeSessionMetadata | null>;
+  readActivity?(opts):                                                // optional: parsed timeline,
+    Promise<ActivityResult | null>;                                   //   paginated by cursor + limit
+  streamActivity?(opts): AsyncIterable<ActivityItem>;                 // optional: live SSE tail
+
+  // Maintenance
+  deleteState(runtimeSessionId): Promise<void>;                       // remove CLI's recorded state
 }
 ```
 
@@ -368,8 +377,9 @@ different "what hand-editing does" story:
 - **the runtime adapter** owns its own per-session / per-task state
   outside the workdir entirely (Copilot:
   `~/.copilot/<runtimeSessionId>/`). Emploke never reads it as a
-  filesystem path; the typed `Runtime.refresh()` /
-  `Runtime.taskActivity()` API surface is the only bridge.
+  filesystem path; the typed `Runtime.readMetadata()` /
+  `Runtime.readActivity()` / `Runtime.streamActivity()` API surface is
+  the only bridge.
 
 ### Why the contract matters
 
@@ -441,17 +451,20 @@ To add e.g. a Gemini adapter:
 1. Implement the `Runtime` interface in `packages/runtime/src/gemini/`
    following the Copilot impl as a reference. Pre-allocating runtimes
    (CLI accepts `--resume=<arbitrary-uuid>`) return a fresh UUID from
-   `provision`; discovery-only runtimes return `null` and rely on
-   `refresh` to learn the id later.
-2. Implement `dispatchTask` if the CLI supports unattended scripting.
+   `provision`; discovery-only runtimes return `null` and rely on a
+   per-runtime discovery hook to learn the id later.
+2. Implement `dispatch` if the CLI supports unattended scripting.
    Pull agent + skill content from the supplied `catalog` argument
    via `agentEntries` / `skillEntries`; write into the supplied
-   `taskDir`. Never resolve catalog paths from the resolve result.
-3. Implement `taskActivity` to read your runtime's per-task log
-   end-to-end (find file → read → parse → derive headline) and return
-   the runtime-neutral `{ activity: ActivityItem[], result: string|null }`.
-   The dashboard renders ActivityItems without ever seeing your log
-   format or path.
+   `opts.workdir`. Never resolve catalog paths from the resolve result.
+3. Implement `readActivity` (and ideally `streamActivity`) to read
+   your runtime's per-conversation log end-to-end (find file → read →
+   parse → derive headline) and return runtime-neutral `ActivityItem[]`
+   plus `result`. Pagination via `cursor` + `limit` is mandatory for
+   `readActivity`; `streamActivity` honours `opts.signal` for
+   cleanup. Implement `readMetadata` if the CLI surfaces a session-
+   level display title. The dashboard / CLI / future MCP renders
+   `ActivityItem`s without ever seeing your log format or path.
 4. Register the runtime in the `RuntimeRegistry` at
    `packages/server/src/runtime-registry.ts`.
 
