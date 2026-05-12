@@ -475,7 +475,7 @@ describe("list()", () => {
     expect(persisted.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
-  it("sorts active sessions by lastActiveAt desc, never-launched ones at the bottom (#43)", async () => {
+  it("sorts never-launched sessions first, then active by lastActiveAt desc (#43)", async () => {
     const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -484,10 +484,10 @@ describe("list()", () => {
       workspaceDir: scratch,
     });
     // Three sessions: a is older but active in 2099, b/c are never launched
-    // (lastActiveAt === null). The new sort puts active first, then null
-    // by createdAt desc — so order is [a, c, b] regardless of c's
-    // createdAt-> Wait: actually b is the second-created, c is third, so
-    // createdAt(c) > createdAt(b). Result must be [a (active), c (newer null), b (older null)].
+    // (lastActiveAt === null). Never-launched sessions ALWAYS go first
+    // regardless of createdAt, secondary sort by createdAt desc — so a
+    // freshly created session is immediately findable at the top of the
+    // list. Order is [c (newer null), b (older null), a (active)].
     rt.refreshResult = null;
     const a = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
@@ -500,7 +500,7 @@ describe("list()", () => {
       runtimeSessionId: rt.provisionId as string,
     });
     const out = await m.list();
-    expect(out.map((r) => r.id)).toEqual([a.id, c.id, b.id]);
+    expect(out.map((r) => r.id)).toEqual([c.id, b.id, a.id]);
   });
 
   it("activeSince filter drops sessions whose lastActiveAt is null or older than the cutoff", async () => {
