@@ -32,7 +32,7 @@ import { TrustRegistrationFailed } from "./errors.js";
  *
  * # When this runs (lazy, per-launch)
  *
- * `ensureDirTrusted` is called from `CopilotRuntime.buildLaunch` as a
+ * `ensureDirTrusted` is called from `CopilotRuntime.buildInteractiveLaunch` as a
  * pre-launch preflight, NOT from a workspace-bootstrap hook. The first
  * interactive launch in a workspace pays one read+write of `config.json`;
  * every subsequent launch hits the "already covered" early return after
@@ -53,20 +53,20 @@ import { TrustRegistrationFailed } from "./errors.js";
  * The atomic-write + cross-process lock primitives come from
  * `@emploke/fs` (the same primitives every `Fs*Repository` uses). The
  * lock has PID-based stale recovery and the write goes through a tmp
- * file + rename, so concurrent buildLaunch preflights from multiple
+ * file + rename, so concurrent buildInteractiveLaunch preflights from multiple
  * dashboard sessions cannot lose-update each other or partially write
  * `config.json`.
  */
 
 /**
  * Make sure `dir` is covered by `<configPath>.trustedFolders` so the
- * spawned interactive Copilot CLI (`-i`, see `buildLaunch`) does not
+ * spawned interactive Copilot CLI (`-i`, see `buildInteractiveLaunch`) does not
  * interrupt the user with a per-folder trust prompt.
  *
  * `configPath` is normally `~/.copilot/config.json` — see the module
  * jsdoc for why this file (and not `settings.json`) is the correct
  * authority for `trustedFolders`. The Copilot `-p --yolo` mode used by
- * `dispatchTask` has no folder-trust gate at all and therefore does
+ * `launchCopilotHeadless` has no folder-trust gate at all and therefore does
  * NOT call this function.
  *
  * Coverage rules (see `isPathCovered`):
@@ -75,13 +75,13 @@ import { TrustRegistrationFailed } from "./errors.js";
  *
  * Concurrency: the entire read-modify-write sequence runs under
  * `withFileLock(<configPath>.lock)`. Without the lock, two concurrent
- * buildLaunch preflights could both pass `isPathCovered` before either
+ * buildInteractiveLaunch preflights could both pass `isPathCovered` before either
  * wrote, then the second `writeJsonAtomic` would clobber the first
  * writer's unrelated changes.
  *
  * Failure modes — every failure path (mkdir, lock timeout, atomic
  * write, parent permissions) is wrapped as {@link TrustRegistrationFailed}.
- * That gives `buildLaunch` a single, typed catch surface and preserves
+ * That gives `buildInteractiveLaunch` a single, typed catch surface and preserves
  * the underlying message (which for {@link FsLockTimeoutError} includes
  * the holder PID — the operator's only handle to a wedged trust write).
  *

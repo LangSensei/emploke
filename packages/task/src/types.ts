@@ -45,7 +45,7 @@ export type TerminalStatus = "success" | "failure" | "cancelled";
  * `stderr.log`. The runtime's per-task event stream lives on the
  * runtime's own state directory (e.g.
  * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`) and is read
- * via `Runtime.taskActivity` rather than mirrored into the workdir.
+ * via `Runtime.readActivity` rather than mirrored into the workdir.
  * The `output` string is intentionally minimal and may be empty:
  * today `TaskManager` always writes `""` here. A future, agent-driven
  * completion model (where the agent submits a structured deliverable

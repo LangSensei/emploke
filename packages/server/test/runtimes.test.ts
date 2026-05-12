@@ -21,7 +21,7 @@ function stubRuntime(kind: string, capabilities?: { remoteSession?: boolean }) {
     ...(capabilities !== undefined ? { capabilities } : {}),
     provision: async () => "x",
     refresh: async () => null,
-    buildLaunch: async () => ({ cmd: "x", args: [], cwd: "/", display: "x" }),
+    buildInteractiveLaunch: async () => ({ cmd: "x", args: [], cwd: "/", display: "x" }),
     deleteState: async () => undefined,
   };
 }

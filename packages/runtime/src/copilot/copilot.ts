@@ -13,9 +13,9 @@ import type { PlaceholderContext } from "../placeholders.js";
 import type {
   ActivityItem,
   ActivityResult,
-  BuildLaunchOpts,
-  DispatchOpts,
+  BuildInteractiveLaunchOpts,
   LaunchCommand,
+  LaunchHeadlessOpts,
   ProvisionContext,
   ReadActivityOpts,
   Runtime,
@@ -30,13 +30,13 @@ import {
   deriveCopilotResult,
   parseCopilotActivity,
 } from "./activity.js";
-import {
-  type DispatchCopilotTaskDeps,
-  type DispatchCopilotTaskOpts,
-  dispatchCopilotTask,
-} from "./dispatch-task.js";
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
+import {
+  type LaunchCopilotHeadlessDeps,
+  type LaunchCopilotHeadlessOpts,
+  launchCopilotHeadless,
+} from "./launch-headless.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { readCopilotSessionState, readCopilotWorkspaceYaml } from "./state.js";
 import { ensureDirTrusted } from "./trust.js";
@@ -62,8 +62,8 @@ export interface CopilotRuntimeConfig {
    *
    * Tests pass a tmp path so the real user config file is never mutated.
    *
-   * Used exclusively by `buildLaunch` (interactive mode preflight); per-
-   * session `provision` and per-task `dispatchTask` do NOT touch this
+   * Used exclusively by `buildInteractiveLaunch` (interactive mode preflight); per-
+   * session `provision` and per-task `launchHeadless` do NOT touch this
    * file (see class jsdoc for the per-mode trust matrix).
    */
   readonly copilotConfigPath?: string;
@@ -84,12 +84,12 @@ export interface CopilotRuntimeConfig {
    */
   readonly randomUUID?: () => string;
   /**
-   * Optional injection of the dispatch dependencies. Production callers
+   * Optional injection of the headless-launch dependencies. Production callers
    * leave this unset; tests pass a stub spawn / mkdir to avoid actually
    * launching the CLI. `copilotStateDir` and `randomUUID` here, if
-   * provided, override the top-level options for dispatch only.
+   * provided, override the top-level options for headless launch only.
    */
-  readonly dispatchDeps?: Partial<DispatchCopilotTaskDeps>;
+  readonly headlessDeps?: Partial<LaunchCopilotHeadlessDeps>;
 }
 
 /**
@@ -112,14 +112,14 @@ export interface CopilotRuntimeConfig {
  *   | mode                | folder-trust gate?           | how to satisfy                |
  *   |---------------------|------------------------------|-------------------------------|
  *   | `-i` (interactive)  | yes — `cwd` (or an ancestor) | write `cwd` (or an ancestor)  |
- *   |  i.e. `buildLaunch` |   must be in                 |   to `~/.copilot/config.json` |
+ *   |  i.e. `buildInteractiveLaunch` |   must be in            |   to `~/.copilot/config.json` |
  *   |                     |   `config.json.trustedFolders` |  `trustedFolders`           |
  *   |                     |   else CLI shows blocking    |                               |
  *   |                     |   "Confirm folder trust"     |                               |
  *   |                     |   prompt                     |                               |
  *   |---------------------|------------------------------|-------------------------------|
  *   | `-p --yolo`         | none                         | nothing — `--yolo` (which     |
- *   |  i.e. `dispatchTask`|   (verified: even cross-     |   includes `--allow-all-paths`)|
+ *   |  i.e. `launchHeadless`|   (verified: even cross-   |   includes `--allow-all-paths`)|
  *   |                     |    drive absolute paths      |   bypasses the gate entirely  |
  *   |                     |    work with empty           |                               |
  *   |                     |    `trustedFolders`)         |                               |
@@ -140,13 +140,13 @@ export interface CopilotRuntimeConfig {
  *   `--add-dir` shims do not work as a transient. The only working knob
  *   for `-i` is the persistent `config.json` entry.
  *
- * Concretely, `buildLaunch(session, workspaceDir)` ensures `workspaceDir`
+ * Concretely, `buildInteractiveLaunch(session, workspaceDir)` ensures `workspaceDir`
  * is covered by `config.json.trustedFolders` immediately before returning
  * the launch spec — so trust I/O happens at the moment the user actually
  * launches an interactive session, not eagerly when the workspace is
  * registered. The write is idempotent and ancestor-aware: the first
  * launch in a workspace pays one read+write; every subsequent launch
- * passes `isPathCovered` and short-circuits without writing. `dispatchTask`
+ * passes `isPathCovered` and short-circuits without writing. `launchHeadless`
  * never touches the file because `-p --yolo` does not need trust.
  *
  * SECURITY: every method that would compose `runtimeSessionId` into a
@@ -154,7 +154,7 @@ export interface CopilotRuntimeConfig {
  * `isCopilotSessionId` first. A tampered `session.json` with a malicious id
  * (e.g. `"../../etc"` for path-traversal, or one with shell metacharacters
  * for the display string) is treated as if the id were null — refresh
- * returns "no activity", deleteState is a no-op, and buildLaunch produces a
+ * returns "no activity", deleteState is a no-op, and buildInteractiveLaunch produces a
  * fresh launch (no --resume). That degrades gracefully for the user and
  * keeps the surface immune to malformed persisted state.
  */
@@ -169,7 +169,7 @@ export class CopilotRuntime implements Runtime {
    *
    * - `remoteSession`: Copilot CLI 1.0.44+ accepts `--remote` to bridge
    *   the interactive session to a browser / mobile app via GitHub. See
-   *   {@link buildLaunch} for the per-launch wiring.
+   *   {@link buildInteractiveLaunch} for the per-launch wiring.
    */
   readonly capabilities: RuntimeCapabilities = {
     remoteSession: true,
@@ -179,14 +179,14 @@ export class CopilotRuntime implements Runtime {
   private readonly copilotConfigPath: string;
   private readonly globalDir: string;
   private readonly randomUUID: () => string;
-  private readonly dispatchDeps: Partial<DispatchCopilotTaskDeps>;
+  private readonly headlessDeps: Partial<LaunchCopilotHeadlessDeps>;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
     this.globalDir = config.globalDir ?? DEFAULT_GLOBAL_DIR;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
-    this.dispatchDeps = config.dispatchDeps ?? {};
+    this.headlessDeps = config.headlessDeps ?? {};
   }
 
   async provision(
@@ -232,11 +232,11 @@ export class CopilotRuntime implements Runtime {
    * still runs; that is not a security concern because workspaceDir is
    * controlled by the caller (server, not user input).
    */
-  async buildLaunch(
+  async buildInteractiveLaunch(
     runtimeSessionId: string | null,
     workdir: string,
     workspaceDir: string,
-    opts: BuildLaunchOpts = {},
+    opts: BuildInteractiveLaunchOpts = {},
   ): Promise<LaunchCommand> {
     if (opts.remote === true && this.capabilities.remoteSession !== true) {
       // Defensive: shouldn't fire because we set the capability above,
@@ -286,17 +286,17 @@ export class CopilotRuntime implements Runtime {
 
   /**
    * Spawn copilot non-interactively against `opts.workdir` to consume
-   * `opts.prompt` unattended. Delegates to `dispatchCopilotTask` so the
+   * `opts.prompt` unattended. Delegates to `launchCopilotHeadless` so the
    * spawn machinery stays isolated and unit-testable. The returned
    * {@link RuntimeHandle} carries the runtime session id (so callers
    * can persist it for later inspection) and a pre-resolved
    * `sessionDir` Promise pointing at the just-created
    * `<copilotStateDir>/<id>/`.
    */
-  async dispatch(opts: DispatchOpts): Promise<RuntimeHandle> {
-    return dispatchCopilotTask(
+  async launchHeadless(opts: LaunchHeadlessOpts): Promise<RuntimeHandle> {
+    return launchCopilotHeadless(
       {
-        // dispatchCopilotTask still uses the legacy `taskDir` field
+        // launchCopilotHeadless still uses the legacy `taskDir` field
         // name internally (Copilot-specific impl detail). Map it.
         taskDir: opts.workdir,
         agent: opts.agent,
@@ -308,7 +308,7 @@ export class CopilotRuntime implements Runtime {
         copilotStateDir: this.copilotStateDir,
         globalDir: this.globalDir,
         randomUUID: this.randomUUID,
-        ...this.dispatchDeps,
+        ...this.headlessDeps,
       },
     );
   }
@@ -516,7 +516,7 @@ export class CopilotRuntime implements Runtime {
 
 /**
  * Maximum bytes we'll read from `events.jsonl` in one
- * {@link CopilotRuntime.taskActivity} call. Sized to comfortably
+ * {@link CopilotRuntime.readActivity} call. Sized to comfortably
  * fit a long autonomous run (hundreds of turns) without risking
  * OOM. When exceeded, we tail-read the last N bytes and mark the
  * response truncated.
@@ -524,7 +524,7 @@ export class CopilotRuntime implements Runtime {
 const COPILOT_RAW_READ_CAP_BYTES = 4 * 1024 * 1024;
 
 /**
- * Poll interval for {@link CopilotRuntime.taskActivityStream}. 250ms
+ * Poll interval for {@link CopilotRuntime.streamActivity}. 250ms
  * is the upper bound on perceived dashboard latency for live-tail;
  * faster than this risks burning CPU on idle tasks.
  */
@@ -532,7 +532,7 @@ const COPILOT_TAIL_POLL_MS = 250;
 
 /**
  * Return the id if it's a syntactically-valid copilot session id, else null.
- * Centralised so refresh/buildLaunch/deleteState all defend against tampered
+ * Centralised so refresh/buildInteractiveLaunch/deleteState all defend against tampered
  * persisted state in the same way.
  */
 function safeCopilotId(id: string | null): string | null {

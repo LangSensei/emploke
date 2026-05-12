@@ -209,7 +209,7 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
   });
 
-  it("does NOT touch any settings file (trust handling moved to the buildLaunch preflight)", async () => {
+  it("does NOT touch any settings file (trust handling moved to the buildInteractiveLaunch preflight)", async () => {
     const t = targetDir();
     const configPath = path.join(scratch, "copilot-config.json");
     expect(await exists(configPath)).toBe(false);

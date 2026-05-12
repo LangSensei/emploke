@@ -16,7 +16,7 @@ This package ships two layers:
   FSM directly.
 - **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
   task's metadata to `tasks.db` (one SQLite row per task), dispatches via
-  `Runtime.dispatch`, watches the subprocess to fold the terminal
+  `Runtime.launchHeadless`, watches the subprocess to fold the terminal
   exit into the task value, and forwards activity reads to
   `Runtime.readActivity` / `Runtime.streamActivity` (the runtime owns
   its own event log end-to-end — emploke does NOT mirror it back into
@@ -145,7 +145,7 @@ column for filtering.
 ## Manager lifecycle
 
 - `dispatch(opts)` — reserves a task dir, persists `not_started`, calls
-  `Runtime.dispatch`, applies `start` with the runtime metadata, and
+  `Runtime.launchHeadless`, applies `start` with the runtime metadata, and
   schedules the subprocess watcher. Returns the running `Task`.
 - `list()` / `get(id)` — read-only.
 - `delete(id)` — kills if live, awaits exit, then `rm -rf` the workdir.

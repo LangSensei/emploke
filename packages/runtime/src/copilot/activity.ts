@@ -99,7 +99,7 @@ export interface ParseLineResult {
 /**
  * Stateful per-stream parser used by both
  * {@link parseCopilotActivity} (one shot) and
- * `CopilotRuntime.taskActivityStream` (live tail). Maintains the
+ * `CopilotRuntime.streamActivity` (live tail). Maintains the
  * tool-call merge map across line boundaries so begin/end events
  * arriving in separate writes still merge.
  *

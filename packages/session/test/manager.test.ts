@@ -159,7 +159,7 @@ class StubRuntime implements Runtime {
     return this.readMetadataResult;
   }
 
-  async buildLaunch(
+  async buildInteractiveLaunch(
     runtimeSessionId: string | null,
     workdir: string,
     workspaceDir: string,
@@ -744,7 +744,7 @@ describe("delete()", () => {
 
 // ───── buildLaunch ──────────────────────────────────────────
 
-describe("buildLaunch()", () => {
+describe("buildInteractiveLaunch()", () => {
   it("returns launch command for a real session", async () => {
     const rt = new StubRuntime();
     const m = buildManager({
@@ -754,7 +754,7 @@ describe("buildLaunch()", () => {
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    const c = await m.buildLaunch(s.id);
+    const c = await m.buildInteractiveLaunch(s.id);
     expect(c.cmd).toBe("stub");
     expect(c.cwd).toBe(s.workdir);
     expect(c.args).toEqual([`--id=${s.runtimeSessionId}`]);
@@ -783,7 +783,7 @@ describe("buildLaunch()", () => {
       workspaceDir: scratch,
     });
     const s = await m.create({ agent: "demo" });
-    const c = await m.buildLaunch(s.id);
+    const c = await m.buildInteractiveLaunch(s.id);
     expect(c.args).toEqual(["--id=abcdef12-3456-7890-abcd-ef1234567890"]);
   });
 
@@ -794,7 +794,9 @@ describe("buildLaunch()", () => {
       sessionsDir,
       workspaceDir: scratch,
     });
-    await expect(m.buildLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(SessionNotFoundError);
+    await expect(m.buildInteractiveLaunch("20260508-deadbeef")).rejects.toBeInstanceOf(
+      SessionNotFoundError,
+    );
   });
 
   it("persists lastLaunchMode after a successful launch", async () => {
@@ -808,9 +810,9 @@ describe("buildLaunch()", () => {
       repository: repo,
     });
     const s = await m.create({ agent: "demo" });
-    await m.buildLaunch(s.id, { remote: true });
+    await m.buildInteractiveLaunch(s.id, { remote: true });
     expect((await repo.read(s.id))?.lastLaunchMode).toBe("remote");
-    await m.buildLaunch(s.id, { remote: false });
+    await m.buildInteractiveLaunch(s.id, { remote: false });
     expect((await repo.read(s.id))?.lastLaunchMode).toBe("local");
   });
 
@@ -837,7 +839,7 @@ describe("buildLaunch()", () => {
     if (before === null) throw new Error("session row missing after create");
     // Fire both writes concurrently.
     await Promise.all([
-      m.buildLaunch(s.id, { remote: true }),
+      m.buildInteractiveLaunch(s.id, { remote: true }),
       repo.save(s.id, { ...before, runtimeSessionId: "from-parallel-writer" }),
     ]);
     const after = await repo.read(s.id);

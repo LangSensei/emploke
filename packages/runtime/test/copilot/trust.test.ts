@@ -141,7 +141,7 @@ describe("ensureDirTrusted", () => {
 
   // Concurrency hardening: the read-modify-write cycle on config.json is
   // protected by an O_EXCL lock file. Without the lock, two parallel
-  // buildLaunch preflights would both pass `isPathCovered` before either
+  // buildInteractiveLaunch preflights would both pass `isPathCovered` before either
   // wrote, then the second `rename()` would clobber the first writer's
   // entries (and any unrelated keys the user happened to have between the
   // two reads). These tests pin the lock behavior.
@@ -212,7 +212,7 @@ describe("ensureDirTrusted", () => {
   it("steals a fresh lock whose recorded PID is dead (process.kill ESRCH)", async () => {
     // This pins the new PID-guard behaviour: a lock with a dead-process PID
     // is taken immediately, regardless of mtime. Without the guard, a
-    // crashed buildLaunch caller would block fresh writes for the
+    // crashed buildInteractiveLaunch caller would block fresh writes for the
     // full LOCK_STALE_MS (30s) until the mtime-based heuristic kicked in.
     const dead = findDeadPid();
     if (dead === null) {

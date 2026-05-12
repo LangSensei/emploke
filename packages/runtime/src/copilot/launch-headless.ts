@@ -3,7 +3,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir as nodeMkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import { RuntimeDispatchTaskFailed, RuntimeProvisionFailed } from "../errors.js";
+import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
 import type { RuntimeExit, RuntimeHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
@@ -14,7 +14,7 @@ import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js"
  * File names for side-channel stdout/stderr capture under the task
  * directory. Copilot's primary log surface is `events.jsonl` inside the
  * per-session state dir at `<copilotStateDir>/<runtimeSessionId>/`,
- * which the runtime owns end-to-end via `Runtime.taskActivity`. These
+ * which the runtime owns end-to-end via `Runtime.readActivity`. These
  * files exist as a fallback for output that happens before the session
  * dir has anything useful (e.g. the CLI complaining about a missing
  * flag) and — crucially on Windows — to give the child process a real
@@ -37,22 +37,22 @@ export type SpawnFn = (
   options: Parameters<typeof nodeSpawn>[2],
 ) => ChildProcess;
 
-export interface DispatchCopilotTaskDeps {
+export interface LaunchCopilotHeadlessDeps {
   /**
    * Root under which Copilot maintains per-session state directories. We
    * `mkdir` `<copilotStateDir>/<sessionId>/` before spawn so the returned
    * `sessionDir` resolves to a path that already exists, avoiding a
    * race against Copilot's first event write — useful for callers (and
-   * tests) that need a stable path post-dispatch even before the CLI
+   * tests) that need a stable path post-launch even before the CLI
    * has had a chance to write anything. The runtime then reads back
-   * from this dir via `taskActivity` whenever the dashboard asks for
+   * from this dir via `readActivity` whenever the dashboard asks for
    * the parsed timeline.
    */
   readonly copilotStateDir: string;
   /**
    * Absolute path resolved as `${globalDir}` during provision-time
    * placeholder substitution in MCP specs. Required so non-interactive
-   * task dispatch reaches the same per-machine shared dir as interactive
+   * task launch reaches the same per-machine shared dir as interactive
    * provision; the copilot runtime threads the value from
    * `CopilotRuntimeConfig.globalDir`.
    */
@@ -72,7 +72,7 @@ export interface DispatchCopilotTaskDeps {
   readonly resolveBin?: ResolveCopilotBinDeps;
   /**
    * Maximum time to wait for the child's `'spawn'` (or `'error'`) event
-   * before giving up and reporting `RuntimeDispatchTaskFailed`. Defaults
+   * before giving up and reporting `RuntimeHeadlessLaunchFailed`. Defaults
    * to 30000 ms.
    *
    * The cap exists purely as a deadlock guard: Node v15+ documents that
@@ -92,7 +92,7 @@ export interface DispatchCopilotTaskDeps {
   readonly spawnTimeoutMs?: number;
 }
 
-export interface DispatchCopilotTaskOpts {
+export interface LaunchCopilotHeadlessOpts {
   readonly taskDir: string;
   readonly agent: AgentResolveResult;
   readonly catalog: CatalogManager;
@@ -119,7 +119,7 @@ export interface DispatchCopilotTaskOpts {
  *   2. Mint a fresh Copilot session id and pre-create
  *      `<copilotStateDir>/<id>/` so the returned `sessionDir` resolves to
  *      a path that already exists (consumers can read it via
- *      `Runtime.taskActivity` immediately, no race with Copilot's
+ *      `Runtime.readActivity` immediately, no race with Copilot's
  *      first event write).
  *   3. Spawn the CLI in non-interactive mode with stdout/stderr piped to
  *      `<taskDir>/stdout.log` and `<taskDir>/stderr.log` respectively.
@@ -129,13 +129,13 @@ export interface DispatchCopilotTaskOpts {
  *      Windows requires for `process.stdout` flushing to succeed.
  *   4. Wait for the `'spawn'` event to confirm the OS started the
  *      process. Spawn failures (ENOENT on `copilot`, EPERM, …) reject the
- *      dispatch promise with `RuntimeDispatchTaskFailed`. Once spawn is
+ *      launchHeadless promise with `RuntimeHeadlessLaunchFailed`. Once spawn is
  *      confirmed, post-startup failures become normal task outcomes
  *      surfaced via `handle.exit`.
  */
-export async function dispatchCopilotTask(
-  opts: DispatchCopilotTaskOpts,
-  deps: DispatchCopilotTaskDeps,
+export async function launchCopilotHeadless(
+  opts: LaunchCopilotHeadlessOpts,
+  deps: LaunchCopilotHeadlessDeps,
 ): Promise<RuntimeHandle> {
   // Step 1: provision. Distinguishable from spawn failures via error type.
   const placeholders: PlaceholderContext = {
@@ -162,7 +162,7 @@ export async function dispatchCopilotTask(
     sessionDir = path.join(deps.copilotStateDir, sessionId);
     await mkdirImpl(sessionDir, { recursive: true });
   } catch (cause) {
-    throw new RuntimeDispatchTaskFailed("copilot", opts.taskDir, cause as Error);
+    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
   }
 
   // Step 3: spawn.
@@ -172,7 +172,7 @@ export async function dispatchCopilotTask(
   // we'll never deliver. `--output-format json` makes stdout a JSONL of
   // events. We don't currently consume that stream — the canonical event
   // log lives at `<sessionDir>/events.jsonl` and the dashboard reads it
-  // through the runtime's `taskActivity` surface — but the flag stays
+  // through the runtime's `readActivity` surface — but the flag stays
   // on so a future progress-streaming UI can attach to stdout without
   // changing the spawn arguments. `-C` is redundant with `cwd` but
   // belt-and-suspenders for tools that introspect argv.
@@ -204,7 +204,7 @@ export async function dispatchCopilotTask(
     });
   } catch (cause) {
     // Truly synchronous spawn failure. Rare on Node; usually async via 'error'.
-    throw new RuntimeDispatchTaskFailed("copilot", opts.taskDir, cause as Error);
+    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
   }
 
   // Step 4: await `'spawn'` so a failed exec (ENOENT, EPERM) surfaces
@@ -233,7 +233,7 @@ export async function dispatchCopilotTask(
         // Already gone or never started.
       }
       reject(
-        new RuntimeDispatchTaskFailed(
+        new RuntimeHeadlessLaunchFailed(
           "copilot",
           opts.taskDir,
           new Error(
@@ -253,11 +253,11 @@ export async function dispatchCopilotTask(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new RuntimeDispatchTaskFailed("copilot", opts.taskDir, err));
+      reject(new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, err));
     });
   });
 
-  // Pipe stdout/stderr to disk. Append-mode so a re-dispatch (future
+  // Pipe stdout/stderr to disk. Append-mode so a re-launch (future
   // feature) wouldn't truncate prior context, but in MVP each task dir
   // is fresh. Stdout *must* be a real file (not 'ignore'/NUL) for
   // Windows: the child's `process.stdout` flush calls FlushFileBuffers,

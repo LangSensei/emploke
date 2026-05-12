@@ -60,7 +60,7 @@ function statusForError(err: unknown): number | null {
   // are server-side faults — the client's request was well-formed; the host
   // environment broke. 500 lets clients distinguish from 4xx user errors.
   if (err instanceof RuntimeProvisionFailed) return 500;
-  // Trust-file write failures from buildLaunch's per-launch preflight are
+  // Trust-file write failures from buildInteractiveLaunch's per-launch preflight are
   // also host-side faults (mkdir/write/lock-timeout on ~/.copilot/config.json),
   // and identical in shape to provisioning failures from a client's point of
   // view: the user can't fix it by retrying with a different payload.
@@ -232,7 +232,7 @@ export function sessionsRoutes(
 
     let cmd: LaunchCommand;
     try {
-      cmd = await getManager(c).buildLaunch(id, { remote });
+      cmd = await getManager(c).buildInteractiveLaunch(id, { remote });
     } catch (err) {
       const status = statusForError(err) ?? 400;
       if (status >= 500) logServerError(err);

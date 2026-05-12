@@ -2,7 +2,7 @@
  * End-to-end smoke test that exercises the *real* spawn → exit watcher →
  * persist chain.
  *
- * Every other test in this package stubs `Runtime.dispatchTask` and
+ * Every other test in this package stubs `Runtime.launchHeadless` and
  * hand-resolves `TaskHandle.exit`, which gives us fast deterministic CI
  * but leaves the production-critical chain of
  *
@@ -67,12 +67,12 @@ class RealNodeRuntime implements Runtime {
   async provision(): Promise<{ runtimeSessionId: string | null }> {
     return { runtimeSessionId: null };
   }
-  async buildLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
+  async buildInteractiveLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
     return { cmd: "noop", args: [], cwd: workdir, display: "noop" };
   }
   async deleteState(): Promise<void> {}
 
-  async dispatch(opts: {
+  async launchHeadless(opts: {
     workdir: string;
     agent: AgentResolveResult;
     prompt: string;

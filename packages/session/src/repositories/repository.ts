@@ -30,7 +30,7 @@ export interface SessionState {
    */
   readonly runtimeSessionId: string | null;
   /**
-   * Mode the user chose for the most recent successful `buildLaunch`
+   * Mode the user chose for the most recent successful `buildInteractiveLaunch`
    * call against this session, or `undefined` if the session has never
    * been launched. Persisted so the dashboard can default the next
    * launch to the user's last intent (e.g. "this session is one I
@@ -103,8 +103,8 @@ export interface SessionRepository {
    * should not have to pre-check existence just to record a UI hint).
    *
    * This exists as a field-scoped escape hatch from the read-merge-save
-   * race in `SessionManager.buildLaunch`: two concurrent
-   * `buildLaunch(id, { remote })` calls (e.g. user clicks "Resume Local"
+   * race in `SessionManager.buildInteractiveLaunch`: two concurrent
+   * `buildInteractiveLaunch(id, { remote })` calls (e.g. user clicks "Resume Local"
    * in tab A and "Resume Remote" in tab B) used to lose one another's
    * `lastLaunchMode` write, and could in principle also clobber any
    * other field that some third path was concurrently updating. With

@@ -1,4 +1,4 @@
-import type { BuildLaunchOpts, LaunchCommand } from "../types.js";
+import type { BuildInteractiveLaunchOpts, LaunchCommand } from "../types.js";
 
 /**
  * Build the launch command for a workdir. Uses `--resume=<id>` to seed the
@@ -25,7 +25,7 @@ import type { BuildLaunchOpts, LaunchCommand } from "../types.js";
 export function buildCopilotLaunchCommand(
   workdir: string,
   runtimeSessionId: string | null,
-  opts: BuildLaunchOpts = {},
+  opts: BuildInteractiveLaunchOpts = {},
 ): LaunchCommand {
   const args: string[] = [];
   if (runtimeSessionId !== null) args.push(`--resume=${runtimeSessionId}`);

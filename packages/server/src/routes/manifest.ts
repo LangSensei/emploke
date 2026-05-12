@@ -400,7 +400,7 @@ export const ROUTES = {
    * Runtime-neutral activity timeline: the runtime parses its own
    * event log into the {@link ActivityItem} discriminated union
    * declared in `@emploke/runtime` (end-to-end via
-   * `Runtime.taskActivity` — the route never sees a path or raw
+   * `Runtime.readActivity` — the route never sees a path or raw
    * bytes). Paginated by `cursor` + `limit`; `truncated` marker is
    * non-null when the runtime had to drop bytes/items to stay within
    * its safety cap. 404 NoEventsYet when the runtime hasn't produced
@@ -419,7 +419,7 @@ export const ROUTES = {
 
   /**
    * SSE live-tail of activity. Subscribes to
-   * `Runtime.taskActivityStream` and frames each
+   * `Runtime.streamActivity` and frames each
    * {@link ActivityItem} as `event: activity` with the JSON payload.
    * Sends `event: end` when the iterator completes (task terminal,
    * file gone, server shutdown). The client SHOULD use the

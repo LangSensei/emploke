@@ -5,12 +5,12 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { SpawnFn } from "../../src/copilot/dispatch-task.js";
+import type { SpawnFn } from "../../src/copilot/launch-headless.js";
 import {
   COPILOT_STDERR_LOG,
   COPILOT_STDOUT_LOG,
-  dispatchCopilotTask,
-  RuntimeDispatchTaskFailed,
+  launchCopilotHeadless,
+  RuntimeHeadlessLaunchFailed,
   RuntimeProvisionFailed,
 } from "../../src/index.js";
 import { makeTestCatalog } from "./test-catalog.js";
@@ -62,7 +62,7 @@ class FakeChild extends EventEmitter {
 /**
  * Build a fake spawn that emits 'spawn' on the next microtask. Tests that
  * want to simulate spawn failure construct their own (see
- * "rejects with RuntimeDispatchTaskFailed").
+ * "rejects with RuntimeHeadlessLaunchFailed").
  */
 function makeFakeSpawn(): FakeSpawn {
   const child = new FakeChild();
@@ -86,11 +86,11 @@ const NOOP_RESOLVE_BIN = {
   platform: "linux" as NodeJS.Platform,
 };
 
-describe("dispatchCopilotTask", () => {
+describe("launchCopilotHeadless", () => {
   it("provisions the workdir before spawning", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    await dispatchCopilotTask(
+    await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "hello", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -107,7 +107,7 @@ describe("dispatchCopilotTask", () => {
   it("pre-creates the session-state dir so it exists before the first event write", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "hi", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -125,7 +125,7 @@ describe("dispatchCopilotTask", () => {
   it("spawns copilot with the expected non-interactive args", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    await dispatchCopilotTask(
+    await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "do thing", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -157,7 +157,7 @@ describe("dispatchCopilotTask", () => {
   it("honours an injected copilotBin override", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    await dispatchCopilotTask(
+    await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -173,7 +173,7 @@ describe("dispatchCopilotTask", () => {
   it("returns a handle exposing pid and runtimeSessionId", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -190,7 +190,7 @@ describe("dispatchCopilotTask", () => {
   it("exit promise resolves with code+signal=null on clean exit", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -207,7 +207,7 @@ describe("dispatchCopilotTask", () => {
   it("exit promise carries the non-zero exit code", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -224,7 +224,7 @@ describe("dispatchCopilotTask", () => {
   it("exit promise carries the termination signal", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -241,7 +241,7 @@ describe("dispatchCopilotTask", () => {
   it("kill() forwards to child.kill", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -261,7 +261,7 @@ describe("dispatchCopilotTask", () => {
     fake.child.killImpl = () => {
       throw new Error("ESRCH");
     };
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -274,7 +274,7 @@ describe("dispatchCopilotTask", () => {
     expect(() => handle.kill()).not.toThrow();
   });
 
-  it("rejects with RuntimeDispatchTaskFailed when 'error' fires before 'spawn'", async () => {
+  it("rejects with RuntimeHeadlessLaunchFailed when 'error' fires before 'spawn'", async () => {
     const { agent, catalog } = await buildAgent();
     const child = new FakeChild();
     const spawn: SpawnFn = (() => {
@@ -282,7 +282,7 @@ describe("dispatchCopilotTask", () => {
       return child as unknown as ReturnType<SpawnFn>;
     }) as SpawnFn;
     await expect(
-      dispatchCopilotTask(
+      launchCopilotHeadless(
         { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
@@ -291,7 +291,7 @@ describe("dispatchCopilotTask", () => {
           spawn,
         },
       ),
-    ).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
+    ).rejects.toBeInstanceOf(RuntimeHeadlessLaunchFailed);
   });
 
   // Belt-and-suspenders deadlock guard: if a child process is returned but
@@ -301,14 +301,14 @@ describe("dispatchCopilotTask", () => {
   // timeout and best-effort kill the lingering child so we don't leak
   // orphans behind the rejected promise. Tests inject a tiny timeout so
   // they don't actually wait 30s.
-  it("rejects with RuntimeDispatchTaskFailed when neither 'spawn' nor 'error' fires within the timeout", async () => {
+  it("rejects with RuntimeHeadlessLaunchFailed when neither 'spawn' nor 'error' fires within the timeout", async () => {
     const { agent, catalog } = await buildAgent();
     const child = new FakeChild();
     const spawn: SpawnFn = (() => {
       // Intentionally never emit 'spawn' or 'error'.
       return child as unknown as ReturnType<SpawnFn>;
     }) as SpawnFn;
-    const promise = dispatchCopilotTask(
+    const promise = launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -318,7 +318,7 @@ describe("dispatchCopilotTask", () => {
         spawnTimeoutMs: 50,
       },
     );
-    await expect(promise).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
+    await expect(promise).rejects.toBeInstanceOf(RuntimeHeadlessLaunchFailed);
     // Sanitised wrapper message (#24) carries only the runtime kind;
     // the underlying `timed out after Nms` string lives on `cause`.
     await expect(promise).rejects.toMatchObject({
@@ -337,7 +337,7 @@ describe("dispatchCopilotTask", () => {
     };
     const fake = makeFakeSpawn();
     await expect(
-      dispatchCopilotTask(
+      launchCopilotHeadless(
         {
           taskDir,
           agent: badAgent,
@@ -356,14 +356,14 @@ describe("dispatchCopilotTask", () => {
     ).rejects.toBeInstanceOf(RuntimeProvisionFailed);
   });
 
-  it("wraps mkdir failures on the session dir as RuntimeDispatchTaskFailed", async () => {
+  it("wraps mkdir failures on the session dir as RuntimeHeadlessLaunchFailed", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const failingMkdir = (async () => {
       throw new Error("EACCES: mock");
     }) as unknown as typeof mkdir;
     await expect(
-      dispatchCopilotTask(
+      launchCopilotHeadless(
         { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
@@ -373,13 +373,13 @@ describe("dispatchCopilotTask", () => {
           mkdir: failingMkdir,
         },
       ),
-    ).rejects.toBeInstanceOf(RuntimeDispatchTaskFailed);
+    ).rejects.toBeInstanceOf(RuntimeHeadlessLaunchFailed);
   });
 
   it("mirrors child stderr to <taskDir>/stderr.log", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -407,7 +407,7 @@ describe("dispatchCopilotTask", () => {
     // land in it.
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
@@ -439,7 +439,7 @@ describe("dispatchCopilotTask", () => {
   it("survives errors on child streams and child itself without crashing", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const handle = await dispatchCopilotTask(
+    const handle = await launchCopilotHeadless(
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,

@@ -1,4 +1,4 @@
-import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
+import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
@@ -44,7 +44,7 @@ function statusForError(err: unknown): number | null {
   // RuntimeProvisionFailed → 500). Falling through to the default 400
   // would lie to the dashboard about whose fault it is.
   if (err instanceof TaskIdAllocationFailedError) return 500;
-  if (err instanceof RuntimeDispatchTaskFailed) return 500;
+  if (err instanceof RuntimeHeadlessLaunchFailed) return 500;
   return null;
 }
 
@@ -234,7 +234,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
   //   - 400 on malformed cursor / limit (non-integer, negative, > max)
   //   - 404 if the task doesn't exist
   //   - 404 with code=NoEventsYet if the runtime doesn't implement
-  //     `taskActivity`, or has no log for this task yet
+  //     `Runtime.readActivity`, or has no log for this task yet
   //   - 200 application/json `{ activity, result, cursor, totalItems?, truncated? }`
   app.get("/:tid/activity", async (c) => {
     const id = c.req.param("tid");
@@ -282,7 +282,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     return c.json(payload);
   });
 
-  // SSE live tail. Subscribes to runtime.taskActivityStream and
+  // SSE live tail. Subscribes to runtime.streamActivity and
   // pushes each ActivityItem as `event: activity` with the JSON
   // payload. Sends `event: end` on iterator completion, `event: error`
   // on faults. Standard SSE wire format — any HTTP client can

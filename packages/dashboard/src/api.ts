@@ -683,7 +683,7 @@ export const updateWorkspaceMetadata = async (
 // A Task is an autonomous one-shot agent invocation: dispatch a brief +
 // instructions, the runtime spawns the agent, and the dashboard polls for
 // terminal status. Each runtime publishes its own native event log; the
-// server fetches the parsed timeline via the runtime's `taskActivity`
+// server fetches the parsed timeline via the runtime's `readActivity`
 // surface (`/api/.../tasks/:tid/activity`) which returns runtime-neutral
 // `ActivityItem[]`. Filename, format, and on-disk layout of the underlying
 // log stay inside the runtime adapter; the dashboard never sees them.

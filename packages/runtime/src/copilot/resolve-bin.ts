@@ -65,7 +65,7 @@ export interface ResolveCopilotBinDeps {
  *
  * Lifecycle: this whole file is a temporary compatibility layer. When
  * the upstream WinGet / Copilot install story stops needing it, delete
- * the file and have `dispatchCopilotTask` call `spawn("copilot", ...)`
+ * the file and have `launchCopilotHeadless` call `spawn("copilot", ...)`
  * directly. See {@link https://github.com/LangSensei/emploke/issues/27}.
  */
 export function resolveCopilotBin(

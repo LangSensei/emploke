@@ -19,7 +19,7 @@ import {
   SkillOriginConflictError,
 } from "@emploke/catalog";
 import {
-  RuntimeDispatchTaskFailed,
+  RuntimeHeadlessLaunchFailed,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
@@ -89,7 +89,7 @@ describe("errorBody", () => {
       "SessionsError",
       // runtime
       "InvalidMcpJson",
-      "RuntimeDispatchTaskFailed",
+      "RuntimeHeadlessLaunchFailed",
       "RuntimeProvisionFailed",
       "RuntimeRefreshFailed",
       "RuntimeStateDeletionFailed",
@@ -316,8 +316,8 @@ describe("RuntimeXxxFailed message sanitization (#24)", () => {
       ],
     },
     {
-      name: "RuntimeDispatchTaskFailed",
-      err: new RuntimeDispatchTaskFailed(
+      name: "RuntimeHeadlessLaunchFailed",
+      err: new RuntimeHeadlessLaunchFailed(
         "copilot",
         "C:\\Users\\langcheng\\.emploke\\workspaces\\foo\\tasks\\20260509-cafef00d",
         fsCause,
@@ -352,7 +352,7 @@ describe("RuntimeXxxFailed message sanitization (#24)", () => {
     const p = new RuntimeProvisionFailed("copilot", "/abs/wd", fsCause);
     expect(p.workdir).toBe("/abs/wd");
 
-    const d = new RuntimeDispatchTaskFailed("copilot", "/abs/td", fsCause);
+    const d = new RuntimeHeadlessLaunchFailed("copilot", "/abs/td", fsCause);
     expect(d.taskDir).toBe("/abs/td");
   });
 });
