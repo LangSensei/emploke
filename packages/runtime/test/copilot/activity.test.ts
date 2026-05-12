@@ -90,7 +90,7 @@ describe("parseCopilotActivity — tool_call merge", () => {
         type: "tool.execution_complete",
         id: "c1",
         parentId: null,
-        data: { toolCallId: "call-1", success: true, result: "ok" },
+        data: { toolCallId: "call-1", success: true, result: { content: "ok" } },
       });
     const items = parseCopilotActivity(raw);
     // Two items: assistant + one merged tool_call (NOT three)
@@ -99,7 +99,8 @@ describe("parseCopilotActivity — tool_call merge", () => {
       kind: "tool_call",
       callId: "call-1",
       status: "success",
-      result: "ok",
+      result: { content: "ok" },
+      display: { content: "ok" },
     });
   });
 
@@ -123,8 +124,6 @@ describe("parseCopilotActivity — tool_call merge", () => {
 
 describe("parseCopilotActivity — system items", () => {
   it.each([
-    ["hook.start", "hook"],
-    ["hook.end", "hook"],
     ["skill.invoked", "skill"],
     ["subagent.started", "subagent"],
     ["subagent.completed", "subagent"],
@@ -143,6 +142,16 @@ describe("parseCopilotActivity — system items", () => {
     if (eventType === "session.error") {
       expect((items[0] as { level: string }).level).toBe("error");
     }
+  });
+
+  it("drops hook.start and hook.end (low signal — duplicates tool_call info)", () => {
+    const raw =
+      ev({ type: "hook.start", id: "h1", parentId: null, data: { hookType: "preToolUse" } }) +
+      ev({ type: "hook.end", id: "h2", parentId: null, data: { hookType: "preToolUse" } }) +
+      ev({ type: "user.message", id: "u1", parentId: null, data: { content: "go" } });
+    const items = parseCopilotActivity(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.kind).toBe("user");
   });
 });
 

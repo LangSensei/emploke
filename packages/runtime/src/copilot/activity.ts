@@ -209,10 +209,12 @@ export class CopilotActivityStreamParser {
           Number.isFinite(startMs) && Number.isFinite(endMs)
             ? Math.max(0, endMs - startMs)
             : undefined;
+        const display = extractToolDisplay(result);
         const updated: ToolCallItem = {
           ...existing,
           status: success ? "success" : "error",
           ...(result !== undefined ? { result } : {}),
+          ...(display !== undefined ? { display } : {}),
           ...(durationMs !== undefined ? { durationMs } : {}),
         };
         this.itemsBySeq.set(targetSeq, updated);
@@ -220,6 +222,7 @@ export class CopilotActivityStreamParser {
         // Don't bump seq — same item, mutated in place.
       } else {
         const name = pickString(ev.data, "toolName") ?? "<unknown>";
+        const display = extractToolDisplay(result);
         const item: ToolCallItem = {
           kind: "tool_call",
           ...baseFields,
@@ -227,19 +230,23 @@ export class CopilotActivityStreamParser {
           name,
           status: success ? "success" : "error",
           ...(result !== undefined ? { result } : {}),
+          ...(display !== undefined ? { display } : {}),
         };
         this.commit(item);
         items.push(item);
       }
     } else if (
-      ev.type === "hook.start" ||
-      ev.type === "hook.end" ||
       ev.type === "skill.invoked" ||
       ev.type === "subagent.started" ||
       ev.type === "subagent.completed" ||
       ev.type === "system.notification" ||
       ev.type === "session.error"
     ) {
+      // hook.start / hook.end are intentionally NOT lifted — they fire
+      // before AND after every tool call (Copilot's pre/postToolUse
+      // observability hooks) and carry no signal beyond what the
+      // adjacent tool_call item already shows. Keeping them would
+      // bury real timeline content under hook.start/hook.end pairs.
       const subKind = systemSubKind(ev.type);
       const text =
         pickString(ev.data, "message") ??
@@ -402,12 +409,32 @@ function parseAssistantTokens(d: Record<string, unknown>): TokenUsage | null {
 }
 
 function systemSubKind(eventType: string): string {
-  if (eventType.startsWith("hook.")) return "hook";
   if (eventType.startsWith("skill.")) return "skill";
   if (eventType.startsWith("subagent.")) return "subagent";
   if (eventType === "system.notification") return "notification";
   if (eventType === "session.error") return "error";
   return "other";
+}
+
+/**
+ * Extract a human-readable rendering hint from Copilot's
+ * `tool.execution_complete.result` payload. Copilot ships
+ * `{content, detailedContent}` where `content` is the one-line
+ * summary suitable for inline display in the timeline (e.g.
+ * "Intent logged") and `detailedContent` is the verbose form
+ * (kept opaque in `result` for the "Result" detail toggle).
+ *
+ * Returns `undefined` when the payload doesn't fit the recognised
+ * shape, so the dashboard falls back to its generic JSON renderer.
+ */
+function extractToolDisplay(
+  result: unknown,
+): { readonly content: string; readonly markdown?: boolean } | undefined {
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return undefined;
+  const obj = result as Record<string, unknown>;
+  const content = pickString(obj, "content") ?? pickString(obj, "textResultForLlm");
+  if (content === null) return undefined;
+  return { content };
 }
 
 function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): SummaryItem {
