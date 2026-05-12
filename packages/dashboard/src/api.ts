@@ -764,12 +764,13 @@ export const dispatchTask = async (
 
 export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
   // Default ("archive") removes only the task metadata row — workdir
-  // contents (stderr.log, agent artifacts, the runtime's session/
-  // junction) stay on disk so the user can inspect the run after the
-  // fact. `{ purge: true }` is the hard-delete path: row + workdir.
-  // The runtime's per-task state (the junction *target*) is currently
-  // not cleaned up by `purge: true` — that's a follow-up requiring a
-  // runtime API addition.
+  // contents (stderr.log, agent artifacts) stay on disk so the user
+  // can inspect the run after the fact; the runtime's own per-task
+  // state (Copilot's events.jsonl / session-state dir) is also
+  // preserved. `{ purge: true }` is the hard-delete path: row +
+  // workdir + runtime state all go, in that order — runtime first
+  // so a runtime failure aborts before any local removal (mirrors
+  // session-delete semantics).
   const qs = opts?.purge ? "?purge=1" : "";
   return mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
 };

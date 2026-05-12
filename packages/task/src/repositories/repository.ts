@@ -34,9 +34,9 @@ export interface TaskRepository {
   /**
    * Remove the task's metadata. Idempotent: deleting a missing id is a
    * no-op. Does NOT touch agent-owned content under the task's workdir
-   * (e.g. `session/` runtime junction, agent-produced files) — that
-   * concern lives in `TaskManager.delete(id, { purge })`, not in the
-   * repository.
+   * (captured stderr, agent-produced files) or the runtime's own
+   * per-task state — those concerns live in
+   * `TaskManager.delete(id, { purge })`, not in the repository.
    */
   delete(id: string): Promise<void>;
 

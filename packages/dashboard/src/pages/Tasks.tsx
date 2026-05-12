@@ -537,7 +537,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
             </p>
             <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
               By default, the workdir is preserved on disk so you can inspect the agent's output
-              (stderr, artifacts, runtime junction) after the fact.
+              (stderr, artifacts, runtime event log) after the fact.
             </p>
             <label
               style={{

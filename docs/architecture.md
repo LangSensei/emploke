@@ -72,19 +72,20 @@ Three properties matter:
 1. **Domain types are clean.** `Workspace`, `Task`, `Session`, `Skill`,
    `Agent` are flat value types with no `schemaVersion`, no `metadata`
    wrapper, no fs-shaped fields beyond a single `workdir` on `Workspace`.
-   The `schemaVersion` lives only inside the FS repository's wire format
-   (the `task.json` / `workspace.json` on disk wrap the value in
-   `{schemaVersion: N, ...fields}`); the manager strips it on read.
+   The `schemaVersion` lives only inside the repository's wire format
+   (FS-backed entities wrap the value in `{schemaVersion: N, ...fields}`
+   on disk; SQLite-backed entities track it in a `schema_meta` row);
+   the manager strips it on read.
 2. **Repositories are bytes in / bytes out.** They never parse
    frontmatter, build dependency graphs, or maintain caches — those are
    manager concerns. The repository's job is "given an id, return the
    stored value (or null)."
-3. **InMemory implementations exist for tests.** Every entity package
-   exports one at `@emploke/<pkg>/testing`. Test code consumes the same
-   manager class as production but injects the in-memory repo — fast,
-   no `mkdtemp` ritual, and crucially the InMemory impl validates ids
-   the same way the FS impl does so tests can't pass with malformed
-   inputs that production would reject.
+3. **InMemory implementations exist for FS-backed entity tests.** Every
+   FS-backed entity package (today: `workspace`) exports one at
+   `@emploke/<pkg>/testing`. SQLite-backed entities (catalog, session,
+   task) instead expose their `Sqlite*Repository` constructed with
+   `":memory:"` for the same role — isolated, lifetime-of-the-test,
+   validates ids the same way the on-disk DB does.
 
 ## `@emploke/fs`: the atomic IO seam
 
@@ -98,12 +99,15 @@ primitives in [`packages/fs`](../packages/fs):
 | `readJson`              | `readFile` + `JSON.parse` with a 10 MB cap (DoS guard); double-checked post-read to defeat stat/read TOCTOU races.            |
 | `withFileLock`          | Advisory lock backed by an `O_EXCL` lockfile, with PID-aware stale recovery (stuck PID → wait; dead PID → steal).             |
 
-These are the **only** allowed paths to durable state in the repo. A
-catalog `write()`, a workspace registry mutation, a task.json save —
-all flow through these. CI failures and production incidents disappear
-when an entity rewrite forgets to use them; the parameterised
-regression test in `packages/catalog/test/fs-repositories.test.ts`
-spies on `writeFileAtomic` to keep that from happening again.
+These are the **only** allowed paths to durable state in the FS-backed
+repo. A catalog `write()`, a workspace registry mutation, a runtime
+breadcrumb save — all flow through these. CI failures and production
+incidents disappear when an entity rewrite forgets to use them; the
+parameterised regression test in
+`packages/catalog/test/fs-repositories.test.ts` spies on
+`writeFileAtomic` to keep that from happening again. SQLite-backed
+entities (catalog, session, task) get the equivalent guarantees from
+WAL mode + transactions and don't go through this layer.
 
 ## Backend selection: when FS, when SQLite
 
@@ -155,14 +159,19 @@ aggregation across workspaces).
 
 `session` and `task` use a **hybrid** pattern: SQLite owns the
 queryable metadata; FS owns the human-meaningful content. The
-metadata sidecar (`session.json` / `task.json`) moves into a row of
-the entity's `*.db`; the workdir directory tree
+metadata sidecar that used to live on disk (`session.json` /
+`task.json` in the pre-SQLite layout) moves into a row of the
+entity's `*.db`; the workdir directory tree
 (`<workspaceRoot>/sessions/<sid>/...` for session, `.../tasks/<tid>/`
 for task) stays a plain directory of agent-produced files (AGENTS.md,
-artifacts, runtime junctions). The default `delete(id)` removes only
-the metadata row (matches the workspace-wide "purge is opt-in" pattern,
-giving operators a chance to inspect agent output after a delete);
-`delete(id, { purge: true })` additionally removes the workdir.
+artifacts, captured stderr). The default `delete(id)` removes only
+the metadata row (the "archive" mode — matches the workspace-wide
+"purge is opt-in" pattern, giving operators a chance to inspect
+agent output after a delete); `delete(id, { purge: true })`
+additionally removes the workdir AND asks the runtime to wipe its
+own per-entity state (Copilot's `<copilotStateDir>/<id>/` etc.) via
+`Runtime.deleteState` (sessions) / `Runtime.deleteTaskState` (tasks),
+so a hard delete leaves nothing behind across the layers.
 
 This split keeps the workdir-as-product invariant (`cd` into a session
 workdir, find the agent's actual output, grep it, commit it to your
@@ -243,15 +252,17 @@ production deploy fails fast.
 │   ├── agents/<name>/AGENTS.md  + arbitrary sibling files (templates, scripts)
 │   ├── skills/<name>/SKILL.md   + arbitrary sibling files (incl. hooks/copilot/)
 │   └── mcps/<name>.json
-├── sessions/<id>/               agent-baked workdir; `copilot` runs here
-│   ├── AGENTS.md                materialised from catalog at create time
-│   ├── .mcp.json                merged from agent's MCP deps
-│   └── .github/{skills,hooks}/  materialised from catalog
-├── tasks/<id>/                  one-shot autonomous dispatch
-│   ├── task.json                { schemaVersion, ...task fields }
-│   ├── session/                 → junction → runtime's per-task state dir
-│   ├── stderr.log               CLI errors before session dir exists
-│   └── ...                      whatever the agent writes
+├── sessions/
+│   ├── sessions.db              SQLite — one row per session: status, runtime, agent, timings, …
+│   └── <id>/                    agent-baked workdir; `copilot` runs here
+│       ├── AGENTS.md            materialised from catalog at create time
+│       ├── .mcp.json            merged from agent's MCP deps
+│       └── .github/{skills,hooks}/  materialised from catalog
+├── tasks/
+│   ├── tasks.db                 SQLite — one row per task: status, runtime, agent, timings, …
+│   └── <id>/                    one-shot autonomous dispatch — workdir for agent artifacts
+│       ├── stderr.log           CLI errors (the runtime owns its event log via taskActivity, NOT mirrored here)
+│       └── ...                  whatever the agent writes
 └── (workflows/, logs/, schedules/ — added when those entities land)
 ```
 

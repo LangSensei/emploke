@@ -13,15 +13,15 @@ import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js"
 /**
  * File names for side-channel stdout/stderr capture under the task
  * directory. Copilot's primary log surface is `events.jsonl` inside the
- * per-session state dir (which `TaskManager` junctions in as
- * `<taskDir>/session/`); these files exist as a fallback for output that
- * happens before the session dir has anything useful (e.g. the CLI
- * complaining about a missing flag) and — crucially on Windows — to give
- * the child process a real file handle as its stdout. Without that,
- * `'ignore'` resolves to the NUL device, and any subsequent
- * `process.stdout` flush from the child aborts with
- * `Failed to sync '<stdout>': Incorrect function.` because Windows'
- * NUL doesn't support `FlushFileBuffers`. Real files do.
+ * per-session state dir at `<copilotStateDir>/<runtimeSessionId>/`,
+ * which the runtime owns end-to-end via `Runtime.taskActivity`. These
+ * files exist as a fallback for output that happens before the session
+ * dir has anything useful (e.g. the CLI complaining about a missing
+ * flag) and — crucially on Windows — to give the child process a real
+ * file handle as its stdout. Without that, `'ignore'` resolves to the
+ * NUL device, and any subsequent `process.stdout` flush from the child
+ * aborts with `Failed to sync '<stdout>': Incorrect function.` because
+ * Windows' NUL doesn't support `FlushFileBuffers`. Real files do.
  */
 export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
@@ -40,9 +40,13 @@ export type SpawnFn = (
 export interface DispatchCopilotTaskDeps {
   /**
    * Root under which Copilot maintains per-session state directories. We
-   * `mkdir` `<copilotStateDir>/<sessionId>/` before spawn so the caller
-   * can junction it into the task workdir without waiting for Copilot to
-   * write its first event.
+   * `mkdir` `<copilotStateDir>/<sessionId>/` before spawn so the returned
+   * `sessionDir` resolves to a path that already exists, avoiding a
+   * race against Copilot's first event write — useful for callers (and
+   * tests) that need a stable path post-dispatch even before the CLI
+   * has had a chance to write anything. The runtime then reads back
+   * from this dir via `taskActivity` whenever the dashboard asks for
+   * the parsed timeline.
    */
   readonly copilotStateDir: string;
   /**
@@ -114,8 +118,9 @@ export interface DispatchCopilotTaskOpts {
  *      provisioning trouble from spawn trouble.
  *   2. Mint a fresh Copilot session id and pre-create
  *      `<copilotStateDir>/<id>/` so the returned `sessionDir` resolves to
- *      a path that already exists (TaskManager can junction it
- *      immediately, no race with Copilot's first event write).
+ *      a path that already exists (consumers can read it via
+ *      `Runtime.taskActivity` immediately, no race with Copilot's
+ *      first event write).
  *   3. Spawn the CLI in non-interactive mode with stdout/stderr piped to
  *      `<taskDir>/stdout.log` and `<taskDir>/stderr.log` respectively.
  *      The canonical log lives in events.jsonl under the session dir;

@@ -2,12 +2,15 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
- * by emploke. It owns four operations against the CLI's on-disk world:
+ * by emploke. It owns operations against the CLI's on-disk world:
  *
  *  - `provision`: bake an agent into a workdir so the CLI can be launched there
  *  - `refresh`: read the CLI's view of activity for an emploke session
  *  - `buildLaunch`: build the shell command that drops the user into the CLI
  *  - `deleteState`: remove the CLI's record of an emploke session
+ *  - `dispatchTask?` / `taskActivity?` / `deleteTaskState?`: the parallel trio
+ *    for autonomous tasks (optional — runtimes that lack a non-interactive
+ *    mode simply omit them)
  *
  * Runtimes are stateless across calls — all per-session data lives either in
  * `Session.runtimeSessionId` (an opaque, runtime-specific id) or in the CLI's
@@ -15,8 +18,8 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
  * return updated values that the caller persists.
  *
  * The interface is deliberately small. Anything CLI-specific that doesn't fit
- * one of these four verbs (e.g. logging, telemetry) is the runtime's private
- * concern and should not leak into emploke's surface.
+ * these verbs (e.g. logging, telemetry) is the runtime's private concern and
+ * should not leak into emploke's surface.
  */
 export interface Runtime {
   /**
@@ -157,6 +160,32 @@ export interface Runtime {
   dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
 
   /**
+   * Optional. Remove the runtime's recorded state for a previously-dispatched
+   * task. Mirrors {@link deleteState} for sessions; called by `TaskManager`
+   * when a task is purged so the runtime's per-task event log (Copilot's
+   * `<copilotStateDir>/<runtimeSessionId>/`, etc.) doesn't leak after the
+   * task row + workdir are gone.
+   *
+   * `opts.metadata` is the task's open-shape metadata bag (the same
+   * `Task.metadata` shape `dispatchTask` populated, identical to
+   * {@link TaskActivityOpts}). The runtime knows which keys to consult
+   * (typically `runtimeSessionId`) and silently no-ops when the relevant
+   * key is missing or unparseable, the same way {@link deleteState} does
+   * for sessions.
+   *
+   * Throws on partial failure (e.g. permission denied removing some files);
+   * the caller (`TaskManager.delete({ purge: true })`) propagates as
+   * `RuntimeStateDeletionFailed` so the user sees a clear failure rather
+   * than a silently-leaked state dir. The order on the manager side is
+   * "runtime first, then local row + workdir" — a runtime failure aborts
+   * before any local removal, mirroring `SessionManager.delete`.
+   *
+   * Runtimes whose CLI does not persist per-task state simply omit this
+   * method; the manager treats absence as "nothing to clean up".
+   */
+  deleteTaskState?(opts: TaskStateOpts): Promise<void>;
+
+  /**
    * Optional. Fetch the runtime-neutral activity timeline + derived
    * "result" line for a task — end-to-end:
    *
@@ -191,7 +220,7 @@ export interface Runtime {
    * knows which keys to consult (e.g. Copilot reads
    * `runtimeSessionId` to find its own state dir). The manager
    * deliberately does NOT pass a workdir — workdir-based discovery
-   * was the abstraction leak we're closing here.
+   * was the abstraction leak this method closes.
    *
    * Runtimes whose CLI doesn't emit a structured log simply omit
    * this method. The route returns `404 NoEventsYet` in that case.
@@ -205,6 +234,22 @@ export interface TaskActivityOpts {
    * The task's open-shape metadata bag (`Task.metadata`). The runtime
    * looks up its own keys (typically `runtimeSessionId`) to find the
    * log on its own state directory.
+   */
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Inputs to {@link Runtime.deleteTaskState}. Same shape as
+ * {@link TaskActivityOpts} — both are "given a task's metadata, do
+ * something runtime-specific with the per-task state dir". Kept as a
+ * separate type so future divergence (e.g. a `force` flag for one but
+ * not the other) doesn't churn both call sites.
+ */
+export interface TaskStateOpts {
+  /**
+   * The task's open-shape metadata bag (`Task.metadata`). The runtime
+   * looks up its own keys (typically `runtimeSessionId`) to locate its
+   * own per-task state dir.
    */
   readonly metadata: Readonly<Record<string, unknown>>;
 }
@@ -323,18 +368,22 @@ export interface TaskHandle {
    * discovery-only runtimes leave it undefined and the caller learns it
    * (if at all) by other means.
    *
-   * Persisted by `TaskManager` into `task.json` for later inspection (and
-   * for callers who want to drive the underlying CLI directly, e.g.
-   * `copilot --resume=<id>`).
+   * Persisted by `TaskManager` into the task's `metadata.runtimeSessionId`
+   * column for later inspection (and for callers who want to drive the
+   * underlying CLI directly, e.g. `copilot --resume=<id>`). Also the key
+   * the runtime reads back from `Task.metadata` in `taskActivity` and
+   * `deleteTaskState`.
    */
   readonly runtimeSessionId?: string;
 
   /**
    * Where the runtime is writing its native per-session log directory for
-   * this task. `TaskManager` junctions this into `<taskDir>/session/` so
-   * the dashboard can serve `events.jsonl` (or whatever the runtime calls
-   * its log) without coupling to per-runtime layout. See the type-level
-   * comment above for the Promise rationale.
+   * this task. The runtime owns reads against this directory end-to-end via
+   * `taskActivity` (and removal via `deleteTaskState`) — `TaskManager` does
+   * NOT mirror it back into the task workdir, so consumers (dashboard, CLI)
+   * never need to know per-runtime layout. The Promise lets discovery-only
+   * runtimes resolve the path post-spawn; see the type-level comment above
+   * for the rationale.
    */
   readonly sessionDir: Promise<string>;
 

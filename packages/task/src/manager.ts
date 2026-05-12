@@ -57,9 +57,13 @@ interface LiveTask {
  * Per-workspace registry of autonomous tasks.
  *
  * Owns `<tasksDir>/` on disk. Each task is one directory containing the
- * persisted `task.json`, a `session/` junction into the runtime's native
- * log directory, an `stderr.log` capture, and whatever the agent itself
- * wrote during execution.
+ * captured `stderr.log` and whatever the agent itself wrote during
+ * execution. The queryable metadata (status, runtime, agent, timings,
+ * the open-shape `metadata` bag) lives in `<tasksDir>/tasks.db` —
+ * one row per task, owned by the SQLite repository. The runtime keeps
+ * its own per-task event log on its own state directory (Copilot:
+ * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`); emploke does
+ * NOT mirror it back into the workdir.
  *
  * The manager is the source of truth for task state. It:
  *
@@ -333,11 +337,14 @@ export class TaskManager {
     );
     await this.persist(workdir, running);
 
-    // 7. Wire post-spawn background work: junction the runtime's session
-    //    dir under `<workdir>/session/`, then watch for exit and persist
-    //    the terminal status. Both run independently — junction failure
-    //    must not block exit handling. We expose a `settled` promise so
-    //    `shutdown()` and tests can await drain.
+    // 7. Wire post-spawn background work: watch for exit and persist
+    //    the terminal status. The runtime owns its own per-task state
+    //    dir (Copilot puts events.jsonl in
+    //    `<copilotStateDir>/<runtimeSessionId>/`); we no longer mirror
+    //    it into the task workdir. The dashboard fetches the parsed
+    //    activity through `Runtime.taskActivity`, which reads the
+    //    runtime's native log directly. We expose a `settled` promise
+    //    so `shutdown()` and tests can await drain.
     //
     //    Order matters: we register the `LiveTask` entry BEFORE awaiting
     //    anything, so a `shutdown()` arriving between this register and
@@ -359,9 +366,9 @@ export class TaskManager {
     const settled = (async () => {
       // 7a. Wait for exit + apply terminal status. The runtime owns
       //     its own per-task state dir (Copilot puts events.jsonl in
-      //     `<copilotStateDir>/<runtimeSessionId>/`); we no longer
-      //     mirror it via a junction inside the task workdir. The
-      //     dashboard fetches the parsed activity through
+      //     `<copilotStateDir>/<runtimeSessionId>/`); we don't
+      //     mirror it back into the task workdir. The dashboard
+      //     fetches the parsed activity through
       //     `Runtime.taskActivity`, which reads the runtime's native
       //     log directly without going through the manager.
       let exitInfo: Awaited<TaskHandle["exit"]>;
@@ -401,12 +408,13 @@ export class TaskManager {
    * List persisted tasks in `tasksDir`, newest first. Cheap reads only —
    * no runtime introspection. Corrupted entries are logged and skipped.
    *
-   * Filters in `opts` are applied server-side after reading each
-   * `task.json`, so the manager returns only the rows the caller asked
-   * for. This mirrors `@emploke/session`'s `list(ListSessionOpts)`
-   * pattern and lets the dashboard push its filter UI down to the
-   * server (so e.g. an "agent: writer" filter doesn't ship the other
-   * 95% of the workspace's tasks across the wire on every poll).
+   * Filters in `opts` are applied server-side by the SQLite repository
+   * (which holds the indexes), so the manager returns only the rows the
+   * caller asked for. This mirrors `@emploke/session`'s
+   * `list(ListSessionOpts)` pattern and lets the dashboard push its
+   * filter UI down to the server (so e.g. an "agent: writer" filter
+   * doesn't ship the other 95% of the workspace's tasks across the
+   * wire on every poll).
    */
   async list(opts: ListTaskOpts = {}): Promise<Task[]> {
     // Push every filter (status, agent, runtime, createdSince) down to
@@ -485,20 +493,29 @@ export class TaskManager {
   // ─── delete ──────────────────────────────────────────────
 
   /**
-   * Remove a task. Default behaviour removes only the task's metadata
-   * (the repository row / `task.json`). Pass `{ purge: true }` to
-   * additionally rm the entire workdir (`<tasksDir>/<id>/`) — including
-   * the runtime's session junction and any agent-produced files.
+   * Remove a task. Default ("archive") removes only the task's metadata
+   * row; the workdir is left on disk so the user can inspect agent
+   * artifacts after the fact.
+   *
+   * `{ purge: true }` is the hard-delete path:
+   *   1. Kill any live subprocess (always; metadata removal alone would
+   *      orphan it).
+   *   2. Ask the runtime to wipe its per-task state (e.g. Copilot's
+   *      `<copilotStateDir>/<runtimeSessionId>/`) via
+   *      `runtime.deleteTaskState`. Runtime first so a permission-denied
+   *      or network failure aborts BEFORE any local removal — same
+   *      ordering as `SessionManager.delete`. Runtimes without per-task
+   *      state simply omit the method and we skip this step.
+   *   3. Remove the metadata row from the repository.
+   *   4. `rm -rf` the workdir.
    *
    * `purge: true` also implies "skip metadata validation" — a task
-   * whose `task.json` is corrupted (parse failure, future
-   * `CURRENT_SCHEMA_VERSION` bump) would otherwise be undeletable
-   * through the public API. Mirrors `rm -rf` semantics for that
-   * recovery path.
-   *
-   * Live subprocesses are killed before the rm regardless of `purge`,
-   * because the metadata removal alone would leave the running process
-   * orphaned. The kill path is the same in both modes.
+   * whose metadata row is corrupted or missing (parse failure, future
+   * `CURRENT_SCHEMA_VERSION` bump, stray workdir from a prior emploke
+   * version) would otherwise be undeletable through the public API.
+   * Mirrors `rm -rf` semantics for that recovery path; we skip the
+   * runtime state cleanup in that case because there's no metadata
+   * to read the runtime session id from.
    *
    * Throws `TaskNotFoundError` when no task with `id` exists (and, in
    * default mode, when the metadata is unreadable).
@@ -507,26 +524,37 @@ export class TaskManager {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
+    // Resolve the existing task (metadata row) when we can. In purge
+    // mode we still try to load it so we can hand metadata to the
+    // runtime for state cleanup — but we tolerate failure and fall
+    // back to the directory-existence check (rm -rf semantics).
+    let existing: Task | null = null;
+    try {
+      existing = await this.loadTask(id, workdir);
+    } catch (err) {
+      if (opts.purge !== true) throw err;
+      // purge mode: corrupted row is acceptable; we'll detect via stat below.
+    }
+
     if (opts.purge === true) {
-      // Existence check via stat(): we still want a 404 if the dir
-      // truly doesn't exist (so the dashboard's optimistic UI can
-      // distinguish "already gone" from "deleted now"), but we don't
-      // care whether the task.json inside parses.
-      let dirExists: boolean;
-      try {
-        const st = await stat(workdir);
-        dirExists = st.isDirectory();
-      } catch {
-        dirExists = false;
-      }
-      if (!dirExists) {
-        throw new TaskNotFoundError(id);
-      }
-    } else {
-      const existing = await this.loadTask(id, workdir);
       if (existing === null) {
-        throw new TaskNotFoundError(id);
+        // Existence check via stat(): we still want a 404 if the dir
+        // truly doesn't exist (so the dashboard's optimistic UI can
+        // distinguish "already gone" from "deleted now"), but we
+        // accept a missing/corrupt metadata row.
+        let dirExists: boolean;
+        try {
+          const st = await stat(workdir);
+          dirExists = st.isDirectory();
+        } catch {
+          dirExists = false;
+        }
+        if (!dirExists) {
+          throw new TaskNotFoundError(id);
+        }
       }
+    } else if (existing === null) {
+      throw new TaskNotFoundError(id);
     }
 
     const live = this.live.get(id);
@@ -542,6 +570,28 @@ export class TaskManager {
         await live.settled;
       } catch {
         // Defensive — settled is constructed to never reject.
+      }
+    }
+
+    if (opts.purge === true && existing !== null) {
+      // Wipe the runtime's per-task state BEFORE we touch local rows
+      // / workdir, so a runtime failure leaves a recoverable state
+      // (row + workdir intact, user can retry). No-op when the
+      // runtime doesn't implement the optional hook, or when the
+      // metadata doesn't carry the keys it needs.
+      const runtimeName = existing.metadata.runtime;
+      const runtimeKey = typeof runtimeName === "string" ? runtimeName : this.defaultRuntime;
+      let runtime: Runtime;
+      try {
+        runtime = this.runtimeRegistry.get(runtimeKey);
+      } catch {
+        // Unknown runtime (e.g. dropped from registry between dispatch
+        // and delete): nothing to call into. Skip and proceed with the
+        // local cleanup so the user can still get rid of the task.
+        runtime = undefined as unknown as Runtime;
+      }
+      if (runtime !== undefined && typeof runtime.deleteTaskState === "function") {
+        await runtime.deleteTaskState({ metadata: existing.metadata });
       }
     }
 
@@ -738,7 +788,7 @@ export class TaskManager {
       task = await this.repository.read(id);
     } catch (err) {
       if (err instanceof CorruptedTaskError) {
-        this.logger.warn("tasks: skipping corrupted task.json", {
+        this.logger.warn("tasks: skipping corrupted task row", {
           taskId: id,
           reason: err.reason,
         });
@@ -748,9 +798,9 @@ export class TaskManager {
     }
     if (task === null) return null;
     if (task.id !== id) {
-      // Defensive: directory name and id-in-file disagree. Trust the
+      // Defensive: directory name and id-in-row disagree. Trust the
       // directory name (it's how we found this) and surface a warning.
-      this.logger.warn("tasks: id mismatch between dir and task.json", {
+      this.logger.warn("tasks: id mismatch between dir and persisted row", {
         taskId: id,
         persistedId: task.id,
       });

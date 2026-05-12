@@ -15,9 +15,11 @@ This package ships two layers:
   Useful in tests, custom orchestrators, or anywhere you want to drive the
   FSM directly.
 - **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
-  task as `task.json`, dispatches via `Runtime.dispatchTask`, junctions
-  the runtime's per-task state directory under `<task>/session/`, and
-  watches the subprocess to fold the terminal exit into the task value.
+  task's metadata to `tasks.db` (one SQLite row per task), dispatches via
+  `Runtime.dispatchTask`, watches the subprocess to fold the terminal
+  exit into the task value, and forwards activity reads to
+  `Runtime.taskActivity` (the runtime owns its own event log
+  end-to-end — emploke does NOT mirror it back into the workdir).
 
 ## Quick start (kernel)
 

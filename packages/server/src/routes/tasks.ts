@@ -196,13 +196,16 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     }
   });
 
-  // Delete a task. Default behaviour removes only the task's metadata
-  // (the repository row / task.json); the workdir contents — including
-  // the runtime's session junction and any agent-produced files — are
-  // preserved for archival. Pass `?purge=1` to additionally rm the
-  // entire workdir AND skip metadata validation (mirrors `rm -rf`,
-  // useful for cleaning up tasks whose task.json is corrupted or
-  // schema-mismatched across an emploke upgrade).
+  // Delete a task. Default ("archive") removes only the task's metadata
+  // row; the workdir contents (stderr.log, agent-produced files) and
+  // the runtime's per-task event log stay on disk so the user can
+  // inspect the run after the fact. Pass `?purge=1` for the hard-
+  // delete path: row + workdir + runtime state, in that order
+  // (runtime first so a runtime-side failure aborts before any local
+  // removal — mirrors session-delete semantics). `purge=1` also
+  // skips metadata validation, mirroring `rm -rf` for cleanup of
+  // tasks whose row is corrupted or schema-mismatched across an
+  // emploke upgrade.
   app.delete("/:tid", async (c) => {
     const id = c.req.param("tid");
     const purge = c.req.query("purge") === "1";

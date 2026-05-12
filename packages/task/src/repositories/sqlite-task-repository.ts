@@ -43,9 +43,12 @@ interface TaskRow {
 /**
  * SQLite-backed `TaskRepository`. Each task's metadata lives in a row
  * of the `tasks` table inside `<tasksDir>/tasks.db`. The task's workdir
- * (`<tasksDir>/<id>/`) — agent artifacts, the runtime's `session/`
- * junction, the captured `stderr.log` — is **not** owned by this
- * repository; it stays a plain directory tree on disk.
+ * (`<tasksDir>/<id>/`) — agent artifacts and the captured `stderr.log`
+ * — is **not** owned by this repository; it stays a plain directory
+ * tree on disk. The runtime's per-task event log (Copilot's
+ * `<copilotStateDir>/<runtimeSessionId>/`) is also outside this
+ * repository's scope; the runtime owns it end-to-end via
+ * `Runtime.taskActivity` / `Runtime.deleteTaskState`.
  *
  * ## `Task.metadata` handling
  *
@@ -216,7 +219,7 @@ export class SqliteTaskRepository implements TaskRepository {
         // FsTaskRepository.list behaviour. We warn via the injected
         // logger so operators can see the bad row without `list`
         // itself failing — the manager hooks its own logger here.
-        this.logger.warn("tasks: skipping corrupted task.json", {
+        this.logger.warn("tasks: skipping corrupted task row", {
           taskId: row.id ?? null,
           reason: err instanceof Error ? err.message : String(err),
         });

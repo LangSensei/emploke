@@ -19,6 +19,7 @@ import type {
   TaskActivityOpts,
   TaskActivityResult,
   TaskHandle,
+  TaskStateOpts,
 } from "../types.js";
 import { deriveCopilotResult, parseCopilotActivity } from "./activity.js";
 import {
@@ -271,6 +272,29 @@ export class CopilotRuntime implements Runtime {
       await rm(dir, { recursive: true, force: true });
     } catch (err) {
       throw new RuntimeStateDeletionFailed(this.kind, session.id, err as Error);
+    }
+  }
+
+  /**
+   * Mirror of {@link deleteState} for tasks. Pulls
+   * `runtimeSessionId` out of the task's metadata bag (the same key
+   * `taskActivity` consults) and rms `<copilotStateDir>/<id>/`.
+   *
+   * No-ops when the metadata doesn't carry a syntactically-valid Copilot
+   * session id — defends against tampered persisted state the same way
+   * `deleteState` does for sessions, and gracefully handles legacy task
+   * rows from before `runtimeSessionId` was promoted into metadata.
+   */
+  async deleteTaskState(opts: TaskStateOpts): Promise<void> {
+    const sessionId = opts.metadata.runtimeSessionId;
+    if (typeof sessionId !== "string") return;
+    const id = safeCopilotId(sessionId);
+    if (id === null) return;
+    const dir = path.join(this.copilotStateDir, id);
+    try {
+      await rm(dir, { recursive: true, force: true });
+    } catch (err) {
+      throw new RuntimeStateDeletionFailed(this.kind, id, err as Error);
     }
   }
 

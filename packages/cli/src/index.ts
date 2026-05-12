@@ -417,7 +417,10 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(taskCmd.command("rm"))
     .argument("<tid>", "Task id")
     .description("Remove a task")
-    .option("--purge", "Also remove the task's workdir contents")
+    .option(
+      "--purge",
+      "Hard delete: also remove the task workdir and the runtime's per-task state (default is archive — row only)",
+    )
     .action(async (tid: string, opts: Record<string, unknown>) => {
       slot.result = await taskRm({
         ...parseWorkspaceFlags(opts),

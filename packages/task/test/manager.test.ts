@@ -140,6 +140,11 @@ class StubRuntime implements Runtime {
   /** Auto-fire exit on kill, mirroring real child_process behavior. */
   autoExitOnKill = false;
 
+  /** Records every call to deleteTaskState so tests can assert on cleanup. */
+  readonly deleteTaskStateCalls: { metadata: Record<string, unknown> }[] = [];
+  /** If set, deleteTaskState throws this — to test runtime-failure aborts. */
+  deleteTaskStateError: Error | null = null;
+
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
   readonly dispatchCalls: { taskDir: string; agent: AgentResolveResult; prompt: string }[] = [];
@@ -162,6 +167,15 @@ class StubRuntime implements Runtime {
     return { cmd: "stub", args: [], cwd: s.workdir, display: "stub" };
   }
   async deleteState(): Promise<void> {}
+
+  async deleteTaskState(opts: { metadata: Readonly<Record<string, unknown>> }): Promise<void> {
+    this.deleteTaskStateCalls.push({ metadata: { ...opts.metadata } });
+    if (this.deleteTaskStateError !== null) {
+      const e = this.deleteTaskStateError;
+      this.deleteTaskStateError = null;
+      throw e;
+    }
+  }
 
   // dispatchTask is set conditionally via Object.defineProperty so we can
   // model "runtime doesn't implement it" cleanly.
@@ -612,7 +626,7 @@ describe("get / list", () => {
 
     const all = await m.list();
     expect(all).toHaveLength(1); // good row survives, bogus is dropped
-    expect(r.calls.some((c) => c.msg.includes("corrupted task.json"))).toBe(true);
+    expect(r.calls.some((c) => c.msg.includes("corrupted task row"))).toBe(true);
   });
 
   it("list() ignores directories whose name doesn't match the task id pattern", async () => {
@@ -814,6 +828,78 @@ describe("delete", () => {
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
+  });
+
+  // Mirrors SessionManager.delete({purge:true}): runtime per-task state
+  // (e.g. Copilot's <copilotStateDir>/<runtimeSessionId>/) must be cleaned
+  // up too, otherwise purge leaks events.jsonl + transcripts forever.
+  it("purge: true asks the runtime to wipe its per-task state, with task metadata", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    expect(rt.deleteTaskStateCalls).toEqual([]);
+    await m.delete(t.id, { purge: true });
+
+    expect(rt.deleteTaskStateCalls).toHaveLength(1);
+    expect(rt.deleteTaskStateCalls[0].metadata.runtimeSessionId).toBe(
+      rt.handles[0].runtimeSessionId,
+    );
+    expect(rt.deleteTaskStateCalls[0].metadata.runtime).toBe("copilot");
+  });
+
+  // Default (archive) mode preserves runtime state — only the row is dropped,
+  // not the workdir, not the runtime's events.jsonl. This matches the
+  // "operators can recover the agent's product after a delete" intent.
+  it("default delete does NOT call runtime.deleteTaskState", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await m.delete(t.id);
+
+    expect(rt.deleteTaskStateCalls).toEqual([]);
+  });
+
+  // Order matters: a runtime that fails to clean up its state must leave
+  // the local row + workdir intact so the user can retry rather than
+  // ending up with a half-deleted task whose state dir leaks.
+  it("aborts BEFORE removing the row + workdir when runtime.deleteTaskState throws", async () => {
+    const rt = new StubRuntime();
+    rt.deleteTaskStateError = new Error("permission denied wiping state dir");
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await expect(m.delete(t.id, { purge: true })).rejects.toThrow(
+      /permission denied wiping state dir/,
+    );
+
+    // Row still there, workdir still there.
+    expect(await m.get(t.id)).not.toBeNull();
+    expect(await safeStat(path.join(tasksDir, t.id))).not.toBeNull();
+  });
+
+  // The "stray workdir" recovery path has no metadata to read, so the
+  // runtime cleanup is silently skipped. This is the rm -rf escape hatch
+  // for purge — losing some runtime state is acceptable when the row's
+  // gone anyway.
+  it("purge: true skips runtime.deleteTaskState when no metadata row exists", async () => {
+    const id = "20260508-c0ffee02";
+    const workdir = path.join(tasksDir, id);
+    await mkdir(workdir, { recursive: true });
+
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+    await m.delete(id, { purge: true });
+
+    expect(rt.deleteTaskStateCalls).toEqual([]);
+    expect(await safeStat(workdir)).toBeNull();
   });
 });
 
