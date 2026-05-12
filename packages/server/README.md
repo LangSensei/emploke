@@ -46,8 +46,14 @@ catalog the dashboard sees.
 
 The server holds one `WorkspaceManager` process-wide and lazily mints
 per-workspace `CatalogManager` / `SessionManager` / `TaskManager`
-instances behind a `WorkspaceContextCache`. Cache invalidation
-happens on workspace deletion or metadata update.
+instances behind a `WorkspaceContextCache`. Implicit invalidation
+happens on workspace deletion or metadata update; an explicit
+`POST /api/workspaces/:id/reload` is also available for operator-driven
+reload (e.g. recovering after the persisted state on disk has been
+edited externally). Reload is refused with HTTP 409 +
+`code=WorkspaceHasLiveTasksError` when the workspace still has live
+task subprocesses, since dropping the cached `TaskManager` would
+orphan the in-flight `live` map's exit watchers.
 
 ```text
                           ┌─── catalog ───┐
@@ -61,7 +67,7 @@ WorkspaceContextCache ────┼─── tasks  ────┤   per work
 This means the cost of "switch workspace" in the dashboard is one
 cache lookup; the manager instances are stateless beyond their
 backing repositories so the cache can be flushed on demand without
-losing in-flight work.
+losing in-flight work (modulo the live-task refuse rule above).
 
 ## Boot
 
