@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
-import type { LaunchCommand, Runtime, RuntimeRegistry, Session } from "@emploke/runtime";
+import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
 import {
   AgentNotFoundError,
@@ -20,6 +20,7 @@ import type {
   DeleteSessionOpts,
   ListSessionOpts,
   Logger,
+  Session,
   SessionManagerConfig,
 } from "./types.js";
 
@@ -224,7 +225,9 @@ export class SessionManager {
       // to bail before we've started removing things). Only after it
       // succeeds do we drop the metadata row + workdir.
       const runtime = this.runtimeRegistry.get(session.runtime);
-      await runtime.deleteState(session);
+      if (session.runtimeSessionId !== null) {
+        await runtime.deleteState(session.runtimeSessionId);
+      }
       await this.repository.delete(id);
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
@@ -244,9 +247,14 @@ export class SessionManager {
     if (session === null) throw new SessionNotFoundError(id);
 
     const runtime = this.runtimeRegistry.get(session.runtime);
-    const launch = await runtime.buildLaunch(session, this.workspaceDir, {
-      ...(opts.remote === true ? { remote: true } : {}),
-    });
+    const launch = await runtime.buildLaunch(
+      session.runtimeSessionId,
+      session.workdir,
+      this.workspaceDir,
+      {
+        ...(opts.remote === true ? { remote: true } : {}),
+      },
+    );
 
     // Best-effort: remember the user's last intent for this session so
     // the next dashboard render can default the Resume button. Persisted
@@ -332,12 +340,18 @@ export class SessionManager {
 
   private async refreshSession(draft: Session): Promise<Session> {
     const runtime = this.runtimeRegistry.get(draft.runtime);
+    if (typeof runtime.readMetadata !== "function" || draft.runtimeSessionId === null) {
+      // Runtime doesn't expose metadata, or we have no id to look up
+      // (discovery-only runtime that hasn't launched yet) — leave the
+      // draft untouched.
+      return draft;
+    }
 
-    let refreshed: Awaited<ReturnType<Runtime["refresh"]>>;
+    let refreshed: Awaited<ReturnType<NonNullable<Runtime["readMetadata"]>>>;
     try {
-      refreshed = await runtime.refresh(draft);
+      refreshed = await runtime.readMetadata(draft.runtimeSessionId);
     } catch (err) {
-      this.logger.warn("sessions: runtime refresh failed", {
+      this.logger.warn("sessions: runtime readMetadata failed", {
         sessionId: draft.id,
         runtime: draft.runtime,
         error: err instanceof Error ? err.message : String(err),
@@ -348,33 +362,14 @@ export class SessionManager {
       return draft;
     }
 
-    if (refreshed.runtimeSessionId !== draft.runtimeSessionId) {
-      try {
-        // Read-then-merge so we don't drop other fields the repository
-        // may have persisted (notably `lastLaunchMode`). The runtime
-        // refresh only owns `runtimeSessionId` / preview / lastActiveAt;
-        // everything else must round-trip untouched.
-        const prev = await this.repository.read(draft.id);
-        if (prev !== null) {
-          await this.repository.save(draft.id, {
-            ...prev,
-            runtimeSessionId: refreshed.runtimeSessionId,
-          });
-        }
-      } catch (err) {
-        this.logger.warn("sessions: failed to persist discovered runtimeSessionId", {
-          sessionId: draft.id,
-          runtime: draft.runtime,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     return {
       ...draft,
-      runtimeSessionId: refreshed.runtimeSessionId,
-      lastActiveAt: refreshed.lastActiveAt,
-      preview: refreshed.preview,
+      // Runtime supplies title via `title`; emploke's session API surfaces
+      // this as `preview` (legacy field name). Map at the boundary so
+      // session API consumers don't break — the rename is queued as a
+      // separate breaking-change PR.
+      lastActiveAt: refreshed.lastActiveAt ?? draft.lastActiveAt,
+      preview: refreshed.title ?? draft.preview,
     };
   }
 

@@ -625,10 +625,11 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
       : null;
   const headline =
     runtimeTitle ??
-    (task.instructions
+    task.instructions
       .split(/\r?\n/)
       .map((s) => s.trim())
-      .find((s) => s.length > 0) ?? "(empty instructions)");
+      .find((s) => s.length > 0) ??
+    "(empty instructions)";
   return (
     <li
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${

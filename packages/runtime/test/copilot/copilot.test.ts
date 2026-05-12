@@ -1,4 +1,4 @@
-﻿import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -127,7 +127,7 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
+      const c = await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       expect(c.cmd).toBe("copilot");
       expect(c.args).toEqual(["--yolo"]);
     });
@@ -138,7 +138,11 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: FIXED_UUID }), ws);
+      const c = await rt.buildLaunch(
+        FIXED_UUID,
+        fakeSession({ runtimeSessionId: FIXED_UUID }).workdir,
+        ws,
+      );
       expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
     });
 
@@ -148,7 +152,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       expect(await exists(sp)).toBe(false);
-      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
+      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       expect(written.trustedFolders).toContain(path.resolve(ws));
     });
@@ -158,8 +162,8 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
-      await rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws);
+      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       const matches = written.trustedFolders.filter((p: string) => p === path.resolve(ws));
       expect(matches).toHaveLength(1);
@@ -173,7 +177,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       await expect(
-        rt.buildLaunch(fakeSession({ runtimeSessionId: null }), ws),
+        rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws),
       ).rejects.toBeInstanceOf(TrustRegistrationFailed);
     });
   });
@@ -181,12 +185,12 @@ describe("CopilotRuntime", () => {
   describe("refresh", () => {
     it("returns null when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      expect(await rt.refresh(fakeSession({ runtimeSessionId: null }))).toBeNull();
+      expect(await rt.readMetadata("")).toBeNull();
     });
 
     it("returns null when copilot has no state for the id", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      const r = await rt.refresh(fakeSession({ runtimeSessionId: FIXED_UUID }));
+      const r = await rt.readMetadata(FIXED_UUID);
       expect(r).toBeNull();
     });
 
@@ -198,11 +202,11 @@ describe("CopilotRuntime", () => {
         "utf8",
       );
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      const r = await rt.refresh(fakeSession({ runtimeSessionId: FIXED_UUID }));
+      const r = await rt.readMetadata(FIXED_UUID);
       expect(r).toEqual({
         lastActiveAt: "2026-05-08T01:05:00.000Z",
-        preview: "hello there",
-        runtimeSessionId: FIXED_UUID,
+        title: "hello there",
+        userTitled: false,
       });
     });
   });
@@ -210,7 +214,7 @@ describe("CopilotRuntime", () => {
   describe("deleteState", () => {
     it("is a no-op when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      await rt.deleteState(fakeSession({ runtimeSessionId: null }));
+      await rt.deleteState("");
       // No throw, no fs effect â€” pass.
     });
 
@@ -219,13 +223,13 @@ describe("CopilotRuntime", () => {
       await mkdir(dir, { recursive: true });
       await writeFile(path.join(dir, "workspace.yaml"), "name: x\n", "utf8");
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      await rt.deleteState(fakeSession({ runtimeSessionId: FIXED_UUID }));
+      await rt.deleteState(FIXED_UUID);
       expect(await exists(dir)).toBe(false);
     });
 
     it("succeeds when the state dir does not exist (idempotent)", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      await rt.deleteState(fakeSession({ runtimeSessionId: FIXED_UUID }));
+      await rt.deleteState(FIXED_UUID);
     });
 
     it("wraps unexpected fs errors in RuntimeStateDeletionFailed", async () => {
@@ -267,7 +271,7 @@ describe("CopilotRuntime", () => {
       const sentinel = path.join(scratch, "passwd");
       await writeFile(sentinel, "secret\n", "utf8");
       for (const id of MALICIOUS_IDS) {
-        const r = await rt.refresh(fakeSession({ runtimeSessionId: id }));
+        const r = await rt.readMetadata(id ?? "");
         expect(r).toBeNull();
       }
       // Sentinel still present and unread (no observable side effects).
@@ -281,7 +285,7 @@ describe("CopilotRuntime", () => {
       await mkdir(sentinelDir, { recursive: true });
       await writeFile(path.join(sentinelDir, "marker"), "x", "utf8");
       for (const id of MALICIOUS_IDS) {
-        await rt.deleteState(fakeSession({ runtimeSessionId: id }));
+        await rt.deleteState(id ?? "");
       }
       expect(await exists(sentinelDir)).toBe(true);
       expect(await exists(path.join(sentinelDir, "marker"))).toBe(true);
@@ -294,7 +298,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws-mal");
       await mkdir(ws, { recursive: true });
       for (const id of MALICIOUS_IDS) {
-        const c = await rt.buildLaunch(fakeSession({ runtimeSessionId: id }), ws);
+        const c = await rt.buildLaunch(id, fakeSession({ runtimeSessionId: id }).workdir, ws);
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
         expect(c.display).not.toContain("--resume");
@@ -305,13 +309,13 @@ describe("CopilotRuntime", () => {
   describe("taskActivity", () => {
     it("returns null when runtimeSessionId is missing or invalid", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      expect(await rt.taskActivity({ metadata: {} })).toBeNull();
-      expect(await rt.taskActivity({ metadata: { runtimeSessionId: "not-a-uuid" } })).toBeNull();
+      expect(await rt.readActivity({ runtimeSessionId: "" })).toBeNull();
+      expect(await rt.readActivity({ runtimeSessionId: "not-a-uuid" })).toBeNull();
     });
 
     it("returns null when events.jsonl is missing on disk", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      expect(await rt.taskActivity({ metadata: { runtimeSessionId: FIXED_UUID } })).toBeNull();
+      expect(await rt.readActivity({ runtimeSessionId: FIXED_UUID })).toBeNull();
     });
 
     it("reads + parses + paginates events.jsonl", async () => {
@@ -332,23 +336,23 @@ describe("CopilotRuntime", () => {
       await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
 
-      const all = await rt.taskActivity({
-        metadata: { runtimeSessionId: FIXED_UUID },
+      const all = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
       });
       expect(all?.activity).toHaveLength(10);
       expect(all?.totalItems).toBe(10);
       expect(all?.cursor).toBeNull();
 
-      const first3 = await rt.taskActivity({
-        metadata: { runtimeSessionId: FIXED_UUID },
+      const first3 = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
         limit: 3,
       });
       expect(first3?.activity).toHaveLength(3);
       expect(first3?.cursor).toBe(2); // last seq returned in this page
       expect(first3?.truncated?.reason).toBe("page_limit");
 
-      const next = await rt.taskActivity({
-        metadata: { runtimeSessionId: FIXED_UUID },
+      const next = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
         cursor: 2,
         limit: 5,
       });
@@ -379,7 +383,7 @@ describe("CopilotRuntime", () => {
         await appendFile(eventsPath, fatLine);
       }
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
-      const r = await rt.taskActivity({ metadata: { runtimeSessionId: FIXED_UUID } });
+      const r = await rt.readActivity({ runtimeSessionId: FIXED_UUID });
       expect(r).not.toBeNull();
       expect(r?.truncated?.reason).toBe("size_limit");
       expect(r?.truncated?.droppedBytes).toBeGreaterThan(0);
@@ -392,7 +396,7 @@ describe("CopilotRuntime", () => {
     it("returns nothing when runtimeSessionId is missing", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       const items: unknown[] = [];
-      for await (const item of rt.taskActivityStream({ metadata: {} })) {
+      for await (const item of rt.streamActivity({ runtimeSessionId: "" })) {
         items.push(item);
       }
       expect(items).toEqual([]);
@@ -411,8 +415,8 @@ describe("CopilotRuntime", () => {
       // Drive the iterator on a background promise so we can write to
       // the file in parallel.
       const iterPromise = (async () => {
-        for await (const item of rt.taskActivityStream({
-          metadata: { runtimeSessionId: FIXED_UUID },
+        for await (const item of rt.streamActivity({
+          runtimeSessionId: FIXED_UUID,
           signal: ac.signal,
         })) {
           collected.push(item);

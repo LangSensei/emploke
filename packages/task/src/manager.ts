@@ -3,7 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
-import type { Runtime, RuntimeRegistry, TaskHandle } from "@emploke/runtime";
+import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import { apply } from "./apply.js";
 import { create as createTask } from "./create.js";
 import {
@@ -41,7 +41,7 @@ const MAX_CREATE_RETRIES = 5;
  */
 interface LiveTask {
   readonly id: string;
-  readonly handle: TaskHandle;
+  readonly handle: RuntimeHandle;
   /** Resolves once the post-exit persistence has finished (success or failure path). */
   readonly settled: Promise<void>;
   /**
@@ -183,7 +183,7 @@ export class TaskManager {
     //    dirs on disk.
     const runtimeKind = opts.runtime ?? this.defaultRuntime;
     const runtime = this.runtimeRegistry.get(runtimeKind);
-    if (typeof runtime.dispatchTask !== "function") {
+    if (typeof runtime.dispatch !== "function") {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
@@ -240,14 +240,14 @@ export class TaskManager {
     resolveResult: AgentResolveResult;
   }): Promise<Task> {
     const { id, workdir, agentName, instructions, runtime, resolveResult } = args;
-    // Re-narrow `runtime.dispatchTask` for TypeScript. The caller
+    // Re-narrow `runtime.dispatch` for TypeScript. The caller
     // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
     // before reserving the workdir, so this guard is only here to
     // restore the type narrow that's lost across the method boundary —
-    // we deliberately do NOT extract `dispatchTask` to a local because
+    // we deliberately do NOT extract `dispatch` to a local because
     // that would break the `this`-binding for runtime impls that read
     // own state (e.g. the `RealSpawnRuntime` test fixture).
-    if (typeof runtime.dispatchTask !== "function") {
+    if (typeof runtime.dispatch !== "function") {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
@@ -277,10 +277,10 @@ export class TaskManager {
     // 5. Spawn. The runtime owns the subprocess and gives us back a
     //    handle. Failures here (provision throws, spawn ENOENT, ...) are
     //    pre-running, so we rollback the workdir and rethrow.
-    let handle: TaskHandle;
+    let handle: RuntimeHandle;
     try {
-      handle = await runtime.dispatchTask({
-        taskDir: workdir,
+      handle = await runtime.dispatch({
+        workdir,
         agent: resolveResult,
         catalog: this.catalog,
         prompt: instructions,
@@ -292,7 +292,7 @@ export class TaskManager {
     }
 
     // 5b. Re-check `shuttingDown` after spawn. The flag is read once at
-    //     the top of `dispatch()`, but `await runtime.dispatchTask(...)`
+    //     the top of `dispatch()`, but `await runtime.dispatch(...)`
     //     yields the event loop and a SIGTERM-driven `shutdown()` could
     //     have flipped it during that window. Without this guard the
     //     subprocess is now live but `shutdown()`'s snapshot of
@@ -342,7 +342,7 @@ export class TaskManager {
     //    dir (Copilot puts events.jsonl in
     //    `<copilotStateDir>/<runtimeSessionId>/`); we no longer mirror
     //    it into the task workdir. The dashboard fetches the parsed
-    //    activity through `Runtime.taskActivity`, which reads the
+    //    activity through `runtime.readActivity`, which reads the
     //    runtime's native log directly. We expose a `settled` promise
     //    so `shutdown()` and tests can await drain.
     //
@@ -369,9 +369,9 @@ export class TaskManager {
       //     `<copilotStateDir>/<runtimeSessionId>/`); we don't
       //     mirror it back into the task workdir. The dashboard
       //     fetches the parsed activity through
-      //     `Runtime.taskActivity`, which reads the runtime's native
+      //     `runtime.readActivity`, which reads the runtime's native
       //     log directly without going through the manager.
-      let exitInfo: Awaited<TaskHandle["exit"]>;
+      let exitInfo: Awaited<RuntimeHandle["exit"]>;
       try {
         exitInfo = await handle.exit;
       } catch (err) {
@@ -469,7 +469,7 @@ export class TaskManager {
    * the runtime's structured activity surface. Returns `null` when:
    *   - the task is missing or its metadata is corrupted,
    *   - the runtime is no longer registered,
-   *   - the runtime doesn't implement `taskActivity` (no structured
+   *   - the runtime doesn't implement `readActivity` (no structured
    *     log support),
    *   - the runtime has no log for this task yet (task hasn't started,
    *     or started but hasn't emitted its first event).
@@ -489,11 +489,13 @@ export class TaskManager {
   async getTaskActivity(
     id: string,
     opts?: { readonly cursor?: number; readonly limit?: number },
-  ): Promise<import("@emploke/runtime").TaskActivityResult | null> {
+  ): Promise<import("@emploke/runtime").ActivityResult | null> {
     const task = await this.get(id);
     if (task === null) return null;
     const meta = readTaskRuntimeMetadata(task);
     if (typeof meta.runtime !== "string") return null;
+    const runtimeSessionId = pickRuntimeSessionId(task.metadata);
+    if (runtimeSessionId === null) return null;
     let runtime: import("@emploke/runtime").Runtime;
     try {
       runtime = this.runtimeRegistry.get(meta.runtime);
@@ -503,9 +505,9 @@ export class TaskManager {
       // UX for an unrecoverable task.
       return null;
     }
-    if (typeof runtime.taskActivity !== "function") return null;
-    return runtime.taskActivity({
-      metadata: task.metadata,
+    if (typeof runtime.readActivity !== "function") return null;
+    return runtime.readActivity({
+      runtimeSessionId,
       ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
       ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
     });
@@ -513,7 +515,7 @@ export class TaskManager {
 
   /**
    * Live-tail variant of {@link getTaskActivity}. Returns the
-   * runtime's `taskActivityStream` AsyncIterable, or `null` when:
+   * runtime's `streamActivity` AsyncIterable, or `null` when:
    *   - same null cases as `getTaskActivity` (missing task,
    *     unregistered runtime, no streaming support), OR
    *   - the task is already terminal (live tail has nothing more
@@ -537,15 +539,17 @@ export class TaskManager {
     if (task.status !== "running" && task.status !== "not_started") return null;
     const meta = readTaskRuntimeMetadata(task);
     if (typeof meta.runtime !== "string") return null;
+    const runtimeSessionId = pickRuntimeSessionId(task.metadata);
+    if (runtimeSessionId === null) return null;
     let runtime: import("@emploke/runtime").Runtime;
     try {
       runtime = this.runtimeRegistry.get(meta.runtime);
     } catch {
       return null;
     }
-    if (typeof runtime.taskActivityStream !== "function") return null;
-    return runtime.taskActivityStream({
-      metadata: task.metadata,
+    if (typeof runtime.streamActivity !== "function") return null;
+    return runtime.streamActivity({
+      runtimeSessionId,
       ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
@@ -563,7 +567,7 @@ export class TaskManager {
    *      orphan it).
    *   2. Ask the runtime to wipe its per-task state (e.g. Copilot's
    *      `<copilotStateDir>/<runtimeSessionId>/`) via
-   *      `runtime.deleteTaskState`. Runtime first so a permission-denied
+   *      `runtime.deleteState`. Runtime first so a permission-denied
    *      or network failure aborts BEFORE any local removal — same
    *      ordering as `SessionManager.delete`. Runtimes without per-task
    *      state simply omit the method and we skip this step.
@@ -651,8 +655,11 @@ export class TaskManager {
         // local cleanup so the user can still get rid of the task.
         runtime = undefined as unknown as Runtime;
       }
-      if (runtime !== undefined && typeof runtime.deleteTaskState === "function") {
-        await runtime.deleteTaskState({ metadata: existing.metadata });
+      if (runtime !== undefined && typeof runtime.deleteState === "function") {
+        const runtimeSessionId = pickRuntimeSessionId(existing.metadata);
+        if (runtimeSessionId !== null) {
+          await runtime.deleteState(runtimeSessionId);
+        }
       }
     }
 
@@ -873,7 +880,7 @@ export class TaskManager {
    * Fold runtime-supplied display metadata (title, etc.) into a
    * loaded task. Returns the same task object when:
    *   - the runtime is unknown / unregistered (silent)
-   *   - the runtime doesn't implement `taskMetadata` (silent)
+   *   - the runtime doesn't implement `readMetadata` (silent)
    *   - the runtime returns null (no title available yet)
    *   - the runtime call throws (logged at debug; we fall back to
    *     the persisted view)
@@ -903,13 +910,15 @@ export class TaskManager {
     } catch {
       return task;
     }
-    if (typeof runtime.taskMetadata !== "function") return task;
-    let meta: Awaited<ReturnType<NonNullable<Runtime["taskMetadata"]>>>;
+    if (typeof runtime.readMetadata !== "function") return task;
+    const runtimeSessionId = pickRuntimeSessionId(task.metadata);
+    if (runtimeSessionId === null) return task;
+    let meta: Awaited<ReturnType<NonNullable<Runtime["readMetadata"]>>>;
     try {
-      meta = await runtime.taskMetadata({ metadata: task.metadata });
+      meta = await runtime.readMetadata(runtimeSessionId);
     } catch (err) {
       // Title is best-effort; don't break list/get on a runtime fault.
-      this.logger.warn("tasks: taskMetadata read failed", {
+      this.logger.warn("tasks: readMetadata failed", {
         taskId: task.id,
         runtime: runtimeName,
         error: err instanceof Error ? err.message : String(err),
@@ -1045,6 +1054,20 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
 
 function defaultRandomBytes(n: number): Buffer {
   return cryptoRandomBytes(n);
+}
+
+/**
+ * Pull a runtime-shaped session id out of the task's open-shape
+ * metadata bag. Returns null when the field is missing or not a
+ * string — caller treats null as "no runtime session for this task,
+ * skip the runtime-side operation".
+ *
+ * Centralised so dispatch / activity / delete / metadata all read
+ * the same key with the same defensiveness.
+ */
+function pickRuntimeSessionId(metadata: Readonly<Record<string, unknown>>): string | null {
+  const v = metadata.runtimeSessionId;
+  return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 /**

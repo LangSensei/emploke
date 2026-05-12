@@ -12,19 +12,17 @@ import {
 import type { PlaceholderContext } from "../placeholders.js";
 import type {
   ActivityItem,
+  ActivityResult,
   BuildLaunchOpts,
+  DispatchOpts,
   LaunchCommand,
   ProvisionContext,
+  ReadActivityOpts,
   Runtime,
   RuntimeCapabilities,
-  Session,
-  TaskActivityOpts,
-  TaskActivityResult,
-  TaskActivityStreamOpts,
-  TaskHandle,
-  TaskMetadataOpts,
-  TaskRuntimeDisplayMetadata,
-  TaskStateOpts,
+  RuntimeHandle,
+  RuntimeSessionMetadata,
+  StreamActivityOpts,
   TruncationInfo,
 } from "../types.js";
 import {
@@ -235,7 +233,8 @@ export class CopilotRuntime implements Runtime {
    * controlled by the caller (server, not user input).
    */
   async buildLaunch(
-    session: Session,
+    runtimeSessionId: string | null,
+    workdir: string,
     workspaceDir: string,
     opts: BuildLaunchOpts = {},
   ): Promise<LaunchCommand> {
@@ -246,59 +245,36 @@ export class CopilotRuntime implements Runtime {
       throw new RuntimeDoesNotSupportRemoteError(this.kind);
     }
     await ensureDirTrusted(workspaceDir, this.copilotConfigPath);
-    // Pass the id through the validator so a tampered session.json can't
-    // smuggle shell metacharacters into the displayed `--resume=<id>` string.
-    const id = safeCopilotId(session.runtimeSessionId);
-    return buildCopilotLaunchCommand(session.workdir, id, opts);
+    // Pass the id through the validator so a tampered persisted record
+    // can't smuggle shell metacharacters into the displayed
+    // `--resume=<id>` string.
+    const id = safeCopilotId(runtimeSessionId);
+    return buildCopilotLaunchCommand(workdir, id, opts);
   }
 
-  async refresh(
-    session: Session,
-  ): Promise<{ lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null> {
-    const id = safeCopilotId(session.runtimeSessionId);
+  async readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null> {
+    const id = safeCopilotId(runtimeSessionId);
     if (id === null) {
-      // null id: not yet provisioned (legacy data shape) or the persisted id
-      // is malformed. Either way there's no copilot state to read.
+      // Malformed id: no copilot state to read. Defensive — defends
+      // against tampered persisted state the same way the other
+      // observability methods do.
       return null;
     }
     try {
-      const state = await readCopilotSessionState(this.copilotStateDir, id);
-      if (state === null) return null;
+      const meta = await readCopilotWorkspaceYaml(this.copilotStateDir, id);
+      if (meta === null) return null;
       return {
-        lastActiveAt: state.lastActiveAt,
-        preview: state.preview,
-        runtimeSessionId: state.runtimeSessionId,
+        title: meta.title,
+        userTitled: meta.userTitled,
+        lastActiveAt: meta.lastActiveAt,
       };
     } catch (err) {
-      throw new RuntimeRefreshFailed(this.kind, session.id, err as Error);
+      throw new RuntimeRefreshFailed(this.kind, id, err as Error);
     }
   }
 
-  async deleteState(session: Session): Promise<void> {
-    const id = safeCopilotId(session.runtimeSessionId);
-    if (id === null) return;
-    const dir = path.join(this.copilotStateDir, id);
-    try {
-      await rm(dir, { recursive: true, force: true });
-    } catch (err) {
-      throw new RuntimeStateDeletionFailed(this.kind, session.id, err as Error);
-    }
-  }
-
-  /**
-   * Mirror of {@link deleteState} for tasks. Pulls
-   * `runtimeSessionId` out of the task's metadata bag (the same key
-   * `taskActivity` consults) and rms `<copilotStateDir>/<id>/`.
-   *
-   * No-ops when the metadata doesn't carry a syntactically-valid Copilot
-   * session id — defends against tampered persisted state the same way
-   * `deleteState` does for sessions, and gracefully handles legacy task
-   * rows from before `runtimeSessionId` was promoted into metadata.
-   */
-  async deleteTaskState(opts: TaskStateOpts): Promise<void> {
-    const sessionId = opts.metadata.runtimeSessionId;
-    if (typeof sessionId !== "string") return;
-    const id = safeCopilotId(sessionId);
+  async deleteState(runtimeSessionId: string): Promise<void> {
+    const id = safeCopilotId(runtimeSessionId);
     if (id === null) return;
     const dir = path.join(this.copilotStateDir, id);
     try {
@@ -309,54 +285,39 @@ export class CopilotRuntime implements Runtime {
   }
 
   /**
-   * Read Copilot's task display metadata from `workspace.yaml`.
-   * Surfaces the same `name` / `summary` / `user_named` /
-   * `updated_at` fields the session refresh path consumes —
-   * shared via {@link readCopilotWorkspaceYaml} — but typed as a
-   * task-shaped {@link TaskRuntimeDisplayMetadata} so callers
-   * don't conflate the two entity surfaces.
-   *
-   * Returns null when `runtimeSessionId` is missing/invalid or
-   * when the yaml file isn't on disk yet (task hasn't received
-   * its first turn). Caller (TaskManager) treats null as "no
-   * runtime title available, fall through to instructions".
+   * Spawn copilot non-interactively against `opts.workdir` to consume
+   * `opts.prompt` unattended. Delegates to `dispatchCopilotTask` so the
+   * spawn machinery stays isolated and unit-testable. The returned
+   * {@link RuntimeHandle} carries the runtime session id (so callers
+   * can persist it for later inspection) and a pre-resolved
+   * `sessionDir` Promise pointing at the just-created
+   * `<copilotStateDir>/<id>/`.
    */
-  async taskMetadata(opts: TaskMetadataOpts): Promise<TaskRuntimeDisplayMetadata | null> {
-    const sessionId = opts.metadata.runtimeSessionId;
-    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
-      return null;
-    }
-    const meta = await readCopilotWorkspaceYaml(this.copilotStateDir, sessionId);
-    if (meta === null) return null;
-    return {
-      title: meta.title,
-      userTitled: meta.userTitled,
-      lastActiveAt: meta.lastActiveAt,
-    };
-  }
-
-  /**
-   * Spawn copilot non-interactively against `taskDir` to consume `prompt`
-   * unattended. Delegates to `dispatchCopilotTask` so the spawn machinery
-   * stays isolated and unit-testable. The returned `TaskHandle` carries
-   * the runtime session id (so `TaskManager` can persist it for later
-   * inspection / debug) and a pre-resolved `sessionDir` Promise pointing
-   * at the just-created `<copilotStateDir>/<id>/`.
-   */
-  async dispatchTask(opts: DispatchCopilotTaskOpts): Promise<TaskHandle> {
-    return dispatchCopilotTask(opts, {
-      copilotStateDir: this.copilotStateDir,
-      globalDir: this.globalDir,
-      randomUUID: this.randomUUID,
-      ...this.dispatchDeps,
-    });
+  async dispatch(opts: DispatchOpts): Promise<RuntimeHandle> {
+    return dispatchCopilotTask(
+      {
+        // dispatchCopilotTask still uses the legacy `taskDir` field
+        // name internally (Copilot-specific impl detail). Map it.
+        taskDir: opts.workdir,
+        agent: opts.agent,
+        catalog: opts.catalog,
+        prompt: opts.prompt,
+        workspaceDir: opts.workspaceDir,
+      },
+      {
+        copilotStateDir: this.copilotStateDir,
+        globalDir: this.globalDir,
+        randomUUID: this.randomUUID,
+        ...this.dispatchDeps,
+      },
+    );
   }
 
   /**
    * Read + parse + derive — end-to-end. Reads `events.jsonl` from
    * `<copilotStateDir>/<runtimeSessionId>/`, lifts to ActivityItem[],
    * picks the headline result. Returns `null` if the file isn't on
-   * disk yet (task hasn't emitted its first event).
+   * disk yet (the conversation hasn't emitted its first event).
    *
    * The runtime owns the path discovery so consumers (server route,
    * dashboard) never see Copilot's internal `events.jsonl` shape or
@@ -374,14 +335,12 @@ export class CopilotRuntime implements Runtime {
    *
    * Items are sequenced 0..N-1 across the WHOLE log (not just the
    * returned page) — `seq` is the canonical pagination cursor and
-   * matches what `taskActivityStream` would yield for live tail.
+   * matches what `streamActivity` would yield for live tail.
    */
-  async taskActivity(opts: TaskActivityOpts): Promise<TaskActivityResult | null> {
-    const sessionId = opts.metadata.runtimeSessionId;
-    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
-      return null;
-    }
-    const eventsPath = path.join(this.copilotStateDir, sessionId, "events.jsonl");
+  async readActivity(opts: ReadActivityOpts): Promise<ActivityResult | null> {
+    const id = safeCopilotId(opts.runtimeSessionId);
+    if (id === null) return null;
+    const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
 
     let raw: string;
     let truncated: TruncationInfo | undefined;
@@ -460,23 +419,21 @@ export class CopilotRuntime implements Runtime {
   /**
    * Live-tail variant. Tails `events.jsonl` and yields each new
    * {@link ActivityItem} as it's parseable. Yields nothing on the
-   * historical content — call {@link taskActivity} for that, then
+   * historical content — call {@link readActivity} for that, then
    * subscribe to this for the live tail (the dashboard pattern).
    *
    * Cleanup: stops on `opts.signal` abort or when the file disappears
-   * (task workdir purged). Polls fs every {@link COPILOT_TAIL_POLL_MS};
+   * (workdir purged). Polls fs every {@link COPILOT_TAIL_POLL_MS};
    * a future iteration could use `fs.watch` on supported platforms.
    */
-  async *taskActivityStream(opts: TaskActivityStreamOpts): AsyncIterable<ActivityItem> {
-    const sessionId = opts.metadata.runtimeSessionId;
-    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
-      return;
-    }
-    const eventsPath = path.join(this.copilotStateDir, sessionId, "events.jsonl");
+  async *streamActivity(opts: StreamActivityOpts): AsyncIterable<ActivityItem> {
+    const id = safeCopilotId(opts.runtimeSessionId);
+    if (id === null) return;
+    const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
 
     // Establish starting offset: end-of-file at subscription time
     // (we do NOT replay history). Caller gets that via a one-shot
-    // taskActivity() call beforehand.
+    // readActivity() call beforehand.
     let offset: number;
     let parser: CopilotActivityStreamParser;
     try {
