@@ -42,7 +42,7 @@ import type {
   SkillMetadataPatch,
   Skill as SkillPojo,
 } from "@emploke/catalog";
-import type { ActivityItem } from "@emploke/runtime";
+import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
 import type { Session, SessionRecord } from "@emploke/session";
 import type { Task, TaskStatus } from "@emploke/task";
 import type { WorkspaceUpdatePatch } from "@emploke/workspace";
@@ -196,6 +196,27 @@ export interface TaskDispatchBody {
 /** DELETE /api/workspaces/:id/tasks/:tid query params. */
 export interface TaskDeleteQuery {
   readonly purge?: "1";
+}
+
+/**
+ * GET /api/workspaces/:id/tasks/:tid/activity query params.
+ * Pagination is server-controlled — the manifest declares the
+ * shapes; the server route enforces the default limit (50) and
+ * hard maximum (500) and rejects malformed integers with 400.
+ */
+export interface TaskActivityQuery {
+  /**
+   * Return only items with `seq` strictly greater than this. Pass
+   * back the `cursor` from a prior response to continue. Omit on
+   * the first call to start from the head.
+   */
+  readonly cursor?: string;
+  /**
+   * Maximum items to return. Server clamps to [1, 500]; default 50
+   * when omitted. Sized for LLM token budgets when this endpoint
+   * is reached via MCP.
+   */
+  readonly limit?: string;
 }
 
 /**
@@ -368,17 +389,51 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid",
   ),
   /**
+   * Query params for `GET .../tasks/:tid/activity`. All optional.
+   * `cursor` returns items with seq strictly greater than the value;
+   * `limit` caps the page (server enforces a default of 50 and a
+   * hard maximum of 500). Both parameters arrive as URL strings —
+   * the route parses to integers and rejects malformed values with
+   * 400.
+   */
+  /**
    * Runtime-neutral activity timeline: the runtime parses its own
-   * event log into the {ActivityItem, ActivitySummary} vocabulary
+   * event log into the {@link ActivityItem} discriminated union
    * declared in `@emploke/runtime` (end-to-end via
    * `Runtime.taskActivity` — the route never sees a path or raw
-   * bytes). 404 NoEventsYet when the runtime hasn't produced events
-   * yet (or doesn't implement the activity surface).
+   * bytes). Paginated by `cursor` + `limit`; `truncated` marker is
+   * non-null when the runtime had to drop bytes/items to stay within
+   * its safety cap. 404 NoEventsYet when the runtime hasn't produced
+   * events yet (or doesn't implement the activity surface).
    */
   "tasks.activity": defineRoute<
-    { params: TaskPathParams },
-    { activity: readonly ActivityItem[]; result: string | null }
+    { params: TaskPathParams; query: TaskActivityQuery },
+    {
+      activity: readonly ActivityItem[];
+      result: string | null;
+      cursor: number | null;
+      totalItems?: number;
+      truncated?: TruncationInfo;
+    }
   >("GET", "/api/workspaces/:id/tasks/:tid/activity"),
+
+  /**
+   * SSE live-tail of activity. Subscribes to
+   * `Runtime.taskActivityStream` and frames each
+   * {@link ActivityItem} as `event: activity` with the JSON payload.
+   * Sends `event: end` when the iterator completes (task terminal,
+   * file gone, server shutdown). The client SHOULD use the
+   * one-shot `tasks.activity` endpoint to fetch history first,
+   * then subscribe here for the live tail with
+   * `Last-Event-ID: <seq>` to dedup.
+   *
+   * Marked human-only — NOT exposed via MCP. LLM consumers should
+   * use the paginated `tasks.activity` endpoint instead.
+   */
+  "tasks.activity.stream": defineRoute<{ params: TaskPathParams }, never>(
+    "GET",
+    "/api/workspaces/:id/tasks/:tid/activity/stream",
+  ),
 
   // ── catalog overview (workspace-scoped) ────────────────────────────
   "catalog.overview": defineRoute<{ params: WorkspacePathParams }, CatalogOverview>(

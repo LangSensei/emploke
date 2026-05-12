@@ -777,47 +777,200 @@ export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
 
 /**
  * Runtime-neutral activity timeline for a task. The runtime parses
- * its own event log into the {ActivityItem, ActivitySummary} shapes
- * exported below; the dashboard renders them without knowing which
+ * its own event log into the {@link ActivityItem} discriminated
+ * union below; the dashboard renders them without knowing which
  * runtime produced the underlying log.
+ *
+ * The shapes here MIRROR `@emploke/runtime`'s exports — they are
+ * NOT imported because dashboard is a browser bundle that doesn't
+ * pull from server-side packages. Keep them in lock-step manually
+ * (the route-manifest test would catch divergence on the wire
+ * shape; runtime-internal types like `Runtime` are excluded).
  *
  * Returns `null` (404 NoEventsYet) when the runtime doesn't implement
  * structured activity (e.g. a future runtime with no event log) or
  * when the log isn't on disk yet.
  */
-export interface ActivityToolRequest {
-  name: string;
-  arguments?: Record<string, unknown>;
+
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cached?: number;
+  reasoning?: number;
+  total: number;
 }
 
-export interface ActivitySummary {
-  linesAdded: number;
-  linesRemoved: number;
-  filesModified: string[];
-  premiumRequests: number;
-  inputTokens: number;
-  outputTokens: number;
-  model: string | null;
+export interface SummaryStats {
+  filesModified?: string[];
+  linesAdded?: number;
+  linesRemoved?: number;
+  toolCallsCount?: number;
+  durationMs?: number;
+  costUSD?: number;
+  model?: string;
+  premiumRequests?: number;
+}
+
+export interface Attachment {
+  kind: "image" | "file";
+  mimeType?: string;
+  url?: string;
+  data?: string;
+  name?: string;
+}
+
+interface BaseActivityItem {
+  seq: number;
+  id?: string;
+  parentSeq?: number;
+  timestamp: string;
+}
+
+export interface UserActivityItem extends BaseActivityItem {
+  kind: "user";
+  text: string;
+  attachments?: Attachment[];
+}
+
+export interface AssistantActivityItem extends BaseActivityItem {
+  kind: "assistant";
+  text: string;
+  model?: string;
+  tokens?: TokenUsage;
+  stopReason?: string;
+}
+
+export interface ThinkingActivityItem extends BaseActivityItem {
+  kind: "thinking";
+  text: string;
+  subject?: string;
+}
+
+export interface ToolCallActivityItem extends BaseActivityItem {
+  kind: "tool_call";
+  callId: string;
+  name: string;
+  args?: unknown;
+  status: "running" | "success" | "error" | "cancelled";
+  result?: unknown;
+  display?: { content: string; markdown?: boolean };
+  durationMs?: number;
+}
+
+export interface SystemActivityItem extends BaseActivityItem {
+  kind: "system";
+  text: string;
+  level?: "info" | "warn" | "error";
+  subKind?: string;
+}
+
+export interface SummaryActivityItem extends BaseActivityItem {
+  kind: "summary";
+  text?: string;
+  tokens?: TokenUsage;
+  stats?: SummaryStats;
 }
 
 export type ActivityItem =
-  | { kind: "user"; timestamp: string; content: string }
-  | {
-      kind: "assistant";
-      timestamp: string;
-      content: string;
-      toolRequests: ActivityToolRequest[];
-    }
-  | { kind: "summary"; timestamp: string; summary: ActivitySummary };
+  | UserActivityItem
+  | AssistantActivityItem
+  | ThinkingActivityItem
+  | ToolCallActivityItem
+  | SystemActivityItem
+  | SummaryActivityItem;
+
+export interface TruncationInfo {
+  reason: "size_limit" | "page_limit";
+  droppedBytes?: number;
+  droppedItems?: number;
+  hint?: string;
+}
 
 export interface TaskActivity {
   activity: ActivityItem[];
   result: string | null;
+  cursor: number | null;
+  totalItems?: number;
+  truncated?: TruncationInfo;
 }
 
-export const fetchTaskActivity = async (id: string): Promise<TaskActivity | null> => {
-  const r = await fetch(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity`);
+export interface FetchTaskActivityOpts {
+  cursor?: number;
+  limit?: number;
+}
+
+export const fetchTaskActivity = async (
+  id: string,
+  opts: FetchTaskActivityOpts = {},
+): Promise<TaskActivity | null> => {
+  const usp = new URLSearchParams();
+  if (opts.cursor !== undefined) usp.append("cursor", String(opts.cursor));
+  if (opts.limit !== undefined) usp.append("limit", String(opts.limit));
+  const qs = usp.toString();
+  const url = `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity${qs ? `?${qs}` : ""}`;
+  const r = await fetch(url);
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(await extractError(r));
   return r.json();
+};
+
+/**
+ * Subscribe to live activity for a running task. Returns a handle
+ * that can be `close()`d to release the SSE connection. Each new
+ * {@link ActivityItem} arriving on the wire is delivered to
+ * `onItem`; `onEnd` fires when the runtime finishes streaming
+ * (task terminal) or the connection closes; `onError` fires on
+ * transport / framing faults (the SSE layer auto-reconnects on
+ * its own — `onError` is just for visibility).
+ *
+ * The `Last-Event-ID` reconnection header is set by the browser's
+ * native EventSource using the `id:` field on each frame the
+ * server emits — no manual cursor bookkeeping required.
+ */
+export interface ActivityStreamHandle {
+  close(): void;
+}
+
+export interface SubscribeTaskActivityOpts {
+  cursor?: number;
+  onItem: (item: ActivityItem) => void;
+  onEnd?: () => void;
+  onError?: (err: Error) => void;
+}
+
+export const subscribeTaskActivity = (
+  id: string,
+  opts: SubscribeTaskActivityOpts,
+): ActivityStreamHandle => {
+  const url = `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity/stream`;
+  // EventSource doesn't support custom headers cross-browser, so we
+  // can't pass Last-Event-ID on first connect via headers — but the
+  // browser DOES set it on RECONNECT after a transport drop, which
+  // is the case that matters most. For first-connect cursor resume
+  // we'd need a query-param fallback; deferred (caller can do a
+  // one-shot fetchTaskActivity({ cursor }) before subscribing).
+  const es = new EventSource(url);
+  es.addEventListener("activity", (ev) => {
+    try {
+      const item = JSON.parse((ev as MessageEvent).data) as ActivityItem;
+      opts.onItem(item);
+    } catch (err) {
+      opts.onError?.(err as Error);
+    }
+  });
+  es.addEventListener("end", () => {
+    opts.onEnd?.();
+    es.close();
+  });
+  es.addEventListener("error", () => {
+    // EventSource's spec auto-reconnects; we surface the error for
+    // visibility but don't tear down. CLOSED state means truly dead
+    // (server returned 4xx, won't retry).
+    if (es.readyState === EventSource.CLOSED) {
+      opts.onError?.(new Error("SSE connection closed"));
+    }
+  });
+  return {
+    close: () => es.close(),
+  };
 };

@@ -1,6 +1,7 @@
-import { readFile, rm } from "node:fs/promises";
+import { open, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import {
   RuntimeDoesNotSupportRemoteError,
@@ -10,6 +11,7 @@ import {
 } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
 import type {
+  ActivityItem,
   BuildLaunchOpts,
   LaunchCommand,
   ProvisionContext,
@@ -18,10 +20,16 @@ import type {
   Session,
   TaskActivityOpts,
   TaskActivityResult,
+  TaskActivityStreamOpts,
   TaskHandle,
   TaskStateOpts,
+  TruncationInfo,
 } from "../types.js";
-import { deriveCopilotResult, parseCopilotActivity } from "./activity.js";
+import {
+  CopilotActivityStreamParser,
+  deriveCopilotResult,
+  parseCopilotActivity,
+} from "./activity.js";
 import {
   type DispatchCopilotTaskDeps,
   type DispatchCopilotTaskOpts,
@@ -324,6 +332,20 @@ export class CopilotRuntime implements Runtime {
    * The runtime owns the path discovery so consumers (server route,
    * dashboard) never see Copilot's internal `events.jsonl` shape or
    * its `~/.copilot/session-state/` layout.
+   *
+   * Two safety bounds:
+   *   - **Raw read cap** (4 MB by default): if `events.jsonl` exceeds
+   *     this, we read only the trailing N bytes and surface a
+   *     `truncated.size_limit` marker. Prevents OOM / event-loop
+   *     stalls when the agent has been chatty (extreme case observed:
+   *     hundreds of MB after a long autonomous run).
+   *   - **Per-page limit** (server-enforced via `opts.limit`): the
+   *     runtime returns at most that many items, with `cursor` set
+   *     for the next page.
+   *
+   * Items are sequenced 0..N-1 across the WHOLE log (not just the
+   * returned page) — `seq` is the canonical pagination cursor and
+   * matches what `taskActivityStream` would yield for live tail.
    */
   async taskActivity(opts: TaskActivityOpts): Promise<TaskActivityResult | null> {
     const sessionId = opts.metadata.runtimeSessionId;
@@ -331,20 +353,196 @@ export class CopilotRuntime implements Runtime {
       return null;
     }
     const eventsPath = path.join(this.copilotStateDir, sessionId, "events.jsonl");
+
     let raw: string;
+    let truncated: TruncationInfo | undefined;
     try {
-      raw = await readFile(eventsPath, "utf8");
+      const st = await stat(eventsPath);
+      if (st.size > COPILOT_RAW_READ_CAP_BYTES) {
+        // Tail-read: open + position to the last N bytes. We may slice
+        // the first partial line after the cut; the parser drops it
+        // silently (malformed JSON line) and the truncated marker
+        // tells the consumer items were dropped.
+        const fh = await open(eventsPath, "r");
+        try {
+          const buf = Buffer.alloc(COPILOT_RAW_READ_CAP_BYTES);
+          await fh.read(buf, 0, COPILOT_RAW_READ_CAP_BYTES, st.size - COPILOT_RAW_READ_CAP_BYTES);
+          raw = buf.toString("utf8");
+          // Drop the (probably partial) first line.
+          const firstNewline = raw.indexOf("\n");
+          if (firstNewline > 0) raw = raw.slice(firstNewline + 1);
+        } finally {
+          await fh.close();
+        }
+        truncated = {
+          reason: "size_limit",
+          droppedBytes: st.size - COPILOT_RAW_READ_CAP_BYTES,
+          hint: `events.jsonl is ${st.size} bytes; read last ${COPILOT_RAW_READ_CAP_BYTES} bytes only. Use task summary endpoint for high-level view.`,
+        };
+      } else {
+        raw = await readFile(eventsPath, "utf8");
+      }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return null;
       throw err;
     }
+
+    const allItems = parseCopilotActivity(raw);
+    const totalItems = allItems.length;
+    const result = deriveCopilotResult(raw);
+
+    // Apply pagination (cursor + limit). Defaults: return everything
+    // if no limit set; if cursor is set, return items with seq > cursor.
+    const cursor = typeof opts.cursor === "number" ? opts.cursor : undefined;
+    const limit = typeof opts.limit === "number" && opts.limit > 0 ? opts.limit : undefined;
+    let filtered: ActivityItem[] =
+      cursor !== undefined ? allItems.filter((i) => i.seq > cursor) : allItems;
+
+    let pageTruncated: TruncationInfo | undefined;
+    if (limit !== undefined && filtered.length > limit) {
+      filtered = filtered.slice(0, limit);
+      pageTruncated = {
+        reason: "page_limit",
+        hint: `Showed ${limit} of ${allItems.length} items; pass cursor=${filtered[filtered.length - 1]?.seq} for the next page.`,
+      };
+    }
+
+    const lastSeq = filtered.length > 0 ? (filtered[filtered.length - 1]?.seq ?? null) : null;
+    const hasMore =
+      lastSeq !== null &&
+      allItems.length > 0 &&
+      lastSeq < (allItems[allItems.length - 1]?.seq ?? -1);
+
     return {
-      activity: parseCopilotActivity(raw),
-      result: deriveCopilotResult(raw),
+      activity: filtered,
+      result,
+      cursor: hasMore ? lastSeq : null,
+      totalItems,
+      // size_limit takes precedence over page_limit when both apply.
+      ...(truncated !== undefined
+        ? { truncated }
+        : pageTruncated !== undefined
+          ? { truncated: pageTruncated }
+          : {}),
     };
   }
+
+  /**
+   * Live-tail variant. Tails `events.jsonl` and yields each new
+   * {@link ActivityItem} as it's parseable. Yields nothing on the
+   * historical content — call {@link taskActivity} for that, then
+   * subscribe to this for the live tail (the dashboard pattern).
+   *
+   * Cleanup: stops on `opts.signal` abort or when the file disappears
+   * (task workdir purged). Polls fs every {@link COPILOT_TAIL_POLL_MS};
+   * a future iteration could use `fs.watch` on supported platforms.
+   */
+  async *taskActivityStream(opts: TaskActivityStreamOpts): AsyncIterable<ActivityItem> {
+    const sessionId = opts.metadata.runtimeSessionId;
+    if (typeof sessionId !== "string" || !isCopilotSessionId(sessionId)) {
+      return;
+    }
+    const eventsPath = path.join(this.copilotStateDir, sessionId, "events.jsonl");
+
+    // Establish starting offset: end-of-file at subscription time
+    // (we do NOT replay history). Caller gets that via a one-shot
+    // taskActivity() call beforehand.
+    let offset: number;
+    let parser: CopilotActivityStreamParser;
+    try {
+      const st = await stat(eventsPath);
+      offset = st.size;
+      // Resume at the seq the caller asked for (if any). When omitted,
+      // we use the count of items in the historical content as the
+      // starting seq so subsequent items continue the sequence.
+      const startSeq =
+        typeof opts.cursor === "number"
+          ? opts.cursor + 1
+          : parseCopilotActivity(await readFile(eventsPath, "utf8")).length;
+      parser = new CopilotActivityStreamParser(startSeq);
+    } catch {
+      // File doesn't exist yet (task hasn't started writing). Start
+      // from offset 0, seq 0; we'll catch up when it appears.
+      offset = 0;
+      parser = new CopilotActivityStreamParser(
+        typeof opts.cursor === "number" ? opts.cursor + 1 : 0,
+      );
+    }
+
+    let buffer = "";
+
+    while (true) {
+      if (opts.signal?.aborted) return;
+
+      let st: Awaited<ReturnType<typeof stat>>;
+      try {
+        st = await stat(eventsPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") {
+          // File gone — task purged or workdir removed.
+          return;
+        }
+        throw err;
+      }
+
+      if (st.size > offset) {
+        const fh = await open(eventsPath, "r");
+        try {
+          const len = st.size - offset;
+          const buf = Buffer.alloc(len);
+          await fh.read(buf, 0, len, offset);
+          buffer += buf.toString("utf8");
+          offset = st.size;
+        } finally {
+          await fh.close();
+        }
+
+        // Process complete lines; keep partial trailing line in buffer.
+        while (true) {
+          const newlineIdx = buffer.indexOf("\n");
+          if (newlineIdx === -1) break;
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
+          const result = parser.parseLine(line);
+          for (const item of result.items) {
+            if (opts.signal?.aborted) return;
+            yield item;
+          }
+        }
+      } else if (st.size < offset) {
+        // File was truncated / rewritten (rare — task purge in flight,
+        // or external rotation). Treat as end-of-stream.
+        return;
+      }
+
+      // No new bytes — wait then poll again. The signal abort wins
+      // over the timer.
+      try {
+        await delay(COPILOT_TAIL_POLL_MS, undefined, { signal: opts.signal });
+      } catch {
+        return;
+      }
+    }
+  }
 }
+
+/**
+ * Maximum bytes we'll read from `events.jsonl` in one
+ * {@link CopilotRuntime.taskActivity} call. Sized to comfortably
+ * fit a long autonomous run (hundreds of turns) without risking
+ * OOM. When exceeded, we tail-read the last N bytes and mark the
+ * response truncated.
+ */
+const COPILOT_RAW_READ_CAP_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Poll interval for {@link CopilotRuntime.taskActivityStream}. 250ms
+ * is the upper bound on perceived dashboard latency for live-tail;
+ * faster than this risks burning CPU on idle tasks.
+ */
+const COPILOT_TAIL_POLL_MS = 250;
 
 /**
  * Return the id if it's a syntactically-valid copilot session id, else null.

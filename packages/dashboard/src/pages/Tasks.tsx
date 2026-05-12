@@ -10,6 +10,7 @@ import {
   listRuntimes,
   listTasks,
   type ServerConfig,
+  subscribeTaskActivity,
   type TaskActivity,
   type TaskRecord,
   type TaskStatus,
@@ -973,6 +974,45 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
   usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
 
+  // Live tail via SSE while the task is running. The poll above keeps
+  // the task header (status, exit fields) up to date — the SSE stream
+  // delivers individual ActivityItems as they're produced, so the
+  // timeline updates in near-real-time without burning the polling
+  // budget. Items are merged by `seq` (last-write-wins) so a
+  // tool_call's "running" -> "success" transition (same seq, updated
+  // status) renders correctly. On terminal status the subscription
+  // closes itself; we also tear down on task switch / unmount.
+  useEffect(() => {
+    if (!taskId || !detailPollEnabled) return;
+    const handle = subscribeTaskActivity(taskId, {
+      onItem: (item) => {
+        if (!mountedRef.current) return;
+        setActivity((prev) => {
+          // Merge by seq; new items append, existing seqs overwrite (handles
+          // tool_call begin -> end mutation that yields the same seq twice).
+          const bySeq = new Map<number, ActivityItem>();
+          if (prev !== null) {
+            for (const it of prev.activity) bySeq.set(it.seq, it);
+          }
+          bySeq.set(item.seq, item);
+          const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+          return prev !== null
+            ? { ...prev, activity: merged }
+            : { activity: merged, result: null, cursor: null };
+        });
+      },
+      onError: (err) => {
+        // Soft error: the EventSource auto-reconnects; we just log
+        // for visibility. A persistent error surfaces via the polling
+        // path's activityError state when the next refreshDetail runs.
+        if (typeof console !== "undefined") {
+          console.warn("activity stream error", err);
+        }
+      },
+    });
+    return () => handle.close();
+  }, [taskId, detailPollEnabled]);
+
   // Common box styling lives in CSS now. The right panel anchors at
   // the top of its grid cell (.tasks-pane__detail), with its own
   // scroll container and a viewport-capped max-height so the page
@@ -1228,8 +1268,13 @@ function ActivityView({
 
 function ActivityRow({ item }: { item: ActivityItem }) {
   if (item.kind === "summary") {
-    const s = item.summary;
-    const codeChanged = s.linesAdded > 0 || s.linesRemoved > 0 || s.filesModified.length > 0;
+    const stats = item.stats;
+    const tokens = item.tokens;
+    const codeChanged =
+      stats !== undefined &&
+      ((stats.linesAdded ?? 0) > 0 ||
+        (stats.linesRemoved ?? 0) > 0 ||
+        (stats.filesModified?.length ?? 0) > 0);
     return (
       <li className="activity-row activity-row--summary">
         <div className="activity-row__head">
@@ -1238,60 +1283,176 @@ function ActivityRow({ item }: { item: ActivityItem }) {
             {formatRelative(item.timestamp)}
           </time>
         </div>
+        {item.text !== undefined && item.text.length > 0 && (
+          <p className="activity-row__body">{item.text}</p>
+        )}
         <div className="activity-row__summary-grid">
           {codeChanged ? (
             <span>
-              <strong>Code:</strong> +{s.linesAdded} −{s.linesRemoved} across{" "}
-              {s.filesModified.length} file{s.filesModified.length === 1 ? "" : "s"}
+              <strong>Code:</strong> +{stats?.linesAdded ?? 0} −{stats?.linesRemoved ?? 0} across{" "}
+              {stats?.filesModified?.length ?? 0} file
+              {(stats?.filesModified?.length ?? 0) === 1 ? "" : "s"}
             </span>
           ) : (
             <span className="muted">No code changes</span>
           )}
-          {s.premiumRequests > 0 && (
+          {(stats?.premiumRequests ?? 0) > 0 && (
             <span>
-              <strong>Premium requests:</strong> {s.premiumRequests}
+              <strong>Premium requests:</strong> {stats?.premiumRequests}
             </span>
           )}
-          {(s.inputTokens > 0 || s.outputTokens > 0) && (
+          {tokens !== undefined && (tokens.input > 0 || tokens.output > 0) && (
             <span>
-              <strong>Tokens:</strong> {s.inputTokens.toLocaleString()} in /{" "}
-              {s.outputTokens.toLocaleString()} out
+              <strong>Tokens:</strong> {tokens.input.toLocaleString()} in /{" "}
+              {tokens.output.toLocaleString()} out
             </span>
           )}
-          {s.model && (
+          {stats?.costUSD !== undefined && (
             <span>
-              <strong>Model:</strong> {s.model}
+              <strong>Cost:</strong> ${stats.costUSD.toFixed(4)}
+            </span>
+          )}
+          {stats?.model && (
+            <span>
+              <strong>Model:</strong> {stats.model}
             </span>
           )}
         </div>
       </li>
     );
   }
+
+  if (item.kind === "thinking") {
+    return (
+      <li className="activity-row activity-row--thinking">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--thinking">
+            Thinking{item.subject ? `: ${item.subject}` : ""}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+          </time>
+        </div>
+        <details>
+          <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+            Show reasoning
+          </summary>
+          <p className="activity-row__body" style={{ fontStyle: "italic", opacity: 0.8 }}>
+            {item.text}
+          </p>
+        </details>
+      </li>
+    );
+  }
+
+  if (item.kind === "tool_call") {
+    const statusColor =
+      item.status === "success"
+        ? "#3fb950"
+        : item.status === "error"
+          ? "#f85149"
+          : item.status === "cancelled"
+            ? "#8b949e"
+            : "#d29922";
+    return (
+      <li className="activity-row activity-row--tool_call">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--tool_call">
+            <span style={{ color: statusColor }}>●</span> tool: {item.name}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+            {item.durationMs !== undefined && ` (${item.durationMs}ms)`}
+          </time>
+        </div>
+        {item.args !== undefined && (
+          <details>
+            <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+              Arguments
+            </summary>
+            <pre className="activity-row__body" style={{ fontSize: 11 }}>
+              {JSON.stringify(item.args, null, 2)}
+            </pre>
+          </details>
+        )}
+        {item.display !== undefined ? (
+          <p className="activity-row__body" style={{ fontSize: 12 }}>
+            {item.display.content}
+          </p>
+        ) : (
+          item.result !== undefined && (
+            <details>
+              <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+                Result
+              </summary>
+              <pre className="activity-row__body" style={{ fontSize: 11 }}>
+                {typeof item.result === "string"
+                  ? item.result
+                  : JSON.stringify(item.result, null, 2)}
+              </pre>
+            </details>
+          )
+        )}
+      </li>
+    );
+  }
+
+  if (item.kind === "system") {
+    const levelColor =
+      item.level === "error" ? "#f85149" : item.level === "warn" ? "#d29922" : "#8b949e";
+    return (
+      <li className="activity-row activity-row--system">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--system">
+            <span style={{ color: levelColor }}>●</span> {item.subKind ?? "system"}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+          </time>
+        </div>
+        <p className="activity-row__body muted" style={{ fontSize: 12 }}>
+          {item.text}
+        </p>
+      </li>
+    );
+  }
+
+  // user / assistant
   return (
     <li className={`activity-row activity-row--${item.kind}`}>
       <div className="activity-row__head">
         <span className={`activity-row__role activity-row__role--${item.kind}`}>
           {item.kind === "user" ? "User" : "Assistant"}
+          {item.kind === "assistant" && item.model !== undefined && (
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+              ({item.model})
+            </span>
+          )}
         </span>
         <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
           {formatRelative(item.timestamp)}
+          {item.kind === "assistant" && item.tokens !== undefined && (
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+              ({item.tokens.output.toLocaleString()} tok)
+            </span>
+          )}
         </time>
       </div>
-      {item.content.length > 0 && <p className="activity-row__body">{item.content}</p>}
-      {item.kind === "assistant" && item.toolRequests.length > 0 && (
-        <div className="activity-row__tools">
-          {item.toolRequests.map((t) => {
-            // Tool calls within a single assistant message are emitted as
-            // a list; same tool name can repeat, so we hash the args into
-            // the key to keep React happy when the message re-renders
-            // (e.g. during a poll tick that returns the same content).
-            const key = `${t.name}::${JSON.stringify(t.arguments ?? {})}`;
-            return (
-              <span key={key} className="activity-row__tool" title={t.name}>
-                {t.name}
-              </span>
-            );
-          })}
+      {item.text.length > 0 && <p className="activity-row__body">{item.text}</p>}
+      {item.kind === "user" && item.attachments !== undefined && item.attachments.length > 0 && (
+        <div
+          className="activity-row__attachments"
+          style={{ display: "flex", gap: 6, marginTop: 4 }}
+        >
+          {item.attachments.map((att) => (
+            <span
+              key={att.url ?? att.data ?? att.name ?? Math.random()}
+              className="activity-row__tool"
+              title={att.mimeType ?? att.kind}
+            >
+              📎 {att.name ?? att.kind}
+            </span>
+          ))}
         </div>
       )}
     </li>

@@ -301,4 +301,147 @@ describe("CopilotRuntime", () => {
       }
     });
   });
+
+  describe("taskActivity", () => {
+    it("returns null when runtimeSessionId is missing or invalid", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      expect(await rt.taskActivity({ metadata: {} })).toBeNull();
+      expect(await rt.taskActivity({ metadata: { runtimeSessionId: "not-a-uuid" } })).toBeNull();
+    });
+
+    it("returns null when events.jsonl is missing on disk", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      expect(await rt.taskActivity({ metadata: { runtimeSessionId: FIXED_UUID } })).toBeNull();
+    });
+
+    it("reads + parses + paginates events.jsonl", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const lines: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        lines.push(
+          JSON.stringify({
+            type: "user.message",
+            id: `u${i}`,
+            parentId: null,
+            timestamp: "2026-05-12T03:54:11.016Z",
+            data: { content: `msg ${i}` },
+          }),
+        );
+      }
+      await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+
+      const all = await rt.taskActivity({
+        metadata: { runtimeSessionId: FIXED_UUID },
+      });
+      expect(all?.activity).toHaveLength(10);
+      expect(all?.totalItems).toBe(10);
+      expect(all?.cursor).toBeNull();
+
+      const first3 = await rt.taskActivity({
+        metadata: { runtimeSessionId: FIXED_UUID },
+        limit: 3,
+      });
+      expect(first3?.activity).toHaveLength(3);
+      expect(first3?.cursor).toBe(2); // last seq returned in this page
+      expect(first3?.truncated?.reason).toBe("page_limit");
+
+      const next = await rt.taskActivity({
+        metadata: { runtimeSessionId: FIXED_UUID },
+        cursor: 2,
+        limit: 5,
+      });
+      expect(next?.activity[0]?.seq).toBe(3);
+      expect(next?.activity).toHaveLength(5);
+    });
+
+    it("caps the raw read at 4MB and surfaces truncated marker", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      // Build a > 4MB events.jsonl by repeating a fat user.message line.
+      const fatPayload = "x".repeat(8000);
+      const fatLine =
+        JSON.stringify({
+          type: "user.message",
+          id: "u1",
+          parentId: null,
+          timestamp: "2026-05-12T03:54:11.016Z",
+          data: { content: fatPayload },
+        }) + "\n";
+      const targetBytes = 5 * 1024 * 1024;
+      const repeats = Math.ceil(targetBytes / fatLine.length);
+      const eventsPath = path.join(dir, "events.jsonl");
+      // Write incrementally to avoid holding 5MB string in memory twice.
+      await writeFile(eventsPath, "");
+      const { appendFile } = await import("node:fs/promises");
+      for (let i = 0; i < repeats; i++) {
+        await appendFile(eventsPath, fatLine);
+      }
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const r = await rt.taskActivity({ metadata: { runtimeSessionId: FIXED_UUID } });
+      expect(r).not.toBeNull();
+      expect(r?.truncated?.reason).toBe("size_limit");
+      expect(r?.truncated?.droppedBytes).toBeGreaterThan(0);
+      // Activity is still parsed (last 4MB worth), not empty.
+      expect(r?.activity.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("taskActivityStream", () => {
+    it("returns nothing when runtimeSessionId is missing", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const items: unknown[] = [];
+      for await (const item of rt.taskActivityStream({ metadata: {} })) {
+        items.push(item);
+      }
+      expect(items).toEqual([]);
+    });
+
+    it("yields each new event as it's appended; honours abort signal", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const eventsPath = path.join(dir, "events.jsonl");
+      await writeFile(eventsPath, "");
+
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const ac = new AbortController();
+      const collected: unknown[] = [];
+
+      // Drive the iterator on a background promise so we can write to
+      // the file in parallel.
+      const iterPromise = (async () => {
+        for await (const item of rt.taskActivityStream({
+          metadata: { runtimeSessionId: FIXED_UUID },
+          signal: ac.signal,
+        })) {
+          collected.push(item);
+        }
+      })();
+
+      // Give the iterator one poll cycle to settle on the empty file,
+      // then append a line.
+      const { appendFile } = await import("node:fs/promises");
+      const { setTimeout: delay } = await import("node:timers/promises");
+      await delay(300);
+      await appendFile(
+        eventsPath,
+        `${JSON.stringify({
+          type: "user.message",
+          id: "u1",
+          parentId: null,
+          timestamp: "2026-05-12T03:54:11.016Z",
+          data: { content: "live!" },
+        })}\n`,
+      );
+      // Give the iterator time to pick up the new bytes.
+      await delay(500);
+      ac.abort();
+      await iterPromise;
+
+      expect(collected.length).toBeGreaterThanOrEqual(1);
+      expect((collected[0] as { kind: string; text: string }).kind).toBe("user");
+      expect((collected[0] as { text: string }).text).toBe("live!");
+    });
+  });
 });

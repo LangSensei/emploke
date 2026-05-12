@@ -226,6 +226,29 @@ export interface Runtime {
    * this method. The route returns `404 NoEventsYet` in that case.
    */
   taskActivity?(opts: TaskActivityOpts): Promise<TaskActivityResult | null>;
+
+  /**
+   * Optional. Live-tail variant of {@link taskActivity}. Returns an
+   * AsyncIterable that yields {@link ActivityItem}s as they're
+   * written to the runtime's native log, until the iterator is
+   * closed (caller aborts, file is closed by the CLI, or the task
+   * reaches a terminal state — runtimes are responsible for the
+   * second case via fs watch / poll).
+   *
+   * Used by the SSE `/activity/stream` endpoint to push live events
+   * to the dashboard while a task is still running. Static views
+   * (post-mortem) MUST NOT use this hook — use the bounded
+   * {@link taskActivity} for those.
+   *
+   * Cleanup contract: when `opts.signal` aborts (HTTP client
+   * disconnect, server shutdown), the iterator MUST stop within
+   * a few hundred ms and release any file handles / watchers.
+   *
+   * Runtimes that don't expose a streaming source simply omit this
+   * method; the SSE route then falls back to polling
+   * {@link taskActivity} every few seconds.
+   */
+  taskActivityStream?(opts: TaskActivityStreamOpts): AsyncIterable<ActivityItem>;
 }
 
 /** Inputs to {@link Runtime.taskActivity}. */
@@ -236,6 +259,20 @@ export interface TaskActivityOpts {
    * log on its own state directory.
    */
   readonly metadata: Readonly<Record<string, unknown>>;
+  /**
+   * Return only items with `seq > cursor`. When omitted, the runtime
+   * returns the most recent `limit` items (the post-mortem default).
+   * Used by paginated reads (`?cursor=N`) and SSE reconnection
+   * (`Last-Event-ID: N` header).
+   */
+  readonly cursor?: number;
+  /**
+   * Maximum number of items to return. Server enforces a default
+   * (50) and a hard maximum (500) before calling into the runtime.
+   * Runtimes MUST honour this even when reading from a small log,
+   * so callers can rely on the bound for memory budgeting.
+   */
+  readonly limit?: number;
 }
 
 /**
@@ -260,10 +297,67 @@ export interface TaskStateOpts {
  * headline answer the dashboard renders prominently. `result` is
  * `null` when the agent never produced a final assistant message
  * (crashed early, runtime doesn't model the concept, ...).
+ *
+ * Pagination + truncation:
+ *
+ * - `cursor` is the seq number to pass back as `opts.cursor` for the
+ *   next page; `null` when this page is the tail.
+ * - `truncated` is non-null when the runtime had to drop bytes /
+ *   items to stay within the safety cap (e.g. `events.jsonl` too
+ *   large to read in full). Consumers MUST surface this so the
+ *   user / LLM knows they're seeing a partial timeline.
  */
 export interface TaskActivityResult {
   readonly activity: readonly ActivityItem[];
   readonly result: string | null;
+  /** seq to pass as next `opts.cursor`; null when caller has the tail. */
+  readonly cursor: number | null;
+  /** Total items in the underlying log, when known. Useful for "showing X of Y" UI. */
+  readonly totalItems?: number;
+  /**
+   * Set when the runtime had to truncate the source (file too large,
+   * cap hit). Always non-null when truncation occurred so consumers
+   * never render a partial timeline as if it were complete.
+   */
+  readonly truncated?: TruncationInfo;
+}
+
+/**
+ * Why and how a {@link TaskActivityResult} was truncated. Always
+ * present when truncation happened; absent when the response is the
+ * complete timeline.
+ */
+export interface TruncationInfo {
+  /**
+   * `"size_limit"` — runtime hit a raw byte cap reading the log.
+   * `"page_limit"` — caller's `limit` was smaller than available items.
+   */
+  readonly reason: "size_limit" | "page_limit";
+  /** Bytes dropped from the start of the source file (size_limit only). */
+  readonly droppedBytes?: number;
+  /** Items dropped from the start (size_limit only — when raw read was trimmed). */
+  readonly droppedItems?: number;
+  /** Hint string for the LLM when this response is consumed via MCP. */
+  readonly hint?: string;
+}
+
+/** Inputs to {@link Runtime.taskActivityStream}. */
+export interface TaskActivityStreamOpts {
+  /** Same shape as {@link TaskActivityOpts.metadata}. */
+  readonly metadata: Readonly<Record<string, unknown>>;
+  /**
+   * Resume from this seq number (exclusive). Used by SSE
+   * reconnection (`Last-Event-ID` header). When omitted, the
+   * stream starts from the next event written to the log — it does
+   * NOT replay history (use {@link Runtime.taskActivity} for that).
+   */
+  readonly cursor?: number;
+  /**
+   * Caller's abort signal. The runtime MUST stop tailing and clean
+   * up file handles / watchers when this fires. Used by the SSE
+   * route to release resources when the HTTP client disconnects.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -446,56 +540,233 @@ export interface LaunchCommand {
 
 /**
  * Runtime-neutral entries returned inside {@link TaskActivityResult}
- * by {@link Runtime.taskActivity}.
- * The vocabulary covers the three things a user actually wants to see
- * in a task's timeline:
+ * by {@link Runtime.taskActivity}, and yielded by
+ * {@link Runtime.taskActivityStream}.
  *
- *   - `user` — what the user asked
- *   - `assistant` — what the agent answered, plus any tool calls it
- *     issued in that turn
- *   - `summary` — terminal stats (files changed, premium requests,
- *     token usage); typically emitted at most once per task
+ * Discriminated union covering the cross-runtime semantic primitives
+ * observed in Copilot, Gemini, OpenAI Codex, and Claude Code:
  *
- * Lower-signal events (handshake, model-handshake, system prompts,
- * turn boundaries) are filtered out by the runtime — consumers never
- * see them via this surface. Runtimes that want to expose a "raw log"
- * surface (forensic / debug) can do so behind their own opt-in route
- * outside this contract.
+ *   - `user` — what the user asked, plus optional attachments
+ *   - `assistant` — what the agent answered (plain text only — tool
+ *     calls live in their own items); optional model + tokens
+ *   - `thinking` — agent reasoning trace (Gemini `thoughts`, Claude
+ *     `thinking` blocks, Codex `agent_reasoning` events). Runtimes
+ *     that don't expose reasoning simply emit zero of these.
+ *   - `tool_call` — a single tool invocation. Runtimes that expose
+ *     begin/end pairs (Copilot, Codex) merge them into one item with
+ *     `status` flipping `running` → `success`/`error`. Runtimes that
+ *     inline tool calls on assistant turns (Gemini, Claude) emit one
+ *     item per call alongside the assistant text.
+ *   - `system` — out-of-band events (Copilot hooks/skills/subagents,
+ *     Codex context_compacted, runtime warnings). `subKind` carries
+ *     the runtime-specific tag for filtering.
+ *   - `summary` — terminal stats (Copilot `session.shutdown`, Codex
+ *     `task_complete`); typically emitted at most once per task.
+ *
+ * Every item carries a monotonic `seq` (per task) — this is the
+ * canonical cursor for pagination and SSE reconnection. `id` is the
+ * runtime-native UUID when available; `parentSeq` is optional
+ * threading metadata where the runtime exposes it (Copilot
+ * `parentId`, Claude Code `parentUuid`).
+ *
+ * Future runtimes add new kinds via PR; consumers that don't
+ * recognise a kind should treat it as opaque (renderable as JSON)
+ * rather than crashing.
  */
 export type ActivityItem =
-  | { readonly kind: "user"; readonly timestamp: string; readonly content: string }
-  | {
-      readonly kind: "assistant";
-      readonly timestamp: string;
-      readonly content: string;
-      readonly toolRequests: readonly ToolRequest[];
-    }
-  | { readonly kind: "summary"; readonly timestamp: string; readonly summary: ActivitySummary };
+  | UserItem
+  | AssistantItem
+  | ThinkingItem
+  | ToolCallItem
+  | SystemItem
+  | SummaryItem;
 
-/**
- * A tool invocation requested by the agent. Inert representation —
- * the runtime has already executed (or chosen not to) by the time the
- * dashboard renders this; we only carry it for the timeline view.
- */
-export interface ToolRequest {
-  readonly name: string;
-  readonly arguments?: Record<string, unknown> | undefined;
+interface BaseActivityItem {
+  /**
+   * Monotonic per-task sequence number. Starts at 0 for the first
+   * item, increments by 1 per item. Used by the streaming endpoint
+   * (`Last-Event-ID`), by paginated `taskActivity({ cursor })`, and
+   * by the dashboard to dedup items arriving via SSE after a
+   * one-shot fetch.
+   */
+  readonly seq: number;
+  /**
+   * Runtime-native stable id for this item, when the runtime exposes
+   * one (Copilot event id, Claude Code uuid, Gemini id). Optional —
+   * runtimes that only have positional ordering (Codex, SWE-agent)
+   * omit it. Consumers should NOT key persistent state off this; use
+   * `seq` for that.
+   */
+  readonly id?: string;
+  /**
+   * Sequence number of the item this one logically follows, when the
+   * runtime exposes parent-child threading (Copilot, Claude Code).
+   * Optional — most runtimes don't model threading explicitly.
+   */
+  readonly parentSeq?: number;
+  /** ISO 8601 UTC timestamp the runtime recorded for this event. */
+  readonly timestamp: string;
+}
+
+/** A user turn (prompt + optional attachments). */
+export interface UserItem extends BaseActivityItem {
+  readonly kind: "user";
+  readonly text: string;
+  /**
+   * Multi-modal payload the user attached to this turn (images,
+   * file references). Runtimes that don't accept attachments simply
+   * omit this field. Today only Codex / Claude Code surface this.
+   */
+  readonly attachments?: readonly Attachment[];
+}
+
+/** An assistant turn (plain text response). */
+export interface AssistantItem extends BaseActivityItem {
+  readonly kind: "assistant";
+  readonly text: string;
+  /** Model id (e.g. `claude-opus-4-5`, `gpt-4-turbo`) when the runtime exposes it. */
+  readonly model?: string;
+  /**
+   * Per-turn token usage when the runtime reports it (Gemini, Codex,
+   * Claude Code). Runtimes that only report at session-end (Copilot)
+   * leave this undefined and surface aggregates on the
+   * {@link SummaryItem} instead.
+   */
+  readonly tokens?: TokenUsage;
+  /**
+   * Why the model stopped this turn. Lifted directly from the
+   * runtime where exposed (Claude `stop_reason`, Codex
+   * `task_complete.reason`); free-string for forwards-compat.
+   */
+  readonly stopReason?: "end_turn" | "tool_use" | "max_tokens" | "error" | string;
 }
 
 /**
- * End-of-task aggregate stats. Field set is the union of what current
- * runtimes can produce — implementations zero out fields they don't
- * track so consumers can render unconditionally without a per-runtime
- * shape branch.
+ * A reasoning / thinking block. Separate from {@link AssistantItem}
+ * so the dashboard can render it collapsed-by-default and the LLM
+ * (when consuming activity via MCP) can choose to skip it for token
+ * budget reasons.
  */
-export interface ActivitySummary {
-  readonly linesAdded: number;
-  readonly linesRemoved: number;
-  readonly filesModified: readonly string[];
-  /** "Premium" / billable request count, when the runtime exposes one. */
-  readonly premiumRequests: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  /** Last-seen model id, or `null` if the runtime doesn't surface it. */
-  readonly model: string | null;
+export interface ThinkingItem extends BaseActivityItem {
+  readonly kind: "thinking";
+  readonly text: string;
+  /**
+   * Short headline Gemini exposes per `thoughts[]` entry; absent for
+   * runtimes that produce a single undifferentiated trace (Codex,
+   * Claude).
+   */
+  readonly subject?: string;
+}
+
+/**
+ * A single tool invocation. The runtime adapter is responsible for
+ * merging begin/end event pairs (Copilot, Codex) into one item and
+ * flipping `status` accordingly. Runtimes that report tool calls
+ * inline on the assistant turn (Gemini, Claude Code) emit one item
+ * per call, sequenced before the assistant text.
+ */
+export interface ToolCallItem extends BaseActivityItem {
+  readonly kind: "tool_call";
+  /** Runtime-native call id, used to merge begin/end pairs. */
+  readonly callId: string;
+  /** Tool name as reported by the runtime. */
+  readonly name: string;
+  /** Tool arguments (open-shape; depends on the tool). */
+  readonly args?: unknown;
+  readonly status: "running" | "success" | "error" | "cancelled";
+  /** Tool result payload. Open-shape; consumers render as text/JSON. */
+  readonly result?: unknown;
+  /**
+   * Runtime-supplied rendering hint (Gemini's `resultDisplay` +
+   * `renderOutputAsMarkdown`). When present, dashboards SHOULD prefer
+   * this over the raw `result` for the collapsed view.
+   */
+  readonly display?: { readonly content: string; readonly markdown?: boolean };
+  /** Wall-clock duration when both begin + end events were observed. */
+  readonly durationMs?: number;
+}
+
+/**
+ * Out-of-band events that don't fit the conversation model:
+ * Copilot hooks/skills/subagents, Codex `context_compacted` /
+ * `model_reroute`, runtime warnings, etc. `subKind` is the
+ * runtime-specific tag so consumers can filter / colour them.
+ */
+export interface SystemItem extends BaseActivityItem {
+  readonly kind: "system";
+  readonly text: string;
+  readonly level?: "info" | "warn" | "error";
+  /**
+   * Runtime-specific category. Conventional values (use these when
+   * applicable, runtimes are free to add new ones):
+   * `"hook"` | `"skill"` | `"subagent"` | `"notification"` |
+   * `"context_compacted"` | `"model_change"` | `"warning"`.
+   */
+  readonly subKind?: string;
+}
+
+/**
+ * Terminal stats for the task (typically one per task, emitted on
+ * session shutdown / task_complete). Optional fields reflect that
+ * runtimes report different subsets — consumers render whatever is
+ * present.
+ */
+export interface SummaryItem extends BaseActivityItem {
+  readonly kind: "summary";
+  /** Free-text summary line if the runtime supplies one. */
+  readonly text?: string;
+  /**
+   * Aggregated token usage for the entire task. Runtimes that
+   * already reported tokens per-turn (Gemini, Codex, Claude) sum
+   * them; runtimes that only have a session-end count (Copilot)
+   * populate it directly here.
+   */
+  readonly tokens?: TokenUsage;
+  readonly stats?: SummaryStats;
+}
+
+/**
+ * Token usage as a single normalized shape. `total` is required so
+ * consumers can render a single number without doing arithmetic;
+ * runtimes that only have one number populate `input` and `total`
+ * with the same value rather than splitting.
+ */
+export interface TokenUsage {
+  readonly input: number;
+  readonly output: number;
+  /** Cache-read tokens (Anthropic / OpenAI). */
+  readonly cached?: number;
+  /** Reasoning tokens (Codex `reasoning_output_tokens`, OpenAI o1). */
+  readonly reasoning?: number;
+  readonly total: number;
+}
+
+/** Aggregate stats for {@link SummaryItem.stats}. All fields optional. */
+export interface SummaryStats {
+  readonly filesModified?: readonly string[];
+  readonly linesAdded?: number;
+  readonly linesRemoved?: number;
+  readonly toolCallsCount?: number;
+  readonly durationMs?: number;
+  /** Pre-computed cost when the runtime exposes one (Claude Code). */
+  readonly costUSD?: number;
+  /** Last-seen model id (Copilot, Codex). */
+  readonly model?: string;
+  /** "Premium" / billable request count (Copilot-specific, generalisable). */
+  readonly premiumRequests?: number;
+}
+
+/**
+ * Multi-modal payload attached to a {@link UserItem}. Either `url`
+ * or `data` is present; both convey the same image/file but via
+ * different transport (URL reference vs base64 inline).
+ */
+export interface Attachment {
+  readonly kind: "image" | "file";
+  readonly mimeType?: string;
+  readonly url?: string;
+  /** Base64-encoded inline payload. */
+  readonly data?: string;
+  /** Display name (filename without path). */
+  readonly name?: string;
 }

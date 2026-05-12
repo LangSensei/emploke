@@ -454,7 +454,7 @@ export class TaskManager {
     return this.loadTask(id, workdir);
   }
 
-  // ─── getTaskActivity ─────────────────────────────────────
+  // ─── getTaskActivity / getTaskActivityStream ─────────────
 
   /**
    * Fetch a task's activity timeline + derived headline result via
@@ -468,11 +468,20 @@ export class TaskManager {
    *
    * The route layer maps `null` to 404 NoEventsYet.
    *
+   * Pagination is owned by the runtime (it's the only layer that
+   * knows its own log layout); the manager just forwards
+   * `cursor` / `limit` and the runtime's `truncated` marker. The
+   * server route enforces the [1, 500] limit clamp before reaching
+   * here.
+   *
    * Read errors after the runtime found its log (e.g. permission
    * error mid-read) propagate; they're true server faults and should
    * surface as 500.
    */
-  async getTaskActivity(id: string): Promise<import("@emploke/runtime").TaskActivityResult | null> {
+  async getTaskActivity(
+    id: string,
+    opts?: { readonly cursor?: number; readonly limit?: number },
+  ): Promise<import("@emploke/runtime").TaskActivityResult | null> {
     const task = await this.get(id);
     if (task === null) return null;
     const meta = readTaskRuntimeMetadata(task);
@@ -487,7 +496,51 @@ export class TaskManager {
       return null;
     }
     if (typeof runtime.taskActivity !== "function") return null;
-    return runtime.taskActivity({ metadata: task.metadata });
+    return runtime.taskActivity({
+      metadata: task.metadata,
+      ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
+      ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
+    });
+  }
+
+  /**
+   * Live-tail variant of {@link getTaskActivity}. Returns the
+   * runtime's `taskActivityStream` AsyncIterable, or `null` when:
+   *   - same null cases as `getTaskActivity` (missing task,
+   *     unregistered runtime, no streaming support), OR
+   *   - the task is already terminal (live tail has nothing more
+   *     to deliver — caller should use the bounded
+   *     `getTaskActivity` for post-mortem reads).
+   *
+   * The caller (SSE route) is responsible for closing the stream
+   * when the HTTP client disconnects via `opts.signal`. The
+   * runtime's iterator MUST honour the signal and clean up file
+   * handles / watchers within a few hundred ms.
+   */
+  async getTaskActivityStream(
+    id: string,
+    opts: { readonly cursor?: number; readonly signal?: AbortSignal },
+  ): Promise<AsyncIterable<import("@emploke/runtime").ActivityItem> | null> {
+    const task = await this.get(id);
+    if (task === null) return null;
+    // Streaming a terminal task is wasted work — the iterator would
+    // immediately yield nothing and close. Force callers to use the
+    // one-shot endpoint for that case.
+    if (task.status !== "running" && task.status !== "not_started") return null;
+    const meta = readTaskRuntimeMetadata(task);
+    if (typeof meta.runtime !== "string") return null;
+    let runtime: import("@emploke/runtime").Runtime;
+    try {
+      runtime = this.runtimeRegistry.get(meta.runtime);
+    } catch {
+      return null;
+    }
+    if (typeof runtime.taskActivityStream !== "function") return null;
+    return runtime.taskActivityStream({
+      metadata: task.metadata,
+      ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}),
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+    });
   }
 
   // ─── delete ──────────────────────────────────────────────

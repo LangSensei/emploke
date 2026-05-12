@@ -431,8 +431,26 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(taskCmd.command("activity"))
     .argument("<tid>", "Task id")
     .description("Print the runtime-parsed activity timeline (JSON)")
+    .option("-f, --follow", "Tail live activity over SSE; exits when task terminates")
+    .option("--cursor <seq>", "Only return items with seq > cursor (for pagination)")
+    .option("--limit <n>", "Maximum items per page (default 50, max 500)", (v) =>
+      Number.parseInt(v, 10),
+    )
     .action(async (tid: string, opts: Record<string, unknown>) => {
-      slot.result = await taskActivity({ ...parseWorkspaceFlags(opts), tid });
+      const cursor =
+        typeof opts.cursor === "string"
+          ? Number.parseInt(opts.cursor, 10)
+          : typeof opts.cursor === "number"
+            ? opts.cursor
+            : undefined;
+      const limit = typeof opts.limit === "number" ? opts.limit : undefined;
+      slot.result = await taskActivity({
+        ...parseWorkspaceFlags(opts),
+        tid,
+        follow: opts.follow === true,
+        ...(cursor !== undefined && Number.isFinite(cursor) ? { cursor } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
     });
 
   // ─── API: catalog (workspace-scoped) ───────────────────────────────
