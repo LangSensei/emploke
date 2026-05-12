@@ -6,11 +6,11 @@ export { CopilotRuntime } from "./copilot/copilot.js";
 export {
   COPILOT_STDERR_LOG,
   COPILOT_STDOUT_LOG,
-  type DispatchCopilotTaskDeps,
-  type DispatchCopilotTaskOpts,
-  dispatchCopilotTask,
+  type LaunchCopilotHeadlessDeps,
+  type LaunchCopilotHeadlessOpts,
+  launchCopilotHeadless,
   type SpawnFn,
-} from "./copilot/dispatch-task.js";
+} from "./copilot/launch-headless.js";
 export {
   InvalidMcpJson,
   TrustRegistrationFailed,
@@ -29,8 +29,8 @@ export {
 } from "./copilot/resolve-bin.js";
 export { isPathCovered } from "./copilot/trust.js";
 export {
-  RuntimeDispatchTaskFailed,
   RuntimeDoesNotSupportRemoteError,
+  RuntimeHeadlessLaunchFailed,
   RuntimeProvisionFailed,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
@@ -50,8 +50,8 @@ export type {
   ActivityResult,
   AssistantItem,
   Attachment,
-  BuildLaunchOpts,
-  DispatchOpts,
+  BuildInteractiveLaunchOpts,
+  LaunchHeadlessOpts,
   LaunchCommand,
   ProvisionContext,
   ReadActivityOpts,

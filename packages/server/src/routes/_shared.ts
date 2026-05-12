@@ -75,7 +75,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "SessionsError",
   // @emploke/runtime
   "InvalidMcpJson",
-  "RuntimeDispatchTaskFailed",
+  "RuntimeHeadlessLaunchFailed",
   "RuntimeProvisionFailed",
   "RuntimeRefreshFailed",
   "RuntimeStateDeletionFailed",
@@ -113,7 +113,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
 /**
  * Log a server-side fault with the FULL diagnostic the sanitised HTTP body
  * intentionally drops. Intended for the 5xx catch path of routes that
- * surface `RuntimeProvisionFailed` / `RuntimeDispatchTaskFailed` /
+ * surface `RuntimeProvisionFailed` / `RuntimeHeadlessLaunchFailed` /
  * `RuntimeRefreshFailed` / `RuntimeStateDeletionFailed` (whose `.message`
  * carries only the runtime kind — see issue #24 and the per-class jsdoc
  * in `packages/runtime/src/errors.ts`).

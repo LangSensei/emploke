@@ -183,7 +183,7 @@ export class TaskManager {
     //    dirs on disk.
     const runtimeKind = opts.runtime ?? this.defaultRuntime;
     const runtime = this.runtimeRegistry.get(runtimeKind);
-    if (typeof runtime.dispatch !== "function") {
+    if (typeof runtime.launchHeadless !== "function") {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
@@ -240,14 +240,14 @@ export class TaskManager {
     resolveResult: AgentResolveResult;
   }): Promise<Task> {
     const { id, workdir, agentName, instructions, runtime, resolveResult } = args;
-    // Re-narrow `runtime.dispatch` for TypeScript. The caller
+    // Re-narrow `runtime.launchHeadless` for TypeScript. The caller
     // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
     // before reserving the workdir, so this guard is only here to
     // restore the type narrow that's lost across the method boundary —
-    // we deliberately do NOT extract `dispatch` to a local because
+    // we deliberately do NOT extract `launchHeadless` to a local because
     // that would break the `this`-binding for runtime impls that read
     // own state (e.g. the `RealSpawnRuntime` test fixture).
-    if (typeof runtime.dispatch !== "function") {
+    if (typeof runtime.launchHeadless !== "function") {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
@@ -279,7 +279,7 @@ export class TaskManager {
     //    pre-running, so we rollback the workdir and rethrow.
     let handle: RuntimeHandle;
     try {
-      handle = await runtime.dispatch({
+      handle = await runtime.launchHeadless({
         workdir,
         agent: resolveResult,
         catalog: this.catalog,
@@ -292,7 +292,7 @@ export class TaskManager {
     }
 
     // 5b. Re-check `shuttingDown` after spawn. The flag is read once at
-    //     the top of `dispatch()`, but `await runtime.dispatch(...)`
+    //     the top of `dispatch()`, but `await runtime.launchHeadless(...)`
     //     yields the event loop and a SIGTERM-driven `shutdown()` could
     //     have flipped it during that window. Without this guard the
     //     subprocess is now live but `shutdown()`'s snapshot of

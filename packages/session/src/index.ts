@@ -8,7 +8,7 @@
  * `SqliteSessionRepository`, which writes to `<sessionsDir>/sessions.db`).
  * Activity (lastActiveAt, preview) is read fresh from the runtime on
  * every list/get call. The package never spawns processes —
- * `buildLaunch()` returns a shell-runnable `LaunchCommand`.
+ * `buildInteractiveLaunch()` returns a shell-runnable `LaunchCommand`.
  */
 
 // Re-export runtime errors that callers commonly want to catch alongside
@@ -37,7 +37,7 @@ export type {
 } from "./repositories/repository.js";
 export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 export type {
-  BuildLaunchSessionOpts,
+  BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   LaunchCommand,

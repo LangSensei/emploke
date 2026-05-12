@@ -1,4 +1,4 @@
-import { RuntimeDispatchTaskFailed } from "@emploke/runtime";
+import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
@@ -356,10 +356,10 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(500);
   });
 
-  it("POST / maps RuntimeDispatchTaskFailed to 500 (host-side spawn failure)", async () => {
+  it("POST / maps RuntimeHeadlessLaunchFailed to 500 (host-side spawn failure)", async () => {
     const m = stubManager({
       dispatch: vi.fn(async () => {
-        throw new RuntimeDispatchTaskFailed("copilot", "/tmp/wd", new Error("ENOENT"));
+        throw new RuntimeHeadlessLaunchFailed("copilot", "/tmp/wd", new Error("ENOENT"));
       }),
     });
     const res = await tasksRoutes(m).request("/", {
@@ -374,7 +374,7 @@ describe("tasksRoutes", () => {
     it("404 NoEventsYet when manager returns null (task missing, runtime declines, or no events yet)", async () => {
       // The route delegates the entire read+parse+derive to
       // `TaskManager.getTaskActivity`, which itself fans down to
-      // `Runtime.taskActivity`. A `null` return collapses every
+      // `Runtime.readActivity`. A `null` return collapses every
       // "nothing to show" case (task missing, runtime omits the
       // surface, log file not on disk yet) into a single 404
       // NoEventsYet. The explicit "task missing" 404 lives on

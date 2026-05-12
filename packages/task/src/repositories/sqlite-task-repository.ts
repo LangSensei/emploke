@@ -48,7 +48,7 @@ interface TaskRow {
  * tree on disk. The runtime's per-task event log (Copilot's
  * `<copilotStateDir>/<runtimeSessionId>/`) is also outside this
  * repository's scope; the runtime owns it end-to-end via
- * `Runtime.taskActivity` / `Runtime.deleteTaskState`.
+ * `Runtime.readActivity` / `Runtime.deleteState`.
  *
  * ## `Task.metadata` handling
  *

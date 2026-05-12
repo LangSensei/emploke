@@ -9,10 +9,10 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
  *
  *   ## Interactive mode (`-i`)
  *   - {@link provision}: bake an agent into a workdir
- *   - {@link buildLaunch}: build the shell command that drops the user into the CLI
+ *   - {@link buildInteractiveLaunch}: build the shell command that drops the user into the CLI
  *
  *   ## Non-interactive mode (`-p`)
- *   - {@link dispatch} (optional): spawn the CLI as a detached worker that
+ *   - {@link launchHeadless} (optional): spawn the CLI as a detached worker that
  *     consumes a prompt and exits when done
  *
  *   ## Observability — works for either mode
@@ -63,7 +63,7 @@ export interface Runtime {
    *
    *  - **Pre-allocating runtimes** (e.g. Copilot, which accepts
    *    `--resume=<arbitrary-uuid>` and creates the session if missing)
-   *    return a freshly-minted id here. Subsequent {@link buildLaunch}
+   *    return a freshly-minted id here. Subsequent {@link buildInteractiveLaunch}
    *    calls always pass `--resume=<that-id>`.
    *  - **Discovery-only runtimes** (e.g. Gemini, where the id is minted
    *    by the CLI at first launch and must be scraped from logs / fs /
@@ -110,11 +110,11 @@ export interface Runtime {
    * {@link RuntimeCapabilities}); they MUST NOT silently ignore an
    * unsupported flag.
    */
-  buildLaunch(
+  buildInteractiveLaunch(
     runtimeSessionId: string | null,
     workdir: string,
     workspaceDir: string,
-    opts?: BuildLaunchOpts,
+    opts?: BuildInteractiveLaunchOpts,
   ): Promise<LaunchCommand>;
 
   // ─── Non-interactive mode (-p) ─────────────────────────────────────
@@ -124,7 +124,7 @@ export interface Runtime {
    * unattended (Copilot's `-p`/`--prompt`, etc.). Runtimes whose
    * underlying CLI doesn't support a headless mode simply omit this
    * method; the manager surfaces a clear "this CLI can't run autonomous
-   * tasks" error rather than letting `dispatch is not a function`
+   * tasks" error rather than letting `launchHeadless is not a function`
    * leak through.
    *
    * The runtime owns the subprocess for the life of the call: it picks
@@ -134,7 +134,7 @@ export interface Runtime {
    * caller can observe completion without holding the spawn machinery
    * itself.
    */
-  dispatch?(opts: DispatchOpts): Promise<RuntimeHandle>;
+  launchHeadless?(opts: LaunchHeadlessOpts): Promise<RuntimeHandle>;
 
   // ─── Observability ─────────────────────────────────────────────────
 
@@ -210,12 +210,12 @@ export interface ProvisionContext {
 }
 
 /**
- * Per-launch flags handed to {@link Runtime.buildLaunch}. Each field
+ * Per-launch flags handed to {@link Runtime.buildInteractiveLaunch}. Each field
  * maps to a user-facing affordance the dashboard exposes (typically as
  * a separate spawn button). Runtimes that don't support a flag MUST
  * throw — see the per-flag note for the right error class.
  */
-export interface BuildLaunchOpts {
+export interface BuildInteractiveLaunchOpts {
   /**
    * If `true`, the launch should enable remote control of the
    * interactive session. For Copilot this maps to the CLI's `--remote`
@@ -238,17 +238,17 @@ export interface BuildLaunchOpts {
  */
 export interface RuntimeCapabilities {
   /**
-   * Whether {@link Runtime.buildLaunch} supports `opts.remote = true`.
-   * When `true`, calling buildLaunch with `{ remote: true }` produces
+   * Whether {@link Runtime.buildInteractiveLaunch} supports `opts.remote = true`.
+   * When `true`, calling buildInteractiveLaunch with `{ remote: true }` produces
    * a launch that puts the underlying CLI into remote-control mode.
    */
   readonly remoteSession?: boolean;
 }
 
 /**
- * Inputs to {@link Runtime.dispatch}. `workdir` is guaranteed to exist
+ * Inputs to {@link Runtime.launchHeadless}. `workdir` is guaranteed to exist
  * and doubles as the subprocess `cwd`; the caller is responsible for
- * laying down whatever the agent needs there before invoking dispatch
+ * laying down whatever the agent needs there before invoking launchHeadless
  * (typically by calling {@link Runtime.provision} on the same dir
  * first).
  *
@@ -258,7 +258,7 @@ export interface RuntimeCapabilities {
  * `workspaceDir` lets the runtime resolve `${workspaceDir}`
  * placeholders in MCP / agent specs the same way `provision` does.
  */
-export interface DispatchOpts {
+export interface LaunchHeadlessOpts {
   readonly workdir: string;
   readonly agent: AgentResolveResult;
   readonly catalog: CatalogManager;
@@ -267,14 +267,14 @@ export interface DispatchOpts {
 }
 
 /**
- * Live handle to a dispatched (`-p` mode) subprocess. Returned
- * synchronously (via Promise) from {@link Runtime.dispatch} once the
+ * Live handle to a headless (`-p` mode) subprocess. Returned
+ * synchronously (via Promise) from {@link Runtime.launchHeadless} once the
  * subprocess is up; the caller awaits `exit` for terminal status and
  * may consult `sessionDir` to mount the runtime's native log
  * directory.
  *
  * **Why `sessionDir` is a Promise** rather than a sync `string | null`:
- * a dispatched subprocess is owned by the runtime *now*, so it can
+ * a headless subprocess is owned by the runtime *now*, so it can
  * naturally produce a future value for any id/path it learns
  * post-spawn. Interactive sessions are launched by a human at some
  * unknown later time, so the runtime can't promise anything; the
@@ -298,7 +298,7 @@ export interface RuntimeHandle {
 
   /**
    * Where the runtime is writing its native per-session log directory
-   * for this dispatch. The runtime owns reads against this directory
+   * for this headless launch. The runtime owns reads against this directory
    * end-to-end via {@link Runtime.readActivity} (and removal via
    * {@link Runtime.deleteState}).
    */
@@ -327,7 +327,7 @@ export interface RuntimeExit {
  * Runtime-supplied display metadata. Returned by
  * {@link Runtime.readMetadata}. The same shape regardless of whether
  * the underlying conversation was started via `-i` interactive or `-p`
- * dispatch — the runtime stores them the same way.
+ * headless launch — the runtime stores them the same way.
  */
 export interface RuntimeSessionMetadata {
   /**
@@ -425,7 +425,7 @@ export interface TruncationInfo {
 
 /**
  * A shell-runnable launch command, returned by
- * {@link Runtime.buildLaunch}. The `cmd`/`args`/`cwd` triple is suitable
+ * {@link Runtime.buildInteractiveLaunch}. The `cmd`/`args`/`cwd` triple is suitable
  * for `child_process.spawn`; `display` is a single-line string suitable
  * for displaying to the user or copying to the clipboard.
  */

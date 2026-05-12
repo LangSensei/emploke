@@ -38,7 +38,7 @@ function stubManager(overrides: Partial<Record<keyof SessionManager, unknown>>):
     get: vi.fn(async () => sampleRecord),
     create: vi.fn(async () => sampleRecord),
     delete: vi.fn(async () => undefined),
-    buildLaunch: vi.fn(async () => sampleLaunch),
+    buildInteractiveLaunch: vi.fn(async () => sampleLaunch),
     ...overrides,
   };
   return stub as unknown as SessionManager;
@@ -325,8 +325,8 @@ describe("sessionsRoutes", () => {
       expect(body.ok).toBe(true);
       expect(body.launcher).toBe("wt");
       expect(body.display).toBe(sampleLaunch.display);
-      // No body → manager.buildLaunch is called with default opts (remote=false).
-      expect(m.buildLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: false });
+      // No body → manager.buildInteractiveLaunch is called with default opts (remote=false).
+      expect(m.buildInteractiveLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: false });
       expect(spawn).toHaveBeenCalledTimes(1);
     });
 
@@ -341,7 +341,7 @@ describe("sessionsRoutes", () => {
         body: JSON.stringify({ remote: true }),
       });
       expect(res.status).toBe(200);
-      expect(m.buildLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: true });
+      expect(m.buildInteractiveLaunch).toHaveBeenCalledWith("20260508-9dfbdf05", { remote: true });
     });
 
     it("rejects a non-boolean `remote` value with 400", async () => {
@@ -375,7 +375,7 @@ describe("sessionsRoutes", () => {
 
     it("propagates SessionNotFoundError as 404", async () => {
       const m = stubManager({
-        buildLaunch: vi.fn(async () => {
+        buildInteractiveLaunch: vi.fn(async () => {
           throw new SessionNotFoundError("20260508-9dfbdf05");
         }),
       });
@@ -389,7 +389,7 @@ describe("sessionsRoutes", () => {
 
     it("propagates InvalidSessionIdError as 400", async () => {
       const m = stubManager({
-        buildLaunch: vi.fn(async () => {
+        buildInteractiveLaunch: vi.fn(async () => {
           throw new InvalidSessionIdError("bad");
         }),
       });

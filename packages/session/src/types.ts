@@ -53,7 +53,7 @@ export interface SessionManagerConfig {
   /**
    * Absolute path of the workspace this manager belongs to. Required.
    *
-   * Threaded through `buildLaunch` to the runtime so runtimes whose
+   * Threaded through `buildInteractiveLaunch` to the runtime so runtimes whose
    * interactive launch needs a workspace-rooted preflight (e.g. Copilot
    * needs to ensure `workspaceDir` is in `~/.copilot/config.json`
    * `trustedFolders` to suppress its trust prompt) can run that
@@ -92,17 +92,17 @@ export interface CreateSessionOpts {
 }
 
 /**
- * Options for `SessionManager.buildLaunch`. The session's persisted
+ * Options for `SessionManager.buildInteractiveLaunch`. The session's persisted
  * record is unchanged across calls — these flags only modify how the
  * runtime renders the launch command this time around. The dashboard
  * sets these from the user's choice of "Spawn local" vs "Spawn remote"
  * button so the same session can be launched either way.
  */
-export interface BuildLaunchSessionOpts {
+export interface BuildInteractiveLaunchSessionOpts {
   /**
    * If `true`, ask the runtime to enable remote control of the
    * interactive session (browser / mobile steering). Forwarded to
-   * `Runtime.buildLaunch`'s `BuildLaunchOpts.remote`. The runtime
+   * `Runtime.buildInteractiveLaunch`'s `BuildInteractiveLaunchOpts.remote`. The runtime
    * throws `RuntimeDoesNotSupportRemoteError` if it doesn't support
    * the flag — the route layer maps that to HTTP 400.
    */

@@ -156,7 +156,7 @@ class StubRuntime implements Runtime {
   async provision(): Promise<{ runtimeSessionId: string | null }> {
     return { runtimeSessionId: null };
   }
-  async buildLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
+  async buildInteractiveLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
     return { cmd: "stub", args: [], cwd: workdir, display: "stub" };
   }
 
@@ -170,9 +170,9 @@ class StubRuntime implements Runtime {
     }
   }
 
-  // dispatch is set conditionally via Object.defineProperty so we can
+  // launchHeadless is set conditionally via Object.defineProperty so we can
   // model "runtime doesn't implement it" cleanly.
-  get dispatch(): Runtime["dispatch"] | undefined {
+  get launchHeadless(): Runtime["launchHeadless"] | undefined {
     if (!this.dispatchSupported) return undefined;
     return async (opts) => this.spawnHandle(opts);
   }
@@ -959,19 +959,19 @@ describe("shutdown", () => {
   it("dispatch that races with shutdown kills the subprocess and rolls back", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
-    // Hold the dispatch in `runtime.dispatch` long enough for
+    // Hold the dispatch in `runtime.launchHeadless` long enough for
     // shutdown() to flip the flag underneath it.
     let resolveSpawn!: () => void;
     const spawnHold = new Promise<void>((r) => {
       resolveSpawn = r;
     });
-    const original = rt.dispatch;
-    Object.defineProperty(rt, "dispatch", {
+    const original = rt.launchHeadless;
+    Object.defineProperty(rt, "launchHeadless", {
       get:
         () =>
         async (opts: Parameters<NonNullable<typeof original>>[0]): Promise<RuntimeHandle> => {
           await spawnHold;
-          if (!original) throw new Error("dispatch hook lost");
+          if (!original) throw new Error("launchHeadless hook lost");
           return original.call(rt, opts);
         },
     });

@@ -10,8 +10,8 @@ a uniform observability + maintenance surface that works against
 either:
 
 - **Interactive** — `provision` (bake an agent into a workdir) +
-  `buildLaunch` (build the shell command)
-- **Non-interactive** — `dispatch` (spawn the CLI as a detached
+  `buildInteractiveLaunch` (build the shell command)
+- **Non-interactive** — `launchHeadless` (spawn the CLI as a detached
   worker that consumes a prompt and exits)
 - **Observability** — `readMetadata` (title / lastActiveAt) +
   `readActivity` (paginated parsed timeline) + `streamActivity`
@@ -56,17 +56,17 @@ interface Runtime {
    * mode requires a per-launch precondition keyed off the workspace
    * root use it to perform that precondition here, lazily.
    */
-  buildLaunch(
+  buildInteractiveLaunch(
     runtimeSessionId: string | null,
     workdir: string,
     workspaceDir: string,
-    opts?: BuildLaunchOpts,
+    opts?: BuildInteractiveLaunchOpts,
   ): Promise<LaunchCommand>;
 
   // ─── Non-interactive mode (-p) ─────────────────────────────────
 
   /** Optional: spawn a one-shot non-interactive worker. */
-  dispatch?(opts: DispatchOpts): Promise<RuntimeHandle>;
+  launchHeadless?(opts: LaunchHeadlessOpts): Promise<RuntimeHandle>;
 
   // ─── Observability ─────────────────────────────────────────────
 
@@ -135,14 +135,14 @@ Key design points:
   subsequent launches resume it. Eliminates the "scan all sessions
   and match by cwd" dance the old impl needed.
 - **Per-launch trust preflight, not workspace-bootstrap.**
-  `buildLaunch(runtimeSessionId, workdir, workspaceDir, opts)` runs
+  `buildInteractiveLaunch(runtimeSessionId, workdir, workspaceDir, opts)` runs
   `ensureDirTrusted` against `~/.copilot/config.json` immediately
   before returning the launch spec, so trust I/O happens at the
   moment the user actually launches an interactive session — never
   eagerly at workspace open. The write is idempotent and
   ancestor-aware: the first launch in a workspace pays one
   read+write; every subsequent launch passes `isPathCovered` and
-  short-circuits without writing. `dispatch` (`copilot -p --yolo`)
+  short-circuits without writing. `launchHeadless` (`copilot -p --yolo`)
   does not need trust and never touches the file.
 - **Trust file is `config.json`, NOT `settings.json`.** The Copilot
   CLI (verified against 1.0.44) only reads `trustedFolders` from
@@ -153,7 +153,7 @@ Key design points:
   would compose the id into a filesystem path or `--resume=<id>`
   argument runs it through `isCopilotSessionId` first. Tampered
   persisted state with `"../../etc"` degrades gracefully — `readMetadata`
-  returns null, `deleteState` is a no-op, `buildLaunch` produces a
+  returns null, `deleteState` is a no-op, `buildInteractiveLaunch` produces a
   fresh launch (no `--resume`).
 - **Activity reads share an internal helper.** `readMetadata` and the
   legacy session-state reader both go through `readCopilotWorkspaceYaml`
@@ -195,7 +195,7 @@ Skill order is the topological order the catalog produced.
 2. Pull agent content from the supplied `CatalogManager` arg via
    `agentEntries(name)` / `skillEntries(name)` / `getMcpContent(name)`.
    Never resolve catalog paths from the resolve result.
-3. Implement `dispatch` if the CLI supports unattended scripting
+3. Implement `launchHeadless` if the CLI supports unattended scripting
    (e.g. Copilot's `-p/--prompt` mode). Wire stdout/stderr to log
    files in the supplied `opts.workdir`.
 4. Implement `readActivity` (and ideally `streamActivity`) to read
@@ -222,12 +222,12 @@ RuntimeError
 ├── RuntimeProvisionFailed              — provision() threw (workdir prep, catalog read)
 ├── RuntimeRefreshFailed                — readMetadata() threw (CLI state corruption)
 ├── RuntimeStateDeletionFailed          — deleteState() threw
-├── RuntimeDispatchTaskFailed           — dispatch() spawn / pre-spawn failure
+├── RuntimeHeadlessLaunchFailed           — launchHeadless() spawn / pre-spawn failure
 └── (Copilot-specific)
     ├── InvalidMcpJson                  — MCP content failed JSON parse during provision
     ├── WorkdirPrepFailed               — git init / mkdir failed
     └── TrustRegistrationFailed         — config.json mutation failed (mkdir, lock,
-                                          atomic write); thrown by buildLaunch's
+                                          atomic write); thrown by buildInteractiveLaunch's
                                           per-launch ensureDirTrusted preflight
 ```
 
@@ -237,8 +237,8 @@ RuntimeError
 pnpm --filter @emploke/runtime test
 ```
 
-Tests cover Copilot runtime (provision, readMetadata, buildLaunch,
-deleteState, dispatch, readActivity with cap + pagination,
+Tests cover Copilot runtime (provision, readMetadata, buildInteractiveLaunch,
+deleteState, launchHeadless, readActivity with cap + pagination,
 streamActivity with abort) plus path-traversal hardening, trust-file
 locking semantics, and Windows-specific spawn timing.
 

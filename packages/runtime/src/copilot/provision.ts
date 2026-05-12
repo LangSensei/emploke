@@ -98,7 +98,7 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  *
  * **Trust handling moved out**: previous versions of this function also
  * appended `workdir` to `~/.copilot/config.json.trustedFolders`. That
- * concern is now `CopilotRuntime.buildLaunch`'s preflight, which writes
+ * concern is now `CopilotRuntime.buildInteractiveLaunch`'s preflight, which writes
  * the workspace dir (idempotently, with ancestor coverage) into
  * `config.json` immediately before producing the launch spec. Per-session
  * provision no longer touches the user's Copilot config file.

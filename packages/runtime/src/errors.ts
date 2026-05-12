@@ -74,32 +74,32 @@ export class RuntimeProvisionFailed extends Error {
 }
 
 /**
- * Wraps a failure that happened inside `Runtime.dispatchTask`. Covers
+ * Wraps a failure that happened inside `Runtime.launchHeadless`. Covers
  * both pre-spawn errors (provisioning, mkdir on the runtime's session dir)
  * and spawn-itself errors (binary not found, exec permission denied,
  * platform refused to start the process).
  *
  * Once the subprocess is up, exit-time failures are surfaced via the
  * returned `TaskHandle.exit` instead — that's a normal task outcome, not
- * a dispatch failure.
+ * a headless-launch failure.
  *
  * `.message` carries only the runtime kind. See `RuntimeRefreshFailed`
  * (issue #24).
  */
-export class RuntimeDispatchTaskFailed extends Error {
+export class RuntimeHeadlessLaunchFailed extends Error {
   constructor(
     public readonly kind: string,
     public readonly taskDir: string,
     cause: Error,
   ) {
-    super(`runtime "${kind}" dispatchTask failed`);
-    this.name = "RuntimeDispatchTaskFailed";
+    super(`runtime "${kind}" launchHeadless failed`);
+    this.name = "RuntimeHeadlessLaunchFailed";
     this.cause = cause;
   }
 }
 
 /**
- * Thrown by `Runtime.buildLaunch` when called with `{ remote: true }`
+ * Thrown by `Runtime.buildInteractiveLaunch` when called with `{ remote: true }`
  * against a runtime that does NOT advertise
  * `capabilities.remoteSession === true`.
  *

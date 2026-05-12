@@ -100,7 +100,7 @@ describe("CopilotRuntime", () => {
       ).rejects.toBeInstanceOf(RuntimeProvisionFailed);
     });
 
-    it("does NOT touch the Copilot config file (trust handled by buildLaunch preflight)", async () => {
+    it("does NOT touch the Copilot config file (trust handled by buildInteractiveLaunch preflight)", async () => {
       const sp = path.join(scratch, "copilot-config.json");
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const { agent, catalog } = await buildAgent();
@@ -109,25 +109,25 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("registerWorkspace (no longer exists; trust now lives in buildLaunch)", () => {
+  describe("registerWorkspace (no longer exists; trust now lives in buildInteractiveLaunch)", () => {
     it("does not expose a registerWorkspace method on Runtime", () => {
       const rt = new CopilotRuntime();
       // The method was removed in favour of per-launch preflight inside
-      // buildLaunch (see class jsdoc: per-mode trust matrix). Verifying
+      // buildInteractiveLaunch (see class jsdoc: per-mode trust matrix). Verifying
       // the absence here pins the design choice â€” anyone re-adding it
       // should think twice and update both this test and the jsdoc.
       expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
     });
   });
 
-  describe("buildLaunch", () => {
+  describe("buildInteractiveLaunch", () => {
     it("returns `copilot --yolo` when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      const c = await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       expect(c.cmd).toBe("copilot");
       expect(c.args).toEqual(["--yolo"]);
     });
@@ -138,7 +138,7 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildLaunch(
+      const c = await rt.buildInteractiveLaunch(
         FIXED_UUID,
         fakeSession({ runtimeSessionId: FIXED_UUID }).workdir,
         ws,
@@ -152,7 +152,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       expect(await exists(sp)).toBe(false);
-      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       expect(written.trustedFolders).toContain(path.resolve(ws));
     });
@@ -162,8 +162,8 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
-      await rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       const matches = written.trustedFolders.filter((p: string) => p === path.resolve(ws));
       expect(matches).toHaveLength(1);
@@ -177,7 +177,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       await expect(
-        rt.buildLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws),
+        rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws),
       ).rejects.toBeInstanceOf(TrustRegistrationFailed);
     });
   });
@@ -291,14 +291,14 @@ describe("CopilotRuntime", () => {
       expect(await exists(path.join(sentinelDir, "marker"))).toBe(true);
     });
 
-    it("buildLaunch produces a fresh launch (no --resume) for malformed ids", async () => {
+    it("buildInteractiveLaunch produces a fresh launch (no --resume) for malformed ids", async () => {
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       const ws = path.join(scratch, "ws-mal");
       await mkdir(ws, { recursive: true });
       for (const id of MALICIOUS_IDS) {
-        const c = await rt.buildLaunch(id, fakeSession({ runtimeSessionId: id }).workdir, ws);
+        const c = await rt.buildInteractiveLaunch(id, fakeSession({ runtimeSessionId: id }).workdir, ws);
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
         expect(c.display).not.toContain("--resume");
@@ -306,7 +306,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("taskActivity", () => {
+  describe("readActivity", () => {
     it("returns null when runtimeSessionId is missing or invalid", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       expect(await rt.readActivity({ runtimeSessionId: "" })).toBeNull();
@@ -392,7 +392,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("taskActivityStream", () => {
+  describe("streamActivity", () => {
     it("returns nothing when runtimeSessionId is missing", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       const items: unknown[] = [];

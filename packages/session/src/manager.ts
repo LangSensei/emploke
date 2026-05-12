@@ -15,7 +15,7 @@ import { safeJoinUnderRoot } from "./paths.js";
 import type { SessionRepository, SessionState } from "./repositories/repository.js";
 import { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 import type {
-  BuildLaunchSessionOpts,
+  BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   ListSessionOpts,
@@ -239,15 +239,15 @@ export class SessionManager {
     await this.repository.delete(id);
   }
 
-  // ─── buildLaunch ─────────────────────────────────────────
+  // ─── buildInteractiveLaunch ─────────────────────────────────────────
 
-  async buildLaunch(id: string, opts: BuildLaunchSessionOpts = {}): Promise<LaunchCommand> {
+  async buildInteractiveLaunch(id: string, opts: BuildInteractiveLaunchSessionOpts = {}): Promise<LaunchCommand> {
     assertValidSessionId(id);
     const session = await this.loadSession(id);
     if (session === null) throw new SessionNotFoundError(id);
 
     const runtime = this.runtimeRegistry.get(session.runtime);
-    const launch = await runtime.buildLaunch(
+    const launch = await runtime.buildInteractiveLaunch(
       session.runtimeSessionId,
       session.workdir,
       this.workspaceDir,
@@ -258,7 +258,7 @@ export class SessionManager {
 
     // Best-effort: remember the user's last intent for this session so
     // the next dashboard render can default the Resume button. Persisted
-    // only after `buildLaunch` succeeded — if the runtime threw (e.g.
+    // only after `buildInteractiveLaunch` succeeded — if the runtime threw (e.g.
     // RuntimeDoesNotSupportRemoteError), we shouldn't update intent.
     // A failed save is logged but does not fail the call: the launch
     // command is already valid and the worst case is the next page
@@ -266,7 +266,7 @@ export class SessionManager {
     //
     // Uses `patchLastLaunchMode` (a single-statement UPDATE) instead
     // of `read → save({...prev, lastLaunchMode})` so two concurrent
-    // `buildLaunch` calls for the same session id (e.g. "Resume Local"
+    // `buildInteractiveLaunch` calls for the same session id (e.g. "Resume Local"
     // in tab A and "Resume Remote" in tab B fired within the same
     // event-loop tick) cannot lose each other's writes to OTHER
     // persisted fields. Last writer of `lastLaunchMode` itself still

@@ -25,7 +25,7 @@ export class InvalidMcpJson extends Error {
  * file the CLI actually reads `trustedFolders` from — see `trust.ts`
  * for why this is `config.json` and not `settings.json`) fails.
  *
- * Surfaced from `CopilotRuntime.buildLaunch` as part of the per-launch
+ * Surfaced from `CopilotRuntime.buildInteractiveLaunch` as part of the per-launch
  * trust preflight: an interactive (`-i`) Copilot session that runs in a
  * folder not covered by `trustedFolders` would stall on the blocking
  * "Confirm folder trust" prompt inside the freshly-spawned terminal.

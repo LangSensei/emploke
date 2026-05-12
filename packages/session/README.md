@@ -72,7 +72,7 @@ const sessions = new SessionManager({
 const session = await sessions.create({ agent: "demo-agent" });
 console.log("workdir:", session.workdir);
 
-const cmd = await sessions.buildLaunch(session.id);
+const cmd = await sessions.buildInteractiveLaunch(session.id);
 console.log("run:", cmd.display);
 // → cd "/Users/.../.emploke/sessions/20260508-9dfbdf05" && copilot -i
 ```
@@ -87,21 +87,21 @@ records[0].preview        // runtime-derived display title (Copilot: workspace.y
 records[0].runtimeSessionId  // the opaque id the runtime owns
 ```
 
-Resume is the same call as launch — `buildLaunch` produces `cd && copilot -i --resume <id>`
+Resume is the same call as launch — `buildInteractiveLaunch` produces `cd && copilot -i --resume <id>`
 once a `runtimeSessionId` exists, or `cd && copilot -i` (fresh session) when it doesn't:
 
 ```ts
-const cmd = await sessions.buildLaunch(records[0].id);
+const cmd = await sessions.buildInteractiveLaunch(records[0].id);
 console.log(cmd.display);
 // → cd "/.../20260508-9dfbdf05" && copilot -i --resume <sid>
 ```
 
-`buildLaunch(id, { remote: true })` produces a remote-friendly variant when
+`buildInteractiveLaunch(id, { remote: true })` produces a remote-friendly variant when
 the runtime supports it (otherwise throws `RuntimeDoesNotSupportRemoteError`).
 
 ## What this package does NOT do
 
-- Spawn `copilot`. `buildLaunch` returns the invocation; you exec it.
+- Spawn `copilot`. `buildInteractiveLaunch` returns the invocation; you exec it.
 - Track headless task execution. That's [`@emploke/task`](../task).
 - Stream events from Copilot. The Copilot CLI handles the chat UI itself.
 
