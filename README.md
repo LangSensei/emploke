@@ -74,57 +74,17 @@ deployment mode that makes sense for the local-first model).
 
 ## Filesystem contract
 
-`<EMPLOKE_HOME>` (default `~/.emploke`) and the workspaces emploke writes
-hold **server-internal state**. The on-disk layout — file names, JSON
-shapes, SQLite schemas, sidecar files — is an implementation detail that
-may change between versions. Reading these files for inspection is fine;
-**anything else is unsupported.**
+Everything emploke writes under `<EMPLOKE_HOME>` (default `~/.emploke`)
+and per-workspace internals is **server-internal state**. The layout —
+file names, JSON shapes, SQLite schemas, sidecar files — is implementation
+detail and may change between versions. Reading these files for inspection
+is fine; **anything else (writes, hand-edits, `rm`) is unsupported and
+may be detected as corruption.**
 
-### Owned by emploke
-
-| Path | Notes |
-| ---- | ----- |
-| `<EMPLOKE_HOME>/workspaces.json`                         | Workspace registry (id → workdir + currentId). |
-| `<EMPLOKE_HOME>/runtime.json`                            | CLI lifecycle breadcrumb written by `emploke start`; pid + port + apiKey. |
-| `<EMPLOKE_HOME>/logs/`                                   | Rotated server logs. |
-| `<EMPLOKE_HOME>/shared/`                                 | `${globalDir}` placeholder root for MCP specs. |
-| `<workspace>/workspace.json`                             | Per-workspace metadata (name, createdAt, defaults). |
-| `<workspace>/sessions/sessions.db` (+ `-wal` / `-shm`)   | Session metadata (SQLite WAL). |
-| `<workspace>/tasks/tasks.db` (+ `-wal` / `-shm`)         | Task metadata (SQLite WAL). |
-| `<workspace>/catalog/catalog.db` (+ `-wal` / `-shm`)     | Catalog index (single SQLite DB with agents / skills / MCPs tables). |
-| `<workspace>/catalog/agents/`, `skills/`, `mcps/`        | Source files for installed entries. Add or remove entries through `emploke catalog ...` or the dashboard so the index stays in sync; do not edit by hand. |
-
-### Owned by the agent inside its workdir
-
-Each session and task gets a dedicated workdir at
-`<workspace>/sessions/<id>/` or `<workspace>/tasks/<id>/`. Emploke creates
-the directory and bakes `AGENTS.md` into it from the catalog at
-provision time; everything the agent writes after that — files it
-produces, captured stderr — is the agent's. You can delete an entire
-`<id>/` directory by hand to forget the artifacts (the next `list` call
-drops the orphan row); editing the baked `AGENTS.md` in place will
-reach the agent on the next launch but bypasses catalog versioning.
-
-### Owned by the runtime
-
-Per-session and per-task runtime state (e.g. Copilot's `events.jsonl`)
-lives under the runtime adapter's own state directory (Copilot:
-`~/.copilot/<runtimeSessionId>/`) and is exposed to the dashboard / CLI
-through the runtime API surface — `Runtime.refresh()` for sessions,
-`Runtime.taskActivity()` for tasks. Emploke never reads or writes
-inside that directory as a filesystem path; a future runtime that
-stores its log as a SQLite row or streams it over a socket fits the
-same contract without any change on the emploke side.
-
-### Why the contract exists
-
-Emploke is the only writer so the storage layer can change (schema
-migrations, new sidecar files, JSON → SQLite, ...) without breaking any
-client. Clients — dashboard, CLI, future MCP server — interact strictly
-through the HTTP API; nothing reads `<EMPLOKE_HOME>/` directly. If you
-hand-edit a managed file and break it, that's a `git restore` away (if
-you're lucky) or a `rm <file> && emploke restart` away — not a bug
-report.
+For the path-by-path layout (what emploke owns vs the agent vs the
+runtime adapter) and the rationale for keeping clients out of
+`<EMPLOKE_HOME>/`, see [`docs/architecture.md` →
+Filesystem contract](./docs/architecture.md#filesystem-contract).
 
 ## CLI
 
