@@ -3075,6 +3075,12 @@ button {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
+  /* Allow the row to shrink inside its flex/grid parent so long
+     pre/code blocks (tool args/results) wrap rather than blow out
+     the column width. Without min-width: 0, an inner <pre> with
+     long unbreakable content forces the parent grid track wider
+     than the viewport. */
+  min-width: 0;
 }
 
 .activity-row--user {
@@ -3127,6 +3133,35 @@ button {
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
+  /* Same min-width: 0 reasoning as the parent — long
+     unbreakable tokens (URLs, hashes, base64 blobs) need a
+     break opportunity. word-break covers the long-words case;
+     overflow-wrap covers the no-spaces case. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Pre/code variant for tool args and tool results — bounded
+   height with vertical scroll so a 50KB file dump can't take
+   over the timeline. */
+.activity-row__pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  /* Wrap inside the container, not horizontally, so we never
+     introduce horizontal scroll on the timeline. Vertical
+     scroll caps tall results. */
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .activity-row__tools {

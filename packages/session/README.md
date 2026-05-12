@@ -1,20 +1,24 @@
 # @emploke/session
 
 Per-session workdir registry for emploke. Each session is a directory with an
-agent baked in (via [`@emploke/provisioner`](../provisioner)). This package
-**organizes** those workdirs — it does not spawn any process.
+agent baked in by the runtime adapter (see [`@emploke/runtime`](../runtime)).
+This package **organizes** those workdirs — it does not spawn any process.
 
 ## Why
 
 For interactive use, the [GitHub Copilot CLI](https://github.com/github/gh-copilot)
 (`copilot -i`) is the chat UI. emploke's job is to:
 
-- prepare a workdir for an agent (provisioner)
-- remember which workdirs exist, what agent each was baked from, and which
-  Copilot sessions have run in each (this package)
-- give callers the exact incantation to launch / resume Copilot in a workdir
+- prepare a workdir with an agent baked in (the runtime adapter's
+  `provision` step pulls bytes from the catalog)
+- remember which workdirs exist, what agent each was baked from, and
+  the opaque `runtimeSessionId` the runtime returned (this package)
+- give callers the exact incantation to launch / resume the runtime in
+  a workdir
+- surface runtime-side display metadata (title / lastActiveAt) in
+  `list()` by calling the runtime's optional `readMetadata` hook
 
-You launch Copilot yourself.
+You launch the CLI yourself.
 
 ## Layout
 
@@ -74,49 +78,48 @@ console.log("run:", cmd.display);
 ```
 
 After the user runs `copilot -i` in the workdir at least once, listing surfaces
-the discovered Copilot sessions:
+the runtime-supplied display metadata (read via `Runtime.readMetadata`):
 
 ```ts
 const records = await sessions.list();
-records[0].copilotSessions       // [{ sessionId, name, summary, ... }, …]
-records[0].latestCopilotSession  // most recently updated
+records[0].lastActiveAt   // ISO timestamp of the most recent CLI activity
+records[0].preview        // runtime-derived display title (Copilot: workspace.yaml.name)
+records[0].runtimeSessionId  // the opaque id the runtime owns
 ```
 
-Resume:
+Resume is the same call as launch — `buildLaunch` produces `cd && copilot -i --resume <id>`
+once a `runtimeSessionId` exists, or `cd && copilot -i` (fresh session) when it doesn't:
 
 ```ts
-const sid = records[0].latestCopilotSession?.sessionId;
-if (sid) {
-  const cmd = await sessions.getResumeCommand(records[0].id, sid);
-  console.log(cmd.display);
-  // → cd "/.../20260508-9dfbdf05" && copilot -i --resume <sid>
-}
+const cmd = await sessions.buildLaunch(records[0].id);
+console.log(cmd.display);
+// → cd "/.../20260508-9dfbdf05" && copilot -i --resume <sid>
 ```
+
+`buildLaunch(id, { remote: true })` produces a remote-friendly variant when
+the runtime supports it (otherwise throws `RuntimeDoesNotSupportRemoteError`).
 
 ## What this package does NOT do
 
-- Spawn `copilot`. `getLaunchCommand` / `getResumeCommand` return the
-  invocation; you exec it.
-- Track headless task execution. That belongs to a future
-  `@emploke/runtime` package.
+- Spawn `copilot`. `buildLaunch` returns the invocation; you exec it.
+- Track headless task execution. That's [`@emploke/task`](../task).
 - Stream events from Copilot. The Copilot CLI handles the chat UI itself.
 
 ## Caveats
 
-- **Multiple Copilot sessions per workdir**: running `copilot -i` twice in the
-  same cwd creates two distinct Copilot sessions. Each emploke workdir can
-  have zero or more Copilot sessions associated. `latestCopilotSession`
-  returns the most recently updated one.
-- **`copilot -i --resume <sid>` from a different cwd**: Copilot's internal cwd
-  for that session may shift. The cwd-based join here is best-effort: a
-  session that moves cwd will appear under whichever workdir matches the new
-  cwd, or none.
+- **One Copilot session per emploke workdir**. Provision pre-allocates
+  a `runtimeSessionId` and threads it through `--resume=<id>` on every
+  launch — first launch creates the Copilot session, subsequent
+  launches resume the same one. (Pre-emploke installs that ran
+  `copilot -i` directly in a workdir without `--resume` could end up
+  with multiple Copilot sessions per cwd; this is no longer possible
+  for sessions emploke provisioned itself.)
 - **Path matching**: case-insensitive on Windows, case-sensitive elsewhere
   (no special handling for case-insensitive macOS volumes — pull requests
   welcome with a robust detection strategy).
-- **`deleteCopilotState: true`** may fail with `EBUSY` on Windows if Copilot
-  currently has the session open. The error is surfaced; the emploke workdir
-  is left intact.
+- **`delete(id, { purge: true })`** may fail with `EBUSY` on Windows if
+  Copilot currently has the session open. The error is surfaced; the
+  metadata row is left intact.
 
 ## License
 

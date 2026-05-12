@@ -222,20 +222,55 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
   // Runtime-neutral activity timeline for a task. The runtime
   // end-to-end owns reading + parsing its own event log into the
   // {ActivityItem, TaskActivityResult} vocabulary; this route just
-  // forwards that result as JSON. Consumers (dashboard, future MCP
-  // clients) render without knowing which runtime produced the
-  // underlying log or where it lives on disk.
+  // forwards that result as JSON.
+  //
+  // Pagination via `?cursor=<seq>&limit=<n>`. The route enforces
+  // limit in [1, 500], default 50 — sized for LLM token budgets so
+  // this surface stays MCP-safe by construction. Both params are
+  // optional; omitting cursor returns the head, omitting limit
+  // applies the 50 default.
   //
   // Returns:
+  //   - 400 on malformed cursor / limit (non-integer, negative, > max)
   //   - 404 if the task doesn't exist
   //   - 404 with code=NoEventsYet if the runtime doesn't implement
   //     `taskActivity`, or has no log for this task yet
-  //   - 200 application/json `{ activity: ActivityItem[], result: string|null }` otherwise
+  //   - 200 application/json `{ activity, result, cursor, totalItems?, truncated? }`
   app.get("/:tid/activity", async (c) => {
     const id = c.req.param("tid");
+    const cursorRaw = c.req.query("cursor");
+    const limitRaw = c.req.query("limit");
+
+    let cursor: number | undefined;
+    if (cursorRaw !== undefined) {
+      const parsed = Number.parseInt(cursorRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== cursorRaw) {
+        return c.json({ error: "cursor must be a non-negative integer", code: "BadRequest" }, 400);
+      }
+      cursor = parsed;
+    }
+
+    let limit: number = TASK_ACTIVITY_DEFAULT_LIMIT;
+    if (limitRaw !== undefined) {
+      const parsed = Number.parseInt(limitRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > TASK_ACTIVITY_MAX_LIMIT) {
+        return c.json(
+          {
+            error: `limit must be an integer in [1, ${TASK_ACTIVITY_MAX_LIMIT}]`,
+            code: "BadRequest",
+          },
+          400,
+        );
+      }
+      limit = parsed;
+    }
+
     let payload: Awaited<ReturnType<TaskManager["getTaskActivity"]>>;
     try {
-      payload = await getManager(c).getTaskActivity(id);
+      payload = await getManager(c).getTaskActivity(id, {
+        ...(cursor !== undefined ? { cursor } : {}),
+        limit,
+      });
     } catch (err) {
       const status = statusForError(err) ?? 400;
       // biome-ignore lint/suspicious/noExplicitAny: see above.
@@ -247,5 +282,99 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     return c.json(payload);
   });
 
+  // SSE live tail. Subscribes to runtime.taskActivityStream and
+  // pushes each ActivityItem as `event: activity` with the JSON
+  // payload. Sends `event: end` on iterator completion, `event: error`
+  // on faults. Standard SSE wire format — any HTTP client can
+  // consume (curl -N, EventSource, eventsource-parser).
+  //
+  // The SSE iterator is cancelled when the HTTP client disconnects
+  // (request `signal` propagates to the runtime via TaskManager).
+  // This route is HUMAN-only: not exposed via MCP because LLM tool
+  // surfaces require bounded responses, not streams.
+  //
+  // Returns:
+  //   - 404 if the task doesn't exist
+  //   - 404 with code=NoEventsYet if the runtime doesn't implement
+  //     streaming
+  //   - 200 text/event-stream otherwise (long-lived response)
+  app.get("/:tid/activity/stream", async (c) => {
+    const id = c.req.param("tid");
+    let stream: AsyncIterable<import("@emploke/runtime").ActivityItem> | null;
+    try {
+      const lastEventId = c.req.header("Last-Event-ID");
+      const cursor =
+        lastEventId !== undefined && /^\d+$/.test(lastEventId)
+          ? Number.parseInt(lastEventId, 10)
+          : undefined;
+      stream = await getManager(c).getTaskActivityStream(id, {
+        ...(cursor !== undefined ? { cursor } : {}),
+        signal: c.req.raw.signal,
+      });
+    } catch (err) {
+      const status = statusForError(err) ?? 400;
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return c.json(errorBody(err), status as any);
+    }
+    if (stream === null) {
+      return c.json(
+        { error: "no streaming activity available for this task", code: "NoEventsYet" },
+        404,
+      );
+    }
+
+    // Hono SSE: hand back a Response with a ReadableStream framed
+    // per the EventSource spec.
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enqueue = (frame: string) => {
+          try {
+            controller.enqueue(encoder.encode(frame));
+          } catch {
+            // Controller closed (client gone).
+          }
+        };
+        try {
+          for await (const item of stream as AsyncIterable<
+            import("@emploke/runtime").ActivityItem
+          >) {
+            if (c.req.raw.signal.aborted) break;
+            enqueue(`event: activity\nid: ${item.seq}\ndata: ${JSON.stringify(item)}\n\n`);
+          }
+          enqueue("event: end\ndata: {}\n\n");
+        } catch (err) {
+          enqueue(
+            `event: error\ndata: ${JSON.stringify({
+              error: err instanceof Error ? err.message : String(err),
+            })}\n\n`,
+          );
+        } finally {
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+        }
+      },
+    });
+
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        // Disable Nginx buffering that would defeat the live-tail UX.
+        "X-Accel-Buffering": "no",
+      },
+    });
+  });
+
   return app;
 }
+
+/** Default `limit` for `GET /tasks/:tid/activity` when caller omits it. Sized for LLM token budgets. */
+const TASK_ACTIVITY_DEFAULT_LIMIT = 50;
+/** Hard maximum `limit` accepted from callers. Defends the dashboard / MCP from blowing memory. */
+const TASK_ACTIVITY_MAX_LIMIT = 500;

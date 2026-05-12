@@ -24,7 +24,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
+import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -67,23 +67,20 @@ class RealNodeRuntime implements Runtime {
   async provision(): Promise<{ runtimeSessionId: string | null }> {
     return { runtimeSessionId: null };
   }
-  async refresh(): Promise<null> {
-    return null;
-  }
-  async buildLaunch(s: Session): Promise<LaunchCommand> {
-    return { cmd: "noop", args: [], cwd: s.workdir, display: "noop" };
+  async buildLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
+    return { cmd: "noop", args: [], cwd: workdir, display: "noop" };
   }
   async deleteState(): Promise<void> {}
 
-  async dispatchTask(opts: {
-    taskDir: string;
+  async dispatch(opts: {
+    workdir: string;
     agent: AgentResolveResult;
     prompt: string;
-  }): Promise<TaskHandle> {
+  }): Promise<RuntimeHandle> {
     const agentName = opts.agent.agent.name;
     const script = this.scripts[agentName] ?? "process.exit(0)";
     const child = nodeSpawn(process.execPath, ["-e", script], {
-      cwd: opts.taskDir,
+      cwd: opts.workdir,
       stdio: "ignore",
       windowsHide: true,
     });
@@ -95,7 +92,7 @@ class RealNodeRuntime implements Runtime {
 
     return {
       pid: child.pid as number,
-      sessionDir: Promise.resolve(opts.taskDir),
+      sessionDir: Promise.resolve(opts.workdir),
       exit,
       kill: () => child.kill(),
     };

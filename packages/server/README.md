@@ -24,7 +24,8 @@ renames.
 /api/workspaces/:id/tasks                       list (filters: agent / runtime / status / createdSince)
 /api/workspaces/:id/tasks                       POST: dispatch
 /api/workspaces/:id/tasks/:tid                  get / delete (?purge=1)
-/api/workspaces/:id/tasks/:tid/activity         runtime-parsed ActivityItem[] (timeline + headline)
+/api/workspaces/:id/tasks/:tid/activity         runtime-parsed ActivityItem[] timeline + headline (paginated: ?cursor=N&limit=50, max 500; surfaces `truncated` when source-side cap fires)
+/api/workspaces/:id/tasks/:tid/activity/stream  Server-Sent Events live tail — emits `activity` events while the task runs, terminates with `event: end` on exit / abort
 /api/runtimes                                   list registered runtime kinds
 /api/config                                     server-side config snapshot for the dashboard
 ```

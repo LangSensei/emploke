@@ -16,10 +16,11 @@ This package ships two layers:
   FSM directly.
 - **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
   task's metadata to `tasks.db` (one SQLite row per task), dispatches via
-  `Runtime.dispatchTask`, watches the subprocess to fold the terminal
+  `Runtime.dispatch`, watches the subprocess to fold the terminal
   exit into the task value, and forwards activity reads to
-  `Runtime.taskActivity` (the runtime owns its own event log
-  end-to-end — emploke does NOT mirror it back into the workdir).
+  `Runtime.readActivity` / `Runtime.streamActivity` (the runtime owns
+  its own event log end-to-end — emploke does NOT mirror it back into
+  the workdir).
 
 ## Quick start (kernel)
 
@@ -46,8 +47,10 @@ const mgr = new TaskManager({
 await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boot
 const t = await mgr.dispatch({ agent: "writer", instructions: "..." });
 // t.status === "running" — the subprocess has been spawned; poll mgr.get(t.id)
-// for status changes, or fetch the runtime-parsed activity timeline via
-// mgr.getTaskActivity(t.id) for streaming progress.
+// for status changes, fetch the runtime-parsed activity timeline via
+// mgr.getTaskActivity(t.id, { cursor, limit }) for paginated reads, or
+// subscribe to mgr.getTaskActivityStream(t.id, { signal }) for a live
+// AsyncIterable<ActivityItem> while the task is still running.
 
 await mgr.shutdown();                   // kills live tasks, persists "server shutdown"
 ```
@@ -116,13 +119,16 @@ on-disk workdir for agent artifacts.
 ```
 
 The runtime adapter owns its own per-task event log end-to-end —
-emploke does NOT mirror it via a junction inside the workdir. The
-runtime exposes the parsed timeline through `Runtime.taskActivity?(opts)`,
-which reads its native log (Copilot: `<copilotStateDir>/<id>/events.jsonl`),
-filters + lifts each event into the runtime-neutral `ActivityItem`
-vocabulary, and returns the bundle. A future runtime that stores its
-log as a single file, a SQLite row, or anything else fits the same
-contract — consumers (dashboard, CLI) never see the source format.
+emploke does NOT mirror it inside the workdir. The runtime exposes
+the parsed timeline through `Runtime.readActivity?(opts)` (paginated
+by `cursor` + `limit`, with a `truncated` marker for source-side
+caps) and an optional `Runtime.streamActivity?(opts)` (AsyncIterable
+of `ActivityItem`s for live tail). For Copilot this reads
+`<copilotStateDir>/<id>/events.jsonl` with a 4 MB cap; future
+runtimes that store their log as a single file, a SQLite row, or
+anything else fit the same contract — consumers (dashboard, CLI,
+future MCP) only see structured `ActivityItem`s, never the source
+format or path.
 
 The workdir contains **no metadata sidecar file** — the directory name
 is the only source of truth for the task ID, and every queryable field
@@ -139,7 +145,7 @@ column for filtering.
 ## Manager lifecycle
 
 - `dispatch(opts)` — reserves a task dir, persists `not_started`, calls
-  `Runtime.dispatchTask`, applies `start` with the runtime metadata, and
+  `Runtime.dispatch`, applies `start` with the runtime metadata, and
   schedules the subprocess watcher. Returns the running `Task`.
 - `list()` / `get(id)` — read-only.
 - `delete(id)` — kills if live, awaits exit, then `rm -rf` the workdir.

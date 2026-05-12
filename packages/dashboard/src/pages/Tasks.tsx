@@ -10,6 +10,7 @@ import {
   listRuntimes,
   listTasks,
   type ServerConfig,
+  subscribeTaskActivity,
   type TaskActivity,
   type TaskRecord,
   type TaskStatus,
@@ -611,15 +612,24 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
   const isRunning = task.status === "running" || task.status === "not_started";
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
-  // Pull the first non-empty line of instructions as the headline.
-  // Multi-line instructions usually start with the gist on line 1 and
-  // expand below; rendering only the gist keeps row height predictable
-  // and CSS ellipsis handles overflow.
+  // Pull the first non-empty line of instructions as the headline,
+  // unless the runtime has supplied a shorter display title (Copilot's
+  // workspace.yaml `name` / `summary`). Runtime-derived titles are 5-7
+  // words sized for list rendering; they're stable (set once when the
+  // CLI generates them, then preserved unless the user renames) so
+  // they don't shift on poll. Falls through to the instructions
+  // first-line for tasks where no title is available yet.
+  const runtimeTitle =
+    typeof task.metadata?.title === "string" && task.metadata.title.length > 0
+      ? (task.metadata.title as string)
+      : null;
   const headline =
+    runtimeTitle ??
     task.instructions
       .split(/\r?\n/)
       .map((s) => s.trim())
-      .find((s) => s.length > 0) ?? "(empty instructions)";
+      .find((s) => s.length > 0) ??
+    "(empty instructions)";
   return (
     <li
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${
@@ -909,6 +919,73 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   }, []);
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  // Mirror of the activity state, kept in a ref so callbacks (notably
+  // loadMoreActivity, which can fire from IntersectionObserver any
+  // time) read the latest cursor without re-creating their closure
+  // on every state change. setState updaters are async, so the
+  // earlier "snapshot via setState((prev) => prev)" trick raced the
+  // first IntersectionObserver fire and bailed early — leaving the
+  // sentinel stuck in view, never re-firing because IO only triggers
+  // on intersection state CHANGES.
+  const activityRef = useRef<TaskActivity | null>(null);
+
+  /**
+   * Append the next page of activity items. Called when the user
+   * scrolls to the bottom of the timeline (sentinel intersects).
+   * Reads the cursor from `activityRef` (kept in sync via the
+   * activity-state effect below) so the closure never staleness-bails
+   * on a quickly-clicked sentinel.
+   *
+   * No-ops when there's nothing more to load (cursor === null) or
+   * when a page fetch is already in flight. Errors are surfaced
+   * via the existing activityError channel.
+   */
+  const loadMoreActivity = useCallback(async (): Promise<void> => {
+    if (!taskId) return;
+    if (loadingMoreRef.current) return;
+    const cursor = activityRef.current?.cursor ?? null;
+    if (cursor === null) return;
+    loadingMoreRef.current = true;
+    try {
+      const next = await fetchTaskActivity(taskId, { cursor, limit: 50 });
+      if (!mountedRef.current) return;
+      if (next === null) return;
+      setActivity((prev) => {
+        if (prev === null) return next;
+        // Merge by seq (last-write-wins) — same approach the SSE
+        // handler uses, so a tool_call that's been mutated locally
+        // doesn't get clobbered by an older snapshot from the page.
+        const bySeq = new Map<number, ActivityItem>();
+        for (const it of prev.activity) bySeq.set(it.seq, it);
+        for (const it of next.activity) bySeq.set(it.seq, it);
+        const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+        return {
+          activity: merged,
+          // Newer headline result (next page tail) wins; falls back to
+          // existing if the next page didn't include a final answer.
+          result: next.result ?? prev.result,
+          cursor: next.cursor,
+          totalItems: next.totalItems ?? prev.totalItems,
+          ...(next.truncated !== undefined ? { truncated: next.truncated } : {}),
+        };
+      });
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setActivityError((e as Error).message);
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [taskId]);
+
+  // Keep the ref synced with the latest activity state so
+  // loadMoreActivity can read the current cursor without taking
+  // `activity` as a dep (which would re-create the callback on
+  // every SSE tick and thrash IntersectionObserver).
+  useEffect(() => {
+    activityRef.current = activity;
+  }, [activity]);
+
   // Tab is plain state — no need for a ref since `refreshDetail` no
   // longer branches on which tab is active (the Raw tab now renders
   // the same `activity` payload as JSON).
@@ -930,7 +1007,13 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
           if (!mountedRef.current || token !== taskTokenRef.current) return;
           setTask(t);
         }),
-        fetchTaskActivity(taskId)
+        // Match server-side default `limit=50` — sized for snappy
+        // first paint and reused page-size for subsequent
+        // auto-loads. The IntersectionObserver sentinel near the
+        // bottom of the list fetches additional pages as the user
+        // scrolls, so a long autonomous task progressively renders
+        // 50 items at a time without an upfront cost.
+        fetchTaskActivity(taskId, { limit: 50 })
           .then((a) => {
             if (!mountedRef.current || token !== taskTokenRef.current) return;
             setActivity(a);
@@ -972,6 +1055,45 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   // sync. Backoff matches the list-view loop above.
   const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
   usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
+
+  // Live tail via SSE while the task is running. The poll above keeps
+  // the task header (status, exit fields) up to date — the SSE stream
+  // delivers individual ActivityItems as they're produced, so the
+  // timeline updates in near-real-time without burning the polling
+  // budget. Items are merged by `seq` (last-write-wins) so a
+  // tool_call's "running" -> "success" transition (same seq, updated
+  // status) renders correctly. On terminal status the subscription
+  // closes itself; we also tear down on task switch / unmount.
+  useEffect(() => {
+    if (!taskId || !detailPollEnabled) return;
+    const handle = subscribeTaskActivity(taskId, {
+      onItem: (item) => {
+        if (!mountedRef.current) return;
+        setActivity((prev) => {
+          // Merge by seq; new items append, existing seqs overwrite (handles
+          // tool_call begin -> end mutation that yields the same seq twice).
+          const bySeq = new Map<number, ActivityItem>();
+          if (prev !== null) {
+            for (const it of prev.activity) bySeq.set(it.seq, it);
+          }
+          bySeq.set(item.seq, item);
+          const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+          return prev !== null
+            ? { ...prev, activity: merged }
+            : { activity: merged, result: null, cursor: null };
+        });
+      },
+      onError: (err) => {
+        // Soft error: the EventSource auto-reconnects; we just log
+        // for visibility. A persistent error surfaces via the polling
+        // path's activityError state when the next refreshDetail runs.
+        if (typeof console !== "undefined") {
+          console.warn("activity stream error", err);
+        }
+      },
+    });
+    return () => handle.close();
+  }, [taskId, detailPollEnabled]);
 
   // Common box styling lives in CSS now. The right panel anchors at
   // the top of its grid cell (.tasks-pane__detail), with its own
@@ -1076,11 +1198,7 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
             )}
           </div>
         )}
-        {task?.instructions && (
-          <p className="task-detail__instructions" title={task.instructions}>
-            {task.instructions}
-          </p>
-        )}
+        {task?.instructions && <TaskInstructions text={task.instructions} />}
         {task?.failure && (
           <div className="alert alert--error" style={{ margin: 0 }}>
             <strong>Failure:</strong> {task.failure.error}
@@ -1137,7 +1255,11 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 
       {tab === "activity" && (
         <div className="task-detail__body">
-          <ActivityView activity={activity} activityError={activityError} />
+          <ActivityView
+            activity={activity}
+            activityError={activityError}
+            onLoadMore={loadMoreActivity}
+          />
         </div>
       )}
 
@@ -1196,9 +1318,11 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 function ActivityView({
   activity,
   activityError,
+  onLoadMore,
 }: {
   activity: TaskActivity | null;
   activityError: string | null;
+  onLoadMore: () => Promise<void>;
 }) {
   if (activity === null) {
     if (activityError) {
@@ -1215,21 +1339,107 @@ function ActivityView({
     return <p className="muted">No activity yet for this task.</p>;
   }
   return (
-    <ol className="activity-list">
-      {activity.activity.map((item) => (
-        // Timestamps are runtime-emitted UUIDs-in-time and are unique
-        // per event; the activity list is append-only (never reordered),
-        // so timestamp-as-key is stable across re-renders.
-        <ActivityRow key={item.timestamp} item={item} />
-      ))}
-    </ol>
+    <>
+      {activity.truncated !== undefined && activity.truncated.reason === "size_limit" && (
+        <div
+          className="muted"
+          style={{
+            fontSize: 12,
+            padding: "6px 10px",
+            marginBottom: 8,
+            background: "rgba(210, 153, 34, 0.08)",
+            border: "1px solid rgba(210, 153, 34, 0.2)",
+            borderRadius: 4,
+          }}
+        >
+          Showing the tail of a very large event log
+          {activity.truncated.droppedBytes !== undefined &&
+            ` (${(activity.truncated.droppedBytes / (1024 * 1024)).toFixed(1)} MB dropped)`}
+          . Older events were skipped to keep the page responsive.
+        </div>
+      )}
+      <ol className="activity-list">
+        {activity.activity.map((item) => (
+          // `seq` is monotonic per task and unique within the timeline,
+          // so it's a stable React key across re-renders (incl. SSE
+          // updates that mutate a tool_call's status with the same seq).
+          <ActivityRow key={item.seq} item={item} />
+        ))}
+      </ol>
+      {activity.cursor !== null && (
+        <LoadMoreSentinel onIntersect={onLoadMore} activity={activity} />
+      )}
+    </>
+  );
+}
+
+/**
+ * Bottom-of-list sentinel that triggers the next page fetch when
+ * scrolled into view. Uses IntersectionObserver with a generous
+ * rootMargin so the next page starts loading slightly before the
+ * user actually reaches the bottom (smoother UX than waiting for
+ * the spinner to appear).
+ *
+ * Re-observes when `activity.cursor` changes — this fires the next
+ * page after the current one is appended (in case the sentinel is
+ * still in view because the new page didn't fill the viewport).
+ */
+function LoadMoreSentinel({
+  onIntersect,
+  activity,
+}: {
+  onIntersect: () => Promise<void>;
+  activity: TaskActivity;
+}) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  // Capture cursor so the effect's dep list has a value Biome
+  // recognises as in-scope. We re-observe whenever cursor advances:
+  // after a page is appended the sentinel may still be in view (the
+  // newly-rendered items didn't push it past the fold), and a fresh
+  // observe-cycle is what fires IntersectionObserver again.
+  const cursor = activity.cursor;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    // Reference cursor in the body so the dep list isn't "extra".
+    void cursor;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            void onIntersect();
+            break;
+          }
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onIntersect, cursor]);
+  return (
+    <div
+      ref={sentinelRef}
+      className="muted"
+      style={{ padding: "10px 0", textAlign: "center", fontSize: 12 }}
+    >
+      Loading more
+      {activity.totalItems !== undefined &&
+        ` (${activity.activity.length} of ${activity.totalItems})`}
+      …
+    </div>
   );
 }
 
 function ActivityRow({ item }: { item: ActivityItem }) {
   if (item.kind === "summary") {
-    const s = item.summary;
-    const codeChanged = s.linesAdded > 0 || s.linesRemoved > 0 || s.filesModified.length > 0;
+    const stats = item.stats;
+    const tokens = item.tokens;
+    const codeChanged =
+      stats !== undefined &&
+      ((stats.linesAdded ?? 0) > 0 ||
+        (stats.linesRemoved ?? 0) > 0 ||
+        (stats.filesModified?.length ?? 0) > 0);
     return (
       <li className="activity-row activity-row--summary">
         <div className="activity-row__head">
@@ -1238,64 +1448,262 @@ function ActivityRow({ item }: { item: ActivityItem }) {
             {formatRelative(item.timestamp)}
           </time>
         </div>
+        {item.text !== undefined && item.text.length > 0 && (
+          <p className="activity-row__body">{item.text}</p>
+        )}
         <div className="activity-row__summary-grid">
           {codeChanged ? (
             <span>
-              <strong>Code:</strong> +{s.linesAdded} −{s.linesRemoved} across{" "}
-              {s.filesModified.length} file{s.filesModified.length === 1 ? "" : "s"}
+              <strong>Code:</strong> +{stats?.linesAdded ?? 0} −{stats?.linesRemoved ?? 0} across{" "}
+              {stats?.filesModified?.length ?? 0} file
+              {(stats?.filesModified?.length ?? 0) === 1 ? "" : "s"}
             </span>
           ) : (
             <span className="muted">No code changes</span>
           )}
-          {s.premiumRequests > 0 && (
+          {(stats?.premiumRequests ?? 0) > 0 && (
             <span>
-              <strong>Premium requests:</strong> {s.premiumRequests}
+              <strong>Premium requests:</strong> {stats?.premiumRequests}
             </span>
           )}
-          {(s.inputTokens > 0 || s.outputTokens > 0) && (
+          {tokens !== undefined && (tokens.input > 0 || tokens.output > 0) && (
             <span>
-              <strong>Tokens:</strong> {s.inputTokens.toLocaleString()} in /{" "}
-              {s.outputTokens.toLocaleString()} out
+              <strong>Tokens:</strong> {tokens.input.toLocaleString()} in /{" "}
+              {tokens.output.toLocaleString()} out
             </span>
           )}
-          {s.model && (
+          {stats?.costUSD !== undefined && (
             <span>
-              <strong>Model:</strong> {s.model}
+              <strong>Cost:</strong> ${stats.costUSD.toFixed(4)}
+            </span>
+          )}
+          {stats?.model && (
+            <span>
+              <strong>Model:</strong> {stats.model}
             </span>
           )}
         </div>
       </li>
     );
   }
+
+  if (item.kind === "thinking") {
+    return (
+      <li className="activity-row activity-row--thinking">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--thinking">
+            Thinking{item.subject ? `: ${item.subject}` : ""}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+          </time>
+        </div>
+        <details>
+          <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+            Show reasoning
+          </summary>
+          <p className="activity-row__body" style={{ fontStyle: "italic", opacity: 0.8 }}>
+            {item.text}
+          </p>
+        </details>
+      </li>
+    );
+  }
+
+  if (item.kind === "tool_call") {
+    const statusColor =
+      item.status === "success"
+        ? "#3fb950"
+        : item.status === "error"
+          ? "#f85149"
+          : item.status === "cancelled"
+            ? "#8b949e"
+            : "#d29922";
+    return (
+      <li className="activity-row activity-row--tool_call">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--tool_call">
+            <span style={{ color: statusColor }}>●</span> tool: {item.name}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+            {item.durationMs !== undefined && ` (${item.durationMs}ms)`}
+          </time>
+        </div>
+        {item.args !== undefined && (
+          <details>
+            <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+              Arguments
+            </summary>
+            <pre className="activity-row__pre">{JSON.stringify(item.args, null, 2)}</pre>
+          </details>
+        )}
+        {item.display !== undefined ? (
+          <ToolDisplay content={item.display.content} />
+        ) : (
+          item.result !== undefined && (
+            <details>
+              <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
+                Result
+              </summary>
+              <pre className="activity-row__pre">
+                {typeof item.result === "string"
+                  ? item.result
+                  : JSON.stringify(item.result, null, 2)}
+              </pre>
+            </details>
+          )
+        )}
+      </li>
+    );
+  }
+
+  if (item.kind === "system") {
+    const levelColor =
+      item.level === "error" ? "#f85149" : item.level === "warn" ? "#d29922" : "#8b949e";
+    return (
+      <li className="activity-row activity-row--system">
+        <div className="activity-row__head">
+          <span className="activity-row__role activity-row__role--system">
+            <span style={{ color: levelColor }}>●</span> {item.subKind ?? "system"}
+          </span>
+          <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
+            {formatRelative(item.timestamp)}
+          </time>
+        </div>
+        <p className="activity-row__body muted" style={{ fontSize: 12 }}>
+          {item.text}
+        </p>
+      </li>
+    );
+  }
+
+  // user / assistant
   return (
     <li className={`activity-row activity-row--${item.kind}`}>
       <div className="activity-row__head">
         <span className={`activity-row__role activity-row__role--${item.kind}`}>
           {item.kind === "user" ? "User" : "Assistant"}
+          {item.kind === "assistant" && item.model !== undefined && (
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+              ({item.model})
+            </span>
+          )}
         </span>
         <time className="activity-row__time" title={formatAbsolute(item.timestamp)}>
           {formatRelative(item.timestamp)}
+          {item.kind === "assistant" && item.tokens !== undefined && (
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+              ({item.tokens.output.toLocaleString()} tok)
+            </span>
+          )}
         </time>
       </div>
-      {item.content.length > 0 && <p className="activity-row__body">{item.content}</p>}
-      {item.kind === "assistant" && item.toolRequests.length > 0 && (
-        <div className="activity-row__tools">
-          {item.toolRequests.map((t) => {
-            // Tool calls within a single assistant message are emitted as
-            // a list; same tool name can repeat, so we hash the args into
-            // the key to keep React happy when the message re-renders
-            // (e.g. during a poll tick that returns the same content).
-            const key = `${t.name}::${JSON.stringify(t.arguments ?? {})}`;
-            return (
-              <span key={key} className="activity-row__tool" title={t.name}>
-                {t.name}
-              </span>
-            );
-          })}
+      {item.text.length > 0 && <p className="activity-row__body">{item.text}</p>}
+      {item.kind === "user" && item.attachments !== undefined && item.attachments.length > 0 && (
+        <div
+          className="activity-row__attachments"
+          style={{ display: "flex", gap: 6, marginTop: 4 }}
+        >
+          {item.attachments.map((att) => (
+            <span
+              key={att.url ?? att.data ?? att.name ?? Math.random()}
+              className="activity-row__tool"
+              title={att.mimeType ?? att.kind}
+            >
+              📎 {att.name ?? att.kind}
+            </span>
+          ))}
         </div>
       )}
     </li>
   );
 }
 
+/**
+ * Renders a tool's display.content (Copilot's `result.content`,
+ * Gemini's `resultDisplay`). Short results show inline; long ones
+ * collapse to a one-line preview behind a "Show full result"
+ * toggle. The threshold is a soft preview cap — the bounded
+ * `.activity-row__pre` style provides a vertical scroll backstop
+ * regardless.
+ */
+const TOOL_DISPLAY_PREVIEW_CHARS = 240;
+function ToolDisplay({ content }: { content: string }) {
+  const isLong = content.length > TOOL_DISPLAY_PREVIEW_CHARS;
+  if (!isLong) {
+    return (
+      <p className="activity-row__body" style={{ fontSize: 12 }}>
+        {content}
+      </p>
+    );
+  }
+  // First-line preview when content is multiline; otherwise the
+  // first N chars. Either way, the bounded pre handles overflow
+  // when the user expands.
+  const previewSrc = content.split("\n", 1)[0] ?? content;
+  const preview =
+    previewSrc.length > TOOL_DISPLAY_PREVIEW_CHARS
+      ? `${previewSrc.slice(0, TOOL_DISPLAY_PREVIEW_CHARS)}…`
+      : previewSrc;
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: 12 }}>
+        {preview}
+        <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+          (show full {content.length.toLocaleString()} chars)
+        </span>
+      </summary>
+      <pre className="activity-row__pre">{content}</pre>
+    </details>
+  );
+}
+
 // ─ helpers ─
+
+/**
+ * Detail-header instructions with collapse-by-default for long
+ * inputs. Short instructions render plain (the existing 4-line CSS
+ * clamp is enough); long ones use a `<details>` toggle so the user
+ * can expand to read the full text without the header eating half
+ * the viewport.
+ *
+ * The tag-line below the form already serves as the task's
+ * persistent "title"; the unmutable instructions are the source of
+ * truth, not a runtime-derived preview (which would be unstable
+ * and shift every poll). See the comment in TaskDetail's render.
+ */
+const TASK_INSTRUCTIONS_PREVIEW_CHARS = 320;
+function TaskInstructions({ text }: { text: string }) {
+  const isLong = text.length > TASK_INSTRUCTIONS_PREVIEW_CHARS;
+  if (!isLong) {
+    return (
+      <p className="task-detail__instructions" title={text}>
+        {text}
+      </p>
+    );
+  }
+  // Cut on a word boundary near the threshold for a cleaner preview.
+  const cut = text.lastIndexOf(" ", TASK_INSTRUCTIONS_PREVIEW_CHARS);
+  const preview = `${text.slice(0, cut > 0 ? cut : TASK_INSTRUCTIONS_PREVIEW_CHARS)}…`;
+  return (
+    <details className="task-detail__instructions-details">
+      <summary
+        className="task-detail__instructions"
+        style={{ cursor: "pointer", listStyle: "none" }}
+        title={text}
+      >
+        {preview}{" "}
+        <span className="muted" style={{ fontSize: 11 }}>
+          (show full {text.length.toLocaleString()} chars)
+        </span>
+      </summary>
+      <p
+        className="task-detail__instructions"
+        style={{ marginTop: 8, WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
+      >
+        {text}
+      </p>
+    </details>
+  );
+}

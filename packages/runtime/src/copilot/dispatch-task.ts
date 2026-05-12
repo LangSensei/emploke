@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { RuntimeDispatchTaskFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
-import type { TaskExit, TaskHandle } from "../types.js";
+import type { RuntimeExit, RuntimeHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
 import { provisionCopilotWorkdir } from "./provision.js";
 import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js";
@@ -107,7 +107,7 @@ export interface DispatchCopilotTaskOpts {
 
 /**
  * Spawn `copilot -p <prompt> --resume=<uuid>` against `taskDir` and return
- * a live `TaskHandle`. The CLI runs unattended (`--allow-all`,
+ * a live {@link RuntimeHandle}. The CLI runs unattended (`--allow-all`,
  * `--no-ask-user`) and emits structured events into its per-session state
  * directory, which the caller can mount under the task workdir.
  *
@@ -136,7 +136,7 @@ export interface DispatchCopilotTaskOpts {
 export async function dispatchCopilotTask(
   opts: DispatchCopilotTaskOpts,
   deps: DispatchCopilotTaskDeps,
-): Promise<TaskHandle> {
+): Promise<RuntimeHandle> {
   // Step 1: provision. Distinguishable from spawn failures via error type.
   const placeholders: PlaceholderContext = {
     workspaceDir: opts.workspaceDir,
@@ -296,9 +296,9 @@ export async function dispatchCopilotTask(
   // event (failed `kill`, IPC issue, …) would crash the manager. We
   // route it into the exit promise so the watcher still settles
   // deterministically.
-  const exit = new Promise<TaskExit>((resolve) => {
+  const exit = new Promise<RuntimeExit>((resolve) => {
     let settled = false;
-    const settle = (info: TaskExit) => {
+    const settle = (info: RuntimeExit) => {
       if (settled) return;
       settled = true;
       stdoutStream?.end();

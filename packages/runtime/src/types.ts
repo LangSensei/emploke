@@ -2,77 +2,77 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
- * by emploke. It owns operations against the CLI's on-disk world:
+ * by emploke. The interface is **domain-agnostic** — it does NOT import
+ * emploke's `Session` or `Task` value types and exposes no method named after
+ * either. It surfaces two execution modes plus a shared
+ * observability + maintenance surface that both modes consume:
  *
- *  - `provision`: bake an agent into a workdir so the CLI can be launched there
- *  - `refresh`: read the CLI's view of activity for an emploke session
- *  - `buildLaunch`: build the shell command that drops the user into the CLI
- *  - `deleteState`: remove the CLI's record of an emploke session
- *  - `dispatchTask?` / `taskActivity?` / `deleteTaskState?`: the parallel trio
- *    for autonomous tasks (optional — runtimes that lack a non-interactive
- *    mode simply omit them)
+ *   ## Interactive mode (`-i`)
+ *   - {@link provision}: bake an agent into a workdir
+ *   - {@link buildLaunch}: build the shell command that drops the user into the CLI
  *
- * Runtimes are stateless across calls — all per-session data lives either in
- * `Session.runtimeSessionId` (an opaque, runtime-specific id) or in the CLI's
- * own storage. Runtimes never mutate the `Session` they receive; instead they
- * return updated values that the caller persists.
+ *   ## Non-interactive mode (`-p`)
+ *   - {@link dispatch} (optional): spawn the CLI as a detached worker that
+ *     consumes a prompt and exits when done
  *
- * The interface is deliberately small. Anything CLI-specific that doesn't fit
- * these verbs (e.g. logging, telemetry) is the runtime's private concern and
- * should not leak into emploke's surface.
+ *   ## Observability — works for either mode
+ *   - {@link readMetadata}: title / lastActiveAt / userTitled, by `runtimeSessionId`
+ *   - {@link readActivity}: paginated parsed timeline
+ *   - {@link streamActivity}: live tail of the timeline
+ *
+ *   ## Maintenance — works for either mode
+ *   - {@link deleteState}: remove the runtime's recorded state for one
+ *     `runtimeSessionId`
+ *
+ * Runtimes are stateless across calls. Per-conversation data lives either
+ * keyed by an opaque `runtimeSessionId` (string) or in the CLI's own
+ * storage. The manager layer (`@emploke/session`, `@emploke/task`) is the
+ * one that understands "session" vs "task" and translates those domain
+ * concepts into runtime calls — to the runtime it's all just one thing
+ * with two start modes.
+ *
+ * Why this split: a session and a task are, from the runtime's perspective,
+ * the same thing — a `runtimeSessionId` that points at a CLI-managed
+ * conversation. The execution mode (`-i` interactive vs `-p` headless) is
+ * the only distinction the runtime actually sees.
  */
 export interface Runtime {
   /**
-   * Stable identifier for this runtime, written into `Session.runtime` and
-   * used by `RuntimeRegistry` as the lookup key. Conventionally the CLI's
+   * Stable identifier for this runtime, used as the `RuntimeRegistry`
+   * lookup key and persisted by managers. Conventionally the CLI's
    * canonical name in lowercase: `"copilot"`, `"gemini"`, `"claude-code"`.
    */
   readonly kind: string;
 
   /**
    * Optional capability flags advertised to the rest of the system.
-   * Absent or `undefined` means "baseline-only" (only the four required
-   * verbs are guaranteed to do anything useful). Surfaced through the
+   * Absent or `undefined` means "baseline-only". Surfaced through the
    * server's `/api/runtimes` endpoint so the dashboard can disable UI
    * affordances that map to capabilities the active runtime doesn't
    * support — see {@link RuntimeCapabilities}.
-   *
-   * New flags are added here as runtimes diverge in functionality. Keep
-   * the set small: each flag should map to a real, observable user-
-   * facing affordance, not internal implementation differences.
    */
   readonly capabilities?: RuntimeCapabilities;
+
+  // ─── Interactive mode (-i) ─────────────────────────────────────────
 
   /**
    * Bake `agent` into `workdir` so the CLI can be launched against it.
    *
-   * The returned `runtimeSessionId` becomes the binding between this emploke
-   * session and the CLI's notion of a session:
+   * The returned `runtimeSessionId` becomes the binding between this
+   * conversation and the CLI's notion of a session:
    *
    *  - **Pre-allocating runtimes** (e.g. Copilot, which accepts
-   *    `--resume=<arbitrary-uuid>` and creates the session if missing) return
-   *    a freshly-minted id here. Subsequent `buildLaunch` calls always pass
-   *    `--resume=<that-id>`, so first launch creates and later launches resume.
-   *  - **Discovery-only runtimes** (e.g. Gemini, where the id is minted by
-   *    the CLI at first launch and must be scraped from logs / fs / stdout
-   *    afterwards) return `null`. The id will be filled in later by `refresh`.
+   *    `--resume=<arbitrary-uuid>` and creates the session if missing)
+   *    return a freshly-minted id here. Subsequent {@link buildLaunch}
+   *    calls always pass `--resume=<that-id>`.
+   *  - **Discovery-only runtimes** (e.g. Gemini, where the id is minted
+   *    by the CLI at first launch and must be scraped from logs / fs /
+   *    stdout afterwards) return `null`. The id will be filled in later
+   *    by the manager calling {@link readMetadata}.
    *
-   * `workdir` is guaranteed to exist and be empty. Provision is *not* required
-   * to be idempotent; the caller arranges atomicity (rolling back the workdir
-   * on failure).
-   *
-   * `catalog` is the source of agent / skill / mcp file content — the runtime
-   * pulls them via streams (`catalog.agentEntries`, `catalog.skillEntries`,
-   * `catalog.getMcpContent`) instead of resolving on-disk catalog paths. This
-   * keeps the runtime backend-agnostic so a future SQLite-backed catalog
-   * works without code changes here.
-   *
-   * `ctx.workspaceDir` is the absolute path of the workspace this session
-   * lives under (the parent of `<workspaceDir>/sessions/<id>/...`). Runtimes
-   * use it to resolve `${workspaceDir}` placeholders in MCP / agent specs so
-   * marketplace-shareable configs can refer to per-workspace state without
-   * encoding machine paths. See {@link substitutePlaceholders} for the
-   * vocabulary.
+   * `workdir` is guaranteed to exist and be empty. Provision is *not*
+   * required to be idempotent; the caller arranges atomicity (rolling
+   * back the workdir on failure).
    */
   provision(
     workdir: string,
@@ -84,217 +84,128 @@ export interface Runtime {
   }>;
 
   /**
-   * Inspect the CLI's view of `session` and return fresh activity metadata.
-   *
-   * Returns `null` when the CLI has no record of this session — either the
-   * user hasn't launched yet, or the CLI's state was deleted out of band. A
-   * non-null return guarantees `runtimeSessionId` is known, so this is also
-   * the discovery point for runtimes that mint ids at first launch.
-   *
-   * Implementations should be idempotent and side-effect-free against the
-   * CLI's own storage. They may perform fs / network reads but must not
-   * write back to the CLI's state directories.
-   */
-  refresh(session: Session): Promise<{
-    lastActiveAt: string;
-    preview: string | null;
-    runtimeSessionId: string;
-  } | null>;
-
-  /**
    * Build the shell incantation that drops the user into an interactive
-   * session against the CLI. Inspects `session.runtimeSessionId` to decide
-   * whether to include a resume flag.
+   * CLI session. Inspects `runtimeSessionId` to decide whether to
+   * include a resume flag.
    *
-   * The caller is expected to have just invoked `refresh()` so that
-   * `runtimeSessionId` is as up to date as it can be.
+   * `runtimeSessionId` is `null` when no resume is desired (fresh launch
+   * for a discovery-only runtime, or a session that's never been
+   * provisioned with a pre-allocated id). Otherwise the runtime SHOULD
+   * include `--resume=<id>` (or its CLI's equivalent).
    *
-   * `workspaceDir` is the absolute path of the workspace this session
-   * lives under (the parent of `<workspace>/sessions/<id>/workdir`).
-   * Runtimes are free to ignore it; CLIs whose interactive mode requires
-   * a per-launch precondition keyed off the workspace root (e.g. Copilot
-   * needs an entry in `~/.copilot/config.json` `trustedFolders` to
-   * suppress its folder-trust prompt) use it to perform that
-   * precondition here, lazily, only when the user actually launches.
+   * `workdir` is the directory the CLI should be launched in (becomes
+   * the returned {@link LaunchCommand.cwd}). Distinct from
+   * `workspaceDir` because a single workspace can host many
+   * conversations; this is the per-conversation one.
    *
-   * `opts` carries per-launch flags that the user picks at spawn time
-   * (via the dashboard's "Spawn local" vs "Spawn remote" buttons). The
-   * default — `{}` or `{ remote: false }` — is the original local
-   * behaviour. Runtimes that don't implement a flag MUST throw a typed
-   * error when asked for it (see {@link RuntimeCapabilities}); they
-   * MUST NOT silently ignore an unsupported flag.
+   * `workspaceDir` is the absolute path of the workspace this
+   * conversation belongs to. Runtimes are free to ignore it; CLIs
+   * whose interactive mode requires a per-launch precondition keyed
+   * off the workspace root (e.g. Copilot needs an entry in
+   * `~/.copilot/config.json` `trustedFolders`) use it to perform
+   * that precondition here, lazily, only when the user actually launches.
    *
-   * Async by contract: a runtime may need to do a small amount of
-   * idempotent fs work (write a config, open a token) before returning
-   * the launch spec. Pure runtimes simply `return { ... }` without
-   * `await`ing anything.
+   * `opts` carries per-launch flags. Runtimes that don't implement a
+   * flag MUST throw a typed error when asked for it (see
+   * {@link RuntimeCapabilities}); they MUST NOT silently ignore an
+   * unsupported flag.
    */
   buildLaunch(
-    session: Session,
+    runtimeSessionId: string | null,
+    workdir: string,
     workspaceDir: string,
     opts?: BuildLaunchOpts,
   ): Promise<LaunchCommand>;
 
-  /**
-   * Remove the CLI's recorded state for `session`. No-op if no state exists.
-   * Throws on partial failure (e.g. permission denied removing some files);
-   * the caller is responsible for surfacing this to the user.
-   */
-  deleteState(session: Session): Promise<void>;
+  // ─── Non-interactive mode (-p) ─────────────────────────────────────
 
   /**
-   * Optional. Runtimes whose underlying CLI supports non-interactive
-   * scripting (e.g. Copilot's `-p/--prompt`) implement this to spawn the
-   * CLI as a detached worker that consumes `prompt` and exits when done.
+   * Optional. Spawn the CLI non-interactively to consume `opts.prompt`
+   * unattended (Copilot's `-p`/`--prompt`, etc.). Runtimes whose
+   * underlying CLI doesn't support a headless mode simply omit this
+   * method; the manager surfaces a clear "this CLI can't run autonomous
+   * tasks" error rather than letting `dispatch is not a function`
+   * leak through.
    *
    * The runtime owns the subprocess for the life of the call: it picks
    * CLI flags appropriate for unattended execution (allow-all-tools,
    * disable user prompts, structured output where available), wires up
-   * its own stderr capture, and returns a `TaskHandle` so the caller can
-   * observe completion without holding the spawn machinery itself.
-   *
-   * Runtimes that lack a non-interactive mode simply omit this method;
-   * `TaskManager` checks for its presence and raises a clear error at
-   * dispatch time when the chosen runtime cannot run tasks.
+   * its own stderr capture, and returns a {@link RuntimeHandle} so the
+   * caller can observe completion without holding the spawn machinery
+   * itself.
    */
-  dispatchTask?(opts: DispatchTaskOpts): Promise<TaskHandle>;
+  dispatch?(opts: DispatchOpts): Promise<RuntimeHandle>;
+
+  // ─── Observability ─────────────────────────────────────────────────
 
   /**
-   * Optional. Remove the runtime's recorded state for a previously-dispatched
-   * task. Mirrors {@link deleteState} for sessions; called by `TaskManager`
-   * when a task is purged so the runtime's per-task event log (Copilot's
-   * `<copilotStateDir>/<runtimeSessionId>/`, etc.) doesn't leak after the
-   * task row + workdir are gone.
+   * Optional. Read runtime-managed display metadata for one
+   * `runtimeSessionId` — principally a `title` field that the CLI
+   * generates from the first user prompt (Copilot's
+   * `workspace.yaml.name`). Works for either execution mode.
    *
-   * `opts.metadata` is the task's open-shape metadata bag (the same
-   * `Task.metadata` shape `dispatchTask` populated, identical to
-   * {@link TaskActivityOpts}). The runtime knows which keys to consult
-   * (typically `runtimeSessionId`) and silently no-ops when the relevant
-   * key is missing or unparseable, the same way {@link deleteState} does
-   * for sessions.
+   * Returns `null` when the runtime has no record of the id (CLI
+   * hasn't launched yet, state was deleted out of band, runtime
+   * doesn't expose display metadata at all).
    *
-   * Throws on partial failure (e.g. permission denied removing some files);
-   * the caller (`TaskManager.delete({ purge: true })`) propagates as
-   * `RuntimeStateDeletionFailed` so the user sees a clear failure rather
-   * than a silently-leaked state dir. The order on the manager side is
-   * "runtime first, then local row + workdir" — a runtime failure aborts
-   * before any local removal, mirroring `SessionManager.delete`.
-   *
-   * Runtimes whose CLI does not persist per-task state simply omit this
-   * method; the manager treats absence as "nothing to clean up".
+   * Implementations should be idempotent and side-effect-free.
    */
-  deleteTaskState?(opts: TaskStateOpts): Promise<void>;
+  readMetadata?(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null>;
 
   /**
-   * Optional. Fetch the runtime-neutral activity timeline + derived
-   * "result" line for a task — end-to-end:
+   * Optional. Fetch the runtime-neutral activity timeline for one
+   * `runtimeSessionId` — end-to-end:
    *
-   *   1. Locate the task's runtime-native event log (the runtime knows
-   *      where its own state lives; the manager doesn't need to).
-   *   2. Read the file (or however the runtime persists its log).
-   *   3. Translate to the shared {@link ActivityItem} vocabulary.
-   *   4. Pick the agent's "final answer" string for the headline.
+   *   1. Locate the runtime-native event log for this id
+   *   2. Read it (with safety caps) and parse
+   *   3. Translate to the shared {@link ActivityItem} vocabulary
+   *   4. Pick the agent's "final answer" string for the headline
    *
-   * Returns `null` when the runtime has no log for this task yet
-   * (task hasn't started, file not yet on disk, runtime didn't
-   * persist anything). Throws on real I/O / parse errors so the
-   * route layer can surface 5xx for genuine faults.
+   * Returns `null` when the runtime has no log for this id yet.
+   * Throws on real I/O / parse errors so the route layer can surface
+   * 5xx for genuine faults.
    *
-   * Why one fused method instead of three (`taskEventsPath` +
-   * `parseActivity` + `deriveResult`)?
-   *
-   *   - The three pieces are always called together by the only
-   *     consumer (the activity route) — splitting them just exposed
-   *     the file-system shape (path, raw bytes) up to the manager
-   *     and route layers, which then leaked across runtimes (Copilot
-   *     stores in a folder; a hypothetical Gemini might store in a
-   *     single file or a SQLite row — the "path → bytes" model
-   *     doesn't generalise).
-   *   - Containing read + parse + derive inside the runtime keeps
-   *     consumers unaware of `events.jsonl`, NDJSON, or any other
-   *     runtime-internal artefact. They get structured ActivityItems
-   *     and never know the source format.
-   *
-   * `opts.metadata` is the task's open-shape metadata bag (the same
-   * `Task.metadata` shape `dispatchTask` populated). The runtime
-   * knows which keys to consult (e.g. Copilot reads
-   * `runtimeSessionId` to find its own state dir). The manager
-   * deliberately does NOT pass a workdir — workdir-based discovery
-   * was the abstraction leak this method closes.
-   *
-   * Runtimes whose CLI doesn't emit a structured log simply omit
-   * this method. The route returns `404 NoEventsYet` in that case.
+   * Pagination via `opts.cursor` + `opts.limit`. Truncation surfaces
+   * in {@link TruncationInfo}; consumers MUST surface it so the user
+   * doesn't render a partial timeline as if it were complete.
    */
-  taskActivity?(opts: TaskActivityOpts): Promise<TaskActivityResult | null>;
-}
+  readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
 
-/** Inputs to {@link Runtime.taskActivity}. */
-export interface TaskActivityOpts {
   /**
-   * The task's open-shape metadata bag (`Task.metadata`). The runtime
-   * looks up its own keys (typically `runtimeSessionId`) to find the
-   * log on its own state directory.
+   * Optional. Live-tail variant of {@link readActivity}. Returns an
+   * AsyncIterable that yields {@link ActivityItem}s as they're
+   * written to the runtime's native log, until the iterator is closed.
+   *
+   * Used by the SSE `/activity/stream` endpoint to push live events
+   * to the dashboard.
+   *
+   * Cleanup contract: when `opts.signal` aborts, the iterator MUST
+   * stop within a few hundred ms and release any file handles.
    */
-  readonly metadata: Readonly<Record<string, unknown>>;
-}
+  streamActivity?(opts: StreamActivityOpts): AsyncIterable<ActivityItem>;
 
-/**
- * Inputs to {@link Runtime.deleteTaskState}. Same shape as
- * {@link TaskActivityOpts} — both are "given a task's metadata, do
- * something runtime-specific with the per-task state dir". Kept as a
- * separate type so future divergence (e.g. a `force` flag for one but
- * not the other) doesn't churn both call sites.
- */
-export interface TaskStateOpts {
+  // ─── Maintenance ───────────────────────────────────────────────────
+
   /**
-   * The task's open-shape metadata bag (`Task.metadata`). The runtime
-   * looks up its own keys (typically `runtimeSessionId`) to locate its
-   * own per-task state dir.
+   * Remove the runtime's recorded state for one `runtimeSessionId`.
+   * No-op when no state exists.
+   *
+   * Throws on partial failure (e.g. permission denied removing some
+   * files); the caller is responsible for surfacing this to the user.
+   * Both `SessionManager.delete({purge:true})` and
+   * `TaskManager.delete({purge:true})` call this — runtime first, so
+   * a runtime failure aborts before any local removal.
    */
-  readonly metadata: Readonly<Record<string, unknown>>;
-}
-
-/**
- * Bundled result returned by {@link Runtime.taskActivity}: the
- * filtered timeline ({@link ActivityItem} entries) plus the derived
- * headline answer the dashboard renders prominently. `result` is
- * `null` when the agent never produced a final assistant message
- * (crashed early, runtime doesn't model the concept, ...).
- */
-export interface TaskActivityResult {
-  readonly activity: readonly ActivityItem[];
-  readonly result: string | null;
-}
-
-/**
- * Inputs to `Runtime.dispatchTask`. `taskDir` is guaranteed to exist and
- * doubles as the subprocess `cwd`; the caller is responsible for laying
- * down whatever the agent needs there before invoking dispatch (typically
- * by calling `Runtime.provision` on the same dir first).
- *
- * `catalog` carries the byte-source for skill / agent / mcp content, see
- * the docstring on {@link Runtime.provision} for rationale.
- *
- * `workspaceDir` lets the runtime resolve `${workspaceDir}` placeholders
- * in MCP / agent specs the same way `provision` does (see
- * {@link Runtime.provision} for the vocabulary).
- */
-export interface DispatchTaskOpts {
-  readonly taskDir: string;
-  readonly agent: AgentResolveResult;
-  readonly catalog: CatalogManager;
-  readonly prompt: string;
-  readonly workspaceDir: string;
+  deleteState(runtimeSessionId: string): Promise<void>;
 }
 
 /**
  * Cross-runtime context handed to {@link Runtime.provision}. Keeps the
  * positional arg list short while leaving room for future per-call
- * fields (e.g. a per-session env override) without churning every
- * runtime adapter.
+ * fields without churning every runtime adapter.
  */
 export interface ProvisionContext {
-  /** Absolute path of the workspace this session/task belongs to. */
+  /** Absolute path of the workspace this conversation belongs to. */
   readonly workspaceDir: string;
 }
 
@@ -307,17 +218,14 @@ export interface ProvisionContext {
 export interface BuildLaunchOpts {
   /**
    * If `true`, the launch should enable remote control of the
-   * interactive session (so the user can steer it from a browser /
-   * mobile app). For Copilot this maps to the CLI's `--remote` flag.
+   * interactive session. For Copilot this maps to the CLI's `--remote`
+   * flag.
    *
    * The dashboard only surfaces a "Spawn remote" button when the
    * active runtime advertises `capabilities.remoteSession === true`;
    * the runtime MUST still defend itself by throwing
    * {@link RuntimeDoesNotSupportRemoteError} when called with
-   * `{ remote: true }` on a runtime that doesn't support it. Silently
-   * ignoring an unsupported flag would let a HTTP caller (CLI, future
-   * MCP client) bypass the UI gate and end up with a launch that
-   * misses the very behaviour they asked for.
+   * `{ remote: true }` on a runtime that doesn't support it.
    */
   readonly remote?: boolean;
 }
@@ -326,116 +234,200 @@ export interface BuildLaunchOpts {
  * Optional capability flags advertised by a {@link Runtime}. Each flag
  * is a public guarantee about a specific behaviour the runtime
  * implements; the absence of a flag means the runtime makes no claim
- * either way (and in practice doesn't support it). Surfaced by the
- * server's `/api/runtimes` endpoint so dashboards / CLIs can
- * conditionally expose UI / commands.
+ * either way (and in practice doesn't support it).
  */
 export interface RuntimeCapabilities {
   /**
    * Whether {@link Runtime.buildLaunch} supports `opts.remote = true`.
    * When `true`, calling buildLaunch with `{ remote: true }` produces
    * a launch that puts the underlying CLI into remote-control mode.
-   * When `false` or absent, the runtime throws
-   * {@link RuntimeDoesNotSupportRemoteError} on that input.
    */
   readonly remoteSession?: boolean;
 }
 
 /**
- * Live handle to a dispatched task. Returned synchronously (via Promise)
- * from `Runtime.dispatchTask` once the subprocess is up; the caller awaits
- * `exit` for terminal status and may consult `sessionDir` to mount the
- * runtime's native log directory under the task's workdir.
+ * Inputs to {@link Runtime.dispatch}. `workdir` is guaranteed to exist
+ * and doubles as the subprocess `cwd`; the caller is responsible for
+ * laying down whatever the agent needs there before invoking dispatch
+ * (typically by calling {@link Runtime.provision} on the same dir
+ * first).
  *
- * **Why `sessionDir` is a Promise** rather than a sync `string | null`
- * (which is the shape the interactive session surface uses on
- * `Runtime.provision`): tasks are spawned by the runtime *now*, so the
- * runtime owns a real subprocess and can naturally produce a future value
- * for any id/path it learns post-spawn. Interactive sessions are launched
- * by a human at some unknown later time, so the runtime can't promise
- * anything; the manager discovers the id later via `refresh()`. Same
- * underlying goal in both APIs — "don't assume the CLI knows its session
- * id at any specific moment" — expressed with the mechanism that fits each
- * ownership pattern.
+ * `catalog` carries the byte-source for skill / agent / mcp content,
+ * see the docstring on {@link Runtime.provision} for rationale.
+ *
+ * `workspaceDir` lets the runtime resolve `${workspaceDir}`
+ * placeholders in MCP / agent specs the same way `provision` does.
  */
-export interface TaskHandle {
+export interface DispatchOpts {
+  readonly workdir: string;
+  readonly agent: AgentResolveResult;
+  readonly catalog: CatalogManager;
+  readonly prompt: string;
+  readonly workspaceDir: string;
+}
+
+/**
+ * Live handle to a dispatched (`-p` mode) subprocess. Returned
+ * synchronously (via Promise) from {@link Runtime.dispatch} once the
+ * subprocess is up; the caller awaits `exit` for terminal status and
+ * may consult `sessionDir` to mount the runtime's native log
+ * directory.
+ *
+ * **Why `sessionDir` is a Promise** rather than a sync `string | null`:
+ * a dispatched subprocess is owned by the runtime *now*, so it can
+ * naturally produce a future value for any id/path it learns
+ * post-spawn. Interactive sessions are launched by a human at some
+ * unknown later time, so the runtime can't promise anything; the
+ * manager discovers the id later via {@link Runtime.readMetadata}.
+ */
+export interface RuntimeHandle {
   /** OS process id of the spawned CLI. */
   readonly pid: number;
 
   /**
-   * Id the runtime minted for the underlying CLI session/state. Optional
-   * because only pre-allocating runtimes (Copilot) know it up front;
-   * discovery-only runtimes leave it undefined and the caller learns it
-   * (if at all) by other means.
+   * Id the runtime minted for the underlying CLI session/state.
+   * Optional because only pre-allocating runtimes (Copilot) know it
+   * up front; discovery-only runtimes leave it undefined.
    *
-   * Persisted by `TaskManager` into the task's `metadata.runtimeSessionId`
-   * column for later inspection (and for callers who want to drive the
-   * underlying CLI directly, e.g. `copilot --resume=<id>`). Also the key
-   * the runtime reads back from `Task.metadata` in `taskActivity` and
-   * `deleteTaskState`.
+   * Persisted by callers (TaskManager / SessionManager) so observability
+   * methods (`readActivity`, `readMetadata`, etc.) can reference it
+   * later, plus drive the underlying CLI directly
+   * (e.g. `copilot --resume=<id>`).
    */
   readonly runtimeSessionId?: string;
 
   /**
-   * Where the runtime is writing its native per-session log directory for
-   * this task. The runtime owns reads against this directory end-to-end via
-   * `taskActivity` (and removal via `deleteTaskState`) — `TaskManager` does
-   * NOT mirror it back into the task workdir, so consumers (dashboard, CLI)
-   * never need to know per-runtime layout. The Promise lets discovery-only
-   * runtimes resolve the path post-spawn; see the type-level comment above
-   * for the rationale.
+   * Where the runtime is writing its native per-session log directory
+   * for this dispatch. The runtime owns reads against this directory
+   * end-to-end via {@link Runtime.readActivity} (and removal via
+   * {@link Runtime.deleteState}).
    */
   readonly sessionDir: Promise<string>;
 
   /**
-   * Resolves when the subprocess exits. `code` is `null` if the process
-   * was terminated by a signal (in which case `signal` carries it); `signal`
-   * is `null` for a normal exit.
+   * Resolves when the subprocess exits. `code` is `null` if the
+   * process was terminated by a signal (in which case `signal`
+   * carries it); `signal` is `null` for a normal exit.
    */
-  readonly exit: Promise<TaskExit>;
+  readonly exit: Promise<RuntimeExit>;
 
   /**
-   * Best-effort terminate. Sends SIGTERM (or the platform equivalent); the
-   * caller awaits `exit` to confirm termination. Used by
-   * `TaskManager.shutdown` during server shutdown; not exposed to end users
-   * in MVP.
+   * Best-effort terminate. Sends SIGTERM (or the platform equivalent);
+   * the caller awaits `exit` to confirm termination.
    */
   kill(): void;
 }
 
-export interface TaskExit {
+export interface RuntimeExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
 }
 
 /**
- * A session as seen by the runtime layer. This is the same shape the
- * `@emploke/session` package exposes; we re-declare it here so that
- * `@emploke/runtime` does not depend on `@emploke/session` (the dependency
- * arrow runs the other way).
+ * Runtime-supplied display metadata. Returned by
+ * {@link Runtime.readMetadata}. The same shape regardless of whether
+ * the underlying conversation was started via `-i` interactive or `-p`
+ * dispatch — the runtime stores them the same way.
  */
-export interface Session {
-  readonly id: string;
-  readonly workdir: string;
-  readonly agent: string;
-  readonly runtime: string;
-  readonly runtimeSessionId: string | null;
-  readonly createdAt: string;
-  readonly lastActiveAt: string | null;
-  readonly preview: string | null;
+export interface RuntimeSessionMetadata {
   /**
-   * Mode the user chose for the most recent successful launch of this
-   * session, or `null` if it has never been launched. Defaults the
-   * dashboard's Resume button to the user's last intent.
+   * Short user-facing label generated by the runtime CLI (typically
+   * 5-7 words summarising the user's first prompt). `null` when the
+   * runtime hasn't produced one yet or when the source field is empty.
    */
-  readonly lastLaunchMode: "local" | "remote" | null;
+  readonly title: string | null;
+  /**
+   * True when the user has explicitly renamed the session via the
+   * runtime CLI's rename command (Copilot's `user_named: true`).
+   * Consumers MUST NOT overwrite the title in this case.
+   */
+  readonly userTitled: boolean;
+  /**
+   * Last-active ISO timestamp from the runtime's own clock.
+   */
+  readonly lastActiveAt: string | null;
+}
+
+/** Inputs to {@link Runtime.readActivity}. */
+export interface ReadActivityOpts {
+  /** The runtime session id to read activity for. */
+  readonly runtimeSessionId: string;
+  /**
+   * Return only items with `seq > cursor`. When omitted, the runtime
+   * returns the most recent `limit` items.
+   */
+  readonly cursor?: number;
+  /**
+   * Maximum number of items to return. Server enforces a default
+   * (50) and a hard maximum (500) before calling into the runtime.
+   */
+  readonly limit?: number;
+}
+
+/** Inputs to {@link Runtime.streamActivity}. */
+export interface StreamActivityOpts {
+  /** The runtime session id to stream activity for. */
+  readonly runtimeSessionId: string;
+  /**
+   * Resume from this seq number (exclusive). Used by SSE reconnection.
+   * When omitted, the stream starts from the next event written to
+   * the log — it does NOT replay history.
+   */
+  readonly cursor?: number;
+  /**
+   * Caller's abort signal. The runtime MUST stop tailing and clean
+   * up file handles / watchers when this fires.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
- * A shell-runnable launch command, returned by `Runtime.buildLaunch`. The
- * `cmd`/`args`/`cwd` triple is suitable for `child_process.spawn`; `display`
- * is a single-line string suitable for displaying to the user or copying to
- * the clipboard as a fallback when programmatic spawn fails.
+ * Bundled result returned by {@link Runtime.readActivity}: the
+ * filtered timeline plus the derived headline answer the dashboard
+ * renders prominently. `result` is `null` when the agent never
+ * produced a final assistant message.
+ *
+ * Pagination + truncation:
+ *
+ * - `cursor` is the seq number to pass back as `opts.cursor` for the
+ *   next page; `null` when this page is the tail.
+ * - `truncated` is non-null when the runtime had to drop bytes /
+ *   items to stay within the safety cap.
+ */
+export interface ActivityResult {
+  readonly activity: readonly ActivityItem[];
+  readonly result: string | null;
+  /** seq to pass as next `opts.cursor`; null when caller has the tail. */
+  readonly cursor: number | null;
+  /** Total items in the underlying log, when known. */
+  readonly totalItems?: number;
+  readonly truncated?: TruncationInfo;
+}
+
+/**
+ * Why and how an {@link ActivityResult} was truncated. Always present
+ * when truncation happened; absent when the response is the complete
+ * timeline.
+ */
+export interface TruncationInfo {
+  /**
+   * `"size_limit"` — runtime hit a raw byte cap reading the log.
+   * `"page_limit"` — caller's `limit` was smaller than available items.
+   */
+  readonly reason: "size_limit" | "page_limit";
+  /** Bytes dropped from the start of the source file (size_limit only). */
+  readonly droppedBytes?: number;
+  /** Items dropped from the start (size_limit only). */
+  readonly droppedItems?: number;
+  /** Hint string for the LLM when this response is consumed via MCP. */
+  readonly hint?: string;
+}
+
+/**
+ * A shell-runnable launch command, returned by
+ * {@link Runtime.buildLaunch}. The `cmd`/`args`/`cwd` triple is suitable
+ * for `child_process.spawn`; `display` is a single-line string suitable
+ * for displaying to the user or copying to the clipboard.
  */
 export interface LaunchCommand {
   readonly cmd: string;
@@ -444,58 +436,149 @@ export interface LaunchCommand {
   readonly display: string;
 }
 
-/**
- * Runtime-neutral entries returned inside {@link TaskActivityResult}
- * by {@link Runtime.taskActivity}.
- * The vocabulary covers the three things a user actually wants to see
- * in a task's timeline:
- *
- *   - `user` — what the user asked
- *   - `assistant` — what the agent answered, plus any tool calls it
- *     issued in that turn
- *   - `summary` — terminal stats (files changed, premium requests,
- *     token usage); typically emitted at most once per task
- *
- * Lower-signal events (handshake, model-handshake, system prompts,
- * turn boundaries) are filtered out by the runtime — consumers never
- * see them via this surface. Runtimes that want to expose a "raw log"
- * surface (forensic / debug) can do so behind their own opt-in route
- * outside this contract.
- */
-export type ActivityItem =
-  | { readonly kind: "user"; readonly timestamp: string; readonly content: string }
-  | {
-      readonly kind: "assistant";
-      readonly timestamp: string;
-      readonly content: string;
-      readonly toolRequests: readonly ToolRequest[];
-    }
-  | { readonly kind: "summary"; readonly timestamp: string; readonly summary: ActivitySummary };
+// ─── ActivityItem (cross-runtime structured timeline) ─────────────────
 
 /**
- * A tool invocation requested by the agent. Inert representation —
- * the runtime has already executed (or chosen not to) by the time the
- * dashboard renders this; we only carry it for the timeline view.
+ * Runtime-neutral entries returned inside {@link ActivityResult} by
+ * {@link Runtime.readActivity}, and yielded by
+ * {@link Runtime.streamActivity}.
+ *
+ * Discriminated union covering the cross-runtime semantic primitives
+ * observed in Copilot, Gemini, OpenAI Codex, and Claude Code:
+ *
+ *   - `user` — what the user asked, plus optional attachments
+ *   - `assistant` — what the agent answered (plain text only — tool
+ *     calls live in their own items); optional model + tokens
+ *   - `thinking` — agent reasoning trace
+ *   - `tool_call` — a single tool invocation
+ *   - `system` — out-of-band events
+ *   - `summary` — terminal stats; typically once per conversation
+ *
+ * Every item carries a monotonic `seq` (per conversation) — the
+ * canonical cursor for pagination and SSE reconnection. `id` is the
+ * runtime-native UUID when available; `parentSeq` is optional
+ * threading metadata.
  */
-export interface ToolRequest {
-  readonly name: string;
-  readonly arguments?: Record<string, unknown> | undefined;
+export type ActivityItem =
+  | UserItem
+  | AssistantItem
+  | ThinkingItem
+  | ToolCallItem
+  | SystemItem
+  | SummaryItem;
+
+interface BaseActivityItem {
+  /**
+   * Monotonic per-conversation sequence number. The canonical cursor
+   * for pagination and SSE `Last-Event-ID` reconnection.
+   */
+  readonly seq: number;
+  /** Runtime-native stable id when available. */
+  readonly id?: string;
+  /** Sequence number of the item this one logically follows. */
+  readonly parentSeq?: number;
+  /** ISO 8601 UTC timestamp the runtime recorded for this event. */
+  readonly timestamp: string;
+}
+
+/** A user turn (prompt + optional attachments). */
+export interface UserItem extends BaseActivityItem {
+  readonly kind: "user";
+  readonly text: string;
+  readonly attachments?: readonly Attachment[];
+}
+
+/** An assistant turn (plain text response). */
+export interface AssistantItem extends BaseActivityItem {
+  readonly kind: "assistant";
+  readonly text: string;
+  readonly model?: string;
+  readonly tokens?: TokenUsage;
+  readonly stopReason?: "end_turn" | "tool_use" | "max_tokens" | "error" | string;
 }
 
 /**
- * End-of-task aggregate stats. Field set is the union of what current
- * runtimes can produce — implementations zero out fields they don't
- * track so consumers can render unconditionally without a per-runtime
- * shape branch.
+ * A reasoning / thinking block. Separate from {@link AssistantItem}
+ * so the dashboard can render it collapsed-by-default and the LLM
+ * (when consuming activity via MCP) can choose to skip it for token
+ * budget reasons.
  */
-export interface ActivitySummary {
-  readonly linesAdded: number;
-  readonly linesRemoved: number;
-  readonly filesModified: readonly string[];
-  /** "Premium" / billable request count, when the runtime exposes one. */
-  readonly premiumRequests: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  /** Last-seen model id, or `null` if the runtime doesn't surface it. */
-  readonly model: string | null;
+export interface ThinkingItem extends BaseActivityItem {
+  readonly kind: "thinking";
+  readonly text: string;
+  readonly subject?: string;
+}
+
+/**
+ * A single tool invocation. The runtime adapter is responsible for
+ * merging begin/end event pairs into one item and flipping `status`
+ * accordingly.
+ */
+export interface ToolCallItem extends BaseActivityItem {
+  readonly kind: "tool_call";
+  readonly callId: string;
+  readonly name: string;
+  readonly args?: unknown;
+  readonly status: "running" | "success" | "error" | "cancelled";
+  readonly result?: unknown;
+  readonly display?: { readonly content: string; readonly markdown?: boolean };
+  readonly durationMs?: number;
+}
+
+/**
+ * Out-of-band events that don't fit the conversation model.
+ * `subKind` is the runtime-specific tag so consumers can filter.
+ */
+export interface SystemItem extends BaseActivityItem {
+  readonly kind: "system";
+  readonly text: string;
+  readonly level?: "info" | "warn" | "error";
+  readonly subKind?: string;
+}
+
+/**
+ * Terminal stats for the conversation (typically one per task,
+ * emitted on session shutdown / task complete).
+ */
+export interface SummaryItem extends BaseActivityItem {
+  readonly kind: "summary";
+  readonly text?: string;
+  readonly tokens?: TokenUsage;
+  readonly stats?: SummaryStats;
+}
+
+/**
+ * Token usage as a single normalized shape. `total` is required so
+ * consumers can render a single number without doing arithmetic.
+ */
+export interface TokenUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cached?: number;
+  readonly reasoning?: number;
+  readonly total: number;
+}
+
+/** Aggregate stats for {@link SummaryItem.stats}. All fields optional. */
+export interface SummaryStats {
+  readonly filesModified?: readonly string[];
+  readonly linesAdded?: number;
+  readonly linesRemoved?: number;
+  readonly toolCallsCount?: number;
+  readonly durationMs?: number;
+  readonly costUSD?: number;
+  readonly model?: string;
+  readonly premiumRequests?: number;
+}
+
+/**
+ * Multi-modal payload attached to a {@link UserItem}. Either `url` or
+ * `data` is present.
+ */
+export interface Attachment {
+  readonly kind: "image" | "file";
+  readonly mimeType?: string;
+  readonly url?: string;
+  readonly data?: string;
+  readonly name?: string;
 }

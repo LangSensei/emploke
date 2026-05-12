@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import type { LaunchCommand, Runtime, Session, TaskHandle } from "@emploke/runtime";
+import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -125,7 +125,7 @@ interface SpawnedHandle {
 class StubRuntime implements Runtime {
   readonly kind: string;
 
-  /** If set, dispatchTask throws this BEFORE creating a handle. */
+  /** If set, dispatch throws this BEFORE creating a handle. */
   dispatchError: Error | null = null;
   /** Per-call session id override. Default: a unique uuid-ish per spawn. */
   nextRuntimeSessionId: string | undefined = undefined;
@@ -134,16 +134,16 @@ class StubRuntime implements Runtime {
     mode: "resolve",
     value: "/tmp/session-default",
   };
-  /** True when dispatchTask is implemented; flip false to test "doesn't support tasks". */
+  /** True when dispatch is implemented; flip false to test "doesn't support tasks". */
   dispatchSupported = true;
 
   /** Auto-fire exit on kill, mirroring real child_process behavior. */
   autoExitOnKill = false;
 
-  /** Records every call to deleteTaskState so tests can assert on cleanup. */
-  readonly deleteTaskStateCalls: { metadata: Record<string, unknown> }[] = [];
-  /** If set, deleteTaskState throws this — to test runtime-failure aborts. */
-  deleteTaskStateError: Error | null = null;
+  /** Per-call deleteState records keyed by runtimeSessionId. */
+  readonly deleteStateCalls: { runtimeSessionId: string }[] = [];
+  /** If set, deleteState throws this — to test runtime-failure aborts. */
+  deleteStateError: Error | null = null;
 
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
@@ -156,30 +156,23 @@ class StubRuntime implements Runtime {
   async provision(): Promise<{ runtimeSessionId: string | null }> {
     return { runtimeSessionId: null };
   }
-  async refresh(): Promise<{
-    lastActiveAt: string;
-    preview: string | null;
-    runtimeSessionId: string;
-  } | null> {
-    return null;
+  async buildLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
+    return { cmd: "stub", args: [], cwd: workdir, display: "stub" };
   }
-  async buildLaunch(s: Session): Promise<LaunchCommand> {
-    return { cmd: "stub", args: [], cwd: s.workdir, display: "stub" };
-  }
-  async deleteState(): Promise<void> {}
 
-  async deleteTaskState(opts: { metadata: Readonly<Record<string, unknown>> }): Promise<void> {
-    this.deleteTaskStateCalls.push({ metadata: { ...opts.metadata } });
-    if (this.deleteTaskStateError !== null) {
-      const e = this.deleteTaskStateError;
-      this.deleteTaskStateError = null;
+  /** Records every call to deleteState so tests can assert on cleanup. */
+  async deleteState(runtimeSessionId: string): Promise<void> {
+    this.deleteStateCalls.push({ runtimeSessionId });
+    if (this.deleteStateError !== null) {
+      const e = this.deleteStateError;
+      this.deleteStateError = null;
       throw e;
     }
   }
 
-  // dispatchTask is set conditionally via Object.defineProperty so we can
+  // dispatch is set conditionally via Object.defineProperty so we can
   // model "runtime doesn't implement it" cleanly.
-  get dispatchTask(): Runtime["dispatchTask"] | undefined {
+  get dispatch(): Runtime["dispatch"] | undefined {
     if (!this.dispatchSupported) return undefined;
     return async (opts) => this.spawnHandle(opts);
   }
@@ -188,7 +181,7 @@ class StubRuntime implements Runtime {
     taskDir: string;
     agent: AgentResolveResult;
     prompt: string;
-  }): Promise<TaskHandle> {
+  }): Promise<RuntimeHandle> {
     if (this.dispatchError) {
       const e = this.dispatchError;
       this.dispatchError = null;
@@ -230,7 +223,7 @@ class StubRuntime implements Runtime {
       resolvePersisted = res;
     });
 
-    const handle: TaskHandle = {
+    const handle: RuntimeHandle = {
       pid,
       runtimeSessionId,
       sessionDir: sessionDirP,
@@ -393,7 +386,7 @@ describe("dispatch — error paths", () => {
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatchTask", async () => {
+  it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatch", async () => {
     const rt = new StubRuntime();
     rt.dispatchSupported = false;
     const { m } = makeManager({ runtime: rt });
@@ -402,7 +395,7 @@ describe("dispatch — error paths", () => {
     expect(entries).toEqual([]);
   });
 
-  it("rolls back the workdir when the runtime throws during dispatchTask", async () => {
+  it("rolls back the workdir when the runtime throws during dispatch", async () => {
     const rt = new StubRuntime();
     rt.dispatchError = new Error("boom in spawn");
     const { m } = makeManager({ runtime: rt });
@@ -840,20 +833,17 @@ describe("delete", () => {
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
-    expect(rt.deleteTaskStateCalls).toEqual([]);
+    expect(rt.deleteStateCalls).toEqual([]);
     await m.delete(t.id, { purge: true });
 
-    expect(rt.deleteTaskStateCalls).toHaveLength(1);
-    expect(rt.deleteTaskStateCalls[0].metadata.runtimeSessionId).toBe(
-      rt.handles[0].runtimeSessionId,
-    );
-    expect(rt.deleteTaskStateCalls[0].metadata.runtime).toBe("copilot");
+    expect(rt.deleteStateCalls).toHaveLength(1);
+    expect(rt.deleteStateCalls[0].runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
   });
 
   // Default (archive) mode preserves runtime state — only the row is dropped,
   // not the workdir, not the runtime's events.jsonl. This matches the
   // "operators can recover the agent's product after a delete" intent.
-  it("default delete does NOT call runtime.deleteTaskState", async () => {
+  it("default delete does NOT call runtime.deleteState", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
@@ -862,15 +852,15 @@ describe("delete", () => {
 
     await m.delete(t.id);
 
-    expect(rt.deleteTaskStateCalls).toEqual([]);
+    expect(rt.deleteStateCalls).toEqual([]);
   });
 
   // Order matters: a runtime that fails to clean up its state must leave
   // the local row + workdir intact so the user can retry rather than
   // ending up with a half-deleted task whose state dir leaks.
-  it("aborts BEFORE removing the row + workdir when runtime.deleteTaskState throws", async () => {
+  it("aborts BEFORE removing the row + workdir when runtime.deleteState throws", async () => {
     const rt = new StubRuntime();
-    rt.deleteTaskStateError = new Error("permission denied wiping state dir");
+    rt.deleteStateError = new Error("permission denied wiping state dir");
     const { m } = makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
@@ -889,7 +879,7 @@ describe("delete", () => {
   // runtime cleanup is silently skipped. This is the rm -rf escape hatch
   // for purge — losing some runtime state is acceptable when the row's
   // gone anyway.
-  it("purge: true skips runtime.deleteTaskState when no metadata row exists", async () => {
+  it("purge: true skips runtime.deleteState when no metadata row exists", async () => {
     const id = "20260508-c0ffee02";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
@@ -898,7 +888,7 @@ describe("delete", () => {
     const { m } = makeManager({ runtime: rt });
     await m.delete(id, { purge: true });
 
-    expect(rt.deleteTaskStateCalls).toEqual([]);
+    expect(rt.deleteStateCalls).toEqual([]);
     expect(await safeStat(workdir)).toBeNull();
   });
 });
@@ -969,19 +959,19 @@ describe("shutdown", () => {
   it("dispatch that races with shutdown kills the subprocess and rolls back", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
-    // Hold the dispatch in `runtime.dispatchTask` long enough for
+    // Hold the dispatch in `runtime.dispatch` long enough for
     // shutdown() to flip the flag underneath it.
     let resolveSpawn!: () => void;
     const spawnHold = new Promise<void>((r) => {
       resolveSpawn = r;
     });
-    const original = rt.dispatchTask;
-    Object.defineProperty(rt, "dispatchTask", {
+    const original = rt.dispatch;
+    Object.defineProperty(rt, "dispatch", {
       get:
         () =>
-        async (opts: Parameters<NonNullable<typeof original>>[0]): Promise<TaskHandle> => {
+        async (opts: Parameters<NonNullable<typeof original>>[0]): Promise<RuntimeHandle> => {
           await spawnHold;
-          if (!original) throw new Error("dispatchTask hook lost");
+          if (!original) throw new Error("dispatch hook lost");
           return original.call(rt, opts);
         },
     });
@@ -989,7 +979,7 @@ describe("shutdown", () => {
     const dispatched = m.dispatch(dispatchOf());
 
     // Flip shutdown while the dispatch is parked inside spawnHold.
-    // Then release dispatchTask: the post-spawn check fires, kill is
+    // Then release dispatch: the post-spawn check fires, kill is
     // invoked, workdir is rolled back, dispatch rejects.
     setTimeout(() => {
       void m.shutdown();

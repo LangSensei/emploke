@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import type { LaunchCommand, Runtime, Session } from "@emploke/runtime";
+import type { LaunchCommand, Runtime } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
   RuntimeRegistry,
@@ -92,29 +92,37 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
 /**
  * A configurable in-memory Runtime that mimics the contract without touching
  * any real CLI. Defaults: provision writes a minimal AGENTS.md so
- * readAgentName() finds the right name; refresh returns null (no activity).
+ * readAgentName() finds the right name; readMetadata returns null (no activity).
  */
 class StubRuntime implements Runtime {
   readonly kind: string;
   provisionCalls: { workdir: string; agent: AgentResolveResult }[] = [];
-  refreshCalls: Session[] = [];
-  deleteStateCalls: Session[] = [];
-  buildLaunchCalls: { session: Session; workspaceDir: string }[] = [];
+  readMetadataCalls: string[] = [];
+  deleteStateCalls: string[] = [];
+  buildLaunchCalls: {
+    runtimeSessionId: string | null;
+    workdir: string;
+    workspaceDir: string;
+  }[] = [];
 
   /** Defaults to a stable UUID for determinism. */
+  /** Defaults to a stable UUID. Set to `"per-call"` to mint a new uuid per provision. */
   provisionId: string | null = "12345678-1234-1234-1234-1234567890ab";
   /** If set, provision throws this. */
   provisionError: Error | null = null;
-  /** If set, refresh returns this. */
-  refreshResult: { lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null =
-    null;
-  /** Per-session-id overrides for refresh. Takes precedence over refreshResult. */
-  refreshResultBy: Map<
+  /** If set, readMetadata returns this. */
+  readMetadataResult: {
+    title: string | null;
+    userTitled: boolean;
+    lastActiveAt: string | null;
+  } | null = null;
+  /** Per-session-id overrides for readMetadata. Takes precedence over readMetadataResult. */
+  readMetadataResultBy: Map<
     string,
-    { lastActiveAt: string; preview: string | null; runtimeSessionId: string } | null
+    { title: string | null; userTitled: boolean; lastActiveAt: string | null } | null
   > = new Map();
-  /** If set, refresh throws this. */
-  refreshError: Error | null = null;
+  /** If set, readMetadata throws this. */
+  readMetadataError: Error | null = null;
   /** If set, deleteState throws this. */
   deleteStateError: Error | null = null;
 
@@ -134,28 +142,39 @@ class StubRuntime implements Runtime {
       `---\nname: ${agent.agent.name}\n---\n# agent\n`,
       "utf8",
     );
+    if (this.provisionId === "per-call") {
+      this.provisionCounter += 1;
+      const id = `00000000-0000-0000-0000-${String(this.provisionCounter).padStart(12, "0")}`;
+      return { runtimeSessionId: id };
+    }
     return { runtimeSessionId: this.provisionId };
   }
+  private provisionCounter = 0;
 
-  async refresh(s: Session) {
-    this.refreshCalls.push(s);
-    if (this.refreshError) throw this.refreshError;
-    if (this.refreshResultBy.has(s.id)) return this.refreshResultBy.get(s.id) ?? null;
-    return this.refreshResult;
+  async readMetadata(runtimeSessionId: string) {
+    this.readMetadataCalls.push(runtimeSessionId);
+    if (this.readMetadataError) throw this.readMetadataError;
+    if (this.readMetadataResultBy.has(runtimeSessionId))
+      return this.readMetadataResultBy.get(runtimeSessionId) ?? null;
+    return this.readMetadataResult;
   }
 
-  async buildLaunch(s: Session, workspaceDir: string): Promise<LaunchCommand> {
-    this.buildLaunchCalls.push({ session: s, workspaceDir });
+  async buildLaunch(
+    runtimeSessionId: string | null,
+    workdir: string,
+    workspaceDir: string,
+  ): Promise<LaunchCommand> {
+    this.buildLaunchCalls.push({ runtimeSessionId, workdir, workspaceDir });
     return {
       cmd: "stub",
-      args: s.runtimeSessionId === null ? [] : [`--id=${s.runtimeSessionId}`],
-      cwd: s.workdir,
-      display: `stub ${s.workdir}`,
+      args: runtimeSessionId === null ? [] : [`--id=${runtimeSessionId}`],
+      cwd: workdir,
+      display: `stub ${workdir}`,
     };
   }
 
-  async deleteState(s: Session): Promise<void> {
-    this.deleteStateCalls.push(s);
+  async deleteState(runtimeSessionId: string): Promise<void> {
+    this.deleteStateCalls.push(runtimeSessionId);
     if (this.deleteStateError) throw this.deleteStateError;
   }
 }
@@ -377,12 +396,12 @@ describe("list()", () => {
     nowMs = Date.UTC(2026, 1, 1);
     await m.create({ agent: "demo" });
 
-    rt.refreshCalls.length = 0;
+    rt.readMetadataCalls.length = 0;
     const onlyNew = await m.list({ createdSince: "2026-01-15T00:00:00.000Z" });
     expect(onlyNew).toHaveLength(1);
     expect(onlyNew[0]?.createdAt).toBe("2026-02-01T00:00:00.000Z");
     // Critical: refresh must NOT have been called for the excluded entry.
-    expect(rt.refreshCalls).toHaveLength(1);
+    expect(rt.readMetadataCalls).toHaveLength(1);
   });
 
   it("createdSince combined with agent narrows further", async () => {
@@ -409,10 +428,10 @@ describe("list()", () => {
 
   it("folds runtime.refresh activity into the record", async () => {
     const rt = new StubRuntime();
-    rt.refreshResult = {
+    rt.readMetadataResult = {
       lastActiveAt: "2026-05-08T02:00:00.000Z",
-      preview: "did stuff",
-      runtimeSessionId: rt.provisionId as string,
+      title: "did stuff",
+      userTitled: false,
     };
     const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -469,13 +488,19 @@ describe("list()", () => {
     expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
   });
 
-  it("persists discovered runtimeSessionId back to the repository (gemini-style)", async () => {
+  // NOTE: the old "discovery" behaviour (provisionId=null, runtime
+  // mints + returns an id later via refresh) is intentionally not
+  // covered by the new Runtime contract — `readMetadata` requires a
+  // pre-known `runtimeSessionId`. A future Gemini-style adapter will
+  // add a separate `discoverRuntimeSessionId(workdir)` hook for that
+  // case; tracked separately. For now, this case test is deferred.
+  it.skip("persists discovered runtimeSessionId back to the repository (gemini-style)", async () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
-    rt.refreshResult = {
+    rt.readMetadataResult = {
       lastActiveAt: "2026-05-08T02:00:00.000Z",
-      preview: null,
-      runtimeSessionId: "33333333-3333-3333-3333-333333333333",
+      title: null,
+      userTitled: false,
     };
     const repo = makeRepo();
     const m = buildManager({
@@ -505,16 +530,16 @@ describe("list()", () => {
     // regardless of createdAt, secondary sort by createdAt desc — so a
     // freshly created session is immediately findable at the top of the
     // list. Order is [c (newer null), b (older null), a (active)].
-    rt.refreshResult = null;
+    rt.readMetadataResult = null;
     const a = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
     const b = await m.create({ agent: "demo" });
     await new Promise((r) => setTimeout(r, 5));
     const c = await m.create({ agent: "demo" });
-    rt.refreshResultBy.set(a.id, {
+    rt.readMetadataResultBy.set(a.id, {
       lastActiveAt: "2099-01-01T00:00:00.000Z",
-      preview: null,
-      runtimeSessionId: rt.provisionId as string,
+      title: null,
+      userTitled: false,
     });
     const out = await m.list();
     expect(out.map((r) => r.id)).toEqual([c.id, b.id, a.id]);
@@ -528,19 +553,20 @@ describe("list()", () => {
       sessionsDir,
       workspaceDir: scratch,
     });
-    rt.refreshResult = null;
+    rt.provisionId = "per-call";
+    rt.readMetadataResult = null;
     const old = await m.create({ agent: "demo" });
     const recent = await m.create({ agent: "demo" });
-    const never = await m.create({ agent: "demo" });
-    rt.refreshResultBy.set(old.id, {
+    const _never = await m.create({ agent: "demo" });
+    rt.readMetadataResultBy.set(old.runtimeSessionId as string, {
       lastActiveAt: "2026-01-01T00:00:00.000Z",
-      preview: null,
-      runtimeSessionId: rt.provisionId as string,
+      title: null,
+      userTitled: false,
     });
-    rt.refreshResultBy.set(recent.id, {
+    rt.readMetadataResultBy.set(recent.runtimeSessionId as string, {
       lastActiveAt: "2099-12-31T00:00:00.000Z",
-      preview: null,
-      runtimeSessionId: rt.provisionId as string,
+      title: null,
+      userTitled: false,
     });
     // `never` was created at the test's `now()` (typically 2026-01-15);
     // cutoff (2099-01-01) is far in the future so it stays excluded
@@ -564,7 +590,7 @@ describe("list()", () => {
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
     });
-    rt.refreshResult = null;
+    rt.readMetadataResult = null;
     const fresh = await m.create({ agent: "demo" }); // createdAt = 2026-05-08
     // Cutoff one day before `now` — a freshly created session must
     // pass even though it has no lastActiveAt.
@@ -672,7 +698,7 @@ describe("delete()", () => {
     const s = await m.create({ agent: "demo" });
     await m.delete(s.id, { purge: true });
     expect(rt.deleteStateCalls).toHaveLength(1);
-    expect(rt.deleteStateCalls[0]?.id).toBe(s.id);
+    expect(rt.deleteStateCalls[0]).toBe(s.runtimeSessionId);
     // workdir gone
     await expect(stat(s.workdir)).rejects.toThrow();
   });
@@ -740,13 +766,15 @@ describe("buildLaunch()", () => {
     expect(rt.buildLaunchCalls[0]?.workspaceDir).toBe(scratch);
   });
 
-  it("calls runtime.refresh first so a discovery-runtime can mint an id", async () => {
+  // Same discovery limitation as above — defer until the Gemini
+  // adapter PR designs the discoverRuntimeSessionId hook.
+  it.skip("calls runtime.refresh first so a discovery-runtime can mint an id", async () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
-    rt.refreshResult = {
+    rt.readMetadataResult = {
       lastActiveAt: "2026-05-08T02:00:00.000Z",
-      preview: null,
-      runtimeSessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+      title: null,
+      userTitled: false,
     };
     const m = buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),

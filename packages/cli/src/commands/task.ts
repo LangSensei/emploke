@@ -135,6 +135,12 @@ export async function taskRm(opts: TaskRmOpts): Promise<CommandResult> {
 // ─── activity ──────────────────────────────────────────────────────────
 export interface TaskActivityOpts extends CommonFlags {
   readonly tid: string;
+  /** Tail the live activity stream over SSE; exits when the task terminates. */
+  readonly follow?: boolean;
+  /** Only return items with seq > cursor. Forwarded as ?cursor= query param. */
+  readonly cursor?: number;
+  /** Maximum items per page. Server clamps to [1, 500]; default 50. */
+  readonly limit?: number;
 }
 
 export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResult> {
@@ -144,11 +150,129 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts, client);
-    const payload = await client.call("tasks.activity", { params: { id, tid: opts.tid } });
+
+    if (opts.follow === true) {
+      return await followTaskActivity(client, id, opts.tid);
+    }
+
+    const query: { cursor?: string; limit?: string } = {};
+    if (opts.cursor !== undefined) query.cursor = String(opts.cursor);
+    if (opts.limit !== undefined) query.limit = String(opts.limit);
+    const payload = await client.call("tasks.activity", {
+      params: { id, tid: opts.tid },
+      query,
+    });
     // Activity is intrinsically structured (variant ActivityItem types);
     // human-readable rendering is left to higher layers. Always JSON.
     return { exitCode: 0, stdout: formatJson(payload) };
   } catch (err) {
     return formatError(err);
   }
+}
+
+/**
+ * Live-tail an in-progress task by streaming SSE from the
+ * `/activity/stream` endpoint. Each ActivityItem is printed as a
+ * single NDJSON line on stdout (pipe-friendly: `... | jq -c`,
+ * `... | grep error`).
+ *
+ * Exits 0 when the server sends `event: end` (task terminal) or the
+ * stream closes cleanly. Exits non-zero on transport / framing
+ * errors. SIGINT (Ctrl+C) terminates the process between frames.
+ *
+ * Implementation notes:
+ *   - Uses `apiClient.callRaw()` to get the raw `Response` (the
+ *     manifest declares the route as `never` response so `call()`
+ *     would type-error).
+ *   - Hand-parses the SSE wire format (lines split by \n, frames
+ *     separated by \n\n; we only care about `event:` and `data:`
+ *     fields). Avoids pulling in `eventsource-parser` for ~3KB; the
+ *     framing is too simple to need it.
+ */
+async function followTaskActivity(
+  client: import("../api-client.js").ApiClient,
+  id: string,
+  tid: string,
+): Promise<CommandResult> {
+  const res = await client.callRaw("tasks.activity.stream", { params: { id, tid } });
+  if (res.status === 404) {
+    return { exitCode: 1, stderr: `task ${tid} has no streaming activity (terminal or missing)\n` };
+  }
+  if (!res.ok) {
+    let body = "";
+    try {
+      body = await res.text();
+    } catch {
+      // ignore
+    }
+    return { exitCode: 1, stderr: `HTTP ${res.status}: ${body || res.statusText}\n` };
+  }
+  if (res.body === null) {
+    return { exitCode: 1, stderr: "server returned an empty body\n" };
+  }
+
+  // Stream + frame-split on \n\n.
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = "";
+  let stdout = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const frameEnd = buffer.indexOf("\n\n");
+        if (frameEnd === -1) break;
+        const frame = buffer.slice(0, frameEnd);
+        buffer = buffer.slice(frameEnd + 2);
+        const parsed = parseSseFrame(frame);
+        if (parsed === null) continue;
+        if (parsed.event === "end") {
+          return { exitCode: 0, stdout };
+        }
+        if (parsed.event === "error") {
+          return {
+            exitCode: 1,
+            stdout,
+            stderr: `stream error: ${parsed.data}\n`,
+          };
+        }
+        if (parsed.event === "activity") {
+          // Ensure single-line NDJSON: re-stringify (no indent) so
+          // multi-line item content stays on one line.
+          try {
+            const item = JSON.parse(parsed.data);
+            stdout += `${JSON.stringify(item)}\n`;
+          } catch {
+            // Forward malformed frames verbatim for debuggability.
+            stdout += `${parsed.data}\n`;
+          }
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
+  }
+  return { exitCode: 0, stdout };
+}
+
+/** Parse a single SSE frame (event: + data: lines, no comments / id). */
+function parseSseFrame(frame: string): { event: string; data: string } | null {
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+    // Ignore `id:`, `retry:`, comments — we don't need them client-side.
+  }
+  if (dataLines.length === 0) return null;
+  return { event, data: dataLines.join("\n") };
 }

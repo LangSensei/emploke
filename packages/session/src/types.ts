@@ -1,6 +1,6 @@
 import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
-import type { RuntimeRegistry, Session } from "@emploke/runtime";
+import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionRepository } from "./repositories/repository.js";
 
 /**
@@ -9,6 +9,31 @@ import type { SessionRepository } from "./repositories/repository.js";
  * `@emploke/session` directly.
  */
 export type { Logger } from "@emploke/logger";
+
+/** Re-export `LaunchCommand` so call sites only need one import. */
+export type { LaunchCommand } from "@emploke/runtime";
+
+/**
+ * The canonical session value type. Owned by `@emploke/session` (the
+ * Runtime layer is intentionally domain-agnostic and doesn't know
+ * what a "session" is — it just sees opaque `runtimeSessionId`s).
+ */
+export interface Session {
+  readonly id: string;
+  readonly workdir: string;
+  readonly agent: string;
+  readonly runtime: string;
+  readonly runtimeSessionId: string | null;
+  readonly createdAt: string;
+  readonly lastActiveAt: string | null;
+  readonly preview: string | null;
+  /**
+   * Mode the user chose for the most recent successful launch of this
+   * session, or `null` if it has never been launched. Defaults the
+   * dashboard's Resume button to the user's last intent.
+   */
+  readonly lastLaunchMode: "local" | "remote" | null;
+}
 
 /** Configuration for SessionManager. All fields are optional except `catalog`, `runtimeRegistry`, and `sessionsDir`. */
 export interface SessionManagerConfig {
@@ -54,9 +79,6 @@ export interface SessionManagerConfig {
   /** Test seam: random byte source for ID generation. Defaults to `crypto.randomBytes`. */
   readonly randomBytes?: (n: number) => Buffer;
 }
-
-/** Re-export the runtime view of a session as the canonical session record. */
-export type { LaunchCommand, Session } from "@emploke/runtime";
 
 /** Options for SessionManager.create. */
 export interface CreateSessionOpts {
@@ -133,8 +155,8 @@ export interface DeleteSessionOpts {
   readonly purge?: boolean;
 }
 
-/** Re-exported for callers that want to type-narrow. */
-export type { Session as SessionRecord } from "@emploke/runtime";
+/** Re-exported for callers that want to type-narrow on the canonical record. */
+export type SessionRecord = Session;
 
-// Internal helper used by tests and consumers; alias for parity with Runtime.
+// Internal helper used by tests and consumers; alias for legacy callers.
 export type ManagedSession = Session;

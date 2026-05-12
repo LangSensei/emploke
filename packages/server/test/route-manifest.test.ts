@@ -130,10 +130,10 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 51 entries (the current API surface)", () => {
+  it("listRoutes returns 52 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
-    expect(listRoutes()).toHaveLength(51);
+    expect(listRoutes()).toHaveLength(52);
   });
 });
 
