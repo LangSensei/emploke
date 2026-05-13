@@ -34,18 +34,20 @@ const CREATED_AT = "2026-05-09T01:00:00.000Z";
  * storage. We use it here as a test-shape factory because the
  * storage seam is what the repository tests are about.
  */
-function makeTask(overrides: {
-  id?: string;
-  agent?: string;
-  instructions?: string;
-  status?: TaskStatus;
-  metadata?: Readonly<Record<string, unknown>>;
-  createdAt?: string;
-  startedAt?: string;
-  endedAt?: string;
-  result?: { output: string };
-  failure?: { error: string };
-} = {}): Task {
+function makeTask(
+  overrides: {
+    id?: string;
+    agent?: string;
+    instructions?: string;
+    status?: TaskStatus;
+    metadata?: Readonly<Record<string, unknown>>;
+    createdAt?: string;
+    startedAt?: string;
+    endedAt?: string;
+    result?: { output: string };
+    failure?: { error: string };
+  } = {},
+): Task {
   return Task.fromStored({
     id: overrides.id ?? ID,
     agent: overrides.agent ?? "writer",

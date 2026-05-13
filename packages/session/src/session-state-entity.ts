@@ -147,12 +147,7 @@ export class SessionState {
    * refresh paths). Identity (runtime / createdAt) is preserved.
    */
   withRuntimeSessionId(runtimeSessionId: string | null): SessionState {
-    return new SessionState(
-      this._runtime,
-      this._createdAt,
-      runtimeSessionId,
-      this._lastLaunchMode,
-    );
+    return new SessionState(this._runtime, this._createdAt, runtimeSessionId, this._lastLaunchMode);
   }
 
   /**
