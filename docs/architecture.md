@@ -349,7 +349,7 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 
 | Path | Owner | Notes |
 | ---- | ----- | ----- |
-| `workspaces.json`  | server               | Workspace registry (id → workdir + currentId). |
+| `global.db`        | server               | SQLite — workspace registry (id → workdir + currentId) plus other cross-workspace state. |
 | `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
 | `logs/`            | server               | Rotated server logs (pino-roll). |
 | `shared/`          | runtime adapters     | `${globalDir}` placeholder root for MCP specs. |

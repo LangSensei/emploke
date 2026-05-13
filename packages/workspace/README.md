@@ -5,7 +5,7 @@ emploke's per-project state (sessions, tasks, catalog)
 plus a self-describing `workspace.json`. The directory is normally
 user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
-(see `Quick start` below). The `$EMPLOKE_HOME/workspaces.json` registry
+(see `Quick start` below). The `$EMPLOKE_HOME/global.db` SQLite registry
 maps opaque UUIDs to absolute workspace paths.
 
 ## Concepts
@@ -26,11 +26,11 @@ maps opaque UUIDs to absolute workspace paths.
 ## Quick start
 
 ```ts
-import { WorkspaceManager, FsWorkspaceRepository } from "@emploke/workspace";
+import { DatabaseSync } from "node:sqlite";
+import { WorkspaceManager, SqliteWorkspaceRepository } from "@emploke/workspace";
 
-const repo = new FsWorkspaceRepository({
-  indexFile: "/Users/me/.emploke/workspaces.json",
-});
+const db = new DatabaseSync("/Users/me/.emploke/global.db");
+const repo = new SqliteWorkspaceRepository({ db });
 const workspaces = new WorkspaceManager(repo);
 
 const ws = await workspaces.init({
@@ -38,7 +38,7 @@ const ws = await workspaces.init({
   workdir: "/Users/me/code/acme",
 });
 // → creates /Users/me/code/acme/{workspace.json,sessions,tasks,catalog}
-// → adds {id, workdir} to the index
+// → inserts {id, workdir} into global.db.workspace_registry
 
 // `workdir` is always required at the manager layer — defaulting it
 // to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
@@ -93,35 +93,38 @@ interface WorkspaceRepository {
 }
 ```
 
-Two implementations ship:
+Production runs `SqliteWorkspaceRepository` against
+`$EMPLOKE_HOME/global.db`. Tests use the same class against a
+`":memory:"` `DatabaseSync` (re-exported via `@emploke/workspace/testing`)
+— there is no separate in-memory implementation, matching the pattern
+the other SQLite-backed entity packages (`@emploke/task`,
+`@emploke/session`, `@emploke/catalog`) use.
 
-- **`FsWorkspaceRepository`** — production. Single `workspaces.json`
-  index protected by an advisory lock (`workspaces.json.lock` via
-  `@emploke/fs`'s `withFileLock`); per-workspace metadata at
-  `<workdir>/workspace.json` written atomically inside the same lock.
-- **`InMemoryWorkspaceRepository`** at `@emploke/workspace/testing` —
-  for fast unit tests. Mirrors the FS impl's id validation + path
-  conflict semantics so tests can't pass on inputs that production
-  would reject.
-
-> Why FS for workspace (and not SQLite)?
+> Why SQLite for the registry?
 > See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
-> for the project-wide decision rule. Workspace data is small N
-> (1–10 entries per user), trivial query surface, and
-> hand-editable JSON has real operational value.
+> for the project-wide decision rule. The registry has multi-write
+> concurrency requirements (concurrent `workspace add` calls) that
+> SQLite's atomic INSERT + UNIQUE constraints solve more cleanly than
+> the previous JSON-file + advisory-lock dance.
 
 ## On-disk wire format
 
-```jsonc
-// $EMPLOKE_HOME/workspaces.json
-{
-  "schemaVersion": 1,
-  "entries": [
-    { "id": "uuid-1", "workdir": "/abs/path", "lastOpenedAt": "..." }
-  ],
-  "currentId": "uuid-1"
-}
+```sql
+-- $EMPLOKE_HOME/global.db
+CREATE TABLE workspace_registry (
+  id              TEXT PRIMARY KEY,
+  workdir         TEXT NOT NULL UNIQUE,
+  registered_at   TEXT NOT NULL,
+  last_opened_at  TEXT
+);
+CREATE TABLE global_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+-- e.g. ('current_workspace_id', '<uuid>')
+```
 
+```jsonc
 // <workspace>/workspace.json
 {
   "schemaVersion": 1,

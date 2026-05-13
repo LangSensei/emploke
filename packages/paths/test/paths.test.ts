@@ -7,7 +7,7 @@ describe("resolveEmplokePaths", () => {
   it("falls back to ~/.emploke when no env is set", () => {
     const p = resolveEmplokePaths({});
     expect(p.home).toBe(path.resolve(homedir(), ".emploke"));
-    expect(p.registryFile).toBe(path.join(p.home, "workspaces.json"));
+    expect(p.globalDbFile).toBe(path.join(p.home, "global.db"));
     expect(p.logsDir).toBe(path.join(p.home, "logs"));
     expect(p.runtimeFile).toBe(path.join(p.home, "runtime.json"));
     expect(p.sharedDir).toBe(path.join(p.home, "shared"));
@@ -21,7 +21,7 @@ describe("resolveEmplokePaths", () => {
   it("EMPLOKE_HOME relocates home and every derived path", () => {
     const p = resolveEmplokePaths({ EMPLOKE_HOME: "/tmp/eh" });
     expect(p.home).toBe(path.resolve("/tmp/eh"));
-    expect(p.registryFile).toBe(path.resolve("/tmp/eh/workspaces.json"));
+    expect(p.globalDbFile).toBe(path.resolve("/tmp/eh/global.db"));
     expect(p.logsDir).toBe(path.resolve("/tmp/eh/logs"));
     expect(p.runtimeFile).toBe(path.resolve("/tmp/eh/runtime.json"));
     expect(p.sharedDir).toBe(path.resolve("/tmp/eh/shared"));
@@ -49,6 +49,17 @@ describe("resolveEmplokePaths", () => {
     >;
     expect(p.workspacesDir).toBeUndefined();
     expect(p.defaultWorkspaceDir).toBeUndefined();
+  });
+
+  it("does NOT expose a registryFile field (workspaces.json removed)", () => {
+    // The workspace registry moved from `<home>/workspaces.json` to a
+    // SQLite table inside `<home>/global.db`. Asserting absence guards
+    // against accidental reintroduction of the JSON-based path.
+    const p = resolveEmplokePaths({ EMPLOKE_HOME: "/tmp/eh" }) as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(p.registryFile).toBeUndefined();
   });
 
   it("treats empty-string EMPLOKE_HOME as unset", () => {

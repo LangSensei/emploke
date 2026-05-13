@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@emploke/fs": "workspace:*",
+    "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*"
   },
   "devDependencies": {

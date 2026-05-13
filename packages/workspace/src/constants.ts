@@ -3,8 +3,8 @@ export const WORKSPACE_FILE = "workspace.json";
 
 /**
  * Schema version for both `workspace.json` (per-workspace metadata) and
- * `workspaces.json` (the home-level index `FsWorkspaceRepository`
- * maintains).
+ * the workspace pkg's row in `global.db.schema_meta`
+ * (`SqliteWorkspaceRepository` writes one row keyed by `pkg='workspace'`).
  *
  * ## Bump policy
  *

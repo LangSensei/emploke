@@ -1,10 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import {
-  FsWorkspaceRepository,
+  SqliteWorkspaceRepository,
   type Workspace,
   WorkspaceManager,
   workspaceLayout,
@@ -15,14 +16,14 @@ import { catalogRoutes } from "../src/routes/catalog/index.js";
 import { WorkspaceContextCache } from "../src/workspace-context.js";
 
 let scratch: string;
-let indexFile: string;
+let globalDb: DatabaseSync;
 let workspaces: WorkspaceManager;
 let cache: WorkspaceContextCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
-  indexFile = path.join(scratch, ".emploke", "workspaces.json");
-  workspaces = new WorkspaceManager(new FsWorkspaceRepository({ indexFile }));
+  globalDb = new DatabaseSync(":memory:");
+  workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
@@ -31,6 +32,11 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   cache.closeAll();
+  try {
+    globalDb.close();
+  } catch {
+    // already closed
+  }
   await rm(scratch, { recursive: true, force: true });
 });
 

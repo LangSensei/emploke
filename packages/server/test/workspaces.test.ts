@@ -1,27 +1,33 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { FsWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
+import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
 import { WorkspaceContextCache } from "../src/workspace-context.js";
 
 let scratch: string;
-let indexFile: string;
+let globalDb: DatabaseSync;
 const openCaches: WorkspaceContextCache[] = [];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-ws-"));
-  indexFile = path.join(scratch, ".emploke", "workspaces.json");
+  globalDb = new DatabaseSync(":memory:");
 });
 afterEach(async () => {
   for (const c of openCaches.splice(0)) c.closeAll();
+  try {
+    globalDb.close();
+  } catch {
+    // already closed
+  }
   await rm(scratch, { recursive: true, force: true });
 });
 
 async function makeApp() {
-  const manager = new WorkspaceManager(new FsWorkspaceRepository({ indexFile }));
+  const manager = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),

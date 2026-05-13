@@ -51,17 +51,18 @@ export interface WorkspaceDeleteOpts {
 
 /**
  * Workspace lifecycle façade. All persistence flows through the
- * supplied `WorkspaceRepository` (defaults to `FsWorkspaceRepository`
- * when constructed via the static factory below). The manager owns
- * filesystem side-effects that are NOT persistence — creating the
- * workspace directory and standard subdirs at init time, and the
- * optional `purge`-mode cleanup at delete time.
+ * supplied `WorkspaceRepository` (typically `SqliteWorkspaceRepository`
+ * for production, `InMemoryWorkspaceRepository` for unit tests). The
+ * manager owns filesystem side-effects that are NOT persistence —
+ * creating the workspace directory and standard subdirs at init time,
+ * and the optional `purge`-mode cleanup at delete time.
  *
  * Concurrency: cross-process serialisation lives in the repository
- * (see `FsWorkspaceRepository`'s advisory lock). The manager itself is
- * stateless beyond the injected repository reference, so two
- * `WorkspaceManager` instances pointing at the same repository are
- * safe to use concurrently.
+ * (the SQLite repository relies on SQLite's write lock + UNIQUE
+ * constraints; in-memory has no cross-process semantics by design).
+ * The manager itself is stateless beyond the injected repository
+ * reference, so two `WorkspaceManager` instances pointing at the same
+ * repository are safe to use concurrently.
  */
 export class WorkspaceManager {
   constructor(private readonly repository: WorkspaceRepository) {}

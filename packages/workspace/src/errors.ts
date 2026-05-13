@@ -86,23 +86,24 @@ export class RegistryError extends WorkspaceError {
   }
 }
 
-/** `workspaces.json` exists but cannot be parsed or violates the schema. */
+/** `global.db.workspace_registry` row failed validation or schema drift. */
 export class RegistryCorruptedError extends RegistryError {
   constructor(
     public readonly file: string,
     public readonly reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`workspaces.json at ${file} is corrupted: ${reason}`, options);
+    super(`workspace registry at ${file} is corrupted: ${reason}`, options);
     this.name = "RegistryCorruptedError";
   }
 }
 
 /**
- * `workspaces.json` declares a schemaVersion this build doesn't understand.
- * Distinct from `RegistryCorruptedError` so callers can catch the specific
- * "operator must upgrade or migrate" case separately from generic parse
- * failures.
+ * The workspace pkg's row in `global.db.schema_meta` declares a
+ * version this build doesn't understand. Distinct from
+ * `RegistryCorruptedError` so callers can catch the specific
+ * "operator must upgrade or migrate" case separately from generic
+ * corruption.
  */
 export class RegistrySchemaMismatchError extends RegistryError {
   constructor(
@@ -111,7 +112,7 @@ export class RegistrySchemaMismatchError extends RegistryError {
     public readonly toVersion: number,
   ) {
     super(
-      `workspaces.json at ${file} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
+      `workspace registry at ${file} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
     );
     this.name = "RegistrySchemaMismatchError";
   }

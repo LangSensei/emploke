@@ -63,7 +63,7 @@ work for single-machine use; only set what you need to override.
 | `PORT`               | `8787`         | HTTP listen port.                                                                                        |
 | `EMPLOKE_HOST`       | `127.0.0.1`    | Bind address. **Non-loopback values require `EMPLOKE_API_KEY`** — emploke refuses to start otherwise.    |
 | `EMPLOKE_API_KEY`    | —              | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. Required for non-loopback.    |
-| `EMPLOKE_HOME`       | `~/.emploke`   | Where the workspace registry (`workspaces.json`) lives.                                                  |
+| `EMPLOKE_HOME`       | `~/.emploke`   | Where the global SQLite registry (`global.db`) lives.                                                  |
 | `EMPLOKE_LOG_LEVEL`  | `info`         | `debug` / `info` / `warn` / `error`.                                                                     |
 | `EMPLOKE_LOG_FORMAT` | `pretty`       | `pretty` (dev terminal) or `json` (log aggregators).                                                     |
 | `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. Useful when running from a non-bundle layout.                       |

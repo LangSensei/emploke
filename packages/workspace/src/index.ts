@@ -10,10 +10,13 @@
  * time without breaking links.
  *
  * Persistence is delegated to a `WorkspaceRepository`. The default
- * implementation `FsWorkspaceRepository` stores the index at
- * `$EMPLOKE_HOME/workspaces.json` and the per-workspace metadata at
- * `<workdir>/workspace.json`. Tests can swap in `InMemoryWorkspaceRepository`
- * (re-exported from `@emploke/workspace/testing`).
+ * implementation `SqliteWorkspaceRepository` stores the workspace
+ * registry in a SQLite database at `$EMPLOKE_HOME/global.db` and the
+ * per-workspace metadata at `<workdir>/workspace.json`. Tests use the
+ * same class with a `":memory:"` `DatabaseSync` (re-exported from
+ * `@emploke/workspace/testing`); there is no separate in-memory
+ * implementation since SQLite already provides that natively, matching
+ * the pattern other SQLite-backed entity packages use.
  *
  * This package never spawns subprocesses, never touches `~/.copilot/`,
  * and has no opinions about runtimes — it's pure workspace state
@@ -50,6 +53,6 @@ export {
   type WorkspaceUpdatePatch,
 } from "./manager.js";
 export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
-export { FsWorkspaceRepository } from "./repositories/fs-workspace-repository.js";
 export type { WorkspaceRepository } from "./repositories/repository.js";
+export { SqliteWorkspaceRepository } from "./repositories/sqlite-workspace-repository.js";
 export { type Workspace, type WorkspaceLayout, workspaceLayout } from "./types.js";
