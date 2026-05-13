@@ -170,6 +170,123 @@ describe("launchCopilotHeadless", () => {
     expect(fake.captures?.command).toBe("C:\\fake\\copilot.exe");
   });
 
+  it("does not pass an env override to spawn when subprocessEnv is unset (Node default-inherit)", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        globalDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
+      },
+    );
+    const opts = fake.captures?.options as { env?: NodeJS.ProcessEnv };
+    expect(opts.env).toBeUndefined();
+  });
+
+  it("merges subprocessEnv on top of process.env so children inherit context bag", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    await launchCopilotHeadless(
+      {
+        taskDir,
+        agent,
+        catalog,
+        prompt: "x",
+        workspaceDir: scratch,
+        subprocessEnv: {
+          EMPLOKE_WORKSPACE: "ws-uuid-1",
+          EMPLOKE_TASK_ID: "01HZZZ",
+          EMPLOKE_SERVER: "http://127.0.0.1:8787",
+        },
+      },
+      {
+        copilotStateDir: stateDir,
+        globalDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        resolveBin: NOOP_RESOLVE_BIN,
+      },
+    );
+    const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
+    expect(opts.env.EMPLOKE_WORKSPACE).toBe("ws-uuid-1");
+    expect(opts.env.EMPLOKE_TASK_ID).toBe("01HZZZ");
+    expect(opts.env.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    // PATH (or similar) from process.env is still there — we layered, didn't replace.
+    expect(opts.env.PATH ?? opts.env.Path).toBeDefined();
+  });
+
+  it("subprocessEnv overrides win over process.env (per-task identity beats inherited)", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    const original = process.env.EMPLOKE_WORKSPACE;
+    process.env.EMPLOKE_WORKSPACE = "stale-ambient";
+    try {
+      await launchCopilotHeadless(
+        {
+          taskDir,
+          agent,
+          catalog,
+          prompt: "x",
+          workspaceDir: scratch,
+          subprocessEnv: { EMPLOKE_WORKSPACE: "fresh-from-dispatch" },
+        },
+        {
+          copilotStateDir: stateDir,
+          globalDir: scratch,
+          randomUUID: () => FIXED_UUID,
+          spawn: fake.spawn,
+          resolveBin: NOOP_RESOLVE_BIN,
+        },
+      );
+      const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
+      expect(opts.env.EMPLOKE_WORKSPACE).toBe("fresh-from-dispatch");
+    } finally {
+      if (original === undefined) delete process.env.EMPLOKE_WORKSPACE;
+      else process.env.EMPLOKE_WORKSPACE = original;
+    }
+  });
+
+  it("subprocessEnv with explicit `undefined` deletes the inherited variable", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    const original = process.env.EMPLOKE_API_KEY;
+    process.env.EMPLOKE_API_KEY = "leaked-from-server-env";
+    try {
+      await launchCopilotHeadless(
+        {
+          taskDir,
+          agent,
+          catalog,
+          prompt: "x",
+          workspaceDir: scratch,
+          // Server has no API key configured — caller passes
+          // `undefined` rather than branching on whether the key is
+          // set upstream. mergeEnv must drop the entry entirely so
+          // the child sees `process.env.EMPLOKE_API_KEY === undefined`
+          // rather than the literal string "undefined".
+          subprocessEnv: { EMPLOKE_API_KEY: undefined },
+        },
+        {
+          copilotStateDir: stateDir,
+          globalDir: scratch,
+          randomUUID: () => FIXED_UUID,
+          spawn: fake.spawn,
+          resolveBin: NOOP_RESOLVE_BIN,
+        },
+      );
+      const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
+      expect(opts.env.EMPLOKE_API_KEY).toBeUndefined();
+      expect("EMPLOKE_API_KEY" in opts.env).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.EMPLOKE_API_KEY;
+      else process.env.EMPLOKE_API_KEY = original;
+    }
+  });
+
   it("returns a handle exposing pid and runtimeSessionId", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();

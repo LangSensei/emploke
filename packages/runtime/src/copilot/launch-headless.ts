@@ -27,6 +27,35 @@ export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
 
 /**
+ * Merge a base env (typically `process.env`) with an override map,
+ * deleting any key whose override value is `undefined`. Returns a fresh
+ * object so callers can hand it straight to `child_process.spawn` without
+ * mutating the caller's env.
+ *
+ * Why bother: Node's spawn semantics interpret `undefined` values in
+ * `env` as "actually set the variable to the literal string 'undefined'"
+ * on some platforms (the value goes through a `String()` conversion).
+ * That's almost never what the caller wants when they pass
+ * `EMPLOKE_API_KEY: process.env.EMPLOKE_API_KEY` and the upstream env
+ * has no key set. Stripping `undefined` before spawn means downstream
+ * `process.env.EMPLOKE_API_KEY` is genuinely `undefined` rather than
+ * the string "undefined". The same convention is used by every
+ * `process.env`-aware helper we've built so the runtime stays
+ * predictable across platforms.
+ */
+function mergeEnv(base: NodeJS.ProcessEnv, overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete out[key];
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * Default child_process.spawn signature, narrowed to what we actually call.
  * Carved out as a type alias so the test seam parameter can be typed
  * without leaking node's overload soup into the public surface.
@@ -103,6 +132,14 @@ export interface LaunchCopilotHeadlessOpts {
    * substitution in MCP specs.
    */
   readonly workspaceDir: string;
+  /**
+   * Optional bag merged into the spawned subprocess's environment on
+   * top of `process.env`. See `LaunchHeadlessOpts.subprocessEnv` for
+   * the rationale (TL;DR: lets emploke-controlled children inherit
+   * `EMPLOKE_WORKSPACE` etc. without the AI-agent caller having to
+   * `export` per-shell).
+   */
+  readonly subprocessEnv?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -201,6 +238,11 @@ export async function launchCopilotHeadless(
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
       windowsHide: true,
+      // Inherit the server's env so PATH / HOME / Copilot's own auth
+      // tokens etc. flow through, then layer the per-task bag on top.
+      // We omit the field entirely when no override is supplied, so
+      // Node's default-inherit behaviour kicks in (matches old code).
+      env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
     });
   } catch (cause) {
     // Truly synchronous spawn failure. Rare on Node; usually async via 'error'.

@@ -80,6 +80,18 @@ export class WorkspaceContextCache {
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly workspaces: WorkspaceManager;
   private readonly logger: Logger;
+  /**
+   * Static env overrides forwarded into every per-workspace
+   * `TaskManager` so the spawned task subprocesses inherit a
+   * self-describing bag (server URL, API key, EMPLOKE_HOME). The
+   * per-workspace + per-task fields (`EMPLOKE_WORKSPACE`,
+   * `EMPLOKE_TASK_ID`, …) are added inside `TaskManager.dispatch` —
+   * this field carries only what the server itself contributes.
+   *
+   * Defaults to `{}` so existing callers (notably tests) keep
+   * working without having to assemble an env bag.
+   */
+  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
   private readonly entries = new Map<string, WorkspaceContext>();
   /**
    * Inflight lookups keyed by id, to dedupe concurrent first-request
@@ -97,10 +109,13 @@ export class WorkspaceContextCache {
      * non-server callers (tests) don't need to pass one.
      */
     logger?: Logger;
+    /** See `subprocessEnvBase` above. */
+    subprocessEnvBase?: NodeJS.ProcessEnv;
   }) {
     this.runtimeRegistry = deps.runtimeRegistry;
     this.workspaces = deps.workspaces;
     this.logger = deps.logger ?? silentLogger;
+    this.subprocessEnvBase = deps.subprocessEnvBase ?? {};
   }
 
   /**
@@ -276,6 +291,8 @@ export class WorkspaceContextCache {
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
       workspaceDir: workspace.workdir,
+      workspaceId: id,
+      subprocessEnv: this.subprocessEnvBase,
       repository: new SqliteTaskRepository({ db, logger: this.logger }),
       logger: this.logger,
     });

@@ -303,6 +303,10 @@ export class CopilotRuntime implements Runtime {
         catalog: opts.catalog,
         prompt: opts.prompt,
         workspaceDir: opts.workspaceDir,
+        // Conditional spread so callers without an env override don't
+        // poke an `undefined` into the field (forbidden under
+        // tsconfig's `exactOptionalPropertyTypes`).
+        ...(opts.subprocessEnv ? { subprocessEnv: opts.subprocessEnv } : {}),
       },
       {
         copilotStateDir: this.copilotStateDir,

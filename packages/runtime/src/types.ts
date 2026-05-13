@@ -264,6 +264,26 @@ export interface LaunchHeadlessOpts {
   readonly catalog: CatalogManager;
   readonly prompt: string;
   readonly workspaceDir: string;
+  /**
+   * Extra environment variables merged into the spawned subprocess on
+   * top of the server's own `process.env`. Used to give every emploke-
+   * controlled child a self-describing context bag (`EMPLOKE_WORKSPACE`,
+   * `EMPLOKE_WORKDIR`, `EMPLOKE_TASK_ID`, `EMPLOKE_SERVER`,
+   * `EMPLOKE_API_KEY`, `EMPLOKE_HOME`, …).
+   *
+   * Why this exists: AI-agent harnesses run each tool call in a fresh
+   * shell, so per-shell `export EMPLOKE_WORKSPACE=...` does not survive.
+   * Threading the bag through the runtime contract means the very
+   * binary the agent shells out to (e.g. `emploke task dispatch`)
+   * inherits the workspace identity automatically; no setup step
+   * required, no chance of operating on the wrong workspace because
+   * the env was rebuilt mid-conversation.
+   *
+   * Keys with `undefined` values are dropped (matches Node's spawn
+   * convention); pass `undefined` from the caller to "don't set this
+   * variable" without having to branch on whether it exists upstream.
+   */
+  readonly subprocessEnv?: NodeJS.ProcessEnv;
 }
 
 /**

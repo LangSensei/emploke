@@ -82,6 +82,8 @@ export class TaskManager {
   private readonly defaultRuntime: string;
   private readonly tasksDir: string;
   private readonly workspaceDir: string;
+  private readonly workspaceId: string | undefined;
+  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
   private readonly repository: TaskRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -128,6 +130,8 @@ export class TaskManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
+    this.workspaceId = config.workspaceId;
+    this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
     this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
@@ -282,6 +286,26 @@ export class TaskManager {
         catalog: this.catalog,
         prompt: instructions,
         workspaceDir: this.workspaceDir,
+        // Self-describing context bag the subprocess (and any
+        // grandchildren it spawns through `emploke ...` calls)
+        // inherits via process.env. Merged with the static base
+        // (server URL, API key, home) supplied at construction time.
+        // See LaunchHeadlessOpts.subprocessEnv for the rationale.
+        //
+        // CONCURRENCY: this object literal is freshly allocated on
+        // every dispatch — never cache it on `this`. The base is
+        // frozen (see `buildSubprocessEnvBase`) so the spread is the
+        // only mutable layer. Two concurrent dispatches each build
+        // their own object with their own `id`, then hand them to
+        // `runtime.launchHeadless` which hands them to `spawn`,
+        // which copies into the OS at process-create time — the
+        // env stops being shared the instant the child is up.
+        subprocessEnv: {
+          ...this.subprocessEnvBase,
+          ...(this.workspaceId !== undefined ? { EMPLOKE_WORKSPACE: this.workspaceId } : {}),
+          EMPLOKE_WORKDIR: this.workspaceDir,
+          EMPLOKE_TASK_ID: id,
+        },
       });
     } catch (err) {
       await safeRm(workdir, this.logger);

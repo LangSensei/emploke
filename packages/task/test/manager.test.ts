@@ -147,7 +147,13 @@ class StubRuntime implements Runtime {
 
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
-  readonly dispatchCalls: { taskDir: string; agent: AgentResolveResult; prompt: string }[] = [];
+  readonly dispatchCalls: {
+    taskDir: string;
+    agent: AgentResolveResult;
+    prompt: string;
+    workspaceDir?: string;
+    subprocessEnv?: NodeJS.ProcessEnv;
+  }[] = [];
 
   constructor(kind = "copilot") {
     this.kind = kind;
@@ -181,6 +187,8 @@ class StubRuntime implements Runtime {
     taskDir: string;
     agent: AgentResolveResult;
     prompt: string;
+    workspaceDir?: string;
+    subprocessEnv?: NodeJS.ProcessEnv;
   }): Promise<RuntimeHandle> {
     if (this.dispatchError) {
       const e = this.dispatchError;
@@ -328,6 +336,8 @@ const makeManager = (
     randomBytes?: (n: number) => Buffer;
     logger?: { warn: (meta: object | string, msg?: string) => void };
     repository?: SqliteTaskRepository;
+    workspaceId?: string;
+    subprocessEnv?: NodeJS.ProcessEnv;
   } = {},
 ): { m: TaskManager; repo: SqliteTaskRepository } => {
   const rt = overrides.runtime ?? new StubRuntime();
@@ -342,6 +352,8 @@ const makeManager = (
     randomBytes: overrides.randomBytes ?? seqRandom(),
     logger: overrides.logger,
     repository: repo,
+    ...(overrides.workspaceId !== undefined ? { workspaceId: overrides.workspaceId } : {}),
+    ...(overrides.subprocessEnv !== undefined ? { subprocessEnv: overrides.subprocessEnv } : {}),
   });
   return { m, repo };
 };
@@ -1256,3 +1268,138 @@ async function spawnAndReap(): Promise<number> {
   await new Promise<void>((resolve) => child.once("exit", () => resolve()));
   return pid;
 }
+
+// ═════ subprocess env injection ═════════════════════════════════
+//
+// Fixes the v0.3.2 footgun where AI-agent harnesses lost their
+// EMPLOKE_WORKSPACE between tool calls because each call ran in a
+// fresh shell. Env injection guarantees every task subprocess and
+// any child it spawns inherits the bag, so `emploke ...` calls made
+// from inside a task automatically know which workspace they belong
+// to without the human/agent having to set anything.
+//
+// Concurrency-safety contract (these tests pin it):
+//   1. The base bag passed at construction is shared by reference
+//      across all dispatches; it is NOT mutated by dispatch.
+//   2. Each dispatch builds a FRESH per-task object on top of the
+//      base — never reuses a previous dispatch's object.
+//   3. Per-task fields (EMPLOKE_TASK_ID) are unique per dispatch.
+//   4. Per-workspace fields (EMPLOKE_WORKSPACE, EMPLOKE_WORKDIR)
+//      come from the manager's own immutable config.
+//   5. Two managers built for two different workspaces, dispatching
+//      concurrently, must produce disjoint env bags — no leakage.
+
+describe("dispatch — subprocess env injection", () => {
+  it("threads workspaceId, workspaceDir, taskId into runtime.launchHeadless as EMPLOKE_* vars", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({
+      runtime: rt,
+      workspaceId: "ws-uuid-alpha",
+      subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
+    });
+    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "go" }));
+
+    expect(rt.dispatchCalls).toHaveLength(1);
+    const env = rt.dispatchCalls[0].subprocessEnv;
+    expect(env).toBeDefined();
+    expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect(env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
+    // workspaceDir defaults to tasksDir in the test harness.
+    expect(env?.EMPLOKE_WORKDIR).toBe(tasksDir);
+    expect(env?.EMPLOKE_TASK_ID).toBe(t.id);
+  });
+
+  it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+    await m.dispatch(dispatchOf({ agent: "demo", instructions: "go" }));
+
+    const env = rt.dispatchCalls[0].subprocessEnv;
+    expect(env).toBeDefined();
+    expect("EMPLOKE_WORKSPACE" in (env ?? {})).toBe(false);
+    // Per-task fields are still set even without a workspaceId.
+    expect(env?.EMPLOKE_WORKDIR).toBe(tasksDir);
+    expect(env?.EMPLOKE_TASK_ID).toMatch(/^\d{8}-[0-9a-f]{8}$/);
+  });
+
+  it("two concurrent dispatches on the same manager get disjoint EMPLOKE_TASK_IDs (no shared bag)", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({
+      runtime: rt,
+      workspaceId: "ws-uuid-1",
+      randomBytes: seqRandom(),
+    });
+    const [t1, t2] = await Promise.all([
+      m.dispatch(dispatchOf({ agent: "demo", instructions: "a" })),
+      m.dispatch(dispatchOf({ agent: "demo", instructions: "b" })),
+    ]);
+
+    expect(t1.id).not.toBe(t2.id);
+    expect(rt.dispatchCalls).toHaveLength(2);
+    const ids = rt.dispatchCalls.map((c) => c.subprocessEnv?.EMPLOKE_TASK_ID);
+    expect(new Set(ids).size).toBe(2);
+    // Both should belong to the same workspace.
+    for (const c of rt.dispatchCalls) {
+      expect(c.subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-uuid-1");
+    }
+    // The two env objects are distinct instances — proves we don't
+    // reuse a memoised per-manager bag.
+    expect(rt.dispatchCalls[0].subprocessEnv).not.toBe(rt.dispatchCalls[1].subprocessEnv);
+  });
+
+  it("two managers for two workspaces produce strictly isolated env bags", async () => {
+    // Same shared base (mimics what WorkspaceContextCache does in
+    // production: one frozen base passed by reference into every
+    // per-workspace manager). Concurrency-safety means workspace A's
+    // dispatch and workspace B's dispatch must NEVER cross-contaminate
+    // — even though they share the base bag by reference.
+    const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
+
+    const rtA = new StubRuntime();
+    const { m: managerA } = makeManager({
+      runtime: rtA,
+      workspaceId: "ws-A",
+      subprocessEnv: sharedBase,
+    });
+
+    const rtB = new StubRuntime();
+    const { m: managerB } = makeManager({
+      runtime: rtB,
+      workspaceId: "ws-B",
+      subprocessEnv: sharedBase,
+    });
+
+    await Promise.all([
+      managerA.dispatch(dispatchOf({ agent: "demo", instructions: "x" })),
+      managerB.dispatch(dispatchOf({ agent: "demo", instructions: "y" })),
+    ]);
+
+    expect(rtA.dispatchCalls[0].subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-A");
+    expect(rtB.dispatchCalls[0].subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-B");
+    // Frozen base survived without mutation: still has only the
+    // server URL, no workspace fields leaked into it.
+    expect(Object.keys(sharedBase)).toEqual(["EMPLOKE_SERVER"]);
+    // Both dispatches saw the shared base layered correctly.
+    expect(rtA.dispatchCalls[0].subprocessEnv?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect(rtB.dispatchCalls[0].subprocessEnv?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+  });
+
+  it("layered fields override base values (per-task wins over server-default)", async () => {
+    // Pathological config: base accidentally has a stale workspace
+    // pinned. The manager's own workspaceId must still win — base is
+    // a default, not a hard pin.
+    const rt = new StubRuntime();
+    const { m } = makeManager({
+      runtime: rt,
+      workspaceId: "real-workspace",
+      subprocessEnv: {
+        EMPLOKE_WORKSPACE: "stale-from-base",
+        EMPLOKE_SERVER: "http://127.0.0.1:8787",
+      },
+    });
+    await m.dispatch(dispatchOf({ agent: "demo", instructions: "x" }));
+    const env = rt.dispatchCalls[0].subprocessEnv;
+    expect(env?.EMPLOKE_WORKSPACE).toBe("real-workspace");
+    expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+  });
+});
