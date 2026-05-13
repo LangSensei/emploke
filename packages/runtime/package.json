@@ -29,9 +29,11 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/fs": "workspace:*",
+    "cross-spawn": "^7.0.6",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",

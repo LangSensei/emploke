@@ -1,14 +1,14 @@
-import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir as nodeMkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import crossSpawn from "cross-spawn";
 import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
 import type { RuntimeExit, RuntimeHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
 import { provisionCopilotWorkdir } from "./provision.js";
-import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js";
 
 /**
  * File names for side-channel stdout/stderr capture under the task
@@ -25,6 +25,22 @@ import { type ResolveCopilotBinDeps, resolveCopilotBin } from "./resolve-bin.js"
  */
 export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
+
+/**
+ * Default spawn implementation used when `LaunchCopilotHeadlessDeps.spawn`
+ * is not injected (i.e. production code paths). Wraps `cross-spawn` so
+ * Windows footguns (PATHEXT iteration, `.cmd`/`.bat` execution post
+ * CVE-2024-27980, `cmd /S` quote-stripping) are handled transparently.
+ *
+ * Exported so a regression test can assert `defaultSpawnImpl ===
+ * crossSpawn`. Without that pin, a future maintainer could swap the
+ * fallback at line 250 from `crossSpawn` back to `node:child_process`'s
+ * native `spawn` — every existing unit test would still pass (they
+ * inject a fake at the same seam), but production would silently
+ * break for any user with an npm-installed copilot on Windows. See
+ * `launch-headless.test.ts` for the assertion that pins this.
+ */
+export const defaultSpawnImpl: SpawnFn = crossSpawn as unknown as SpawnFn;
 
 /**
  * Merge a base env (typically `process.env`) with an override map,
@@ -86,7 +102,7 @@ export interface LaunchCopilotHeadlessDeps {
    * `CopilotRuntimeConfig.globalDir`.
    */
   readonly globalDir: string;
-  /** Path to the `copilot` executable. Defaults to bare `"copilot"` (PATH lookup). */
+  /** Path to the `copilot` executable. Defaults to bare `"copilot"` (PATH lookup via cross-spawn). */
   readonly copilotBin?: string;
   /** Test seam for id generation. */
   readonly randomUUID?: () => string;
@@ -94,11 +110,6 @@ export interface LaunchCopilotHeadlessDeps {
   readonly spawn?: SpawnFn;
   /** Test seam for mkdir. */
   readonly mkdir?: typeof nodeMkdir;
-  /**
-   * Test/override seams for the WinGet-shim resolver. See
-   * `resolveCopilotBin`. Most callers should leave this unset.
-   */
-  readonly resolveBin?: ResolveCopilotBinDeps;
   /**
    * Maximum time to wait for the child's `'spawn'` (or `'error'`) event
    * before giving up and reporting `RuntimeHeadlessLaunchFailed`. Defaults
@@ -186,10 +197,13 @@ export async function launchCopilotHeadless(
   }
 
   const mkdirImpl = deps.mkdir ?? nodeMkdir;
-  const spawnImpl = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
-  // Resolve the WinGet shim if necessary — see resolve-bin.ts. On
-  // non-Windows platforms or non-shim binaries this is a pass-through.
-  const { bin } = resolveCopilotBin(deps.copilotBin ?? "copilot", deps.resolveBin);
+  // Bin path. Default `"copilot"`; cross-spawn at the spawn site
+  // handles PATH lookup, PATHEXT iteration (Windows), and the
+  // `.cmd` / `.bat` cmd.exe wrap (CVE-2024-27980 mitigation).
+  // Production users should `npm install -g @github/copilot`; the
+  // WinGet-installed Copilot has a separate stdout-corruption bug
+  // under non-console spawn that emploke does not work around.
+  const bin = deps.copilotBin ?? "copilot";
 
   // Step 2: pre-allocate session id + dir.
   let sessionId: string;
@@ -228,6 +242,31 @@ export async function launchCopilotHeadless(
 
   let child: ChildProcess;
   try {
+    // Spawn via `cross-spawn`, the npm de-facto standard for "spawn a
+    // child cross-platform without surprises" (100M+ weekly downloads,
+    // used by npm CLI / Jest / Mocha / ESLint). It transparently
+    // handles every Windows-spawn footgun that this codebase used to
+    // patch by hand:
+    //
+    //   - Bare-name PATHEXT iteration: spawn("copilot", ...) finds
+    //     `copilot.cmd` even though Node's CreateProcess won't.
+    //   - .cmd / .bat execution post CVE-2024-27980 (Node 18.20.0+ /
+    //     20.12.0+): cross-spawn wraps with cmd.exe internally using
+    //     the same `windowsVerbatimArguments` + escape pattern we
+    //     used to write by hand, plus the cmd /S quote-stripping
+    //     workaround that takes an extra outer pair of quotes so
+    //     cmd parses the inner sequence correctly.
+    //   - Shebang resolution for #!-line scripts (irrelevant for
+    //     copilot but keeps the contract simple).
+    //
+    // The test seam (`deps.spawn`) lets unit tests inject a fake
+    // SpawnFn — used by `launch-headless.test.ts` to capture and
+    // assert on spawn args without actually launching a child.
+    // Production goes through `defaultSpawnImpl` (cross-spawn); the
+    // seam never sees it. The default impl is exported above so
+    // a one-line regression test can assert it stays bound to
+    // cross-spawn — see the comment on `defaultSpawnImpl` for why.
+    const spawnImpl = deps.spawn ?? defaultSpawnImpl;
     child = spawnImpl(bin, args, {
       cwd: opts.taskDir,
       // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
@@ -241,7 +280,7 @@ export async function launchCopilotHeadless(
       // Inherit the server's env so PATH / HOME / Copilot's own auth
       // tokens etc. flow through, then layer the per-task bag on top.
       // We omit the field entirely when no override is supplied, so
-      // Node's default-inherit behaviour kicks in (matches old code).
+      // Node's default-inherit behaviour kicks in.
       env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
     });
   } catch (cause) {
