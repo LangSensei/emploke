@@ -353,13 +353,13 @@ export const disableAgent = (fqn: string) =>
 export const enableAgent = (fqn: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(fqn)}/enable`, { method: "POST" });
 
-export const removeAgent = (name: string) =>
+export const deleteAgent = (name: string) =>
   mutate(`${catalogPrefix()}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
 
-export const removeSkill = (name: string) =>
+export const deleteSkill = (name: string) =>
   mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
 
-export const removeMcp = (name: string) =>
+export const deleteMcp = (name: string) =>
   mutate(`${catalogPrefix()}/mcps/${encodeURIComponent(name)}`, { method: "DELETE" });
 
 export interface McpDetail {

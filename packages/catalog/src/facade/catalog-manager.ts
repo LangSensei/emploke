@@ -18,8 +18,6 @@ import type {
   BlockedDep,
   BlockedReason,
   EntryStatus,
-  InstallEntryOpts,
-  InstallMcpOpts,
   McpMetadata,
   MissingDep,
   ResolvedMcp,
@@ -28,7 +26,7 @@ import type {
   SkillMetadataPatch,
   Skill as SkillPojo,
   SkillResolveResult,
-} from "../compat/types.js";
+} from "../dto/types.js";
 import { McpNotFoundError } from "../mcp/errors.js";
 import { Mcp } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
@@ -51,15 +49,16 @@ import {
  * Catalog facade: cross-entity orchestration over the per-entity
  * services (Mcp / Skill / Agent).
  *
- * Two API surfaces, both stable:
+ * Two responsibilities:
  *
- * 1. **New install/resolve flow** — `resolveSkill` / `resolveAgent` /
+ * 1. **Install / resolve** — `resolveSkill` / `resolveAgent` /
  *    `resolveMcp` return a `CatalogPlan` (cross-entity DAG); `install`
  *    consumes a plan or origin string and walks the topology.
  *
- * 2. **Legacy consumer-facing API** — `listSkillEntries`,
- *    `getSkillContent`, `agentEntries`, etc. mirror the pre-refactor
- *    `CatalogManager`.
+ * 2. **DTO-projecting reads & mutations** — `listSkillEntries`,
+ *    `getSkillContent`, `updateSkillMetadata`, `agentEntries`, etc.
+ *    fan out to the per-entity services and project the rich entity
+ *    classes into the wire-shaped DTOs HTTP routes serialise.
  *
  * Backing store: SQLite (the per-workspace shared `workspace.db`,
  * with catalog tables `agents`/`skills`/`mcps`/`agent_files`/`skill_files`,
@@ -210,8 +209,7 @@ export interface CatalogInstalledEntry {
  *
  * Callers that need the original `Error` instance should drive
  * `install()` themselves and inspect the thrown error from `installNode`
- * — the in-memory shim methods (`installSkillFromOrigin` etc.) keep
- * the throw path for exactly that reason.
+ * rather than relying on the wire projection.
  */
 export interface CatalogInstallFailure {
   readonly kind: "mcp" | "skill" | "agent";
@@ -385,18 +383,6 @@ export class CatalogManager {
     };
 
     return new CatalogManager(mcpSvc, skillSvc, agentSvc, resolveMcp);
-  }
-
-  // ─── Lifecycle ────────────────────────────────────────
-
-  /**
-   * No-op — the underlying `DatabaseSync` connection is owned by the
-   * caller (workspace pkg in production). Kept on the facade for API
-   * compatibility with callers that wrap many resources in a single
-   * `close()` sweep.
-   */
-  close(): void {
-    // intentionally empty
   }
 
   // ─── Resolve (cross-entity walk) ──────────────────────
@@ -719,48 +705,6 @@ export class CatalogManager {
     return this.install(await this.resolveAgentFromOrigin(origin));
   }
 
-  // ─── Legacy consumer API (backward-compat shims) ───
-
-  async installSkillFromOrigin(origin: string, _opts: InstallEntryOpts = {}): Promise<SkillPojo> {
-    const plan = await this.resolveSkill(origin);
-    const result = await this.install(plan);
-    if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
-      throw conflictToError(plan.conflicts[0] as CatalogConflict);
-    }
-    if (result.failed.length > 0) {
-      const first = result.failed[0]!;
-      throw new Error(`${first.error.name}: ${first.error.message}`);
-    }
-    const installed = await this.skill.getByOrigin(origin);
-    if (installed === null) {
-      throw new Error(`installSkillFromOrigin: no entity persisted for ${origin}`);
-    }
-    const ctx = await this.loadCascadeContext();
-    return projectSkillPojo(installed, ctx);
-  }
-
-  async installAgentFromOrigin(origin: string, _opts: InstallEntryOpts = {}): Promise<AgentPojo> {
-    const plan = await this.resolveAgentFromOrigin(origin);
-    const result = await this.install(plan);
-    if (plan.conflicts.length > 0 && plan.toInstall.length === 0) {
-      throw conflictToError(plan.conflicts[0] as CatalogConflict);
-    }
-    if (result.failed.length > 0) {
-      const first = result.failed[0]!;
-      throw new Error(`${first.error.name}: ${first.error.message}`);
-    }
-    const installed = await this.agent.getByOrigin(origin);
-    if (installed === null) {
-      throw new Error(`installAgentFromOrigin: no entity persisted for ${origin}`);
-    }
-    return projectAgentPojo(installed);
-  }
-
-  async installMcp(content: string, opts: InstallMcpOpts): Promise<string> {
-    const entity = await this.mcp.install(opts.name, opts.origin, content);
-    return entity.name;
-  }
-
   /**
    * Install an MCP by origin. The MCP's spec FQN is recovered from the
    * fetched JSON's `_meta.name` field at resolve time — clients don't
@@ -847,7 +791,7 @@ export class CatalogManager {
     return projectMcpMetadata(m, ctx);
   }
 
-  // ─── Mutations: legacy compat API ──
+  // ─── Mutations (DTO-returning facade) ────────────────
 
   async updateSkillContent(fqn: string, content: string): Promise<SkillPojo> {
     const updated = await this.skill.updateAnchor(fqn, content);
@@ -873,18 +817,6 @@ export class CatalogManager {
   async updateAgentMetadata(fqn: string, patch: AgentMetadataPatch): Promise<AgentPojo> {
     const updated = await this.agent.updateMetadata(fqn, patch as Record<string, unknown>);
     return projectAgentPojo(updated);
-  }
-
-  async removeSkill(fqn: string): Promise<void> {
-    await this.deleteSkill(fqn);
-  }
-
-  async removeAgent(fqn: string): Promise<void> {
-    await this.deleteAgent(fqn);
-  }
-
-  async removeMcp(name: string): Promise<void> {
-    await this.deleteMcp(name);
   }
 
   // ─── Streaming entries (for runtime materialisation) ─
@@ -1355,15 +1287,6 @@ function toInstalledEntry(
     return { ...out, prereqs };
   }
   return out;
-}
-
-function conflictToError(c: CatalogConflict): Error {
-  if (c.reason.kind === "fetch-failed" || c.reason.kind === "parse-failed") {
-    return c.reason.cause instanceof Error
-      ? c.reason.cause
-      : new Error(`catalog ${c.kind} resolve failed: ${c.reason.kind}`);
-  }
-  return new Error(`catalog ${c.kind} resolve conflict: ${JSON.stringify(c.reason)}`);
 }
 
 /**

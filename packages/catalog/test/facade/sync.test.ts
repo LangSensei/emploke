@@ -303,7 +303,7 @@ describe("sync resolve — orphan detection", () => {
   });
 
   it("removing an agent flips its dep skill to orphan (live derivation, no flag write)", async () => {
-    // Regression for the gap where `removeAgent` did not propagate
+    // Regression for the gap where `deleteAgent` did not propagate
     // orphan status to the skills it depended on. Under the new
     // derived model the answer is computed from the live dep graph
     // each time a wire DTO is projected, so the right thing happens
@@ -323,7 +323,7 @@ describe("sync resolve — orphan detection", () => {
     let tool = await mgr.getSkill("public/tool");
     expect(tool?.orphaned).toBe(false);
 
-    await mgr.removeAgent("public/writer");
+    await mgr.deleteAgent("public/writer");
 
     // Removing the agent leaves the tool with zero reverse-deps —
     // it should now read as orphan from the very next projection.

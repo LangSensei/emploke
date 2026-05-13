@@ -1,12 +1,16 @@
 /**
- * Backward-compatibility types preserved for consumers that haven't
- * migrated to the new entity classes (dashboard, runtime, etc.).
+ * Wire-format DTOs for the catalog: the JSON shapes returned by
+ * `CatalogManager.listSkillEntries`, `getSkill`, `resolveAgent`, etc.
+ * and consumed by the dashboard and runtime over HTTP.
  *
- * These mirror the legacy `@emploke/catalog` types byte-for-byte so
- * HTTP responses and TypeScript imports keep working without churn.
- * The shapes intentionally avoid leaking the rich entity classes;
- * `CatalogManager.listSkillEntries()` etc. project entities into
- * these POJOs.
+ * Kept distinct from the rich entity classes (`Skill`, `Agent`, `Mcp`)
+ * so HTTP responses don't leak methods that wouldn't survive
+ * serialisation, and so consumers that work in pure data-transfer
+ * mode don't need to import the entity layer.
+ *
+ * `CatalogManager` projects entities into these DTOs at the boundary
+ * via the internal `projectSkillPojo` / `projectAgentPojo` /
+ * `projectMcpMetadata` helpers.
  */
 
 export type CatalogKind = "skill" | "agent" | "mcp";
@@ -60,7 +64,7 @@ export interface BlockedReason {
 }
 
 /**
- * POJO mirror of the {@link Skill} entity. Returned via
+ * Wire DTO for a skill. Returned via
  * {@link CatalogManager.listSkillEntries} and friends so consumers
  * working with HTTP-shaped data don't need to import the entity class.
  */
@@ -134,7 +138,7 @@ export interface SkillEntry {
   readonly skill: Skill;
   readonly status: EntryStatus;
   readonly blockedReason?: BlockedReason;
-  /** Legacy mirror of {@link BlockedReason.missingDeps}. */
+  /** Convenience flattening of {@link BlockedReason.missingDeps}. */
   readonly missingDeps?: readonly MissingDep[];
 }
 
@@ -142,7 +146,7 @@ export interface AgentEntry {
   readonly agent: Agent;
   readonly status: EntryStatus;
   readonly blockedReason?: BlockedReason;
-  /** Legacy mirror of {@link BlockedReason.missingDeps}. */
+  /** Convenience flattening of {@link BlockedReason.missingDeps}. */
   readonly missingDeps?: readonly MissingDep[];
 }
 
@@ -170,17 +174,6 @@ export interface SkillResolveResult {
   readonly skill: Skill;
   readonly skills: readonly ResolvedSkill[];
   readonly mcps: readonly ResolvedMcp[];
-}
-
-/** Per-call options for {@link CatalogManager.installSkillFromOrigin}. */
-export interface InstallEntryOpts {
-  readonly origin?: string;
-}
-
-/** Per-call options for {@link CatalogManager.installMcp}. */
-export interface InstallMcpOpts {
-  readonly name: string;
-  readonly origin: string;
 }
 
 /**

@@ -60,15 +60,11 @@ function statusForError(err: unknown): number | null {
  * Routes for `/api/workspaces/:wsId/tasks/*`.
  *
  * Mounted at the parent in `index.ts`; paths here are relative to that
- * mount. Same shape as `sessionsRoutes` — accept either a resolver or a
- * bare manager (the latter is the test idiom).
+ * mount.
  */
-export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): Hono {
+export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   const app = new Hono();
-  const getManager: TaskManagerResolver =
-    typeof resolveManager === "function"
-      ? (resolveManager as TaskManagerResolver)
-      : () => resolveManager;
+  const getManager = resolveManager;
 
   // List tasks in this workspace, newest-first per the manager.
   // Optional server-side filters (mirroring the sessions route):

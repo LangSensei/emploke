@@ -1,6 +1,6 @@
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
-import { applyFrontmatterPatch } from "../compat/frontmatter-patch.js";
+import { applyFrontmatterPatch } from "../frontmatter/patch.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import { Agent } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";

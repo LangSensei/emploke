@@ -2,6 +2,7 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import {
@@ -16,7 +17,7 @@ import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
 import { Task } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
-import type { DispatchOpts, ListTaskOpts, Logger, TaskManagerConfig } from "./types.js";
+import type { DispatchOpts, ListTaskOpts, TaskManagerConfig } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;

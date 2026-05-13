@@ -4,7 +4,7 @@ import {
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,
-} from "../src/compat/install-input.js";
+} from "../src/validate/install-input.js";
 
 describe("buildOriginFrom", () => {
   it("github: passes the URL through verbatim (already canonical)", () => {

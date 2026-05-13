@@ -1509,6 +1509,8 @@ button {
 
 /* Remove icon button — invisible until card hover, then fades in. */
 .card-grid__action--icon {
+  display: inline-flex;
+  align-items: center;
   padding: 4px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -1537,28 +1539,6 @@ button {
   width: 14px;
   height: 14px;
   display: block;
-}
-
-/* Legacy .card-grid__action (text-button form) — kept for any non-grid
- * callers that haven't migrated to the icon form. */
-.card-grid__action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-subtle);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.card-grid__action:hover {
-  background: var(--color-danger-bg);
-  color: var(--color-danger);
 }
 
 .card-grid__desc {

@@ -1,21 +1,27 @@
 /**
  * Public API of `@emploke/catalog`.
  *
- * Two surfaces:
- *  - **New, clean entity-based API**: per-entity services (Mcp/Skill/
- *    Agent), entity classes, repository interfaces, the cross-entity
- *    `CatalogManager` facade. Available under `agent.*`, `skill.*`,
- *    `mcp.*`, `facade.*` namespaces and at the top level.
- *  - **Legacy compat API** for in-tree consumers (server routes,
- *    runtime, dashboard). POJO type re-exports and convenience
- *    methods on `CatalogManager` mirror the pre-refactor shape.
+ * Layout:
+ *   - `Mcp` / `Skill` / `Agent` rich entity classes (with methods).
+ *   - Per-entity service namespaces (`mcp.*`, `skill.*`, `agent.*`)
+ *     and the cross-entity `CatalogManager` facade (`facade.*`).
+ *   - DTOs (`SkillPojo`, `AgentPojo`, `McpMetadata`, `SkillEntry`,
+ *     `BlockedReason`, …) are the wire shapes returned by the facade
+ *     for HTTP serialisation; they intentionally avoid leaking
+ *     entity-class methods.
+ *   - Errors are exported per-entity (`SkillNotFoundError`,
+ *     `AgentFrontmatterError`, `McpInvalidJsonError`, …) so HTTP
+ *     status mapping in `server/_shared.ts` can name them.
  *
- * The legacy surface is the larger of the two by line count; over
- * time consumers will migrate to the new entity classes and the
- * compat re-exports can be removed.
+ * Note: short alias error names like `NotFound`, `OriginConflictError`,
+ * `NameInvalid`, `FrontmatterError`, `InvalidMcpJsonError` were
+ * removed. They masqueraded as cross-entity types but were Skill-only
+ * aliases, and the abstract base error sets `.name = new.target.name`
+ * — so any `switch (err.name)` keyed off the alias would never match a
+ * real instance. Use the per-entity class names instead.
  */
 
-// ─── Compat: catalog-fetcher re-exports ──────────────
+// ─── catalog-fetcher re-exports ─────────────────────
 export {
   FetchError,
   type FetcherRegistry,
@@ -24,18 +30,8 @@ export {
   type ParsedOrigin,
   parseOrigin,
 } from "@emploke/catalog-fetcher";
-// ─── Compat: errors (preserve legacy names) ──────────
-//
-// Old code imports per-entity errors directly. We re-export them
-// at the top level so HTTP error-status mapping in
-// server/_shared.ts can name them.
-//
-// Note: short alias names like `NotFound`, `OriginConflictError`,
-// `NameInvalid`, `FrontmatterError`, `InvalidMcpJsonError` were
-// removed. They masqueraded as cross-entity types but were Skill-only
-// aliases, and the abstract base error sets `.name = new.target.name`
-// — so any `switch (err.name)` keyed off the alias would never match a
-// real instance. Use the per-entity class names instead.
+
+// ─── Errors ─────────────────────────────────────────
 export {
   AgentFrontmatterError,
   AgentNameInvalidError,
@@ -43,23 +39,11 @@ export {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./agent/errors.js";
+// ─── Entities + service namespaces ──────────────────
 export type { AgentFetcher } from "./agent/index.js";
-// ─── Namespaces ─────────────────────────────────────────────
 export * as agent from "./agent/index.js";
-
-// ─── Top-level entity classes (rich API) ───────────────
 export { Agent } from "./agent/index.js";
-// ─── Compat: utility functions ─────────────────────────
-export { applyFrontmatterPatch } from "./compat/frontmatter-patch.js";
-export {
-  type AgentInstallBody,
-  type McpInstallBody,
-  type SkillInstallBody,
-  validateAgentInstallInput,
-  validateMcpInstallInput,
-  validateSkillInstallInput,
-} from "./compat/install-input.js";
-// ─── Compat: POJO types (legacy consumer shape) ────────
+// ─── Wire DTOs (HTTP-shaped projections) ────────────
 export type {
   Agent as AgentPojo,
   AgentEntry,
@@ -71,8 +55,6 @@ export type {
   DependencyKind,
   DependencyRef,
   EntryStatus,
-  InstallEntryOpts,
-  InstallMcpOpts,
   McpMetadata,
   MissingDep,
   ResolvedMcp,
@@ -81,9 +63,9 @@ export type {
   SkillEntry,
   SkillMetadataPatch,
   SkillResolveResult,
-} from "./compat/types.js";
+} from "./dto/types.js";
+// ─── Facade ─────────────────────────────────────────
 export * as facade from "./facade/index.js";
-// ─── Top-level facade ───────────────────────────────────
 export {
   type CatalogConflict,
   type CatalogInstalledEntry,
@@ -99,18 +81,18 @@ export {
   type McpResolvedNode,
   type OrphanedEntry,
 } from "./facade/index.js";
+// ─── Frontmatter utility (markdown patch) ───────────
+export { applyFrontmatterPatch } from "./frontmatter/patch.js";
 export {
   McpInvalidJsonError,
   McpNameInvalidError,
   McpNotFoundError,
   McpOriginConflictError,
 } from "./mcp/errors.js";
-// ─── Entity-fetcher contract types ─────────────────────
 export type { McpFetcher } from "./mcp/index.js";
 export * as mcp from "./mcp/index.js";
 export { Mcp } from "./mcp/index.js";
-
-// ─── Compat: codec re-exports ─────────────────────────
+// ─── MCP file format codec ──────────────────────────
 export {
   type McpFile as McpFileShape,
   type McpMeta,
@@ -132,7 +114,8 @@ export {
 export type { SkillFetcher } from "./skill/index.js";
 export * as skill from "./skill/index.js";
 export { Skill } from "./skill/index.js";
-// ─── Compat: validate utilities ─────────────────────
+
+// ─── FQN / scope / shortName helpers ────────────────
 export {
   DEFAULT_SCOPE,
   makeFqn,
@@ -141,3 +124,12 @@ export {
   validateScope,
   validateShortName,
 } from "./skill/validate.js";
+// ─── Install-body validators (HTTP boundary) ────────
+export {
+  type AgentInstallBody,
+  type McpInstallBody,
+  type SkillInstallBody,
+  validateAgentInstallInput,
+  validateMcpInstallInput,
+  validateSkillInstallInput,
+} from "./validate/install-input.js";

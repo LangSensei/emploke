@@ -68,15 +68,7 @@ export interface TaskFailure {
 
 // ─── TaskManager-side types ───────────────────────────────────
 
-/**
- * Pluggable logger surface. Re-exported from `@emploke/logger` so we
- * keep a single canonical definition; this re-export exists for source
- * compatibility with callers that previously imported `Logger` from
- * `@emploke/task` directly.
- */
-export type { Logger } from "@emploke/logger";
-
-import type { Logger as _Logger } from "@emploke/logger";
+import type { Logger } from "@emploke/logger";
 import type { TaskRepository } from "./repositories/repository.js";
 
 /** Constructor options for `TaskManager`. */
@@ -102,7 +94,7 @@ export interface TaskManagerConfig {
    * path; the workspace pkg does.
    */
   readonly repository: TaskRepository;
-  readonly logger?: _Logger;
+  readonly logger?: Logger;
   /** Test seam: clock injection. */
   readonly now?: () => Date;
   /** Test seam: random source for id generation. */

@@ -2,6 +2,7 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CatalogManager } from "@emploke/catalog";
+import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 import { readAgentName } from "./agent-file.js";
@@ -19,7 +20,6 @@ import type {
   CreateSessionOpts,
   DeleteSessionOpts,
   ListSessionOpts,
-  Logger,
   SessionManagerConfig,
   SessionView,
 } from "./types.js";

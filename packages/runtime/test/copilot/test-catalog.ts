@@ -11,10 +11,10 @@ import { type AgentResolveResult, CatalogManager } from "@emploke/catalog";
  * Each fixture entry is a map of relative paths → file contents.
  * AGENTS.md / SKILL.md must be present where applicable. The helper
  * writes fixtures into a temporary "source" directory (one per
- * entry), then drives `catalog.installAgentFromOrigin` /
- * `installSkillFromOrigin` / `installMcp` to register them through
- * the normal install path. This keeps test fixtures honest — they
- * exercise the real install flow rather than bypassing it.
+ * entry), then drives `catalog.installAgent` / `installSkill` /
+ * `installMcpFromOrigin` to register them through the normal install
+ * path. This keeps test fixtures honest — they exercise the real
+ * install flow rather than bypassing it.
  *
  * Fixture keys MAY be either short names (auto-prefixed with
  * `public/`) or full FQNs (`scope/name`). MCP fixture keys MUST be
@@ -95,7 +95,7 @@ export async function makeTestCatalog(
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
     }
-    await catalog.installSkillFromOrigin(`file:${dir}`);
+    await catalog.installSkill(`file:${dir}`);
   }
   for (const [shortOrFqn, files] of Object.entries(fixtures.agents ?? {})) {
     const fqn = toFqn(shortOrFqn);
@@ -107,7 +107,7 @@ export async function makeTestCatalog(
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
     }
-    await catalog.installAgentFromOrigin(`file:${dir}`);
+    await catalog.installAgent(`file:${dir}`);
   }
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {

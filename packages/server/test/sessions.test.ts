@@ -47,7 +47,7 @@ function stubManager(overrides: Partial<Record<keyof SessionManager, unknown>>):
 describe("sessionsRoutes", () => {
   it("GET / lists sessions", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/");
+    const res = await sessionsRoutes(() => m).request("/");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
@@ -59,21 +59,21 @@ describe("sessionsRoutes", () => {
 
   it("GET /?agent=demo passes agent filter", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?agent=demo");
+    const res = await sessionsRoutes(() => m).request("/?agent=demo");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith({ agent: "demo" });
   });
 
   it("GET /?createdSince=ISO passes the timestamp through", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?createdSince=2026-05-01T00:00:00.000Z");
+    const res = await sessionsRoutes(() => m).request("/?createdSince=2026-05-01T00:00:00.000Z");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith({ createdSince: "2026-05-01T00:00:00.000Z" });
   });
 
   it("GET /?createdSince combines with agent", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request(
+    const res = await sessionsRoutes(() => m).request(
       "/?agent=demo&createdSince=2026-05-01T00:00:00.000Z",
     );
     expect(res.status).toBe(200);
@@ -85,7 +85,7 @@ describe("sessionsRoutes", () => {
 
   it("GET /?createdSince=garbage returns 400", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?createdSince=not-a-date");
+    const res = await sessionsRoutes(() => m).request("/?createdSince=not-a-date");
     expect(res.status).toBe(400);
     expect(m.list).not.toHaveBeenCalled();
     const body = await res.json();
@@ -99,21 +99,21 @@ describe("sessionsRoutes", () => {
     // exclude valid 2026-... sessions. Validate-then-normalize protects
     // the manager from any Date.parse-able input format.
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?createdSince=Jan 1 2024 UTC");
+    const res = await sessionsRoutes(() => m).request("/?createdSince=Jan 1 2024 UTC");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith({ createdSince: "2024-01-01T00:00:00.000Z" });
   });
 
   it("GET /?activeSince=ISO passes the timestamp through", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?activeSince=2026-05-01T00:00:00.000Z");
+    const res = await sessionsRoutes(() => m).request("/?activeSince=2026-05-01T00:00:00.000Z");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith({ activeSince: "2026-05-01T00:00:00.000Z" });
   });
 
   it("GET /?activeSince=garbage returns 400", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?activeSince=not-a-date");
+    const res = await sessionsRoutes(() => m).request("/?activeSince=not-a-date");
     expect(res.status).toBe(400);
     expect(m.list).not.toHaveBeenCalled();
     const body = await res.json();
@@ -122,7 +122,7 @@ describe("sessionsRoutes", () => {
 
   it("GET /?createdSince + ?activeSince combine", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request(
+    const res = await sessionsRoutes(() => m).request(
       "/?createdSince=2026-01-01T00:00:00.000Z&activeSince=2026-04-01T00:00:00.000Z",
     );
     expect(res.status).toBe(200);
@@ -138,14 +138,14 @@ describe("sessionsRoutes", () => {
     // correct for canonical ISO 8601 strings. Validates symmetry with
     // the createdSince canonicalisation above.
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/?activeSince=Jan 1 2024 UTC");
+    const res = await sessionsRoutes(() => m).request("/?activeSince=Jan 1 2024 UTC");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith({ activeSince: "2024-01-01T00:00:00.000Z" });
   });
 
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/", { method: "POST", body: "not json" });
+    const res = await sessionsRoutes(() => m).request("/", { method: "POST", body: "not json" });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/JSON/);
@@ -153,7 +153,7 @@ describe("sessionsRoutes", () => {
 
   it("POST / requires agent string", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
@@ -163,7 +163,7 @@ describe("sessionsRoutes", () => {
 
   it("POST / rejects non-string runtime", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo", runtime: 42 }),
@@ -173,7 +173,7 @@ describe("sessionsRoutes", () => {
 
   it("POST / creates session and returns 201", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo" }),
@@ -184,7 +184,7 @@ describe("sessionsRoutes", () => {
 
   it("POST / forwards optional runtime override", async () => {
     const m = stubManager({});
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo", runtime: "claude" }),
@@ -199,7 +199,7 @@ describe("sessionsRoutes", () => {
         throw new AgentNotFoundError("ghost");
       }),
     });
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "ghost" }),
@@ -215,7 +215,7 @@ describe("sessionsRoutes", () => {
         throw new UnknownRuntimeError("gemini");
       }),
     });
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo", runtime: "gemini" }),
@@ -231,7 +231,7 @@ describe("sessionsRoutes", () => {
         throw new RuntimeProvisionFailed("copilot", "/tmp/wd", new Error("mkdir failed"));
       }),
     });
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo" }),
@@ -247,7 +247,7 @@ describe("sessionsRoutes", () => {
         throw new SessionIdAllocationFailedError(5);
       }),
     });
-    const res = await sessionsRoutes(m).request("/", {
+    const res = await sessionsRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "demo" }),
@@ -259,7 +259,7 @@ describe("sessionsRoutes", () => {
 
   it("GET /:id returns 404 when not found", async () => {
     const m = stubManager({ get: vi.fn(async () => null) });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05");
+    const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05");
     expect(res.status).toBe(404);
   });
 
@@ -269,7 +269,7 @@ describe("sessionsRoutes", () => {
         throw new InvalidSessionIdError("bad");
       }),
     });
-    const res = await sessionsRoutes(m).request("/bad");
+    const res = await sessionsRoutes(() => m).request("/bad");
     expect(res.status).toBe(400);
   });
 
@@ -279,14 +279,14 @@ describe("sessionsRoutes", () => {
         throw new SessionNotFoundError("20260508-9dfbdf05");
       }),
     });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05", { method: "DELETE" });
+    const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05", { method: "DELETE" });
     expect(res.status).toBe(404);
   });
 
   it("DELETE /:id?purge=1 propagates the purge flag (full wipe)", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", {
+    const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05?purge=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
@@ -296,7 +296,7 @@ describe("sessionsRoutes", () => {
   it("DELETE /:id without ?purge=1 archives (purge defaults to false)", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05", { method: "DELETE" });
+    const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05", { method: "DELETE" });
     expect(res.status).toBe(204);
     expect(del).toHaveBeenCalledWith("20260508-9dfbdf05", { purge: false });
   });
@@ -307,7 +307,7 @@ describe("sessionsRoutes", () => {
         throw new RuntimeStateDeletionFailed("copilot", "20260508-9dfbdf05", new Error("EBUSY"));
       }),
     });
-    const res = await sessionsRoutes(m).request("/20260508-9dfbdf05?purge=1", {
+    const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05?purge=1", {
       method: "DELETE",
     });
     expect(res.status).toBe(409);
@@ -317,7 +317,7 @@ describe("sessionsRoutes", () => {
     it("spawns the launch command", async () => {
       const m = stubManager({});
       const spawn = vi.fn(async () => ({ launcher: "wt" as const }));
-      const res = await sessionsRoutes(m, spawn).request("/20260508-9dfbdf05/spawn", {
+      const res = await sessionsRoutes(() => m, spawn).request("/20260508-9dfbdf05/spawn", {
         method: "POST",
       });
       expect(res.status).toBe(200);
@@ -335,7 +335,7 @@ describe("sessionsRoutes", () => {
       // the route must thread the flag down so the runtime sees it.
       const m = stubManager({});
       const spawn = vi.fn(async () => ({ launcher: "wt" as const }));
-      const res = await sessionsRoutes(m, spawn).request("/20260508-9dfbdf05/spawn", {
+      const res = await sessionsRoutes(() => m, spawn).request("/20260508-9dfbdf05/spawn", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ remote: true }),
@@ -348,7 +348,7 @@ describe("sessionsRoutes", () => {
       // Defends the wire contract — clients should send a literal
       // boolean, not a string or number, even when the value coerces.
       const m = stubManager({});
-      const res = await sessionsRoutes(m).request("/20260508-9dfbdf05/spawn", {
+      const res = await sessionsRoutes(() => m).request("/20260508-9dfbdf05/spawn", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ remote: "yes" }),
@@ -361,7 +361,7 @@ describe("sessionsRoutes", () => {
       const spawn = vi.fn(async () => {
         throw new Error("ENOENT: terminal not found");
       });
-      const res = await sessionsRoutes(m, spawn).request("/20260508-9dfbdf05/spawn", {
+      const res = await sessionsRoutes(() => m, spawn).request("/20260508-9dfbdf05/spawn", {
         method: "POST",
       });
       // 200 because the request itself succeeded; the body carries ok:false
@@ -380,7 +380,7 @@ describe("sessionsRoutes", () => {
         }),
       });
       const spawn = vi.fn();
-      const res = await sessionsRoutes(m, spawn).request("/20260508-9dfbdf05/spawn", {
+      const res = await sessionsRoutes(() => m, spawn).request("/20260508-9dfbdf05/spawn", {
         method: "POST",
       });
       expect(res.status).toBe(404);
@@ -394,7 +394,7 @@ describe("sessionsRoutes", () => {
         }),
       });
       const spawn = vi.fn();
-      const res = await sessionsRoutes(m, spawn).request("/bad/spawn", { method: "POST" });
+      const res = await sessionsRoutes(() => m, spawn).request("/bad/spawn", { method: "POST" });
       expect(res.status).toBe(400);
       expect(spawn).not.toHaveBeenCalled();
     });
@@ -417,7 +417,10 @@ describe("sessionsRoutes", () => {
       // param `:wsid` instead, but that wouldn't catch a future regression;
       // the production wiring really does use `:id` on the outer mount.
       const parent = new Hono();
-      parent.route("/api/workspaces/:id/sessions", sessionsRoutes(m));
+      parent.route(
+        "/api/workspaces/:id/sessions",
+        sessionsRoutes(() => m),
+      );
       const wsId = "3e8b2d26-3cac-4d0e-9878-f1abe542e2d0"; // a UUID
       const sid = "20260508-9dfbdf05";
       const res = await parent.request(`/api/workspaces/${wsId}/sessions/${sid}`, {
