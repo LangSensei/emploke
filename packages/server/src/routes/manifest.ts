@@ -43,7 +43,7 @@ import type {
   Skill as SkillPojo,
 } from "@emploke/catalog";
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
-import type { Session, SessionRecord } from "@emploke/session";
+import type { SessionView } from "@emploke/session";
 import type { Task, TaskStatus } from "@emploke/task";
 import type { WorkspaceUpdatePatch } from "@emploke/workspace";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
@@ -352,13 +352,13 @@ export const ROUTES = {
   // ── sessions (workspace-scoped) ────────────────────────────────────
   "sessions.list": defineRoute<
     { params: WorkspacePathParams; query: SessionListQuery },
-    readonly Session[]
+    readonly SessionView[]
   >("GET", "/api/workspaces/:id/sessions"),
   "sessions.create": defineRoute<
     { params: WorkspacePathParams; body: SessionCreateBody },
-    SessionRecord
+    SessionView
   >("POST", "/api/workspaces/:id/sessions"),
-  "sessions.get": defineRoute<{ params: SessionPathParams }, SessionRecord>(
+  "sessions.get": defineRoute<{ params: SessionPathParams }, SessionView>(
     "GET",
     "/api/workspaces/:id/sessions/:sid",
   ),

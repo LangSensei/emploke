@@ -1,4 +1,5 @@
-import type { ListTaskOpts, Task } from "../types.js";
+import type { Task } from "../task-entity.js";
+import type { ListTaskOpts } from "../types.js";
 
 /**
  * Storage contract for tasks. Implementations decide where the task

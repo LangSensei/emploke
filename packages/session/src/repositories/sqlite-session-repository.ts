@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { InvalidSessionIdError, SessionCorruptedError } from "../errors.js";
+import { InvalidSessionIdError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
-import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";
+import { Session } from "../session-entity.js";
+import type { ListSessionStateOpts, SessionRepository } from "./repository.js";
 
 /**
  * Current schema version for the session pkg's slice of the shared
@@ -44,6 +45,13 @@ interface SessionRow {
  * per workspace stays at one. PRAGMAs (journal_mode, synchronous, ...)
  * are the caller's responsibility — the workspace pkg sets them once
  * on the shared connection.
+ *
+ * Row-to-entity decoding is delegated to
+ * {@link Session.fromStored}: the repository is the source of
+ * bytes, the entity is the source of validation. Local helper
+ * `parseRow` only handles concerns SQLite exposes (nullable
+ * `last_launch_mode` column ↔ optional entity field) before handing
+ * the rest to the entity factory.
  */
 export class SqliteSessionRepository implements SessionRepository {
   private readonly db: DatabaseSync;
@@ -60,7 +68,7 @@ export class SqliteSessionRepository implements SessionRepository {
     // intentionally empty
   }
 
-  async read(id: string): Promise<SessionState | null> {
+  async read(id: string): Promise<Session | null> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     const row = this.db
       .prepare(
@@ -68,10 +76,10 @@ export class SqliteSessionRepository implements SessionRepository {
       )
       .get(id) as SessionRow | undefined;
     if (row === undefined) return null;
-    return rowToState(id, row);
+    return parseRow(id, row);
   }
 
-  async save(id: string, state: SessionState): Promise<void> {
+  async save(id: string, state: Session): Promise<void> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     this.db
       .prepare(
@@ -118,7 +126,7 @@ export class SqliteSessionRepository implements SessionRepository {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
-  async list(opts: ListSessionStateOpts = {}): Promise<{ id: string; state: SessionState }[]> {
+  async list(opts: ListSessionStateOpts = {}): Promise<{ id: string; state: Session }[]> {
     let sql = "SELECT id, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions";
     const params: string[] = [];
     if (opts.createdSince !== undefined) {
@@ -126,10 +134,10 @@ export class SqliteSessionRepository implements SessionRepository {
       params.push(opts.createdSince);
     }
     const rows = this.db.prepare(sql).all(...params) as unknown as SessionRow[];
-    const out: { id: string; state: SessionState }[] = [];
+    const out: { id: string; state: Session }[] = [];
     for (const row of rows) {
       try {
-        out.push({ id: row.id, state: rowToState(row.id, row) });
+        out.push({ id: row.id, state: parseRow(row.id, row) });
       } catch (err) {
         // Corrupted row — drop from list. Matches the old
         // FsSessionRepository.list behaviour (silently skip a single
@@ -182,30 +190,21 @@ export class SqliteSessionRepository implements SessionRepository {
   }
 }
 
-function rowToState(id: string, row: SessionRow): SessionState {
-  if (typeof row.runtime !== "string" || row.runtime.length === 0) {
-    throw new SessionCorruptedError(id, "missing or invalid 'runtime'");
-  }
-  if (typeof row.created_at !== "string" || row.created_at.length === 0) {
-    throw new SessionCorruptedError(id, "missing or invalid 'created_at'");
-  }
-  if (row.runtime_session_id !== null && typeof row.runtime_session_id !== "string") {
-    throw new SessionCorruptedError(id, "'runtime_session_id' must be string or null");
-  }
-  if (
-    row.last_launch_mode !== null &&
-    row.last_launch_mode !== "local" &&
-    row.last_launch_mode !== "remote"
-  ) {
-    throw new SessionCorruptedError(id, "'last_launch_mode' must be 'local', 'remote', or null");
-  }
-  const out: SessionState = {
+/**
+ * Decode a `sessions` row into a {@link Session} entity. The
+ * nullable `last_launch_mode` column is mapped to the optional entity
+ * field; everything else (id presence, runtime non-empty, ISO
+ * timestamps, mode enum values) is validated by
+ * {@link Session.fromStored}.
+ */
+function parseRow(id: string, row: SessionRow): Session {
+  return Session.fromStored({
+    id,
     runtime: row.runtime,
     createdAt: row.created_at,
     runtimeSessionId: row.runtime_session_id,
-  };
-  if (row.last_launch_mode !== null) {
-    return { ...out, lastLaunchMode: row.last_launch_mode };
-  }
-  return out;
+    ...(row.last_launch_mode !== null
+      ? { lastLaunchMode: row.last_launch_mode as "local" | "remote" }
+      : {}),
+  });
 }

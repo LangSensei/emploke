@@ -1,43 +1,6 @@
-/**
- * On-storage shape for a session — the slice of `Session` that the
- * `SessionRepository` actually persists. Excludes:
- *
- *   - `id`: the session's identity is the storage key, not duplicated
- *     in the value
- *   - `agent`: lives in the runtime-baked `AGENTS.md`, not in
- *     repository-managed metadata (the manager combines the two when
- *     producing a full `Session`)
- *   - `lastActiveAt` / `preview`: refreshed live from the runtime on
- *     every read, never persisted (would go stale immediately)
- *   - `workdir`: derived by the manager from the workspace layout, not
- *     stored
- *   - `schemaVersion`: an FS-Repository wire-format detail, not part
- *     of the domain
- *
- * Renamed from the old `PersistedSession` to break the old
- * "Persisted*" naming convention which leaked storage shape into the
- * public surface. The new name reflects what the type *is* (the
- * persistent state of a session) without saying *how* it's stored.
- */
-export interface SessionState {
-  /** Runtime kind (e.g. `"copilot"`, `"gemini"`). */
-  readonly runtime: string;
-  /** ISO 8601 UTC timestamp at session creation. */
-  readonly createdAt: string;
-  /**
-   * Opaque id minted by the runtime for its own per-session state.
-   * `null` when not yet known (e.g. discovery-only runtimes that lazy-mint).
-   */
-  readonly runtimeSessionId: string | null;
-  /**
-   * Mode the user chose for the most recent successful `buildInteractiveLaunch`
-   * call against this session, or `undefined` if the session has never
-   * been launched. Persisted so the dashboard can default the next
-   * launch to the user's last intent (e.g. "this session is one I
-   * always run remotely"), without forcing a global preference.
-   */
-  readonly lastLaunchMode?: "local" | "remote";
-}
+import type { Session } from "../session-entity.js";
+
+export { Session } from "../session-entity.js";
 
 /**
  * Filter options for `SessionRepository.list`. Only fields the
@@ -87,14 +50,14 @@ export interface SessionRepository {
    * record exists. Throws a `SessionCorruptedError` when the on-disk
    * shape is invalid.
    */
-  read(id: string): Promise<SessionState | null>;
+  read(id: string): Promise<Session | null>;
 
   /**
    * Insert or replace the session's state. Atomic from a reader's
    * perspective: concurrent `read` calls see either the previous value
    * or the new one, never partial bytes.
    */
-  save(id: string, state: SessionState): Promise<void>;
+  save(id: string, state: Session): Promise<void>;
 
   /**
    * Atomically update *only* the `lastLaunchMode` column for `id`,
@@ -129,5 +92,5 @@ export interface SessionRepository {
    * post-filters by `agent` (which requires reading AGENTS.md) before
    * exposing the result to callers.
    */
-  list(opts?: ListSessionStateOpts): Promise<{ id: string; state: SessionState }[]>;
+  list(opts?: ListSessionStateOpts): Promise<{ id: string; state: Session }[]>;
 }

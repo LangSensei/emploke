@@ -2,18 +2,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
-import type { ListTaskOpts, Task, TaskStatus } from "../types.js";
+import { Task } from "../task-entity.js";
+import type { ListTaskOpts, TaskStatus } from "../types.js";
 import type { TaskRepository } from "./repository.js";
 
 const TASK_PKG_SCHEMA_VERSION = 1;
-
-const VALID_STATUSES = new Set<TaskStatus>([
-  "not_started",
-  "running",
-  "success",
-  "failure",
-  "cancelled",
-]);
 
 interface TaskRow {
   id: string;
@@ -46,6 +39,12 @@ interface TaskRow {
  * `Task.metadata.runtime` is promoted to a first-class column for
  * indexed filtering; every other key in `metadata` round-trips
  * verbatim through the JSON `metadata` column.
+ *
+ * Row-to-entity decoding is delegated to {@link Task.fromStored}: the
+ * repository is the source of bytes, the entity is the source of
+ * validation. Local helper `parseRow` only handles concerns SQLite
+ * exposes (`metadata` is a JSON string column, `runtime` is promoted
+ * out of the JSON bag) before handing the rest to the entity factory.
  */
 export class SqliteTaskRepository implements TaskRepository {
   private readonly db: DatabaseSync;
@@ -72,7 +71,7 @@ export class SqliteTaskRepository implements TaskRepository {
       )
       .get(id) as TaskRow | undefined;
     if (row === undefined) return null;
-    return rowToTask(id, row);
+    return parseRow(id, row);
   }
 
   async save(task: Task): Promise<void> {
@@ -150,7 +149,7 @@ export class SqliteTaskRepository implements TaskRepository {
     const out: Task[] = [];
     for (const row of rows) {
       try {
-        out.push(rowToTask(row.id, row));
+        out.push(parseRow(row.id, row));
       } catch (err) {
         this.logger.warn(
           {
@@ -204,46 +203,49 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 }
 
-function rowToTask(id: string, row: TaskRow): Task {
-  if (typeof row.agent !== "string") {
-    throw new CorruptedTaskError(id, "task.agent must be a string");
-  }
-  if (typeof row.instructions !== "string") {
-    throw new CorruptedTaskError(id, "task.instructions must be a string");
-  }
-  if (typeof row.status !== "string" || !VALID_STATUSES.has(row.status as TaskStatus)) {
-    throw new CorruptedTaskError(
-      id,
-      `task.status must be one of: ${[...VALID_STATUSES].join(", ")}`,
-    );
-  }
-  if (typeof row.created_at !== "string") {
-    throw new CorruptedTaskError(id, "task.created_at must be a string");
-  }
-  let metaParsed: Record<string, unknown>;
+/**
+ * Decode a `tasks` row into a {@link Task} entity. Storage-shape
+ * concerns are handled here:
+ *   - the `metadata` column is JSON-encoded text, so this function
+ *     must parse it *and* reject syntactically-invalid JSON or
+ *     non-object roots before handing the value to the entity factory
+ *     (which only knows about typed JS values, not the JSON wire
+ *     format we chose for this column);
+ *   - the `runtime` value is a promoted column extracted from the
+ *     metadata bag at save time; we re-fold it back into the bag here
+ *     so the entity sees the same shape callers passed in originally.
+ *
+ * Everything else (id format, status enum, ISO timestamps,
+ * metadata-is-an-object) is validated by {@link Task.fromStored}.
+ */
+function parseRow(id: string, row: TaskRow): Task {
+  let metaParsed: unknown;
   try {
-    const v = JSON.parse(row.metadata) as unknown;
-    if (!v || typeof v !== "object" || Array.isArray(v)) {
-      throw new Error("expected an object");
-    }
-    metaParsed = v as Record<string, unknown>;
+    metaParsed = JSON.parse(row.metadata);
   } catch (err) {
+    // Storage-side concern: the wire format for the metadata column is
+    // JSON, and a parse failure means the column was tampered with or
+    // bit-rot. Surface as a typed corruption so list() can skip + warn
+    // and read() can 5xx with a meaningful reason.
     throw new CorruptedTaskError(id, `task.metadata is not valid JSON: ${(err as Error).message}`);
   }
-  if (row.runtime !== null) {
-    metaParsed = { ...metaParsed, runtime: row.runtime };
+  if (metaParsed === null || typeof metaParsed !== "object" || Array.isArray(metaParsed)) {
+    throw new CorruptedTaskError(id, "task.metadata must decode to an object");
   }
-  const task: Task = {
+  let metadata: Record<string, unknown> = metaParsed as Record<string, unknown>;
+  if (row.runtime !== null) {
+    metadata = { ...metadata, runtime: row.runtime };
+  }
+  return Task.fromStored({
     id,
     agent: row.agent,
     instructions: row.instructions,
     status: row.status as TaskStatus,
-    metadata: metaParsed,
+    metadata,
     createdAt: row.created_at,
     ...(row.started_at !== null ? { startedAt: row.started_at } : {}),
     ...(row.ended_at !== null ? { endedAt: row.ended_at } : {}),
     ...(row.result_output !== null ? { result: { output: row.result_output } } : {}),
     ...(row.failure_error !== null ? { failure: { error: row.failure_error } } : {}),
-  };
-  return task;
+  });
 }

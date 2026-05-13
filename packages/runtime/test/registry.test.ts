@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LaunchCommand, Runtime, Session } from "../src/index.js";
+import type { LaunchCommand, Runtime } from "../src/index.js";
 import { RuntimeRegistry, UnknownRuntimeError } from "../src/index.js";
 
 function fakeRuntime(kind: string): Runtime {
@@ -11,8 +11,11 @@ function fakeRuntime(kind: string): Runtime {
     async refresh() {
       return null;
     },
-    async buildInteractiveLaunch(s: Session): Promise<LaunchCommand> {
-      return { cmd: "noop", args: [], cwd: s.workdir, display: "noop" };
+    async buildInteractiveLaunch(
+      _runtimeSessionId: string | null,
+      workdir: string,
+    ): Promise<LaunchCommand> {
+      return { cmd: "noop", args: [], cwd: workdir, display: "noop" };
     },
     async deleteState() {},
   };

@@ -4,11 +4,8 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
-import { apply } from "./apply.js";
-import { create as createTask } from "./create.js";
 import {
   AgentNotFoundError,
-  CorruptedTaskError,
   EntryNotReadyError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
@@ -17,8 +14,9 @@ import {
 import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
+import { Task } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
-import type { DispatchOpts, ListTaskOpts, Logger, Task, TaskManagerConfig } from "./types.js";
+import type { DispatchOpts, ListTaskOpts, Logger, TaskManagerConfig } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
@@ -255,7 +253,7 @@ export class TaskManager {
     //    Task FSM, `fail` is only legal from `running`, so we'd have to
     //    persist a status the kernel doesn't permit anyway).
     const createdAt = this.now().toISOString();
-    const initial = createTask({
+    const initial = Task.create({
       id,
       agent: agentName,
       instructions,
@@ -328,11 +326,10 @@ export class TaskManager {
     if (handle.runtimeSessionId !== undefined) {
       startMetaPatch.runtimeSessionId = handle.runtimeSessionId;
     }
-    const running = apply(
-      initial,
-      { type: "start", metadata: startMetaPatch },
-      this.now().toISOString(),
-    );
+    const running = initial.start({
+      metadata: startMetaPatch,
+      now: this.now().toISOString(),
+    });
     await this.persist(workdir, running);
 
     // 7. Wire post-spawn background work: watch for exit and persist
@@ -742,14 +739,9 @@ export class TaskManager {
         }
 
         try {
-          const failed = apply(
-            task,
-            {
-              type: "fail",
-              error: "orphaned (server crashed before this task ended)",
-            },
-            this.now().toISOString(),
-          );
+          const failed = task.fail("orphaned (server crashed before this task ended)", {
+            now: this.now().toISOString(),
+          });
           await this.persist(workdir, failed);
         } catch (err) {
           this.logger.warn(
@@ -856,24 +848,22 @@ export class TaskManager {
 
   // ─── internals ───────────────────────────────────────────
 
-  /** Read + validate the persisted task at `workdir`, or null on miss. */
+  /**
+   * Read + validate the persisted task at `workdir`, or null when no
+   * row exists for `id`.
+   *
+   * `CorruptedTaskError` from the repository is **propagated**, not
+   * swallowed. The route layer maps it to 5xx so operators see the
+   * corruption (a silent 404 would let the dashboard render "task
+   * gone" for what is really tampered/bit-rotted metadata, hiding the
+   * problem until next save round-trips an empty `{}` over the corrupt
+   * blob). The `delete --purge` caller catches the propagated error
+   * and falls through to the stat-based escape hatch — see `delete()`
+   * above. The `list()` path does NOT go through this method; it
+   * skip+warns at the repo layer (see `SqliteTaskRepository.list`).
+   */
   private async loadTask(id: string, _workdir: string): Promise<Task | null> {
-    let task: Task | null;
-    try {
-      task = await this.repository.read(id);
-    } catch (err) {
-      if (err instanceof CorruptedTaskError) {
-        this.logger.warn(
-          {
-            taskId: id,
-            reason: err.reason,
-          },
-          "tasks: skipping corrupted task row",
-        );
-        return null;
-      }
-      throw err;
-    }
+    const task = await this.repository.read(id);
     if (task === null) return null;
     if (task.id !== id) {
       // Defensive: directory name and id-in-row disagree. Trust the
@@ -948,7 +938,7 @@ export class TaskManager {
     if (meta.title !== null) enriched.title = meta.title;
     enriched.userTitled = meta.userTitled;
     if (meta.lastActiveAt !== null) enriched.lastActiveAtRuntime = meta.lastActiveAt;
-    return { ...task, metadata: enriched };
+    return task.withMetadata(enriched);
   }
 
   /** Atomic write of the persisted record. */
@@ -975,17 +965,15 @@ export class TaskManager {
         // real artifacts live on disk under `<workdir>/` and the runtime's
         // event stream sits at `<workdir>/session/`. See the JSDoc on
         // `TaskResult` in ./types.ts and the long-term design discussion.
-        next = apply(
-          running,
-          { type: "complete", output: "", metadata: metaPatch },
-          this.now().toISOString(),
-        );
+        next = running.complete("", {
+          metadata: metaPatch,
+          now: this.now().toISOString(),
+        });
       } else {
-        next = apply(
-          running,
-          { type: "fail", error: decision.reason, metadata: metaPatch },
-          this.now().toISOString(),
-        );
+        next = running.fail(decision.reason, {
+          metadata: metaPatch,
+          now: this.now().toISOString(),
+        });
       }
       await this.persist(workdir, next);
     } catch (err) {

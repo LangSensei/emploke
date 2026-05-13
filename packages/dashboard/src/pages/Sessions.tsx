@@ -6,7 +6,7 @@ import {
   listRuntimes,
   listSessions,
   type ServerConfig,
-  type SessionRecord,
+  type SessionView,
   spawnSession,
   type WorkspaceListItem,
 } from "../api";
@@ -38,7 +38,7 @@ interface FallbackInfo {
 }
 
 interface DeleteModalState {
-  session: SessionRecord;
+  session: SessionView;
   /**
    * `true` = purge mode: also wipe the workdir and the runtime adapter's
    * per-session state. `false` = archive (default): only the metadata
@@ -100,7 +100,7 @@ function presetToActiveSince(preset: TimePreset, now: Date = serverNow()): strin
  * incantation in a modal so the user can still copy-paste it.
  */
 export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }: SessionsProps) {
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [sessions, setSessions] = useState<SessionView[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [filter, setFilter] = useState<string>(ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
@@ -196,7 +196,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
     }
   };
 
-  const onLaunch = async (s: SessionRecord, opts: { remote?: boolean } = {}) => {
+  const onLaunch = async (s: SessionView, opts: { remote?: boolean } = {}) => {
     if (launchingId !== null) return;
     setLaunchingId(s.id);
     setError(null);
@@ -463,7 +463,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
 // ─── List item ───────────────────────────────────────────────
 
 interface ListItemProps {
-  session: SessionRecord;
+  session: SessionView;
   launching: boolean;
   onLaunch: (opts: { remote?: boolean }) => void;
   onDelete: () => void;
@@ -655,7 +655,7 @@ function ResumeSplitButton({
   );
 }
 
-function SessionActivity({ session }: { session: SessionRecord }) {
+function SessionActivity({ session }: { session: SessionView }) {
   if (session.lastActiveAt === null) {
     return <span className="muted">never run</span>;
   }
@@ -859,7 +859,7 @@ function FallbackModalBody({ display, reason, onClose }: FallbackModalBodyProps)
 // ─── Delete modal ─────────────────────────────────────────────
 
 interface DeleteModalBodyProps {
-  session: SessionRecord;
+  session: SessionView;
   purge: boolean;
   busy: boolean;
   onToggle: (v: boolean) => void;

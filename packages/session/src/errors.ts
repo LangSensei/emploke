@@ -56,9 +56,14 @@ export class AgentNotFoundError extends SessionsError {
 }
 
 /**
- * The workdir exists but its `session.json` is missing, malformed, or
- * declares an unsupported `schemaVersion`. Surfaced by list()/get() — they
- * skip and warn — and by delete() — which throws so the user can investigate.
+ * The persisted session row is missing required fields, holds an
+ * invalid value, or has a column shape the current build cannot
+ * decode. Surfaced by `list()` / `get()` — they skip and warn — and
+ * by `delete()` — which throws so the user can investigate.
+ *
+ * Carries the offending session `id` plus a human-readable `reason`
+ * so operators can find the bad row in the workspace's `sessions`
+ * table without re-running the failing query.
  */
 export class SessionCorruptedError extends SessionsError {
   constructor(

@@ -2,8 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { captureLogger } from "@emploke/logger/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InvalidTaskIdError, SqliteTaskRepository, type Task } from "../src/index.js";
+import {
+  CorruptedTaskError,
+  InvalidTaskIdError,
+  SqliteTaskRepository,
+  Task,
+  type TaskStatus,
+} from "../src/index.js";
 
 let scratchDir: string;
 let db: DatabaseSync;
@@ -24,20 +31,50 @@ afterEach(async () => {
 });
 
 const ID = "20260509-aabbccdd";
-const sample: Task = {
-  id: ID,
-  agent: "writer",
-  instructions: "do the thing",
-  status: "running",
-  metadata: {},
-  createdAt: "2026-05-09T01:00:00.000Z",
-};
+const CREATED_AT = "2026-05-09T01:00:00.000Z";
+
+/**
+ * Build a Task in any status — `Task.fromStored` is the only public
+ * factory that lets the test stand a task up directly in `running` /
+ * `success` / `failure` / `cancelled` without going through the
+ * transition methods. That's exactly its job: rehydrating from
+ * storage. We use it here as a test-shape factory because the
+ * storage seam is what the repository tests are about.
+ */
+function makeTask(
+  overrides: {
+    id?: string;
+    agent?: string;
+    instructions?: string;
+    status?: TaskStatus;
+    metadata?: Readonly<Record<string, unknown>>;
+    createdAt?: string;
+    startedAt?: string;
+    endedAt?: string;
+    result?: { output: string };
+    failure?: { error: string };
+  } = {},
+): Task {
+  return Task.fromStored({
+    id: overrides.id ?? ID,
+    agent: overrides.agent ?? "writer",
+    instructions: overrides.instructions ?? "do the thing",
+    status: overrides.status ?? "running",
+    metadata: overrides.metadata ?? {},
+    createdAt: overrides.createdAt ?? CREATED_AT,
+    ...(overrides.startedAt !== undefined ? { startedAt: overrides.startedAt } : {}),
+    ...(overrides.endedAt !== undefined ? { endedAt: overrides.endedAt } : {}),
+    ...(overrides.result !== undefined ? { result: overrides.result } : {}),
+    ...(overrides.failure !== undefined ? { failure: overrides.failure } : {}),
+  });
+}
 
 describe("SqliteTaskRepository", () => {
   it("save + read round-trip preserves all base fields", async () => {
+    const sample = makeTask();
     await repo.save(sample);
     const back = await repo.read(ID);
-    expect(back).toEqual(sample);
+    expect(back?.toJSON()).toEqual(sample.toJSON());
   });
 
   it("read returns null for missing id", async () => {
@@ -45,7 +82,7 @@ describe("SqliteTaskRepository", () => {
   });
 
   it("save promotes metadata.runtime to first-class column", async () => {
-    await repo.save({ ...sample, metadata: { runtime: "gemini", pid: 1234 } });
+    await repo.save(makeTask({ metadata: { runtime: "gemini", pid: 1234 } }));
     const back = await repo.read(ID);
     expect(back?.metadata).toEqual({ runtime: "gemini", pid: 1234 });
     expect(await repo.list({ runtime: "gemini" })).toHaveLength(1);
@@ -53,44 +90,42 @@ describe("SqliteTaskRepository", () => {
   });
 
   it("save handles tasks with empty metadata (runtime column = NULL)", async () => {
-    await repo.save(sample);
+    await repo.save(makeTask());
     const back = await repo.read(ID);
     expect(back?.metadata).toEqual({});
     expect(await repo.list({ runtime: "anything" })).toHaveLength(0);
   });
 
   it("save preserves optional terminal fields (result.output, failure.error, started/ended)", async () => {
-    const success: Task = {
-      ...sample,
+    const success = makeTask({
       status: "success",
       startedAt: "2026-05-09T01:00:01.000Z",
       endedAt: "2026-05-09T01:00:05.000Z",
       result: { output: "all good" },
-    };
+    });
     await repo.save(success);
-    expect(await repo.read(ID)).toEqual(success);
+    expect((await repo.read(ID))?.toJSON()).toEqual(success.toJSON());
 
-    const failure: Task = {
-      ...sample,
+    const failure = makeTask({
       status: "failure",
       startedAt: "2026-05-09T01:00:01.000Z",
       endedAt: "2026-05-09T01:00:03.000Z",
       failure: { error: "boom" },
-    };
+    });
     await repo.save(failure);
-    expect(await repo.read(ID)).toEqual(failure);
+    expect((await repo.read(ID))?.toJSON()).toEqual(failure.toJSON());
   });
 
   it("save is idempotent (INSERT OR REPLACE)", async () => {
-    await repo.save(sample);
-    await repo.save({ ...sample, status: "success", result: { output: "done" } });
+    await repo.save(makeTask());
+    await repo.save(makeTask({ status: "success", result: { output: "done" } }));
     const back = await repo.read(ID);
     expect(back?.status).toBe("success");
     expect(back?.result?.output).toBe("done");
   });
 
   it("delete removes the row; subsequent read returns null", async () => {
-    await repo.save(sample);
+    await repo.save(makeTask());
     await repo.delete(ID);
     expect(await repo.read(ID)).toBeNull();
   });
@@ -101,34 +136,32 @@ describe("SqliteTaskRepository", () => {
 
   it("read/save reject malformed ids with InvalidTaskIdError", async () => {
     await expect(repo.read("../../etc/passwd")).rejects.toBeInstanceOf(InvalidTaskIdError);
-    await expect(repo.save({ ...sample, id: "../../etc" })).rejects.toBeInstanceOf(
-      InvalidTaskIdError,
-    );
+    // `Task.fromStored` rejects malformed ids before construction —
+    // the test asserts the bad-id rejection at the entity boundary.
+    expect(() => makeTask({ id: "../../etc" })).toThrow(InvalidTaskIdError);
   });
 
   it("delete with malformed id is a silent no-op", async () => {
-    await repo.save(sample);
+    await repo.save(makeTask());
     await repo.delete("../../etc/passwd");
     expect((await repo.read(ID))?.id).toBe(ID);
   });
 
   it("list filters by agent / status / createdSince / runtime", async () => {
-    const a: Task = {
-      ...sample,
+    const a = makeTask({
       id: "20260101-aaaaaaaa",
       agent: "writer",
       status: "running",
       createdAt: "2026-01-01T00:00:00.000Z",
       metadata: { runtime: "copilot" },
-    };
-    const b: Task = {
-      ...sample,
+    });
+    const b = makeTask({
       id: "20260601-bbbbbbbb",
       agent: "reviewer",
       status: "success",
       createdAt: "2026-06-01T00:00:00.000Z",
       metadata: { runtime: "gemini" },
-    };
+    });
     await repo.save(a);
     await repo.save(b);
 
@@ -142,9 +175,9 @@ describe("SqliteTaskRepository", () => {
   });
 
   it("list with multiple statuses uses IN (...)", async () => {
-    await repo.save({ ...sample, id: "20260101-aaaaaaaa", status: "running" });
-    await repo.save({ ...sample, id: "20260101-bbbbbbbb", status: "success" });
-    await repo.save({ ...sample, id: "20260101-cccccccc", status: "failure" });
+    await repo.save(makeTask({ id: "20260101-aaaaaaaa", status: "running" }));
+    await repo.save(makeTask({ id: "20260101-bbbbbbbb", status: "success" }));
+    await repo.save(makeTask({ id: "20260101-cccccccc", status: "failure" }));
     const r = await repo.list({ statuses: ["success", "failure"] });
     expect(r.map((t) => t.id).sort()).toEqual(["20260101-bbbbbbbb", "20260101-cccccccc"]);
   });
@@ -155,13 +188,50 @@ describe("SqliteTaskRepository", () => {
     expect(() => new SqliteTaskRepository({ db })).toThrow(/schema mismatch/);
   });
 
+  it("read throws CorruptedTaskError when metadata column is not valid JSON", async () => {
+    // Regression: storage-side bit-rot in the JSON metadata column
+    // must surface as a typed corruption, not silently degrade to {}.
+    // Tampered/truncated rows could otherwise round-trip a valid-looking
+    // task whose runtime metadata was lost on disk.
+    await repo.save(makeTask());
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", ID);
+    await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
+  it("read throws CorruptedTaskError when metadata decodes to a non-object root", async () => {
+    await repo.save(makeTask());
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("[1,2,3]", ID);
+    await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
+  it("list silently skips rows with corrupted metadata and warns via the injected logger", async () => {
+    // list() never throws on a single bad row — it logs + skips so the
+    // dashboard can render every other task. This pins both halves of
+    // that contract: the corrupted row is dropped AND a structured
+    // warn is emitted carrying the offending taskId so operators can
+    // find it without re-running the query manually.
+    const { logger, entries } = captureLogger();
+    const r = new SqliteTaskRepository({ db, logger });
+    await r.save(makeTask({ id: "20260101-aaaaaaaa" }));
+    await r.save(makeTask({ id: "20260101-bbbbbbbb" }));
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", "20260101-bbbbbbbb");
+    const all = await r.list();
+    expect(all.map((t) => t.id)).toEqual(["20260101-aaaaaaaa"]);
+    const warn = entries.find(
+      (e) => e.level === 40 && e.msg === "tasks: skipping corrupted task row",
+    );
+    expect(warn).toBeDefined();
+    expect(warn?.taskId).toBe("20260101-bbbbbbbb");
+  });
+
   it("two separate :memory: connections are isolated", async () => {
     const dbA = new DatabaseSync(":memory:");
     const dbB = new DatabaseSync(":memory:");
     const a = new SqliteTaskRepository({ db: dbA });
     const b = new SqliteTaskRepository({ db: dbB });
+    const sample = makeTask();
     await a.save(sample);
-    expect(await a.read(ID)).toEqual(sample);
+    expect((await a.read(ID))?.toJSON()).toEqual(sample.toJSON());
     expect(await b.read(ID)).toBeNull();
     dbA.close();
     dbB.close();

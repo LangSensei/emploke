@@ -444,7 +444,7 @@ export const patchAgentMetadata = (name: string, patch: AgentMetadataPatch) =>
 
 //  Sessions (workspace-scoped)
 
-export interface SessionRecord {
+export interface SessionView {
   id: string;
   workdir: string;
   agent: string;
@@ -485,16 +485,13 @@ export interface ListSessionsOpts {
   activeSince?: string;
 }
 
-export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionRecord[]> => {
+export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionView[]> => {
   const params = new URLSearchParams();
   if (opts.agent) params.set("agent", opts.agent);
   if (opts.createdSince) params.set("createdSince", opts.createdSince);
   if (opts.activeSince) params.set("activeSince", opts.activeSince);
   const qs = params.toString();
-  return fetchJson<SessionRecord[]>(
-    `${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`,
-    "sessions",
-  );
+  return fetchJson<SessionView[]>(`${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`, "sessions");
 };
 
 /**
@@ -552,13 +549,13 @@ export interface HealthResponse {
 export const getHealth = (): Promise<HealthResponse> =>
   fetchJson<HealthResponse>("/api/health", "health");
 
-export const getSession = (id: string): Promise<SessionRecord> =>
-  fetchJson<SessionRecord>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
+export const getSession = (id: string): Promise<SessionView> =>
+  fetchJson<SessionView>(`${workspacePrefix()}/sessions/${encodeURIComponent(id)}`, "session");
 
-export const createSession = async (agent: string, runtime?: string): Promise<SessionRecord> => {
+export const createSession = async (agent: string, runtime?: string): Promise<SessionView> => {
   const body: Record<string, string> = { agent };
   if (runtime !== undefined) body.runtime = runtime;
-  return mutateJson<SessionRecord>(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
+  return mutateJson<SessionView>(`${workspacePrefix()}/sessions`, jsonInit("POST", body));
 };
 
 export const deleteSession = (id: string, opts?: { purge?: boolean }) => {
