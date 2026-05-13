@@ -892,7 +892,7 @@ interface TaskDetailPanelProps {
   pollIntervalMs: number;
 }
 
-type DetailTab = "activity" | "raw" | "metadata";
+type DetailTab = "result" | "activity" | "raw" | "metadata";
 
 function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetailPanelProps) {
   const [task, setTask] = useState<TaskRecord | null>(null);
@@ -1095,6 +1095,66 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     return () => handle.close();
   }, [taskId, detailPollEnabled]);
 
+  // Result is the agent's final answer — but only meaningful once the
+  // task has actually finished successfully. Earlier the dashboard
+  // surfaced `activity.result` (= last assistant message in the log)
+  // unconditionally, which during a running task showed the most recent
+  // intermediate thought as if it were the answer. We now gate on
+  // `status === "success"` so Result reflects only a real completion;
+  // failures route through the dedicated Failure alert in the header
+  // and have no Result tab at all.
+  //
+  // Computed up here (before the early return on `!taskId`) so the
+  // useEffect below stays at the top of the hook order.
+  const headlineResult =
+    task?.status === "success"
+      ? (activity?.result ??
+        (typeof task?.result?.output === "string" && task.result.output.length > 0
+          ? task.result.output
+          : null))
+      : null;
+  const showResultTab = headlineResult !== null;
+
+  // Initial-default-tab decision: open a finished, successful task
+  // straight to its Result; everything else opens to Activity (the
+  // user is watching it run or debugging a failure). Two refs guard
+  // the behaviour:
+  //   - `initialTabPickedRef` records the taskId we've already
+  //     defaulted, so the effect runs at most once per task open
+  //     (otherwise a status flip mid-watch would yank the user back
+  //     to Result against their will).
+  //   - `userPickedTabRef` records taskIds where the user clicked a
+  //     tab themselves; we never overwrite an explicit choice, even
+  //     if they clicked before the task data arrived.
+  const initialTabPickedRef = useRef<string | null>(null);
+  const userPickedTabRef = useRef<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: taskId is a trigger, not a value
+  useEffect(() => {
+    // New task → reset both flags so the per-task defaulting fires fresh.
+    // The body doesn't read `taskId`; it's a deps-only trigger so this
+    // re-runs when the user navigates between tasks.
+    initialTabPickedRef.current = null;
+    userPickedTabRef.current = null;
+  }, [taskId]);
+  useEffect(() => {
+    if (!task || !taskId) return;
+    if (initialTabPickedRef.current === taskId) return;
+    if (userPickedTabRef.current === taskId) return;
+    initialTabPickedRef.current = taskId;
+    setTab(showResultTab ? "result" : "activity");
+  }, [task, taskId, showResultTab]);
+  const pickTab = (t: DetailTab) => {
+    if (taskId) userPickedTabRef.current = taskId;
+    setTab(t);
+  };
+
+  // If the user is parked on the Result tab and a state change makes
+  // it unavailable (e.g. a re-run flips status back to running), bounce
+  // them to Activity so the panel doesn't render an empty body.
+  useEffect(() => {
+    if (tab === "result" && !showResultTab) setTab("activity");
+  }, [tab, showResultTab]);
+
   // Common box styling lives in CSS now. The right panel anchors at
   // the top of its grid cell (.tasks-pane__detail), with its own
   // scroll container and a viewport-capped max-height so the page
@@ -1208,38 +1268,37 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         )}
       </header>
 
-      {/* Result block — the agent's final answer, the headline thing
-          a user wants to see. Falls back gracefully:
-            1. derived `activity.result` (last assistant message) if any
-            2. raw task.result.output if the kernel captured one
-            3. nothing (don't render a noisy empty box) */}
-      {(() => {
-        const headlineResult =
-          activity?.result ??
-          (typeof task?.result?.output === "string" && task.result.output.length > 0
-            ? task.result.output
-            : null);
-        if (!headlineResult) return null;
-        return (
-          <section className="task-detail__result">
-            <h3 className="task-detail__section-title">Result</h3>
-            <p className="task-detail__result-body">{headlineResult}</p>
-          </section>
-        );
-      })()}
+      {/*
+        Result lives in its own tab (visible only when the task is
+        successful and a result exists). Earlier this was rendered as
+        a always-on header section that read "the most recent assistant
+        message" mid-run — meaning the panel showed an intermediate
+        thought as if it were the headline answer. Gating on
+        `status === "success"` makes it so the Result is only ever the
+        ACTUAL final answer, never a partial step.
+      */}
 
       <nav className="pills" style={{ display: "flex", gap: 4 }}>
+        {showResultTab && (
+          <button
+            type="button"
+            className={`pills__btn${tab === "result" ? " pills__btn--active" : ""}`}
+            onClick={() => pickTab("result")}
+          >
+            Result
+          </button>
+        )}
         <button
           type="button"
           className={`pills__btn${tab === "activity" ? " pills__btn--active" : ""}`}
-          onClick={() => setTab("activity")}
+          onClick={() => pickTab("activity")}
         >
           Activity
         </button>
         <button
           type="button"
           className={`pills__btn${tab === "raw" ? " pills__btn--active" : ""}`}
-          onClick={() => setTab("raw")}
+          onClick={() => pickTab("raw")}
           title="Same activity payload as the Activity tab, rendered as raw JSON for debugging"
         >
           Raw JSON
@@ -1247,11 +1306,19 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         <button
           type="button"
           className={`pills__btn${tab === "metadata" ? " pills__btn--active" : ""}`}
-          onClick={() => setTab("metadata")}
+          onClick={() => pickTab("metadata")}
         >
           Metadata
         </button>
       </nav>
+
+      {tab === "result" && showResultTab && headlineResult && (
+        <div className="task-detail__body">
+          <section className="task-detail__result">
+            <p className="task-detail__result-body">{headlineResult}</p>
+          </section>
+        </div>
+      )}
 
       {tab === "activity" && (
         <div className="task-detail__body">
