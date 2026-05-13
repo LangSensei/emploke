@@ -1117,8 +1117,8 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 
   // Initial-default-tab decision: open a finished, successful task
   // straight to its Result; everything else opens to Activity (the
-  // user is watching it run or debugging a failure). Two refs guard
-  // the behaviour:
+  // user is watching it run or debugging a failure). Three refs/conds
+  // guard the behaviour:
   //   - `initialTabPickedRef` records the taskId we've already
   //     defaulted, so the effect runs at most once per task open
   //     (otherwise a status flip mid-watch would yank the user back
@@ -1126,6 +1126,17 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   //   - `userPickedTabRef` records taskIds where the user clicked a
   //     tab themselves; we never overwrite an explicit choice, even
   //     if they clicked before the task data arrived.
+  //   - `activityResolved` waits for the activity fetch to settle
+  //     before committing to "Activity is the right default". Without
+  //     this, opening a successful task races: `task` lands first
+  //     (status=success known), `activity` lands ~ms later (carrying
+  //     the actual result). If we defaulted on `task` alone, we'd see
+  //     `showResultTab=false` and pick Activity, then never re-default
+  //     when activity arrives because the ref is already set. Waiting
+  //     for `activity !== null` (success) or `activityError !== null`
+  //     (deterministic failure) closes the race; "Result is true now"
+  //     is its own short-circuit so we don't wait unnecessarily once
+  //     we already know we want Result.
   const initialTabPickedRef = useRef<string | null>(null);
   const userPickedTabRef = useRef<string | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: taskId is a trigger, not a value
@@ -1140,9 +1151,22 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     if (!task || !taskId) return;
     if (initialTabPickedRef.current === taskId) return;
     if (userPickedTabRef.current === taskId) return;
-    initialTabPickedRef.current = taskId;
-    setTab(showResultTab ? "result" : "activity");
-  }, [task, taskId, showResultTab]);
+    if (showResultTab) {
+      // We already know Result is the right default; no need to wait
+      // for activity (it's already loaded if showResultTab is true).
+      initialTabPickedRef.current = taskId;
+      setTab("result");
+      return;
+    }
+    const activityResolved = activity !== null || activityError !== null;
+    if (activityResolved) {
+      // Activity attempt has settled and we still don't have a result —
+      // commit to Activity as the default.
+      initialTabPickedRef.current = taskId;
+      setTab("activity");
+    }
+    // Otherwise: task loaded but activity still loading; wait for it.
+  }, [task, taskId, showResultTab, activity, activityError]);
   const pickTab = (t: DetailTab) => {
     if (taskId) userPickedTabRef.current = taskId;
     setTab(t);
