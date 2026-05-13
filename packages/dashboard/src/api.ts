@@ -796,6 +796,7 @@ export interface TokenUsage {
   input?: number;
   output: number;
   cached?: number;
+  cacheWrite?: number;
   reasoning?: number;
   total?: number;
 }
