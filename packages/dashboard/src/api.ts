@@ -793,11 +793,11 @@ export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
  */
 
 export interface TokenUsage {
-  input: number;
+  input?: number;
   output: number;
   cached?: number;
   reasoning?: number;
-  total: number;
+  total?: number;
 }
 
 export interface SummaryStats {

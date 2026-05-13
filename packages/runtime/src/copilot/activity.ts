@@ -5,6 +5,7 @@ import type {
   SummaryItem,
   SummaryStats,
   SystemItem,
+  ThinkingItem,
   TokenUsage,
   ToolCallItem,
   UserItem,
@@ -21,7 +22,10 @@ import type {
  *
  *   - `user.message` -> {@link UserItem} (with attachments when present)
  *   - `assistant.message` -> {@link AssistantItem}, plus one
- *     {@link ToolCallItem} per `toolRequests[]` entry (status: running)
+ *     {@link ToolCallItem} per `toolRequests[]` entry (status: running).
+ *     When the data carries `reasoningText` (extended-thinking models
+ *     like Claude with thinking enabled), a {@link ThinkingItem} is
+ *     emitted FIRST so the timeline reads think-then-speak.
  *   - `tool.execution_start` -> {@link ToolCallItem} (status: running)
  *     when no matching toolRequest already created the item
  *   - `tool.execution_complete` -> merged into existing
@@ -147,9 +151,31 @@ export class CopilotActivityStreamParser {
       const text = pickString(ev.data, "content") ?? "";
       const model = pickString(ev.data, "model") ?? undefined;
       const tokens = parseAssistantTokens(ev.data);
+      // Thinking trace, if present, gets its own item BEFORE the assistant
+      // message so the timeline reads think → speak. We mint a derived id
+      // (`<eventId>-thinking`) so the seq -> item map and parentSeq lookups
+      // don't collide with the assistant item that shares the source event id.
+      const reasoningText = pickString(ev.data, "reasoningText");
+      if (reasoningText !== null && reasoningText.length > 0) {
+        const thinkingItem: ThinkingItem = {
+          kind: "thinking",
+          seq: this.seq,
+          id: `${baseId}-thinking`,
+          ...(parentSeq !== undefined ? { parentSeq } : {}),
+          timestamp: ev.timestamp,
+          text: reasoningText,
+        };
+        this.commit(thinkingItem);
+        items.push(thinkingItem);
+      }
+      const assistantParentSeq =
+        reasoningText !== null && reasoningText.length > 0 ? this.seq - 1 : parentSeq;
       const item: AssistantItem = {
         kind: "assistant",
-        ...baseFields,
+        seq: this.seq,
+        id: baseId,
+        ...(assistantParentSeq !== undefined ? { parentSeq: assistantParentSeq } : {}),
+        timestamp: ev.timestamp,
         text,
         ...(model !== undefined ? { model } : {}),
         ...(tokens !== null ? { tokens } : {}),
@@ -399,13 +425,17 @@ function parseAttachments(raw: unknown): Attachment[] {
 }
 
 function parseAssistantTokens(d: Record<string, unknown>): TokenUsage | null {
+  // Copilot's `assistant.message.data` only carries `outputTokens`. The
+  // input token count for that turn lives in `session.shutdown.modelMetrics`
+  // as an aggregate across the whole session — not per message. Earlier
+  // versions returned `{ input: 0, output, total: output }` which was a
+  // lie (the ":input is 0" reading was wrong; it really means "unknown")
+  // and broke downstream `input > 0 || output > 0` checks. We now omit
+  // `input` / `total` per the new optional shape; consumers render the
+  // output count alone and fall back to "—" or skip the input column.
   const output = numOrUndefined(d.outputTokens);
   if (output === undefined) return null;
-  return {
-    input: 0,
-    output,
-    total: output,
-  };
+  return { output };
 }
 
 function systemSubKind(eventType: string): string {
