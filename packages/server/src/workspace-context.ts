@@ -256,20 +256,6 @@ export class WorkspaceContextCache {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA busy_timeout = 5000");
 
-    // Best-effort upgrade hint for per-workspace `workspace.json`
-    // sidecars from the pre-`workspace.db` build. Same rationale as
-    // the boot-time check for `<EMPLOKE_HOME>/workspaces.json`:
-    // emploke no longer reads the file but the user might be wondering
-    // why their dashboard catalog/session/task panels look empty.
-    const { existsSync } = await import("node:fs");
-    const legacySidecar = path.join(workspace.workdir, "workspace.json");
-    if (existsSync(legacySidecar)) {
-      this.logger.warn(
-        { legacyFile: legacySidecar, workspaceId: workspace.id },
-        "legacy workspace.json found; this version stores per-workspace metadata in the global registry instead. Safe to delete.",
-      );
-    }
-
     // Each manager gets the shared connection via DI. Repositories
     // bootstrap their own tables on first construction (idempotent
     // CREATE IF NOT EXISTS) and register themselves in the multi-row

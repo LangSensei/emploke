@@ -198,24 +198,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // the landing page reflects that.
   await mkdir(paths.home, { recursive: true });
 
-  // Best-effort upgrade hint: if the user is upgrading from a build
-  // that wrote `workspaces.json` (the pre-`global.db` registry), the
-  // file is now silently ignored. Without a hint the dashboard looks
-  // empty post-upgrade and is visually indistinguishable from data
-  // loss. We do NOT auto-migrate — workspaces are user-placed, and
-  // re-adding two or three through the dashboard is fast — but the
-  // user deserves to know what happened. Same hint for any
-  // `<workdir>/workspace.json` we encounter is emitted lazily as
-  // workspaces are loaded; this one fires once at boot for the
-  // EMPLOKE_HOME-level file.
-  const legacyRegistry = path.join(paths.home, "workspaces.json");
-  if (existsSync(legacyRegistry)) {
-    logger.warn(
-      { legacyFile: legacyRegistry, registry: paths.globalDbFile },
-      "legacy workspaces.json found; this version reads the workspace registry from global.db instead. Re-register your workspaces via the dashboard or `emploke workspace add`. The legacy file is safe to delete after.",
-    );
-  }
-
   const globalDb = new DatabaseSync(paths.globalDbFile);
   const workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb, logger }));
 
