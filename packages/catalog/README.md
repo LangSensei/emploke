@@ -43,43 +43,56 @@ out of the BLOB columns by the legacy `agentEntries` /
 import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
 
-// Catalog now reads/writes the per-workspace shared `workspace.db`.
+// Catalog reads/writes the per-workspace shared `workspace.db`.
 // In production the workspace pkg owns the connection; here we open
 // one ourselves for illustration.
 const db = new DatabaseSync("/path/to/workspace/workspace.db");
 const catalog = await CatalogManager.open({ db });
 
-// Install
-await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });
-await catalog.installMcp({ name: "playwright", json: { type: "stdio", command: "npx", args: ["@modelcontextprotocol/server-playwright"] } });
+// Install (origin-driven). The resolver fetches the entry + its
+// transitive deps, surfaces conflicts, and returns a CatalogPlan;
+// install() walks the topology in order.
+await catalog.installSkill("file:/tmp/sop-prepared");
+await catalog.installAgent("github:org/repo/tree/main/agents/code-reviewer");
+await catalog.installMcpFromOrigin("file:/tmp/mcps/playwright.json");
 
-// Resolve
-const { agent, skills, mcps } = await catalog.resolveAgent("code-reviewer");
+// Resolve from the local catalog (no network — DAG walk over
+// already-installed entries; used by the runtime when materialising a
+// session workdir).
+const { agent, skills, mcps } = await catalog.resolveAgent("public/code-reviewer");
 console.log(agent.fqn);          // "public/code-reviewer"
 console.log(skills.length);      // transitive skill deps in topological order
 console.log(mcps.length);
 
-// Or resolve a skill (for tooling / dep inspection)
-const { skill, skills: deps } = await catalog.resolveSkill("squad-lint");
+// Or resolve a skill from the local catalog (for tooling / dep inspection).
+const { skill, skills: deps } = await catalog.resolveSkillFromCatalog("public/squad-lint");
 console.log(skill.fqn);          // "public/squad-lint"
 console.log(deps.length);        // includes squad-lint + transitive deps
 
-// Update / uninstall
-await catalog.updateSkill({ name: "sop", sourceDir: "/tmp/sop-v2" });
-await catalog.uninstallMcp("playwright");
+// Update / delete
+await catalog.updateSkillContent("public/sop", newMarkdown);
+await catalog.deleteMcp("vendor/playwright");
 ```
 
 ## Errors
 
-All errors thrown by the public API extend `CatalogError`:
+All errors thrown by the public API extend `CatalogError`. Per-entity
+classes are exported at the top level:
 
-- `NameInvalid` — name is not kebab-case or empty
-- `NameConflict` — install/install with a name already in catalog
-- `NotFound` — get/update/uninstall a skill or mcp that does not exist
-- `MissingDependencies` — declared dependencies are not in the catalog
-- `CycleDetected` — install/update would create a dependency cycle
-- `HasDependents` — uninstall blocked because something still depends on the target
-- `FrontmatterError` — SKILL.md frontmatter is malformed
+- `SkillNameInvalidError` / `AgentNameInvalidError` / `McpNameInvalidError`
+  — name is not kebab-case or empty
+- `SkillOriginConflictError` / `AgentOriginConflictError` /
+  `McpOriginConflictError` — install collides with an existing entry
+- `SkillNotFoundError` / `AgentNotFoundError` / `McpNotFoundError` —
+  get / update / delete a target that does not exist
+- `CyclicDependencyError` — install / update would create a dep cycle
+- `HasDependentsError` — delete blocked because something still
+  depends on the target
+- `SkillFrontmatterError` / `AgentFrontmatterError` — markdown
+  frontmatter is malformed
+- `McpInvalidJsonError` — MCP spec JSON failed validation
+- `PlanStaleError` / `AgentPlanStaleError` — applying a stored
+  preview plan after the catalog moved on under it
 
 ## GitHub authentication
 

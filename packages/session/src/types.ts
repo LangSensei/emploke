@@ -3,13 +3,6 @@ import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import type { SessionRepository } from "./repositories/repository.js";
 
-/**
- * Re-export the canonical `Logger` from `@emploke/logger` for source
- * compatibility with callers that previously imported it from
- * `@emploke/session` directly.
- */
-export type { Logger } from "@emploke/logger";
-
 /** Re-export `LaunchCommand` so call sites only need one import. */
 export type { LaunchCommand } from "@emploke/runtime";
 

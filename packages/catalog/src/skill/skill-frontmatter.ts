@@ -141,14 +141,13 @@ function parseDependencies(
 }
 
 /**
- * Parse a `dependencies.skills` / `dependencies.mcps` list. Accepts:
- *   - A bare origin string: `- "file:/abs/path"`
- *   - An object with `{ origin: string }` (legacy / explicit form,
- *     transparently coerced to the string form for downstream code).
+ * Parse a `dependencies.skills` / `dependencies.mcps` list. Each item
+ * must be a non-empty origin URI string:
  *
- * The object form is permitted to make migration from the older
- * `{ name, origin, scope? }` shape less abrupt — authors who delete
- * `name` and `scope` end up with `{ origin }`, which still parses.
+ *     dependencies:
+ *       skills:
+ *         - "file:/abs/path"
+ *         - "github:owner/repo/tree/main/skills/foo"
  */
 function parseDependencyList(
   raw: unknown,
@@ -159,24 +158,20 @@ function parseDependencyList(
     throw new SkillFrontmatterError(sourceLabel, `\`dependencies.${field}\` must be an array`);
   }
   return raw.map((item, idx) => {
-    if (typeof item === "string") {
-      if (item.length === 0) {
-        throw new SkillFrontmatterError(
-          sourceLabel,
-          `\`dependencies.${field}[${idx}]\` must be a non-empty origin URI`,
-        );
-      }
-      return item;
+    if (typeof item !== "string") {
+      throw new SkillFrontmatterError(
+        sourceLabel,
+        `\`dependencies.${field}[${idx}]\` must be an origin URI string ` +
+          '(e.g. "github:owner/repo/tree/main/skills/foo")',
+      );
     }
-    if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-      const obj = item as Record<string, unknown>;
-      if (typeof obj.origin === "string" && obj.origin.length > 0) return obj.origin;
+    if (item.length === 0) {
+      throw new SkillFrontmatterError(
+        sourceLabel,
+        `\`dependencies.${field}[${idx}]\` must be a non-empty origin URI`,
+      );
     }
-    throw new SkillFrontmatterError(
-      sourceLabel,
-      `\`dependencies.${field}[${idx}]\` must be an origin URI string ` +
-        '(e.g. "github:owner/repo/tree/main/skills/foo")',
-    );
+    return item;
   });
 }
 

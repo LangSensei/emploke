@@ -45,7 +45,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
 describe("tasksRoutes", () => {
   it("GET / lists tasks (no filters)", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/");
+    const res = await tasksRoutes(() => m).request("/");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
@@ -58,7 +58,7 @@ describe("tasksRoutes", () => {
   it("GET /?agent=X forwards the agent filter to the manager", async () => {
     const list = vi.fn(async () => [sampleTask]);
     const m = stubManager({ list });
-    const res = await tasksRoutes(m).request("/?agent=writer");
+    const res = await tasksRoutes(() => m).request("/?agent=writer");
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({ agent: "writer" });
   });
@@ -66,7 +66,7 @@ describe("tasksRoutes", () => {
   it("GET /?runtime=copilot forwards the runtime filter", async () => {
     const list = vi.fn(async () => [sampleTask]);
     const m = stubManager({ list });
-    const res = await tasksRoutes(m).request("/?runtime=copilot");
+    const res = await tasksRoutes(() => m).request("/?runtime=copilot");
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({ runtime: "copilot" });
   });
@@ -77,14 +77,14 @@ describe("tasksRoutes", () => {
     // Send a non-canonical form (no Z suffix); server must canonicalise
     // to ISO 8601 UTC so the manager's lexicographic compare stays
     // correct.
-    const res = await tasksRoutes(m).request("/?createdSince=2026-05-08T01%3A00%3A00.000Z");
+    const res = await tasksRoutes(() => m).request("/?createdSince=2026-05-08T01%3A00%3A00.000Z");
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({ createdSince: "2026-05-08T01:00:00.000Z" });
   });
 
   it("GET /?createdSince=garbage returns 400", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/?createdSince=not-a-date");
+    const res = await tasksRoutes(() => m).request("/?createdSince=not-a-date");
     expect(res.status).toBe(400);
     expect(m.list).not.toHaveBeenCalled();
   });
@@ -92,14 +92,14 @@ describe("tasksRoutes", () => {
   it("GET /?status=running,success forwards the status set", async () => {
     const list = vi.fn(async () => [sampleTask]);
     const m = stubManager({ list });
-    const res = await tasksRoutes(m).request("/?status=running,success");
+    const res = await tasksRoutes(() => m).request("/?status=running,success");
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({ statuses: ["running", "success"] });
   });
 
   it("GET /?status=bogus returns 400 (unknown status)", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/?status=bogus");
+    const res = await tasksRoutes(() => m).request("/?status=bogus");
     expect(res.status).toBe(400);
     expect(m.list).not.toHaveBeenCalled();
   });
@@ -107,7 +107,7 @@ describe("tasksRoutes", () => {
   it("GET / combines all filters with AND semantics on the manager call", async () => {
     const list = vi.fn(async () => [sampleTask]);
     const m = stubManager({ list });
-    const res = await tasksRoutes(m).request(
+    const res = await tasksRoutes(() => m).request(
       "/?agent=writer&runtime=copilot&createdSince=2026-05-08T01%3A00%3A00.000Z&status=running",
     );
     expect(res.status).toBe(200);
@@ -121,14 +121,14 @@ describe("tasksRoutes", () => {
 
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", { method: "POST", body: "not json" });
+    const res = await tasksRoutes(() => m).request("/", { method: "POST", body: "not json" });
     expect(res.status).toBe(400);
     expect(m.dispatch).not.toHaveBeenCalled();
   });
 
   it("POST / requires agent", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ instructions: "go" }),
@@ -139,7 +139,7 @@ describe("tasksRoutes", () => {
 
   it("POST / requires instructions", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer" }),
@@ -150,7 +150,7 @@ describe("tasksRoutes", () => {
 
   it("POST / rejects non-string runtime", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "hi", runtime: 7 }),
@@ -160,7 +160,7 @@ describe("tasksRoutes", () => {
 
   it("POST / dispatches and returns 201", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "Draft the post" }),
@@ -174,7 +174,7 @@ describe("tasksRoutes", () => {
 
   it("POST / forwards optional runtime override", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "go", runtime: "claude" }),
@@ -193,7 +193,7 @@ describe("tasksRoutes", () => {
         throw new AgentNotFoundError("ghost");
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "ghost", instructions: "go" }),
@@ -209,7 +209,7 @@ describe("tasksRoutes", () => {
         throw new RuntimeDoesNotSupportTasksError("legacy");
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "go" }),
@@ -232,7 +232,7 @@ describe("tasksRoutes", () => {
         throw new EntryNotReadyError("public/writer", { needsPrereqsAck: true });
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
@@ -255,7 +255,7 @@ describe("tasksRoutes", () => {
         });
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
@@ -278,7 +278,7 @@ describe("tasksRoutes", () => {
         throw new EntryNotReadyError("public/writer", undefined);
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
@@ -291,7 +291,7 @@ describe("tasksRoutes", () => {
 
   it("GET /:tid returns task", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`);
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.id).toBe(sampleTask.id);
@@ -300,7 +300,7 @@ describe("tasksRoutes", () => {
 
   it("GET /:tid returns 404 when missing", async () => {
     const m = stubManager({ get: vi.fn(async () => null) });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`);
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`);
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.code).toBe("TaskNotFoundError");
@@ -316,7 +316,7 @@ describe("tasksRoutes", () => {
         throw new CorruptedTaskError(sampleTask.id, "task.metadata is not valid JSON");
       }),
     });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`);
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`);
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.code).toBe("CorruptedTaskError");
@@ -331,7 +331,7 @@ describe("tasksRoutes", () => {
         throw new CorruptedTaskError(sampleTask.id, "task.metadata is not valid JSON");
       }),
     });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.code).toBe("CorruptedTaskError");
@@ -343,13 +343,13 @@ describe("tasksRoutes", () => {
         throw new InvalidTaskIdError("bad");
       }),
     });
-    const res = await tasksRoutes(m).request("/bad");
+    const res = await tasksRoutes(() => m).request("/bad");
     expect(res.status).toBe(400);
   });
 
   it("DELETE /:tid returns 204", async () => {
     const m = stubManager({});
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(204);
     expect(m.delete).toHaveBeenCalledWith(sampleTask.id, { purge: false });
   });
@@ -357,7 +357,9 @@ describe("tasksRoutes", () => {
   it("DELETE /:tid?purge=1 propagates the purge flag to the manager", async () => {
     const del = vi.fn(async () => undefined);
     const m = stubManager({ delete: del });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}?purge=1`, { method: "DELETE" });
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}?purge=1`, {
+      method: "DELETE",
+    });
     expect(res.status).toBe(204);
     expect(del).toHaveBeenCalledWith(sampleTask.id, { purge: true });
   });
@@ -368,7 +370,7 @@ describe("tasksRoutes", () => {
         throw new TaskNotFoundError(sampleTask.id);
       }),
     });
-    const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
+    const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`, { method: "DELETE" });
     expect(res.status).toBe(404);
   });
 
@@ -380,7 +382,7 @@ describe("tasksRoutes", () => {
         throw new TaskIdAllocationFailedError(5);
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "x" }),
@@ -394,7 +396,7 @@ describe("tasksRoutes", () => {
         throw new RuntimeHeadlessLaunchFailed("copilot", "/tmp/wd", new Error("ENOENT"));
       }),
     });
-    const res = await tasksRoutes(m).request("/", {
+    const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "writer", instructions: "x" }),
@@ -412,7 +414,7 @@ describe("tasksRoutes", () => {
       // NoEventsYet. The explicit "task missing" 404 lives on
       // GET /:tid (covered separately).
       const m = stubManager({ getTaskActivity: vi.fn(async () => null) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/activity`);
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/activity`);
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.code).toBe("NoEventsYet");
@@ -436,7 +438,7 @@ describe("tasksRoutes", () => {
         result: "ok",
       };
       const m = stubManager({ getTaskActivity: vi.fn(async () => payload) });
-      const res = await tasksRoutes(m).request(`/${sampleTask.id}/activity`);
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/activity`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body).toEqual(payload);

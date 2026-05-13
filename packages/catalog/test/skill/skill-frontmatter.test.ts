@@ -57,7 +57,7 @@ dependencies:
     expect(meta.dependencies?.mcps).toEqual(["file:/abs/mcps/azure"]);
   });
 
-  it("accepts deps in object form { origin: string } as legacy compat", () => {
+  it("rejects deps in object form { origin: string } (only bare strings allowed)", () => {
     const src = `---
 name: parent
 description: x
@@ -67,8 +67,7 @@ dependencies:
     - { origin: "file:/abs/web-search" }
 ---
 `;
-    const { meta } = SkillFormat.parse(src, LABEL);
-    expect(meta.dependencies?.skills).toEqual(["file:/abs/web-search"]);
+    expect(() => SkillFormat.parse(src, LABEL)).toThrow(SkillFrontmatterError);
   });
 
   it("body preserved verbatim including blank lines", () => {

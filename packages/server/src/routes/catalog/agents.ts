@@ -195,7 +195,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      await catalog.removeAgent(name);
+      await catalog.deleteAgent(name);
       logEvent(c, "catalog: agent removed", { kind: "agent", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {

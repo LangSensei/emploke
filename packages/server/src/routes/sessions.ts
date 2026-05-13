@@ -81,16 +81,12 @@ function statusForError(err: unknown): number | null {
  * touching the host. Production passes the default `spawnTerminal`.
  */
 export function sessionsRoutes(
-  resolveManager: SessionManagerResolver | SessionManager,
+  resolveManager: SessionManagerResolver,
   spawnFn: SpawnFn = spawnTerminal,
 ): Hono {
   const app = new Hono();
 
-  // Backward-compat overload: tests still pass a SessionManager directly.
-  const getManager: SessionManagerResolver =
-    typeof resolveManager === "function"
-      ? (resolveManager as SessionManagerResolver)
-      : () => resolveManager;
+  const getManager = resolveManager;
 
   // List sessions, optionally filtered by agent / createdSince / activeSince.
   app.get("/", async (c) => {

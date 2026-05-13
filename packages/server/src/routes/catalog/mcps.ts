@@ -130,7 +130,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      await catalog.removeMcp(name);
+      await catalog.deleteMcp(name);
       logEvent(c, "catalog: mcp removed", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {

@@ -1,6 +1,9 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  deleteAgent,
+  deleteMcp,
+  deleteSkill,
   disableAgent,
   enableAgent,
   getAgent,
@@ -15,9 +18,6 @@ import {
   patchAgentMetadata,
   patchSkillMetadata,
   type ResolveManifest,
-  removeAgent,
-  removeMcp,
-  removeSkill,
   resolveAgentInstall,
   resolveSkillInstall,
   updateAgentContent,
@@ -148,9 +148,9 @@ export function CatalogPage({
     setBusy(true);
     setError(null);
     try {
-      if (tab === "agents") await removeAgent(name);
-      else if (tab === "skills") await removeSkill(name);
-      else await removeMcp(name);
+      if (tab === "agents") await deleteAgent(name);
+      else if (tab === "skills") await deleteSkill(name);
+      else await deleteMcp(name);
       setConfirmRemove(null);
       onChanged();
     } catch (e) {
@@ -168,7 +168,7 @@ export function CatalogPage({
         const orphans = skills.filter((s) => s.skill.orphaned);
         for (const s of orphans) {
           try {
-            await removeSkill(s.skill.fqn);
+            await deleteSkill(s.skill.fqn);
           } catch (e) {
             // HasDependentsError shouldn't happen by definition (orphans
             // have zero reverse-deps), but if it does, surface and continue
@@ -180,7 +180,7 @@ export function CatalogPage({
         const orphans = mcps.filter((m) => m.orphaned);
         for (const m of orphans) {
           try {
-            await removeMcp(m.name);
+            await deleteMcp(m.name);
           } catch (e) {
             setError(`failed to remove ${m.name}: ${(e as Error).message}`);
           }

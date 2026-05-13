@@ -48,7 +48,6 @@ export type {
   DeleteSessionOpts,
   LaunchCommand,
   ListSessionOpts,
-  Logger,
   SessionManagerConfig,
   SessionView,
 } from "./types.js";

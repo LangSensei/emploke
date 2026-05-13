@@ -59,7 +59,6 @@ export { readTaskRuntimeMetadata, type TaskRuntimeMetadata } from "./task-meta.j
 export type {
   DispatchOpts,
   ListTaskOpts,
-  Logger,
   TaskFailure,
   TaskManagerConfig,
   TaskResult,

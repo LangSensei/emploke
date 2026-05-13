@@ -180,7 +180,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      await catalog.removeSkill(name);
+      await catalog.deleteSkill(name);
       logEvent(c, "catalog: skill removed", { kind: "skill", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {
