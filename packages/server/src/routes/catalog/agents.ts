@@ -1,6 +1,6 @@
 import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
-import { errorBody, statusForCatalogError } from "../_shared.js";
+import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import {
   readAgentInstallBody,
   readContentBody,
@@ -58,6 +58,13 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       const result = await catalog.installAgent(parsed.origin);
       const status = result.failed.length > 0 ? 207 : 201;
+      logEvent(c, "catalog: agent install completed", {
+        kind: "agent",
+        origin: parsed.origin,
+        installed: result.installed.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+      });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
     } catch (e: unknown) {
@@ -98,6 +105,12 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       const result = await catalog.applySync(plan);
       const status = result.failed.length > 0 ? 207 : 200;
+      logEvent(c, "catalog: agent sync applied", {
+        kind: "agent",
+        installed: result.installed.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+      });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
     } catch (e: unknown) {
@@ -111,6 +124,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const name = c.req.param("name");
     try {
       const agent = await catalog.acknowledgeAgentPrereqs(name);
+      logEvent(c, "catalog: agent prereqs acknowledged", { kind: "agent", fqn: name });
       return c.json(agent);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -123,6 +137,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const name = c.req.param("name");
     try {
       const agent = await catalog.disableAgent(name);
+      logEvent(c, "catalog: agent disabled", { kind: "agent", fqn: name });
       return c.json(agent);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -135,6 +150,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const name = c.req.param("name");
     try {
       const agent = await catalog.enableAgent(name);
+      logEvent(c, "catalog: agent enabled", { kind: "agent", fqn: name });
       return c.json(agent);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -149,6 +165,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     if ("error" in parsed) return c.json(parsed, 400);
     try {
       const agent = await catalog.updateAgentContent(name, parsed.content);
+      logEvent(c, "catalog: agent content updated", { kind: "agent", fqn: name });
       return c.json(agent);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -166,6 +183,7 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
         name,
         parsed.body as Parameters<typeof catalog.updateAgentMetadata>[1],
       );
+      logEvent(c, "catalog: agent metadata updated", { kind: "agent", fqn: name });
       return c.json(agent);
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -175,8 +193,10 @@ export function agentsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.delete("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
+    const name = c.req.param("name");
     try {
-      await catalog.removeAgent(c.req.param("name"));
+      await catalog.removeAgent(name);
+      logEvent(c, "catalog: agent removed", { kind: "agent", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.

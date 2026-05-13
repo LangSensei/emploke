@@ -19,7 +19,7 @@ import {
   UnsupportedPlatformError,
 } from "@emploke/terminal";
 import { Hono } from "hono";
-import { errorBody, logFault, parseJsonBody } from "./_shared.js";
+import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
 import type { SessionCreateBody } from "./manifest.js";
 
 /** Override hook used by tests to bypass real terminal spawning. */
@@ -149,6 +149,11 @@ export function sessionsRoutes(
         agent: body.agent,
         ...(typeof body.runtime === "string" ? { runtime: body.runtime } : {}),
       });
+      logEvent(c, "session created", {
+        sessionId: rec.id,
+        agent: rec.agent,
+        runtime: rec.runtime,
+      });
       return c.json(rec, 201);
     } catch (err) {
       const status = statusForError(err) ?? 400;
@@ -197,6 +202,7 @@ export function sessionsRoutes(
     const purge = c.req.query("purge") === "1";
     try {
       await getManager(c).delete(id, { purge });
+      logEvent(c, "session deleted", { sessionId: id, purge });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
@@ -242,10 +248,21 @@ export function sessionsRoutes(
 
     try {
       const result = await spawnFn(cmd);
+      logEvent(c, "session spawned", {
+        sessionId: id,
+        remote,
+        launcher: result.launcher,
+      });
       return c.json({ ok: true as const, launcher: result.launcher, display: cmd.display });
     } catch (err) {
       const code = spawnErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
+      logEvent(c, "session spawn failed", {
+        sessionId: id,
+        remote,
+        code,
+        reason: message,
+      });
       return c.json({
         ok: false as const,
         error: message,
