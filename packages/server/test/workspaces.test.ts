@@ -2,9 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { requestId } from "../src/middleware/request-id.js";
+import { requestLogger } from "../src/middleware/request-logger.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
 import { WorkspaceContextCache } from "../src/workspace-context.js";
 
@@ -342,5 +346,65 @@ describe("workspacesRoutes — POST /:id/reload", () => {
     // Sanity: the original cached context is preserved (not evicted).
     const stillCached = await cache.get(ws.id);
     expect(stillCached).toBe(ctx);
+  });
+});
+
+// Issue #58 (slice 2): every state-mutating workspace endpoint emits a
+// single structured `info` line at the success boundary so operators
+// can audit who changed what without parsing free-form messages. The
+// info lines flow through the request-scoped logger that the
+// `requestLogger` middleware binds, so they inherit the request id.
+describe("workspacesRoutes — observability (issue #58)", () => {
+  async function makeWiredApp() {
+    const cap = captureLogger();
+    const manager = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
+    const runtimeRegistry = new RuntimeRegistry();
+    runtimeRegistry.register(
+      new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
+    );
+    const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
+    openCaches.push(cache);
+    const defaultWorkspaceParent = path.join(scratch, "default-workspaces");
+
+    // Wire the middleware chain that production mounts in app.ts:
+    // requestId then requestLogger so c.var.logger is a request-scoped
+    // child carrying the request id. workspacesRoutes is mounted at
+    // root for the test, but the helper would behave identically under
+    // any mount path.
+    const root = new Hono();
+    root.use("*", requestId());
+    root.use("*", requestLogger(cap.logger));
+    root.route("/", workspacesRoutes({ manager, cache, defaultWorkspaceParent }));
+
+    return { root, cap, manager, cache };
+  }
+
+  it("POST / emits a 'workspace created' info line carrying the new id", async () => {
+    const { root, cap } = await makeWiredApp();
+    const res = await root.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "req-create" },
+      body: JSON.stringify({ workdir: path.join(scratch, "obs-create"), name: "Obs Create" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+
+    const evt = cap.entries.find((e) => e.msg === "workspace created");
+    expect(evt).toBeDefined();
+    expect(evt?.level).toBe(30); // info
+    expect(evt?.workspaceId).toBe(body.id);
+    expect(evt?.requestId).toBe("req-create");
+  });
+
+  it("DELETE /:id emits a 'workspace deleted' info line", async () => {
+    const { root, cap, manager } = await makeWiredApp();
+    const ws = await manager.init({ name: "Doomed", workdir: path.join(scratch, "doomed") });
+    cap.entries.length = 0;
+
+    const res = await root.request(`/${ws.id}`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+
+    const evt = cap.entries.find((e) => e.msg === "workspace deleted");
+    expect(evt?.workspaceId).toBe(ws.id);
   });
 });

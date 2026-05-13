@@ -136,6 +136,7 @@ export class WorkspaceContextCache {
       } catch {
         // best-effort
       }
+      this.logger.info({ workspaceId: id }, "workspace context invalidated");
     }
     this.entries.delete(id);
   }
@@ -180,6 +181,10 @@ export class WorkspaceContextCache {
     if (cached) {
       const live = cached.tasks.liveCount();
       if (live > 0) {
+        this.logger.warn(
+          { workspaceId: id, liveCount: live },
+          "workspace reload refused: live tasks would be orphaned",
+        );
         throw new WorkspaceHasLiveTasksError(id, live);
       }
       try {
@@ -189,7 +194,11 @@ export class WorkspaceContextCache {
       }
     }
     this.entries.delete(id);
-    return this.get(id);
+    const fresh = await this.get(id);
+    if (fresh !== null) {
+      this.logger.info({ workspaceId: id }, "workspace context reloaded");
+    }
+    return fresh;
   }
 
   /**
@@ -291,6 +300,14 @@ export class WorkspaceContextCache {
 
     const ctx: WorkspaceContext = { workspace, db, catalog, sessions, tasks };
     this.entries.set(id, ctx);
+    this.logger.info(
+      {
+        workspaceId: id,
+        workdir: workspace.workdir,
+        dbPath,
+      },
+      "workspace context built (first request)",
+    );
     return ctx;
   }
 }

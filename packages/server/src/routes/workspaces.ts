@@ -16,7 +16,7 @@ import {
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type WorkspaceContextCache, WorkspaceHasLiveTasksError } from "../workspace-context.js";
-import { errorBody, logFault, parseJsonBody } from "./_shared.js";
+import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
 import type {
   WorkspaceCreateBody,
   WorkspaceCurrentPutBody,
@@ -148,6 +148,11 @@ export function workspacesRoutes(deps: {
 
     try {
       const ws = await manager.init(initOpts);
+      logEvent(c, "workspace created", {
+        workspaceId: ws.id,
+        name: ws.name,
+        workdir: ws.workdir,
+      });
       return c.json(
         {
           id: ws.id,
@@ -185,6 +190,7 @@ export function workspacesRoutes(deps: {
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
+    logEvent(c, "workspace selected as current", { workspaceId: parsed.body.id });
     return c.json({ id: parsed.body.id });
   });
 
@@ -242,6 +248,11 @@ export function workspacesRoutes(deps: {
     try {
       const updated = await manager.update(id, patch);
       cache.invalidate(id);
+      logEvent(c, "workspace updated", {
+        workspaceId: id,
+        ...(patch.name !== undefined ? { newName: patch.name } : {}),
+        ...(patch.defaults !== undefined ? { defaultsChanged: true } : {}),
+      });
       return c.json({
         id: updated.id,
         name: updated.name,
@@ -268,6 +279,7 @@ export function workspacesRoutes(deps: {
       return wsErrorJson(c, err, 400);
     }
     cache.invalidate(id);
+    logEvent(c, "workspace deleted", { workspaceId: id, purge });
     return c.body(null, 204);
   });
 
@@ -297,6 +309,7 @@ export function workspacesRoutes(deps: {
           404,
         );
       }
+      logEvent(c, "workspace reload requested via API", { workspaceId: id });
       return c.body(null, 204);
     } catch (err) {
       if (err instanceof WorkspaceHasLiveTasksError) {
