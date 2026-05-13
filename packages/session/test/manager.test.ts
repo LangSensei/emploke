@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime } from "@emploke/runtime";
 import {
@@ -26,18 +27,18 @@ let scratch: string;
 let catalogDir: string;
 
 /**
- * Per-test repos that the buildManager helper hands out. Tracked so
- * afterEach can close them — important on Windows where leaked WAL
- * sidecar handles would block the temp-dir `rm`. Using `:memory:`
- * SQLite means there's no on-disk file to leak in the first place,
- * but we still close to release any internal handles.
+ * Per-test connections that the buildManager helper hands out. Tracked
+ * so afterEach can close them — important because repos no longer own
+ * the connection (the workspace pkg does in production; the test owns
+ * it here). Using `:memory:` SQLite means there's no on-disk file to
+ * leak, but we still close to release any internal handles.
  */
-let openRepos: SqliteSessionRepository[] = [];
+let openDbs: DatabaseSync[] = [];
 
 function makeRepo(): SqliteSessionRepository {
-  const repo = new SqliteSessionRepository(":memory:");
-  openRepos.push(repo);
-  return repo;
+  const db = new DatabaseSync(":memory:");
+  openDbs.push(db);
+  return new SqliteSessionRepository({ db });
 }
 
 /**
@@ -56,8 +57,14 @@ beforeEach(async () => {
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
-  for (const r of openRepos) r.close();
-  openRepos = [];
+  for (const d of openDbs.splice(0)) {
+    try {
+      d.close();
+    } catch {
+      // already closed
+    }
+  }
+  openDbs = [];
   await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });

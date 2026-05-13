@@ -1,62 +1,39 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { addColumnIfMissing, tableHasLegacyShape } from "../skill/sqlite-skill-repository.js";
 import { Agent, type AgentDependencies } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
+
+const AGENT_PKG_SCHEMA_VERSION = 1;
 
 /**
  * SQLite-backed `AgentRepository`. Mirror of {@link SqliteSkillRepository}
  * with `agent` / `agent_file` tables instead.
+ *
+ * The constructor takes an already-opened `DatabaseSync`. The server
+ * shares one connection across every per-workspace repository
+ * (task / session / catalog / workflow); the file handle count per
+ * workspace stays at one. PRAGMAs (journal_mode, synchronous,
+ * foreign_keys, ...) are the caller's responsibility — the workspace
+ * pkg sets them once on the shared connection.
+ *
+ * Schema versioning is per-pkg: this repo writes its own row to
+ * `schema_meta` keyed by `pkg='catalog_agent'`, sibling to the rows
+ * written by `SqliteSkillRepository` (`catalog_skill`) and
+ * `SqliteMcpRepository` (`catalog_mcp`).
  */
 export class SqliteAgentRepository implements AgentRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
 
-  constructor(dbPath: string, opts?: { logger?: Logger }) {
-    this.db = new DatabaseSync(dbPath);
-    this.logger = opts?.logger ?? silentLogger;
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    // See SqliteSkillRepository for the rationale on dropping legacy
-    // pre-`fqn`-rename schemas instead of carrying ALTER TABLE migrations.
-    if (tableHasLegacyShape(this.db, "agent", "fqn")) {
-      this.db.exec("DROP TABLE IF EXISTS agent_file");
-      this.db.exec("DROP TABLE IF EXISTS agent");
-    }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS agent (
-        fqn              TEXT PRIMARY KEY NOT NULL,
-        origin           TEXT NOT NULL,
-        scope            TEXT NOT NULL,
-        short_name       TEXT NOT NULL,
-        description      TEXT NOT NULL,
-        version          TEXT NOT NULL,
-        prereqs          TEXT,
-        deps_json        TEXT NOT NULL,
-        anchor_content   TEXT NOT NULL,
-        prereqs_ack      INTEGER NOT NULL DEFAULT 1,
-        disabled_by_user INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-    this.db.exec("CREATE INDEX IF NOT EXISTS agent_origin ON agent(origin)");
-    // Additive migrations for tables that pre-date these columns;
-    // see SqliteSkillRepository for rationale.
-    addColumnIfMissing(this.db, "agent", "prereqs", "TEXT");
-    addColumnIfMissing(this.db, "agent", "prereqs_ack", "INTEGER NOT NULL DEFAULT 1");
-    addColumnIfMissing(this.db, "agent", "disabled_by_user", "INTEGER NOT NULL DEFAULT 0");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS agent_file (
-        agent_fqn  TEXT NOT NULL REFERENCES agent(fqn) ON DELETE CASCADE,
-        rel_path   TEXT NOT NULL,
-        content    BLOB NOT NULL,
-        PRIMARY KEY (agent_fqn, rel_path)
-      )
-    `);
+  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    this.ensureSchema();
   }
 
+  /** No-op — the connection is owned by the caller. */
   close(): void {
-    this.db.close();
+    // intentionally empty
   }
 
   async add(agent: Agent, files: ReadonlyMap<string, Buffer>): Promise<void> {
@@ -212,6 +189,50 @@ export class SqliteAgentRepository implements AgentRepository {
     if (sets.length === 0) return;
     args.push(fqn);
     this.db.prepare(`UPDATE agent SET ${sets.join(", ")} WHERE fqn = ?`).run(...args);
+  }
+
+  // ─── schema management ──────────────────────────────────────
+
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE IF NOT EXISTS agent (
+        fqn              TEXT PRIMARY KEY NOT NULL,
+        origin           TEXT NOT NULL,
+        scope            TEXT NOT NULL,
+        short_name       TEXT NOT NULL,
+        description      TEXT NOT NULL,
+        version          TEXT NOT NULL,
+        prereqs          TEXT,
+        deps_json        TEXT NOT NULL,
+        anchor_content   TEXT NOT NULL,
+        prereqs_ack      INTEGER NOT NULL DEFAULT 1,
+        disabled_by_user INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS agent_origin ON agent(origin);
+      CREATE TABLE IF NOT EXISTS agent_file (
+        agent_fqn  TEXT NOT NULL REFERENCES agent(fqn) ON DELETE CASCADE,
+        rel_path   TEXT NOT NULL,
+        content    BLOB NOT NULL,
+        PRIMARY KEY (agent_fqn, rel_path)
+      );
+    `);
+    const existing = this.db
+      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+      .get("catalog_agent") as { version: number } | undefined;
+    if (existing === undefined) {
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("catalog_agent", AGENT_PKG_SCHEMA_VERSION);
+      return;
+    }
+    if (existing.version === AGENT_PKG_SCHEMA_VERSION) return;
+    throw new Error(
+      `catalog_agent pkg schema mismatch: db has v${existing.version}, server supports v${AGENT_PKG_SCHEMA_VERSION}.`,
+    );
   }
 }
 

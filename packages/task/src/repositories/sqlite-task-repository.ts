@@ -1,23 +1,12 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
 import type { ListTaskOpts, Task, TaskStatus } from "../types.js";
 import type { TaskRepository } from "./repository.js";
 
-/**
- * Current on-disk schema version for `tasks.db`.
- *
- * Bump when an existing column is removed, renamed, or its semantics
- * change in a way an older server cannot ignore. Mismatch behaviour
- * mirrors `@emploke/workspace`'s policy: refuse to open with a
- * direction-aware message.
- */
-const CURRENT_SCHEMA_VERSION = 1;
+const TASK_PKG_SCHEMA_VERSION = 1;
 
-/** Closed set of valid task statuses; used to validate rows on read. */
 const VALID_STATUSES = new Set<TaskStatus>([
   "not_started",
   "running",
@@ -42,79 +31,35 @@ interface TaskRow {
 
 /**
  * SQLite-backed `TaskRepository`. Each task's metadata lives in a row
- * of the `tasks` table inside `<tasksDir>/tasks.db`. The task's workdir
- * (`<tasksDir>/<id>/`) — agent artifacts and the captured `stderr.log`
- * — is **not** owned by this repository; it stays a plain directory
- * tree on disk. The runtime's per-task event log (Copilot's
- * `<copilotStateDir>/<runtimeSessionId>/`) is also outside this
- * repository's scope; the runtime owns it end-to-end via
- * `Runtime.readActivity` / `Runtime.deleteState`.
+ * of the `tasks` table inside the **shared per-workspace database**
+ * (`<workspace>/workspace.db`). The task's workdir
+ * (`<workspace>/tasks/<id>/`) — agent artifacts and the captured
+ * `stderr.log` — is **not** owned by this repository; it stays a plain
+ * directory tree on disk.
  *
- * ## `Task.metadata` handling
+ * The constructor takes an already-opened `DatabaseSync`. The server
+ * shares one connection across every per-workspace repository
+ * (task / session / catalog / workflow), so cross-entity JOINs and
+ * atomic multi-table transactions are cheap and the file handle count
+ * per workspace stays at one.
  *
- * `Task.metadata` is an open-shape `Record<string, unknown>`. We promote
- * one well-known field — `runtime` — to a first-class column so it can
- * be indexed (used by `ListTaskOpts.runtime` and the dashboard's
- * runtime filter). Every other key in `metadata` is stored verbatim in
- * the `metadata` JSON column.
- *
- * On `read`, the column value is re-injected into the returned
- * `task.metadata.runtime` so consumers (notably `readTaskRuntimeMetadata`
- * in `task-meta.ts`) see the same `Task` shape they always did. The
- * column promotion is a storage-layer detail; the public `Task` type
- * is unchanged.
- *
- * Defense-in-depth: every public method validates `id` against
- * `TASK_ID_RE`. SQLite parameter binding makes injection harmless, but
- * the validation makes "this is the tasks namespace, not arbitrary
- * keys" an explicit precondition.
- *
- * Concurrency: WAL + SQLite's internal serialisation. Per-id writes
- * don't need cross-process locking.
+ * `Task.metadata.runtime` is promoted to a first-class column for
+ * indexed filtering; every other key in `metadata` round-trips
+ * verbatim through the JSON `metadata` column.
  */
 export class SqliteTaskRepository implements TaskRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
 
-  /**
-   * Open or create a tasks database at `dbPath`.
-   *
-   * Pass `":memory:"` for tests. The parent directory of `dbPath` is
-   * created recursively if it doesn't already exist (no-op for
-   * `:memory:`).
-   *
-   * `opts.logger` (optional) receives `warn` when `list()` drops a row
-   * that fails validation — the manager passes its own logger here so
-   * operators see per-row corruption without `list()` failing.
-   */
-  constructor(dbPath: string, opts?: { logger?: Logger }) {
-    if (dbPath !== ":memory:") {
-      mkdirSync(path.dirname(dbPath), { recursive: true });
-    }
-    this.db = new DatabaseSync(dbPath);
-    this.logger = opts?.logger ?? silentLogger;
-    try {
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec("PRAGMA synchronous = NORMAL");
-      this.checkOrCreateSchema();
-    } catch (err) {
-      // Don't leak the DB handle if construction fails — on Windows
-      // a leaked WAL handle blocks the test cleanup `rm` with EBUSY.
-      try {
-        this.db.close();
-      } catch {
-        // best-effort
-      }
-      throw err;
-    }
+  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    this.ensureSchema();
   }
 
+  /** No-op — the connection is owned by the caller. */
   close(): void {
-    try {
-      this.db.close();
-    } catch {
-      // Already closed; idempotent.
-    }
+    // intentionally empty
   }
 
   async read(id: string): Promise<Task | null> {
@@ -133,13 +78,6 @@ export class SqliteTaskRepository implements TaskRepository {
   async save(task: Task): Promise<void> {
     if (!TASK_ID_RE.test(task.id)) throw new InvalidTaskIdError(task.id);
     const meta = task.metadata ?? {};
-    // Only promote `runtime` to its own column when it's a string
-    // (the Task type permits `unknown` here). When it's anything else
-    // (number, object, undefined explicitly set, ...), keep it inside
-    // the JSON `metadata` blob so `read()` round-trips the original
-    // value verbatim — silently dropping it would violate the
-    // "open-shape keys round-trip verbatim" guarantee `Task.metadata`
-    // makes to runtime adapters.
     let runtime: string | null = null;
     let metaForJson: Record<string, unknown> = meta as Record<string, unknown>;
     if (typeof meta.runtime === "string") {
@@ -181,7 +119,6 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async delete(id: string): Promise<void> {
-    // Idempotent on bad ids — matches the old FsTaskRepository.delete.
     if (!TASK_ID_RE.test(id)) return;
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
   }
@@ -215,10 +152,6 @@ export class SqliteTaskRepository implements TaskRepository {
       try {
         out.push(rowToTask(row.id, row));
       } catch (err) {
-        // Corrupted row — drop from list. Matches the old
-        // FsTaskRepository.list behaviour. We warn via the injected
-        // logger so operators can see the bad row without `list`
-        // itself failing — the manager hooks its own logger here.
         this.logger.warn("tasks: skipping corrupted task row", {
           taskId: row.id ?? null,
           reason: err instanceof Error ? err.message : String(err),
@@ -228,73 +161,43 @@ export class SqliteTaskRepository implements TaskRepository {
     return out;
   }
 
-  // ─── schema management ──────────────────────────────────────
-
-  private checkOrCreateSchema(): void {
-    const meta = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'")
-      .get() as { name: string } | undefined;
-    if (meta === undefined) {
-      this.createSchema();
-      return;
-    }
-    const row = this.db.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE IF NOT EXISTS tasks (
+        id              TEXT PRIMARY KEY,
+        agent           TEXT NOT NULL,
+        runtime         TEXT,
+        status          TEXT NOT NULL,
+        instructions    TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        started_at      TEXT,
+        ended_at        TEXT,
+        result_output   TEXT,
+        failure_error   TEXT,
+        metadata        TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
+      CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
+      CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
+      CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
+    `);
+    const existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as
       | { version: number }
       | undefined;
-    if (row === undefined) {
-      throw new Error(
-        "tasks.db: schema_meta table exists but is empty (db is corrupted; remove it and restart)",
-      );
+    if (existing === undefined) {
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("task", TASK_PKG_SCHEMA_VERSION);
+      return;
     }
-    if (row.version === CURRENT_SCHEMA_VERSION) return;
-    if (row.version > CURRENT_SCHEMA_VERSION) {
-      throw new Error(
-        `tasks.db was written by a newer emploke (schema v${row.version}; this server supports v${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`,
-      );
-    }
+    if (existing.version === TASK_PKG_SCHEMA_VERSION) return;
     throw new Error(
-      `tasks.db was written by an older emploke (schema v${row.version}; this server supports v${CURRENT_SCHEMA_VERSION}). Migration from older versions is not yet implemented.`,
+      `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
     );
-  }
-
-  private createSchema(): void {
-    // Bootstrap inside a transaction so a crash mid-DDL leaves an empty
-    // db (caller treats that as "fresh, recreate") rather than a
-    // half-built one (schema_meta present but `tasks` missing → reads
-    // fail confusingly). `IF NOT EXISTS` + `INSERT OR IGNORE` makes
-    // the bootstrap race-safe across concurrent first-opens of the
-    // same dbPath (rare in practice — one server per workspace — but
-    // free defence).
-    this.db.exec("BEGIN");
-    try {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS schema_meta (
-          version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
-        );
-        INSERT OR IGNORE INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
-        CREATE TABLE IF NOT EXISTS tasks (
-          id              TEXT PRIMARY KEY,
-          agent           TEXT NOT NULL,
-          runtime         TEXT,
-          status          TEXT NOT NULL,
-          instructions    TEXT NOT NULL,
-          created_at      TEXT NOT NULL,
-          started_at      TEXT,
-          ended_at        TEXT,
-          result_output   TEXT,
-          failure_error   TEXT,
-          metadata        TEXT NOT NULL DEFAULT '{}'
-        );
-        CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
-        CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
-        CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
-        CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
-      `);
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
   }
 }
 
@@ -324,8 +227,6 @@ function rowToTask(id: string, row: TaskRow): Task {
   } catch (err) {
     throw new CorruptedTaskError(id, `task.metadata is not valid JSON: ${(err as Error).message}`);
   }
-  // Re-inject the column-promoted runtime so the public Task shape is
-  // unchanged. Storage-level promotion is invisible to consumers.
   if (row.runtime !== null) {
     metaParsed = { ...metaParsed, runtime: row.runtime };
   }

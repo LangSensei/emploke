@@ -50,9 +50,14 @@ re-derived from the DB on any read path that wants them.
 ## Quick start
 
 ```ts
+import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
 
-const catalog = await CatalogManager.open({ catalogDir: "/path/to/workspace/catalog" });
+// Catalog now reads/writes the per-workspace shared `workspace.db`.
+// In production the workspace pkg owns the connection; here we open
+// one ourselves for illustration.
+const db = new DatabaseSync("/path/to/workspace/workspace.db");
+const catalog = await CatalogManager.open({ db });
 
 // Install
 await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });

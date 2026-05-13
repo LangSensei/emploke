@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -25,8 +26,14 @@ const BACKENDS: Backend[] = [
   {
     name: "SqliteMcpRepository (in-memory)",
     setup: async () => {
-      const repo = new SqliteMcpRepository(":memory:");
-      return { repo, teardown: async () => repo.close() };
+      const db = new DatabaseSync(":memory:");
+      const repo = new SqliteMcpRepository({ db });
+      return {
+        repo,
+        teardown: async () => {
+          db.close();
+        },
+      };
     },
   },
 ];

@@ -65,13 +65,13 @@ export interface SessionManagerConfig {
    */
   readonly workspaceDir: string;
   /**
-   * Persistence backend for session state. When omitted, the manager
-   * constructs a `SqliteSessionRepository` opened at
-   * `<sessionsDir>/sessions.db` automatically; tests can inject a
-   * `:memory:`-backed `SqliteSessionRepository` (from
-   * `@emploke/session/testing`) to keep state purely in-process.
+   * Persistence backend for session state. Required: callers (server
+   * `WorkspaceContext` in production, tests) construct a
+   * `SqliteSessionRepository({ db: <workspace.db connection> })` and
+   * pass it. There is no default — the session pkg no longer owns a DB
+   * file path; the workspace pkg does.
    */
-  readonly repository?: SessionRepository;
+  readonly repository: SessionRepository;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */

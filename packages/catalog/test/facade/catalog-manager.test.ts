@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
@@ -145,6 +146,7 @@ const MCP_BODY = `{
   "args": ["server.js"]
 }`;
 
+let db: DatabaseSync;
 let mcpRepo: SqliteMcpRepository;
 let skillRepo: SqliteSkillRepository;
 let agentRepo: SqliteAgentRepository;
@@ -152,9 +154,12 @@ let fetchers: ReturnType<typeof makeFakeFetchers>;
 let mgr: CatalogManager;
 
 beforeEach(() => {
-  mcpRepo = new SqliteMcpRepository(":memory:");
-  skillRepo = new SqliteSkillRepository(":memory:");
-  agentRepo = new SqliteAgentRepository(":memory:");
+  // All three catalog repos share one in-memory connection — same as
+  // production where they share the workspace's `workspace.db` handle.
+  db = new DatabaseSync(":memory:");
+  mcpRepo = new SqliteMcpRepository({ db });
+  skillRepo = new SqliteSkillRepository({ db });
+  agentRepo = new SqliteAgentRepository({ db });
   fetchers = makeFakeFetchers();
 
   // McpService is wired against a tree-based fetcher that reads the
@@ -167,9 +172,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  mcpRepo.close();
-  skillRepo.close();
-  agentRepo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 // ─── resolveSkill: cross-entity walking ─────────────────

@@ -1,8 +1,9 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { dropColumnIfPresent } from "../skill/sqlite-skill-repository.js";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
+
+const MCP_PKG_SCHEMA_VERSION = 1;
 
 /**
  * SQLite-backed `McpRepository`.
@@ -28,47 +29,31 @@ import type { McpRepository } from "./mcp-repository.js";
  * full bytes (with `_meta` injected by `Mcp.create`). All map 1:1 to
  * the `Mcp` entity.
  *
- * Note: an earlier schema persisted an `orphaned INTEGER` column. That
- * flag is now derived from the catalog dep graph at projection time;
- * we drop the column on open via the migration helper (idempotent).
+ * The constructor takes an already-opened `DatabaseSync`. The server
+ * shares one connection across every per-workspace repository
+ * (task / session / catalog / workflow), so the file handle count per
+ * workspace stays at one. PRAGMAs (journal_mode, synchronous,
+ * foreign_keys, ...) are the caller's responsibility — the workspace
+ * pkg sets them once on the shared connection.
  *
- * Concurrency: opens with `journal_mode=WAL` so concurrent readers
- * don't block writers and vice versa. WAL also gives crash safety
- * (the WAL file is replayed on next open, so a crash mid-write
- * either commits or rolls back atomically).
+ * Schema versioning is per-pkg: this repo writes its own row to
+ * `schema_meta` keyed by `pkg='catalog_mcp'`, sibling to the rows
+ * written by `SqliteSkillRepository` (`catalog_skill`) and
+ * `SqliteAgentRepository` (`catalog_agent`).
  */
 export class SqliteMcpRepository implements McpRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
 
-  /**
-   * Open (and initialise if needed) the SQLite database at `dbPath`.
-   * Special path `:memory:` keeps the database in RAM — useful for
-   * tests. Pass `dbPath = "/abs/path/to/catalog.db"` for production.
-   */
-  constructor(dbPath: string, opts?: { logger?: Logger }) {
-    this.db = new DatabaseSync(dbPath);
-    this.logger = opts?.logger ?? silentLogger;
-    // WAL gives concurrent readers + crash safety. NORMAL sync is the
-    // standard WAL companion (FULL is overkill for a local catalog).
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS mcp (
-        name      TEXT PRIMARY KEY NOT NULL,
-        origin    TEXT NOT NULL,
-        content   TEXT NOT NULL
-      )
-    `);
-    // Retire the legacy `orphaned` column on existing DBs — orphan
-    // is now derived from the dep graph, not stored. Idempotent.
-    dropColumnIfPresent(this.db, "mcp", "orphaned");
+  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    this.ensureSchema();
   }
 
-  /** Close the database. Idempotent. */
+  /** No-op — the connection is owned by the caller. */
   close(): void {
-    this.db.close();
+    // intentionally empty
   }
 
   async add(mcp: Mcp): Promise<void> {
@@ -129,5 +114,34 @@ export class SqliteMcpRepository implements McpRepository {
       }
     }
     return out;
+  }
+
+  // ─── schema management ──────────────────────────────────────
+
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE IF NOT EXISTS mcp (
+        name      TEXT PRIMARY KEY NOT NULL,
+        origin    TEXT NOT NULL,
+        content   TEXT NOT NULL
+      );
+    `);
+    const existing = this.db
+      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+      .get("catalog_mcp") as { version: number } | undefined;
+    if (existing === undefined) {
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("catalog_mcp", MCP_PKG_SCHEMA_VERSION);
+      return;
+    }
+    if (existing.version === MCP_PKG_SCHEMA_VERSION) return;
+    throw new Error(
+      `catalog_mcp pkg schema mismatch: db has v${existing.version}, server supports v${MCP_PKG_SCHEMA_VERSION}.`,
+    );
   }
 }

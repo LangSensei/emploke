@@ -1,23 +1,18 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { InvalidSessionIdError, SessionCorruptedError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
 import type { ListSessionStateOpts, SessionRepository, SessionState } from "./repository.js";
 
 /**
- * Current on-disk schema version for `sessions.db`.
+ * Current schema version for the session pkg's slice of the shared
+ * per-workspace `workspace.db`. Stored in `schema_meta(pkg='session')`.
  *
  * Bump when an existing column is removed, renamed, or its semantics
  * change in a way an older server cannot ignore. Purely additive
  * changes (new column with sensible default) do not require a bump.
- *
- * Mismatch behaviour mirrors `@emploke/workspace`'s policy: refuse to
- * open with a direction-aware message ("upgrade your server" vs "no
- * migration code").
  */
-const CURRENT_SCHEMA_VERSION = 1;
+const SESSION_PKG_SCHEMA_VERSION = 1;
 
 interface SessionRow {
   id: string;
@@ -29,10 +24,11 @@ interface SessionRow {
 
 /**
  * SQLite-backed `SessionRepository`. Each session's metadata lives in
- * a row of the `sessions` table inside `<sessionsDir>/sessions.db`.
- * The session's workdir (`<sessionsDir>/<id>/`) — AGENTS.md and any
- * agent-produced files — is **not** owned by this repository; it stays
- * a plain directory tree on disk.
+ * a row of the `sessions` table inside the **shared per-workspace
+ * database** (`<workspace>/workspace.db`). The session's workdir
+ * (`<sessionsDir>/<id>/`) — AGENTS.md and any agent-produced files —
+ * is **not** owned by this repository; it stays a plain directory tree
+ * on disk.
  *
  * Defense-in-depth: every public method validates `id` against
  * `SESSION_ID_RE` before composing SQL. Mirrors the path-traversal
@@ -41,57 +37,27 @@ interface SessionRow {
  * injection harmless, keeping the validation makes the semantics of
  * "this is a sessions namespace, not arbitrary keys" explicit.
  *
- * Concurrency: WAL mode + SQLite's internal serialisation. Per-id
- * writes don't need cross-process locking on top.
+ * The constructor takes an already-opened `DatabaseSync`. The server
+ * shares one connection across every per-workspace repository
+ * (task / session / catalog / workflow), so cross-entity JOINs and
+ * atomic multi-table transactions are cheap and the file handle count
+ * per workspace stays at one. PRAGMAs (journal_mode, synchronous, ...)
+ * are the caller's responsibility — the workspace pkg sets them once
+ * on the shared connection.
  */
 export class SqliteSessionRepository implements SessionRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
 
-  /**
-   * Open or create a sessions database at `dbPath`.
-   *
-   * Pass `":memory:"` for tests — the in-memory DB lives only as long
-   * as the connection. The parent directory of `dbPath` is created
-   * recursively if it doesn't already exist (no-op for `:memory:`).
-   *
-   * `opts.logger` (optional) receives `warn` when `list()` drops a row
-   * that fails validation — the manager passes its own logger here so
-   * operators see per-row corruption without `list()` failing.
-   */
-  constructor(dbPath: string, opts?: { logger?: Logger }) {
-    if (dbPath !== ":memory:") {
-      mkdirSync(path.dirname(dbPath), { recursive: true });
-    }
-    this.db = new DatabaseSync(dbPath);
-    this.logger = opts?.logger ?? silentLogger;
-    try {
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec("PRAGMA synchronous = NORMAL");
-      this.checkOrCreateSchema();
-    } catch (err) {
-      // Don't leak the DB handle if construction fails — on Windows
-      // a leaked WAL handle blocks the test cleanup `rm` with EBUSY.
-      try {
-        this.db.close();
-      } catch {
-        // best-effort
-      }
-      throw err;
-    }
+  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    this.ensureSchema();
   }
 
-  /**
-   * Close the underlying database connection. Tests that create
-   * file-backed repositories should call this in cleanup so the WAL
-   * sidecar files release on Windows. No-op safe to call repeatedly.
-   */
+  /** No-op — the connection is owned by the caller. */
   close(): void {
-    try {
-      this.db.close();
-    } catch {
-      // Already closed; idempotent.
-    }
+    // intentionally empty
   }
 
   async read(id: string): Promise<SessionState | null> {
@@ -181,63 +147,35 @@ export class SqliteSessionRepository implements SessionRepository {
 
   // ─── schema management ──────────────────────────────────────
 
-  private checkOrCreateSchema(): void {
-    const meta = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'")
-      .get() as { name: string } | undefined;
-    if (meta === undefined) {
-      this.createSchema();
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        id                  TEXT PRIMARY KEY,
+        runtime             TEXT NOT NULL,
+        created_at          TEXT NOT NULL,
+        runtime_session_id  TEXT,
+        last_launch_mode    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS sessions_runtime_idx    ON sessions(runtime);
+      CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions(created_at);
+    `);
+    const existing = this.db
+      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+      .get("session") as { version: number } | undefined;
+    if (existing === undefined) {
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("session", SESSION_PKG_SCHEMA_VERSION);
       return;
     }
-    const row = this.db.prepare("SELECT version FROM schema_meta LIMIT 1").get() as
-      | { version: number }
-      | undefined;
-    if (row === undefined) {
-      throw new Error(
-        "sessions.db: schema_meta table exists but is empty (db is corrupted; remove it and restart)",
-      );
-    }
-    if (row.version === CURRENT_SCHEMA_VERSION) return;
-    if (row.version > CURRENT_SCHEMA_VERSION) {
-      throw new Error(
-        `sessions.db was written by a newer emploke (schema v${row.version}; this server supports v${CURRENT_SCHEMA_VERSION}). Upgrade the server to read it.`,
-      );
-    }
+    if (existing.version === SESSION_PKG_SCHEMA_VERSION) return;
     throw new Error(
-      `sessions.db was written by an older emploke (schema v${row.version}; this server supports v${CURRENT_SCHEMA_VERSION}). Migration from older versions is not yet implemented.`,
+      `session pkg schema mismatch: db has v${existing.version}, server supports v${SESSION_PKG_SCHEMA_VERSION}.`,
     );
-  }
-
-  private createSchema(): void {
-    // Bootstrap inside a transaction so a crash mid-DDL leaves an empty
-    // db (caller treats that as "fresh, recreate") rather than a
-    // half-built one (schema_meta present but `sessions` missing → reads
-    // fail confusingly). `IF NOT EXISTS` + `INSERT OR IGNORE` makes
-    // the bootstrap race-safe across concurrent first-opens of the
-    // same dbPath (rare in practice — one server per workspace — but
-    // free defence).
-    this.db.exec("BEGIN");
-    try {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS schema_meta (
-          version INTEGER NOT NULL PRIMARY KEY CHECK (version > 0)
-        );
-        INSERT OR IGNORE INTO schema_meta (version) VALUES (${CURRENT_SCHEMA_VERSION});
-        CREATE TABLE IF NOT EXISTS sessions (
-          id                  TEXT PRIMARY KEY,
-          runtime             TEXT NOT NULL,
-          created_at          TEXT NOT NULL,
-          runtime_session_id  TEXT,
-          last_launch_mode    TEXT
-        );
-        CREATE INDEX IF NOT EXISTS sessions_runtime_idx    ON sessions(runtime);
-        CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions(created_at);
-      `);
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
   }
 }
 

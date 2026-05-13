@@ -17,7 +17,6 @@ import {
 import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
-import { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
 import type { DispatchOpts, ListTaskOpts, Logger, Task, TaskManagerConfig } from "./types.js";
 
@@ -130,9 +129,7 @@ export class TaskManager {
     this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
     this.logger = config.logger ?? silentLogger;
-    this.repository =
-      config.repository ??
-      new SqliteTaskRepository(path.join(this.tasksDir, "tasks.db"), { logger: this.logger });
+    this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

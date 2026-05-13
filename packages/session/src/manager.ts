@@ -13,7 +13,6 @@ import {
 import { assertValidSessionId, generateSessionId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { SessionRepository, SessionState } from "./repositories/repository.js";
-import { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
@@ -29,8 +28,10 @@ const MAX_CREATE_RETRIES = 5;
 
 /**
  * Per-session workdir manager, parameterised over a set of CLI runtimes
- * and a `SessionRepository` (defaults to a `SqliteSessionRepository`
- * opened at `<sessionsDir>/sessions.db`).
+ * and a `SessionRepository`. Construction takes a fully-built repository
+ * (in production, a `SqliteSessionRepository` backed by the workspace's
+ * shared `workspace.db` connection); the manager itself never opens a
+ * database.
  *
  * Each session has two stores: the *repository* holds the persistent
  * state (`runtime`, `createdAt`, `runtimeSessionId`); the *workdir* on
@@ -56,11 +57,7 @@ export class SessionManager {
     this.sessionsDir = path.resolve(config.sessionsDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
     this.logger = config.logger ?? silentLogger;
-    this.repository =
-      config.repository ??
-      new SqliteSessionRepository(path.join(this.sessionsDir, "sessions.db"), {
-        logger: this.logger,
-      });
+    this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

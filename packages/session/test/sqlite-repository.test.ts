@@ -1,23 +1,21 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidSessionIdError } from "../src/errors.js";
 import { SqliteSessionRepository } from "../src/index.js";
 
-let scratchDir: string;
+let db: DatabaseSync;
 let repo: SqliteSessionRepository;
 
-beforeEach(async () => {
-  scratchDir = await mkdtemp(path.join(tmpdir(), "emploke-sqlite-sess-"));
-  // Use file-backed DB so we can also exercise the on-disk side
-  // (parent-dir creation, second-open-survives, ...). Tests that only
-  // need an isolated repo would be equally happy with `:memory:`.
-  repo = new SqliteSessionRepository(path.join(scratchDir, "sessions.db"));
+beforeEach(() => {
+  db = new DatabaseSync(":memory:");
+  repo = new SqliteSessionRepository({ db });
 });
-afterEach(async () => {
-  repo.close();
-  await rm(scratchDir, { recursive: true, force: true });
+afterEach(() => {
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 const ID = "20260509-aabbccdd";
@@ -139,37 +137,22 @@ describe("SqliteSessionRepository", () => {
     expect(since[0]?.id).toBe("20260601-bbbbbbbb");
   });
 
-  it("rejects opening a sessions.db with an unknown future schema version", async () => {
-    repo.close();
-    // Use a fresh dbPath, open as a SqliteSessionRepository to set up
-    // schema, then forge a newer version row directly via a sibling
-    // raw connection.
-    const dbPath = path.join(scratchDir, "future.db");
-    const r = new SqliteSessionRepository(dbPath);
-    r.close();
-    const { DatabaseSync } = await import("node:sqlite");
-    const raw = new DatabaseSync(dbPath);
-    raw.exec("UPDATE schema_meta SET version = 999");
-    raw.close();
-    expect(() => new SqliteSessionRepository(dbPath)).toThrow(/newer emploke/);
+  it("rejects opening a workspace.db with a future schema version for the session pkg", async () => {
+    // Bump the session pkg's row to a future version and re-construct
+    // a fresh repo against the same DB; ensureSchema must throw.
+    db.prepare("UPDATE schema_meta SET version = 999 WHERE pkg = ?").run("session");
+    expect(() => new SqliteSessionRepository({ db })).toThrow(/schema mismatch/);
   });
 
-  it("creates parent directory if it doesn't exist (mkdirSync recursive)", async () => {
-    repo.close();
-    const nested = path.join(scratchDir, "deeply", "nested", "sessions.db");
-    const r = new SqliteSessionRepository(nested);
-    await r.save(ID, sample);
-    expect(await r.read(ID)).toEqual(sample);
-    r.close();
-  });
-
-  it(":memory: dbPath gives an isolated database", async () => {
-    const a = new SqliteSessionRepository(":memory:");
-    const b = new SqliteSessionRepository(":memory:");
+  it("two separate :memory: connections are isolated", async () => {
+    const dbA = new DatabaseSync(":memory:");
+    const dbB = new DatabaseSync(":memory:");
+    const a = new SqliteSessionRepository({ db: dbA });
+    const b = new SqliteSessionRepository({ db: dbB });
     await a.save(ID, sample);
     expect(await a.read(ID)).toEqual(sample);
     expect(await b.read(ID)).toBeNull();
-    a.close();
-    b.close();
+    dbA.close();
+    dbB.close();
   });
 });

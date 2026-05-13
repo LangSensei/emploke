@@ -58,15 +58,20 @@ of truth for the session ID**.
 ## Usage
 
 ```ts
+import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
-import { SessionManager } from "@emploke/session";
+import { SessionManager, SqliteSessionRepository } from "@emploke/session";
 
-const catalog = await CatalogManager.open({ catalogDir: "/path/to/workspace/catalog" });
+// Catalog and session both read/write the per-workspace shared
+// `workspace.db`. In production the workspace pkg owns the connection.
+const db = new DatabaseSync("/path/to/workspace/workspace.db");
+const catalog = await CatalogManager.open({ db });
 const sessions = new SessionManager({
   catalog,
   runtimeRegistry,
   sessionsDir: "/path/to/workspace/sessions",
   workspaceDir: "/path/to/workspace",
+  repository: new SqliteSessionRepository({ db }),
 });
 
 const session = await sessions.create({ agent: "demo-agent" });
