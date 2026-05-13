@@ -125,8 +125,10 @@ export interface ListSessionOpts {
   readonly agent?: string;
   /**
    * Drop sessions whose `createdAt` is strictly before this ISO 8601 timestamp.
-   * Applied AFTER reading session.json + AGENTS.md but BEFORE the (more expensive)
-   * runtime.refresh() call, so excluded entries pay zero refresh cost.
+   * Applied at the repository layer (a `WHERE created_at >= ?` filter on the
+   * `sessions` table) before AGENTS.md parsing and BEFORE the (more
+   * expensive) `runtime.refresh()` call, so excluded entries pay zero
+   * refresh cost.
    */
   readonly createdSince?: string;
   /**

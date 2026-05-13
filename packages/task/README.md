@@ -38,12 +38,18 @@ const t2 = t1.complete("draft.md written");
 ## Quick start (manager)
 
 ```ts
-import { TaskManager } from "@emploke/task";
+import { DatabaseSync } from "node:sqlite";
+import { SqliteTaskRepository, TaskManager } from "@emploke/task";
 
+// In production the per-workspace `workspace.db` connection comes from
+// `WorkspaceContext`; here we open one ourselves for illustration.
+const db = new DatabaseSync("/abs/path/to/workspace/workspace.db");
 const mgr = new TaskManager({
   catalog,           // @emploke/catalog instance
   runtimeRegistry,   // @emploke/runtime registry
   tasksDir: "/abs/path/to/workspace/tasks",
+  workspaceDir: "/abs/path/to/workspace",
+  repository: new SqliteTaskRepository({ db }),
 });
 
 await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boot
