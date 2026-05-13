@@ -107,10 +107,13 @@ export class SqliteMcpRepository implements McpRepository {
         // corrupted SQLite catalog without trawling every dashboard
         // list — the row stays in the DB (deletion is a separate
         // operation) and is hidden from listings until repaired.
-        this.logger.warn("catalog/mcp: skipping row that failed validation", {
-          name: row.name ?? null,
-          cause: (cause as Error).message,
-        });
+        this.logger.warn(
+          {
+            name: row.name ?? null,
+            cause: (cause as Error).message,
+          },
+          "catalog/mcp: skipping row that failed validation",
+        );
       }
     }
     return out;

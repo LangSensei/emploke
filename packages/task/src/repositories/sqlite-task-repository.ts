@@ -152,10 +152,13 @@ export class SqliteTaskRepository implements TaskRepository {
       try {
         out.push(rowToTask(row.id, row));
       } catch (err) {
-        this.logger.warn("tasks: skipping corrupted task row", {
-          taskId: row.id ?? null,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        this.logger.warn(
+          {
+            taskId: row.id ?? null,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+          "tasks: skipping corrupted task row",
+        );
       }
     }
     return out;

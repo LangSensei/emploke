@@ -11,7 +11,7 @@ import {
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
-import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
+import { errorBody, logFault, parseJsonBody } from "./_shared.js";
 import type { TaskDispatchBody } from "./manifest.js";
 
 /**
@@ -156,7 +156,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
       return c.json(task, 201);
     } catch (err) {
       const status = statusForError(err) ?? 400;
-      if (status >= 500) logServerError(err);
+      if (status >= 500) logFault(c, err, "tasks: 5xx fault");
       // EntryNotReadyError carries a structured `BlockedReason` on
       // the instance; surface it on the wire so the dashboard can
       // render typed UI (the catalog list already uses the same

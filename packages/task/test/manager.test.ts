@@ -291,10 +291,18 @@ const seqRandom = (start = 1) => {
 // ───── helpers ──────────────────────────────────────────────
 
 const recorder = () => {
+  // Matches pino's API shape: (meta, msg). Hand-rolled rather than
+  // pulled from `@emploke/logger/testing.captureLogger` because these
+  // tests want a synchronous in-memory record (captureLogger goes
+  // through a real pino instance + Writable stream which can race
+  // assertion timing in tight loops).
   const calls: { msg: string; meta?: object }[] = [];
   return {
     logger: {
-      warn: (msg: string, meta?: object) => calls.push({ msg, ...(meta ? { meta } : {}) }),
+      warn: (meta: object | string, msg?: string) => {
+        if (typeof meta === "string") calls.push({ msg: meta });
+        else calls.push({ msg: msg ?? "", meta });
+      },
     },
     calls,
   };
@@ -317,7 +325,7 @@ const makeManager = (
     registry?: RuntimeRegistry;
     now?: () => Date;
     randomBytes?: (n: number) => Buffer;
-    logger?: { warn: (msg: string, meta?: object) => void };
+    logger?: { warn: (meta: object | string, msg?: string) => void };
     repository?: SqliteTaskRepository;
   } = {},
 ): { m: TaskManager; repo: SqliteTaskRepository } => {

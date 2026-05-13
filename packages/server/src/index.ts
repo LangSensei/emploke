@@ -13,6 +13,9 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, bearerAuth, isLoopbackBind } from "./auth.js";
+import { accessLog } from "./middleware/access-log.js";
+import { requestId } from "./middleware/request-id.js";
+import { requestLogger } from "./middleware/request-logger.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
@@ -208,8 +211,8 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const legacyRegistry = path.join(paths.home, "workspaces.json");
   if (existsSync(legacyRegistry)) {
     logger.warn(
-      "legacy workspaces.json found; this version reads the workspace registry from global.db instead. Re-register your workspaces via the dashboard or `emploke workspace add`. The legacy file is safe to delete after.",
       { legacyFile: legacyRegistry, registry: paths.globalDbFile },
+      "legacy workspaces.json found; this version reads the workspace registry from global.db instead. Re-register your workspaces via the dashboard or `emploke workspace add`. The legacy file is safe to delete after.",
     );
   }
 
@@ -219,6 +222,19 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces, logger });
 
   const app = new Hono();
+
+  // Observability middleware chain (issue #58). Order matters:
+  //   1. requestId      — mints/honours x-request-id header
+  //   2. requestLogger  — builds a pino child bound to { requestId }
+  //                       and stashes it on c.var.logger
+  //   3. accessLog      — emits one structured info/warn/error line per
+  //                       request at end-of-request
+  // Mounted globally so /api/health and unauth requests still produce
+  // an access line. accessLog skips /api/health internally to keep the
+  // poll-loop noise down.
+  app.use("*", requestId());
+  app.use("*", requestLogger(logger));
+  app.use("*", accessLog());
 
   // /api/health is mounted *before* the auth middleware so the dashboard's
   // backoff probe and external liveness checks can poll without first
@@ -310,20 +326,24 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   }
 
   const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
-  logger.info("emploke server starting", {
-    listen: `http://${displayHost}:${port}`,
-    home: paths.home,
-    globalDb: paths.globalDbFile,
-    workspaces: (await workspaces.list()).length,
-    runtimes: runtimeRegistry.kinds(),
-    static: serveStaticFiles ? staticDir : null,
-    auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",
-    logsDir: paths.logsDir,
-  });
+  logger.info(
+    {
+      listen: `http://${displayHost}:${port}`,
+      home: paths.home,
+      globalDb: paths.globalDbFile,
+      workspaces: (await workspaces.list()).length,
+      runtimes: runtimeRegistry.kinds(),
+      static: serveStaticFiles ? staticDir : null,
+      auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",
+      logsDir: paths.logsDir,
+    },
+    "emploke server starting",
+  );
   if (!isLoopbackBind(hostname)) {
-    logger.warn("server is reachable from the network; rotate EMPLOKE_API_KEY if it leaks", {
-      host: hostname,
-    });
+    logger.warn(
+      { host: hostname },
+      "server is reachable from the network; rotate EMPLOKE_API_KEY if it leaks",
+    );
   }
   const server = serve({ fetch: app.fetch, port, hostname });
 
@@ -349,7 +369,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    logger.info("shutdown initiated", { signal });
+    logger.info({ signal }, "shutdown initiated");
     const deadline = setTimeout(() => {
       logger.error("shutdown timed out after 30s; forcing exit");
       process.exit(1);
@@ -366,13 +386,13 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
         });
       });
     } catch (err) {
-      logger.error("error closing http server", { err: errorToMeta(err) });
+      logger.error({ err: errorToMeta(err) }, "error closing http server");
     }
     try {
       const ctxs = cache.loaded();
       await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
     } catch (err) {
-      logger.error("error during tasks shutdown", { err: errorToMeta(err) });
+      logger.error({ err: errorToMeta(err) }, "error during tasks shutdown");
     }
     try {
       // Close the workspace registry DB after task contexts have
@@ -381,7 +401,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // open connection.
       globalDb.close();
     } catch (err) {
-      logger.error("error closing global.db", { err: errorToMeta(err) });
+      logger.error({ err: errorToMeta(err) }, "error closing global.db");
     }
     clearTimeout(deadline);
     process.exit(0);
@@ -432,16 +452,19 @@ function workspaceContextMiddleware(
 }
 
 /**
- * Parse the `EMPLOKE_LOG_LEVEL` env into one of the four supported
- * levels. Falls back to `"info"` on any unrecognised / unset value so
- * a misconfigured env never silently disables logging.
+ * Parse the `EMPLOKE_LOG_LEVEL` env into one of pino's six supported
+ * levels (`trace`, `debug`, `info`, `warn`, `error`, `fatal`). Falls
+ * back to `"info"` on any unrecognised / unset value so a misconfigured
+ * env never silently disables logging.
  */
 function parseLogLevel(raw: string | undefined): LogLevel {
   switch (raw) {
+    case "trace":
     case "debug":
     case "info":
     case "warn":
     case "error":
+    case "fatal":
       return raw;
     default:
       return "info";

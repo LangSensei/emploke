@@ -35,9 +35,9 @@ async function waitForLogFile(dir: string, timeoutMs = 15000): Promise<string> {
 describe("silentLogger", () => {
   it("drops every call without throwing or logging", () => {
     silentLogger.debug("dbg");
-    silentLogger.info("info", { k: 1 });
-    silentLogger.warn("warn", { k: 2 });
-    silentLogger.error("err", { k: 3 });
+    silentLogger.info({ k: 1 }, "info");
+    silentLogger.warn({ k: 2 }, "warn");
+    silentLogger.error({ k: 3 }, "err");
     // The point is just that none of these threw and there's no fs
     // side-effect to clean up.
     expect(true).toBe(true);
@@ -47,8 +47,8 @@ describe("silentLogger", () => {
 describe("buildLogger — file destination", () => {
   it("writes JSON lines to a daily-rotated file under `dir`", async () => {
     const logger = buildLogger({ dir: scratch, level: "debug", basename: "server" });
-    logger.info("hello", { user: "alice", n: 1 });
-    logger.warn("oops", { code: "E_TEST" });
+    logger.info({ user: "alice", n: 1 }, "hello");
+    logger.warn({ code: "E_TEST" }, "oops");
 
     const file = await waitForLogFile(scratch);
     const lines = (await readFile(file, "utf8")).trim().split("\n");

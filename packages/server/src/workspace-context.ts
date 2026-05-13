@@ -256,8 +256,8 @@ export class WorkspaceContextCache {
     const legacySidecar = path.join(workspace.workdir, "workspace.json");
     if (existsSync(legacySidecar)) {
       this.logger.warn(
-        "legacy workspace.json found; this version stores per-workspace metadata in the global registry instead. Safe to delete.",
         { legacyFile: legacySidecar, workspaceId: workspace.id },
+        "legacy workspace.json found; this version stores per-workspace metadata in the global registry instead. Safe to delete.",
       );
     }
 

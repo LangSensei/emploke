@@ -136,10 +136,13 @@ export class SqliteSessionRepository implements SessionRepository {
         // corrupted entry rather than fail the whole call). We warn
         // via the injected logger so operators can see the bad row
         // without `list` itself failing.
-        this.logger.warn("sessions: skipping corrupted session row", {
-          sessionId: row.id ?? null,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        this.logger.warn(
+          {
+            sessionId: row.id ?? null,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+          "sessions: skipping corrupted session row",
+        );
       }
     }
     return out;

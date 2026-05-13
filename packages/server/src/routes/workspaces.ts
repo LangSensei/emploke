@@ -16,7 +16,7 @@ import {
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type WorkspaceContextCache, WorkspaceHasLiveTasksError } from "../workspace-context.js";
-import { errorBody, logServerError, parseJsonBody } from "./_shared.js";
+import { errorBody, logFault, parseJsonBody } from "./_shared.js";
 import type {
   WorkspaceCreateBody,
   WorkspaceCurrentPutBody,
@@ -40,7 +40,7 @@ import type {
 function wsErrorJson(c: Context, err: unknown, fallback: number) {
   const status = workspaceErrorStatus(err) ?? fallback;
   if (status >= 500) {
-    logServerError(err);
+    logFault(c, err, "workspaces: 5xx fault");
   }
   // biome-ignore lint/suspicious/noExplicitAny: see helper docstring above
   return c.json(errorBody(err), status as any);

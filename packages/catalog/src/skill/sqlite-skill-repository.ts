@@ -171,10 +171,13 @@ export class SqliteSkillRepository implements SkillRepository {
         // without trawling every dashboard list — the row stays in the
         // DB (deletion is a separate operation) and is hidden from
         // listings until the user repairs it.
-        this.logger.warn("catalog/skill: skipping row that failed validation", {
-          fqn: row.fqn ?? null,
-          cause: (cause as Error).message,
-        });
+        this.logger.warn(
+          {
+            fqn: row.fqn ?? null,
+            cause: (cause as Error).message,
+          },
+          "catalog/skill: skipping row that failed validation",
+        );
       }
     }
     return out;

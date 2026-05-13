@@ -202,10 +202,16 @@ const seqRandom = () => {
 };
 
 const recorder = () => {
+  // Matches pino's API shape: (meta, msg). See task/test/manager.test.ts
+  // for the rationale (tight-loop assertion timing rules out a real
+  // pino-backed captureLogger here).
   const calls: { msg: string; meta?: object }[] = [];
   return {
     logger: {
-      warn: (msg: string, meta?: object) => calls.push({ msg, ...(meta ? { meta } : {}) }),
+      warn: (meta: object | string, msg?: string) => {
+        if (typeof meta === "string") calls.push({ msg: meta });
+        else calls.push({ msg: msg ?? "", meta });
+      },
     },
     calls,
   };

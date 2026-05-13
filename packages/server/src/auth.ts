@@ -1,3 +1,4 @@
+import type { Logger } from "@emploke/logger";
 import type { Context } from "hono";
 
 /**
@@ -69,18 +70,47 @@ export function constantTimeEqual(a: string, b: string): boolean {
  * Returns a Hono middleware function (async (c, next) => …). Failures
  * respond with 401 + `{ error: "unauthorized", code: "Unauthorized" }`
  * so the dashboard can branch on `code` like with other typed errors.
+ *
+ * **Auth events**: when a request is rejected, a `warn`-level structured
+ * log line is emitted via the request-scoped logger (when one is
+ * available on `c.var.logger`) recording the failure mode (missing
+ * header / wrong key), the request path, and a sanitised user-agent.
+ * **The presented key is never logged** — only its presence and a
+ * length-bucketed fingerprint, so brute-force probing leaves a signal
+ * without the log itself becoming a credential leak vector.
  */
 export function bearerAuth(expected: string) {
   return async (c: Context, next: () => Promise<void>): Promise<Response | undefined> => {
     const header = c.req.header("authorization");
     let presented: string | null = null;
+    let mode: "header" | "query" | "absent" = "absent";
     if (header?.toLowerCase().startsWith("bearer ")) {
       presented = header.slice(7).trim();
+      mode = "header";
     } else {
       const q = c.req.query("apiKey");
-      if (typeof q === "string" && q.length > 0) presented = q;
+      if (typeof q === "string" && q.length > 0) {
+        presented = q;
+        mode = "query";
+      }
     }
     if (presented === null || !constantTimeEqual(presented, expected)) {
+      // Request-scoped logger is set by `requestLogger` middleware;
+      // when missing (e.g. tests that mount bearerAuth standalone) we
+      // skip the log without throwing.
+      const logger = (c.get as unknown as (k: string) => unknown)("logger") as Logger | undefined;
+      if (logger !== undefined) {
+        logger.warn(
+          {
+            path: c.req.path,
+            method: c.req.method,
+            credentialMode: mode,
+            credentialLen: presented?.length ?? 0,
+            userAgent: c.req.header("user-agent")?.slice(0, 80),
+          },
+          "auth: bearer check failed",
+        );
+      }
       return c.json({ error: "unauthorized", code: "Unauthorized" }, 401);
     }
     await next();

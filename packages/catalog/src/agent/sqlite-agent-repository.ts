@@ -147,10 +147,13 @@ export class SqliteAgentRepository implements AgentRepository {
       } catch (cause) {
         // Skip rows with FQNs that fail validation. See
         // SqliteSkillRepository.findAll for rationale.
-        this.logger.warn("catalog/agent: skipping row that failed validation", {
-          fqn: row.fqn ?? null,
-          cause: (cause as Error).message,
-        });
+        this.logger.warn(
+          {
+            fqn: row.fqn ?? null,
+            cause: (cause as Error).message,
+          },
+          "catalog/agent: skipping row that failed validation",
+        );
       }
     }
     return out;
