@@ -1,11 +1,13 @@
 /**
  * @emploke/logger — pino, with emploke's default configuration.
  *
- * emploke commits to pino as the logging API across the whole codebase
- * (see `docs/adr/0001-commit-to-pino.md`). The previous 4-method facade
- * was hiding pino features (child loggers, redact, serializers) that we
- * actually want to use, in exchange for an abstraction that was never
- * going to be redeemed (we're not switching off pino).
+ * emploke commits to pino as the logging API across the whole codebase.
+ * `Logger` is `pino.Logger` directly — no wrapper interface in front.
+ * The previous 4-method facade hid pino features (child loggers,
+ * redact, serializers) that the code actually wants to use, in
+ * exchange for the ability to swap pino for a different backend; that
+ * swap is hypothetical work that won't happen, while the friction
+ * was concrete daily cost.
  *
  * This package provides:
  *
@@ -29,6 +31,9 @@
  * 4. `@emploke/logger/testing` (separate entry) — `captureLogger()`
  *    that returns `{ logger, entries }` for tests that need to assert
  *    on log output.
+ *
+ * The full rationale for committing to pino lives inline in
+ * `docs/architecture.md` under "Tech stack".
  */
 
 export {

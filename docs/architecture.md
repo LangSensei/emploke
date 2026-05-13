@@ -395,8 +395,20 @@ file and break it, that's a `git restore` away (if you're lucky) or a
   the repo root; CI fails on diff.
 - **[esbuild](https://esbuild.github.io)** for the production bundle
   (`pnpm bundle` → `bundle/emploke.js` + `bundle/static/`).
-- **[pino](https://getpino.io)** for structured logging; threaded
-  through every manager. Pretty-printed in dev, JSON in prod.
+- **[pino](https://getpino.io)** for structured logging — committed
+  to as the API surface, not just a transport choice. `Logger` in
+  `@emploke/logger` is `pino.Logger`; call sites use pino's native
+  `(meta, msg)` form (`logger.info({ userId }, "user logged in")`)
+  and reach for pino features (`child(bindings)` for per-request /
+  per-component scoping, `redact` for token sanitisation,
+  `serializers` for error rendering) directly. Pretty-printed in
+  dev, JSON in prod (file destination is always JSON regardless).
+  - `silentLogger` is `pino({ level: "silent" })` — the default for
+    any optional `logger?` constructor parameter; pino short-circuits
+    at the level check so it incurs no allocation cost.
+  - Test seam: `import { captureLogger } from "@emploke/logger/testing"`
+    returns `{ logger, entries }` for tests that need to assert on
+    structured log output.
 
 ## Testing posture
 

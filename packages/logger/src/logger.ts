@@ -4,11 +4,11 @@ import pino, { type DestinationStream, type LoggerOptions } from "pino";
 
 /**
  * `Logger` is pino's `Logger` type, re-exported. emploke commits to
- * pino at the type level — see `docs/adr/0001-commit-to-pino.md` for
- * the rationale. In short: the previous 4-method facade was hiding
- * pino features (child loggers, redact, serializers) that we actually
- * want to use across the codebase, in exchange for an abstraction that
- * was never going to be redeemed (we're not switching off pino).
+ * pino at the type level — the previous 4-method facade was hiding
+ * pino features (child loggers, redact, serializers) that the codebase
+ * actually wants to use, in exchange for an abstraction whose payoff
+ * (swapping logger backends) is hypothetical work that won't happen.
+ * See `docs/architecture.md` → "Tech stack" for the concise rationale.
  *
  * Call sites use pino's API directly:
  *   logger.info({ userId }, "user logged in");           // meta, msg
