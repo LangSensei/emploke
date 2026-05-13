@@ -39,12 +39,23 @@ export class FetcherRegistry {
   }
 
   /**
-   * Parse `originUri`, dispatch to the matching fetcher, and return its
-   * stream. Used by `deepInstall` and any caller that has a raw URI string.
+   * Parse `originUri`, dispatch to the matching fetcher, and read a
+   * single file relative to the origin's entry root. See
+   * {@link Fetcher.fetchFile} for `relPath` joining rules.
    */
-  dispatch(originUri: string): AsyncIterable<EntryFile> {
+  dispatchFile(originUri: string, relPath: string): Promise<Buffer> {
     const origin = parseOrigin(originUri);
-    return this.resolve(origin).fetch(originUri);
+    return this.resolve(origin).fetchFile(originUri, relPath);
+  }
+
+  /**
+   * Parse `originUri`, dispatch to the matching fetcher, and stream
+   * its full tree. Used by `deepInstall` and any caller that needs
+   * every regular file under the origin's entry root.
+   */
+  dispatchTree(originUri: string): AsyncIterable<EntryFile> {
+    const origin = parseOrigin(originUri);
+    return this.resolve(origin).fetchTree(originUri);
   }
 }
 

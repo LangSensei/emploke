@@ -27,7 +27,7 @@ function makeFakeFetchers(): {
   skillFetcher: SkillFetcher;
   agentFetcher: AgentFetcher;
   mcpResolveAdapter: McpResolveAdapter;
-  mcpFetchTree: (origin: string) => AsyncIterable<EntryFile>;
+  mcpFetchFile: (origin: string) => Promise<string>;
   setSkill: (origin: string, files: Record<string, string>) => void;
   setAgent: (origin: string, files: Record<string, string>) => void;
   setMcp: (origin: string, name: string, content: string) => void;
@@ -65,13 +65,10 @@ function makeFakeFetchers(): {
       }
     },
   };
-  const mcpFetchTree = async function* (origin: string): AsyncIterable<EntryFile> {
+  const mcpFetchFile = async (origin: string): Promise<string> => {
     const store = mcpStore.get(origin);
     if (store === undefined) throw new Error(`no MCP at ${origin}`);
-    yield {
-      relPath: "mcp.json",
-      content: Buffer.from(store.content, "utf8"),
-    } satisfies EntryFile;
+    return store.content;
   };
   const mcpResolveAdapter: McpResolveAdapter = async (origin) => {
     const store = mcpStore.get(origin);
@@ -97,7 +94,7 @@ function makeFakeFetchers(): {
     skillFetcher,
     agentFetcher,
     mcpResolveAdapter,
-    mcpFetchTree,
+    mcpFetchFile,
     setSkill(origin, files) {
       const map = new Map<string, Buffer>();
       for (const [k, v] of Object.entries(files)) map.set(k, Buffer.from(v, "utf8"));
@@ -162,10 +159,9 @@ beforeEach(() => {
   agentRepo = new SqliteAgentRepository({ db });
   fetchers = makeFakeFetchers();
 
-  // McpService is wired against a tree-based fetcher that reads the
-  // first file it sees — `fetchers.mcpFetchTree` synthesises a single
-  // `mcp.json` for each registered origin.
-  const mcpSvc = new McpService(mcpRepo, fetchers.mcpFetchTree);
+  // McpService is wired against a single-file fetcher that returns
+  // the registered mcp.json content for each origin.
+  const mcpSvc = new McpService(mcpRepo, fetchers.mcpFetchFile);
   const skillSvc = new SkillService(skillRepo, fetchers.skillFetcher);
   const agentSvc = new AgentService(agentRepo, fetchers.agentFetcher);
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fetchers.mcpResolveAdapter);

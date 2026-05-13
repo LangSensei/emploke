@@ -9,10 +9,22 @@ import { parseOrigin } from "./origin.js";
 /**
  * Fetcher for `https://github.com/<owner>/<repo>/tree/<ref>[/path]` URIs.
  *
- * Strategy: GET the GitHub Tarball API endpoint
- * (`https://api.github.com/repos/{owner}/{repo}/tarball/{ref}`),
- * gunzip + tar-extract on the fly, and yield `EntryFile` records as
- * the stream progresses. No filesystem touch; no `git` binary required.
+ * Two transports, picked per call:
+ *
+ *  - {@link GitHubFetcher.fetchFile} — single-file reads use the
+ *    **Contents API** (`/repos/{o}/{r}/contents/{path}?ref={ref}`)
+ *    with `Accept: application/vnd.github.raw` so the body is the
+ *    raw file bytes, not a base64-wrapped JSON envelope. One small
+ *    request, no tarball, no extraction. The resolve path goes here
+ *    — anchor files (SKILL.md / AGENTS.md / `<name>.json`) only.
+ *    1 MB cap is a GitHub API limit; bigger anchors fall outside
+ *    this fetcher (in practice an anchor that big is a bug).
+ *
+ *  - {@link GitHubFetcher.fetchTree} — full-tree reads use the
+ *    **Tarball API** (`/repos/{o}/{r}/tarball/{ref}`), gunzip +
+ *    tar-extract on the fly, yielding `EntryFile` records as the
+ *    stream progresses. No filesystem touch; no `git` binary
+ *    required. The install path goes here — we need every file.
  *
  * **Auth**: optional. The token is resolved via {@link resolveDefaultGitHubToken}
  * which checks `GITHUB_TOKEN` / `GH_TOKEN` env vars first and then falls
@@ -36,7 +48,82 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export class GitHubFetcher implements Fetcher {
   readonly scheme = "github";
 
-  async *fetch(uri: string): AsyncIterable<EntryFile> {
+  async fetchFile(uri: string, relPath: string): Promise<Buffer> {
+    const origin = parseOrigin(uri);
+    if (origin.scheme !== "github") {
+      throw new FetchError(uri, "GitHubFetcher only handles github URIs");
+    }
+    if (typeof relPath !== "string") {
+      throw new FetchError(uri, "fetchFile relPath must be a string");
+    }
+    if (relPath.startsWith("/")) {
+      throw new FetchError(uri, `fetchFile relPath must be relative, got "${relPath}"`);
+    }
+    const { owner, repo, ref, path: subPath } = origin;
+
+    // Compose the target path:
+    //  - relPath === "" → origin already names the file (mcp single-file
+    //    case); use subPath as-is. Reject if subPath is null (no file
+    //    to read).
+    //  - relPath !== "" → join subPath (if any) + relPath. Strip leading
+    //    slashes from each segment to keep the URL clean.
+    let targetPath: string;
+    if (relPath === "") {
+      if (subPath === null) {
+        throw new FetchError(
+          uri,
+          "fetchFile with empty relPath requires the origin to point at a file (no subpath given)",
+        );
+      }
+      targetPath = stripLeadingSlash(subPath);
+    } else {
+      const cleanRel = stripLeadingSlash(relPath);
+      targetPath = subPath ? `${stripTrailingSlash(subPath)}/${cleanRel}` : cleanRel;
+    }
+    // Encode each segment so spaces / Unicode survive transport, but
+    // keep the slash separators. Empty path (root) is rejected above.
+    const encodedPath = targetPath
+      .split("/")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
+    const contentsUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+
+    const headers: Record<string, string> = {
+      "User-Agent": "emploke-catalog-fetcher",
+      Accept: "application/vnd.github.raw",
+    };
+    const token = await resolveDefaultGitHubToken("github.com");
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    let response: Response;
+    try {
+      response = await fetch(contentsUrl, { headers, redirect: "follow" });
+    } catch (cause) {
+      throw new FetchError(uri, `network error fetching contents: ${(cause as Error).message}`, {
+        cause,
+      });
+    }
+    if (!response.ok) {
+      // Drain body so we don't keep the socket open. Status text is
+      // safe to surface (no token leakage); response body is NOT
+      // surfaced because GitHub's error JSON sometimes echoes the
+      // request including the Authorization header in non-200 paths.
+      try {
+        await response.text();
+      } catch {}
+      throw new FetchError(
+        uri,
+        `GitHub Contents API returned ${response.status} ${response.statusText} for ${targetPath}`,
+      );
+    }
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > MAX_FILE_BYTES) {
+      throw new FetchError(uri, `file exceeds ${MAX_FILE_BYTES}-byte cap`);
+    }
+    return buf;
+  }
+
+  async *fetchTree(uri: string): AsyncIterable<EntryFile> {
     const origin = parseOrigin(uri);
     if (origin.scheme !== "github") {
       throw new FetchError(uri, "GitHubFetcher only handles github URIs");
@@ -133,6 +220,14 @@ export class GitHubFetcher implements Fetcher {
       });
     }
   }
+}
+
+function stripLeadingSlash(p: string): string {
+  return p.replace(/^\/+/, "");
+}
+
+function stripTrailingSlash(p: string): string {
+  return p.replace(/\/+$/, "");
 }
 
 interface RawEntry {
