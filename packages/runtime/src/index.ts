@@ -21,12 +21,6 @@ export {
   type SpawnFn,
 } from "./copilot/launch-headless.js";
 export { flattenSkillName } from "./copilot/provision.js";
-export {
-  type CopilotBinResolutionReason,
-  type ResolveCopilotBinDeps,
-  type ResolvedCopilotBin,
-  resolveCopilotBin,
-} from "./copilot/resolve-bin.js";
 export { isPathCovered } from "./copilot/trust.js";
 export {
   RuntimeDoesNotSupportRemoteError,

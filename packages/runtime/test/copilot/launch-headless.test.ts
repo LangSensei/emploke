@@ -1,4 +1,4 @@
-﻿import { EventEmitter } from "node:events";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -76,16 +76,6 @@ function makeFakeSpawn(): FakeSpawn {
   return out;
 }
 
-/**
- * Default-deps shape that suppresses the WinGet-shim resolver. Tests
- * want deterministic command resolution; the resolver kicks in on
- * Windows and would otherwise rewrite "copilot" to a full WinGet path
- * found on the test machine.
- */
-const NOOP_RESOLVE_BIN = {
-  platform: "linux" as NodeJS.Platform,
-};
-
 describe("launchCopilotHeadless", () => {
   it("provisions the workdir before spawning", async () => {
     const { agent, catalog } = await buildAgent();
@@ -97,7 +87,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const md = await readFile(path.join(taskDir, "AGENTS.md"), "utf8");
@@ -114,7 +103,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const sessionDir = await handle.sessionDir;
@@ -132,7 +120,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(fake.captures).not.toBeNull();
@@ -170,112 +157,64 @@ describe("launchCopilotHeadless", () => {
     expect(fake.captures?.command).toBe("C:\\fake\\copilot.exe");
   });
 
-  // CVE-2024-27980 mitigation: Node 18.20.0+ / 20.12.0+ refuses to
-  // spawn `.cmd` / `.bat` files directly (EINVAL) to prevent
-  // arg-injection attacks. We wrap such bins via `cmd.exe /d /s /c`
-  // with explicit `escapeCmdArg` quoting so the supported escape
-  // hatch (`shell: true`) doesn't introduce a different injection
-  // surface. The wrap is windows-only — POSIX paths take the
-  // direct-spawn branch.
-  describe.skipIf(process.platform !== "win32")("cmd.exe wrap (Windows .cmd / .bat)", () => {
-    it("wraps `.cmd` bin via cmd.exe /d /s /c with escaped argv (CVE-2024-27980 mitigation)", async () => {
-      const { agent, catalog } = await buildAgent();
-      const fake = makeFakeSpawn();
-      const cmdShim = "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd";
-      await launchCopilotHeadless(
-        { taskDir, agent, catalog, prompt: "say hi", workspaceDir: scratch },
-        {
-          copilotStateDir: stateDir,
-          globalDir: scratch,
-          randomUUID: () => FIXED_UUID,
-          spawn: fake.spawn,
-          copilotBin: cmdShim,
-        },
-      );
-      expect(fake.captures?.command).toBe("cmd.exe");
-      const args = fake.captures?.args ?? [];
-      expect(args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
-      // The fourth arg is a single string holding the WHOLE escaped
-      // command line, wrapped in extra outer quotes so cmd /S's
-      // "strip-first-and-last-quote" rule leaves the inner sequence
-      // correctly quoted (per cmd /? semantics). Without the outer
-      // wrap, cmd would strip the first and last quotes of our
-      // escaped sequence and try to execute the inner blob as a
-      // single command name, hitting "is not recognized as an
-      // internal or external command".
-      const wrapped = args[3] as string;
-      expect(wrapped.startsWith('""')).toBe(true);
-      expect(wrapped.endsWith('""')).toBe(true);
-      // Bin and the user-supplied prompt arg are both inside the
-      // wrapped string, each individually quoted via escapeCmdArg.
-      expect(wrapped).toContain('"C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd"');
-      expect(wrapped).toContain('"say hi"');
-      // windowsVerbatimArguments must be true alongside this shape;
-      // otherwise libuv re-quotes our argv and breaks the carefully
-      // assembled command line.
-      const opts = fake.captures?.options as { windowsVerbatimArguments: boolean };
-      expect(opts.windowsVerbatimArguments).toBe(true);
-    });
+  // Cross-spawn handles the Windows-specific spawn footguns
+  // (PATHEXT iteration, .cmd / .bat wrapping post-CVE-2024-27980,
+  // cmd /S quote-stripping, shell-metachar escaping) inside the
+  // library. The runtime contract here is intentionally narrow:
+  // hand cross-spawn the bare bin name + argv + spawn opts. If a
+  // future maintainer reverts to native node:child_process spawn,
+  // npm-installed copilot will silently break on Windows — these
+  // tests pin the call shape to catch that regression early.
 
-    it("escapes shell metachars in args so they cannot break out of the cmd.exe wrap", async () => {
-      const { agent, catalog } = await buildAgent();
-      const fake = makeFakeSpawn();
-      const cmdShim = "C:\\nodejs\\copilot.cmd";
-      await launchCopilotHeadless(
-        {
-          taskDir,
-          agent,
-          catalog,
-          // Prompt with every cmd.exe metachar that escapeCmdArg defends:
-          // `&`, `|`, `<`, `>`, `^`, `(`, `)`, `%`, `!`, `"`.
-          prompt: 'say & hi | tee out.log > nul < in.txt ^ cat (a) %FOO% !BAR! "quoted"',
-          workspaceDir: scratch,
-        },
-        {
-          copilotStateDir: stateDir,
-          globalDir: scratch,
-          randomUUID: () => FIXED_UUID,
-          spawn: fake.spawn,
-          copilotBin: cmdShim,
-        },
-      );
-      const wrapped = (fake.captures?.args ?? [])[3] as string;
-      // Each metachar appears caret-escaped inside its argument's
-      // quoted region. Defense-in-depth assertion: NO unescaped
-      // metachar reaches cmd.exe's parser (which would let it
-      // break out and execute additional commands).
-      expect(wrapped).toContain("^&");
-      expect(wrapped).toContain("^|");
-      expect(wrapped).toContain("^<");
-      expect(wrapped).toContain("^>");
-      expect(wrapped).toContain("^^");
-      expect(wrapped).toContain("^(");
-      expect(wrapped).toContain("^)");
-      expect(wrapped).toContain("^%");
-      expect(wrapped).toContain("^!");
-      expect(wrapped).toContain('^"');
-    });
+  it("hands the bare bin name to the spawn impl unchanged (cross-spawn handles platform quirks)", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "say hi", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        globalDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        // Bare name. Production goes through cross-spawn which
+        // does PATH lookup + PATHEXT + .cmd wrap on Windows; tests
+        // stub at the same seam so the call shape stays uniform.
+        copilotBin: "copilot",
+      },
+    );
+    expect(fake.captures?.command).toBe("copilot");
+    const args = fake.captures?.args ?? [];
+    // Args reach the spawn impl untouched — no manual cmd.exe
+    // wrap, no escapeCmdArg quoting, no windowsVerbatimArguments.
+    // Cross-spawn (production) or the test fake will see the same
+    // shape; cross-spawn rewrites internally, the fake captures
+    // verbatim.
+    expect(args).toContain("say hi");
+    expect(args).toContain("--allow-all");
+    expect(args).toContain("--no-ask-user");
+    const opts = fake.captures?.options as { windowsVerbatimArguments?: boolean };
+    expect(opts.windowsVerbatimArguments).toBeFalsy();
+  });
 
-    it("takes the direct-spawn branch for .exe (no wrap needed)", async () => {
-      const { agent, catalog } = await buildAgent();
-      const fake = makeFakeSpawn();
-      await launchCopilotHeadless(
-        { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
-        {
-          copilotStateDir: stateDir,
-          globalDir: scratch,
-          randomUUID: () => FIXED_UUID,
-          spawn: fake.spawn,
-          copilotBin: "C:\\winget\\copilot.exe",
-        },
-      );
-      // Direct spawn: command IS the bin (not cmd.exe).
-      expect(fake.captures?.command).toBe("C:\\winget\\copilot.exe");
-      const opts = fake.captures?.options as { windowsVerbatimArguments?: boolean };
-      // No verbatim flag on the direct path — libuv's standard
-      // MSVCRT-style escaping handles argv naturally.
-      expect(opts.windowsVerbatimArguments).toBeFalsy();
-    });
+  it("forwards an explicit copilotBin path verbatim (no resolver layer mangles it)", async () => {
+    // Removed in this PR: a `resolveCopilotBin` indirection that
+    // tried to swap WinGet shim paths. Production now requires npm-
+    // installed copilot (`npm install -g @github/copilot`); the
+    // launcher hands the configured `copilotBin` straight through
+    // to the spawn impl. This test pins that no-mangling contract.
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        globalDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+        copilotBin: "/opt/local/bin/copilot",
+      },
+    );
+    expect(fake.captures?.command).toBe("/opt/local/bin/copilot");
   });
 
   it("does not pass an env override to spawn when subprocessEnv is unset (Node default-inherit)", async () => {
@@ -288,7 +227,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const opts = fake.captures?.options as { env?: NodeJS.ProcessEnv };
@@ -316,7 +254,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
@@ -347,7 +284,6 @@ describe("launchCopilotHeadless", () => {
           globalDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
-          resolveBin: NOOP_RESOLVE_BIN,
         },
       );
       const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
@@ -383,7 +319,6 @@ describe("launchCopilotHeadless", () => {
           globalDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
-          resolveBin: NOOP_RESOLVE_BIN,
         },
       );
       const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
@@ -405,7 +340,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(handle.pid).toBe(12345);
@@ -422,7 +356,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", 0, null));
@@ -439,7 +372,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", 42, null));
@@ -456,7 +388,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     setImmediate(() => fake.child.emit("exit", null, "SIGTERM"));
@@ -473,7 +404,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     handle.kill();
@@ -493,7 +423,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     expect(() => handle.kill()).not.toThrow();
@@ -611,7 +540,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     fake.child.stderr.push(Buffer.from("warn: something\n"));
@@ -639,7 +567,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
     fake.child.stdout.push(Buffer.from('{"event":"start"}\n'));
@@ -671,7 +598,6 @@ describe("launchCopilotHeadless", () => {
         globalDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
-        resolveBin: NOOP_RESOLVE_BIN,
       },
     );
 
