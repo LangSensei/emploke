@@ -945,6 +945,40 @@ describe("buildInteractiveLaunch()", () => {
     // Frozen base survived without mutation.
     expect(Object.keys(sharedBase)).toEqual(["EMPLOKE_SERVER"]);
   });
+
+  it('drops non-string subprocessEnv values via the `typeof v === "string"` guard', async () => {
+    // The guard exists in `assembleLaunchEnv` so a malformed base
+    // (e.g. a Number leaking in from a future caller that converted
+    // a port without coercing) cannot reach the shell-export prefix
+    // as a non-string. Today no production code path hits this — the
+    // server's `buildSubprocessEnvBase` only emits string values —
+    // but the guard is defense-in-depth, so it deserves a test that
+    // would catch a regression that removed it.
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      workspaceId: "ws-uuid-1",
+      // Cast through `unknown`: NodeJS.ProcessEnv types values as
+      // `string | undefined`, but at runtime the JS object can hold
+      // anything. We exercise the runtime path here.
+      subprocessEnv: {
+        EMPLOKE_SERVER: "http://127.0.0.1:8787",
+        ROGUE_NUMBER: 42 as unknown as string,
+        ROGUE_NULL: null as unknown as string,
+        ROGUE_OBJ: { not: "a string" } as unknown as string,
+      },
+      repository: makeRepo(),
+    });
+    const s = await m.create({ agent: "demo" });
+    const launch = await m.buildInteractiveLaunch(s.id);
+    expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect("ROGUE_NUMBER" in (launch.env ?? {})).toBe(false);
+    expect("ROGUE_NULL" in (launch.env ?? {})).toBe(false);
+    expect("ROGUE_OBJ" in (launch.env ?? {})).toBe(false);
+  });
 });
 
 // Suppress unused imports warning for vi (kept available for future tests).

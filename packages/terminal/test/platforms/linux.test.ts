@@ -196,4 +196,46 @@ describe("spawnTerminalWith > linux", () => {
     const shellLine = calls[0]?.args.at(-1) as string;
     expect(shellLine).toContain("EMPLOKE_NOTE='Lang'\\''s note'");
   });
+
+  // Coverage gap: the env-set path for xfce4-terminal / lxterminal
+  // takes a different shape (`--command=<single string>` instead of
+  // `-- argv` or `-e argv`). It is the ONLY platform branch where
+  // shQuote is applied to a string that itself already contains
+  // POSIX `'\''` escapes — i.e. an outer single-quote-then-escape
+  // wrapping an inner already-escaped value. Worth a dedicated test
+  // so a regression in either layer surfaces here rather than
+  // requiring an actual xfce/lx user to notice their session vanished
+  // immediately on launch.
+
+  it("xfce4-terminal env-set path uses --command=<sh -lc shQuote(line)> wrapping the inline export", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { "xfce4-terminal": "/usr/bin/xfce4-terminal" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-1" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.args).toEqual([
+      "--working-directory=/tmp/wd",
+      "--command=sh -lc 'export EMPLOKE_WORKSPACE='\\''ws-uuid-1'\\'' && cd '\\''/tmp/wd'\\'' && exec '\\''copilot'\\'''",
+    ]);
+  });
+
+  it("lxterminal env-set path uses --command=<sh -lc shQuote(line)> wrapping the inline export", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { lxterminal: "/usr/bin/lxterminal" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-1" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.args).toEqual([
+      "--working-directory=/tmp/wd",
+      "--command=sh -lc 'export EMPLOKE_WORKSPACE='\\''ws-uuid-1'\\'' && cd '\\''/tmp/wd'\\'' && exec '\\''copilot'\\'''",
+    ]);
+  });
 });

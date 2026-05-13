@@ -283,9 +283,16 @@ export class SessionManager {
     // `export K='undefined'` would set the literal string. The
     // mergeEnv approach used by the task path drops them; we do the
     // same here for symmetry.
-    const launchEnv = this.assembleLaunchEnv(id, launch.env);
-    const launchWithEnv: LaunchCommand =
-      Object.keys(launchEnv).length === 0 ? launch : { ...launch, env: launchEnv };
+    //
+    // assembleLaunchEnv unconditionally writes EMPLOKE_WORKDIR and
+    // EMPLOKE_SESSION_ID, so `launchEnv` is always non-empty (size ≥ 2).
+    // An earlier draft branched on `Object.keys(launchEnv).length === 0`
+    // to skip the spread when empty — dead code, since the branch was
+    // never reached. Removed in PR #95.
+    const launchWithEnv: LaunchCommand = {
+      ...launch,
+      env: this.assembleLaunchEnv(id, launch.env),
+    };
 
     // Best-effort: remember the user's last intent for this session so
     // the next dashboard render can default the Resume button. Persisted
