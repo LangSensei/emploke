@@ -10,37 +10,23 @@ export class WorkspaceError extends Error {
   }
 }
 
-/** `WorkspaceManager.open()` could not find or read `workspace.json`. */
+/** `WorkspaceManager.open()` could not find the workspace's row in `global.db`. */
 export class WorkspaceNotFoundError extends WorkspaceError {
   constructor(public readonly dir: string) {
-    super(`workspace.json not found at ${dir}`);
+    super(`workspace not found at ${dir}`);
     this.name = "WorkspaceNotFoundError";
   }
 }
 
-/** `workspace.json` exists but cannot be parsed or violates the schema. */
+/** A row in `global.db.workspaces` failed validation. */
 export class WorkspaceCorruptedError extends WorkspaceError {
   constructor(
     public readonly dir: string,
     public readonly reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`workspace.json at ${dir} is corrupted: ${reason}`, options);
+    super(`workspace row at ${dir} is corrupted: ${reason}`, options);
     this.name = "WorkspaceCorruptedError";
-  }
-}
-
-/** `workspace.json` declares a schemaVersion this build doesn't understand. */
-export class WorkspaceSchemaMismatchError extends WorkspaceError {
-  constructor(
-    public readonly dir: string,
-    public readonly fromVersion: number,
-    public readonly toVersion: number,
-  ) {
-    super(
-      `workspace.json at ${dir} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
-    );
-    this.name = "WorkspaceSchemaMismatchError";
   }
 }
 
@@ -86,7 +72,7 @@ export class RegistryError extends WorkspaceError {
   }
 }
 
-/** `global.db.workspace_registry` row failed validation or schema drift. */
+/** `global.db.workspaces` row failed validation or schema drift. */
 export class RegistryCorruptedError extends RegistryError {
   constructor(
     public readonly file: string,

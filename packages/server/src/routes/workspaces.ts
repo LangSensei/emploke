@@ -255,7 +255,7 @@ export function workspacesRoutes(deps: {
   });
 
   // Remove a workspace. Default behaviour removes only the metadata
-  // (workspace.json + index entry); user files preserved. Pass
+  // (the row in `global.db`); user files preserved. Pass
   // `?purge=1` to also rm every emploke-owned subdirectory under the
   // workspace's workdir (sessions/, tasks/, catalog/). The workdir
   // itself is never removed.
@@ -284,7 +284,7 @@ export function workspacesRoutes(deps: {
   //     task subprocesses; reloading would orphan them and race the
   //     fresh `recoverOrphaned` sweep. Caller cancels the tasks (or
   //     waits) and retries.
-  //   - 500 for any other load failure (e.g. corrupted workspace.json),
+  //   - 500 for any other load failure (e.g. corrupted workspace row),
   //     surfaced as `errorBody(err)` so the dashboard can show why.
   app.post("/:id/reload", async (c) => {
     const id = c.req.param("id");

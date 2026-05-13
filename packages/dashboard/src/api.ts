@@ -656,8 +656,8 @@ export const addWorkspace = async (opts: {
 /**
  * Remove a workspace from the registry.
  *
- * Default behaviour: metadata-only — `workspace.json` and the index entry
- * are deleted but the user's directory contents (their files, plus any
+ * Default behaviour: metadata-only — the registry row in `global.db`
+ * is deleted but the user's directory contents (their files, plus any
  * agent-produced sessions/, tasks/, catalog/) stay on disk untouched.
  *
  * Pass `{ purge: true }` to also rm every emploke-owned subdirectory under

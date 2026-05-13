@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -117,7 +117,7 @@ describe("workspacesRoutes — POST /", () => {
     // The auto-generated workdir lives under the parent we configured;
     // its basename matches the workspace's UUID — tying the registry id
     // to the on-disk dir name keeps "which folder belongs to which
-    // workspace?" answerable without opening workspace.json.
+    // workspace?" answerable from the path alone.
     const expectedPrefix = path.resolve(defaultWorkspaceParent) + path.sep;
     expect(body.workdir.startsWith(expectedPrefix)).toBe(true);
     expect(path.basename(body.workdir)).toBe(body.id);
@@ -245,9 +245,10 @@ describe("workspacesRoutes — PATCH /:id", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { name: string };
     expect(body.name).toBe("New");
-    const wsFile = path.join(ws.workdir, "workspace.json");
-    const stored = JSON.parse(await readFile(wsFile, "utf8"));
-    expect(stored.name).toBe("New");
+    // Re-read via the manager — it round-trips through SQLite, no
+    // workspace.json sidecar exists since the global.db consolidation.
+    const stored = await manager.read(ws.id);
+    expect(stored?.name).toBe("New");
   });
 
   it("returns 400 when no patchable fields are present", async () => {

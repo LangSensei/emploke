@@ -1,10 +1,10 @@
-import type { Workspace } from "../types.js";
+import type { Workspace } from "../workspace-entity.js";
 
 /**
  * Storage contract for workspaces. Implementations decide where the
- * workspace records actually live (a JSON index + per-workspace
- * `workspace.json`, a SQLite table, an HTTP service, ...) — callers
- * never see persistence shape.
+ * workspace records actually live (a SQLite table is the production
+ * default; an HTTP service or in-memory map could be drop-in
+ * replacements) — callers never see persistence shape.
  *
  * Per-instance scope: a `WorkspaceRepository` instance covers an
  * **emploke root** (e.g. `~/.emploke/`). Workspaces inside that root

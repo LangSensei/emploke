@@ -45,13 +45,16 @@ export interface StartOpts {
   /** Extra args to pass to `node` before the script (e.g. `["--import", "tsx"]`). */
   readonly nodeArgs?: readonly string[];
   /**
-   * Total budget for `/api/health` polling after spawn. Default 15000 ms.
+   * Total budget for `/api/health` polling after spawn. Default 30000 ms.
    *
    * Generous enough to absorb cold Node.js startup on Windows runners
-   * with antivirus in the path (the 5s default we shipped with caused
-   * intermittent CI failures on `windows-latest`). Real-world boots on
-   * macOS/Linux complete in well under a second, so the extra budget
-   * only kicks in when something is genuinely slow.
+   * with antivirus in the path. Bumped from 15s to 30s after the
+   * global.db SQLite migration: opening a `node:sqlite` `DatabaseSync`
+   * + ensuring the schema_meta row + WAL pragma negotiation occasionally
+   * pushed cold-boot past the 15s budget on `windows-latest` runners
+   * (~1% of CI runs). Real-world boots on macOS/Linux complete in well
+   * under a second, so the extra budget only kicks in when something
+   * is genuinely slow.
    */
   readonly healthTimeoutMs?: number;
 }
@@ -65,7 +68,7 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   const port = opts.port ?? Number(env.PORT || 8787);
   const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
   const apiKey = opts.apiKey ?? env.EMPLOKE_API_KEY;
-  const healthTimeoutMs = opts.healthTimeoutMs ?? 15_000;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? 30_000;
 
   // Step 1 — idempotency check.
   const existing = await readRuntimeFile(home);

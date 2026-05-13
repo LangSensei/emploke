@@ -4,7 +4,7 @@ import path from "node:path";
 import { WorkspaceIdInvalidError, WorkspaceNotRegisteredError } from "./errors.js";
 import { assertValidDisplayName, isValidWorkspaceId } from "./names.js";
 import type { WorkspaceRepository } from "./repositories/repository.js";
-import { type Workspace, workspaceLayout } from "./types.js";
+import { Workspace, workspaceLayout } from "./workspace-entity.js";
 
 /** Options accepted by `WorkspaceManager.init`. */
 export interface WorkspaceInitOpts {
@@ -115,13 +115,13 @@ export class WorkspaceManager {
     ]);
 
     const now = opts.now ?? (() => new Date());
-    const workspace: Workspace = {
+    const workspace = Workspace.create({
       id,
       name: opts.name,
-      createdAt: now().toISOString(),
       workdir: resolvedWorkdir,
+      createdAt: now().toISOString(),
       ...(opts.defaults ? { defaults: opts.defaults } : {}),
-    };
+    });
     await this.repository.create(workspace);
     return workspace;
   }
@@ -135,26 +135,18 @@ export class WorkspaceManager {
   async update(id: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
     const current = await this.repository.read(id);
     if (!current) throw new WorkspaceNotRegisteredError(id);
-    if (patch.name !== undefined) assertValidDisplayName(patch.name);
-
-    const nextName = patch.name ?? current.name;
-    const nextDefaults =
-      patch.defaults === undefined ? current.defaults : (patch.defaults ?? undefined);
-
-    const updated: Workspace = {
-      id: current.id,
-      workdir: current.workdir,
-      createdAt: current.createdAt,
-      name: nextName,
-      ...(nextDefaults ? { defaults: nextDefaults } : {}),
-    };
+    const updated = current.withMetadata({
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.defaults !== undefined ? { defaults: patch.defaults } : {}),
+    });
     await this.repository.save(updated);
     return updated;
   }
 
   /**
    * Remove a registered workspace. Default behaviour removes only the
-   * emploke metadata (the registry entry + `workspace.json`). Pass
+   * Remove a registered workspace. Default behaviour removes only the
+   * emploke metadata (the registry row in `global.db`). Pass
    * `{ purge: true }` to additionally rm every emploke-owned
    * subdirectory under the workspace's `workdir`; the `workdir` itself
    * is preserved either way (user-owned). Idempotent for unregistered ids.

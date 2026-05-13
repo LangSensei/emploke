@@ -44,7 +44,7 @@ interface SidebarProps {
   onAddWorkspace: () => void;
   /**
    * Persist a new display name for the currently-selected workspace.
-   * Only the metadata `name` (workspace.json) changes  the registry id
+   * Only the metadata `name` (workspace row in `global.db`) changes — the registry id
    * and on-disk directory are intentionally untouched.
    */
   onRenameWorkspace: (id: string, newDisplayName: string) => Promise<void>;
@@ -71,7 +71,7 @@ export function Sidebar({
   const selectValue = selectedExists ? (currentWorkspaceId ?? "") : "";
   const currentEntry = workspaces.find((w) => w.id === currentWorkspaceId);
   // Falling back to the raw id is intentional: it keeps the dropdown
-  // populated even when workspace.json is unreadable, so the user can
+  // populated even when the workspace metadata row is unreadable, so the user can
   // navigate to settings and fix it.
   const displayName = currentEntry?.name ?? currentWorkspaceId ?? "";
 

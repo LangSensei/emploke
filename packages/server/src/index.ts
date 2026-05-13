@@ -183,14 +183,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   );
 
   // Open the workspace registry. The `global.db` SQLite file lives at
-  // `<EMPLOKE_HOME>/global.db` and holds the workspace registry plus
-  // any other cross-workspace state (currently just the
-  // current-workspace pointer). The connection's lifetime is bound to
-  // the server process — the repository never closes it.
-  //
-  // Per-workspace metadata (name / createdAt / defaults) still lives
-  // in `<workdir>/workspace.json` for now; a follow-up PR moves it
-  // into a per-workspace `workspace.db`.
+  // `<EMPLOKE_HOME>/global.db` and holds every workspace's full record
+  // (id, workdir, name, createdAt, defaults) plus cross-workspace
+  // state (currently just the current-workspace pointer). The
+  // connection's lifetime is bound to the server process — the
+  // repository never closes it.
   //
   // We do NOT auto-create a default workspace — the dashboard's
   // landing page prompts the user to create one explicitly (workdir +
@@ -247,7 +244,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // Workspace-scoped sessions and catalog. The middleware resolves :id
   // context and stashes both `sessionManager` and `catalog` on c.var; each
   // route family reads back the one it needs via the resolver. 404 if id
-  // unknown; 5xx if workspace.json missing/corrupted.
+  // unknown; 5xx if the workspace row is corrupted or workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
   sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
@@ -387,7 +384,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
  *   - 404 if the id isn't in the registry
- *   - 5xx if workspace.json is missing/corrupted (cache.load throws)
+ *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
  */
 function workspaceContextMiddleware(
   cache: WorkspaceContextCache,

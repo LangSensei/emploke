@@ -2,17 +2,17 @@
  * @emploke/workspace — per-project workspace abstraction.
  *
  * A *workspace* is the user-chosen working directory that holds
- * emploke's per-workspace state (sessions, tasks, catalog)
- * plus whatever the user has under it. Each workspace is
- * identified by an opaque UUID `id` (the URL routing key) and lives at
- * an absolute filesystem `workdir`. Its user-facing display name is
- * stored as part of the workspace's metadata and may be changed at any
- * time without breaking links.
+ * emploke's per-workspace state (per-workspace SQLite DB at
+ * `<workdir>/workspace.db`, plus agent workdirs under `sessions/`
+ * and `tasks/`). Each workspace is identified by an opaque UUID `id`
+ * (the URL routing key) and lives at an absolute filesystem
+ * `workdir`. Its user-facing display name and other metadata live
+ * in the global registry row, NOT in the workspace folder.
  *
  * Persistence is delegated to a `WorkspaceRepository`. The default
- * implementation `SqliteWorkspaceRepository` stores the workspace
- * registry in a SQLite database at `$EMPLOKE_HOME/global.db` and the
- * per-workspace metadata at `<workdir>/workspace.json`. Tests use the
+ * implementation `SqliteWorkspaceRepository` stores every workspace
+ * record (id, workdir, name, createdAt, defaults) as a single row
+ * in a SQLite database at `$EMPLOKE_HOME/global.db`. Tests use the
  * same class with a `":memory:"` `DatabaseSync` (re-exported from
  * `@emploke/workspace/testing`); there is no separate in-memory
  * implementation since SQLite already provides that natively, matching
@@ -29,7 +29,6 @@ export {
   MAX_DISPLAY_NAME_LENGTH,
   SESSIONS_SUBDIR,
   TASKS_SUBDIR,
-  WORKSPACE_FILE,
 } from "./constants.js";
 export {
   RegistryCorruptedError,
@@ -44,7 +43,6 @@ export {
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  WorkspaceSchemaMismatchError,
 } from "./errors.js";
 export {
   type WorkspaceDeleteOpts,
@@ -55,4 +53,9 @@ export {
 export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
 export type { WorkspaceRepository } from "./repositories/repository.js";
 export { SqliteWorkspaceRepository } from "./repositories/sqlite-workspace-repository.js";
-export { type Workspace, type WorkspaceLayout, workspaceLayout } from "./types.js";
+export {
+  Workspace,
+  type WorkspaceDefaults,
+  type WorkspaceLayout,
+  workspaceLayout,
+} from "./workspace-entity.js";

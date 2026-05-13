@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,7 +11,6 @@ import {
   WorkspaceManager,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  WorkspaceSchemaMismatchError,
 } from "../src/index.js";
 
 let scratch: string;
@@ -169,8 +168,6 @@ describe("WorkspaceManager — delete", () => {
 
     await m.delete(UUID_A);
     expect(await m.read(UUID_A)).toBeNull();
-    // workspace.json removed
-    await expect(fs.stat(path.join(ws.workdir, "workspace.json"))).rejects.toThrow();
     // user file preserved
     expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user data");
     // sessions subdir preserved (not purged by default)
@@ -261,53 +258,19 @@ describe("WorkspaceManager — current selection", () => {
 });
 
 describe("SqliteWorkspaceRepository — corruption / schema mismatch", () => {
-  it("rejects newer schemaVersion in workspace.json with upgrade hint", async () => {
-    const m = newSqliteManager();
-    const wsDir = path.join(scratch, "x");
-    await m.init({ id: UUID_A, name: "X", workdir: wsDir });
-    // Corrupt workspace.json with a newer schemaVersion.
-    await writeFile(
-      path.join(wsDir, "workspace.json"),
-      JSON.stringify({ schemaVersion: 99, name: "X", createdAt: "2026-01-01T00:00:00Z" }),
-      "utf8",
-    );
-    await expect(m.read(UUID_A)).rejects.toBeInstanceOf(WorkspaceSchemaMismatchError);
-  });
-
-  it("rejects newer schemaVersion in the global.db registry", async () => {
-    // Bump the workspace pkg's schema_meta row to a future version.
+  it("rejects newer schemaVersion in the global.db registry", () => {
     const repo = new SqliteWorkspaceRepository({ db });
     void repo;
     db.prepare("UPDATE schema_meta SET version = 99 WHERE pkg = ?").run("workspace");
     expect(() => new SqliteWorkspaceRepository({ db })).toThrow(RegistrySchemaMismatchError);
   });
 
-  it("missing workspace.json causes the entry to be dropped from list (warns)", async () => {
-    const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
-    const fs = await import("node:fs/promises");
-    // Remove the metadata file out from under the index.
-    await fs.rm(path.join(ws.workdir, "workspace.json"), { force: true });
-
-    const all = await m.list();
-    expect(all).toEqual([]);
-  });
-
-  it("explicitly corrupted workspace.json bubbles WorkspaceCorruptedError on read(id)", async () => {
-    const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
-    await writeFile(path.join(ws.workdir, "workspace.json"), "not json", "utf8");
-    await expect(m.read(UUID_A)).rejects.toBeInstanceOf(WorkspaceCorruptedError);
-  });
-
-  it("explicitly corrupted workspace.json is dropped from list() (resilient)", async () => {
-    // Regression: tryHydrate used to throw on parse errors, taking down
-    // the whole list. list() must isolate per-entry corruption so a single
-    // bad workspace doesn't hide every other registered one.
+  it("an out-of-band corrupted row is dropped from list (warns), still throws on read(id)", async () => {
     const m = newSqliteManager();
     await m.init({ id: UUID_A, name: "Healthy", workdir: path.join(scratch, "h") });
-    const bad = await m.init({ id: UUID_B, name: "Bad", workdir: path.join(scratch, "b") });
-    await writeFile(path.join(bad.workdir, "workspace.json"), "not json", "utf8");
+    await m.init({ id: UUID_B, name: "Bad", workdir: path.join(scratch, "b") });
+    // Forge a corrupt row by direct UPDATE — overwrite name with empty string.
+    db.prepare("UPDATE workspaces SET name = '' WHERE id = ?").run(UUID_B);
 
     const all = await m.list();
     expect(all.map((w) => w.id)).toEqual([UUID_A]);

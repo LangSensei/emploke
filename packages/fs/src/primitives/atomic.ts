@@ -7,7 +7,7 @@ import { safeStat } from "./safe-fs.js";
  * On Windows, rename can race with a reader on the destination
  * (`MoveFileEx` returns EPERM/EACCES if any process has the dest open
  * even briefly without share-delete). Pollers reading
- * `workspace.json` / `runtime.json` hit this in practice. We retry the
+ * `runtime.json` hits this in practice. We retry the
  * rename a few times with a tiny backoff before giving up — the
  * contention window is microseconds, so even 1-2 retries normally
  * suffice.
@@ -18,7 +18,7 @@ const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
  * Total worst-case wait across all attempts is ~127 ms (1 + 2 + 4 + 8 +
  * 16 + 32 + 32 + 32). Sized to comfortably absorb the dashboard's 4s
  * task-list poll cadence (which today reads SQLite, not files, but the
- * server still atomic-writes `workspace.json` / `runtime.json` on the
+ * server still atomic-writes `runtime.json` on the
  * same loop). The cap exists so a genuinely stuck destination
  * (antivirus full-scan holding the file, broken share, disk going
  * read-only) eventually surfaces as an error rather than pinning the

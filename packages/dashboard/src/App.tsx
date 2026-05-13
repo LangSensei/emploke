@@ -404,7 +404,7 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           The workspace files on disk are kept untouched. Only emploke's metadata (the registry
-          entry and <code>workspace.json</code>) is removed. You can re-add this path later.
+          entry in <code>global.db</code>) is removed. You can re-add this path later.
         </p>
         {error && <div className="alert alert--error">⚠ {error}</div>}
       </div>
@@ -566,7 +566,7 @@ function WorkspaceLayout() {
 
   const handleRenameWorkspace = useCallback(
     async (id: string, newDisplayName: string) => {
-      // PATCHes only workspace.json metadata; the URL key (id) is opaque
+      // PATCHes only the workspace metadata row; the URL key (id) is opaque
       // and stable, so existing URLs continue to work.
       await updateWorkspaceMetadata(id, { name: newDisplayName });
       await refreshWorkspaces();
