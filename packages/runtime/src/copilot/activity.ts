@@ -478,6 +478,9 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
   let model: string | undefined;
   if (raw.modelMetrics && typeof raw.modelMetrics === "object") {
     for (const [k, v] of Object.entries(raw.modelMetrics as Record<string, unknown>)) {
@@ -485,8 +488,19 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
       const usage = (v as Record<string, unknown>).usage;
       if (usage && typeof usage === "object") {
         const u = usage as Record<string, unknown>;
+        // Anthropic prompt-cache + extended-thinking accounting:
+        //   cacheReadTokens   — re-used cached input (~1/10 price)
+        //   cacheWriteTokens  — initial cache write (~1.25× input price)
+        //   reasoningTokens   — extended-thinking output (already counted
+        //                       toward outputTokens upstream, surfaced
+        //                       separately so operators can see thinking
+        //                       cost vs reply cost)
+        // Sum across models so multi-model sessions get one bill view.
         inputTokens += numOr0(u.inputTokens);
         outputTokens += numOr0(u.outputTokens);
+        cachedTokens += numOr0(u.cacheReadTokens);
+        cacheWriteTokens += numOr0(u.cacheWriteTokens);
+        reasoningTokens += numOr0(u.reasoningTokens);
       }
       if (model === undefined) model = k;
     }
@@ -495,7 +509,14 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
 
   const tokens: TokenUsage | undefined =
     inputTokens > 0 || outputTokens > 0
-      ? { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens }
+      ? {
+          input: inputTokens,
+          output: outputTokens,
+          ...(cachedTokens > 0 ? { cached: cachedTokens } : {}),
+          ...(cacheWriteTokens > 0 ? { cacheWrite: cacheWriteTokens } : {}),
+          ...(reasoningTokens > 0 ? { reasoning: reasoningTokens } : {}),
+          total: inputTokens + outputTokens,
+        }
       : undefined;
 
   const stats: SummaryStats = {

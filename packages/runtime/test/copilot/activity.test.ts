@@ -257,6 +257,104 @@ describe("parseCopilotActivity — summary item", () => {
       },
     });
   });
+
+  it("captures cacheRead / cacheWrite / reasoning tokens from modelMetrics", () => {
+    // Real shape from a Claude session with prompt caching + extended
+    // thinking. Numbers are scaled-down but proportions match a real
+    // observed session: ~94% cache hit rate, small cache-write delta,
+    // non-zero reasoning footprint.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "claude-opus-4.7",
+        modelMetrics: {
+          "claude-opus-4.7": {
+            usage: {
+              inputTokens: 100_000,
+              outputTokens: 5_000,
+              cacheReadTokens: 94_000,
+              cacheWriteTokens: 6_000,
+              reasoningTokens: 1_200,
+            },
+          },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    expect(items[0]).toMatchObject({
+      kind: "summary",
+      tokens: {
+        input: 100_000,
+        output: 5_000,
+        cached: 94_000,
+        cacheWrite: 6_000,
+        reasoning: 1_200,
+        total: 105_000,
+      },
+    });
+  });
+
+  it("omits cached / cacheWrite / reasoning fields when their upstream values are 0 or missing", () => {
+    // The most common shape: a non-cached, non-thinking model run.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "gpt-5",
+        modelMetrics: {
+          "gpt-5": { usage: { inputTokens: 800, outputTokens: 200 } },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    const tokens = (items[0] as { tokens?: Record<string, unknown> }).tokens;
+    expect(tokens).toMatchObject({ input: 800, output: 200, total: 1000 });
+    // Defensive: the optional fields must not be present (rather than
+    // present-as-undefined) so JSON serialisation stays clean.
+    expect(tokens).not.toHaveProperty("cached");
+    expect(tokens).not.toHaveProperty("cacheWrite");
+    expect(tokens).not.toHaveProperty("reasoning");
+  });
+
+  it("aggregates token classes across multiple models", () => {
+    // Multi-model session (e.g. user switched mid-task). Each class sums
+    // independently so the bill view stays single-bottom-line.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "claude-opus-4.7",
+        modelMetrics: {
+          "claude-opus-4.7": {
+            usage: {
+              inputTokens: 50_000,
+              outputTokens: 2_000,
+              cacheReadTokens: 45_000,
+              reasoningTokens: 500,
+            },
+          },
+          "gpt-5": {
+            usage: { inputTokens: 10_000, outputTokens: 1_000 },
+          },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    expect(items[0]).toMatchObject({
+      kind: "summary",
+      tokens: {
+        input: 60_000,
+        output: 3_000,
+        cached: 45_000,
+        reasoning: 500,
+        total: 63_000,
+      },
+    });
+  });
 });
 
 describe("deriveCopilotResult", () => {

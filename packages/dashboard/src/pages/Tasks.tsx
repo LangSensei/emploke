@@ -1469,8 +1469,29 @@ function ActivityRow({ item }: { item: ActivityItem }) {
           {tokens !== undefined && ((tokens.input ?? 0) > 0 || tokens.output > 0) && (
             <span>
               <strong>Tokens:</strong>{" "}
-              {tokens.input !== undefined ? `${tokens.input.toLocaleString()} in / ` : ""}
+              {tokens.input !== undefined ? (
+                <>
+                  {tokens.input.toLocaleString()} in
+                  {/*
+                    Show cache-hit % when the upstream provided cacheRead
+                    accounting. On long Claude sessions this is usually 90%+
+                    and dramatically changes the cost story (cache reads
+                    bill at ~1/10 fresh input).
+                  */}
+                  {tokens.cached !== undefined && tokens.input > 0 && (
+                    <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>
+                      ({Math.round((tokens.cached / tokens.input) * 100)}% cached)
+                    </span>
+                  )}
+                  {" / "}
+                </>
+              ) : null}
               {tokens.output.toLocaleString()} out
+              {tokens.reasoning !== undefined && tokens.reasoning > 0 && (
+                <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>
+                  (incl. {tokens.reasoning.toLocaleString()} reasoning)
+                </span>
+              )}
             </span>
           )}
           {stats?.costUSD !== undefined && (

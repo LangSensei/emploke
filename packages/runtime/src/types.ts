@@ -564,14 +564,23 @@ export interface SummaryItem extends BaseActivityItem {
  * as "not measured at this granularity" and either omit the input
  * column from rendering or render `?`/`—`.
  *
- * `cached` and `reasoning` are optional add-ons emitted when the
- * upstream provides per-class breakdown (Anthropic prompt-cache hits,
- * extended-thinking reasoning tokens). Always opt-in; absent ≢ zero.
+ * `cached`, `cacheWrite`, and `reasoning` are optional add-ons emitted
+ * when the upstream provides per-class breakdown:
+ *  - `cached` = Anthropic prompt-cache READ (charged ~10× cheaper than
+ *    fresh input, often >90% of `input` on long sessions)
+ *  - `cacheWrite` = prompt-cache WRITE (charged ~1.25× input on the
+ *    one-time creation)
+ *  - `reasoning` = extended-thinking output tokens (counted toward
+ *    `output` totals upstream but billed and surfaced separately so
+ *    operators can see how much was spent thinking vs replying)
+ *
+ * Always opt-in; absent ≢ zero.
  */
 export interface TokenUsage {
   readonly input?: number;
   readonly output: number;
   readonly cached?: number;
+  readonly cacheWrite?: number;
   readonly reasoning?: number;
   readonly total?: number;
 }
