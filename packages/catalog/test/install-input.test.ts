@@ -1,46 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildOriginFrom,
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,
 } from "../src/validate/install-input.js";
 
-describe("buildOriginFrom", () => {
-  it("github: passes the URL through verbatim (already canonical)", () => {
-    const url = "https://github.com/owner/repo/tree/main/skills/foo";
-    expect(buildOriginFrom("github", url)).toBe(url);
-  });
-
-  it("file: prepends file: prefix", () => {
-    expect(buildOriginFrom("file", "/abs/path")).toBe("file:/abs/path");
-    expect(buildOriginFrom("file", "C:/Users/me/skill")).toBe("file:C:/Users/me/skill");
-  });
-
-  it("file: tolerates an already-prefixed paste (idempotent)", () => {
-    expect(buildOriginFrom("file", "file:/abs/path")).toBe("file:/abs/path");
-  });
-
-  it("trims surrounding whitespace before assembling", () => {
-    expect(buildOriginFrom("file", "  /abs/path  ")).toBe("file:/abs/path");
-    expect(buildOriginFrom("github", "  https://github.com/o/r/tree/main  ")).toBe(
-      "https://github.com/o/r/tree/main",
-    );
-  });
-});
-
 describe("validateSkillInstallInput", () => {
-  it("accepts {provider:'github', location: <url>}", () => {
+  it("accepts a plain { origin: <github-url> }", () => {
     const out = validateSkillInstallInput({
-      provider: "github",
-      location: "https://github.com/o/r/tree/main/skills/x",
+      origin: "https://github.com/o/r/tree/main/skills/x",
     });
     expect(out.origin).toBe("https://github.com/o/r/tree/main/skills/x");
   });
 
-  it("accepts {provider:'file', location: <abs path>}", () => {
-    const out = validateSkillInstallInput({ provider: "file", location: "/abs/x" });
+  it("accepts { origin: file:/abs/path }", () => {
+    const out = validateSkillInstallInput({ origin: "file:/abs/x" });
     expect(out.origin).toBe("file:/abs/x");
+  });
+
+  it("trims surrounding whitespace from origin", () => {
+    const out = validateSkillInstallInput({
+      origin: "  https://github.com/o/r/tree/main/skills/x  ",
+    });
+    expect(out.origin).toBe("https://github.com/o/r/tree/main/skills/x");
   });
 
   it("rejects body that isn't an object", () => {
@@ -49,36 +31,82 @@ describe("validateSkillInstallInput", () => {
     expect(() => validateSkillInstallInput(null)).toThrow(/must be a JSON object/);
   });
 
-  it("rejects unknown provider", () => {
+  it("rejects missing origin field", () => {
+    expect(() => validateSkillInstallInput({})).toThrow(/origin/);
+  });
+
+  it("rejects empty-string origin", () => {
+    expect(() => validateSkillInstallInput({ origin: "" })).toThrow(/origin/);
+  });
+
+  it("rejects non-string origin", () => {
+    expect(() => validateSkillInstallInput({ origin: 42 })).toThrow(/origin/);
+    expect(() => validateSkillInstallInput({ origin: null })).toThrow(/origin/);
+    expect(() => validateSkillInstallInput({ origin: { url: "x" } })).toThrow(/origin/);
+  });
+
+  // Format validation (must start with `https://github.com/` or
+  // `file:`) is intentionally NOT done here — the catalog-fetcher's
+  // parseOrigin is the single source of truth for scheme rules and
+  // throws OriginParseError at fetch time. The validator only enforces
+  // the wire-level shape (field exists + non-empty string). Keeping
+  // them separate means new providers (e.g. `npm:`, `oci:`) need
+  // exactly one site change (the fetcher registry), not two.
+  it("does NOT enforce origin format (delegated to parseOrigin at fetch time)", () => {
+    // ftp:// is not a recognised scheme, but the validator accepts
+    // it — the fetcher will reject it later. Same for any other
+    // free-form string the validator hasn't been told about.
+    expect(validateSkillInstallInput({ origin: "ftp://example.com/x" })).toEqual({
+      origin: "ftp://example.com/x",
+    });
+    expect(validateSkillInstallInput({ origin: "anything-goes-here" })).toEqual({
+      origin: "anything-goes-here",
+    });
+  });
+
+  it("ignores legacy { provider, location } fields when an origin is also present", () => {
+    // Defensive: if a stale client (e.g. an old dashboard tab the
+    // user left open) sends BOTH the legacy pair and the new origin,
+    // we honour the origin. The pair is silently dropped — there's
+    // no scenario where keeping it would help.
+    const out = validateSkillInstallInput({
+      provider: "github",
+      location: "https://github.com/legacy/path",
+      origin: "https://github.com/o/r/tree/main/skills/x",
+    });
+    expect(out.origin).toBe("https://github.com/o/r/tree/main/skills/x");
+  });
+
+  it("rejects a body that has only legacy { provider, location } without origin", () => {
+    // Confirms the BREAKING wire-shape change: the previous
+    // `{ provider, location }` form is no longer accepted. The
+    // dashboard moved its assembly to client-side; CLI was always
+    // sending `{ origin }`. Test pins the regression: any code path
+    // that re-introduces the legacy form will fail loudly here.
     expect(() =>
-      validateSkillInstallInput({ provider: "ftp", location: "ftp://example.com/x" }),
-    ).toThrow(/`provider` must be one of/);
-  });
-
-  it("rejects missing fields", () => {
-    expect(() => validateSkillInstallInput({ provider: "github" })).toThrow(/location/);
-    expect(() => validateSkillInstallInput({ location: "/abs/x" })).toThrow(/provider/);
-    expect(() => validateSkillInstallInput({})).toThrow();
-  });
-
-  it("rejects empty-string fields", () => {
-    expect(() => validateSkillInstallInput({ provider: "", location: "/x" })).toThrow();
-    expect(() => validateSkillInstallInput({ provider: "github", location: "" })).toThrow();
+      validateSkillInstallInput({
+        provider: "github",
+        location: "https://github.com/o/r/tree/main",
+      }),
+    ).toThrow(/origin/);
   });
 });
 
 describe("validateAgentInstallInput", () => {
   it("mirrors skill validator behaviour", () => {
-    const out = validateAgentInstallInput({ provider: "file", location: "/abs/agent" });
+    const out = validateAgentInstallInput({ origin: "file:/abs/agent" });
     expect(out.origin).toBe("file:/abs/agent");
+  });
+
+  it("rejects missing origin", () => {
+    expect(() => validateAgentInstallInput({})).toThrow(/origin/);
   });
 });
 
 describe("validateMcpInstallInput", () => {
-  it("requires only provider+location (no name — server derives from _meta.name)", () => {
+  it("requires only origin (no name — server derives from _meta.name)", () => {
     const out = validateMcpInstallInput({
-      provider: "file",
-      location: "/abs/azure.json",
+      origin: "file:/abs/azure.json",
     });
     expect(out.origin).toBe("file:/abs/azure.json");
     // McpInstallBody no longer carries `name` — it's recovered from
@@ -88,15 +116,13 @@ describe("validateMcpInstallInput", () => {
 
   it("ignores any caller-supplied name (no longer part of contract)", () => {
     const out = validateMcpInstallInput({
-      provider: "github",
-      location: "https://github.com/o/r/tree/main/mcps/x.json",
+      origin: "https://github.com/o/r/tree/main/mcps/x.json",
       name: "ignored/name",
     });
     expect(out.origin).toBe("https://github.com/o/r/tree/main/mcps/x.json");
   });
 
-  it("rejects body without provider or location", () => {
-    expect(() => validateMcpInstallInput({ provider: "file" })).toThrow(/location/);
-    expect(() => validateMcpInstallInput({ location: "/abs/x.json" })).toThrow(/provider/);
+  it("rejects body without origin", () => {
+    expect(() => validateMcpInstallInput({})).toThrow(/origin/);
   });
 });

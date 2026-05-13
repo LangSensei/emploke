@@ -98,7 +98,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     const install = await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ origin }),
     });
     expect(install.status).toBe(201);
 
@@ -143,7 +143,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     const installRes = await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: parentOrigin.slice("file:".length) }),
+      body: JSON.stringify({ origin: parentOrigin }),
     });
     expect(installRes.status).toBe(201);
 
@@ -184,7 +184,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     await app.request(`/api/workspaces/${ws.id}/catalog/agents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: dir }),
+      body: JSON.stringify({ origin: `file:${dir}` }),
     });
 
     const disableRes = await app.request(
@@ -249,7 +249,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     const installRes = await app.request(`/api/workspaces/${ws.id}/catalog/agents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: agentDir }),
+      body: JSON.stringify({ origin: `file:${agentDir}` }),
     });
     expect(installRes.status).toBe(201);
 
@@ -290,7 +290,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ origin }),
     });
 
     // No body — apply requires a planToken minted by /sync/resolve.
@@ -308,7 +308,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ origin }),
     });
 
     const res = await app.request(
@@ -331,7 +331,7 @@ describe("server: catalog sync + acknowledge + enable/disable routes", () => {
     await app.request(`/api/workspaces/${ws.id}/catalog/skills`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "file", location: origin.slice("file:".length) }),
+      body: JSON.stringify({ origin }),
     });
 
     const previewRes = await app.request(

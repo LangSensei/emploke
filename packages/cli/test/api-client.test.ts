@@ -219,4 +219,74 @@ describe("ApiClient", () => {
     expect(calls[0]?.headers.Accept).toBe("application/json");
     expect(calls[0]?.headers.Authorization).toBe("Bearer secret");
   });
+
+  // Wire-shape pin for the catalog install routes.
+  //
+  // History: an earlier mismatch had the manifest body type declared
+  // as `{ origin: string }` while the server validator expected
+  // `{ provider, location }`. The CLI sent what the manifest said,
+  // server rejected with 400 "`provider` is required". Caught only
+  // when an end-user tried to install. The fix landed in PR #96 by
+  // collapsing both sides onto `{ origin }` (canonical URI = single
+  // identity used by manifest type, server validator, dashboard
+  // post-assembly, CLI, and SKILL.md/AGENTS.md `dependencies:`
+  // blocks).
+  //
+  // These tests pin the wire shape so any future regression that
+  // re-introduces the legacy `{ provider, location }` body fails
+  // here loudly, before it ever hits a real install.
+
+  it("catalog.skills.install POSTs `{ origin }` (single canonical URI, not provider+location)", async () => {
+    const { client, calls } = makeClient([
+      {
+        status: 201,
+        contentType: "application/json",
+        body: '{"installed":[],"skipped":[],"failed":[]}',
+      },
+    ]);
+    await client.call("catalog.skills.install", {
+      params: { id: "ws-1" },
+      body: { origin: "https://github.com/o/r/tree/main/skills/x" },
+    });
+    expect(calls[0]?.url).toBe("http://test.local/api/workspaces/ws-1/catalog/skills");
+    expect(calls[0]?.method).toBe("POST");
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({
+      origin: "https://github.com/o/r/tree/main/skills/x",
+    });
+  });
+
+  it("catalog.agents.install POSTs `{ origin }`", async () => {
+    const { client, calls } = makeClient([
+      {
+        status: 201,
+        contentType: "application/json",
+        body: '{"installed":[],"skipped":[],"failed":[]}',
+      },
+    ]);
+    await client.call("catalog.agents.install", {
+      params: { id: "ws-1" },
+      body: { origin: "file:/abs/agent" },
+    });
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ origin: "file:/abs/agent" });
+  });
+
+  it("catalog.mcps.install POSTs `{ origin }` (no `name` — derived server-side from _meta.name)", async () => {
+    const { client, calls } = makeClient([
+      {
+        status: 201,
+        contentType: "application/json",
+        body: '{"installed":[],"skipped":[],"failed":[]}',
+      },
+    ]);
+    await client.call("catalog.mcps.install", {
+      params: { id: "ws-1" },
+      body: { origin: "https://github.com/o/r/tree/main/mcps/x.json" },
+    });
+    const sent = JSON.parse(calls[0]?.body ?? "{}");
+    expect(sent).toEqual({ origin: "https://github.com/o/r/tree/main/mcps/x.json" });
+    // Defense-in-depth: the body shape's `name` field was removed from
+    // the contract in PR #92 (server derives from _meta.name); ensure
+    // no caller is sneakily passing one back in.
+    expect("name" in sent).toBe(false);
+  });
 });

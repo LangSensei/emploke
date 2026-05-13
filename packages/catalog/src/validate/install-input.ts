@@ -6,30 +6,45 @@
  * Shared across HTTP / future CLI / future programmatic SDK so all
  * channels enforce the same body shape rules.
  *
- * **Wire shape**: clients send `{ provider, location }` (plus `name`
- * for MCPs). The validator assembles the canonical origin URI from
- * those structured fields so callers don't compose URI strings client-
- * side. The downstream catalog facade only ever sees the origin URI;
- * provider is purely a wire-side concern.
+ * **Wire shape**: clients send `{ origin: string }` (plus `name` for
+ * MCPs is no longer needed — derived from the fetched JSON's
+ * `_meta.name`). The origin URI is the canonical identity for
+ * everything downstream; the wire shape and the post-validated form
+ * are therefore the same shape.
  *
- * Adding a new provider (e.g. `"npm"`, `"oci"`) means:
- *   1. extending the `InstallProvider` type
- *   2. adding a case to {@link buildOriginFrom}
- * No catalog-internal change required.
+ * Why a single `origin` field rather than the historical
+ * `{ provider, location }` pair: the origin URI **is** the canonical
+ * identity in every other layer of the system (catalog DB rows,
+ * AGENTS.md / SKILL.md `dependencies:` blocks, fetcher dispatch).
+ * Splitting it on the wire forced two separate places to know the
+ * provider list and made the wire body trivially incompatible
+ * between clients (the CLI assumed `{ origin }` per the manifest
+ * type, the dashboard sent `{ provider, location }` per its own
+ * client-side type — server validator only accepted the latter,
+ * silently bricking CLI install). Collapsing both clients onto
+ * `{ origin }` removes the gap class entirely.
+ *
+ * The dashboard still presents a friendly `provider + location` form
+ * to humans, but assembles the canonical origin URI client-side
+ * before posting; see `packages/dashboard/src/api.ts`. CLI users
+ * always typed an origin URI in the first place.
+ *
+ * Format validation (must start with `https://github.com/`,
+ * `http://github.com/`, or `file:`) is delegated to the catalog-
+ * fetcher's `parseOrigin` at fetch time — that's where the
+ * authoritative scheme/format rules live (`packages/catalog-fetcher/
+ * src/origin.ts`). The validator here only enforces the wire-level
+ * shape: the field exists and is a non-empty string.
  */
 
 import { AgentFrontmatterError } from "../agent/errors.js";
 import { McpInvalidJsonError } from "../mcp/errors.js";
 import { SkillFrontmatterError } from "../skill/errors.js";
 
-export type InstallProvider = "github" | "file";
-
-const PROVIDERS: ReadonlySet<string> = new Set<InstallProvider>(["github", "file"]);
-
 /**
- * Resolved install body. Routes consume this; the wire-side
- * `provider`/`location` pair is intentionally not exposed past the
- * validator — once we've assembled an origin URI, it IS the identity.
+ * Resolved install body. Wire shape is identical (single `origin`
+ * field), but the type alias is kept so downstream callers can
+ * pattern-match against the validated form.
  */
 export interface SkillInstallBody {
   readonly origin: string;
@@ -61,9 +76,9 @@ export function validateAgentInstallInput(raw: unknown): AgentInstallBody {
 }
 
 /**
- * Validate the body of `POST /catalog/mcps`. MCPs only need
- * `provider`+`location` — name is derived from the fetched JSON's
- * `_meta.name` field at install time.
+ * Validate the body of `POST /catalog/mcps`. Same shape as skills /
+ * agents — `name` is derived from the fetched JSON's `_meta.name`
+ * field at install time, not from the request body.
  */
 export function validateMcpInstallInput(raw: unknown): McpInstallBody {
   const obj = expectObject(raw, "mcp");
@@ -71,36 +86,8 @@ export function validateMcpInstallInput(raw: unknown): McpInstallBody {
 }
 
 function requireOrigin(obj: Record<string, unknown>, kind: "skill" | "agent" | "mcp"): string {
-  const provider = requireNonEmptyString(obj, "provider", kind);
-  if (!PROVIDERS.has(provider)) {
-    throw kindError(
-      kind,
-      `\`provider\` must be one of: ${[...PROVIDERS].join(", ")} (got "${provider}")`,
-    );
-  }
-  const location = requireNonEmptyString(obj, "location", kind);
-  return buildOriginFrom(provider as InstallProvider, location);
-}
-
-/**
- * Assemble a canonical origin URI from the wire-side provider+location
- * pair. Kept separate so non-HTTP callers (e.g. CLI) can reuse it
- * without re-implementing the dispatch table.
- *
- *   - `github` + `https://github.com/owner/repo/tree/ref/path` →
- *     pass-through (the URL is already the canonical github origin)
- *   - `file`   + `/abs/path`            → `file:/abs/path`
- *   - `file`   + `file:/abs/path`       → `file:/abs/path` (tolerate
- *     paste with prefix; trim and re-emit)
- */
-export function buildOriginFrom(provider: InstallProvider, location: string): string {
-  const trimmed = location.trim();
-  switch (provider) {
-    case "github":
-      return trimmed;
-    case "file":
-      return trimmed.startsWith("file:") ? trimmed : `file:${trimmed}`;
-  }
+  const origin = requireNonEmptyString(obj, "origin", kind);
+  return origin.trim();
 }
 
 function expectObject(raw: unknown, kind: "skill" | "agent" | "mcp"): Record<string, unknown> {
