@@ -1,6 +1,6 @@
 import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
-import { errorBody, statusForCatalogError } from "../_shared.js";
+import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody, readPlanTokenBody } from "./helpers.js";
 import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
@@ -50,6 +50,13 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       const result = await catalog.installMcpFromOrigin(parsed.origin);
       const status = result.failed.length > 0 ? 207 : 201;
+      logEvent(c, "catalog: mcp install completed", {
+        kind: "mcp",
+        origin: parsed.origin,
+        installed: result.installed.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+      });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
     } catch (e: unknown) {
@@ -90,6 +97,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       const result = await catalog.applySync(plan);
       const status = result.failed.length > 0 ? 207 : 200;
+      logEvent(c, "catalog: mcp sync applied", {
+        kind: "mcp",
+        installed: result.installed.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+      });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
     } catch (e: unknown) {
@@ -105,6 +118,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     if ("error" in parsed) return c.json(parsed, 400);
     try {
       await catalog.updateMcpContent(name, parsed.content);
+      logEvent(c, "catalog: mcp content updated", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -114,8 +128,10 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
 
   app.delete("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
+    const name = c.req.param("name");
     try {
-      await catalog.removeMcp(c.req.param("name"));
+      await catalog.removeMcp(name);
+      logEvent(c, "catalog: mcp removed", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.

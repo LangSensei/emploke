@@ -187,6 +187,30 @@ export function logFault(
 }
 
 /**
+ * Companion to {@link logFault} for state-mutating routes' success
+ * boundary. Emits a single `info`-level structured line via the
+ * request-scoped logger so operators can `jq 'select(.msg=="...")'`
+ * audit who changed what.
+ *
+ * Same context-probe pattern as `logFault` (silent no-op when no
+ * logger is on `c.var`, e.g. unit tests that mount a route factory
+ * directly without the middleware chain). Routes typically call this
+ * AFTER the manager call returns and BEFORE the JSON response is
+ * built, so a 5xx in serialisation still leaves the audit line.
+ *
+ * Convention for `meta`: include the entity id (`sessionId` /
+ * `taskId` / `workspaceId` / `fqn`), the action verb if the message
+ * doesn't already carry it, and any user-supplied input that's safe
+ * to log (NEVER request bodies / passwords / tokens — keep it to
+ * structured fields the entity already exposes).
+ */
+export function logEvent(c: Context, msg: string, meta?: Record<string, unknown>): void {
+  const logger = (c.get as unknown as (k: string) => unknown)("logger") as Logger | undefined;
+  if (logger === undefined) return;
+  logger.info(meta ?? {}, msg);
+}
+
+/**
  * Standard error response shape: `{ error, code? }`. The `code` field
  * carries the error class name so the dashboard can render typed UI without
  * string-matching the message.

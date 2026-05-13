@@ -11,7 +11,7 @@ import {
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
-import { errorBody, logFault, parseJsonBody } from "./_shared.js";
+import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
 import type { TaskDispatchBody } from "./manifest.js";
 
 /**
@@ -153,6 +153,11 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
         instructions: body.instructions,
         ...(typeof body.runtime === "string" ? { runtime: body.runtime } : {}),
       });
+      logEvent(c, "task dispatched", {
+        taskId: task.id,
+        agent: task.agent,
+        runtime: task.metadata?.runtime,
+      });
       return c.json(task, 201);
     } catch (err) {
       const status = statusForError(err) ?? 400;
@@ -211,6 +216,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
     const purge = c.req.query("purge") === "1";
     try {
       await getManager(c).delete(id, { purge });
+      logEvent(c, "task deleted", { taskId: id, purge });
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
