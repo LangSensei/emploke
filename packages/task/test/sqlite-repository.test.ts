@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InvalidTaskIdError, SqliteTaskRepository, Task, type TaskStatus } from "../src/index.js";
+import {
+  CorruptedTaskError,
+  InvalidTaskIdError,
+  SqliteTaskRepository,
+  Task,
+  type TaskStatus,
+} from "../src/index.js";
 
 let scratchDir: string;
 let db: DatabaseSync;
@@ -179,6 +185,32 @@ describe("SqliteTaskRepository", () => {
     // Bump the task pkg's row to a future version and re-construct.
     db.prepare("UPDATE schema_meta SET version = 999 WHERE pkg = ?").run("task");
     expect(() => new SqliteTaskRepository({ db })).toThrow(/schema mismatch/);
+  });
+
+  it("read throws CorruptedTaskError when metadata column is not valid JSON", async () => {
+    // Regression: storage-side bit-rot in the JSON metadata column
+    // must surface as a typed corruption, not silently degrade to {}.
+    // Tampered/truncated rows could otherwise round-trip a valid-looking
+    // task whose runtime metadata was lost on disk.
+    await repo.save(makeTask());
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", ID);
+    await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
+  it("read throws CorruptedTaskError when metadata decodes to a non-object root", async () => {
+    await repo.save(makeTask());
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("[1,2,3]", ID);
+    await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
+  it("list silently skips rows with corrupted metadata (warns via the injected logger)", async () => {
+    // list() never throws on a single bad row — it logs + skips so the
+    // dashboard can render every other task. This pins the contract.
+    await repo.save(makeTask({ id: "20260101-aaaaaaaa" }));
+    await repo.save(makeTask({ id: "20260101-bbbbbbbb" }));
+    db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", "20260101-bbbbbbbb");
+    const all = await repo.list();
+    expect(all.map((t) => t.id)).toEqual(["20260101-aaaaaaaa"]);
   });
 
   it("two separate :memory: connections are isolated", async () => {

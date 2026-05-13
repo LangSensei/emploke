@@ -491,10 +491,7 @@ export const listSessions = (opts: ListSessionsOpts = {}): Promise<SessionView[]
   if (opts.createdSince) params.set("createdSince", opts.createdSince);
   if (opts.activeSince) params.set("activeSince", opts.activeSince);
   const qs = params.toString();
-  return fetchJson<SessionView[]>(
-    `${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`,
-    "sessions",
-  );
+  return fetchJson<SessionView[]>(`${workspacePrefix()}/sessions${qs ? `?${qs}` : ""}`, "sessions");
 };
 
 /**

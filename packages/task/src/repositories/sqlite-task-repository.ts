@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { InvalidTaskIdError } from "../errors.js";
+import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
 import { Task } from "../task-entity.js";
 import type { ListTaskOpts, TaskStatus } from "../types.js";
@@ -205,27 +205,34 @@ export class SqliteTaskRepository implements TaskRepository {
 
 /**
  * Decode a `tasks` row into a {@link Task} entity. Storage-shape
- * concerns (the `metadata` JSON column, the promoted `runtime` field)
- * are handled here; everything else (id format, status enum, ISO
- * strings, metadata-is-an-object) is validated by
- * {@link Task.fromStored}.
+ * concerns are handled here:
+ *   - the `metadata` column is JSON-encoded text, so this function
+ *     must parse it *and* reject syntactically-invalid JSON or
+ *     non-object roots before handing the value to the entity factory
+ *     (which only knows about typed JS values, not the JSON wire
+ *     format we chose for this column);
+ *   - the `runtime` value is a promoted column extracted from the
+ *     metadata bag at save time; we re-fold it back into the bag here
+ *     so the entity sees the same shape callers passed in originally.
+ *
+ * Everything else (id format, status enum, ISO timestamps,
+ * metadata-is-an-object) is validated by {@link Task.fromStored}.
  */
 function parseRow(id: string, row: TaskRow): Task {
   let metaParsed: unknown;
   try {
     metaParsed = JSON.parse(row.metadata);
   } catch (err) {
-    // Surface the JSON syntax problem with the raw error from
-    // JSON.parse — Task.fromStored will reject the resulting non-object
-    // anyway, but the parse-error message is more actionable for
-    // operators triaging a corrupted row.
-    metaParsed = null;
-    void err;
+    // Storage-side concern: the wire format for the metadata column is
+    // JSON, and a parse failure means the column was tampered with or
+    // bit-rot. Surface as a typed corruption so list() can skip + warn
+    // and read() can 5xx with a meaningful reason.
+    throw new CorruptedTaskError(id, `task.metadata is not valid JSON: ${(err as Error).message}`);
   }
-  let metadata: Record<string, unknown> = {};
-  if (metaParsed !== null && typeof metaParsed === "object" && !Array.isArray(metaParsed)) {
-    metadata = metaParsed as Record<string, unknown>;
+  if (metaParsed === null || typeof metaParsed !== "object" || Array.isArray(metaParsed)) {
+    throw new CorruptedTaskError(id, "task.metadata must decode to an object");
   }
+  let metadata: Record<string, unknown> = metaParsed as Record<string, unknown>;
   if (row.runtime !== null) {
     metadata = { ...metadata, runtime: row.runtime };
   }

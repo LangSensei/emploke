@@ -25,16 +25,22 @@ describe("Task.create", () => {
     expect(t.endedAt).toBeUndefined();
   });
 
-  it("mints distinct UUID v4 ids by default", () => {
+  it("mints distinct canonical task ids by default (YYYYMMDD-xxxxxxxx)", () => {
     const a = Task.create({ agent: "x", instructions: "" });
     const b = Task.create({ agent: "x", instructions: "" });
     expect(a.id).not.toBe(b.id);
-    expect(a.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(a.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
   });
 
-  it("honours an explicit id override", () => {
-    const t = Task.create({ agent: "a", instructions: "", id: "fixed-id" });
-    expect(t.id).toBe("fixed-id");
+  it("honours an explicit canonical id override", () => {
+    const t = Task.create({ agent: "a", instructions: "", id: FIXED_ID });
+    expect(t.id).toBe(FIXED_ID);
+  });
+
+  it("rejects an explicit non-canonical id (matches the repo's storage contract)", () => {
+    expect(() => Task.create({ agent: "a", instructions: "", id: "fixed-id" })).toThrow(
+      InvalidTaskIdError,
+    );
   });
 
   it("honours an explicit createdAt override", () => {

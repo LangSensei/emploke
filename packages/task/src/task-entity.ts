@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
-import { TASK_ID_RE } from "./ids.js";
+import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
 import type { TaskFailure, TaskResult, TaskStatus } from "./types.js";
 
 const VALID_STATUSES = new Set<TaskStatus>([
@@ -130,13 +129,23 @@ export class Task {
 
   /**
    * Construct a fresh task in `not_started` status. Pure factory: the
-   * only ambient effects are `randomUUID()` and
-   * `new Date().toISOString()`, both overridable for deterministic
-   * tests.
+   * only ambient effects are `generateTaskId()` (which calls
+   * `crypto.randomBytes` + `new Date()` for the canonical
+   * `YYYYMMDD-xxxxxxxx` id format) and `new Date().toISOString()`
+   * (for `createdAt`).
+   *
+   * Both can be overridden via {@link TaskCreateArgs.id} /
+   * {@link TaskCreateArgs.createdAt} for deterministic tests; an
+   * explicit `id` is validated against {@link TASK_ID_RE} so the
+   * entity can never carry an id the repository would reject at save
+   * time. Use {@link Task.fromStored} when reconstructing a task from
+   * a row that was written under an older schema.
    */
   static create(args: TaskCreateArgs): Task {
+    const id = args.id ?? generateTaskId();
+    if (args.id !== undefined) assertValidTaskId(id);
     return new Task(
-      args.id ?? randomUUID(),
+      id,
       args.agent,
       args.instructions,
       "not_started",

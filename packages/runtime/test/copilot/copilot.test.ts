@@ -111,11 +111,7 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildInteractiveLaunch(
-        null,
-        workdir,
-        ws,
-      );
+      const c = await rt.buildInteractiveLaunch(null, workdir, ws);
       expect(c.cmd).toBe("copilot");
       expect(c.args).toEqual(["--yolo"]);
     });
@@ -126,11 +122,7 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const c = await rt.buildInteractiveLaunch(
-        FIXED_UUID,
-        workdir,
-        ws,
-      );
+      const c = await rt.buildInteractiveLaunch(FIXED_UUID, workdir, ws);
       expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
     });
 
@@ -164,9 +156,9 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await expect(
-        rt.buildInteractiveLaunch(null, workdir, ws),
-      ).rejects.toBeInstanceOf(TrustRegistrationFailed);
+      await expect(rt.buildInteractiveLaunch(null, workdir, ws)).rejects.toBeInstanceOf(
+        TrustRegistrationFailed,
+      );
     });
   });
 
@@ -286,11 +278,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws-mal");
       await mkdir(ws, { recursive: true });
       for (const id of MALICIOUS_IDS) {
-        const c = await rt.buildInteractiveLaunch(
-          id,
-          workdir,
-          ws,
-        );
+        const c = await rt.buildInteractiveLaunch(id, workdir, ws);
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
         expect(c.display).not.toContain("--resume");
