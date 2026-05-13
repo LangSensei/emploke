@@ -1,6 +1,7 @@
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
@@ -303,6 +304,37 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.code).toBe("TaskNotFoundError");
+  });
+
+  // Companion to the manager-level "get() propagates CorruptedTaskError"
+  // test: a corrupted row must surface as 5xx with code so operators
+  // can see the corruption (a 404 here would let the dashboard render
+  // "task gone" for what is really tampered/bit-rotted metadata).
+  it("GET /:tid maps CorruptedTaskError to 500 with code", async () => {
+    const m = stubManager({
+      get: vi.fn(async () => {
+        throw new CorruptedTaskError(sampleTask.id, "task.metadata is not valid JSON");
+      }),
+    });
+    const res = await tasksRoutes(m).request(`/${sampleTask.id}`);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.code).toBe("CorruptedTaskError");
+  });
+
+  // Companion for the delete path. Default (archive) mode propagates
+  // the corruption; the route maps to 500 with code so the dashboard
+  // can prompt the operator to retry with `?purge=1`.
+  it("DELETE /:tid maps CorruptedTaskError to 500 with code", async () => {
+    const m = stubManager({
+      delete: vi.fn(async () => {
+        throw new CorruptedTaskError(sampleTask.id, "task.metadata is not valid JSON");
+      }),
+    });
+    const res = await tasksRoutes(m).request(`/${sampleTask.id}`, { method: "DELETE" });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.code).toBe("CorruptedTaskError");
   });
 
   it("GET /:tid maps InvalidTaskIdError to 400", async () => {

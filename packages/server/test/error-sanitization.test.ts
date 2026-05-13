@@ -125,6 +125,8 @@ describe("errorBody", () => {
       "PlanStaleError",
       "AgentPlanStaleError",
       "CyclicDependencyError",
+      // task
+      "CorruptedTaskError",
       // workspace
       "RegistryCorruptedError",
       "RegistryError",

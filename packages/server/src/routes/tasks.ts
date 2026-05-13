@@ -1,6 +1,7 @@
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
   type ListTaskOpts,
@@ -45,6 +46,13 @@ function statusForError(err: unknown): number | null {
   // would lie to the dashboard about whose fault it is.
   if (err instanceof TaskIdAllocationFailedError) return 500;
   if (err instanceof RuntimeHeadlessLaunchFailed) return 500;
+  // Corrupted metadata column (JSON parse failure, non-object root,
+  // invalid status enum, etc.) is a host-side / on-disk fault —
+  // operators need to see a 5xx, not a misleading 404 that the
+  // dashboard would render as "task gone". The instance carries
+  // `taskId` + `reason` for triage; the route's `logFault` companion
+  // captures both via `errorMeta`.
+  if (err instanceof CorruptedTaskError) return 500;
   return null;
 }
 
@@ -196,6 +204,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
       return c.json(task);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logFault(c, err, "tasks.get: 5xx fault", { taskId: id });
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
@@ -220,6 +229,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver | TaskManager): 
       return c.body(null, 204);
     } catch (err) {
       const status = statusForError(err) ?? 400;
+      if (status >= 500) logFault(c, err, "tasks.delete: 5xx fault", { taskId: id, purge });
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }

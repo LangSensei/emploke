@@ -9,6 +9,7 @@ import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
+  CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
   InvalidTaskIdError,
@@ -630,6 +631,31 @@ describe("get / list", () => {
     expect(r.calls.some((c) => c.msg.includes("corrupted task row"))).toBe(true);
   });
 
+  // Companion to the list() skip+warn test: get() must NOT silently
+  // 404 when the row is corrupted — operators need to see the
+  // corruption (the route layer maps `CorruptedTaskError` to 5xx).
+  // A silent-null path here would let the dashboard render "task gone"
+  // for a tampered/bit-rotted row, and the next save would round-trip
+  // an empty `{}` over the corrupt blob.
+  it("get() propagates CorruptedTaskError instead of returning null", async () => {
+    const repo = makeRepo();
+    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    // Forge the same kind of bogus row the list() test uses.
+    const rawDb = (
+      repo as unknown as {
+        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
+      }
+    ).db;
+    const id = "20260101-deadbeef";
+    rawDb
+      .prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+    await expect(m.get(id)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
   it("list() ignores directories whose name doesn't match the task id pattern", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
@@ -829,6 +855,49 @@ describe("delete", () => {
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
+  });
+
+  // Twin tests for the corrupted-row-on-delete path. Default (archive)
+  // mode must surface the corruption so operators see it; purge mode
+  // must tolerate it so the workdir + row can still be wiped via the
+  // stat-based escape hatch (mirrors `rm -rf` semantics).
+  it("default delete propagates CorruptedTaskError (operator sees the corruption)", async () => {
+    const repo = makeRepo();
+    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    const id = "20260101-deadbeef";
+    const rawDb = (
+      repo as unknown as {
+        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
+      }
+    ).db;
+    rawDb
+      .prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+    await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
+  });
+
+  it("purge: true tolerates a corrupted row and falls back to the stat escape hatch", async () => {
+    const repo = makeRepo();
+    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    const id = "20260101-deadbeef";
+    const workdir = path.join(tasksDir, id);
+    await mkdir(workdir, { recursive: true });
+    const rawDb = (
+      repo as unknown as {
+        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
+      }
+    ).db;
+    rawDb
+      .prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+    await m.delete(id, { purge: true });
+    expect(await safeStat(workdir)).toBeNull();
   });
 
   // Mirrors SessionManager.delete({purge:true}): runtime per-task state

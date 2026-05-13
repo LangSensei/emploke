@@ -84,6 +84,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "UnknownRuntimeError",
   "TrustRegistrationFailed",
   // @emploke/task
+  "CorruptedTaskError",
   "InvalidTaskIdError",
   "TaskNotFoundError",
   "TaskIdAllocationFailedError",

@@ -6,7 +6,6 @@ import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import {
   AgentNotFoundError,
-  CorruptedTaskError,
   EntryNotReadyError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
@@ -849,24 +848,22 @@ export class TaskManager {
 
   // ─── internals ───────────────────────────────────────────
 
-  /** Read + validate the persisted task at `workdir`, or null on miss. */
+  /**
+   * Read + validate the persisted task at `workdir`, or null when no
+   * row exists for `id`.
+   *
+   * `CorruptedTaskError` from the repository is **propagated**, not
+   * swallowed. The route layer maps it to 5xx so operators see the
+   * corruption (a silent 404 would let the dashboard render "task
+   * gone" for what is really tampered/bit-rotted metadata, hiding the
+   * problem until next save round-trips an empty `{}` over the corrupt
+   * blob). The `delete --purge` caller catches the propagated error
+   * and falls through to the stat-based escape hatch — see `delete()`
+   * above. The `list()` path does NOT go through this method; it
+   * skip+warns at the repo layer (see `SqliteTaskRepository.list`).
+   */
   private async loadTask(id: string, _workdir: string): Promise<Task | null> {
-    let task: Task | null;
-    try {
-      task = await this.repository.read(id);
-    } catch (err) {
-      if (err instanceof CorruptedTaskError) {
-        this.logger.warn(
-          {
-            taskId: id,
-            reason: err.reason,
-          },
-          "tasks: skipping corrupted task row",
-        );
-        return null;
-      }
-      throw err;
-    }
+    const task = await this.repository.read(id);
     if (task === null) return null;
     if (task.id !== id) {
       // Defensive: directory name and id-in-row disagree. Trust the
