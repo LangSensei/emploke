@@ -2,8 +2,9 @@
  * `emploke session …` — 5 subcommands wrapping the workspace-scoped
  * sessions HTTP surface (list / new / show / rm / spawn).
  *
- * All commands take `--workspace` (or fall back to env / server's
- * current). Identifier flags are positional where unambiguous.
+ * All commands take `--workspace <id>` or read `EMPLOKE_WORKSPACE`
+ * (no server-side fallback — see `connect.ts:resolveWorkspace`).
+ * Identifier flags are positional where unambiguous.
  */
 
 import { makeClient, resolveWorkspace } from "../connect.js";
@@ -29,7 +30,7 @@ export interface SessionListOpts extends CommonFlags {
 export async function sessionList(opts: SessionListOpts = {}): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const query: { agent?: string; createdSince?: string; activeSince?: string } = {};
     if (opts.agent !== undefined) query.agent = opts.agent;
     if (opts.createdSince !== undefined) query.createdSince = opts.createdSince;
@@ -66,7 +67,7 @@ export async function sessionNew(opts: SessionNewOpts): Promise<CommandResult> {
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const body: { agent: string; runtime?: string } = { agent: opts.agent };
     if (opts.runtime !== undefined) body.runtime = opts.runtime;
     const session = await client.call("sessions.create", { params: { id }, body });
@@ -89,7 +90,7 @@ export async function sessionShow(opts: SessionShowOpts): Promise<CommandResult>
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const session = await client.call("sessions.get", { params: { id, sid: opts.sid } });
     const fmt = pickFormat(opts, "table");
     const stdout = fmt === "json" ? formatJson(session) : formatRecord({ ...session });
@@ -111,7 +112,7 @@ export async function sessionRm(opts: SessionRmOpts): Promise<CommandResult> {
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const query: { purge?: "1" } = {};
     if (opts.purge) query.purge = "1";
     await client.call("sessions.delete", { params: { id, sid: opts.sid }, query });
@@ -133,7 +134,7 @@ export async function sessionSpawn(opts: SessionSpawnOpts): Promise<CommandResul
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const body: { remote?: boolean } = {};
     if (opts.remote) body.remote = true;
     const result = await client.call("sessions.spawn", {

@@ -6,7 +6,7 @@
  *   ApiClient.call → real HTTP → server → real HTTP response → format → stdout.
  *
  * Picks a small surface (`health`, `config`, `runtime list`,
- * `workspace add`, `workspace list`, `workspace show`, `workspace use`,
+ * `workspace add`, `workspace list`, `workspace show`, `workspace use` (stub),
  * `workspace current`, `workspace rm`) to keep runtime bounded — the
  * apiClient.test.ts unit tests cover URL building / errors / 204 paths
  * for every other route mechanically.
@@ -116,7 +116,7 @@ describe("API commands (integration)", () => {
     expect(runtimes.map((r) => r.kind)).toContain("copilot");
   });
 
-  it("workspace add → list → show → use → current → rm round-trip", async () => {
+  it("workspace add → list → show → current → rm round-trip (use is now a stub)", async () => {
     // Add
     const addRes = await run(
       [
@@ -146,12 +146,15 @@ describe("API commands (integration)", () => {
     expect(showRes.exitCode, showRes.stderr).toBe(0);
     expect(JSON.parse(showRes.stdout).id).toBe(created.id);
 
-    // Use → Current
-    const useRes = await run(["workspace", "use", created.id], env);
-    expect(useRes.exitCode, useRes.stderr).toBe(0);
+    // `workspace current` is dashboard-only state (the dashboard
+    // writes via PUT /api/workspaces/current); the CLI reader is
+    // kept for inspection / debug. With nothing having written
+    // it, the response is `{ id: null }` — that's the documented
+    // shape.
     const curRes = await run(["workspace", "current", "--json"], env);
     expect(curRes.exitCode, curRes.stderr).toBe(0);
-    expect(JSON.parse(curRes.stdout).id).toBe(created.id);
+    const cur = JSON.parse(curRes.stdout) as { id: string | null };
+    expect(cur.id).toBeNull();
 
     // Rm
     const rmRes = await run(["workspace", "rm", created.id], env);
@@ -162,6 +165,31 @@ describe("API commands (integration)", () => {
     expect(list2.some((w) => w.id === created.id)).toBe(false);
   });
 
+  it("`workspace use` is a removed-stub: exit 2 and points at the new flow", async () => {
+    // The race-prone server-side currentWorkspace setter is no
+    // longer wrapped by the CLI. The stub stays so muscle memory
+    // gets a clear redirect rather than `unknown command`.
+    const res = await run(["workspace", "use", "ws-anything"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("was removed");
+    expect(res.stderr).toContain("--workspace");
+    expect(res.stderr).toContain("EMPLOKE_WORKSPACE");
+    // The provided id is echoed in the suggestion so users can
+    // copy-paste it into the new flow without re-typing.
+    expect(res.stderr).toContain("ws-anything");
+  });
+
+  it("`workspace use` (no id) still hits the stub, not commander's missing-arg error", async () => {
+    // The argument was made optional `[id]` (not `<id>`) so a user
+    // who types `emploke workspace use` from muscle memory still
+    // gets our redirection message rather than commander's
+    // generic `error: missing required argument 'id'`.
+    const res = await run(["workspace", "use"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("was removed");
+    expect(res.stderr).toContain("EMPLOKE_WORKSPACE");
+  });
+
   it("`workspace add` without --name fails with usage exit 2", async () => {
     const res = await run(["workspace", "add", "--workdir", "/tmp/x"], env);
     expect(res.exitCode).toBe(2);
@@ -169,16 +197,55 @@ describe("API commands (integration)", () => {
   });
 
   it("workspace-scoped command fails clearly when no workspace is set", async () => {
-    // Use a fresh tmpdir for runtime.json but the server has zero workspaces;
-    // sessions list resolves currentWorkspace → null and surfaces a usage error.
-    const res = await run(["session", "list"], env);
+    // Use a fresh tmpdir for runtime.json but neither --workspace nor
+    // EMPLOKE_WORKSPACE is set. resolveWorkspace must throw a clear
+    // usage error instead of falling back to server state (the
+    // currentWorkspace fallback was removed — see
+    // connect.ts:resolveWorkspace).
+    const cleanEnv = { ...env };
+    cleanEnv.EMPLOKE_WORKSPACE = "";
+    const res = await run(["session", "list"], cleanEnv);
     expect(res.exitCode).not.toBe(0);
     expect(res.stderr).toContain("workspace");
+    expect(res.stderr).toContain("--workspace");
+    expect(res.stderr).toContain("EMPLOKE_WORKSPACE");
   });
 
   it("`emploke task dispatch` errors clearly when agent is missing", async () => {
     const res = await run(["task", "dispatch", "--instructions", "noop"], env);
     expect(res.exitCode).toBe(2);
     expect(res.stderr.toLowerCase()).toContain("agent");
+  });
+
+  it("`task activity --cursor abc` rejects non-numeric cursor with usage exit 2", async () => {
+    // No round-trip — validation happens in the CLI argv layer before
+    // we even resolve the workspace. The previous behaviour silently
+    // dropped a non-numeric cursor (parseInt → NaN, then
+    // `Number.isFinite` filter), making it look like the server had
+    // ignored the resume request.
+    const res = await run(["task", "activity", "tid-x", "--cursor", "abc"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("--cursor");
+    expect(res.stderr.toLowerCase()).toContain("non-negative integer");
+  });
+
+  it("`task activity --cursor -1` rejects negative cursor", async () => {
+    // Used to silently send Last-Event-ID: -1 to the server, which
+    // its `^\d+$` check then dropped — looked like the resume request
+    // was honoured but produced no replay.
+    const res = await run(["task", "activity", "tid-x", "--cursor", "-1"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("--cursor");
+  });
+
+  it("`task activity --follow --limit 10` rejects the conflicting combo", async () => {
+    // --limit has no effect under --follow (SSE streams until task
+    // termination; there is no per-page cap). Silent acceptance is
+    // worse than a hard error: the user almost certainly meant
+    // something different.
+    const res = await run(["task", "activity", "tid-x", "--follow", "--limit", "10"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("--limit");
+    expect(res.stderr).toContain("--follow");
   });
 });

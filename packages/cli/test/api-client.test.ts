@@ -203,4 +203,20 @@ describe("ApiClient", () => {
     await c.call("health.get");
     expect(calls[0]?.headers.Authorization).toBeUndefined();
   });
+
+  it("forwards opts.headers verbatim onto the request", async () => {
+    const { client, calls } = makeClient([
+      { status: 200, contentType: "text/event-stream", body: "" },
+    ]);
+    // tasks.activity.stream is the canonical caller — Last-Event-ID is
+    // the whole reason the headers escape hatch exists.
+    await client.callRaw("tasks.activity.stream", {
+      params: { id: "ws-1", tid: "20260601-abcd1234" },
+      headers: { "Last-Event-ID": "1234" },
+    });
+    expect(calls[0]?.headers["Last-Event-ID"]).toBe("1234");
+    // The built-ins are still set:
+    expect(calls[0]?.headers.Accept).toBe("application/json");
+    expect(calls[0]?.headers.Authorization).toBe("Bearer secret");
+  });
 });

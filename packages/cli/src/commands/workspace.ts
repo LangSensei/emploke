@@ -97,21 +97,69 @@ export async function workspaceCurrent(opts: WorkspaceCurrentOpts = {}): Promise
 }
 
 // ─── use ───────────────────────────────────────────────────────────────
+//
+// `emploke workspace use` — INTENTIONALLY a stub.
+//
+// What this used to do: PUT /api/workspaces/current to set the
+// server-side "current workspace" pointer, which the CLI's
+// `resolveWorkspace` would then fall back to when no `--workspace` /
+// `EMPLOKE_WORKSPACE` was provided.
+//
+// Why it's gone: that fallback chain is a CONCURRENCY FOOTGUN. The
+// server's `currentWorkspace` is shared mutable global state across
+// every client of the same emploke server — every CLI process, every
+// dashboard tab, every MCP / external HTTP caller. A second client
+// (human, AI agent, even a dashboard reload) writing it between your
+// `workspace use` and your next command silently retargets your
+// commands at a different workspace. The bug is invisible: no error,
+// no warning, the next `task list` just returns the wrong tasks.
+//
+// What you should do instead: pass `--workspace <id>` on every
+// workspace-scoped command, OR `export EMPLOKE_WORKSPACE=<id>` once
+// in your shell session. Both are PROCESS-LOCAL — they cannot be
+// mutated by anyone else, and the race vanishes. See
+// `connect.ts:resolveWorkspace` for the read side of the same change.
+//
+// Why this stub is kept (and not just deleted from the CLI surface):
+// muscle memory + stale tutorials + AI agents copying old recipes will
+// still type `emploke workspace use ws-X`. Returning a clear error
+// that points at the right alternative is far better DX than
+// `error: unknown command 'use'`. It also serves as in-source
+// documentation for any future maintainer scanning this file looking
+// for `use` and wondering why it's missing — the answer is right
+// here, no git-archaeology needed.
+//
+// The dashboard still uses the underlying `PUT /api/workspaces/current`
+// route via its own UI to remember "the workspace I last opened" —
+// that's its UX state, not the CLI's scoping mechanism. The route
+// stays in the manifest; only the CLI consumer is gone, and
+// `route-coverage.test.ts` lists `workspaces.setCurrent` in
+// ALLOWED_GAPS to make this intentional.
+//
+// If you're tempted to re-implement this, please first re-read this
+// comment AND the design discussion in PR #92.
+
 export interface WorkspaceUseOpts extends CommonFlags {
   readonly id: string;
 }
 
 export async function workspaceUse(opts: WorkspaceUseOpts): Promise<CommandResult> {
-  if (typeof opts.id !== "string" || opts.id.trim() === "") {
-    return { exitCode: 2, stderr: "workspace id is required\n" };
-  }
-  const client = await makeClient(opts);
-  try {
-    const cur = await client.call("workspaces.setCurrent", { body: { id: opts.id } });
-    return { exitCode: 0, stdout: `current workspace: ${cur.id ?? "(none)"}\n` };
-  } catch (err) {
-    return formatError(err);
-  }
+  const target = typeof opts.id === "string" && opts.id.trim() !== "" ? opts.id.trim() : "<id>";
+  return {
+    exitCode: 2,
+    stderr:
+      "`emploke workspace use` was removed.\n" +
+      "\n" +
+      "The server-side current workspace is shared mutable state across every CLI process,\n" +
+      "dashboard tab, and external client — using it to scope commands races with any other\n" +
+      "writer (human, AI agent, dashboard) and silently retargets your next command.\n" +
+      "\n" +
+      "Use one of:\n" +
+      `  emploke <command> --workspace ${target}              # per-command\n` +
+      `  export EMPLOKE_WORKSPACE=${target}                   # per-shell-session\n` +
+      "\n" +
+      "Run `emploke workspace list` to see available ids.\n",
+  };
 }
 
 // ─── show ──────────────────────────────────────────────────────────────

@@ -49,12 +49,24 @@ export type ParamsOf<K extends RouteKey> =
  * (`[BodyOf<K>] extends [never]`) disables TypeScript's distributive
  * behaviour over `never`, so the type collapses to `never` instead of
  * making body optional everywhere.
+ *
+ * `headers` is always optional, regardless of route. It's an escape
+ * hatch for transport-level concerns the manifest doesn't model
+ * (e.g. `Last-Event-ID` for SSE resume on `tasks.activity.stream`,
+ * see `commands/task.ts`). Keep the route-level body / query / params
+ * as the primary contract — reach for `headers` only when the wire
+ * protocol genuinely lives outside the JSON body (SSE, future
+ * upload streams, etc.).
  */
 export type CallOpts<K extends RouteKey> = ([BodyOf<K>] extends [never]
   ? { readonly body?: never }
   : { readonly body: BodyOf<K> }) &
   ([QueryOf<K>] extends [never] ? { readonly query?: never } : { readonly query?: QueryOf<K> }) &
-  ([ParamsOf<K>] extends [never] ? { readonly params?: never } : { readonly params: ParamsOf<K> });
+  ([ParamsOf<K>] extends [never]
+    ? { readonly params?: never }
+    : { readonly params: ParamsOf<K> }) & {
+    readonly headers?: Record<string, string>;
+  };
 
 /**
  * Thrown when the server responds with a non-2xx / non-204 status.
@@ -176,6 +188,7 @@ export class ApiClient {
           body?: unknown;
           query?: Record<string, string | number | undefined | null>;
           params?: Record<string, string | number>;
+          headers?: Record<string, string>;
         }
       | undefined;
 
@@ -201,6 +214,15 @@ export class ApiClient {
     if (opts?.body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.body);
+    }
+    // Per-call header overrides go LAST so callers can override the
+    // built-ins (e.g. an SSE caller setting Accept: text/event-stream)
+    // — but in practice the manifest-routed types only ever add new
+    // headers (Last-Event-ID), they don't override Accept / Authorization.
+    if (opts?.headers) {
+      for (const [name, value] of Object.entries(opts.headers)) {
+        headers[name] = value;
+      }
     }
 
     const url = `${this.baseUrl}${path}`;
