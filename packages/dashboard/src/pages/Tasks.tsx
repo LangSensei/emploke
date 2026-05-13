@@ -1466,9 +1466,10 @@ function ActivityRow({ item }: { item: ActivityItem }) {
               <strong>Premium requests:</strong> {stats?.premiumRequests}
             </span>
           )}
-          {tokens !== undefined && (tokens.input > 0 || tokens.output > 0) && (
+          {tokens !== undefined && ((tokens.input ?? 0) > 0 || tokens.output > 0) && (
             <span>
-              <strong>Tokens:</strong> {tokens.input.toLocaleString()} in /{" "}
+              <strong>Tokens:</strong>{" "}
+              {tokens.input !== undefined ? `${tokens.input.toLocaleString()} in / ` : ""}
               {tokens.output.toLocaleString()} out
             </span>
           )}
@@ -1498,9 +1499,16 @@ function ActivityRow({ item }: { item: ActivityItem }) {
             {formatRelative(item.timestamp)}
           </time>
         </div>
-        <details>
+        {/*
+          Open by default — Copilot's reasoning traces are typically 1-3
+          sentences and useful at a glance; collapsing them would force a
+          click for every turn. The <details> is kept (rather than just
+          rendering the body inline) so power users can still hide noisy
+          extended-thinking output on long sessions.
+        */}
+        <details open>
           <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
-            Show reasoning
+            Reasoning
           </summary>
           <p className="activity-row__body" style={{ fontStyle: "italic", opacity: 0.8 }}>
             {item.text}
