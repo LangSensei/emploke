@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type ActivityItem,
@@ -1766,6 +1766,10 @@ function TaskInstructions({ text }: { text: string }) {
 const RESULT_PREVIEW_CHARS = 600;
 function ResultSection({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
+  // ARIA disclosure pattern: button toggles a sibling region; the region's
+  // id is referenced by the button's `aria-controls` so screen readers can
+  // associate them. `useId` (React 19) gives a stable, collision-free id.
+  const bodyId = useId();
   const isLong = text.length > RESULT_PREVIEW_CHARS;
   if (!isLong) {
     return (
@@ -1782,16 +1786,24 @@ function ResultSection({ text }: { text: string }) {
     <section className="task-detail__result">
       <h3 className="task-detail__section-title">Result</h3>
       {expanded ? (
-        <p className="task-detail__result-body" style={{ maxHeight: 480, overflowY: "auto" }}>
+        <p
+          id={bodyId}
+          className="task-detail__result-body"
+          style={{ maxHeight: 480, overflowY: "auto" }}
+        >
           {text}
         </p>
       ) : (
-        <p className="task-detail__result-body">{preview}</p>
+        <p id={bodyId} className="task-detail__result-body">
+          {preview}
+        </p>
       )}
       <button
         type="button"
         className="link-button"
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
         style={{
           marginTop: 6,
           background: "none",
