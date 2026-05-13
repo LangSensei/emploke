@@ -170,6 +170,114 @@ describe("launchCopilotHeadless", () => {
     expect(fake.captures?.command).toBe("C:\\fake\\copilot.exe");
   });
 
+  // CVE-2024-27980 mitigation: Node 18.20.0+ / 20.12.0+ refuses to
+  // spawn `.cmd` / `.bat` files directly (EINVAL) to prevent
+  // arg-injection attacks. We wrap such bins via `cmd.exe /d /s /c`
+  // with explicit `escapeCmdArg` quoting so the supported escape
+  // hatch (`shell: true`) doesn't introduce a different injection
+  // surface. The wrap is windows-only — POSIX paths take the
+  // direct-spawn branch.
+  describe.skipIf(process.platform !== "win32")("cmd.exe wrap (Windows .cmd / .bat)", () => {
+    it("wraps `.cmd` bin via cmd.exe /d /s /c with escaped argv (CVE-2024-27980 mitigation)", async () => {
+      const { agent, catalog } = await buildAgent();
+      const fake = makeFakeSpawn();
+      const cmdShim = "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd";
+      await launchCopilotHeadless(
+        { taskDir, agent, catalog, prompt: "say hi", workspaceDir: scratch },
+        {
+          copilotStateDir: stateDir,
+          globalDir: scratch,
+          randomUUID: () => FIXED_UUID,
+          spawn: fake.spawn,
+          copilotBin: cmdShim,
+        },
+      );
+      expect(fake.captures?.command).toBe("cmd.exe");
+      const args = fake.captures?.args ?? [];
+      expect(args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+      // The fourth arg is a single string holding the WHOLE escaped
+      // command line, wrapped in extra outer quotes so cmd /S's
+      // "strip-first-and-last-quote" rule leaves the inner sequence
+      // correctly quoted (per cmd /? semantics). Without the outer
+      // wrap, cmd would strip the first and last quotes of our
+      // escaped sequence and try to execute the inner blob as a
+      // single command name, hitting "is not recognized as an
+      // internal or external command".
+      const wrapped = args[3] as string;
+      expect(wrapped.startsWith('""')).toBe(true);
+      expect(wrapped.endsWith('""')).toBe(true);
+      // Bin and the user-supplied prompt arg are both inside the
+      // wrapped string, each individually quoted via escapeCmdArg.
+      expect(wrapped).toContain('"C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd"');
+      expect(wrapped).toContain('"say hi"');
+      // windowsVerbatimArguments must be true alongside this shape;
+      // otherwise libuv re-quotes our argv and breaks the carefully
+      // assembled command line.
+      const opts = fake.captures?.options as { windowsVerbatimArguments: boolean };
+      expect(opts.windowsVerbatimArguments).toBe(true);
+    });
+
+    it("escapes shell metachars in args so they cannot break out of the cmd.exe wrap", async () => {
+      const { agent, catalog } = await buildAgent();
+      const fake = makeFakeSpawn();
+      const cmdShim = "C:\\nodejs\\copilot.cmd";
+      await launchCopilotHeadless(
+        {
+          taskDir,
+          agent,
+          catalog,
+          // Prompt with every cmd.exe metachar that escapeCmdArg defends:
+          // `&`, `|`, `<`, `>`, `^`, `(`, `)`, `%`, `!`, `"`.
+          prompt: 'say & hi | tee out.log > nul < in.txt ^ cat (a) %FOO% !BAR! "quoted"',
+          workspaceDir: scratch,
+        },
+        {
+          copilotStateDir: stateDir,
+          globalDir: scratch,
+          randomUUID: () => FIXED_UUID,
+          spawn: fake.spawn,
+          copilotBin: cmdShim,
+        },
+      );
+      const wrapped = (fake.captures?.args ?? [])[3] as string;
+      // Each metachar appears caret-escaped inside its argument's
+      // quoted region. Defense-in-depth assertion: NO unescaped
+      // metachar reaches cmd.exe's parser (which would let it
+      // break out and execute additional commands).
+      expect(wrapped).toContain("^&");
+      expect(wrapped).toContain("^|");
+      expect(wrapped).toContain("^<");
+      expect(wrapped).toContain("^>");
+      expect(wrapped).toContain("^^");
+      expect(wrapped).toContain("^(");
+      expect(wrapped).toContain("^)");
+      expect(wrapped).toContain("^%");
+      expect(wrapped).toContain("^!");
+      expect(wrapped).toContain('^"');
+    });
+
+    it("takes the direct-spawn branch for .exe (no wrap needed)", async () => {
+      const { agent, catalog } = await buildAgent();
+      const fake = makeFakeSpawn();
+      await launchCopilotHeadless(
+        { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+        {
+          copilotStateDir: stateDir,
+          globalDir: scratch,
+          randomUUID: () => FIXED_UUID,
+          spawn: fake.spawn,
+          copilotBin: "C:\\winget\\copilot.exe",
+        },
+      );
+      // Direct spawn: command IS the bin (not cmd.exe).
+      expect(fake.captures?.command).toBe("C:\\winget\\copilot.exe");
+      const opts = fake.captures?.options as { windowsVerbatimArguments?: boolean };
+      // No verbatim flag on the direct path — libuv's standard
+      // MSVCRT-style escaping handles argv naturally.
+      expect(opts.windowsVerbatimArguments).toBeFalsy();
+    });
+  });
+
   it("does not pass an env override to spawn when subprocessEnv is unset (Node default-inherit)", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();

@@ -1,6 +1,11 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { type ResolveCopilotBinDeps, resolveCopilotBin } from "../../src/copilot/resolve-bin.js";
+import {
+  parseWhereOutput,
+  pickBestPathExtCandidate,
+  type ResolveCopilotBinDeps,
+  resolveCopilotBin,
+} from "../../src/copilot/resolve-bin.js";
 
 // All fixtures here describe Windows-shaped paths regardless of the host
 // OS the tests are running on. Use `path.win32.join` (not the host-OS
@@ -111,5 +116,95 @@ describe("resolveCopilotBin", () => {
       expect(r.bin).toBe(REAL_BIN);
       expect(r.reason).toBe("winget-package");
     });
+
+    // Regression for the npm-installed-Copilot ENOENT bug:
+    // `where copilot` returns BOTH `copilot` (extensionless bash shim)
+    // and `copilot.cmd` (Windows shim) on the same line. Pre-fix
+    // `defaultWhich` took the first line — extensionless — and Node's
+    // CreateProcess (which doesn't iterate PATHEXT) failed with
+    // ENOENT. Fix: pick by extension priority (.exe > .cmd > .bat).
+    // Resolver must hand back the .cmd path, not the bare name, so
+    // spawn finds the file. The .cmd → cmd.exe wrap then lives in
+    // launch-headless.ts (CVE-2024-27980 mitigation).
+
+    it("returns the full PATH-resolved path (not the bare bin name) for npm-style installs", () => {
+      // Simulate npm install: no WinGet at all, but `where copilot`
+      // returns a .cmd shim somewhere on PATH.
+      const npmShim = "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd";
+      const r = resolveCopilotBin("copilot", {
+        platform: "win32",
+        env: { LOCALAPPDATA: FAKE_LOCALAPPDATA }, // exists but no Packages/
+        which: () => npmShim,
+        exists: () => false,
+        readdir: () => [],
+      });
+      // Pre-fix: returned the bare "copilot" → spawn ENOENT.
+      // Post-fix: returns the full path → spawn finds the .cmd → wrap path takes over.
+      expect(r.bin).toBe(npmShim);
+      expect(r.reason).toBe("path-passthrough");
+    });
+  });
+});
+
+describe("parseWhereOutput", () => {
+  it("splits on CRLF and LF, trims each line", () => {
+    const out = parseWhereOutput("C:\\nodejs\\copilot\r\nC:\\nodejs\\copilot.cmd\r\n");
+    expect(out).toEqual(["C:\\nodejs\\copilot", "C:\\nodejs\\copilot.cmd"]);
+  });
+
+  it("filters out empty lines (trailing newline doesn't produce a phantom entry)", () => {
+    expect(parseWhereOutput("a\n\nb\n\n  \n")).toEqual(["a", "b"]);
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(parseWhereOutput("")).toEqual([]);
+    expect(parseWhereOutput("   \n  \r\n  ")).toEqual([]);
+  });
+});
+
+describe("pickBestPathExtCandidate", () => {
+  it("returns null when no candidates", () => {
+    expect(pickBestPathExtCandidate([])).toBe(null);
+  });
+
+  it("prefers .exe over .cmd over .bat over .com", () => {
+    expect(
+      pickBestPathExtCandidate([
+        "C:\\foo\\copilot.bat",
+        "C:\\foo\\copilot.cmd",
+        "C:\\foo\\copilot.exe",
+      ]),
+    ).toBe("C:\\foo\\copilot.exe");
+    expect(pickBestPathExtCandidate(["C:\\foo\\copilot.bat", "C:\\foo\\copilot.cmd"])).toBe(
+      "C:\\foo\\copilot.cmd",
+    );
+  });
+
+  it("picks .cmd when an extensionless candidate sorts first (npm-shim regression)", () => {
+    // npm install ships both — extensionless first per `where`'s
+    // PATHEXT-iteration order, .cmd second. The pre-fix code took the
+    // first line (extensionless) and spawn ENOENT'd because
+    // CreateProcess doesn't try PATHEXT for a bare filename.
+    expect(
+      pickBestPathExtCandidate([
+        "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot",
+        "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd",
+      ]),
+    ).toBe("C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd");
+  });
+
+  it("falls back to first candidate when nothing matches PATHEXT priority", () => {
+    // Defense-in-depth: even if `where` somehow returns only
+    // exotic-extension candidates (or extensionless-only), don't
+    // return null — match pre-fix behaviour. May still spawn-fail,
+    // but resolver hasn't introduced a new failure.
+    expect(pickBestPathExtCandidate(["C:\\foo\\copilot"])).toBe("C:\\foo\\copilot");
+    expect(pickBestPathExtCandidate(["C:\\foo\\copilot.ps1"])).toBe("C:\\foo\\copilot.ps1");
+  });
+
+  it("is case-insensitive on extension matching (Windows convention)", () => {
+    expect(pickBestPathExtCandidate(["C:\\foo\\copilot.CMD", "C:\\foo\\copilot.EXE"])).toBe(
+      "C:\\foo\\copilot.EXE",
+    );
   });
 });

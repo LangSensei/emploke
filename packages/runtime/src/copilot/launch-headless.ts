@@ -56,6 +56,43 @@ function mergeEnv(base: NodeJS.ProcessEnv, overrides: NodeJS.ProcessEnv): NodeJS
 }
 
 /**
+ * `cmd.exe` shell metacharacters that must not be allowed to reach
+ * cmd.exe's shell parser unescaped. `%` and `!` (with delayed
+ * expansion) trigger variable substitution even inside double-quoted
+ * strings; the rest break out of the intended argument when a value
+ * is unquoted on the cmd.exe command line. `"` is included because we
+ * wrap each token in `"…"` and an embedded `"` would prematurely close
+ * the quoted region.
+ *
+ * Same set as `@emploke/terminal`'s `escapeCmdArg`; the duplication
+ * exists because pulling `@emploke/terminal` into the runtime package
+ * would create a dependency loop (terminal → runtime → terminal).
+ * Keep them in sync.
+ */
+const CMD_META_RE = /["%&|<>^!()]/g;
+
+/**
+ * Escape an argument that will be passed inside a `cmd.exe /d /s /c …`
+ * command line built with `windowsVerbatimArguments: true`. Used by
+ * the spawn path that wraps `.cmd` / `.bat` shims (see CVE-2024-27980
+ * commentary in `launchCopilotHeadless`).
+ *
+ * Strategy: wrap the value in double quotes (so spaces, `&`, `|`, `<`,
+ * `>`, `^`, `(`, `)` lose their shell meaning) and prefix every
+ * metacharacter — including the few that remain dangerous inside
+ * double quotes (`%`, `!`) — with `^`. Embedded `"` becomes `^"` so
+ * it survives cmd.exe's parser as a literal quote rather than
+ * terminating the quoted region.
+ *
+ * Must be paired with `windowsVerbatimArguments: true` on the spawn
+ * call: that flag tells libuv to skip its own MSVCRT-style escaping,
+ * which would otherwise mangle the carets/quotes we just added.
+ */
+function escapeCmdArg(s: string): string {
+  return `"${s.replace(CMD_META_RE, "^$&")}"`;
+}
+
+/**
  * Default child_process.spawn signature, narrowed to what we actually call.
  * Carved out as a type alias so the test seam parameter can be typed
  * without leaking node's overload soup into the public surface.
@@ -228,22 +265,85 @@ export async function launchCopilotHeadless(
 
   let child: ChildProcess;
   try {
-    child = spawnImpl(bin, args, {
-      cwd: opts.taskDir,
-      // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
-      // 'ignore' would map stdout to NUL on Windows, which doesn't
-      // support FlushFileBuffers; the child process then aborts with
-      // "Failed to sync '<stdout>': Incorrect function." before any
-      // real work happens. Piping gives it a real handle.
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
-      windowsHide: true,
-      // Inherit the server's env so PATH / HOME / Copilot's own auth
-      // tokens etc. flow through, then layer the per-task bag on top.
-      // We omit the field entirely when no override is supplied, so
-      // Node's default-inherit behaviour kicks in (matches old code).
-      env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
-    });
+    // Decide spawn shape: bare exe vs cmd.exe-wrapped.
+    //
+    // Node's child_process.spawn refuses to execute `.cmd` / `.bat`
+    // files directly since the CVE-2024-27980 mitigation (Node 18.20.0
+    // / 20.12.0+). The spawn fails with EINVAL. The supported escape
+    // hatches are:
+    //   (a) `shell: true` — Node wraps with cmd.exe and quotes args
+    //       itself, but the quoting is platform-specific and can leak
+    //       arg-injection if a value contains shell metachars (which
+    //       is exactly what the CVE warns about).
+    //   (b) Manually wrap with `cmd.exe /d /s /c <bin> <args...>` and
+    //       handle our own arg escaping with `windowsVerbatimArguments`
+    //       so libuv doesn't re-escape on top.
+    //
+    // We pick (b) because we already use that exact pattern in the
+    // terminal package's cmd-fallback path (windows-platform.ts) and
+    // the escaping is bounded (uses our `escapeCmdArg`, which wraps
+    // in `"..."` and caret-escapes every cmd.exe metachar including
+    // `%` / `!` / `&` / `|` etc). Node's shell:true does not give us
+    // that level of control over the arg-injection surface.
+    //
+    // The bin-detection check is `.cmd` / `.bat` suffix on Windows
+    // only. Other platforms keep the bare-exec path; their spawn has
+    // no equivalent guard.
+    const useCmdWrap =
+      process.platform === "win32" &&
+      (bin.toLowerCase().endsWith(".cmd") || bin.toLowerCase().endsWith(".bat"));
+    if (useCmdWrap) {
+      // cmd.exe /S quote-stripping rule (per `cmd /?`): when the
+      // command line after `/c` starts with `"`, cmd strips the
+      // FIRST `"` and the LAST `"` and treats everything in between
+      // as the command line — WITHOUT re-parsing inner quotes. So
+      // passing `/d /s /c "<bin>" "<arg1>" "<arg2>"` makes cmd see
+      // the WHOLE `<bin>" "<arg1>" "<arg2>` (between outermost
+      // quotes) as a single command name and fail with "is not
+      // recognized as an internal or external command".
+      //
+      // The canonical workaround is to wrap the entire escaped
+      // command line in an EXTRA outer pair of quotes so cmd's
+      // strip-first-and-last leaves the correctly-quoted inner
+      // sequence untouched:
+      //
+      //   /d /s /c ""<bin>" "<arg1>" "<arg2>""
+      //   → strip outer "", leaves: "<bin>" "<arg1>" "<arg2>"
+      //   → cmd parses normally as bin + args
+      //
+      // We assemble the inner command as a single argv element
+      // (rather than separate elements) because libuv's
+      // windowsVerbatimArguments joins argv with single spaces — if
+      // we passed each escaped piece as its own element, the outer
+      // quotes wouldn't end up adjacent to the inner string.
+      const innerCmd = [escapeCmdArg(bin), ...args.map(escapeCmdArg)].join(" ");
+      const wrappedArgs = ["/d", "/s", "/c", `"${innerCmd}"`];
+      child = spawnImpl("cmd.exe", wrappedArgs, {
+        cwd: opts.taskDir,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+        env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
+      });
+    } else {
+      child = spawnImpl(bin, args, {
+        cwd: opts.taskDir,
+        // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
+        // 'ignore' would map stdout to NUL on Windows, which doesn't
+        // support FlushFileBuffers; the child process then aborts with
+        // "Failed to sync '<stdout>': Incorrect function." before any
+        // real work happens. Piping gives it a real handle.
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
+        windowsHide: true,
+        // Inherit the server's env so PATH / HOME / Copilot's own auth
+        // tokens etc. flow through, then layer the per-task bag on top.
+        // We omit the field entirely when no override is supplied, so
+        // Node's default-inherit behaviour kicks in (matches old code).
+        env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
+      });
+    }
   } catch (cause) {
     // Truly synchronous spawn failure. Rare on Node; usually async via 'error'.
     throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);

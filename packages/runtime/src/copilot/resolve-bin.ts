@@ -30,30 +30,42 @@ export interface ResolveCopilotBinDeps {
 /**
  * Escape hatch for the WinGet `copilot` shim on Windows.
  *
- * **This is not a general-purpose path resolver.** It exists solely to
- * compensate for a bug in the WinGet shim: the shim at
- * `%LOCALAPPDATA%\Microsoft\WinGet\Links\copilot.exe` works fine when
- * launched from a console (PowerShell, cmd) but, when spawned by a
- * non-console parent (Node `child_process.spawn`), corrupts stdout and
- * reports exit code 1 even on successful runs. Empirically: same
- * `copilot -p test --allow-all ...` invocation — exit=0 and 15 KB of
- * output via PowerShell, exit=1 and zero output via Node `spawn`.
+ * **This is not a general-purpose path resolver.** It exists for two
+ * Windows-specific spawn-via-CreateProcess problems:
  *
- * To make WinGet-installed Copilot usable through emploke's autonomous
- * task dispatch, this resolver detects when the configured `bin` (or
- * PATH lookup) points at the shim and substitutes the real packaged
- * binary at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.Copilot_*\
- * copilot.exe`, which behaves correctly under non-console spawn.
+ *   1. The WinGet shim at `%LOCALAPPDATA%\Microsoft\WinGet\Links\
+ *      copilot.exe` works fine when launched from a console (PowerShell,
+ *      cmd) but, when spawned by a non-console parent (Node
+ *      `child_process.spawn`), corrupts stdout and reports exit code 1
+ *      even on successful runs. Empirically: same `copilot -p test
+ *      --allow-all ...` invocation — exit=0 and 15 KB of output via
+ *      PowerShell, exit=1 and zero output via Node `spawn`. The
+ *      resolver substitutes the real packaged binary at
+ *      `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.Copilot_*\
+ *      copilot.exe` which behaves correctly under non-console spawn.
+ *
+ *   2. CreateProcess does NOT iterate `PATHEXT` for a bare bin name
+ *      (unlike `cmd.exe` which auto-tries `.exe`, `.cmd`, `.bat`).
+ *      So `spawn("copilot", ...)` fails with ENOENT when Copilot was
+ *      installed via `npm install -g @github/copilot` (npm ships a
+ *      bash shim `copilot` and a Windows shim `copilot.cmd` side-by-
+ *      side; spawn finds neither because it looks for an exact
+ *      filename match). Resolving the PATH hit explicitly via `where`
+ *      and handing back the matching `.cmd` (or `.exe` / `.bat`) lets
+ *      Node spawn it directly — the cmd-host knows how to dispatch
+ *      `.cmd` even from a non-console parent.
  *
  * Resolution order on Windows:
  *   1. If `bin` is an absolute path that is NOT the WinGet shim, return
  *      it untouched. (Caller knows what they want.)
  *   2. If a WinGet packages dir contains a real Copilot binary, return
  *      that.
- *   3. Otherwise return `bin` unchanged and let `child_process.spawn`
- *      (or whoever) deal with PATH lookup. WinGet users without the
- *      packaged binary on disk will still hit the shim bug; that's the
- *      pre-resolver baseline.
+ *   3. If `where copilot` resolved to a usable extension (.exe / .cmd /
+ *      .bat), return that full path so CreateProcess can find it.
+ *   4. Otherwise return `bin` unchanged and let `child_process.spawn`
+ *      deal with PATH lookup. WinGet users without the packaged binary
+ *      on disk will still hit the shim bug; that's the pre-resolver
+ *      baseline.
  *
  * Implementation note on path APIs: this function operates exclusively
  * on Windows-shaped paths (drive letters, backslash separators). All
@@ -95,14 +107,15 @@ export function resolveCopilotBin(
     // Configured to the shim explicitly — fall through to redirect.
   }
 
-  // Resolve PATH so we can detect whether `copilot` would land on the shim.
+  // Resolve PATH so we can detect whether `copilot` would land on the shim
+  // AND so we can hand back a full path with extension to spawn (which
+  // refuses to iterate PATHEXT on a bare name).
   let pathHit: string | null = null;
   try {
     pathHit = which(win.basename(bin, ".exe"));
   } catch {
     pathHit = null;
   }
-  const isShimOnPath = pathHit !== null && isWingetShim(pathHit, env);
 
   // Prefer real WinGet package binary when available.
   const wingetReal = findWingetPackageBin(env, exists, readdir);
@@ -110,10 +123,14 @@ export function resolveCopilotBin(
     return { bin: wingetReal, reason: "winget-package" };
   }
 
-  // Last resort: hand back what we were given. If it was the shim, the
-  // caller will still hit the bug — but at least the failure mode is
-  // unchanged from the pre-resolver baseline.
-  if (isShimOnPath && pathHit !== null) {
+  // Last resort: prefer the full path `where` returned. This handles BOTH
+  // the WinGet-but-no-packages-dir case (return the shim, will hit the
+  // pre-resolver shim bug — unchanged) AND the npm-installed case (return
+  // `copilot.cmd`, which spawn can execute directly because cmd-host
+  // dispatch handles `.cmd` from non-console parents). Falling back to
+  // the bare bin name only when even `where` couldn't find anything,
+  // because then there's nothing useful we could substitute.
+  if (pathHit !== null) {
     return { bin: pathHit, reason: "path-passthrough" };
   }
   return { bin, reason: "path-passthrough" };
@@ -125,11 +142,62 @@ function defaultWhich(cmd: string): string | null {
       encoding: "utf8",
       windowsHide: true,
     });
-    const first = out.split(/\r?\n/)[0]?.trim();
-    return first && first.length > 0 ? first : null;
+    return pickBestPathExtCandidate(parseWhereOutput(out));
   } catch {
     return null;
   }
+}
+
+/**
+ * Split `where`'s output into trimmed non-empty path candidates,
+ * preserving the order `where` returned them in.
+ *
+ * Exported only for tests. The real shape of `where`'s output is
+ * stable (one absolute path per line, CRLF on Windows), but the
+ * trimming + filtering logic is worth pinning so a regression that
+ * silently drops one of the candidates surfaces here rather than as
+ * a mysterious ENOENT at spawn time.
+ */
+export function parseWhereOutput(raw: string): readonly string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Pick the first candidate whose extension is one Node's spawn-on-
+ * Windows can execute directly. PATHEXT priority order:
+ *
+ *   `.exe` (native PE binary)
+ *   `.cmd` / `.bat` (cmd-host scripts; spawn dispatches via cmd.exe
+ *      for these known extensions even from a non-console parent)
+ *   `.com` (legacy DOS executable; rarely seen but still supported)
+ *
+ * If nothing matches the priority list, returns the first candidate
+ * (matches pre-fix behaviour) — better than nothing, even though
+ * spawn may still ENOENT on it.
+ *
+ * Why we can't just take the first line of `where` output: npm-style
+ * installs ship BOTH a bash shim (no extension, intended for
+ * git-bash / WSL) and a Windows shim (`<name>.cmd`) in the same
+ * directory. `where copilot` returns the bash shim first, but
+ * Node's `child_process.spawn` calls CreateProcess which doesn't
+ * iterate PATHEXT — so spawning the extensionless bash shim fails
+ * with ENOENT. Picking by extension priority gets us the
+ * Windows-executable variant. See the broader rationale on
+ * {@link resolveCopilotBin}.
+ *
+ * Exported only for tests.
+ */
+export function pickBestPathExtCandidate(candidates: readonly string[]): string | null {
+  if (candidates.length === 0) return null;
+  const PRIORITY = [".exe", ".cmd", ".bat", ".com"];
+  for (const ext of PRIORITY) {
+    const hit = candidates.find((c) => c.toLowerCase().endsWith(ext));
+    if (hit !== undefined) return hit;
+  }
+  return candidates[0] ?? null;
 }
 
 function isWingetShim(p: string, env: NodeJS.ProcessEnv): boolean {
