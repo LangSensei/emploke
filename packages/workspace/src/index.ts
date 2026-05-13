@@ -4,10 +4,13 @@
  * A *workspace* is the user-chosen working directory that holds
  * emploke's per-workspace state (per-workspace SQLite DB at
  * `<workdir>/workspace.db`, plus agent workdirs under `sessions/`
- * and `tasks/`). Each workspace is identified by an opaque UUID `id`
- * (the URL routing key) and lives at an absolute filesystem
- * `workdir`. Its user-facing display name and other metadata live
- * in the global registry row, NOT in the workspace folder.
+ * and `tasks/`). Catalog content (agents/skills/mcps) lives inside
+ * `workspace.db` as BLOB rows, NOT as files on disk — the workspace
+ * folder has no `catalog/` subdirectory. Each workspace is identified
+ * by an opaque UUID `id` (the URL routing key) and lives at an
+ * absolute filesystem `workdir`. Its user-facing display name and
+ * other metadata live in the global registry row, NOT in the
+ * workspace folder.
  *
  * Persistence is delegated to a `WorkspaceRepository`. The default
  * implementation `SqliteWorkspaceRepository` stores every workspace
@@ -24,7 +27,6 @@
  */
 
 export {
-  CATALOG_SUBDIR,
   CURRENT_SCHEMA_VERSION,
   MAX_DISPLAY_NAME_LENGTH,
   SESSIONS_SUBDIR,

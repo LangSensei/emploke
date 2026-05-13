@@ -38,28 +38,29 @@ export interface WorkspaceUpdatePatch {
 export interface WorkspaceDeleteOpts {
   /**
    * When `true`, also remove every emploke-owned subdirectory under the
-   * workspace's `workdir` (`tasks/`, `sessions/`, `catalog/`).
+   * workspace's `workdir` (`tasks/`, `sessions/`).
    * The `workdir` itself is **never** removed —
    * it is user-owned and may contain files emploke does not know about.
    *
    * Default `false`: only the workspace metadata is removed; agent
-   * artifacts, catalog definitions, etc. survive deletion. The
-   * dashboard surfaces the choice as an explicit checkbox.
+   * artifacts survive deletion. The dashboard surfaces the choice as
+   * an explicit checkbox.
    */
   readonly purge?: boolean;
 }
 
 /**
  * Workspace lifecycle façade. All persistence flows through the
- * supplied `WorkspaceRepository` (typically `SqliteWorkspaceRepository`
- * for production, `InMemoryWorkspaceRepository` for unit tests). The
+ * supplied `WorkspaceRepository` (always `SqliteWorkspaceRepository`
+ * — there is no separate in-memory implementation; tests instantiate
+ * the same class against a `":memory:"` `DatabaseSync`). The
  * manager owns filesystem side-effects that are NOT persistence —
  * creating the workspace directory and standard subdirs at init time,
  * and the optional `purge`-mode cleanup at delete time.
  *
  * Concurrency: cross-process serialisation lives in the repository
  * (the SQLite repository relies on SQLite's write lock + UNIQUE
- * constraints; in-memory has no cross-process semantics by design).
+ * constraints).
  * The manager itself is stateless beyond the injected repository
  * reference, so two `WorkspaceManager` instances pointing at the same
  * repository are safe to use concurrently.
@@ -111,7 +112,6 @@ export class WorkspaceManager {
     await Promise.all([
       mkdir(layout.sessions, { recursive: true }),
       mkdir(layout.tasks, { recursive: true }),
-      mkdir(layout.catalog, { recursive: true }),
     ]);
 
     const now = opts.now ?? (() => new Date());
@@ -129,8 +129,13 @@ export class WorkspaceManager {
   /**
    * Update mutable fields (`name`, `defaults`) on a registered
    * workspace. Throws `WorkspaceNotRegisteredError` when no workspace
-   * with the given id exists. Cannot be used to change `id` or
-   * `workdir` — those are immutable for the lifetime of the workspace.
+   * with the given id exists — including the rare race where a
+   * concurrent `delete(id)` lands between the manager's `read()` and
+   * `repository.save()` calls (the strict-update semantics in
+   * {@link WorkspaceRepository.save} surface that as a typed 404
+   * instead of silently resurrecting the deleted row).
+   * Cannot be used to change `id` or `workdir` — those are immutable
+   * for the lifetime of the workspace.
    */
   async update(id: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
     const current = await this.repository.read(id);
@@ -145,7 +150,6 @@ export class WorkspaceManager {
 
   /**
    * Remove a registered workspace. Default behaviour removes only the
-   * Remove a registered workspace. Default behaviour removes only the
    * emploke metadata (the registry row in `global.db`). Pass
    * `{ purge: true }` to additionally rm every emploke-owned
    * subdirectory under the workspace's `workdir`; the `workdir` itself
@@ -156,7 +160,7 @@ export class WorkspaceManager {
       // Read first, purge subdirs, THEN drop the registry entry.
       // Removing the entry first opens a race window where a concurrent
       // `init({workdir: same})` could succeed (no path conflict in the
-      // index anymore) and start populating sessions/, tasks/, ... —
+      // index anymore) and start populating sessions/, tasks/ —
       // which the in-flight purge would then nuke. Doing the purge
       // first keeps the path-conflict guard active throughout.
       const current = await this.repository.read(id);
@@ -165,7 +169,6 @@ export class WorkspaceManager {
         await Promise.all([
           rm(layout.sessions, { recursive: true, force: true }),
           rm(layout.tasks, { recursive: true, force: true }),
-          rm(layout.catalog, { recursive: true, force: true }),
         ]);
       }
     }

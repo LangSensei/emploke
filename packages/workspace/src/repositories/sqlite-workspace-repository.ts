@@ -59,9 +59,17 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     // integration tests rm-rf the EMPLOKE_HOME mid-test. Per-workspace
     // databases (`workspace.db`) need WAL for high-write paths; this
     // one does not.
+    //
+    // `busy_timeout = 5000` makes any second writer (today only a
+    // future migration tool — server is the sole production writer)
+    // wait up to 5s on the file lock instead of immediately surfacing
+    // SQLITE_BUSY. With journal_mode=DELETE and the default
+    // busy_timeout=0, contention is "fail fast" which is the wrong
+    // tradeoff for short bursty writes on a low-traffic registry.
     this.db.exec("PRAGMA journal_mode = DELETE");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.ensureSchema();
   }
 
@@ -107,32 +115,34 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     const defaultsJson = workspace.defaults ? JSON.stringify(workspace.defaults) : "{}";
 
     this.runInTransaction(() => {
+      // Path-conflict check stays for defence in depth — although
+      // `WorkspaceManager.update` only flows through `withMetadata`
+      // (which preserves workdir), the public repository contract
+      // accepts an arbitrary `Workspace`, so a buggy caller could
+      // still pass a colliding workdir.
       const conflict = this.db
         .prepare("SELECT id FROM workspaces WHERE workdir = ? AND id != ?")
         .get(resolvedWorkdir, workspace.id) as { id: string } | undefined;
       if (conflict) {
         throw new WorkspacePathConflictError(resolvedWorkdir, conflict.id);
       }
-      // ON CONFLICT keeps registered_at + last_opened_at (registry-side
-      // timing fields) from the existing row; caller-supplied metadata
-      // (name, defaults) is overwritten as expected.
-      this.db
+      // Strict UPDATE — no upsert. If a concurrent `delete(id)` landed
+      // between the manager's read() and save() calls, the row no
+      // longer exists; surface that as a typed 404 instead of silently
+      // resurrecting the workspace with the in-flight rename's name and
+      // reset registry-side timing fields. `created_at` /
+      // `registered_at` / `last_opened_at` are owned by `create` /
+      // `setCurrent` and never touched here.
+      const result = this.db
         .prepare(
-          `INSERT INTO workspaces (id, workdir, name, created_at, registered_at, last_opened_at, defaults_json)
-           VALUES (?, ?, ?, ?, ?, NULL, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             workdir = excluded.workdir,
-             name = excluded.name,
-             defaults_json = excluded.defaults_json`,
+          `UPDATE workspaces
+              SET workdir = ?, name = ?, defaults_json = ?
+              WHERE id = ?`,
         )
-        .run(
-          workspace.id,
-          resolvedWorkdir,
-          workspace.name,
-          workspace.createdAt,
-          new Date().toISOString(),
-          defaultsJson,
-        );
+        .run(resolvedWorkdir, workspace.name, defaultsJson, workspace.id);
+      if (result.changes === 0) {
+        throw new WorkspaceNotRegisteredError(workspace.id);
+      }
     });
   }
 
@@ -211,7 +221,12 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
   // ── internals ───────────────────────────────────────────────
 
   private runInTransaction(fn: () => void): void {
-    this.db.exec("BEGIN");
+    // `BEGIN IMMEDIATE` acquires the RESERVED write lock up front
+    // instead of waiting for the first write inside the transaction.
+    // Two concurrent transactions both claim the lock here (the second
+    // waits up to `busy_timeout`), so neither can read stale data and
+    // then race to write a conflicting commit.
+    this.db.exec("BEGIN IMMEDIATE");
     try {
       fn();
       this.db.exec("COMMIT");
@@ -222,7 +237,12 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
   }
 
   private ensureSchema(): void {
-    this.db.exec("BEGIN");
+    // Bootstrap inside a single BEGIN IMMEDIATE so two concurrent
+    // openers (e.g. server + future migration tool) serialise on the
+    // file lock. Without it, both could SELECT existing === undefined
+    // and the second INSERT would fail with PRIMARY KEY conflict
+    // instead of recognising the table is already initialised.
+    this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -243,27 +263,25 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
           value TEXT NOT NULL
         );
       `);
+      const existing = this.db
+        .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+        .get("workspace") as { version: number } | undefined;
+      if (existing === undefined) {
+        this.db
+          .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+          .run("workspace", WORKSPACE_PKG_SCHEMA_VERSION);
+      } else if (existing.version !== WORKSPACE_PKG_SCHEMA_VERSION) {
+        throw new RegistrySchemaMismatchError(
+          "global.db (workspace pkg)",
+          existing.version,
+          WORKSPACE_PKG_SCHEMA_VERSION,
+        );
+      }
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
-
-    const existing = this.db
-      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
-      .get("workspace") as { version: number } | undefined;
-    if (existing === undefined) {
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("workspace", WORKSPACE_PKG_SCHEMA_VERSION);
-      return;
-    }
-    if (existing.version === WORKSPACE_PKG_SCHEMA_VERSION) return;
-    throw new RegistrySchemaMismatchError(
-      "global.db (workspace pkg)",
-      existing.version,
-      WORKSPACE_PKG_SCHEMA_VERSION,
-    );
   }
 }
 

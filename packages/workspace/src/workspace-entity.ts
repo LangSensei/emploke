@@ -1,5 +1,5 @@
 import path from "node:path";
-import { CATALOG_SUBDIR, SESSIONS_SUBDIR, TASKS_SUBDIR } from "./constants.js";
+import { SESSIONS_SUBDIR, TASKS_SUBDIR } from "./constants.js";
 import { WorkspaceCorruptedError, WorkspaceIdInvalidError } from "./errors.js";
 import { assertValidDisplayName, isValidWorkspaceId } from "./names.js";
 
@@ -21,10 +21,11 @@ export interface WorkspaceDefaults {
  *
  * `workdir` is the only filesystem field; everything else is pure
  * metadata. Conventional sub-paths under `workdir` (`sessions/`,
- * `tasks/`, `catalog/`, the per-workspace `workspace.db` file) are
- * computed by {@link workspaceLayout} on demand — they are NOT
- * stored on the entity, so SQLite-backed callers can mint
- * `Workspace` instances without touching the layout helper.
+ * `tasks/`, plus the per-workspace `workspace.db` file) are computed
+ * by {@link workspaceLayout} on demand — they are NOT stored on the
+ * entity, so SQLite-backed callers can mint `Workspace` instances
+ * without touching the layout helper. There is no `catalog/` subdir;
+ * catalog content lives inside `workspace.db` as BLOB rows.
  *
  * ## Construction
  *
@@ -196,7 +197,6 @@ export class Workspace {
 export interface WorkspaceLayout {
   readonly sessions: string;
   readonly tasks: string;
-  readonly catalog: string;
 }
 
 /** Compute every fixed-name subdirectory under `workdir`. */
@@ -205,7 +205,6 @@ export function workspaceLayout(workdir: string): WorkspaceLayout {
   return {
     sessions: path.join(root, SESSIONS_SUBDIR),
     tasks: path.join(root, TASKS_SUBDIR),
-    catalog: path.join(root, CATALOG_SUBDIR),
   };
 }
 

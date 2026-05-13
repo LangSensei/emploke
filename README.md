@@ -38,9 +38,8 @@ Walk through:
    on disk; if you don't, emploke creates one under
    `$EMPLOKE_HOME/workspaces/<uuid>/` so the workspace id and the on-disk
    directory share the same name. Either way emploke writes
-   a `workspace.db` SQLite file plus standard subdirs (`sessions/`,
-   `tasks/`, `catalog/`) inside; existing files in a user-supplied
-   directory are left alone.
+   a `workspace.db` SQLite file plus `sessions/` and `tasks/` subdirs
+   inside; existing files in a user-supplied directory are left alone.
 2. **Install an agent** in the Catalog tab — point at any directory containing
    an `AGENTS.md` (a [Claude-style agent](https://www.claude.com/news/agent-skills);
    any directory with valid frontmatter works). Skills + MCPs the agent

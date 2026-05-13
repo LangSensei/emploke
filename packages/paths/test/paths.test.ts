@@ -33,7 +33,9 @@ describe("resolveEmplokePaths", () => {
       string,
       unknown
     >;
-    // Catalog is per-workspace (lives at <workspace>/catalog/) and is not
+    // Catalog is per-workspace (lives inside the workspace's
+    // workspace.db as BLOB rows; the workspace folder has no
+    // `catalog/` subdir) and is not
     // a global path resolved here. Asserting absence guards against
     // accidental reintroduction.
     expect(p.catalogDir).toBeUndefined();

@@ -15,7 +15,8 @@ This package ships two layers:
   Useful in tests, custom orchestrators, or anywhere you want to drive the
   FSM directly.
 - **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
-  task's metadata to `tasks.db` (one SQLite row per task), dispatches via
+  task's metadata to the `tasks` table inside the per-workspace shared
+  `workspace.db` (one SQLite row per task), dispatches via
   `Runtime.launchHeadless`, watches the subprocess to fold the terminal
   exit into the task value, and forwards activity reads to
   `Runtime.readActivity` / `Runtime.streamActivity` (the runtime owns
@@ -107,15 +108,17 @@ delete operation — Task is a history accumulator.
 
 ## On-disk layout
 
-Each task has two stores: queryable metadata in a SQLite row, and an
-on-disk workdir for agent artifacts.
+Each task has two stores: queryable metadata in a shared SQLite row
+(in the per-workspace `workspace.db`), and an on-disk workdir for
+agent artifacts.
 
 ```
-<workspace>/tasks/
-├── tasks.db              # SQLite — one row per task: status, runtime, agent, timings, …
-└── <task-id>/            # workdir for task <task-id>
-    ├── stderr.log        # bug-out only — runtime CLI errors before session exists
-    └── …                 # whatever the agent writes
+<workspace>/
+├── workspace.db          # SQLite — `tasks` table holds one row per task: status, runtime, agent, timings, …
+└── tasks/
+    └── <task-id>/        # workdir for task <task-id>
+        ├── stderr.log    # bug-out only — runtime CLI errors before session exists
+        └── …             # whatever the agent writes
 ```
 
 The runtime adapter owns its own per-task event log end-to-end —
@@ -132,7 +135,8 @@ format or path.
 
 The workdir contains **no metadata sidecar file** — the directory name
 is the only source of truth for the task ID, and every queryable field
-lives in `tasks.db`. The runtime metadata bag the kernel never reads
+lives in the workspace's `tasks` table. The runtime metadata bag the
+kernel never reads
 (PID, runtime session id, etc.) is stored as JSON in a `metadata`
 column; the indexed `runtime` field is promoted to a first-class
 column for filtering.

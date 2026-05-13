@@ -34,16 +34,20 @@ export interface WorkspaceRepository {
   read(id: string): Promise<Workspace | null>;
 
   /**
-   * Insert or replace a workspace. Atomic from a reader's perspective:
-   * concurrent `read` calls see either the previous state or the new
-   * one, never partial. Implementations must register the workspace's
-   * id in the root index AND persist its metadata as one logical unit
-   * (or do both then unwind on failure).
+   * Persist mutable fields (`name`, `defaults`) on an already-registered
+   * workspace. Throws {@link WorkspaceNotRegisteredError} if no row
+   * with the given id exists — `save` is **strict update**, never an
+   * upsert. Use {@link create} to register a fresh workspace.
    *
-   * Use {@link create} when the caller's intent is "register a new
-   * workspace and surface a typed error if the id is already taken";
-   * `save` is upsert (last-writer-wins), which silently overwrites a
-   * concurrent same-id init attempt.
+   * Strict-update semantics prevent a subtle resurrect bug: if a
+   * concurrent `delete(id)` lands between the manager's `read(id)`
+   * and `save(updated)` calls, an upsert would silently re-create
+   * the deleted row with the in-flight rename's name and reset
+   * timing fields. The strict variant surfaces the race as a typed
+   * 404 instead.
+   *
+   * Atomic from a reader's perspective: concurrent `read` calls see
+   * either the previous state or the new one, never partial.
    */
   save(workspace: Workspace): Promise<void>;
 
@@ -56,16 +60,15 @@ export interface WorkspaceRepository {
    * lose the race against a concurrent `init` with the same id.
    *
    * `WorkspaceManager.init` is the canonical caller; it surfaces the
-   * conflict to the user. Repository implementations decide how the
-   * "atomic" guarantee is delivered (FS uses the same advisory lock
-   * `save` does; SQLite would use `INSERT OR FAIL`).
+   * conflict to the user. SQLite implementations enforce the guarantee
+   * with `INSERT OR FAIL` inside `BEGIN IMMEDIATE`.
    */
   create(workspace: Workspace): Promise<void>;
 
   /**
    * Remove the workspace's metadata. Idempotent (deleting a missing id
    * is a no-op). Does NOT touch agent-owned content under the
-   * workspace's `workdir` (sessions/, tasks/, catalog/, etc.) — that
+   * workspace's `workdir` (sessions/, tasks/) — that
    * concern lives in `WorkspaceManager.delete(id, { purge })`, not in
    * the repository.
    *

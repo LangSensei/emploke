@@ -61,16 +61,17 @@ import {
  *    `getSkillContent`, `agentEntries`, etc. mirror the pre-refactor
  *    `CatalogManager`.
  *
- * Backing store: SQLite (one `catalog.db` per workspace, opened by the
- * per-entity repositories in WAL mode). The facade holds no in-memory
- * snapshot — every read goes straight to the repos and runs in
- * autocommit, so each call starts a fresh implicit read transaction
- * that observes any commit from another `CatalogManager` instance in
- * the same process or from a separate SQLite-aware writer holding its
- * own connection to the same file. (External tools that *replace* the
- * `catalog.db` file out-of-band — e.g. `git pull` overwriting it
- * while a handle is open — are unsupported; SQLite's WAL invariants
- * assume the file is only mutated through SQLite.) Status-aware list
+ * Backing store: SQLite (the per-workspace shared `workspace.db`,
+ * with catalog tables `agents`/`skills`/`mcps`/`agent_files`/`skill_files`,
+ * opened by the per-entity repositories in WAL mode). The facade holds
+ * no in-memory snapshot — every read goes straight to the repos and
+ * runs in autocommit, so each call starts a fresh implicit read
+ * transaction that observes any commit from another `CatalogManager`
+ * instance in the same process or from a separate SQLite-aware writer
+ * holding its own connection to the same file. (External tools that
+ * *replace* the `workspace.db` file out-of-band — e.g. `git pull`
+ * overwriting it while a handle is open — are unsupported; SQLite's
+ * WAL invariants assume the file is only mutated through SQLite.) Status-aware list
  * operations (e.g. `listSkillEntries`) batch the underlying SELECTs
  * with `Promise.all` to keep the wall-clock cost flat.
  *

@@ -2,7 +2,8 @@
 
 Per-project root abstraction. A *workspace* is a directory that holds
 emploke's per-project state (sessions, tasks, catalog) inside a single
-`workspace.db` SQLite file. The directory is normally
+`workspace.db` SQLite file plus agent workdirs under `sessions/` and
+`tasks/`. The directory is normally
 user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
 (see `Quick start` below). The `$EMPLOKE_HOME/global.db` SQLite registry
@@ -24,10 +25,13 @@ metadata sidecar file.
   survive workspace renames.
 - **The `name`** is free-form display text, edited via the sidebar's
   pencil icon. Has no routing significance.
-- **Standard subdirs** — `sessions/`, `tasks/`, `catalog/`, plus the
+- **Standard subdirs** — `sessions/` and `tasks/`, plus the
   shared per-workspace `workspace.db`. Created at `init`; computed
-  from `workdir` by the `workspaceLayout` helper. Not stored on the
-  type so the repository contract has no on-disk path coupling.
+  from `workdir` by the `workspaceLayout` helper. Catalog content
+  (agents/skills/mcps) lives inside `workspace.db` as BLOB rows —
+  there is no `<workspace>/catalog/` subdirectory. Subdirs are not
+  stored on the entity so the repository contract has no on-disk
+  path coupling.
 
 ## Quick start
 
@@ -43,7 +47,7 @@ const ws = await workspaces.init({
   name: "Acme prod",
   workdir: "/Users/me/code/acme",
 });
-// → creates /Users/me/code/acme/{workspace.db,sessions,tasks,catalog}
+// → creates /Users/me/code/acme/{workspace.db,sessions,tasks}
 // → inserts {id, workdir, name, createdAt, defaults} into global.db.workspaces
 
 // `workdir` is always required at the manager layer — defaulting it
@@ -56,7 +60,7 @@ const all = await workspaces.list();
 const back = await workspaces.read(ws.id);
 await workspaces.update(ws.id, { name: "Acme prod (renamed)" });
 await workspaces.delete(ws.id);                 // metadata-only
-await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/, catalog/, ...
+await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/
 ```
 
 The `workdir` itself is **never** removed by `delete({ purge: true })`
@@ -172,7 +176,6 @@ const layout = workspaceLayout("/abs/workdir");
 // {
 //   sessions:  "/abs/workdir/sessions",
 //   tasks:     "/abs/workdir/tasks",
-//   catalog:   "/abs/workdir/catalog",
 // }
 ```
 

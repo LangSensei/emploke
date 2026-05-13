@@ -20,7 +20,8 @@
  * promises to its CLI clients, runtime adapters, and on-disk consumers.
  *
  * Per-workspace paths (`<workspace>/sessions/`, `<workspace>/tasks/`,
- * `<workspace>/catalog/`, ...) are NOT this module's concern — they're
+ * the per-workspace `<workspace>/workspace.db` file, ...) are NOT this
+ * module's concern — they're
  * computed by `@emploke/workspace`'s `workspaceLayout(workdir)` and
  * passed to entity managers as constructor arguments.
  *

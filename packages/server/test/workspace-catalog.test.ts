@@ -8,7 +8,6 @@ import {
   SqliteWorkspaceRepository,
   type Workspace,
   WorkspaceManager,
-  workspaceLayout,
 } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -99,8 +98,12 @@ describe("workspace-scoped catalog routes", () => {
     if (!ctxA || !ctxB) throw new Error("ctx must exist");
 
     expect(ctxA.catalog).not.toBe(ctxB.catalog);
-    expect(workspaceLayout(ctxA.workspace.workdir).catalog).toBe(path.join(a.workdir, "catalog"));
-    expect(workspaceLayout(ctxB.workspace.workdir).catalog).toBe(path.join(b.workdir, "catalog"));
+    // Catalog content lives in each workspace's `workspace.db`, not
+    // as files on disk — there is no `<workspace>/catalog/` subdir.
+    // Distinct CatalogManager instances are sufficient evidence of
+    // isolation since each is bound to a different per-workspace db.
+    expect(ctxA.workspace.workdir).toBe(a.workdir);
+    expect(ctxB.workspace.workdir).toBe(b.workdir);
   });
 
   it("memoises catalog per workspace", async () => {

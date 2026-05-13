@@ -349,11 +349,8 @@ different "what hand-editing does" story:
   the workspace registry + cross-workspace state, `<workspace>/workspace.db`
   for everything per-workspace including catalog content) plus their
   `-wal` / `-shm` sidecars. Add or remove catalog entries through
-  their `-wal` / `-shm` sidecars), and the `catalog/agents/`,
-  `catalog/skills/`, `catalog/mcps/` source-file subdirs. Add or
-  remove catalog entries through `emploke catalog ...` or the
-  dashboard so the SQLite index stays in sync with the on-disk
-  sources; do not edit by hand.
+  `emploke catalog ...` or the dashboard so the SQLite index stays
+  consistent with the install/sync workflow; do not edit by hand.
 - **the agent** owns the contents of `<workspace>/sessions/<id>/` and
   `<workspace>/tasks/<id>/` after emploke creates the directory and
   bakes `AGENTS.md` from the catalog. Files the agent writes,

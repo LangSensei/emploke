@@ -272,9 +272,10 @@ export function workspacesRoutes(deps: {
   });
 
   // Force the cached `WorkspaceContext` for this id to be rebuilt on the
-  // next request. Use case: catalog drift — the user added an agent yaml
-  // to `<workspace>/catalog/agents/` from outside emploke (manual edit,
-  // git pull, …) and the cached `CatalogManager` snapshot is stale.
+  // next request. Use case: catalog drift — the user installed an agent
+  // through a separate process that mutated the workspace.db catalog
+  // tables out-of-band, and the cached `CatalogManager`'s SQLite
+  // handle (or downstream caches) need a clean restart.
   //
   // Returns:
   //   - 204 on success (the fresh context is also pre-loaded so the next

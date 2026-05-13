@@ -43,12 +43,14 @@ describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("My Project");
     expect(ws.workdir).toBe(path.resolve(wsDir));
-    // Standard subdirs were created.
+    // Standard subdirs were created. There is no `catalog/` —
+    // catalog content lives inside `workspace.db` as BLOB rows.
     const fsImport = await import("node:fs/promises");
-    for (const sub of ["sessions", "tasks", "catalog"]) {
+    for (const sub of ["sessions", "tasks"]) {
       const st = await fsImport.stat(path.join(wsDir, sub));
       expect(st.isDirectory()).toBe(true);
     }
+    await expect(fsImport.stat(path.join(wsDir, "catalog"))).rejects.toThrow();
     // Round-trips through the repository.
     const back = await m.read(UUID_A);
     expect(back).toMatchObject({ id: UUID_A, name: "My Project" });
@@ -79,8 +81,7 @@ describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
   it("rejects concurrent init({id: same}) with WorkspaceIdConflictError (lock-loser sees the conflict)", async () => {
     // Regression for #42: previously WorkspaceManager did read+save and
     // had a race window where two concurrent init({id: same}) calls
-    // could both pass the manager-side check and silently overwrite each
-    // other in repository.save (last writer wins). Repository.create()
+    // could both pass the manager-side check. Repository.create()
     // performs the id-conflict check inside the registry lock, so one
     // call must win and one must throw WorkspaceIdConflictError.
     const m = newSqliteManager();
@@ -151,6 +152,27 @@ describe("WorkspaceManager — update", () => {
       WorkspaceNotRegisteredError,
     );
   });
+
+  it("throws WorkspaceNotRegisteredError when the row is deleted between read and save (rename ↔ delete race)", async () => {
+    // Regression: previously `repository.save` was an upsert
+    // (INSERT … ON CONFLICT DO UPDATE), so an in-flight rename whose
+    // `read()` saw a row but whose `save()` arrived after a concurrent
+    // `delete(id)` would silently re-create the workspace with the
+    // rename's name and reset registry-side timing fields. Strict
+    // UPDATE in `repository.save` makes the race a typed 404 instead
+    // — the rename atomically fails and the workspace stays deleted.
+    //
+    // We simulate the interleave by deleting the workspace *via the
+    // manager* between init and update; the update then takes the
+    // rejected branch.
+    const m = newSqliteManager();
+    await m.init({ id: UUID_A, name: "Pre-delete", workdir: path.join(scratch, "race") });
+    await m.delete(UUID_A);
+    await expect(m.update(UUID_A, { name: "Would resurrect" })).rejects.toBeInstanceOf(
+      WorkspaceNotRegisteredError,
+    );
+    expect(await m.read(UUID_A)).toBeNull();
+  });
 });
 
 describe("WorkspaceManager — delete", () => {
@@ -185,12 +207,11 @@ describe("WorkspaceManager — delete", () => {
 
     await m.delete(UUID_A, { purge: true });
     expect(await m.read(UUID_A)).toBeNull();
-    // every emploke-owned subdir gone — pin all three so a future
+    // every emploke-owned subdir gone — pin both so a future
     // accidental drop from the purge list (or a layout addition that
     // forgets a corresponding rm) gets caught.
     await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
     await expect(fs.stat(path.join(ws.workdir, "tasks"))).rejects.toThrow();
-    await expect(fs.stat(path.join(ws.workdir, "catalog"))).rejects.toThrow();
     // workdir itself preserved
     const st = await fs.stat(ws.workdir);
     expect(st.isDirectory()).toBe(true);

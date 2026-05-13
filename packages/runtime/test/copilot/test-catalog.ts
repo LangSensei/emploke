@@ -64,7 +64,7 @@ export async function makeTestCatalog(
 }> {
   const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
 
-  // In-memory DB so tests don't litter tmpdir with catalog.db files
+  // In-memory DB so tests don't litter tmpdir with workspace.db files
   // and Windows EBUSY on cleanup is impossible.
   const db = new DatabaseSync(":memory:");
   const catalog = await CatalogManager.open({ db });

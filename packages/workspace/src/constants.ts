@@ -34,10 +34,7 @@ export const CURRENT_SCHEMA_VERSION = 1;
 /** Subdirectory of a workspace that holds session workdirs. */
 export const SESSIONS_SUBDIR = "sessions";
 
-/** Subdirectory of a workspace that holds the per-workspace catalog (skills, agents, mcps). */
-export const CATALOG_SUBDIR = "catalog";
-
-/** Subdirectory of a workspace that holds task records. */
+/** Subdirectory of a workspace that holds task workdirs. */
 export const TASKS_SUBDIR = "tasks";
 
 /** Maximum allowed length of the workspace display name. */

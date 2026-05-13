@@ -122,8 +122,8 @@ describe("SqliteWorkspaceRepository — create + read round-trip", () => {
   });
 });
 
-describe("SqliteWorkspaceRepository — save (upsert)", () => {
-  it("save upserts an existing workspace's mutable fields", async () => {
+describe("SqliteWorkspaceRepository — save (strict update)", () => {
+  it("save updates an existing workspace's mutable fields", async () => {
     const repo = new SqliteWorkspaceRepository({ db });
     const wsdir = path.join(scratch, "p");
     const original = sample(UUID_A, "first", wsdir);
@@ -134,13 +134,41 @@ describe("SqliteWorkspaceRepository — save (upsert)", () => {
     expect(back?.name).toBe("renamed");
   });
 
+  it("save throws WorkspaceNotRegisteredError when the row was deleted concurrently", async () => {
+    // Regression for the rename ↔ delete race: WorkspaceManager.update()
+    // does read → withMetadata → save. If a concurrent DELETE landed
+    // between the read and the save, an upsert-style save would silently
+    // resurrect the row with the in-flight rename's name + reset the
+    // registry-side timing fields. Strict UPDATE surfaces the race as a
+    // typed 404 — the rename fails atomically and the user sees the
+    // workspace stay deleted.
+    const repo = new SqliteWorkspaceRepository({ db });
+    const wsdir = path.join(scratch, "p");
+    const original = sample(UUID_A, "first", wsdir);
+    await repo.create(original);
+    await repo.delete(UUID_A);
+    await expect(
+      repo.save(original.withMetadata({ name: "would-resurrect" })),
+    ).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+    // And nothing was inserted as a side effect of the rejected save.
+    expect(await repo.read(UUID_A)).toBeNull();
+  });
+
+  it("save throws WorkspaceNotRegisteredError for an id that was never registered", async () => {
+    const repo = new SqliteWorkspaceRepository({ db });
+    await expect(
+      repo.save(sample(UUID_A, "ghost", path.join(scratch, "p"))),
+    ).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+  });
+
   it("save throws WorkspacePathConflictError when another id owns the workdir", async () => {
     const repo = new SqliteWorkspaceRepository({ db });
     await repo.create(sample(UUID_A, "first", path.join(scratch, "a")));
     await repo.create(sample(UUID_B, "second", path.join(scratch, "b")));
-    await expect(
-      repo.save(sample(UUID_B, "second", path.join(scratch, "a"))),
-    ).rejects.toBeInstanceOf(WorkspacePathConflictError);
+    // UUID_B already exists, so this is now a real strict-UPDATE call —
+    // the save tries to repoint UUID_B at /scratch/a, which UUID_A owns.
+    const collidingUuidB = sample(UUID_B, "second", path.join(scratch, "a"));
+    await expect(repo.save(collidingUuidB)).rejects.toBeInstanceOf(WorkspacePathConflictError);
   });
 });
 
@@ -252,7 +280,7 @@ describe("WorkspaceManager backed by SqliteWorkspaceRepository", () => {
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("Project");
     const fsImport = await import("node:fs/promises");
-    for (const sub of ["sessions", "tasks", "catalog"]) {
+    for (const sub of ["sessions", "tasks"]) {
       const st = await fsImport.stat(path.join(wsdir, sub));
       expect(st.isDirectory()).toBe(true);
     }

@@ -55,9 +55,9 @@ export class AgentNotFoundError extends TaskError {
 
 /**
  * Thrown by `TaskManager.get` / `delete` when the requested id has no
- * persisted record (no row in `tasks.db` and, in default-archive mode,
- * the row is unparseable; in `purge: true` mode, the workdir is
- * absent too).
+ * persisted record (no row in the workspace's `tasks` table and, in
+ * default-archive mode, the row is unparseable; in `purge: true` mode,
+ * the workdir is absent too).
  */
 export class TaskNotFoundError extends TaskError {
   constructor(public readonly id: string) {

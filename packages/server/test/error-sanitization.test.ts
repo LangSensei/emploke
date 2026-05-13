@@ -137,7 +137,6 @@ describe("errorBody", () => {
       "WorkspaceNotFoundError",
       "WorkspaceNotRegisteredError",
       "WorkspacePathConflictError",
-      "WorkspaceSchemaMismatchError",
       // server
       "WorkspaceHasLiveTasksError",
     ];

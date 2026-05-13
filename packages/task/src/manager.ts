@@ -58,8 +58,9 @@ interface LiveTask {
  * Owns `<tasksDir>/` on disk. Each task is one directory containing the
  * captured `stderr.log` and whatever the agent itself wrote during
  * execution. The queryable metadata (status, runtime, agent, timings,
- * the open-shape `metadata` bag) lives in `<tasksDir>/tasks.db` —
- * one row per task, owned by the SQLite repository. The runtime keeps
+ * the open-shape `metadata` bag) lives in the per-workspace
+ * `workspace.db` (in the `tasks` table) — one row per task, owned by
+ * the SQLite repository. The runtime keeps
  * its own per-task event log on its own state directory (Copilot:
  * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`); emploke does
  * NOT mirror it back into the workdir.

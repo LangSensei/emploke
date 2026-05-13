@@ -61,7 +61,9 @@ export interface WorkspaceContext {
  * Lookup flow on a cache miss:
  *   1. Look up the workspace via the injected `WorkspaceManager`. If
  *      not registered, return null — the route handler will respond 404.
- *   2. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
+ *   2. Open a per-workspace `CatalogManager` against the shared
+ *      workspace.db (catalog content lives in BLOB rows; the
+ *      workspace folder has no `catalog/` subdir).
  *   3. Build `SessionManager` and `TaskManager` pointed at the
  *      per-workspace state directories. Both receive `workspaceDir` so
  *      runtime adapters can run any per-launch / per-dispatch
@@ -149,7 +151,7 @@ export class WorkspaceContextCache {
    *
    * Catalog content drift no longer needs reload — `CatalogManager`
    * holds no in-memory snapshot, so a `git pull` of the workspace's
-   * `catalog.db` (or any external write) is observable on the next
+   * `workspace.db` (or any external write) is observable on the next
    * request. The cached `CatalogManager` only owns the SQLite handle
    * itself.
    *
@@ -232,7 +234,10 @@ export class WorkspaceContextCache {
     // are set here, once, so individual repositories don't need to
     // think about them. WAL gives concurrent reader safety; foreign_keys
     // is on so cross-table references (task → workflow, task_dep, ...)
-    // are enforced.
+    // are enforced. busy_timeout makes any second writer wait up to 5s
+    // on the file lock instead of immediately surfacing SQLITE_BUSY —
+    // useful when the dashboard's poll cadence overlaps with a
+    // long-running install.
     const dbPath = path.join(workspace.workdir, "workspace.db");
     const { mkdir } = await import("node:fs/promises");
     await mkdir(workspace.workdir, { recursive: true });
@@ -240,6 +245,21 @@ export class WorkspaceContextCache {
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
     db.exec("PRAGMA foreign_keys = ON");
+    db.exec("PRAGMA busy_timeout = 5000");
+
+    // Best-effort upgrade hint for per-workspace `workspace.json`
+    // sidecars from the pre-`workspace.db` build. Same rationale as
+    // the boot-time check for `<EMPLOKE_HOME>/workspaces.json`:
+    // emploke no longer reads the file but the user might be wondering
+    // why their dashboard catalog/session/task panels look empty.
+    const { existsSync } = await import("node:fs");
+    const legacySidecar = path.join(workspace.workdir, "workspace.json");
+    if (existsSync(legacySidecar)) {
+      this.logger.warn(
+        "legacy workspace.json found; this version stores per-workspace metadata in the global registry instead. Safe to delete.",
+        { legacyFile: legacySidecar, workspaceId: workspace.id },
+      );
+    }
 
     // Each manager gets the shared connection via DI. Repositories
     // bootstrap their own tables on first construction (idempotent
