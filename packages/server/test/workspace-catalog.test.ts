@@ -4,11 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import {
-  SqliteWorkspaceRepository,
-  type Workspace,
-  WorkspaceManager,
-} from "@emploke/workspace";
+import { SqliteWorkspaceRepository, type Workspace, WorkspaceManager } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
