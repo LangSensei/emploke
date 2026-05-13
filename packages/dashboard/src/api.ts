@@ -121,12 +121,27 @@ const jsonInit = (method: string, body: object): RequestInit => ({
 });
 
 /**
- * Install a new agent. The wire body is `{provider, location}` — the
- * server assembles the canonical origin URI from those. The server
- * fetches via the registered fetcher (file:, https://github.com/...),
- * recursively resolves dependencies, and returns a manifest. Returns
- * 207 on partial failure — caller surfaces that as an error message
- * via {@link extractError}.
+ * Install a new agent. Wire body is `{ origin: string }` — the
+ * canonical origin URI is the only identity downstream (catalog DB
+ * row, AGENTS.md `dependencies:` blocks, fetcher dispatch). The
+ * dashboard presents a friendlier `provider + location` form to
+ * humans, then assembles the canonical origin URI client-side via
+ * {@link buildOriginFromSource} before posting.
+ *
+ * Why client-side assembly: keeps the wire shape narrow + matches
+ * what the CLI sends + matches what every YAML/markdown frontmatter
+ * dependency declares. Earlier wire shapes carried `{ provider,
+ * location }` on the wire; that forced the server to know two
+ * representations and let the CLI / dashboard drift apart silently
+ * (the CLI's manifest type said `{ origin }`, dashboard sent
+ * `{ provider, location }`, server validator only accepted the
+ * latter, CLI install was 100% broken). Single wire shape removes
+ * the gap class entirely.
+ *
+ * The server then fetches via the registered fetcher (file:,
+ * https://github.com/...), recursively resolves dependencies, and
+ * returns a manifest. Returns 207 on partial failure — caller
+ * surfaces that as an error message via {@link extractError}.
  *
  * No `scopeHints`: scope is determined entirely by each entry's
  * frontmatter (or default `public`). Forking under a different scope =
@@ -144,6 +159,41 @@ export interface InstallSource {
    * Whitespace is trimmed; clients never need to add scheme prefixes.
    */
   location: string;
+}
+
+/**
+ * Wire body for every catalog install / install-resolve route. The
+ * `origin` field is the canonical URI the server's fetcher dispatches
+ * on; it is identical to what `dependencies:` blocks reference inside
+ * SKILL.md / AGENTS.md. CLI users type one of these directly; the
+ * dashboard assembles it from its UI form via
+ * {@link buildOriginFromSource}.
+ */
+export interface InstallBody {
+  readonly origin: string;
+}
+
+/**
+ * Assemble a canonical origin URI from the dashboard's UI form.
+ *
+ *   - `github` + `https://github.com/owner/repo/tree/ref/path` →
+ *     pass-through (the URL is already the canonical github origin)
+ *   - `file`   + `/abs/path`            → `file:/abs/path`
+ *   - `file`   + `file:/abs/path`       → `file:/abs/path` (tolerate
+ *     paste with prefix; trim and re-emit)
+ *
+ * Mirrors the assembly the CLI never had to do (CLI users always
+ * type the canonical URI directly). Tests in `dashboard/test/`
+ * (added in PR #96) pin the contract.
+ */
+export function buildOriginFromSource(src: InstallSource): string {
+  const trimmed = src.location.trim();
+  switch (src.provider) {
+    case "github":
+      return trimmed;
+    case "file":
+      return trimmed.startsWith("file:") ? trimmed : `file:${trimmed}`;
+  }
 }
 
 /**
@@ -177,11 +227,17 @@ export interface SyncResult extends InstallResult {
 }
 
 export const installAgent = (src: InstallSource): Promise<InstallResult> =>
-  mutateJson<InstallResult>(`${catalogPrefix()}/agents`, jsonInit("POST", src));
+  mutateJson<InstallResult>(
+    `${catalogPrefix()}/agents`,
+    jsonInit("POST", { origin: buildOriginFromSource(src) } satisfies InstallBody),
+  );
 
 /** See {@link installAgent}. */
 export const installSkill = (src: InstallSource): Promise<InstallResult> =>
-  mutateJson<InstallResult>(`${catalogPrefix()}/skills`, jsonInit("POST", src));
+  mutateJson<InstallResult>(
+    `${catalogPrefix()}/skills`,
+    jsonInit("POST", { origin: buildOriginFromSource(src) } satisfies InstallBody),
+  );
 
 /**
  * Install an MCP. The MCP's spec FQN is recovered from the fetched
@@ -189,7 +245,10 @@ export const installSkill = (src: InstallSource): Promise<InstallResult> =>
  * supply a name.
  */
 export const installMcp = (src: InstallSource): Promise<InstallResult> =>
-  mutateJson<InstallResult>(`${catalogPrefix()}/mcps`, jsonInit("POST", src));
+  mutateJson<InstallResult>(
+    `${catalogPrefix()}/mcps`,
+    jsonInit("POST", { origin: buildOriginFromSource(src) } satisfies InstallBody),
+  );
 
 /**
  * Resolve manifest returned by `POST /catalog/{kind}/resolve` (install)
@@ -278,10 +337,16 @@ export interface ResolveManifest {
  * committing.
  */
 export const resolveSkillInstall = (src: InstallSource): Promise<ResolveManifest> =>
-  mutateJson<ResolveManifest>(`${catalogPrefix()}/skills/resolve`, jsonInit("POST", src));
+  mutateJson<ResolveManifest>(
+    `${catalogPrefix()}/skills/resolve`,
+    jsonInit("POST", { origin: buildOriginFromSource(src) } satisfies InstallBody),
+  );
 
 export const resolveAgentInstall = (src: InstallSource): Promise<ResolveManifest> =>
-  mutateJson<ResolveManifest>(`${catalogPrefix()}/agents/resolve`, jsonInit("POST", src));
+  mutateJson<ResolveManifest>(
+    `${catalogPrefix()}/agents/resolve`,
+    jsonInit("POST", { origin: buildOriginFromSource(src) } satisfies InstallBody),
+  );
 
 /**
  * Resolve a sync from upstream for an already-installed entry. The
