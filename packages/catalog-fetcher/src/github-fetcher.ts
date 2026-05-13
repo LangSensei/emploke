@@ -9,7 +9,7 @@ import { parseOrigin } from "./origin.js";
 /**
  * Fetcher for `https://github.com/<owner>/<repo>/tree/<ref>[/path]` URIs.
  *
- * Two transports, picked per call:
+ * Three transports, picked by call-site + origin shape:
  *
  *  - {@link GitHubFetcher.fetchFile} — single-file reads use the
  *    **Contents API** (`/repos/{o}/{r}/contents/{path}?ref={ref}`)
@@ -17,14 +17,25 @@ import { parseOrigin } from "./origin.js";
  *    raw file bytes, not a base64-wrapped JSON envelope. One small
  *    request, no tarball, no extraction. The resolve path goes here
  *    — anchor files (SKILL.md / AGENTS.md / `<name>.json`) only.
- *    1 MB cap is a GitHub API limit; bigger anchors fall outside
- *    this fetcher (in practice an anchor that big is a bug).
  *
- *  - {@link GitHubFetcher.fetchTree} — full-tree reads use the
- *    **Tarball API** (`/repos/{o}/{r}/tarball/{ref}`), gunzip +
- *    tar-extract on the fly, yielding `EntryFile` records as the
- *    stream progresses. No filesystem touch; no `git` binary
- *    required. The install path goes here — we need every file.
+ *  - {@link GitHubFetcher.fetchTree} on a **subpath** origin uses
+ *    the **Git Trees API** (`/repos/{o}/{r}/git/trees/{ref}?recursive=1`)
+ *    to list every blob in the repo by `(path, sha)` once, filters
+ *    to entries under the subpath, then fans out parallel
+ *    {@link fetchBlobRaw} requests against the **Git Blobs API**
+ *    (`/repos/{o}/{r}/git/blobs/{sha}` with `Accept: application/vnd.github.raw`).
+ *    Cost: 1 small JSON RTT + N blob RTTs in parallel — orders of
+ *    magnitude less wire than downloading the whole repo tarball
+ *    when the subpath is a small fraction of the tree.
+ *
+ *  - {@link GitHubFetcher.fetchTree} on a **whole-repo** origin
+ *    (no subpath) or when the tree listing is **truncated** falls
+ *    back to the **Tarball API** (`/repos/{o}/{r}/tarball/{ref}`),
+ *    gunzip + tar-extract on the fly. The Trees API caps recursive
+ *    listings at 100K entries / ~7MB; bigger repos return
+ *    `truncated: true` and we can't trust a partial list. For a
+ *    whole-repo install the tarball is also cheaper than N parallel
+ *    blob requests (one streaming HTTPS download wins on RTT count).
  *
  * **Auth**: optional. The token is resolved via {@link resolveDefaultGitHubToken}
  * which checks `GITHUB_TOKEN` / `GH_TOKEN` env vars first and then falls
@@ -40,10 +51,19 @@ import { parseOrigin } from "./origin.js";
  * (so `tree/main/skills/x` yields entries relative to `x/`, not
  * `skills/x/`).
  *
- * **50 MB tarball cap**: enforced by GitHub itself; sufficient for any
- * sane skill / agent / mcp.
+ * **50 MB per-file cap**: enforced for any individual blob — sufficient
+ * for any sane skill / agent / mcp.
  */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Bound on concurrent Blobs API requests per `fetchTree` call. GitHub's
+ * authenticated rate limit is 5000/h and there's no per-second throttle
+ * documented for these endpoints, but bounded fan-out keeps tail
+ * latency tight on small skills (~5-30 files: 1-4 batches) and avoids
+ * any pathological burst behaviour for pathologically large subtrees.
+ */
+const TREE_BLOB_PARALLELISM = 8;
 
 export class GitHubFetcher implements Fetcher {
   readonly scheme = "github";
@@ -88,12 +108,7 @@ export class GitHubFetcher implements Fetcher {
       .join("/");
     const contentsUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
 
-    const headers: Record<string, string> = {
-      "User-Agent": "emploke-catalog-fetcher",
-      Accept: "application/vnd.github.raw",
-    };
-    const token = await resolveDefaultGitHubToken("github.com");
-    if (token) headers.Authorization = `Bearer ${token}`;
+    const headers = await this.buildHeaders("application/vnd.github.raw");
 
     let response: Response;
     try {
@@ -130,13 +145,235 @@ export class GitHubFetcher implements Fetcher {
     }
     const { owner, repo, ref, path: subPath } = origin;
 
-    const tarballUrl = `https://api.github.com/repos/${owner}/${repo}/tarball/${encodeURIComponent(ref)}`;
+    // Whole-repo install: the tarball is a single streaming HTTPS
+    // download vs N parallel round-trips for every blob. Skip the
+    // Trees+Blobs path entirely.
+    if (subPath === null) {
+      yield* this.fetchTreeViaTarball(uri, owner, repo, ref, null);
+      return;
+    }
+
+    // Subpath install: try the Trees+Blobs path first. The Trees API
+    // returns the full repo's `(path, sha)` listing in one call; we
+    // filter to the subpath and fan out parallel Blobs requests for
+    // just those files. Falls back to tarball if the tree listing is
+    // truncated (GitHub caps recursive=1 at 100K entries / ~7MB).
+    const tree = await this.fetchTreeListing(uri, owner, repo, ref);
+    if (tree === null) {
+      yield* this.fetchTreeViaTarball(uri, owner, repo, ref, subPath);
+      return;
+    }
+
+    yield* this.fetchTreeViaBlobs(uri, owner, repo, subPath, tree);
+  }
+
+  /**
+   * List every blob in the repo at `ref` via the Git Trees API
+   * (`recursive=1`). Returns the blob entries on success, or `null`
+   * when GitHub marks the listing `truncated: true` (caller should
+   * fall back to a different transport — typically tarball).
+   *
+   * Network / auth / "ref not found" errors throw {@link FetchError}
+   * instead of returning null: those failures aren't tarball-specific
+   * and the tarball would fail with the same root cause but a less
+   * specific message.
+   */
+  private async fetchTreeListing(
+    uri: string,
+    owner: string,
+    repo: string,
+    ref: string,
+  ): Promise<TreeBlobEntry[] | null> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+    const headers = await this.buildHeaders("application/vnd.github+json");
+
+    let response: Response;
+    try {
+      response = await fetch(url, { headers, redirect: "follow" });
+    } catch (cause) {
+      throw new FetchError(uri, `network error fetching tree: ${(cause as Error).message}`, {
+        cause,
+      });
+    }
+    if (!response.ok) {
+      try {
+        await response.text();
+      } catch {}
+      throw new FetchError(
+        uri,
+        `GitHub Trees API returned ${response.status} ${response.statusText}`,
+      );
+    }
+    let json: TreeListingResponse;
+    try {
+      json = (await response.json()) as TreeListingResponse;
+    } catch (cause) {
+      throw new FetchError(
+        uri,
+        `Trees API response was not valid JSON: ${(cause as Error).message}`,
+        {
+          cause,
+        },
+      );
+    }
+    if (json.truncated === true) return null;
+    if (!Array.isArray(json.tree)) {
+      throw new FetchError(uri, "Trees API response missing `tree` array");
+    }
+    const blobs: TreeBlobEntry[] = [];
+    for (const entry of json.tree) {
+      if (
+        entry !== null &&
+        typeof entry === "object" &&
+        entry.type === "blob" &&
+        typeof entry.path === "string" &&
+        typeof entry.sha === "string"
+      ) {
+        blobs.push({ path: entry.path, sha: entry.sha });
+      }
+    }
+    return blobs;
+  }
+
+  /**
+   * Fan out parallel Blobs API requests for every entry in `tree` that
+   * falls under `subPath`, yielding `EntryFile` records. Subpath
+   * matching mirrors the tarball implementation:
+   *
+   *  - subPath points at a directory → strip `subPath/` prefix from
+   *    `path` to get `relPath`.
+   *  - subPath points at a file (the only blob whose path equals
+   *    subPath exactly) → yield as basename. Mirrors the
+   *    "single-file subpath" tarball branch so callers see the same
+   *    `relPath` regardless of which transport ran.
+   *
+   * Throws {@link FetchError} when the subpath matched zero blobs
+   * (subpath doesn't exist in the tree).
+   *
+   * Yield order is the tree-listing order (filtered, then parallel-
+   * fetched, then collected). Consumers like `AgentService.install`
+   * slurp into a `Map`, so order doesn't affect correctness.
+   */
+  private async *fetchTreeViaBlobs(
+    uri: string,
+    owner: string,
+    repo: string,
+    subPath: string,
+    tree: TreeBlobEntry[],
+  ): AsyncIterable<EntryFile> {
+    const subPrefix = subPath.replace(/\/+$/, "");
+    const planned: { sha: string; relPath: string }[] = [];
+    for (const blob of tree) {
+      if (blob.path === subPrefix) {
+        // Single-file subpath: yield as basename so consumers can
+        // identify the file (matches the tarball's single-file branch).
+        const slashIdx = subPrefix.lastIndexOf("/");
+        const basename = slashIdx >= 0 ? subPrefix.slice(slashIdx + 1) : subPrefix;
+        planned.push({ sha: blob.sha, relPath: basename });
+      } else if (blob.path.startsWith(`${subPrefix}/`)) {
+        planned.push({ sha: blob.sha, relPath: blob.path.slice(subPrefix.length + 1) });
+      }
+    }
+    if (planned.length === 0) {
+      throw new FetchError(uri, `subpath "${subPath}" matched no blobs in the tree`);
+    }
+
+    // Bounded worker pool. We intentionally collect everything before
+    // yielding (rather than streaming as each blob completes) for two
+    // reasons:
+    //   1. Yield order is stable (matches the tree listing order).
+    //   2. Errors short-circuit cleanly — a single rejection aborts
+    //      the wait without leaving in-flight requests dangling
+    //      uncaught.
+    const results: EntryFile[] = new Array(planned.length);
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = cursor++;
+        if (i >= planned.length) return;
+        const job = planned[i];
+        if (job === undefined) return;
+        const content = await this.fetchBlobRaw(uri, owner, repo, job.sha);
+        results[i] = { relPath: job.relPath, content };
+      }
+    };
+    const workerCount = Math.min(TREE_BLOB_PARALLELISM, planned.length);
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < workerCount; i++) workers.push(worker());
+    await Promise.all(workers);
+
+    for (const file of results) yield file;
+  }
+
+  /**
+   * Fetch a single blob's raw bytes via the Git Blobs API. Uses
+   * `Accept: application/vnd.github.raw` so the response body is the
+   * file's raw bytes (not a base64-wrapped JSON envelope). Same
+   * leak-guard pattern as {@link fetchFile}: the response body is
+   * never surfaced in the error message.
+   */
+  private async fetchBlobRaw(
+    uri: string,
+    owner: string,
+    repo: string,
+    sha: string,
+  ): Promise<Buffer> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${encodeURIComponent(sha)}`;
+    const headers = await this.buildHeaders("application/vnd.github.raw");
+
+    let response: Response;
+    try {
+      response = await fetch(url, { headers, redirect: "follow" });
+    } catch (cause) {
+      throw new FetchError(uri, `network error fetching blob ${sha}: ${(cause as Error).message}`, {
+        cause,
+      });
+    }
+    if (!response.ok) {
+      try {
+        await response.text();
+      } catch {}
+      throw new FetchError(
+        uri,
+        `GitHub Blobs API returned ${response.status} ${response.statusText} for blob ${sha}`,
+      );
+    }
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > MAX_FILE_BYTES) {
+      throw new FetchError(uri, `blob ${sha} exceeds ${MAX_FILE_BYTES}-byte cap`);
+    }
+    return buf;
+  }
+
+  /**
+   * Build the standard request headers used across all GitHub API
+   * endpoints touched by this fetcher: User-Agent (required by GitHub),
+   * Accept (varies per call), and an optional Bearer token.
+   */
+  private async buildHeaders(accept: string): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       "User-Agent": "emploke-catalog-fetcher",
-      Accept: "application/vnd.github+json",
+      Accept: accept,
     };
     const token = await resolveDefaultGitHubToken("github.com");
     if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  }
+
+  /**
+   * Original tarball-streaming implementation, kept as the fallback
+   * for whole-repo origins (`subPath === null`) and for tree-listing
+   * truncation. See class jsdoc for when each transport is used.
+   */
+  private async *fetchTreeViaTarball(
+    uri: string,
+    owner: string,
+    repo: string,
+    ref: string,
+    subPath: string | null,
+  ): AsyncIterable<EntryFile> {
+    const tarballUrl = `https://api.github.com/repos/${owner}/${repo}/tarball/${encodeURIComponent(ref)}`;
+    const headers = await this.buildHeaders("application/vnd.github+json");
 
     let response: Response;
     try {
@@ -220,6 +457,26 @@ export class GitHubFetcher implements Fetcher {
       });
     }
   }
+}
+
+/**
+ * One blob in the recursive Trees API response that we care about
+ * (only `path` + `sha`; type/size etc. are filtered out at parse).
+ */
+interface TreeBlobEntry {
+  readonly path: string;
+  readonly sha: string;
+}
+
+interface TreeListingResponse {
+  readonly sha?: string;
+  readonly url?: string;
+  readonly tree?: ReadonlyArray<{
+    readonly path?: unknown;
+    readonly type?: unknown;
+    readonly sha?: unknown;
+  }>;
+  readonly truncated?: boolean;
 }
 
 function stripLeadingSlash(p: string): string {

@@ -238,3 +238,244 @@ describe("GitHubFetcher.fetchFile — Contents API path", () => {
     expect(msg!).not.toContain("contents_secret");
   });
 });
+
+describe("GitHubFetcher.fetchTree — Trees+Blobs subpath transport", () => {
+  // Tarball-vs-Trees discrimination is behavioural (we can't observe the
+  // private branch directly), so we assert via the request URLs the
+  // fetcher hits. The whole `fetchTree` flow is driven through a
+  // request-routing fetch stub: each test seeds responses keyed by URL
+  // pattern so we can verify exactly which endpoints fired.
+  type Route =
+    | { kind: "json"; body: unknown; status?: number }
+    | { kind: "raw"; body: string | Buffer; status?: number }
+    | { kind: "status"; status: number; statusText?: string };
+
+  function routeFetch(routes: { match: RegExp; route: Route }[]): {
+    spy: ReturnType<typeof vi.fn>;
+    urls: string[];
+  } {
+    const urls: string[] = [];
+    const spy = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      urls.push(u);
+      const hit = routes.find(({ match }) => match.test(u));
+      if (!hit) return new Response("unmatched", { status: 599, statusText: "Unmatched" });
+      const { route } = hit;
+      if (route.kind === "json") {
+        return new Response(JSON.stringify(route.body), {
+          status: route.status ?? 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (route.kind === "raw") {
+        return new Response(route.body as BodyInit, { status: route.status ?? 200 });
+      }
+      return new Response("err", { status: route.status, statusText: route.statusText ?? "Err" });
+    });
+    globalThis.fetch = spy as unknown as typeof globalThis.fetch;
+    return { spy, urls };
+  }
+
+  async function collect(uri: string): Promise<{ relPath: string; content: string }[]> {
+    const f = new GitHubFetcher();
+    const out: { relPath: string; content: string }[] = [];
+    for await (const e of f.fetchTree(uri)) {
+      out.push({ relPath: e.relPath, content: e.content.toString("utf8") });
+    }
+    return out;
+  }
+
+  it("subpath origin hits Trees API + parallel Blobs API, never the tarball", async () => {
+    const { urls } = routeFetch([
+      {
+        match: /\/git\/trees\/main\?recursive=1$/,
+        route: {
+          kind: "json",
+          body: {
+            sha: "abc",
+            tree: [
+              { path: "skills/x/SKILL.md", type: "blob", sha: "sha-skill-md" },
+              { path: "skills/x/lib/util.ts", type: "blob", sha: "sha-util" },
+              { path: "skills/y/SKILL.md", type: "blob", sha: "sha-other" },
+              { path: "agents/a/AGENTS.md", type: "blob", sha: "sha-noise" },
+            ],
+            truncated: false,
+          },
+        },
+      },
+      { match: /\/git\/blobs\/sha-skill-md$/, route: { kind: "raw", body: "# skill x\n" } },
+      { match: /\/git\/blobs\/sha-util$/, route: { kind: "raw", body: "export const x = 1;\n" } },
+    ]);
+
+    const out = await collect("https://github.com/owner/repo/tree/main/skills/x");
+
+    expect(out.map((e) => e.relPath).sort()).toEqual(["SKILL.md", "lib/util.ts"]);
+    expect(out.find((e) => e.relPath === "SKILL.md")?.content).toBe("# skill x\n");
+    expect(out.find((e) => e.relPath === "lib/util.ts")?.content).toBe("export const x = 1;\n");
+    // Trees + only the two matching blobs were requested. No tarball,
+    // no extra blob (skills/y, agents/a were filtered before fetch).
+    expect(urls).toHaveLength(3);
+    expect(urls.some((u) => u.includes("/tarball/"))).toBe(false);
+    expect(urls.some((u) => u.includes("/git/blobs/sha-other"))).toBe(false);
+    expect(urls.some((u) => u.includes("/git/blobs/sha-noise"))).toBe(false);
+  });
+
+  it("Blobs API request carries Accept: application/vnd.github.raw (raw bytes, not base64)", async () => {
+    let blobAccept: string | null = null;
+    const spy = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("?recursive=1")) {
+        return new Response(
+          JSON.stringify({
+            tree: [{ path: "skills/x/SKILL.md", type: "blob", sha: "s1" }],
+            truncated: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (u.includes("/git/blobs/")) {
+        blobAccept = new Headers(init?.headers as HeadersInit).get("accept");
+        return new Response("# hi\n", { status: 200 });
+      }
+      return new Response("nope", { status: 599 });
+    });
+    globalThis.fetch = spy as unknown as typeof globalThis.fetch;
+
+    await collect("https://github.com/owner/repo/tree/main/skills/x");
+    expect(blobAccept).toBe("application/vnd.github.raw");
+  });
+
+  it("single-file subpath yields the matched blob under its basename", async () => {
+    routeFetch([
+      {
+        match: /\/git\/trees\/main\?recursive=1$/,
+        route: {
+          kind: "json",
+          body: {
+            tree: [
+              { path: "mcps/foo.json", type: "blob", sha: "sha-foo" },
+              { path: "mcps/bar.json", type: "blob", sha: "sha-bar" },
+            ],
+            truncated: false,
+          },
+        },
+      },
+      { match: /\/git\/blobs\/sha-foo$/, route: { kind: "raw", body: '{"name":"foo"}' } },
+    ]);
+
+    const out = await collect("https://github.com/owner/repo/tree/main/mcps/foo.json");
+    expect(out).toHaveLength(1);
+    expect(out[0]?.relPath).toBe("foo.json");
+    expect(out[0]?.content).toBe('{"name":"foo"}');
+  });
+
+  it("falls back to tarball when the Trees API marks the response truncated", async () => {
+    const tarUrls: string[] = [];
+    const spy = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("?recursive=1")) {
+        return new Response(JSON.stringify({ tree: [], truncated: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (u.includes("/tarball/")) {
+        tarUrls.push(u);
+        // Return a 502 so the fallback fails fast — we only want to
+        // observe that the fallback URL was hit, not parse a real tarball.
+        return new Response("upstream error", { status: 502, statusText: "Bad Gateway" });
+      }
+      return new Response("unmatched", { status: 599 });
+    });
+    globalThis.fetch = spy as unknown as typeof globalThis.fetch;
+
+    const f = new GitHubFetcher();
+    await expect(async () => {
+      for await (const _ of f.fetchTree("https://github.com/owner/repo/tree/main/skills/x")) {
+        // unreachable — we expect the tarball fallback's 502 to throw
+      }
+    }).rejects.toThrow(FetchError);
+    expect(tarUrls).toHaveLength(1);
+    expect(tarUrls[0]).toContain("/tarball/main");
+  });
+
+  it("whole-repo origin (no subpath) skips Trees+Blobs and goes straight to tarball", async () => {
+    const urls: string[] = [];
+    const spy = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.includes("/tarball/")) {
+        return new Response("tar", { status: 502, statusText: "Bad Gateway" });
+      }
+      return new Response("unmatched", { status: 599 });
+    });
+    globalThis.fetch = spy as unknown as typeof globalThis.fetch;
+
+    const f = new GitHubFetcher();
+    await expect(async () => {
+      for await (const _ of f.fetchTree("https://github.com/owner/repo/tree/main")) {
+        // unreachable
+      }
+    }).rejects.toThrow(FetchError);
+    // No Trees API call: the whole-repo branch never tries blob fan-out.
+    expect(urls.some((u) => u.includes("/git/trees/"))).toBe(false);
+    expect(urls.some((u) => u.includes("/tarball/"))).toBe(true);
+  });
+
+  it("throws FetchError when subpath matches no blobs in the tree", async () => {
+    routeFetch([
+      {
+        match: /\/git\/trees\/main\?recursive=1$/,
+        route: {
+          kind: "json",
+          body: {
+            tree: [{ path: "skills/y/SKILL.md", type: "blob", sha: "sha-y" }],
+            truncated: false,
+          },
+        },
+      },
+    ]);
+
+    const f = new GitHubFetcher();
+    await expect(async () => {
+      for await (const _ of f.fetchTree("https://github.com/owner/repo/tree/main/skills/x")) {
+        // unreachable
+      }
+    }).rejects.toThrow(/matched no blobs/);
+  });
+
+  it("FetchError on Blobs API 404 does NOT contain the token bytes", async () => {
+    process.env.GITHUB_TOKEN = "gho_blobs_secret_KEEP_HIDDEN_555";
+    routeFetch([
+      {
+        match: /\/git\/trees\/main\?recursive=1$/,
+        route: {
+          kind: "json",
+          body: {
+            tree: [{ path: "skills/x/SKILL.md", type: "blob", sha: "sha-missing" }],
+            truncated: false,
+          },
+        },
+      },
+      {
+        match: /\/git\/blobs\/sha-missing$/,
+        route: { kind: "status", status: 404, statusText: "Not Found" },
+      },
+    ]);
+
+    const f = new GitHubFetcher();
+    let msg: string | null = null;
+    try {
+      for await (const _ of f.fetchTree("https://github.com/owner/repo/tree/main/skills/x")) {
+        // unreachable
+      }
+    } catch (e) {
+      if (e instanceof FetchError) msg = e.message;
+      else throw e;
+    }
+    expect(msg).not.toBeNull();
+    expect(msg!).toMatch(/404/);
+    expect(msg!).not.toContain("gho_blobs_secret_KEEP_HIDDEN_555");
+    expect(msg!).not.toContain("blobs_secret");
+  });
+});
