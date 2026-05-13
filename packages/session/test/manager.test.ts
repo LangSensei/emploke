@@ -860,6 +860,91 @@ describe("buildInteractiveLaunch()", () => {
     expect(after?.runtimeSessionId).toBe("from-parallel-writer");
     expect(after?.lastLaunchMode).toBe("remote");
   });
+
+  // ─── env injection ──────────────────────────────────────────────
+  //
+  // SessionManager layers a self-describing env bag onto the
+  // LaunchCommand returned by the runtime so the shell that ends up
+  // running `copilot --resume <id>` (and any nested `emploke ...`
+  // calls the user makes inside it) inherits the workspace identity.
+  // See SessionManagerConfig.subprocessEnv for the rationale; same
+  // contract as TaskManager.
+
+  it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKDIR / EMPLOKE_SESSION_ID onto the LaunchCommand", async () => {
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      workspaceId: "ws-uuid-alpha",
+      subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
+      repository: makeRepo(),
+    });
+    const s = await m.create({ agent: "demo" });
+    const launch = await m.buildInteractiveLaunch(s.id);
+    expect(launch.env).toBeDefined();
+    expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
+    expect(launch.env?.EMPLOKE_WORKDIR).toBe(scratch);
+    expect(launch.env?.EMPLOKE_SESSION_ID).toBe(s.id);
+  });
+
+  it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
+    const rt = new StubRuntime();
+    const m = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      sessionsDir,
+      workspaceDir: scratch,
+      repository: makeRepo(),
+    });
+    const s = await m.create({ agent: "demo" });
+    const launch = await m.buildInteractiveLaunch(s.id);
+    // Per-session fields still populated even without a workspaceId.
+    expect(launch.env?.EMPLOKE_WORKDIR).toBe(scratch);
+    expect(launch.env?.EMPLOKE_SESSION_ID).toBe(s.id);
+    expect("EMPLOKE_WORKSPACE" in (launch.env ?? {})).toBe(false);
+  });
+
+  it("two managers for two workspaces produce isolated launch envs (sharing a frozen base)", async () => {
+    // Mimics what WorkspaceContextCache does: one shared frozen base
+    // passed by reference into every per-workspace SessionManager.
+    // The base must NEVER be mutated by buildInteractiveLaunch; per-
+    // session fields go on a fresh layer on top.
+    const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
+
+    const mA = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      sessionsDir,
+      workspaceDir: scratch,
+      workspaceId: "ws-A",
+      subprocessEnv: sharedBase,
+      repository: makeRepo(),
+    });
+    const mB = new SessionManager({
+      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      sessionsDir,
+      workspaceDir: scratch,
+      workspaceId: "ws-B",
+      subprocessEnv: sharedBase,
+      repository: makeRepo(),
+    });
+
+    const sA = await mA.create({ agent: "demo" });
+    const sB = await mB.create({ agent: "demo" });
+    const [lA, lB] = await Promise.all([
+      mA.buildInteractiveLaunch(sA.id),
+      mB.buildInteractiveLaunch(sB.id),
+    ]);
+
+    expect(lA.env?.EMPLOKE_WORKSPACE).toBe("ws-A");
+    expect(lB.env?.EMPLOKE_WORKSPACE).toBe("ws-B");
+    // Frozen base survived without mutation.
+    expect(Object.keys(sharedBase)).toEqual(["EMPLOKE_SERVER"]);
+  });
 });
 
 // Suppress unused imports warning for vi (kept available for future tests).

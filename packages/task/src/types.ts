@@ -84,6 +84,27 @@ export interface TaskManagerConfig {
    * path that is shared across every session/task in this workspace.
    */
   readonly workspaceDir: string;
+  /**
+   * Workspace UUID this manager belongs to. Surfaced as
+   * `EMPLOKE_WORKSPACE` in every task subprocess's env so the spawned
+   * binary (and any of its own children) can address its workspace
+   * over the API without the caller threading `--workspace` through
+   * every invocation.
+   *
+   * Optional for back-compat with existing tests that build a
+   * `TaskManager` without a real workspace registration; production
+   * call sites in `WorkspaceContext` always pass it.
+   */
+  readonly workspaceId?: string;
+  /**
+   * Static env overrides merged into every task subprocess on top of
+   * the per-task additions assembled in `dispatch()`. Production wires
+   * this from the server with `EMPLOKE_SERVER`, `EMPLOKE_API_KEY`
+   * (when set), and `EMPLOKE_HOME` so the spawned CLI can call back
+   * into the same server it was launched from. Tests typically leave
+   * this unset.
+   */
+  readonly subprocessEnv?: NodeJS.ProcessEnv;
   /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
   /**

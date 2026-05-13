@@ -46,6 +46,8 @@ export class SessionManager {
   private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
   private readonly workspaceDir: string;
+  private readonly workspaceId: string | undefined;
+  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
   private readonly repository: SessionRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -57,6 +59,8 @@ export class SessionManager {
     this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
     this.sessionsDir = path.resolve(config.sessionsDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
+    this.workspaceId = config.workspaceId;
+    this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
     this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
@@ -260,6 +264,29 @@ export class SessionManager {
       },
     );
 
+    // Layer in the per-session env bag on top of whatever the runtime
+    // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKDIR /
+    // EMPLOKE_SESSION_ID. Server-supplied base adds: EMPLOKE_SERVER /
+    // EMPLOKE_API_KEY (when set) / EMPLOKE_HOME. Both layers are
+    // merged with the runtime's own (currently empty) env field
+    // letting a future runtime contribute its own vars (e.g. a
+    // CLI-specific flag).
+    //
+    // CONCURRENCY: the resulting env object is a fresh shallow copy.
+    // The shared base (`this.subprocessEnvBase`) is never mutated;
+    // see SessionManagerConfig.subprocessEnv for the rationale (same
+    // contract as TaskManager).
+    //
+    // Why we filter out `undefined` values: NodeJS.ProcessEnv allows
+    // `string | undefined`, but `LaunchCommand.env` is
+    // `Record<string, string>` — inlining `undefined` into a shell
+    // `export K='undefined'` would set the literal string. The
+    // mergeEnv approach used by the task path drops them; we do the
+    // same here for symmetry.
+    const launchEnv = this.assembleLaunchEnv(id, launch.env);
+    const launchWithEnv: LaunchCommand =
+      Object.keys(launchEnv).length === 0 ? launch : { ...launch, env: launchEnv };
+
     // Best-effort: remember the user's last intent for this session so
     // the next dashboard render can default the Resume button. Persisted
     // only after `buildInteractiveLaunch` succeeded — if the runtime threw (e.g.
@@ -290,7 +317,42 @@ export class SessionManager {
       }
     }
 
-    return launch;
+    return launchWithEnv;
+  }
+
+  /**
+   * Build the env bag layered onto the LaunchCommand returned by the
+   * runtime. Order (later wins on key collision):
+   *
+   *   1. The server-supplied base (`subprocessEnvBase`) — typically
+   *      EMPLOKE_SERVER / EMPLOKE_API_KEY / EMPLOKE_HOME.
+   *   2. Whatever the runtime contributed via `LaunchCommand.env`
+   *      (presently nothing for Copilot; reserved for future runtimes
+   *      that need their own vars).
+   *   3. Per-session fields: EMPLOKE_WORKSPACE (when known),
+   *      EMPLOKE_WORKDIR, EMPLOKE_SESSION_ID.
+   *
+   * `undefined` values are dropped so they don't get inlined as the
+   * literal string "undefined" by the shell-export prefix in
+   * `@emploke/terminal`.
+   */
+  private assembleLaunchEnv(
+    sessionId: string,
+    runtimeEnv: Readonly<Record<string, string>> | undefined,
+  ): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.subprocessEnvBase)) {
+      if (typeof v === "string") out[k] = v;
+    }
+    if (runtimeEnv !== undefined) {
+      for (const [k, v] of Object.entries(runtimeEnv)) {
+        out[k] = v;
+      }
+    }
+    if (this.workspaceId !== undefined) out.EMPLOKE_WORKSPACE = this.workspaceId;
+    out.EMPLOKE_WORKDIR = this.workspaceDir;
+    out.EMPLOKE_SESSION_ID = sessionId;
+    return out;
   }
 
   // ─── close ───────────────────────────────────────────────

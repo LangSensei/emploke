@@ -68,6 +68,29 @@ export interface SessionManagerConfig {
    */
   readonly workspaceDir: string;
   /**
+   * Workspace UUID this manager belongs to. Surfaced as
+   * `EMPLOKE_WORKSPACE` in the env bag of every interactive session
+   * spawn so the shell that ends up running `copilot --resume <id>`
+   * (and any `emploke ...` calls the user makes inside it) inherits
+   * the workspace identity automatically. See the `subprocessEnv`
+   * field below for how the bag is assembled.
+   *
+   * Optional for back-compat with tests that build a SessionManager
+   * without a real workspace registration; production call sites in
+   * `WorkspaceContext` always pass it.
+   */
+  readonly workspaceId?: string;
+  /**
+   * Static env overrides merged into every session-launch env bag on
+   * top of the per-session additions assembled in
+   * `buildInteractiveLaunch()`. Production wires this from the server
+   * with `EMPLOKE_SERVER`, `EMPLOKE_API_KEY` (when set), and
+   * `EMPLOKE_HOME` so a shell launched by `session spawn` can call
+   * back into the same server it was launched from. Tests typically
+   * leave this unset.
+   */
+  readonly subprocessEnv?: NodeJS.ProcessEnv;
+  /**
    * Persistence backend for session state. Required: callers (server
    * `WorkspaceContext` in production, tests) construct a
    * `SqliteSessionRepository({ db: <workspace.db connection> })` and

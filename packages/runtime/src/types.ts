@@ -264,6 +264,26 @@ export interface LaunchHeadlessOpts {
   readonly catalog: CatalogManager;
   readonly prompt: string;
   readonly workspaceDir: string;
+  /**
+   * Extra environment variables merged into the spawned subprocess on
+   * top of the server's own `process.env`. Used to give every emploke-
+   * controlled child a self-describing context bag (`EMPLOKE_WORKSPACE`,
+   * `EMPLOKE_WORKDIR`, `EMPLOKE_TASK_ID`, `EMPLOKE_SERVER`,
+   * `EMPLOKE_API_KEY`, `EMPLOKE_HOME`, …).
+   *
+   * Why this exists: AI-agent harnesses run each tool call in a fresh
+   * shell, so per-shell `export EMPLOKE_WORKSPACE=...` does not survive.
+   * Threading the bag through the runtime contract means the very
+   * binary the agent shells out to (e.g. `emploke task dispatch`)
+   * inherits the workspace identity automatically; no setup step
+   * required, no chance of operating on the wrong workspace because
+   * the env was rebuilt mid-conversation.
+   *
+   * Keys with `undefined` values are dropped (matches Node's spawn
+   * convention); pass `undefined` from the caller to "don't set this
+   * variable" without having to branch on whether it exists upstream.
+   */
+  readonly subprocessEnv?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -434,6 +454,26 @@ export interface LaunchCommand {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly display: string;
+  /**
+   * Optional env vars the spawned terminal session should inherit.
+   *
+   * Why this exists: tasks are spawned directly by the server so we
+   * can pass `env` straight to `child_process.spawn`. Sessions are
+   * spawned indirectly via the user's terminal app (Windows Terminal
+   * / Terminal.app / gnome-terminal), most of which run as long-lived
+   * daemons that do NOT see the env we hand to their launcher
+   * process. Reliably propagating env to the shell that ends up
+   * exec'ing this command therefore requires INLINING the env into
+   * the shell command itself (`export K='v' && exec foo args` on
+   * POSIX, `$env:K='v'; & foo args` for pwsh). The terminal package
+   * does that work; this field carries the bag from
+   * `SessionManager.buildInteractiveLaunch` to `spawnTerminal`.
+   *
+   * Values must be plain strings — no `undefined` (semantically
+   * meaningless when inlining), no `null`, no arrays. `undefined`
+   * upstream should be filtered before assembling this map.
+   */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 // ─── ActivityItem (cross-runtime structured timeline) ─────────────────

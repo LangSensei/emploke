@@ -44,6 +44,20 @@ export interface SpawnOpts {
    * parsing entirely (preventing shell-metachar injection in cwd/args).
    */
   windowsVerbatimArguments?: boolean;
+  /**
+   * Optional env override. When undefined, the child inherits the
+   * parent's `process.env` (Node default). When set, `realSpawn`
+   * passes it as-is to `child_process.spawn`'s `env` option — the
+   * caller is responsible for merging with `process.env` if they
+   * want partial-override semantics.
+   *
+   * Used as a belt-and-suspenders for the Windows `cmd /k` fallback,
+   * where the new console naturally inherits parent env. The wt+pwsh
+   * and macOS/Linux paths inline env into the shell command instead
+   * (because their target apps run as daemons and ignore spawn env);
+   * see the per-platform impls.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface SpawnTerminalDeps {

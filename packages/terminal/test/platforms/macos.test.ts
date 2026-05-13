@@ -38,4 +38,35 @@ describe("spawnTerminalWith > macOS", () => {
     const { deps } = makeDeps({ platform: "darwin", failures: { 0: "ENOENT" } });
     await expect(spawnTerminalWith(sample, deps)).rejects.toThrow(TerminalSpawnFailedError);
   });
+
+  it("inlines cmd.env as `export K='v' && ` before cd in the do-script payload", async () => {
+    // Terminal.app is a daemon — env handed to osascript does NOT propagate
+    // to the child shell it forks. Inlining `export ... && ` into the
+    // shell line is the only reliable way to make EMPLOKE_* show up in
+    // the eventual `copilot` process.
+    const { deps, calls } = makeDeps({ platform: "darwin" });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: {
+        EMPLOKE_WORKSPACE: "ws-uuid-1",
+        EMPLOKE_SESSION_ID: "01HZZZ",
+        EMPLOKE_SERVER: "http://127.0.0.1:8787",
+      },
+    };
+    await spawnTerminalWith(cmd, deps);
+    const script = calls[0]?.args[1] as string;
+    // Order-preserving export with single-quoted values.
+    expect(script).toContain(
+      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_SESSION_ID='01HZZZ' EMPLOKE_SERVER='http://127.0.0.1:8787' && cd '/tmp/wd' && exec 'copilot'",
+    );
+  });
+
+  it("does not emit `export … && ` when cmd.env is empty", async () => {
+    const { deps, calls } = makeDeps({ platform: "darwin" });
+    const cmd: LaunchCommand = { ...sample, env: {} };
+    await spawnTerminalWith(cmd, deps);
+    const script = calls[0]?.args[1] as string;
+    expect(script).not.toContain("export ");
+    expect(script).toContain("cd '/tmp/wd' && exec 'copilot'");
+  });
 });

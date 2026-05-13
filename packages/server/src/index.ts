@@ -23,6 +23,7 @@ import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
+import { buildSubprocessEnvBase } from "./subprocess-env.js";
 import { WorkspaceContextCache } from "./workspace-context.js";
 
 // Re-export the route manifest so downstream packages (@emploke/cli,
@@ -201,7 +202,26 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const globalDb = new DatabaseSync(paths.globalDbFile);
   const workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb, logger }));
 
-  const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces, logger });
+  const cache = new WorkspaceContextCache({
+    runtimeRegistry,
+    workspaces,
+    logger,
+    // Static env bag merged into every task subprocess. Per-task
+    // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_TASK_ID`,
+    // `EMPLOKE_WORKDIR`) are layered on inside `TaskManager.dispatch`.
+    //
+    // `EMPLOKE_SERVER` resolves to a loopback URL when the server is
+    // bound to 0.0.0.0 — the spawned subprocess runs on the same host,
+    // so dialing 0.0.0.0 would be a misconfiguration on Windows
+    // (refused) and a no-op on macOS/Linux. Loopback is the only
+    // address guaranteed to work from a child.
+    //
+    // `EMPLOKE_API_KEY` is conditionally added so unset upstream means
+    // genuinely unset downstream (mergeEnv in launch-headless drops
+    // undefined values, but we also keep them out of the static bag
+    // for clarity in logs / tests).
+    subprocessEnvBase: buildSubprocessEnvBase({ hostname, port, apiKey, home: paths.home }),
+  });
 
   const app = new Hono();
 

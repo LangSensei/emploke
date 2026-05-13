@@ -1,5 +1,5 @@
 import type { LaunchCommand } from "@emploke/runtime";
-import { shQuote, waitForEarlyFailure } from "../_shared.js";
+import { shExportPrefix, shQuote, waitForEarlyFailure } from "../_shared.js";
 import { NoTerminalFoundError } from "../errors.js";
 import type { Launcher, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
@@ -48,10 +48,56 @@ export async function spawnLinux(
  * For each terminal, prefer the form that takes argv directly (no shell
  * parsing) when supported. Fall back to `sh -lc` for the ones whose
  * working-dir/command flags only accept a string.
+ *
+ * Env injection: when `cmd.env` is set, ALL terminals are routed through
+ * the `sh -lc "<inline export + cd + exec>"` form. The native argv
+ * forms (e.g. gnome-terminal `-- argv`) cannot carry env — gnome-terminal
+ * is a daemon that inherits env from its first invocation, not from
+ * subsequent client launches. The shell line is the only mechanism
+ * that reliably sets env at the moment the actual command exec's.
+ * See `shExportPrefix` for the rationale.
  */
 function buildLinuxArgs(term: Launcher, cmd: LaunchCommand): string[] {
   const argv = [cmd.cmd, ...cmd.args];
-  const shellLine = `cd ${shQuote(cmd.cwd)} && exec ${argv.map(shQuote).join(" ")}`;
+  // Single canonical shell line used by every "fallback to sh -lc"
+  // branch below AND by the env-set route. The export prefix is empty
+  // when env is unset, so the line stays equivalent to the historical
+  // `cd <cwd> && exec <argv>`.
+  const shellLine = `${shExportPrefix(cmd.env)}cd ${shQuote(cmd.cwd)} && exec ${argv.map(shQuote).join(" ")}`;
+
+  // When env is non-empty we MUST go through a shell to materialise it.
+  // Drop the per-terminal native-argv branches in that case — they
+  // would silently not set the env.
+  const hasEnv = cmd.env !== undefined && Object.keys(cmd.env).length > 0;
+  if (hasEnv) {
+    switch (term) {
+      case "xfce4-terminal":
+      case "lxterminal":
+        // Both accept --command=<single string>. Compose the sh -lc
+        // call as a single string and let the terminal hand it to its
+        // default shell (which then runs sh -lc).
+        return [`--working-directory=${cmd.cwd}`, `--command=sh -lc ${shQuote(shellLine)}`];
+      case "gnome-terminal":
+      case "mate-terminal":
+      case "tilix":
+        return [`--working-directory=${cmd.cwd}`, "--", "sh", "-lc", shellLine];
+      case "kgx":
+        return ["--working-directory", cmd.cwd, "--", "sh", "-lc", shellLine];
+      case "konsole":
+        return ["--workdir", cmd.cwd, "-e", "sh", "-lc", shellLine];
+      case "alacritty":
+      case "wezterm":
+        return ["--working-directory", cmd.cwd, "-e", "sh", "-lc", shellLine];
+      case "kitty":
+        return ["--directory", cmd.cwd, "sh", "-lc", shellLine];
+      case "xterm":
+      case "x-terminal-emulator":
+        return ["-e", "sh", "-lc", shellLine];
+      default:
+        return ["-e", "sh", "-lc", shellLine];
+    }
+  }
+
   switch (term) {
     case "gnome-terminal":
     case "mate-terminal":
