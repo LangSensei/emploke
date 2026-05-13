@@ -325,7 +325,7 @@ const makeManager = (
     registry?: RuntimeRegistry;
     now?: () => Date;
     randomBytes?: (n: number) => Buffer;
-    logger?: { warn: (msg: string, meta?: object) => void };
+    logger?: { warn: (meta: object | string, msg?: string) => void };
     repository?: SqliteTaskRepository;
   } = {},
 ): { m: TaskManager; repo: SqliteTaskRepository } => {

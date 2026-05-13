@@ -1,6 +1,6 @@
 import { captureLogger } from "@emploke/logger/testing";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accessLog } from "../src/middleware/access-log.js";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
@@ -152,5 +152,56 @@ describe("accessLog middleware", () => {
     const access = cap.entries.find((e) => e.msg === "http");
     expect(typeof access?.userAgent).toBe("string");
     expect((access?.userAgent as string).length).toBeLessThanOrEqual(80);
+  });
+
+  it("escalates to warn when a 2xx response takes longer than the slow-request threshold", async () => {
+    // Drive the duration via `performance.now` rather than a real wait so
+    // the test stays fast. accessLog reads `performance.now()` exactly
+    // twice (start, finally); we return a small first value then jump
+    // past the 2s threshold on the second read.
+    const original = performance.now.bind(performance);
+    let call = 0;
+    const spy = vi.spyOn(performance, "now").mockImplementation(() => {
+      call++;
+      // First call: t=0 (start of access middleware).
+      // Second call: t=2500 (in finally — after next()).
+      // Third+ calls: real time, in case anything else reads.
+      if (call === 1) return 0;
+      if (call === 2) return 2500;
+      return original();
+    });
+    try {
+      const app = buildApp();
+      app.get("/slow", (c) => c.text("done"));
+      const res = await app.request("/slow");
+      expect(res.status).toBe(200);
+      const access = cap.entries.find((e) => e.msg === "http");
+      expect(access?.level).toBe(40); // warn — slow but successful
+      expect(access?.status).toBe(200);
+      expect(access?.durationMs).toBeGreaterThan(2000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("still emits an access line with error level when a downstream handler throws", async () => {
+    // Defence-in-depth: Hono's default error handler catches the throw
+    // and converts it to a generic 500 — so by the time our access
+    // middleware's `finally` block runs, the response status is 500
+    // and the `thrown` flag never gets set. The visible behaviour is
+    // identical to "handler returned 500" — what we want to verify is
+    // that an exception in the handler chain does NOT prevent the
+    // access line from being emitted.
+    const app = buildApp();
+    app.get("/throws", () => {
+      throw new Error("downstream-throw-sentinel");
+    });
+
+    const res = await app.request("/throws");
+    expect(res.status).toBe(500); // Hono's default error response
+    const access = cap.entries.find((e) => e.msg === "http");
+    expect(access).toBeDefined();
+    expect(access?.level).toBe(50); // error
+    expect(access?.status).toBe(500);
   });
 });

@@ -452,16 +452,19 @@ function workspaceContextMiddleware(
 }
 
 /**
- * Parse the `EMPLOKE_LOG_LEVEL` env into one of the four supported
- * levels. Falls back to `"info"` on any unrecognised / unset value so
- * a misconfigured env never silently disables logging.
+ * Parse the `EMPLOKE_LOG_LEVEL` env into one of pino's six supported
+ * levels (`trace`, `debug`, `info`, `warn`, `error`, `fatal`). Falls
+ * back to `"info"` on any unrecognised / unset value so a misconfigured
+ * env never silently disables logging.
  */
 function parseLogLevel(raw: string | undefined): LogLevel {
   switch (raw) {
+    case "trace":
     case "debug":
     case "info":
     case "warn":
     case "error":
+    case "fatal":
       return raw;
     default:
       return "info";
