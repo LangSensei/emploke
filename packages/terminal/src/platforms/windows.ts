@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { LaunchCommand } from "@emploke/runtime";
-import { escapeCmdArg, pwshQuote, waitForEarlyFailure } from "../_shared.js";
+import { escapeCmdArg, pwshEnvPrefix, pwshQuote, waitForEarlyFailure } from "../_shared.js";
 import { TerminalSpawnFailedError } from "../errors.js";
 import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
@@ -64,6 +64,13 @@ export async function spawnWindows(
   // does not double-escape: the result is that shell metacharacters in
   // `cmd.cwd` / `cmd.cmd` / `cmd.args` (e.g. `&`, `|`, `>`, `%`) cannot
   // break out of their argument and execute additional commands.
+  //
+  // Env injection: `cmd /k` inherits its environment from the parent
+  // process the OS just spawned (cmd.exe /c start ...), which inherits
+  // from us. Passing `env: cmd.env` as a spawn option on the OUTER
+  // cmd.exe therefore propagates straight through start → new console.
+  // No inline `set …` prefix needed (unlike the wt+pwsh path, where
+  // wt.exe's daemon mode would swallow it).
   const handle = deps.spawn(
     "cmd.exe",
     [
@@ -77,7 +84,12 @@ export async function spawnWindows(
       escapeCmdArg(cmd.cmd),
       ...cmd.args.map(escapeCmdArg),
     ],
-    { windowsVerbatimArguments: true },
+    {
+      windowsVerbatimArguments: true,
+      ...(cmd.env !== undefined && Object.keys(cmd.env).length > 0
+        ? { env: { ...process.env, ...cmd.env } }
+        : {}),
+    },
   );
   const failure = await waitForEarlyFailure(handle, deps.observationMs);
   if (failure !== null) throw new TerminalSpawnFailedError("cmd", failure.reason);
@@ -93,6 +105,33 @@ export async function spawnWindows(
  * legacy "wt runs copilot directly" form. This preserves the prior
  * behaviour rather than failing the launch — the renderer race is
  * intermittent, not deterministic.
+ *
+ * Env injection: when `cmd.env` is non-empty AND we have a pwsh host,
+ * we prepend `$env:K = 'v'; …; ` to the -Command payload. wt.exe runs
+ * as a daemon, so spawn-time env doesn't reach the new tab — but the
+ * pwsh process we ourselves invoke inside the tab IS in our control,
+ * so setting `$env:` before `&`-invoking copilot reliably puts the
+ * vars into copilot's environment. The no-shell-host branch can't
+ * carry env (wt argv is run without a shell) so we silently drop the
+ * env there; in practice every modern Windows install ships with at
+ * least powershell.exe, so this path is essentially unreachable.
+ *
+ * CRITICAL — wt.exe semicolon escaping:
+ * `wt.exe` interprets `;` as its OWN command separator (per
+ * https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments).
+ * Even when `;` appears inside what we think is a single argv element,
+ * wt's parser splits the whole command line on unescaped `;` and
+ * spawns a new tab/window for each chunk. That's why an unescaped
+ * `$env:A = 'x'; $env:B = 'y'; & 'cmd'` payload opens THREE tabs
+ * (one per chunk) instead of running the script. Escape every `;`
+ * with `\;` so wt passes a literal semicolon through to pwsh.
+ *
+ * The escape only needs to happen on the path where we PUT a semicolon
+ * into the payload — i.e. when `cmd.env` was non-empty. We still apply
+ * the replace unconditionally because it's a cheap no-op when the
+ * payload contains no `;` and gives us defense-in-depth if a future
+ * caller adds `;`-bearing args (e.g. a copilot CLI flag value with a
+ * semicolon).
  */
 function buildWtArgs(cmd: LaunchCommand, deps: SpawnTerminalDeps): string[] {
   // Prefer pwsh 7+ since copilot CLI itself documents it as required on
@@ -106,6 +145,18 @@ function buildWtArgs(cmd: LaunchCommand, deps: SpawnTerminalDeps): string[] {
   // one escape rule (`''` for a literal `'`) so this is robust against
   // any character in cmd.cmd / cmd.args, including spaces, `;`, `$`,
   // `&`, etc.
-  const pwshCommand = ["&", pwshQuote(cmd.cmd), ...cmd.args.map(pwshQuote)].join(" ");
+  const callPayload = ["&", pwshQuote(cmd.cmd), ...cmd.args.map(pwshQuote)].join(" ");
+  const pwshCommand = escapeWtSemicolons(`${pwshEnvPrefix(cmd.env)}${callPayload}`);
   return ["-d", cmd.cwd, shell, "-NoLogo", "-NoExit", "-Command", pwshCommand];
+}
+
+/**
+ * Escape every `;` in `s` as `\;`. See `buildWtArgs`'s docstring for
+ * the full rationale — TL;DR: wt.exe's CLI parser treats `;` as a
+ * command separator across the entire command line (including inside
+ * what we'd consider a single quoted argv element), so unescaped
+ * semicolons silently fan out into multiple new-tab subcommands.
+ */
+function escapeWtSemicolons(s: string): string {
+  return s.replace(/;/g, "\\;");
 }

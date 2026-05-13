@@ -122,4 +122,78 @@ describe("spawnTerminalWith > linux", () => {
     // Single quote must be escaped as '\'' inside POSIX single quotes.
     expect(calls[0]?.args[3]).toBe("cd '/tmp/Lang'\\''s Files' && exec 'copilot'");
   });
+
+  // --- env injection (Linux) ---
+  //
+  // Linux terminal apps (gnome-terminal, konsole, kitty, …) all run as
+  // daemons that ignore the env we hand to their launcher process. So
+  // when `cmd.env` is non-empty we route EVERY terminal through the
+  // `sh -lc "<inline export + cd + exec>"` form, even those that
+  // normally accept argv directly. The shell IS the actual exec site,
+  // so `export K='v' && exec foo` reliably puts K into foo's env.
+
+  it("routes gnome-terminal through `sh -lc` with inline export when cmd.env is set", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { "gnome-terminal": "/usr/bin/gnome-terminal" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-1", EMPLOKE_SESSION_ID: "01HZZZ" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.args).toEqual([
+      "--working-directory=/tmp/wd",
+      "--",
+      "sh",
+      "-lc",
+      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_SESSION_ID='01HZZZ' && cd '/tmp/wd' && exec 'copilot'",
+    ]);
+  });
+
+  it("routes konsole through `sh -lc` with inline export when cmd.env is set", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { konsole: "/usr/bin/konsole" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-1" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.args).toEqual([
+      "--workdir",
+      "/tmp/wd",
+      "-e",
+      "sh",
+      "-lc",
+      "export EMPLOKE_WORKSPACE='ws-uuid-1' && cd '/tmp/wd' && exec 'copilot'",
+    ]);
+  });
+
+  it("keeps the native argv form when cmd.env is empty (no shell wrapper)", async () => {
+    // Empty env should be indistinguishable from no env. The native
+    // gnome-terminal `--` form is preferred when we don't NEED a shell.
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { "gnome-terminal": "/usr/bin/gnome-terminal" },
+    });
+    const cmd: LaunchCommand = { ...sample, env: {} };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.args).toEqual(["--working-directory=/tmp/wd", "--", "copilot"]);
+  });
+
+  it("safely shell-quotes env values containing a single quote", async () => {
+    const { deps, calls } = makeDeps({
+      platform: "linux",
+      pathTable: { "gnome-terminal": "/usr/bin/gnome-terminal" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_NOTE: "Lang's note" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    const shellLine = calls[0]?.args.at(-1) as string;
+    expect(shellLine).toContain("EMPLOKE_NOTE='Lang'\\''s note'");
+  });
 });

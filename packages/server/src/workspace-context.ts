@@ -282,6 +282,8 @@ export class WorkspaceContextCache {
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
       workspaceDir: workspace.workdir,
+      workspaceId: id,
+      subprocessEnv: this.subprocessEnvBase,
       repository: new SqliteSessionRepository({ db, logger: this.logger }),
       logger: this.logger,
     });

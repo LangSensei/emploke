@@ -91,6 +91,55 @@ export function pwshQuote(s: string): string {
 }
 
 /**
+ * POSIX shell `export K='v' M='v' && ` prefix, suitable for prepending to a
+ * `sh -c` line that should run with these env vars set. Returns an empty
+ * string when `env` is empty or undefined so callers can unconditionally
+ * concatenate without branching.
+ *
+ * Why inlined into the shell line and not passed as spawn `env`: the
+ * terminal apps we target on macOS (Terminal.app) and Linux
+ * (gnome-terminal in daemon mode) ignore the env we hand to their
+ * launcher process — they spawn the user's shell from a long-lived
+ * daemon process whose env was set at daemon startup. The shell that
+ * ends up exec'ing the command, however, is in OUR control via the
+ * shell line we construct, so `export ... &&` reliably reaches it.
+ *
+ * Keys are emitted in insertion order for deterministic test output.
+ * Values are POSIX-quoted via `shQuote`; embedded quotes / specials
+ * are safe.
+ */
+export function shExportPrefix(env: Readonly<Record<string, string>> | undefined): string {
+  if (env === undefined) return "";
+  const entries = Object.entries(env);
+  if (entries.length === 0) return "";
+  const parts = entries.map(([k, v]) => `${k}=${shQuote(v)}`);
+  return `export ${parts.join(" ")} && `;
+}
+
+/**
+ * PowerShell `$env:K = 'v'; $env:M = 'v'; ` prefix, suitable for prepending
+ * to a `pwsh -Command "..."` payload before the call operator (`&`) that
+ * invokes the program. Returns an empty string when `env` is empty or
+ * undefined.
+ *
+ * Why inlined into the pwsh -Command payload and not passed as spawn `env`:
+ * Windows Terminal (`wt.exe`) is a service-like daemon — when it's already
+ * running, new tabs are owned by the existing wt process and our
+ * spawn-time env doesn't reach them. The pwsh that we explicitly host
+ * inside the new tab IS in our control via the -Command payload, so
+ * `$env:K = 'v'; ` reliably runs before `& 'copilot' args`.
+ *
+ * Keys are emitted in insertion order. Values are pwsh-quoted via
+ * `pwshQuote`; embedded `'` becomes `''` per pwsh single-quote rules.
+ */
+export function pwshEnvPrefix(env: Readonly<Record<string, string>> | undefined): string {
+  if (env === undefined) return "";
+  const entries = Object.entries(env);
+  if (entries.length === 0) return "";
+  return `${entries.map(([k, v]) => `$env:${k} = ${pwshQuote(v)}`).join("; ")}; `;
+}
+
+/**
  * Default deps backed by node:child_process and node:fs. The returned
  * SpawnHandle.earlyFailure resolves to a non-null reason if the child emits
  * `error` (e.g. ENOENT) or exits with a non-zero code; otherwise it stays
@@ -104,6 +153,11 @@ export function realSpawn(file: string, args: readonly string[], opts: SpawnOpts
       detached: true,
       stdio: "ignore",
       windowsVerbatimArguments: opts.windowsVerbatimArguments,
+      // env: undefined means "inherit parent's process.env" (Node default).
+      // The cmd /k fallback path on Windows uses this as a belt-and-
+      // suspenders for the inline `set …` form (which it doesn't actually
+      // need on cmd, but kept consistent with the other platforms).
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

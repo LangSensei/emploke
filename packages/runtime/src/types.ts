@@ -454,6 +454,26 @@ export interface LaunchCommand {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly display: string;
+  /**
+   * Optional env vars the spawned terminal session should inherit.
+   *
+   * Why this exists: tasks are spawned directly by the server so we
+   * can pass `env` straight to `child_process.spawn`. Sessions are
+   * spawned indirectly via the user's terminal app (Windows Terminal
+   * / Terminal.app / gnome-terminal), most of which run as long-lived
+   * daemons that do NOT see the env we hand to their launcher
+   * process. Reliably propagating env to the shell that ends up
+   * exec'ing this command therefore requires INLINING the env into
+   * the shell command itself (`export K='v' && exec foo args` on
+   * POSIX, `$env:K='v'; & foo args` for pwsh). The terminal package
+   * does that work; this field carries the bag from
+   * `SessionManager.buildInteractiveLaunch` to `spawnTerminal`.
+   *
+   * Values must be plain strings — no `undefined` (semantically
+   * meaningless when inlining), no `null`, no arrays. `undefined`
+   * upstream should be filtered before assembling this map.
+   */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 // ─── ActivityItem (cross-runtime structured timeline) ─────────────────

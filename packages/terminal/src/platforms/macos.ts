@@ -1,5 +1,5 @@
 import type { LaunchCommand } from "@emploke/runtime";
-import { shQuote, waitForEarlyFailure } from "../_shared.js";
+import { shExportPrefix, shQuote, waitForEarlyFailure } from "../_shared.js";
 import { TerminalSpawnFailedError } from "../errors.js";
 import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
@@ -8,13 +8,21 @@ import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
  *
  * Inside AppleScript double-quoted strings, only `\` and `"` need escaping;
  * the inner shell quoting is single-quoted, so $/`/! are safe inside it.
+ *
+ * Env injection: Terminal.app is a long-running daemon that ignores the
+ * env we hand to osascript — its child shell inherits env from launchd,
+ * not from us. To reliably propagate the per-session env bag we INLINE
+ * an `export K='v' && ` prefix into the shell line before `cd`+`exec`.
+ * The shell sets these vars before exec'ing `copilot`, so the bag
+ * lands inside copilot's `process.env` regardless of how Terminal.app
+ * was launched.
  */
 export async function spawnMacOS(
   cmd: LaunchCommand,
   deps: SpawnTerminalDeps,
 ): Promise<SpawnTerminalResult> {
   const argv = [cmd.cmd, ...cmd.args].map(shQuote).join(" ");
-  const inner = `cd ${shQuote(cmd.cwd)} && exec ${argv}`;
+  const inner = `${shExportPrefix(cmd.env)}cd ${shQuote(cmd.cwd)} && exec ${argv}`;
   const script = `tell application "Terminal" to do script "${escapeAppleScript(inner)}"`;
   const handle = deps.spawn("osascript", ["-e", script], {});
   const failure = await waitForEarlyFailure(handle, deps.observationMs);

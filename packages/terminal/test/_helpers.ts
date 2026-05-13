@@ -20,6 +20,7 @@ export interface SpawnCall {
   args: readonly string[];
   cwd: string | undefined;
   windowsVerbatimArguments: boolean | undefined;
+  env: NodeJS.ProcessEnv | undefined;
 }
 
 export interface FakeOptions {
@@ -44,6 +45,7 @@ export function makeDeps(opts: FakeOptions): { deps: SpawnTerminalDeps; calls: S
         args,
         cwd: options.cwd,
         windowsVerbatimArguments: options.windowsVerbatimArguments,
+        env: options.env,
       });
       const failure = opts.failures?.[idx];
       return {

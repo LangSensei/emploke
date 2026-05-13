@@ -251,4 +251,103 @@ describe("spawnTerminalWith > windows", () => {
     const args = calls[0]?.args ?? [];
     expect(args.slice(-2)).toEqual(['"^(a^)"', '"x^^y"']);
   });
+
+  // --- env injection (wt + cmd) ---
+  //
+  // The wt+pwsh path ESCAPES `;` as `\;` inside its -Command payload
+  // because wt.exe's CLI parser treats `;` as a command separator
+  // across the whole command line. Without escape, an env-bearing
+  // payload like `$env:A = 'x'; $env:B = 'y'; & 'cmd'` opens THREE
+  // tabs (one per chunk) instead of running the script as one unit.
+  // The cmd.exe fallback uses spawn-time env (cmd /k inherits).
+
+  it("inlines $env: assignments BEFORE the call operator in the wt+pwsh payload", async () => {
+    const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+      filesTable: { [wt]: true },
+      pathTable: { pwsh: "pwsh.exe" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: {
+        EMPLOKE_WORKSPACE: "ws-uuid-1",
+        EMPLOKE_SESSION_ID: "01HZZZ",
+      },
+    };
+    await spawnTerminalWith(cmd, deps);
+    const payload = calls[0]?.args.at(-1) as string;
+    // $env: pairs come first, separated by `\;` (wt-escaped semicolons),
+    // then the `&` call operator. The pwsh quoting doubles `'` to `''`
+    // (none in these values) and leaves everything else literal.
+    expect(payload).toBe(
+      "$env:EMPLOKE_WORKSPACE = 'ws-uuid-1'\\; $env:EMPLOKE_SESSION_ID = '01HZZZ'\\; & 'copilot'",
+    );
+  });
+
+  it("escapes EVERY `;` in the payload, not just the env-prefix separators", async () => {
+    // Defense-in-depth: even if a future caller puts a `;` in cmd.cmd
+    // or cmd.args (e.g. a flag value), it must still be escaped or
+    // wt will fan out into multiple tabs.
+    const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+      filesTable: { [wt]: true },
+      pathTable: { pwsh: "pwsh.exe" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      args: ["--prompt", "step 1; step 2"],
+    };
+    await spawnTerminalWith(cmd, deps);
+    const payload = calls[0]?.args.at(-1) as string;
+    // The `;` inside the prompt arg is escaped too.
+    expect(payload).toBe("& 'copilot' '--prompt' 'step 1\\; step 2'");
+  });
+
+  it("does not emit any $env: assignments when cmd.env is unset (no payload bloat)", async () => {
+    const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+      filesTable: { [wt]: true },
+      pathTable: { pwsh: "pwsh.exe" },
+    });
+    await spawnTerminalWith(sample, deps);
+    const payload = calls[0]?.args.at(-1) as string;
+    expect(payload).toBe("& 'copilot'");
+    expect(payload).not.toContain("$env:");
+    expect(payload).not.toContain("\\;");
+  });
+
+  it("propagates cmd.env to the cmd.exe fallback via spawn `env` option", async () => {
+    // cmd /k inherits its env from the parent cmd.exe, which inherits
+    // from the spawn we made — so passing a merged process.env+cmd.env
+    // is sufficient. No inline `set …` prefix needed (unlike wt+pwsh,
+    // where wt's daemon mode would swallow it).
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: {}, // no LOCALAPPDATA -> wt branch skipped, straight to cmd
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-2" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.file).toBe("cmd.exe");
+    expect(calls[0]?.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-2");
+    // Inherited PATH (or similar) from process.env should still be there
+    // — we layered, didn't replace from scratch.
+    expect(calls[0]?.env?.PATH ?? calls[0]?.env?.Path).toBeDefined();
+  });
+
+  it("does not pass an env override to spawn when cmd.env is empty (Node default-inherit)", async () => {
+    const { deps, calls } = makeDeps({ platform: "win32", env: {} });
+    const cmd: LaunchCommand = { ...sample, env: {} };
+    await spawnTerminalWith(cmd, deps);
+    expect(calls[0]?.file).toBe("cmd.exe");
+    expect(calls[0]?.env).toBeUndefined();
+  });
 });
