@@ -548,15 +548,41 @@ export interface SummaryItem extends BaseActivityItem {
 }
 
 /**
- * Token usage as a single normalized shape. `total` is required so
- * consumers can render a single number without doing arithmetic.
+ * Token usage as a single normalized shape.
+ *
+ * `output` is the only required field — it's reliably present on
+ * per-message events from every shipping runtime adapter (Copilot
+ * `assistant.message.outputTokens`, etc.) and in session shutdown
+ * aggregates.
+ *
+ * `input` and `total` are optional because per-message events from
+ * Copilot's NDJSON log don't carry an input token count; only the
+ * session shutdown's `modelMetrics.usage.inputTokens` aggregate does.
+ * Earlier code papered over this by lying about `input: 0`, which
+ * meant `total` was wrong and downstream `input + output > 0` checks
+ * were perpetually true. Consumers should treat `input === undefined`
+ * as "not measured at this granularity" and either omit the input
+ * column from rendering or render `?`/`—`.
+ *
+ * `cached`, `cacheWrite`, and `reasoning` are optional add-ons emitted
+ * when the upstream provides per-class breakdown:
+ *  - `cached` = Anthropic prompt-cache READ (charged ~10× cheaper than
+ *    fresh input, often >90% of `input` on long sessions)
+ *  - `cacheWrite` = prompt-cache WRITE (charged ~1.25× input on the
+ *    one-time creation)
+ *  - `reasoning` = extended-thinking output tokens (counted toward
+ *    `output` totals upstream but billed and surfaced separately so
+ *    operators can see how much was spent thinking vs replying)
+ *
+ * Always opt-in; absent ≢ zero.
  */
 export interface TokenUsage {
-  readonly input: number;
+  readonly input?: number;
   readonly output: number;
   readonly cached?: number;
+  readonly cacheWrite?: number;
   readonly reasoning?: number;
-  readonly total: number;
+  readonly total?: number;
 }
 
 /** Aggregate stats for {@link SummaryItem.stats}. All fields optional. */

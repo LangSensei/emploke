@@ -5,6 +5,7 @@ import type {
   SummaryItem,
   SummaryStats,
   SystemItem,
+  ThinkingItem,
   TokenUsage,
   ToolCallItem,
   UserItem,
@@ -21,7 +22,10 @@ import type {
  *
  *   - `user.message` -> {@link UserItem} (with attachments when present)
  *   - `assistant.message` -> {@link AssistantItem}, plus one
- *     {@link ToolCallItem} per `toolRequests[]` entry (status: running)
+ *     {@link ToolCallItem} per `toolRequests[]` entry (status: running).
+ *     When the data carries `reasoningText` (extended-thinking models
+ *     like Claude with thinking enabled), a {@link ThinkingItem} is
+ *     emitted FIRST so the timeline reads think-then-speak.
  *   - `tool.execution_start` -> {@link ToolCallItem} (status: running)
  *     when no matching toolRequest already created the item
  *   - `tool.execution_complete` -> merged into existing
@@ -147,9 +151,31 @@ export class CopilotActivityStreamParser {
       const text = pickString(ev.data, "content") ?? "";
       const model = pickString(ev.data, "model") ?? undefined;
       const tokens = parseAssistantTokens(ev.data);
+      // Thinking trace, if present, gets its own item BEFORE the assistant
+      // message so the timeline reads think → speak. We mint a derived id
+      // (`<eventId>-thinking`) so the seq -> item map and parentSeq lookups
+      // don't collide with the assistant item that shares the source event id.
+      const reasoningText = pickString(ev.data, "reasoningText");
+      if (reasoningText !== null && reasoningText.length > 0) {
+        const thinkingItem: ThinkingItem = {
+          kind: "thinking",
+          seq: this.seq,
+          id: `${baseId}-thinking`,
+          ...(parentSeq !== undefined ? { parentSeq } : {}),
+          timestamp: ev.timestamp,
+          text: reasoningText,
+        };
+        this.commit(thinkingItem);
+        items.push(thinkingItem);
+      }
+      const assistantParentSeq =
+        reasoningText !== null && reasoningText.length > 0 ? this.seq - 1 : parentSeq;
       const item: AssistantItem = {
         kind: "assistant",
-        ...baseFields,
+        seq: this.seq,
+        id: baseId,
+        ...(assistantParentSeq !== undefined ? { parentSeq: assistantParentSeq } : {}),
+        timestamp: ev.timestamp,
         text,
         ...(model !== undefined ? { model } : {}),
         ...(tokens !== null ? { tokens } : {}),
@@ -399,13 +425,17 @@ function parseAttachments(raw: unknown): Attachment[] {
 }
 
 function parseAssistantTokens(d: Record<string, unknown>): TokenUsage | null {
+  // Copilot's `assistant.message.data` only carries `outputTokens`. The
+  // input token count for that turn lives in `session.shutdown.modelMetrics`
+  // as an aggregate across the whole session — not per message. Earlier
+  // versions returned `{ input: 0, output, total: output }` which was a
+  // lie (the ":input is 0" reading was wrong; it really means "unknown")
+  // and broke downstream `input > 0 || output > 0` checks. We now omit
+  // `input` / `total` per the new optional shape; consumers render the
+  // output count alone and fall back to "—" or skip the input column.
   const output = numOrUndefined(d.outputTokens);
   if (output === undefined) return null;
-  return {
-    input: 0,
-    output,
-    total: output,
-  };
+  return { output };
 }
 
 function systemSubKind(eventType: string): string {
@@ -448,6 +478,9 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
   let model: string | undefined;
   if (raw.modelMetrics && typeof raw.modelMetrics === "object") {
     for (const [k, v] of Object.entries(raw.modelMetrics as Record<string, unknown>)) {
@@ -455,8 +488,19 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
       const usage = (v as Record<string, unknown>).usage;
       if (usage && typeof usage === "object") {
         const u = usage as Record<string, unknown>;
+        // Anthropic prompt-cache + extended-thinking accounting:
+        //   cacheReadTokens   — re-used cached input (~1/10 price)
+        //   cacheWriteTokens  — initial cache write (~1.25× input price)
+        //   reasoningTokens   — extended-thinking output (already counted
+        //                       toward outputTokens upstream, surfaced
+        //                       separately so operators can see thinking
+        //                       cost vs reply cost)
+        // Sum across models so multi-model sessions get one bill view.
         inputTokens += numOr0(u.inputTokens);
         outputTokens += numOr0(u.outputTokens);
+        cachedTokens += numOr0(u.cacheReadTokens);
+        cacheWriteTokens += numOr0(u.cacheWriteTokens);
+        reasoningTokens += numOr0(u.reasoningTokens);
       }
       if (model === undefined) model = k;
     }
@@ -465,7 +509,14 @@ function parseShutdown(raw: Record<string, unknown>, baseFields: BaseFields): Su
 
   const tokens: TokenUsage | undefined =
     inputTokens > 0 || outputTokens > 0
-      ? { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens }
+      ? {
+          input: inputTokens,
+          output: outputTokens,
+          ...(cachedTokens > 0 ? { cached: cachedTokens } : {}),
+          ...(cacheWriteTokens > 0 ? { cacheWrite: cacheWriteTokens } : {}),
+          ...(reasoningTokens > 0 ? { reasoning: reasoningTokens } : {}),
+          total: inputTokens + outputTokens,
+        }
       : undefined;
 
   const stats: SummaryStats = {

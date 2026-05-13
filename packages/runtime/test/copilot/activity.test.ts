@@ -35,9 +35,13 @@ describe("parseCopilotActivity — basic kinds", () => {
       text: "hello back",
       seq: 1,
       parentSeq: 0,
-      tokens: { input: 0, output: 19, total: 19 },
+      // Per-message Copilot events only carry outputTokens; input is omitted
+      // (rather than the historical `input: 0` lie) so callers know to look
+      // at the session shutdown aggregate for input counts.
+      tokens: { output: 19 },
       model: "claude",
     });
+    expect((items[1] as { tokens: { input?: number } }).tokens.input).toBeUndefined();
   });
 
   it("drops malformed lines + lower-signal events from the timeline", () => {
@@ -49,6 +53,75 @@ describe("parseCopilotActivity — basic kinds", () => {
     const items = parseCopilotActivity(raw);
     expect(items).toHaveLength(1);
     expect(items[0]?.kind).toBe("user");
+  });
+});
+
+describe("parseCopilotActivity — reasoning trace (CoT)", () => {
+  it("emits a ThinkingItem before AssistantItem when reasoningText is present", () => {
+    // Mirrors the real shape of `assistant.message` events from
+    // extended-thinking models (Claude with thinking enabled): both
+    // `reasoningText` (human-readable) and `reasoningOpaque` (encrypted
+    // blob for upstream replay) are populated.
+    const raw = ev({
+      type: "assistant.message",
+      id: "a1",
+      parentId: "u0",
+      data: {
+        content: "Here's the summary you asked for.",
+        outputTokens: 42,
+        model: "claude-opus-4.7-1m-internal",
+        reasoningText: "I should first scan the issue to understand the scope.",
+        reasoningOpaque: "EtAIClsIDRACGAIqQK+isZ/ARefG20jlQutytt0",
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    expect(items).toHaveLength(2);
+
+    expect(items[0]).toMatchObject({
+      kind: "thinking",
+      seq: 0,
+      text: "I should first scan the issue to understand the scope.",
+    });
+    // The thinking item gets a derived id so it doesn't collide with the
+    // assistant item that shares the source event id (`a1`).
+    expect((items[0] as { id: string }).id).toBe("a1-thinking");
+
+    expect(items[1]).toMatchObject({
+      kind: "assistant",
+      seq: 1,
+      // Assistant points back at the thinking item, not at u0 — preserves
+      // the natural think→speak chain in the timeline.
+      parentSeq: 0,
+      text: "Here's the summary you asked for.",
+      tokens: { output: 42 },
+      model: "claude-opus-4.7-1m-internal",
+    });
+    // reasoningOpaque is intentionally NOT exposed — it's an Anthropic
+    // implementation detail (encrypted thinking blob for cross-turn
+    // continuity), useless to humans, and 1.4 KB+ of base64 noise that
+    // would balloon the activity feed.
+    expect(JSON.stringify(items)).not.toContain("EtAIClsIDRACGAIqQK");
+  });
+
+  it("does NOT emit a ThinkingItem when reasoningText is absent or empty", () => {
+    const raw =
+      ev({
+        type: "assistant.message",
+        id: "a1",
+        parentId: null,
+        data: { content: "no thinking", outputTokens: 5 },
+      }) +
+      ev({
+        type: "assistant.message",
+        id: "a2",
+        parentId: null,
+        // Empty string should be treated identically to missing field —
+        // no value in surfacing an empty thinking block.
+        data: { content: "still none", outputTokens: 5, reasoningText: "" },
+      });
+    const items = parseCopilotActivity(raw);
+    expect(items).toHaveLength(2);
+    expect(items.every((i) => i.kind === "assistant")).toBe(true);
   });
 });
 
@@ -181,6 +254,104 @@ describe("parseCopilotActivity — summary item", () => {
         filesModified: ["a.ts", "b.ts"],
         premiumRequests: 4,
         model: "claude-opus",
+      },
+    });
+  });
+
+  it("captures cacheRead / cacheWrite / reasoning tokens from modelMetrics", () => {
+    // Real shape from a Claude session with prompt caching + extended
+    // thinking. Numbers are scaled-down but proportions match a real
+    // observed session: ~94% cache hit rate, small cache-write delta,
+    // non-zero reasoning footprint.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "claude-opus-4.7",
+        modelMetrics: {
+          "claude-opus-4.7": {
+            usage: {
+              inputTokens: 100_000,
+              outputTokens: 5_000,
+              cacheReadTokens: 94_000,
+              cacheWriteTokens: 6_000,
+              reasoningTokens: 1_200,
+            },
+          },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    expect(items[0]).toMatchObject({
+      kind: "summary",
+      tokens: {
+        input: 100_000,
+        output: 5_000,
+        cached: 94_000,
+        cacheWrite: 6_000,
+        reasoning: 1_200,
+        total: 105_000,
+      },
+    });
+  });
+
+  it("omits cached / cacheWrite / reasoning fields when their upstream values are 0 or missing", () => {
+    // The most common shape: a non-cached, non-thinking model run.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "gpt-5",
+        modelMetrics: {
+          "gpt-5": { usage: { inputTokens: 800, outputTokens: 200 } },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    const tokens = (items[0] as { tokens?: Record<string, unknown> }).tokens;
+    expect(tokens).toMatchObject({ input: 800, output: 200, total: 1000 });
+    // Defensive: the optional fields must not be present (rather than
+    // present-as-undefined) so JSON serialisation stays clean.
+    expect(tokens).not.toHaveProperty("cached");
+    expect(tokens).not.toHaveProperty("cacheWrite");
+    expect(tokens).not.toHaveProperty("reasoning");
+  });
+
+  it("aggregates token classes across multiple models", () => {
+    // Multi-model session (e.g. user switched mid-task). Each class sums
+    // independently so the bill view stays single-bottom-line.
+    const raw = ev({
+      type: "session.shutdown",
+      id: "sh1",
+      parentId: null,
+      data: {
+        currentModel: "claude-opus-4.7",
+        modelMetrics: {
+          "claude-opus-4.7": {
+            usage: {
+              inputTokens: 50_000,
+              outputTokens: 2_000,
+              cacheReadTokens: 45_000,
+              reasoningTokens: 500,
+            },
+          },
+          "gpt-5": {
+            usage: { inputTokens: 10_000, outputTokens: 1_000 },
+          },
+        },
+      },
+    });
+    const items = parseCopilotActivity(raw);
+    expect(items[0]).toMatchObject({
+      kind: "summary",
+      tokens: {
+        input: 60_000,
+        output: 3_000,
+        cached: 45_000,
+        reasoning: 500,
+        total: 63_000,
       },
     });
   });

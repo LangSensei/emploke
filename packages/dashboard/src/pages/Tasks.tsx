@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type ActivityItem,
@@ -1095,6 +1095,33 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     return () => handle.close();
   }, [taskId, detailPollEnabled]);
 
+  // Result is the agent's final answer. Two rules:
+  //
+  //  1. **Only when actually finished successfully.** Earlier the panel
+  //     surfaced `activity.result` (= last assistant message in the log)
+  //     unconditionally, so during a running task the most recent
+  //     intermediate thought showed up as if it were the headline. We
+  //     gate on `status === "success"` so Result only ever reflects a
+  //     real completion. Failures route through the dedicated Failure
+  //     alert in the header; cancelled / running tasks show no Result
+  //     at all.
+  //
+  //  2. **Truncate long results.** Real Copilot results vary from one
+  //     line to ~50 lines. Without a cap a long result would push the
+  //     activity timeline below the fold. We default to ~600 chars
+  //     ("Show more" reveals the rest); below that threshold the
+  //     control is omitted entirely so short results render cleanly.
+  //
+  // Computed up here so `useState` for the expand toggle stays at the
+  // top of the hook order.
+  const headlineResult =
+    task?.status === "success"
+      ? (activity?.result ??
+        (typeof task?.result?.output === "string" && task.result.output.length > 0
+          ? task.result.output
+          : null))
+      : null;
+
   // Common box styling lives in CSS now. The right panel anchors at
   // the top of its grid cell (.tasks-pane__detail), with its own
   // scroll container and a viewport-capped max-height so the page
@@ -1208,25 +1235,7 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         )}
       </header>
 
-      {/* Result block — the agent's final answer, the headline thing
-          a user wants to see. Falls back gracefully:
-            1. derived `activity.result` (last assistant message) if any
-            2. raw task.result.output if the kernel captured one
-            3. nothing (don't render a noisy empty box) */}
-      {(() => {
-        const headlineResult =
-          activity?.result ??
-          (typeof task?.result?.output === "string" && task.result.output.length > 0
-            ? task.result.output
-            : null);
-        if (!headlineResult) return null;
-        return (
-          <section className="task-detail__result">
-            <h3 className="task-detail__section-title">Result</h3>
-            <p className="task-detail__result-body">{headlineResult}</p>
-          </section>
-        );
-      })()}
+      {headlineResult !== null && <ResultSection text={headlineResult} />}
 
       <nav className="pills" style={{ display: "flex", gap: 4 }}>
         <button
@@ -1466,10 +1475,32 @@ function ActivityRow({ item }: { item: ActivityItem }) {
               <strong>Premium requests:</strong> {stats?.premiumRequests}
             </span>
           )}
-          {tokens !== undefined && (tokens.input > 0 || tokens.output > 0) && (
+          {tokens !== undefined && ((tokens.input ?? 0) > 0 || tokens.output > 0) && (
             <span>
-              <strong>Tokens:</strong> {tokens.input.toLocaleString()} in /{" "}
+              <strong>Tokens:</strong>{" "}
+              {tokens.input !== undefined ? (
+                <>
+                  {tokens.input.toLocaleString()} in
+                  {/*
+                    Show cache-hit % when the upstream provided cacheRead
+                    accounting. On long Claude sessions this is usually 90%+
+                    and dramatically changes the cost story (cache reads
+                    bill at ~1/10 fresh input).
+                  */}
+                  {tokens.cached !== undefined && tokens.input > 0 && (
+                    <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>
+                      ({Math.round((tokens.cached / tokens.input) * 100)}% cached)
+                    </span>
+                  )}
+                  {" / "}
+                </>
+              ) : null}
               {tokens.output.toLocaleString()} out
+              {tokens.reasoning !== undefined && tokens.reasoning > 0 && (
+                <span className="muted" style={{ fontSize: 11, marginLeft: 4 }}>
+                  (incl. {tokens.reasoning.toLocaleString()} reasoning)
+                </span>
+              )}
             </span>
           )}
           {stats?.costUSD !== undefined && (
@@ -1498,9 +1529,16 @@ function ActivityRow({ item }: { item: ActivityItem }) {
             {formatRelative(item.timestamp)}
           </time>
         </div>
-        <details>
+        {/*
+          Open by default — Copilot's reasoning traces are typically 1-3
+          sentences and useful at a glance; collapsing them would force a
+          click for every turn. The <details> is kept (rather than just
+          rendering the body inline) so power users can still hide noisy
+          extended-thinking output on long sessions.
+        */}
+        <details open>
           <summary className="muted" style={{ cursor: "pointer", fontSize: 12 }}>
-            Show reasoning
+            Reasoning
           </summary>
           <p className="activity-row__body" style={{ fontStyle: "italic", opacity: 0.8 }}>
             {item.text}
@@ -1705,5 +1743,79 @@ function TaskInstructions({ text }: { text: string }) {
         {text}
       </p>
     </details>
+  );
+}
+
+/**
+ * Result section under the task header. Two visual states:
+ *   - **collapsed**: word-bounded preview (~{@link RESULT_PREVIEW_CHARS}
+ *     chars) + a "Show more" button. Rendered for results longer than
+ *     the threshold; short results skip the toggle entirely.
+ *   - **expanded**: full text + "Show less" button. The preview text
+ *     is gone — only one state is visible at a time, unlike the
+ *     `<details>`/`<summary>` element which forces the summary to stay
+ *     on screen and ends up rendering BOTH preview and full content
+ *     simultaneously.
+ *
+ * Cap chosen empirically from real Copilot session data: median final
+ * answer ~1 KB / 15 lines, max ~4.8 KB / 54 lines; 600 chars (~10 lines
+ * of typical text) keeps short answers inline and reins in the long
+ * ones with one click. Expanded body is capped to 480px scroll so even
+ * a 4 KB result can't push the activity timeline below the fold.
+ */
+const RESULT_PREVIEW_CHARS = 600;
+function ResultSection({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // ARIA disclosure pattern: button toggles a sibling region; the region's
+  // id is referenced by the button's `aria-controls` so screen readers can
+  // associate them. `useId` (React 19) gives a stable, collision-free id.
+  const bodyId = useId();
+  const isLong = text.length > RESULT_PREVIEW_CHARS;
+  if (!isLong) {
+    return (
+      <section className="task-detail__result">
+        <h3 className="task-detail__section-title">Result</h3>
+        <p className="task-detail__result-body">{text}</p>
+      </section>
+    );
+  }
+  // Cut on a word boundary near the threshold for a cleaner preview.
+  const cut = text.lastIndexOf(" ", RESULT_PREVIEW_CHARS);
+  const preview = `${text.slice(0, cut > 0 ? cut : RESULT_PREVIEW_CHARS)}…`;
+  return (
+    <section className="task-detail__result">
+      <h3 className="task-detail__section-title">Result</h3>
+      {expanded ? (
+        <p
+          id={bodyId}
+          className="task-detail__result-body"
+          style={{ maxHeight: 480, overflowY: "auto" }}
+        >
+          {text}
+        </p>
+      ) : (
+        <p id={bodyId} className="task-detail__result-body">
+          {preview}
+        </p>
+      )}
+      <button
+        type="button"
+        className="link-button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        style={{
+          marginTop: 6,
+          background: "none",
+          border: "none",
+          color: "var(--color-link, #58a6ff)",
+          cursor: "pointer",
+          padding: 0,
+          fontSize: 12,
+        }}
+      >
+        {expanded ? "Show less" : `Show full (${text.length.toLocaleString()} chars)`}
+      </button>
+    </section>
   );
 }
