@@ -23,25 +23,35 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import {
+  catalogAgentAckPrereqs,
+  catalogAgentDisable,
+  catalogAgentEnable,
   catalogAgentInstall,
   catalogAgentList,
   catalogAgentPatch,
   catalogAgentResolve,
   catalogAgentRm,
   catalogAgentShow,
+  catalogAgentSync,
+  catalogAgentSyncResolve,
   catalogAgentUpdate,
   catalogMcpInstall,
   catalogMcpList,
   catalogMcpRm,
   catalogMcpShow,
+  catalogMcpSync,
+  catalogMcpSyncResolve,
   catalogMcpUpdate,
   catalogOverview,
+  catalogSkillAckPrereqs,
   catalogSkillInstall,
   catalogSkillList,
   catalogSkillPatch,
   catalogSkillResolve,
   catalogSkillRm,
   catalogSkillShow,
+  catalogSkillSync,
+  catalogSkillSyncResolve,
   catalogSkillUpdate,
 } from "./commands/catalog.js";
 import { config } from "./commands/config.js";
@@ -271,10 +281,16 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
       slot.result = await workspaceCurrent(parseConnectFlags(opts));
     });
   withConnectFlags(workspaceCmd.command("use"))
-    .argument("<id>", "Workspace id to mark current")
-    .description("Set the current workspace by id")
-    .action(async (id: string, opts: Record<string, unknown>) => {
-      slot.result = await workspaceUse({ ...parseConnectFlags(opts), id });
+    // Argument is OPTIONAL `[id]` (not `<id>`) so the stub's
+    // redirection message wins even when the user types
+    // `emploke workspace use` with no id (muscle memory). Otherwise
+    // commander would print its own "missing required argument" and
+    // skip our message entirely. The stub handles a missing id by
+    // substituting an `<id>` placeholder in the suggested commands.
+    .argument("[id]", "Workspace id (kept for compatibility; this subcommand is removed)")
+    .description("REMOVED: see `emploke workspace use --help` for migration")
+    .action(async (id: string | undefined, opts: Record<string, unknown>) => {
+      slot.result = await workspaceUse({ ...parseConnectFlags(opts), id: id ?? "" });
     });
   withConnectFlags(workspaceCmd.command("show"))
     .argument("<id>", "Workspace id")
@@ -432,11 +448,46 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .argument("<tid>", "Task id")
     .description("Print the runtime-parsed activity timeline (JSON)")
     .option("-f, --follow", "Tail live activity over SSE; exits when task terminates")
-    .option("--cursor <seq>", "Only return items with seq > cursor (for pagination)")
-    .option("--limit <n>", "Maximum items per page (default 50, max 500)", (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      "--cursor <seq>",
+      "Resume from this seq. With --follow, sent as Last-Event-ID; without, used as ?cursor= query.",
+    )
+    .option(
+      "--limit <n>",
+      "Maximum items per page (default 50, max 500). Ignored under --follow.",
+      (v) => Number.parseInt(v, 10),
     )
     .action(async (tid: string, opts: Record<string, unknown>) => {
+      // Validate `--cursor` up front. The CLI used to silently drop a
+      // non-numeric `--cursor abc` (parseInt → NaN, dropped at
+      // `Number.isFinite`) and SEND a negative `--cursor -1` to the
+      // server (the SSE handler's `^\d+$` check then silently fell
+      // through to "tail from now"). Both are invisible-to-user
+      // mistakes that look like bugs in the server. Reject early.
+      if (opts.cursor !== undefined) {
+        const raw = typeof opts.cursor === "string" ? opts.cursor : String(opts.cursor);
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== raw.trim()) {
+          slot.result = {
+            exitCode: 2,
+            stderr: `--cursor must be a non-negative integer (got ${JSON.stringify(raw)})\n`,
+          };
+          return;
+        }
+      }
+      // `--limit` is meaningless under `--follow` (SSE streams until
+      // the task terminates; there's no per-page cap). Silent
+      // acceptance is worse than a hard error — the user almost
+      // certainly meant something different. Reject the combo.
+      if (opts.follow === true && opts.limit !== undefined) {
+        slot.result = {
+          exitCode: 2,
+          stderr:
+            "--limit has no effect with --follow (SSE streams until the task terminates).\n" +
+            "  Drop --limit, or run a one-shot `task activity <tid> --limit <n>` first and then --follow.\n",
+        };
+        return;
+      }
       const cursor =
         typeof opts.cursor === "string"
           ? Number.parseInt(opts.cursor, 10)
@@ -521,6 +572,29 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .action(async (name: string, opts: Record<string, unknown>) => {
       slot.result = await catalogSkillRm({ ...parseWorkspaceFlags(opts), name });
     });
+  withWorkspaceFlags(catalogSkill.command("sync-resolve"))
+    .argument("<name>", "Skill name (FQN)")
+    .description("Preview a re-sync plan against the upstream origin")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogSkillSyncResolve({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogSkill.command("sync"))
+    .argument("<name>", "Skill name (FQN)")
+    .requiredOption("--plan-token <token>", "planToken from `skill sync-resolve`")
+    .description("Apply a previously-previewed sync plan")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogSkillSync({
+        ...parseWorkspaceFlags(opts),
+        name,
+        planToken: pickString(opts, "planToken") ?? "",
+      });
+    });
+  withWorkspaceFlags(catalogSkill.command("ack-prereqs"))
+    .argument("<name>", "Skill name (FQN)")
+    .description("Acknowledge a skill's prereqs (lifts the prereqs-ack block)")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogSkillAckPrereqs({ ...parseWorkspaceFlags(opts), name });
+    });
 
   // agents
   const catalogAgent = catalogCmd.command("agent").description("Agent operations");
@@ -579,6 +653,41 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .action(async (name: string, opts: Record<string, unknown>) => {
       slot.result = await catalogAgentRm({ ...parseWorkspaceFlags(opts), name });
     });
+  withWorkspaceFlags(catalogAgent.command("sync-resolve"))
+    .argument("<name>", "Agent name (FQN)")
+    .description("Preview a re-sync plan against the upstream origin")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogAgentSyncResolve({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogAgent.command("sync"))
+    .argument("<name>", "Agent name (FQN)")
+    .requiredOption("--plan-token <token>", "planToken from `agent sync-resolve`")
+    .description("Apply a previously-previewed sync plan")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogAgentSync({
+        ...parseWorkspaceFlags(opts),
+        name,
+        planToken: pickString(opts, "planToken") ?? "",
+      });
+    });
+  withWorkspaceFlags(catalogAgent.command("ack-prereqs"))
+    .argument("<name>", "Agent name (FQN)")
+    .description("Acknowledge an agent's prereqs (lifts the prereqs-ack block)")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogAgentAckPrereqs({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogAgent.command("enable"))
+    .argument("<name>", "Agent name (FQN)")
+    .description("Re-enable a disabled agent")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogAgentEnable({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogAgent.command("disable"))
+    .argument("<name>", "Agent name (FQN)")
+    .description("Disable an agent (new dispatches fail with EntryNotReadyError)")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogAgentDisable({ ...parseWorkspaceFlags(opts), name });
+    });
 
   // mcps
   const catalogMcp = catalogCmd.command("mcp").description("MCP operations");
@@ -622,6 +731,23 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Remove an MCP")
     .action(async (name: string, opts: Record<string, unknown>) => {
       slot.result = await catalogMcpRm({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogMcp.command("sync-resolve"))
+    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .description("Preview a re-sync plan against the upstream origin")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogMcpSyncResolve({ ...parseWorkspaceFlags(opts), name });
+    });
+  withWorkspaceFlags(catalogMcp.command("sync"))
+    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .requiredOption("--plan-token <token>", "planToken from `mcp sync-resolve`")
+    .description("Apply a previously-previewed sync plan")
+    .action(async (name: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogMcpSync({
+        ...parseWorkspaceFlags(opts),
+        name,
+        planToken: pickString(opts, "planToken") ?? "",
+      });
     });
 
   return program;
@@ -714,7 +840,7 @@ function withConnectFlags(c: Command): Command {
 function withWorkspaceFlags(c: Command): Command {
   return withConnectFlags(c).option(
     "-w, --workspace <id>",
-    "Workspace id (env: EMPLOKE_WORKSPACE, server-side current)",
+    "Workspace id (or set EMPLOKE_WORKSPACE; one is required)",
   );
 }
 

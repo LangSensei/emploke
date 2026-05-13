@@ -32,7 +32,7 @@ export interface TaskListOpts extends CommonFlags {
 export async function taskList(opts: TaskListOpts = {}): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const query: { agent?: string; runtime?: string; createdSince?: string; status?: string } = {};
     if (opts.agent !== undefined) query.agent = opts.agent;
     if (opts.runtime !== undefined) query.runtime = opts.runtime;
@@ -74,7 +74,7 @@ export async function taskDispatch(opts: TaskDispatchOpts): Promise<CommandResul
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const body: { agent: string; instructions: string; runtime?: string } = {
       agent: opts.agent,
       instructions: opts.instructions,
@@ -100,7 +100,7 @@ export async function taskShow(opts: TaskShowOpts): Promise<CommandResult> {
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const task = await client.call("tasks.get", { params: { id, tid: opts.tid } });
     const fmt = pickFormat(opts, "table");
     const stdout = fmt === "json" ? formatJson(task) : formatRecord({ ...task });
@@ -122,7 +122,7 @@ export async function taskRm(opts: TaskRmOpts): Promise<CommandResult> {
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
     const query: { purge?: "1" } = {};
     if (opts.purge) query.purge = "1";
     await client.call("tasks.delete", { params: { id, tid: opts.tid }, query });
@@ -149,10 +149,10 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
   }
   const client = await makeClient(opts);
   try {
-    const id = await resolveWorkspace(opts, client);
+    const id = await resolveWorkspace(opts);
 
     if (opts.follow === true) {
-      return await followTaskActivity(client, id, opts.tid);
+      return await followTaskActivity(client, id, opts.tid, opts.cursor);
     }
 
     const query: { cursor?: string; limit?: string } = {};
@@ -180,21 +180,39 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
  * stream closes cleanly. Exits non-zero on transport / framing
  * errors. SIGINT (Ctrl+C) terminates the process between frames.
  *
+ * Resume: pass `cursor` to send `Last-Event-ID: <cursor>` so the
+ * server replays from that seq. Conversely, on every clean / mid-
+ * stream-error exit we print `last seq: <N>` to stderr so the next
+ * invocation can resume:
+ *
+ *   emploke task activity <tid> --follow                          # tail from now
+ *   emploke task activity <tid> --follow --cursor 1234            # resume from seq 1234
+ *
+ * Inside Ctrl+C the process dies between frames and stderr is not
+ * written; recover the last seq from stdout instead
+ * (`... | tail -1 | jq .seq`) since each printed item carries its
+ * own `seq`.
+ *
  * Implementation notes:
  *   - Uses `apiClient.callRaw()` to get the raw `Response` (the
  *     manifest declares the route as `never` response so `call()`
  *     would type-error).
  *   - Hand-parses the SSE wire format (lines split by \n, frames
- *     separated by \n\n; we only care about `event:` and `data:`
- *     fields). Avoids pulling in `eventsource-parser` for ~3KB; the
- *     framing is too simple to need it.
+ *     separated by \n\n; we care about `event:`, `data:`, and
+ *     `id:` fields). Avoids pulling in `eventsource-parser` for
+ *     ~3KB; the framing is too simple to need it.
  */
-async function followTaskActivity(
+export async function followTaskActivity(
   client: import("../api-client.js").ApiClient,
   id: string,
   tid: string,
+  cursor: number | undefined,
 ): Promise<CommandResult> {
-  const res = await client.callRaw("tasks.activity.stream", { params: { id, tid } });
+  const headers = cursor !== undefined ? { "Last-Event-ID": String(cursor) } : undefined;
+  const res = await client.callRaw("tasks.activity.stream", {
+    params: { id, tid },
+    ...(headers !== undefined ? { headers } : {}),
+  });
   if (res.status === 404) {
     return { exitCode: 1, stderr: `task ${tid} has no streaming activity (terminal or missing)\n` };
   }
@@ -216,6 +234,10 @@ async function followTaskActivity(
   const reader = res.body.getReader();
   let buffer = "";
   let stdout = "";
+  // Seed lastSeq from the resume cursor so a stream that immediately
+  // ends (no items replayed) still produces a recoverable hint —
+  // e.g. resume cursor was already at HEAD.
+  let lastSeq: string | undefined = cursor !== undefined ? String(cursor) : undefined;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -228,15 +250,15 @@ async function followTaskActivity(
         buffer = buffer.slice(frameEnd + 2);
         const parsed = parseSseFrame(frame);
         if (parsed === null) continue;
+        if (parsed.id !== undefined) lastSeq = parsed.id;
         if (parsed.event === "end") {
-          return { exitCode: 0, stdout };
+          return withResumeHint({ exitCode: 0, stdout }, lastSeq);
         }
         if (parsed.event === "error") {
-          return {
-            exitCode: 1,
-            stdout,
-            stderr: `stream error: ${parsed.data}\n`,
-          };
+          return withResumeHint(
+            { exitCode: 1, stdout, stderr: `stream error: ${parsed.data}\n` },
+            lastSeq,
+          );
         }
         if (parsed.event === "activity") {
           // Ensure single-line NDJSON: re-stringify (no indent) so
@@ -258,21 +280,37 @@ async function followTaskActivity(
       // ignore
     }
   }
-  return { exitCode: 0, stdout };
+  return withResumeHint({ exitCode: 0, stdout }, lastSeq);
 }
 
-/** Parse a single SSE frame (event: + data: lines, no comments / id). */
-function parseSseFrame(frame: string): { event: string; data: string } | null {
+/** Append a `last seq: <N>` resume hint to the result's stderr (no-op when no events were observed). */
+function withResumeHint(result: CommandResult, lastSeq: string | undefined): CommandResult {
+  if (lastSeq === undefined) return result;
+  const tail = `last seq: ${lastSeq}\n`;
+  const existing = result.stderr ?? "";
+  return { ...result, stderr: `${existing}${tail}` };
+}
+
+/** Parse a single SSE frame (event: + data: + id: lines, no comments / retry). */
+function parseSseFrame(frame: string): { event: string; data: string; id?: string } | null {
   let event = "message";
+  let id: string | undefined;
   const dataLines: string[] = [];
   for (const line of frame.split("\n")) {
     if (line.startsWith("event:")) {
       event = line.slice(6).trim();
     } else if (line.startsWith("data:")) {
       dataLines.push(line.slice(5).replace(/^ /, ""));
+    } else if (line.startsWith("id:")) {
+      // id: per SSE spec — used by `tasks.activity.stream` to expose
+      // each item's monotonic `seq`. Tracking it is what makes
+      // --cursor resume work.
+      id = line.slice(3).trim();
     }
-    // Ignore `id:`, `retry:`, comments — we don't need them client-side.
+    // Ignore `retry:` and comments — we don't need them client-side.
   }
   if (dataLines.length === 0) return null;
-  return { event, data: dataLines.join("\n") };
+  return id !== undefined
+    ? { event, data: dataLines.join("\n"), id }
+    : { event, data: dataLines.join("\n") };
 }

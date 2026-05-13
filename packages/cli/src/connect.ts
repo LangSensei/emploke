@@ -7,13 +7,17 @@
  *  - explicit CLI flags (`--server`, `--api-key`, `--workspace`)
  *  - environment (`EMPLOKE_SERVER`, `EMPLOKE_API_KEY`, `EMPLOKE_WORKSPACE`)
  *  - `<EMPLOKE_HOME>/runtime.json` (host/port/apiKey from a recent
- *    `emploke start`); for the workspace, server-side
- *    `GET /api/config.currentWorkspace`
+ *    `emploke start`) — for **connection** only
  *  - hard defaults (`http://127.0.0.1:8787`)
  *
- * The runtime-file fallback means a freshly-started local server is
- * usable without any env wiring — `emploke start` writes the file,
- * `emploke workspace list` reads from it.
+ * The runtime-file fallback covers connection (host/port/apiKey) so a
+ * freshly-started local server is usable without env wiring. There is
+ * NO equivalent fallback for the workspace id — every workspace-scoped
+ * command requires `--workspace` or `EMPLOKE_WORKSPACE` explicitly.
+ * The previous server-side `currentWorkspace` fallback was removed
+ * because it's shared mutable state across every client and races with
+ * the dashboard / other CLI processes / AI agents (see
+ * `resolveWorkspace` below for the full rationale).
  */
 
 import { resolveEmplokePaths } from "@emploke/paths";
@@ -89,7 +93,7 @@ export async function makeClient(flags: ConnectFlags = {}): Promise<ApiClient> {
 }
 
 export interface WorkspaceFlags extends ConnectFlags {
-  /** Workspace id; defaults to `EMPLOKE_WORKSPACE` then server's `currentWorkspace`. */
+  /** Workspace id; defaults to `EMPLOKE_WORKSPACE`. There is NO server-side fallback — see `resolveWorkspace`. */
   readonly workspace?: string;
 }
 
@@ -99,22 +103,34 @@ export interface WorkspaceFlags extends ConnectFlags {
  * Order:
  *   1. `--workspace <id>` flag
  *   2. `EMPLOKE_WORKSPACE` env
- *   3. `GET /api/config` `currentWorkspace` field
- *   4. Throws — caller must surface a usage error
+ *   3. Throws — caller's `formatError` surfaces it.
  *
- * The server fetch is the third-tier fallback so a CLI invoked without
- * any wiring still picks up "the workspace I last opened in the
- * dashboard" without the user having to remember the UUID.
+ * NOTE: a previous version added a third tier that fell back to the
+ * server's `GET /api/config.currentWorkspace`. That fallback has been
+ * REMOVED on purpose — `currentWorkspace` is shared mutable global
+ * state across every client of the same emploke server (every CLI
+ * process, every dashboard tab, every MCP / external HTTP caller).
+ * Falling back to it makes a workspace-scoped command's target
+ * silently dependent on whatever the most recent writer chose, which
+ * is a CONCURRENCY FOOTGUN for any multi-client (and especially any
+ * multi-AI) scenario.
+ *
+ * Today's two sources are both PROCESS-LOCAL and therefore race-free:
+ * `--workspace` is in the call's argv, `EMPLOKE_WORKSPACE` is in the
+ * caller's own environment. No cross-client mutation can change the
+ * answer between this resolve and the next request. See also the
+ * stub at `commands/workspace.ts:workspaceUse` for the dual perspective
+ * — the writer side of the same fallback was removed too.
  */
-export async function resolveWorkspace(flags: WorkspaceFlags, client: ApiClient): Promise<string> {
+export async function resolveWorkspace(flags: WorkspaceFlags): Promise<string> {
   const explicit = nonEmpty(flags.workspace) ?? nonEmpty(process.env.EMPLOKE_WORKSPACE);
   if (explicit) return explicit;
-  const cfg = await client.call("config.get");
-  if (cfg.currentWorkspace !== null && cfg.currentWorkspace !== "") {
-    return cfg.currentWorkspace;
-  }
   throw new Error(
-    "no workspace: pass --workspace <id>, set EMPLOKE_WORKSPACE, or `emploke workspace use <id>` first",
+    "no workspace selected.\n" +
+      "  Pass --workspace <id> or set EMPLOKE_WORKSPACE.\n" +
+      "  Run `emploke workspace list` to see available ids.\n" +
+      "  (`emploke workspace use` was removed because the server-side current workspace " +
+      "is shared mutable state — see commands/workspace.ts for the full rationale.)",
   );
 }
 

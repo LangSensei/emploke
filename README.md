@@ -121,11 +121,11 @@ emploke runtime list
 # workspaces
 emploke workspace list
 emploke workspace add --name "Sandbox" --workdir ~/code/sandbox
-emploke workspace use <id>
+export EMPLOKE_WORKSPACE=<id>          # required for workspace-scoped commands
 emploke workspace show <id>
 emploke workspace rm <id> --purge
 
-# sessions and tasks (workspace-scoped; -w/--workspace overrides default)
+# sessions and tasks (workspace-scoped; pass --workspace <id> to override the env above)
 emploke session new --agent writer
 emploke session list --agent writer --json
 emploke task dispatch --agent triage --instructions "Scan recent issues"

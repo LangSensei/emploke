@@ -76,17 +76,31 @@ export function formatRecord(record: Record<string, unknown>): string {
  *  - 4 — server returned a 4xx/5xx (anything `ApiError`)
  *  - 1 — generic / unknown
  *
- * The stderr message tries to be operator-friendly: an `ApiError`
- * surfaces the server's `error` field; a network error surfaces the
- * underlying message. Either way `\n` is appended so output stays
- * line-oriented.
+ * For an {@link ApiError} the message includes:
+ *  - the server's `error` field
+ *  - the optional `code` field (so users can tell `WorkspaceNotFoundError`
+ *    apart from `BadRequest` apart from `EntryNotReadyError` without
+ *    parsing the prose)
+ *  - `EntryNotReadyError`-specific structured hints (the agent FQN and
+ *    the {@link BlockedReason} bullet list, plus a CTA pointing at the
+ *    matching `emploke catalog ...` subcommand)
+ *
+ * Anything else (network error, generic `Error`, thrown string) falls
+ * through to a plain `<message>\n`. Output stays line-oriented either
+ * way — every emitted line ends in `\n`.
  */
 export function formatError(err: unknown): CommandResult {
   if (err instanceof ApiError) {
-    return {
-      exitCode: 4,
-      stderr: `${err.message} (HTTP ${err.status})\n`,
-    };
+    const lines: string[] = [];
+    const code = pickStringField(err.body, "code");
+    const headline = code
+      ? `${err.message} (HTTP ${err.status}, ${code})`
+      : `${err.message} (HTTP ${err.status})`;
+    lines.push(headline);
+    if (code === "EntryNotReadyError") {
+      lines.push(...formatEntryNotReadyHint(err.body));
+    }
+    return { exitCode: 4, stderr: `${lines.join("\n")}\n` };
   }
   // fetch's TypeError("fetch failed") with cause.code = "ECONNREFUSED"
   // — this is the canonical "server isn't running" signal.
@@ -97,6 +111,97 @@ export function formatError(err: unknown): CommandResult {
   }
   const message = err instanceof Error ? err.message : String(err);
   return { exitCode: 1, stderr: `${message}\n` };
+}
+
+/**
+ * Read a string-typed field off a parsed JSON error body. Defensive
+ * because `body` is typed `unknown` — the server contract says it's
+ * `{error, code?, ...}` but we don't want a malformed reply to throw
+ * inside an error formatter.
+ */
+function pickStringField(body: unknown, key: string): string | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const v = (body as Record<string, unknown>)[key];
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/**
+ * Render the `EntryNotReadyError` envelope extension shipped by
+ * `POST /api/workspaces/:id/tasks` (see
+ * `packages/server/src/routes/tasks.ts`). Mirrors the dashboard's
+ * structured CTA — every actionable cause gets a one-liner pointing
+ * the user at the matching CLI subcommand so the terminal experience
+ * matches the web UI.
+ */
+function formatEntryNotReadyHint(body: unknown): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  const obj = body as Record<string, unknown>;
+  const lines: string[] = [];
+  const agent = typeof obj.agent === "string" ? obj.agent : undefined;
+  if (agent) lines.push(`  agent: ${agent}`);
+  const reason = obj.reason;
+  if (typeof reason !== "object" || reason === null) return lines;
+  // Snapshot line count BEFORE the reason-specific branches so we can
+  // detect "reason was an object but none of our known fields matched"
+  // — that means the server has likely added a new BlockedReason
+  // field this CLI version doesn't know about. Falling back to a
+  // generic pointer is better than emitting just the agent line and
+  // leaving the user staring at a bare HTTP 409.
+  const linesBeforeReason = lines.length;
+  const r = reason as {
+    needsPrereqsAck?: unknown;
+    disabledByUser?: unknown;
+    orphaned?: unknown;
+    missingDeps?: unknown;
+    blockedDeps?: unknown;
+  };
+  if (r.disabledByUser === true) {
+    lines.push("  cause: agent is disabled");
+    if (agent) lines.push(`  fix:   emploke catalog agent enable ${agent}`);
+  }
+  if (r.needsPrereqsAck === true) {
+    lines.push("  cause: prereqs not acknowledged");
+    if (agent) lines.push(`  fix:   emploke catalog agent ack-prereqs ${agent}`);
+  }
+  if (r.orphaned === true) {
+    lines.push("  cause: orphaned (no installed entry references this)");
+  }
+  if (Array.isArray(r.missingDeps) && r.missingDeps.length > 0) {
+    const refs = r.missingDeps
+      .map((d) => (typeof d === "object" && d !== null ? formatDepRef(d) : ""))
+      .filter((s) => s !== "");
+    if (refs.length > 0) {
+      lines.push(`  cause: missing dependencies (${refs.length})`);
+      for (const ref of refs) lines.push(`    - ${ref}`);
+      lines.push("  fix:   install the missing dependencies, then retry");
+    }
+  }
+  if (Array.isArray(r.blockedDeps) && r.blockedDeps.length > 0) {
+    const refs = r.blockedDeps
+      .map((d) => (typeof d === "object" && d !== null ? formatDepRef(d) : ""))
+      .filter((s) => s !== "");
+    if (refs.length > 0) {
+      lines.push(`  cause: blocked dependencies (${refs.length})`);
+      for (const ref of refs) lines.push(`    - ${ref}`);
+      lines.push("  fix:   resolve the blocked dependencies, then retry");
+    }
+  }
+  if (lines.length === linesBeforeReason) {
+    // Reason payload had no recognized field. Either the server added
+    // a new BlockedReason variant after this CLI was built, or the
+    // payload is malformed. Surface a generic pointer rather than
+    // staying silent.
+    lines.push("  cause: blocked (reason fields not recognized by this CLI version)");
+    lines.push("  fix:   inspect via the dashboard or upgrade the CLI for typed remediation");
+  }
+  return lines;
+}
+
+function formatDepRef(d: object): string {
+  const o = d as { kind?: unknown; fqn?: unknown };
+  const kind = typeof o.kind === "string" ? o.kind : "?";
+  const fqn = typeof o.fqn === "string" ? o.fqn : "";
+  return fqn ? `${kind}: ${fqn}` : kind;
 }
 
 /**
