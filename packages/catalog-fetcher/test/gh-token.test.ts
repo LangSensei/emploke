@@ -250,4 +250,85 @@ describe("resolveDefaultGitHubToken — caching", () => {
     await resolveDefaultGitHubToken("github.com");
     expect(spawned).toBe(2);
   });
+
+  it("normalises host case before caching (GitHub.COM == github.com)", async () => {
+    let spawned = 0;
+    spawnFactory = () => {
+      spawned++;
+      return makeGhMock(["gho_caseinsensitive\n"], 0)();
+    };
+    expect(await resolveDefaultGitHubToken("GitHub.COM")).toBe("gho_caseinsensitive");
+    expect(await resolveDefaultGitHubToken("github.com")).toBe("gho_caseinsensitive");
+    expect(await resolveDefaultGitHubToken("GITHUB.COM")).toBe("gho_caseinsensitive");
+    expect(spawned).toBe(1);
+    // The argument actually passed to `gh` is also lower-cased, for parity.
+    expect(spawnSpy).toHaveBeenCalledWith(
+      "gh",
+      ["auth", "token", "--hostname", "github.com"],
+      expect.anything(),
+    );
+  });
+});
+
+describe("resolveDefaultGitHubToken — diagnostics", () => {
+  it("emits a process warning when stdout doesn't look like a token", async () => {
+    spawnFactory = makeGhMock(["this-is-not-a-token\n"], 0);
+
+    // process.emitWarning dispatches on a future tick, so we await a
+    // dedicated promise that resolves on the first matching warning rather
+    // than racing the test's finally block against the warning queue.
+    const warningPromise = new Promise<NodeJS.ErrnoException | null>((resolve) => {
+      const handler = (warning: Error): void => {
+        const w = warning as NodeJS.ErrnoException;
+        if (w.code === "EMPLOKE_GH_TOKEN_FORMAT") {
+          process.off("warning", handler);
+          resolve(w);
+        }
+      };
+      process.on("warning", handler);
+      // Defensive 1s timeout so a regression that drops the warning shows
+      // up as a clear assertion failure instead of a hanging test.
+      setTimeout(() => {
+        process.off("warning", handler);
+        resolve(null);
+      }, 1_000);
+    });
+
+    const t = await resolveDefaultGitHubToken("github.com");
+    expect(t).toBeNull();
+
+    const w = await warningPromise;
+    expect(w, "expected an EMPLOKE_GH_TOKEN_FORMAT warning").not.toBeNull();
+    expect(w!.message).toMatch(/does not look like a GitHub token/);
+    expect(w!.message).toMatch(/falling back to anonymous/);
+  });
+
+  it("does NOT emit a warning on the normal 'gh isn't configured' paths", async () => {
+    let formatWarnings = 0;
+    const handler = (warning: Error): void => {
+      if ((warning as NodeJS.ErrnoException).code === "EMPLOKE_GH_TOKEN_FORMAT") {
+        formatWarnings++;
+      }
+    };
+    process.on("warning", handler);
+    try {
+      // gh exits non-zero — normal "not logged in" path, no warning.
+      spawnFactory = makeGhMock([""], 1);
+      _resetGhTokenCache();
+      await resolveDefaultGitHubToken("github.com");
+
+      // gh not installed (ENOENT) — normal "no gh on machine" path, no warning.
+      spawnFactory = () => {
+        throw Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" });
+      };
+      _resetGhTokenCache();
+      await resolveDefaultGitHubToken("github.com");
+
+      // Drain any queued warnings before asserting.
+      await new Promise<void>((r) => setImmediate(r));
+    } finally {
+      process.off("warning", handler);
+    }
+    expect(formatWarnings).toBe(0);
+  });
 });

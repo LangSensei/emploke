@@ -64,8 +64,14 @@ const TOKEN_RE = /^(gho|ghp|ghs|ghu|github_pat)_[A-Za-z0-9_]+$/;
  * If the keyring is locked or the user isn't logged in, gh exits non-zero
  * immediately rather than blocking — but the timeout is the belt-and-braces
  * fallback in case some future gh version behaves differently.
+ *
+ * Host names are lower-cased before being passed to `gh`. Hostnames are
+ * case-insensitive at the DNS / `gh` level, but the cache in
+ * {@link resolveDefaultGitHubToken} keys on the canonical form, so this
+ * function lower-cases too for consistency.
  */
 export async function tryGhAuthToken(host: string): Promise<string | null> {
+  const normalisedHost = host.toLowerCase();
   return new Promise<string | null>((resolve) => {
     let settled = false;
     const settle = (v: string | null): void => {
@@ -76,7 +82,7 @@ export async function tryGhAuthToken(host: string): Promise<string | null> {
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("gh", ["auth", "token", "--hostname", host], {
+      child = spawn("gh", ["auth", "token", "--hostname", normalisedHost], {
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
       });
@@ -110,7 +116,24 @@ export async function tryGhAuthToken(host: string): Promise<string | null> {
         return;
       }
       const trimmed = stdout.trim();
-      settle(TOKEN_RE.test(trimmed) ? trimmed : null);
+      if (TOKEN_RE.test(trimmed)) {
+        settle(trimmed);
+        return;
+      }
+      // Distinct case from "gh isn't configured here": gh exited 0 but the
+      // stdout isn't a recognised GitHub token shape. That means either
+      // (a) a future gh version changed its output format, or (b) something
+      // else printed to stdout (extension wrapper, login banner, …).
+      // Either way it's an unexpected condition the user almost certainly
+      // wants to know about — emit a one-shot Node warning so it surfaces
+      // in CI logs and process.on("warning") handlers without forcing
+      // catalog-fetcher to depend on a logger.
+      process.emitWarning(
+        `gh auth token --hostname ${normalisedHost} returned data that does not look like a GitHub token; ` +
+          "treating as no token and falling back to anonymous request",
+        { code: "EMPLOKE_GH_TOKEN_FORMAT" },
+      );
+      settle(null);
     });
   });
 }
@@ -118,7 +141,7 @@ export async function tryGhAuthToken(host: string): Promise<string | null> {
 /**
  * Resolve the default GitHub token for `host`. Implements the two-tier
  * fallback chain documented at the top of this file. Result is cached
- * per-host for {@link CACHE_TTL_MS} milliseconds.
+ * per-host (case-insensitive) for {@link CACHE_TTL_MS} milliseconds.
  *
  * The env-var check is NOT cached: each call re-reads `process.env` so that
  * a long-lived host process picks up a mid-run env mutation immediately.
@@ -128,12 +151,13 @@ export async function resolveDefaultGitHubToken(host: string): Promise<string | 
   const env = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   if (env) return env;
 
+  const cacheKey = host.toLowerCase();
   const now = Date.now();
-  const cached = CACHE.get(host);
+  const cached = CACHE.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.token;
 
-  const token = await tryGhAuthToken(host);
-  CACHE.set(host, { token, expiresAt: now + CACHE_TTL_MS });
+  const token = await tryGhAuthToken(cacheKey);
+  CACHE.set(cacheKey, { token, expiresAt: now + CACHE_TTL_MS });
   return token;
 }
 
