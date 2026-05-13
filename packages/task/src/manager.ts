@@ -17,7 +17,6 @@ import {
 import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
-import { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
 import type { DispatchOpts, ListTaskOpts, Logger, Task, TaskManagerConfig } from "./types.js";
 
@@ -59,8 +58,9 @@ interface LiveTask {
  * Owns `<tasksDir>/` on disk. Each task is one directory containing the
  * captured `stderr.log` and whatever the agent itself wrote during
  * execution. The queryable metadata (status, runtime, agent, timings,
- * the open-shape `metadata` bag) lives in `<tasksDir>/tasks.db` —
- * one row per task, owned by the SQLite repository. The runtime keeps
+ * the open-shape `metadata` bag) lives in the per-workspace
+ * `workspace.db` (in the `tasks` table) — one row per task, owned by
+ * the SQLite repository. The runtime keeps
  * its own per-task event log on its own state directory (Copilot:
  * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`); emploke does
  * NOT mirror it back into the workdir.
@@ -130,9 +130,7 @@ export class TaskManager {
     this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
     this.logger = config.logger ?? silentLogger;
-    this.repository =
-      config.repository ??
-      new SqliteTaskRepository(path.join(this.tasksDir, "tasks.db"), { logger: this.logger });
+    this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

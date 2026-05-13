@@ -26,12 +26,13 @@ Each session has two stores: queryable metadata in a SQLite row, and
 an on-disk workdir for the agent's actual product.
 
 ```
-<sessionsDir>/
-├── sessions.db          # SQLite — one row per session: runtime, createdAt, …
-└── <id>/                # workdir for session <id>
-    ├── AGENTS.md        # baked by the runtime provisioner
-    ├── .github/skills/  # …and whatever else the provisioner wrote
-    └── …                # plus anything the agent itself produces
+<workspace>/
+├── workspace.db         # SQLite — `sessions` table holds one row per session: runtime, createdAt, …
+└── sessions/
+    └── <id>/            # workdir for session <id>
+        ├── AGENTS.md    # baked by the runtime provisioner
+        ├── .github/skills/  # …and whatever else the provisioner wrote
+        └── …            # plus anything the agent itself produces
 ```
 
 `<sessionsDir>` is the directory the caller passes to `SessionManager`
@@ -47,8 +48,8 @@ The 8-hex-char suffix gives ~4 billion values per day, more than enough for
 ad-hoc creation. The workdir contains **no metadata sidecar file** — the
 agent name is parsed from `AGENTS.md` frontmatter at read time, and
 `runtime` / `createdAt` / `runtimeSessionId` / `lastLaunchMode` come
-from the row in `sessions.db`. The directory name is the **only source
-of truth for the session ID**.
+from the row in the workspace's `sessions` table. The directory name
+is the **only source of truth for the session ID**.
 
 > Why SQLite for session metadata (and FS for the workdir)?
 > See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
@@ -58,15 +59,20 @@ of truth for the session ID**.
 ## Usage
 
 ```ts
+import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
-import { SessionManager } from "@emploke/session";
+import { SessionManager, SqliteSessionRepository } from "@emploke/session";
 
-const catalog = await CatalogManager.open({ catalogDir: "/path/to/workspace/catalog" });
+// Catalog and session both read/write the per-workspace shared
+// `workspace.db`. In production the workspace pkg owns the connection.
+const db = new DatabaseSync("/path/to/workspace/workspace.db");
+const catalog = await CatalogManager.open({ db });
 const sessions = new SessionManager({
   catalog,
   runtimeRegistry,
   sessionsDir: "/path/to/workspace/sessions",
   workspaceDir: "/path/to/workspace",
+  repository: new SqliteSessionRepository({ db }),
 });
 
 const session = await sessions.create({ agent: "demo-agent" });

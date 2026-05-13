@@ -1,10 +1,10 @@
 import { open, stat } from "node:fs/promises";
 
 /**
- * Hard cap on metadata-file size. Catalog/workspace/session/task JSONs
- * are tiny (< 4 KB typical). Anything bigger is almost certainly an
+ * Hard cap on metadata-file size. Catalog/runtime JSONs are tiny
+ * (< 4 KB typical). Anything bigger is almost certainly an
  * accident or an attack — refuse to read it into memory rather than
- * letting a malformed gigabyte-scale `workspace.json` OOM the process.
+ * letting a malformed gigabyte-scale `runtime.json` OOM the process.
  *
  * Callers that legitimately need to read a larger blob can override
  * via `readJson(path, { maxBytes })`.

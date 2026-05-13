@@ -109,65 +109,56 @@ parameterised regression test in
 entities (catalog, session, task) get the equivalent guarantees from
 WAL mode + transactions and don't go through this layer.
 
-## Backend selection: when FS, when SQLite
+## Backend selection: when SQLite
 
-emploke deliberately does **not** abstract over its persistence
-backend. Each entity package picks the storage shape that matches its
-data, and the rule below is the contract every new entity should follow.
+emploke deliberately keeps its persistence backend simple and consistent.
+Today **every entity is SQLite-backed**, but the DBs are split by
+**scope** (where the data lives in the lifetime hierarchy), not by
+entity:
 
-**Use FS when ALL of these hold:**
+- **`<EMPLOKE_HOME>/global.db`** — workspace registry + cross-workspace
+  state (current-workspace pointer, future audit logs, etc).
+- **`<workspace>/workspace.db`** — every per-workspace entity (catalog,
+  session, task, future workflow). One connection serves them all,
+  shared via DI from `WorkspaceContext`.
 
-- Data is per-id documents (one row → one file)
-- N per workspace stays small (tens, occasionally low hundreds)
-- Queries are list / read-by-id / single-field filter
-- No BLOB content
-- No cross-entity graph traversal
-- No full-text search
-- Operational benefit from a human-readable on-disk format
-  (debugging, recovery, `git diff`, hand-edits)
-
-Per-id JSON via `@emploke/fs.writeJsonAtomic` + `readJson`. Listing
-scans the directory. Filters apply in memory after read.
-
-**Today:** `workspace` (small N, no complex queries, value of
-hand-editable `workspace.json` outweighs the cost of `readdir` +
-N JSON parses).
-
-**Use SQLite when ANY of these hold:**
-
-- Cross-entity joins or dependency-graph traversal
-- Many rows (1000+) where directory scan + per-row read becomes the
-  bottleneck
-- Filtering / sorting / aggregation queries are primary access patterns
-- BLOB content where holding it all in memory is infeasible
-- Full-text search or indexed range queries
-
-One `*.db` file per **(package, workspace)** pair via `node:sqlite`
-(no external dependency). Each entity package owns its own `*.db`
-file inside its existing per-workspace subdirectory
-(`<workspaceRoot>/<entity>/<entity>.db`). The repository owns the
-schema, migrations, and indexes for that file. The manager holds no
+Each pkg owns its own tables inside the shared DB and registers its
+schema version in a multi-row `schema_meta(pkg TEXT PK, version INT)`
+table so pkgs can evolve independently. The manager holds no
 in-memory snapshot — SQLite is the source of truth and reads run in
 autocommit so external writes are observable on the next request.
 
-**Today:** `catalog` (cross-entity dep graph + BLOB content),
-`session` (status/runtime/time filtering at projected scale of
-thousands of sessions per workspace), `task` (same plus dashboard
-aggregation across workspaces).
+Why one DB per scope rather than one DB per entity:
+- Cross-entity JOINs and atomic multi-table transactions are cheap
+  (no `ATTACH DATABASE` dance).
+- File handle count per workspace is exactly one.
+- Backup / migration / diagnostic story is a single file.
+- Mirrors industry norm for desktop SQLite apps (Copilot CLI,
+  Obsidian, Logseq) where data sharing across "modules" within a
+  single workspace is the default.
+
+### When NOT SQLite (intentionally on the filesystem)
+
+- **Agent workdirs** — `<workspace>/sessions/<id>/`,
+  `<workspace>/tasks/<id>/` are the agent's own product dirs. emploke
+  creates them and bakes a starter `AGENTS.md` / `.mcp.json` from the
+  catalog; the agent owns everything else inside.
+- **Server lifecycle** — `<EMPLOKE_HOME>/runtime.json` (pid + port +
+  apiKey) stays a JSON file for ops ergonomics. Port-binding is the
+  actual mutex; SQLite's atomic-write would buy nothing here.
+- **Logs** — `<EMPLOKE_HOME>/logs/` is rotated JSONL via `pino-roll`.
 
 ### Hybrid: when an entity has both metadata and content
 
 `session` and `task` use a **hybrid** pattern: SQLite owns the
 queryable metadata; FS owns the human-meaningful content. The
-metadata sidecar that used to live on disk (`session.json` /
-`task.json` in the pre-SQLite layout) moves into a row of the
-entity's `*.db`; the workdir directory tree
-(`<workspaceRoot>/sessions/<sid>/...` for session, `.../tasks/<tid>/`
-for task) stays a plain directory of agent-produced files (AGENTS.md,
-artifacts, captured stderr). The default `delete(id)` removes only
-the metadata row (the "archive" mode — matches the workspace-wide
-"purge is opt-in" pattern, giving operators a chance to inspect
-agent output after a delete); `delete(id, { purge: true })`
+metadata row lives in the per-workspace `workspace.db`; the workdir
+directory tree (`<workspace>/sessions/<sid>/...` for session,
+`.../tasks/<tid>/` for task) stays a plain directory of agent-produced
+files (AGENTS.md, artifacts, captured stderr). The default `delete(id)`
+removes only the metadata row (the "archive" mode — matches the
+workspace-wide "purge is opt-in" pattern, giving operators a chance
+to inspect agent output after a delete); `delete(id, { purge: true })`
 additionally removes the workdir AND asks the runtime to wipe its
 own per-entity state (Copilot's `<copilotStateDir>/<id>/` etc.) via
 `Runtime.deleteState(runtimeSessionId)` — the same verb is used for
@@ -182,9 +173,7 @@ to thousands of rows under filtering / sorting queries.
 ### Why no unified persistence service
 
 #32 explored a generic `PersistenceService` (Phase 2 of the proposed
-`@emploke/storage`). It was deliberately not built. The shared
-concerns — atomic write, cross-process lock, EPERM retry, TOCTOU
-defence — already live in `@emploke/fs`. Beyond that, each entity's
+`@emploke/storage`). It was deliberately not built. Each entity's
 repository surface is shaped by its own queries:
 `WorkspaceRepository.getCurrent()`,
 `TaskRepository.list({ statuses, runtime, ... })`,
@@ -193,8 +182,9 @@ force these into either an `unknown`-typed lowest common denominator
 or a parade of entity-specific extension methods that re-introduce
 the per-entity shape it was meant to remove.
 
-The pattern that works: **shared primitives, per-entity repositories,
-per-entity backend choice driven by data shape.**
+The pattern that works: **shared SQLite connection per scope (global
++ per-workspace), per-entity repositories with their own table
+ownership and `schema_meta` row.**
 
 ## Unified verb conventions
 
@@ -248,29 +238,25 @@ production deploy fails fast.
 
 ```text
 <workspace>/
-├── workspace.json               { schemaVersion, name, createdAt, defaults? }
-├── catalog/
-│   ├── agents/<name>/AGENTS.md  + arbitrary sibling files (templates, scripts)
-│   ├── skills/<name>/SKILL.md   + arbitrary sibling files (incl. hooks/copilot/)
-│   └── mcps/<name>.json
-├── sessions/
-│   ├── sessions.db              SQLite — one row per session: status, runtime, agent, timings, …
-│   └── <id>/                    agent-baked workdir; `copilot` runs here
-│       ├── AGENTS.md            materialised from catalog at create time
-│       ├── .mcp.json            merged from agent's MCP deps
-│       └── .github/{skills,hooks}/  materialised from catalog
-├── tasks/
-│   ├── tasks.db                 SQLite — one row per task: status, runtime, agent, timings, …
-│   └── <id>/                    one-shot autonomous dispatch — workdir for agent artifacts
-│       ├── stderr.log           CLI errors (the runtime owns its event log via readActivity, NOT mirrored here)
-│       └── ...                  whatever the agent writes
-└── (workflows/, logs/, schedules/ — added when those entities land)
+├── workspace.db                 single SQLite per workspace — holds task / session / catalog tables (one row per pkg in schema_meta)
+├── sessions/<id>/               agent-baked workdir; `copilot` runs here
+│   ├── AGENTS.md                materialised from catalog at create time
+│   ├── .mcp.json                merged from agent's MCP deps
+│   └── .github/{skills,hooks}/  materialised from catalog
+└── tasks/<id>/                  one-shot autonomous dispatch — workdir for agent artifacts
+    ├── stderr.log               CLI errors (the runtime owns its event log via readActivity, NOT mirrored here)
+    └── ...                      whatever the agent writes
 ```
 
-The conventional sub-paths are computed by `workspaceLayout(workdir)`,
-not stored on the `Workspace` value type. A SQLite-backed repository
-would persist no on-disk layout, but the manager would still call
-`workspaceLayout(...)` to know where to spawn agents.
+Workspace metadata (`name`, `createdAt`, `defaults`) lives in
+`<EMPLOKE_HOME>/global.db` keyed by workspace id — there is no
+`workspace.json` sidecar. Catalog content (agents/skills/mcps) lives in
+the workspace's `workspace.db`, not as loose files; the dashboard /
+CLI mutates them via the catalog API.
+
+The conventional sub-paths under `workdir` (`sessions/`, `tasks/`) are
+computed by `workspaceLayout(workdir)`, not stored on the `Workspace`
+entity.
 
 ## How runtimes plug in
 
@@ -349,7 +335,7 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 
 | Path | Owner | Notes |
 | ---- | ----- | ----- |
-| `workspaces.json`  | server               | Workspace registry (id → workdir + currentId). |
+| `global.db`        | server               | SQLite — workspace registry (id → workdir + currentId) plus other cross-workspace state. |
 | `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
 | `logs/`            | server               | Rotated server logs (pino-roll). |
 | `shared/`          | runtime adapters     | `${globalDir}` placeholder root for MCP specs. |
@@ -359,13 +345,12 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 The per-workspace layout has three distinct owners — each with a
 different "what hand-editing does" story:
 
-- **emploke** owns `workspace.json`, the SQLite databases
-  (`sessions/sessions.db`, `tasks/tasks.db`, `catalog/catalog.db` and
-  their `-wal` / `-shm` sidecars), and the `catalog/agents/`,
-  `catalog/skills/`, `catalog/mcps/` source-file subdirs. Add or
-  remove catalog entries through `emploke catalog ...` or the
-  dashboard so the SQLite index stays in sync with the on-disk
-  sources; do not edit by hand.
+- **emploke** owns the SQLite databases (`<EMPLOKE_HOME>/global.db` for
+  the workspace registry + cross-workspace state, `<workspace>/workspace.db`
+  for everything per-workspace including catalog content) plus their
+  `-wal` / `-shm` sidecars. Add or remove catalog entries through
+  `emploke catalog ...` or the dashboard so the SQLite index stays
+  consistent with the install/sync workflow; do not edit by hand.
 - **the agent** owns the contents of `<workspace>/sessions/<id>/` and
   `<workspace>/tasks/<id>/` after emploke creates the directory and
   bakes `AGENTS.md` from the catalog. Files the agent writes,

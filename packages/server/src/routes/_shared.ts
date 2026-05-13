@@ -107,7 +107,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "WorkspaceNotFoundError",
   "WorkspaceNotRegisteredError",
   "WorkspacePathConflictError",
-  "WorkspaceSchemaMismatchError",
 ]);
 
 /**

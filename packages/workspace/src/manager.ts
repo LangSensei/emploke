@@ -4,7 +4,7 @@ import path from "node:path";
 import { WorkspaceIdInvalidError, WorkspaceNotRegisteredError } from "./errors.js";
 import { assertValidDisplayName, isValidWorkspaceId } from "./names.js";
 import type { WorkspaceRepository } from "./repositories/repository.js";
-import { type Workspace, workspaceLayout } from "./types.js";
+import { Workspace, workspaceLayout } from "./workspace-entity.js";
 
 /** Options accepted by `WorkspaceManager.init`. */
 export interface WorkspaceInitOpts {
@@ -38,30 +38,32 @@ export interface WorkspaceUpdatePatch {
 export interface WorkspaceDeleteOpts {
   /**
    * When `true`, also remove every emploke-owned subdirectory under the
-   * workspace's `workdir` (`tasks/`, `sessions/`, `catalog/`).
+   * workspace's `workdir` (`tasks/`, `sessions/`).
    * The `workdir` itself is **never** removed —
    * it is user-owned and may contain files emploke does not know about.
    *
    * Default `false`: only the workspace metadata is removed; agent
-   * artifacts, catalog definitions, etc. survive deletion. The
-   * dashboard surfaces the choice as an explicit checkbox.
+   * artifacts survive deletion. The dashboard surfaces the choice as
+   * an explicit checkbox.
    */
   readonly purge?: boolean;
 }
 
 /**
  * Workspace lifecycle façade. All persistence flows through the
- * supplied `WorkspaceRepository` (defaults to `FsWorkspaceRepository`
- * when constructed via the static factory below). The manager owns
- * filesystem side-effects that are NOT persistence — creating the
- * workspace directory and standard subdirs at init time, and the
- * optional `purge`-mode cleanup at delete time.
+ * supplied `WorkspaceRepository` (always `SqliteWorkspaceRepository`
+ * — there is no separate in-memory implementation; tests instantiate
+ * the same class against a `":memory:"` `DatabaseSync`). The
+ * manager owns filesystem side-effects that are NOT persistence —
+ * creating the workspace directory and standard subdirs at init time,
+ * and the optional `purge`-mode cleanup at delete time.
  *
  * Concurrency: cross-process serialisation lives in the repository
- * (see `FsWorkspaceRepository`'s advisory lock). The manager itself is
- * stateless beyond the injected repository reference, so two
- * `WorkspaceManager` instances pointing at the same repository are
- * safe to use concurrently.
+ * (the SQLite repository relies on SQLite's write lock + UNIQUE
+ * constraints).
+ * The manager itself is stateless beyond the injected repository
+ * reference, so two `WorkspaceManager` instances pointing at the same
+ * repository are safe to use concurrently.
  */
 export class WorkspaceManager {
   constructor(private readonly repository: WorkspaceRepository) {}
@@ -110,17 +112,16 @@ export class WorkspaceManager {
     await Promise.all([
       mkdir(layout.sessions, { recursive: true }),
       mkdir(layout.tasks, { recursive: true }),
-      mkdir(layout.catalog, { recursive: true }),
     ]);
 
     const now = opts.now ?? (() => new Date());
-    const workspace: Workspace = {
+    const workspace = Workspace.create({
       id,
       name: opts.name,
-      createdAt: now().toISOString(),
       workdir: resolvedWorkdir,
+      createdAt: now().toISOString(),
       ...(opts.defaults ? { defaults: opts.defaults } : {}),
-    };
+    });
     await this.repository.create(workspace);
     return workspace;
   }
@@ -128,32 +129,28 @@ export class WorkspaceManager {
   /**
    * Update mutable fields (`name`, `defaults`) on a registered
    * workspace. Throws `WorkspaceNotRegisteredError` when no workspace
-   * with the given id exists. Cannot be used to change `id` or
-   * `workdir` — those are immutable for the lifetime of the workspace.
+   * with the given id exists — including the rare race where a
+   * concurrent `delete(id)` lands between the manager's `read()` and
+   * `repository.save()` calls (the strict-update semantics in
+   * {@link WorkspaceRepository.save} surface that as a typed 404
+   * instead of silently resurrecting the deleted row).
+   * Cannot be used to change `id` or `workdir` — those are immutable
+   * for the lifetime of the workspace.
    */
   async update(id: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
     const current = await this.repository.read(id);
     if (!current) throw new WorkspaceNotRegisteredError(id);
-    if (patch.name !== undefined) assertValidDisplayName(patch.name);
-
-    const nextName = patch.name ?? current.name;
-    const nextDefaults =
-      patch.defaults === undefined ? current.defaults : (patch.defaults ?? undefined);
-
-    const updated: Workspace = {
-      id: current.id,
-      workdir: current.workdir,
-      createdAt: current.createdAt,
-      name: nextName,
-      ...(nextDefaults ? { defaults: nextDefaults } : {}),
-    };
+    const updated = current.withMetadata({
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.defaults !== undefined ? { defaults: patch.defaults } : {}),
+    });
     await this.repository.save(updated);
     return updated;
   }
 
   /**
    * Remove a registered workspace. Default behaviour removes only the
-   * emploke metadata (the registry entry + `workspace.json`). Pass
+   * emploke metadata (the registry row in `global.db`). Pass
    * `{ purge: true }` to additionally rm every emploke-owned
    * subdirectory under the workspace's `workdir`; the `workdir` itself
    * is preserved either way (user-owned). Idempotent for unregistered ids.
@@ -163,7 +160,7 @@ export class WorkspaceManager {
       // Read first, purge subdirs, THEN drop the registry entry.
       // Removing the entry first opens a race window where a concurrent
       // `init({workdir: same})` could succeed (no path conflict in the
-      // index anymore) and start populating sessions/, tasks/, ... —
+      // index anymore) and start populating sessions/, tasks/ —
       // which the in-flight purge would then nuke. Doing the purge
       // first keeps the path-conflict guard active throughout.
       const current = await this.repository.read(id);
@@ -172,7 +169,6 @@ export class WorkspaceManager {
         await Promise.all([
           rm(layout.sessions, { recursive: true, force: true }),
           rm(layout.tasks, { recursive: true, force: true }),
-          rm(layout.catalog, { recursive: true, force: true }),
         ]);
       }
     }

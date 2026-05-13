@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { type AgentResolveResult, CatalogManager } from "@emploke/catalog";
 
 /**
@@ -51,7 +52,8 @@ export async function makeTestCatalog(
   sourceRootArg?: string,
 ): Promise<{
   catalog: CatalogManager;
-  catalogDir: string;
+  /** Underlying SQLite connection backing the catalog. Tests can close it in cleanup. */
+  db: DatabaseSync;
   /**
    * Test-only helper: write garbage bytes into the SQLite-stored
    * content for an installed MCP, simulating an out-of-band data
@@ -60,10 +62,12 @@ export async function makeTestCatalog(
    */
   corruptMcp: (specName: string, content: string) => Promise<void>;
 }> {
-  const catalogDir = await mkdtemp(path.join(tmpdir(), "test-catalog-"));
   const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
 
-  const catalog = await CatalogManager.open({ catalogDir });
+  // In-memory DB so tests don't litter tmpdir with workspace.db files
+  // and Windows EBUSY on cleanup is impossible.
+  const db = new DatabaseSync(":memory:");
+  const catalog = await CatalogManager.open({ db });
 
   // Materialise each fixture as a tiny on-disk source dir so the
   // installer can fetch it via `file:` and run its full validation.
@@ -107,15 +111,12 @@ export async function makeTestCatalog(
   }
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
-    const { DatabaseSync } = await import("node:sqlite");
-    const db = new DatabaseSync(path.join(catalogDir, "catalog.db"));
     db.prepare("UPDATE mcp SET content = ? WHERE name = ?").run(content, specName);
-    db.close();
     // CatalogManager has no in-memory snapshot, so the next direct read
     // via getMcpContent picks up the corrupted bytes immediately.
   };
 
-  return { catalog, catalogDir, corruptMcp };
+  return { catalog, db, corruptMcp };
 }
 
 /** Build an `AgentResolveResult` from a catalog plus a name. */

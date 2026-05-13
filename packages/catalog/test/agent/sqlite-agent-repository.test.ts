@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
 import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
@@ -10,14 +11,20 @@ version: 1.0.0
 # Body
 `;
 
+let db: DatabaseSync;
 let repo: SqliteAgentRepository;
 
 beforeEach(() => {
-  repo = new SqliteAgentRepository(":memory:");
+  db = new DatabaseSync(":memory:");
+  repo = new SqliteAgentRepository({ db });
 });
 
 afterEach(() => {
-  repo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 function fixture(

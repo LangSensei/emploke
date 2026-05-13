@@ -98,7 +98,9 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
       <dl className="kv-list">
         <dt>
           Display name{" "}
-          <EnvHint>Free-form text from workspace.json. Edit via the sidebar's pencil icon.</EnvHint>
+          <EnvHint>
+            Free-form text from the workspace metadata row. Edit via the sidebar's pencil icon.
+          </EnvHint>
         </dt>
         <dd>
           <code>{fmt(displayName)}</code>

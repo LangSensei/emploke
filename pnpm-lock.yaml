@@ -334,6 +334,9 @@ importers:
       '@emploke/fs':
         specifier: workspace:*
         version: link:../fs
+      '@emploke/logger':
+        specifier: workspace:*
+        version: link:../logger
       '@emploke/paths':
         specifier: workspace:*
         version: link:../paths

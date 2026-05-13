@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Skill } from "../../src/skill/skill-entity.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
@@ -10,14 +11,20 @@ version: 1.0.0
 # Body
 `;
 
+let db: DatabaseSync;
 let repo: SqliteSkillRepository;
 
 beforeEach(() => {
-  repo = new SqliteSkillRepository(":memory:");
+  db = new DatabaseSync(":memory:");
+  repo = new SqliteSkillRepository({ db });
 });
 
 afterEach(() => {
-  repo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 function fixture(

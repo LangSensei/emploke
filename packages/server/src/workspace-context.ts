@@ -1,8 +1,10 @@
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import { SessionManager } from "@emploke/session";
-import { TaskManager } from "@emploke/task";
+import { SessionManager, SqliteSessionRepository } from "@emploke/session";
+import { SqliteTaskRepository, TaskManager } from "@emploke/task";
 import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke/workspace";
 
 /**
@@ -33,16 +35,20 @@ export class WorkspaceHasLiveTasksError extends Error {
 }
 
 /**
- * Per-workspace bundle of long-lived state. The server caches one of these
- * per registered workspace and hands it to route handlers via Hono context.
+ * Per-workspace bundle of long-lived state. The server caches one of
+ * these per registered workspace and hands it to route handlers via
+ * Hono context.
  *
- * `catalog` is constructed against `<workspace.workdir>/catalog/` so each
- * workspace has an isolated agent/skill/mcp set; `sessions` and `tasks`
- * reuse that catalog. Future managers (workflows) join this struct as
- * siblings.
+ * Each context holds a single `DatabaseSync` connection to the
+ * workspace's `<workspace>/workspace.db` and shares it with every
+ * per-workspace manager (`catalog`, `sessions`, `tasks`, future
+ * `workflow`). The connection's lifetime equals the cache entry's
+ * lifetime — `closeAll` / `invalidate` close it.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
+  /** Shared per-workspace SQLite handle (one per workspace, owned by the cache). */
+  readonly db: DatabaseSync;
   readonly catalog: CatalogManager;
   readonly sessions: SessionManager;
   readonly tasks: TaskManager;
@@ -55,7 +61,9 @@ export interface WorkspaceContext {
  * Lookup flow on a cache miss:
  *   1. Look up the workspace via the injected `WorkspaceManager`. If
  *      not registered, return null — the route handler will respond 404.
- *   2. Open a per-workspace `CatalogManager` rooted at `<workspace>/catalog/`.
+ *   2. Open a per-workspace `CatalogManager` against the shared
+ *      workspace.db (catalog content lives in BLOB rows; the
+ *      workspace folder has no `catalog/` subdir).
  *   3. Build `SessionManager` and `TaskManager` pointed at the
  *      per-workspace state directories. Both receive `workspaceDir` so
  *      runtime adapters can run any per-launch / per-dispatch
@@ -124,17 +132,7 @@ export class WorkspaceContextCache {
     const cached = this.entries.get(id);
     if (cached) {
       try {
-        cached.catalog.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        cached.sessions.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        cached.tasks.close();
+        cached.db.close();
       } catch {
         // best-effort
       }
@@ -153,7 +151,7 @@ export class WorkspaceContextCache {
    *
    * Catalog content drift no longer needs reload — `CatalogManager`
    * holds no in-memory snapshot, so a `git pull` of the workspace's
-   * `catalog.db` (or any external write) is observable on the next
+   * `workspace.db` (or any external write) is observable on the next
    * request. The cached `CatalogManager` only owns the SQLite handle
    * itself.
    *
@@ -185,17 +183,7 @@ export class WorkspaceContextCache {
         throw new WorkspaceHasLiveTasksError(id, live);
       }
       try {
-        cached.catalog.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        cached.sessions.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        cached.tasks.close();
+        cached.db.close();
       } catch {
         // best-effort
       }
@@ -214,12 +202,12 @@ export class WorkspaceContextCache {
   }
 
   /**
-   * Close every cached context's CatalogManager, releasing SQLite
-   * file handles. Required at server shutdown (so the OS releases
-   * the catalog.db lock cleanly) and at the end of every test that
-   * created ephemeral workspaces (Windows refuses to unlink files
-   * with open handles, so the test cleanup `rm -rf <scratch>` would
-   * fail with EBUSY without this).
+   * Close every cached context's per-workspace SQLite handle.
+   * Required at server shutdown (so the OS releases the workspace.db
+   * lock cleanly) and at the end of every test that created
+   * ephemeral workspaces (Windows refuses to unlink files with open
+   * handles, so the test cleanup `rm -rf <scratch>` would fail with
+   * EBUSY without this).
    *
    * Drops every cache entry as a side effect — subsequent `get(id)`
    * calls rebuild from scratch.
@@ -227,17 +215,7 @@ export class WorkspaceContextCache {
   closeAll(): void {
     for (const ctx of this.entries.values()) {
       try {
-        ctx.catalog.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        ctx.sessions.close();
-      } catch {
-        // best-effort
-      }
-      try {
-        ctx.tasks.close();
+        ctx.db.close();
       } catch {
         // best-effort
       }
@@ -250,16 +228,51 @@ export class WorkspaceContextCache {
     if (!workspace) return null;
 
     const layout = workspaceLayout(workspace.workdir);
-    const catalog = await CatalogManager.open({
-      catalogDir: layout.catalog,
-      logger: this.logger,
-    });
+
+    // Open the per-workspace SQLite database. One connection serves
+    // every entity (catalog, session, task, future workflow). PRAGMAs
+    // are set here, once, so individual repositories don't need to
+    // think about them. WAL gives concurrent reader safety; foreign_keys
+    // is on so cross-table references (task → workflow, task_dep, ...)
+    // are enforced. busy_timeout makes any second writer wait up to 5s
+    // on the file lock instead of immediately surfacing SQLITE_BUSY —
+    // useful when the dashboard's poll cadence overlaps with a
+    // long-running install.
+    const dbPath = path.join(workspace.workdir, "workspace.db");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(workspace.workdir, { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA synchronous = NORMAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("PRAGMA busy_timeout = 5000");
+
+    // Best-effort upgrade hint for per-workspace `workspace.json`
+    // sidecars from the pre-`workspace.db` build. Same rationale as
+    // the boot-time check for `<EMPLOKE_HOME>/workspaces.json`:
+    // emploke no longer reads the file but the user might be wondering
+    // why their dashboard catalog/session/task panels look empty.
+    const { existsSync } = await import("node:fs");
+    const legacySidecar = path.join(workspace.workdir, "workspace.json");
+    if (existsSync(legacySidecar)) {
+      this.logger.warn(
+        "legacy workspace.json found; this version stores per-workspace metadata in the global registry instead. Safe to delete.",
+        { legacyFile: legacySidecar, workspaceId: workspace.id },
+      );
+    }
+
+    // Each manager gets the shared connection via DI. Repositories
+    // bootstrap their own tables on first construction (idempotent
+    // CREATE IF NOT EXISTS) and register themselves in the multi-row
+    // schema_meta table (one row per pkg).
+    const catalog = await CatalogManager.open({ db, logger: this.logger });
 
     const sessions = new SessionManager({
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
       workspaceDir: workspace.workdir,
+      repository: new SqliteSessionRepository({ db, logger: this.logger }),
       logger: this.logger,
     });
 
@@ -268,15 +281,15 @@ export class WorkspaceContextCache {
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
       workspaceDir: workspace.workdir,
+      repository: new SqliteTaskRepository({ db, logger: this.logger }),
       logger: this.logger,
     });
     // Sweep persisted tasks marked `running` from a previous server lifetime
-    // and flip them to `failure`. Cheap (one fs scan + per-orphan rewrite),
-    // and it eliminates ghost-running rows in the dashboard immediately on
-    // first request to this workspace.
+    // and flip them to `failure`. Cheap query, and it eliminates ghost-running
+    // rows in the dashboard immediately on first request to this workspace.
     await tasks.recoverOrphaned();
 
-    const ctx: WorkspaceContext = { workspace, catalog, sessions, tasks };
+    const ctx: WorkspaceContext = { workspace, db, catalog, sessions, tasks };
     this.entries.set(id, ctx);
     return ctx;
   }

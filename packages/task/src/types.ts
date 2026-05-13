@@ -144,13 +144,13 @@ export interface TaskManagerConfig {
   /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
   /**
-   * Persistence backend for task state. When omitted, the manager
-   * constructs a `SqliteTaskRepository` opened at `<tasksDir>/tasks.db`
-   * automatically; tests can inject a `:memory:`-backed
-   * `SqliteTaskRepository` (from `@emploke/task/testing`) to keep
-   * state purely in-process.
+   * Persistence backend for task state. Required: callers (server
+   * `WorkspaceContext` in production, tests) construct a
+   * `SqliteTaskRepository({ db: <workspace.db connection> })` and pass
+   * it. There is no default — the task pkg no longer owns a DB file
+   * path; the workspace pkg does.
    */
-  readonly repository?: TaskRepository;
+  readonly repository: TaskRepository;
   readonly logger?: _Logger;
   /** Test seam: clock injection. */
   readonly now?: () => Date;

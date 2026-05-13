@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workspace",
   "version": "0.0.1",
-  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/tasks/catalog, plus a $EMPLOKE_HOME-level registry",
+  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@emploke/fs": "workspace:*",
+    "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*"
   },
   "devDependencies": {

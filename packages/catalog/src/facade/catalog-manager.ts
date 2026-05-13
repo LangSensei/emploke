@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import {
   defaultFetcherRegistry,
   type EntryFile,
@@ -61,16 +61,17 @@ import {
  *    `getSkillContent`, `agentEntries`, etc. mirror the pre-refactor
  *    `CatalogManager`.
  *
- * Backing store: SQLite (one `catalog.db` per workspace, opened by the
- * per-entity repositories in WAL mode). The facade holds no in-memory
- * snapshot — every read goes straight to the repos and runs in
- * autocommit, so each call starts a fresh implicit read transaction
- * that observes any commit from another `CatalogManager` instance in
- * the same process or from a separate SQLite-aware writer holding its
- * own connection to the same file. (External tools that *replace* the
- * `catalog.db` file out-of-band — e.g. `git pull` overwriting it
- * while a handle is open — are unsupported; SQLite's WAL invariants
- * assume the file is only mutated through SQLite.) Status-aware list
+ * Backing store: SQLite (the per-workspace shared `workspace.db`,
+ * with catalog tables `agents`/`skills`/`mcps`/`agent_files`/`skill_files`,
+ * opened by the per-entity repositories in WAL mode). The facade holds
+ * no in-memory snapshot — every read goes straight to the repos and
+ * runs in autocommit, so each call starts a fresh implicit read
+ * transaction that observes any commit from another `CatalogManager`
+ * instance in the same process or from a separate SQLite-aware writer
+ * holding its own connection to the same file. (External tools that
+ * *replace* the `workspace.db` file out-of-band — e.g. `git pull`
+ * overwriting it while a handle is open — are unsupported; SQLite's
+ * WAL invariants assume the file is only mutated through SQLite.) Status-aware list
  * operations (e.g. `listSkillEntries`) batch the underlying SELECTs
  * with `Promise.all` to keep the wall-clock cost flat.
  *
@@ -250,7 +251,14 @@ export interface CatalogSyncResult extends CatalogInstallResult {
 }
 
 export interface CatalogOptions {
-  readonly catalogDir: string;
+  /**
+   * An already-opened SQLite connection to the per-workspace
+   * `workspace.db`. The catalog facade is one of multiple repositories
+   * sharing this connection (alongside task / session / workflow); the
+   * caller (workspace pkg in production, tests) owns the connection
+   * lifecycle. The catalog never calls `db.close()`.
+   */
+  readonly db: DatabaseSync;
   readonly fetchers?: FetcherRegistry;
   /**
    * Optional logger. Threaded into each per-entity repository so
@@ -313,17 +321,18 @@ export class CatalogManager {
   ) {}
 
   /**
-   * Open a SQLite-backed catalog rooted at `catalogDir`. Creates the
-   * database file (`catalog.db`) inside that directory if missing.
+   * Open a SQLite-backed catalog over an existing `DatabaseSync`
+   * connection. The caller (workspace pkg in production) owns the
+   * connection's lifecycle; the facade just attaches its three
+   * per-entity repositories on top.
    */
   static async open(opts: CatalogOptions): Promise<CatalogManager> {
     const fetchers = opts.fetchers ?? defaultFetcherRegistry();
     const logger = opts.logger ?? silentLogger;
-    const dbPath = join(opts.catalogDir, "catalog.db");
 
-    const mcpRepo = new SqliteMcpRepository(dbPath, { logger });
-    const skillRepo = new SqliteSkillRepository(dbPath, { logger });
-    const agentRepo = new SqliteAgentRepository(dbPath, { logger });
+    const mcpRepo = new SqliteMcpRepository({ db: opts.db, logger });
+    const skillRepo = new SqliteSkillRepository({ db: opts.db, logger });
+    const agentRepo = new SqliteAgentRepository({ db: opts.db, logger });
 
     const mcpFetcher: McpFetcher = (origin) => fetchers.dispatch(origin);
     const skillFetcher: SkillFetcher = {
@@ -380,10 +389,14 @@ export class CatalogManager {
 
   // ─── Lifecycle ────────────────────────────────────────
 
+  /**
+   * No-op — the underlying `DatabaseSync` connection is owned by the
+   * caller (workspace pkg in production). Kept on the facade for API
+   * compatibility with callers that wrap many resources in a single
+   * `close()` sweep.
+   */
   close(): void {
-    this.skill.close();
-    this.agent.close();
-    this.mcp.close();
+    // intentionally empty
   }
 
   // ─── Resolve (cross-entity walk) ──────────────────────

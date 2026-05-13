@@ -38,9 +38,8 @@ Walk through:
    on disk; if you don't, emploke creates one under
    `$EMPLOKE_HOME/workspaces/<uuid>/` so the workspace id and the on-disk
    directory share the same name. Either way emploke writes
-   `workspace.json` plus standard subdirs (`sessions/`, `tasks/`,
-   `catalog/`) inside; existing files in a user-supplied directory are
-   left alone.
+   a `workspace.db` SQLite file plus `sessions/` and `tasks/` subdirs
+   inside; existing files in a user-supplied directory are left alone.
 2. **Install an agent** in the Catalog tab — point at any directory containing
    an `AGENTS.md` (a [Claude-style agent](https://www.claude.com/news/agent-skills);
    any directory with valid frontmatter works). Skills + MCPs the agent
@@ -63,7 +62,7 @@ work for single-machine use; only set what you need to override.
 | `PORT`               | `8787`         | HTTP listen port.                                                                                        |
 | `EMPLOKE_HOST`       | `127.0.0.1`    | Bind address. **Non-loopback values require `EMPLOKE_API_KEY`** — emploke refuses to start otherwise.    |
 | `EMPLOKE_API_KEY`    | —              | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. Required for non-loopback.    |
-| `EMPLOKE_HOME`       | `~/.emploke`   | Where the workspace registry (`workspaces.json`) lives.                                                  |
+| `EMPLOKE_HOME`       | `~/.emploke`   | Where the global SQLite registry (`global.db`) lives.                                                  |
 | `EMPLOKE_LOG_LEVEL`  | `info`         | `debug` / `info` / `warn` / `error`.                                                                     |
 | `EMPLOKE_LOG_FORMAT` | `pretty`       | `pretty` (dev terminal) or `json` (log aggregators).                                                     |
 | `EMPLOKE_STATIC_DIR` | next to bundle | Override the dashboard SPA location. Useful when running from a non-bundle layout.                       |

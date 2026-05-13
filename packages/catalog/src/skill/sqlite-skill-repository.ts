@@ -1,7 +1,9 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { Skill, type SkillDependencies } from "./skill-entity.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
+
+const SKILL_PKG_SCHEMA_VERSION = 1;
 
 /**
  * SQLite-backed `SkillRepository`.
@@ -17,7 +19,8 @@ import type { SkillFile, SkillRepository } from "./skill-repository.js";
  *     version        TEXT NOT NULL,
  *     prereqs        TEXT,
  *     deps_json      TEXT NOT NULL,       -- canonical JSON of SkillDependencies
- *     anchor_content TEXT NOT NULL        -- SKILL.md bytes
+ *     anchor_content TEXT NOT NULL,       -- SKILL.md bytes
+ *     prereqs_ack    INTEGER NOT NULL DEFAULT 1
  *   );
  *   CREATE INDEX skill_origin ON skill(origin);
  *
@@ -29,68 +32,33 @@ import type { SkillFile, SkillRepository } from "./skill-repository.js";
  *   );
  *
  * Atomicity: `add` runs both tables' inserts inside a single SQLite
- * transaction. Concurrency: WAL + SQLite internal serialisation.
+ * transaction.
+ *
+ * The constructor takes an already-opened `DatabaseSync`. The server
+ * shares one connection across every per-workspace repository
+ * (task / session / catalog / workflow); the file handle count per
+ * workspace stays at one. PRAGMAs (journal_mode, synchronous,
+ * foreign_keys, ...) are the caller's responsibility — the workspace
+ * pkg sets them once on the shared connection.
+ *
+ * Schema versioning is per-pkg: this repo writes its own row to
+ * `schema_meta` keyed by `pkg='catalog_skill'`, sibling to the rows
+ * written by `SqliteAgentRepository` (`catalog_agent`) and
+ * `SqliteMcpRepository` (`catalog_mcp`).
  */
 export class SqliteSkillRepository implements SkillRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
 
-  constructor(dbPath: string, opts?: { logger?: Logger }) {
-    this.db = new DatabaseSync(dbPath);
-    this.logger = opts?.logger ?? silentLogger;
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    // Legacy schema (pre-`fqn` rename) used `name` as the PK column.
-    // Emploke isn't released yet, so dropping the legacy table is safe
-    // and avoids carrying a one-shot ALTER TABLE migration that would
-    // need to be retired immediately. If the existing table is missing
-    // `fqn`, wipe it (skill_file is FK-cascade-tied to skill).
-    if (tableHasLegacyShape(this.db, "skill", "fqn")) {
-      this.db.exec("DROP TABLE IF EXISTS skill_file");
-      this.db.exec("DROP TABLE IF EXISTS skill");
-    }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS skill (
-        fqn            TEXT PRIMARY KEY NOT NULL,
-        origin         TEXT NOT NULL,
-        scope          TEXT NOT NULL,
-        short_name     TEXT NOT NULL,
-        description    TEXT NOT NULL,
-        version        TEXT NOT NULL,
-        prereqs        TEXT,
-        deps_json      TEXT NOT NULL,
-        anchor_content TEXT NOT NULL,
-        prereqs_ack    INTEGER NOT NULL DEFAULT 1
-      )
-    `);
-    this.db.exec("CREATE INDEX IF NOT EXISTS skill_origin ON skill(origin)");
-    // Migrations:
-    //  - `prereqs_ack` was added after the initial schema. Pre-1.0 we
-    //    grandfather existing rows to "ack-ed"; the sync path resets
-    //    it to false on entries whose upstream prereqs text changes.
-    //  - `orphaned` USED to be a stored flag, but is now derived from
-    //    the dep graph at projection time. Existing DBs may still have
-    //    the column; SQLite tolerates extra columns on SELECT (we
-    //    explicitly enumerate the ones we care about), so leaving it
-    //    in place is harmless. We drop it best-effort to keep the
-    //    schema clean — `DROP COLUMN` is supported on SQLite ≥ 3.35
-    //    (Node 22 ships ≥ 3.46) and the column is unindexed so the
-    //    drop is cheap.
-    addColumnIfMissing(this.db, "skill", "prereqs_ack", "INTEGER NOT NULL DEFAULT 1");
-    dropColumnIfPresent(this.db, "skill", "orphaned");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS skill_file (
-        skill_fqn  TEXT NOT NULL REFERENCES skill(fqn) ON DELETE CASCADE,
-        rel_path   TEXT NOT NULL,
-        content    BLOB NOT NULL,
-        PRIMARY KEY (skill_fqn, rel_path)
-      )
-    `);
+  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    this.ensureSchema();
   }
 
+  /** No-op — the connection is owned by the caller. */
   close(): void {
-    this.db.close();
+    // intentionally empty
   }
 
   async add(skill: Skill, files: ReadonlyMap<string, Buffer>): Promise<void> {
@@ -234,6 +202,49 @@ export class SqliteSkillRepository implements SkillRepository {
       .prepare("UPDATE skill SET prereqs_ack = ? WHERE fqn = ?")
       .run(flags.prereqsAck ? 1 : 0, fqn);
   }
+
+  // ─── schema management ──────────────────────────────────────
+
+  private ensureSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE IF NOT EXISTS skill (
+        fqn            TEXT PRIMARY KEY NOT NULL,
+        origin         TEXT NOT NULL,
+        scope          TEXT NOT NULL,
+        short_name     TEXT NOT NULL,
+        description    TEXT NOT NULL,
+        version        TEXT NOT NULL,
+        prereqs        TEXT,
+        deps_json      TEXT NOT NULL,
+        anchor_content TEXT NOT NULL,
+        prereqs_ack    INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS skill_origin ON skill(origin);
+      CREATE TABLE IF NOT EXISTS skill_file (
+        skill_fqn  TEXT NOT NULL REFERENCES skill(fqn) ON DELETE CASCADE,
+        rel_path   TEXT NOT NULL,
+        content    BLOB NOT NULL,
+        PRIMARY KEY (skill_fqn, rel_path)
+      );
+    `);
+    const existing = this.db
+      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+      .get("catalog_skill") as { version: number } | undefined;
+    if (existing === undefined) {
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("catalog_skill", SKILL_PKG_SCHEMA_VERSION);
+      return;
+    }
+    if (existing.version === SKILL_PKG_SCHEMA_VERSION) return;
+    throw new Error(
+      `catalog_skill pkg schema mismatch: db has v${existing.version}, server supports v${SKILL_PKG_SCHEMA_VERSION}.`,
+    );
+  }
 }
 
 interface SkillRow {
@@ -273,57 +284,4 @@ function parseDeps(json: string): SkillDependencies {
   } catch {
     return { skills: [], mcps: [] };
   }
-}
-
-/**
- * Returns true if `tableName` exists in the DB but does NOT yet have
- * the column `requiredCol`. Used to detect the legacy pre-`fqn`-rename
- * schema (which had a `name` PK column instead of `fqn`) so it can
- * be dropped & recreated. Emploke isn't released yet, so dropping
- * legacy data is intentional  we don't carry one-shot ALTER TABLE
- * migrations across schema generations.
- */
-export function tableHasLegacyShape(
-  db: DatabaseSync,
-  tableName: string,
-  requiredCol: string,
-): boolean {
-  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  if (rows.length === 0) return false;
-  return !rows.some((r) => r.name === requiredCol);
-}
-
-/**
- * Add `colName colDef` to `tableName` iff the column is missing.
- * Used for additive non-destructive migrations (new boolean flags
- * with constant defaults). The constant default lets SQLite apply
- * the value to historical rows without rewriting the table.
- */
-export function addColumnIfMissing(
-  db: DatabaseSync,
-  tableName: string,
-  colName: string,
-  colDef: string,
-): void {
-  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  if (cols.length === 0) return;
-  if (cols.some((c) => c.name === colName)) return;
-  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colDef}`);
-}
-
-/**
- * Drop `colName` from `tableName` iff the column is present. Used to
- * retire columns whose meaning has moved to derived state (e.g. the
- * `orphaned` flag, now computed from the dep graph at projection
- * time). `DROP COLUMN` requires SQLite ≥ 3.35; Node 22 ships ≥ 3.46
- * so it's available in all our targets.
- *
- * No-op if the table doesn't exist or the column is already gone —
- * idempotent on every run.
- */
-export function dropColumnIfPresent(db: DatabaseSync, tableName: string, colName: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  if (cols.length === 0) return;
-  if (!cols.some((c) => c.name === colName)) return;
-  db.exec(`ALTER TABLE ${tableName} DROP COLUMN ${colName}`);
 }

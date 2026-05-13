@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
@@ -50,18 +51,24 @@ ${deps}
 # Body
 `;
 
+let db: DatabaseSync;
 let repo: SqliteAgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
 beforeEach(() => {
-  repo = new SqliteAgentRepository(":memory:");
+  db = new DatabaseSync(":memory:");
+  repo = new SqliteAgentRepository({ db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
 });
 
 afterEach(() => {
-  repo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 // ─── resolve ──────────────────────────────────────────────────

@@ -13,7 +13,8 @@ import { Hono } from "hono";
  * the moment of the request — it's a hint for the dashboard's "open this
  * workspace on first load" UX, not a binding contract.
  *
- * The catalog is per-workspace (lives at `<workspace>/catalog/`) and is
+ * The catalog is per-workspace (lives in each workspace's
+ * `workspace.db` as BLOB rows) and is
  * therefore NOT a global config field — it's surfaced by the workspace's
  * metadata endpoint instead.
  */

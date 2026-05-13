@@ -23,6 +23,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
@@ -37,15 +38,20 @@ import {
 // ───────── fixture lifecycle ─────────────────────────────────
 
 let tasksDir: string;
-let openRepos: SqliteTaskRepository[] = [];
+const openDbs: DatabaseSync[] = [];
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-real-spawn-"));
 });
 
 afterEach(async () => {
-  for (const r of openRepos) r.close();
-  openRepos = [];
+  for (const d of openDbs.splice(0)) {
+    try {
+      d.close();
+    } catch {
+      // already closed
+    }
+  }
   await rm(tasksDir, { recursive: true, force: true });
 });
 
@@ -147,10 +153,11 @@ const makeManager = (
 ): { m: TaskManager; repo: SqliteTaskRepository } => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
-  // Use `:memory:` so the test owns the DB lifecycle (no file to leak,
+  // In-memory DB so the test owns the lifecycle (no file to leak,
   // no Windows EBUSY on cleanup).
-  const repo = new SqliteTaskRepository(":memory:");
-  openRepos.push(repo);
+  const db = new DatabaseSync(":memory:");
+  openDbs.push(db);
+  const repo = new SqliteTaskRepository({ db });
   const m = new TaskManager({
     catalog,
     runtimeRegistry: reg,

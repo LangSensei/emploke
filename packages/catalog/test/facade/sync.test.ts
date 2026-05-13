@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
@@ -130,6 +131,7 @@ ${extra}
 
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
+let db: DatabaseSync;
 let mcpRepo: SqliteMcpRepository;
 let skillRepo: SqliteSkillRepository;
 let agentRepo: SqliteAgentRepository;
@@ -137,9 +139,10 @@ let fakes: Fakes;
 let mgr: CatalogManager;
 
 beforeEach(() => {
-  mcpRepo = new SqliteMcpRepository(":memory:");
-  skillRepo = new SqliteSkillRepository(":memory:");
-  agentRepo = new SqliteAgentRepository(":memory:");
+  db = new DatabaseSync(":memory:");
+  mcpRepo = new SqliteMcpRepository({ db });
+  skillRepo = new SqliteSkillRepository({ db });
+  agentRepo = new SqliteAgentRepository({ db });
   fakes = makeFakes();
   const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchTree);
   const skillSvc = new SkillService(skillRepo, fakes.skillFetcher);
@@ -148,9 +151,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  mcpRepo.close();
-  skillRepo.close();
-  agentRepo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 describe("sync resolve — identity check", () => {

@@ -1,44 +1,54 @@
 # @emploke/workspace
 
 Per-project root abstraction. A *workspace* is a directory that holds
-emploke's per-project state (sessions, tasks, catalog)
-plus a self-describing `workspace.json`. The directory is normally
+emploke's per-project state (sessions, tasks, catalog) inside a single
+`workspace.db` SQLite file plus agent workdirs under `sessions/` and
+`tasks/`. The directory is normally
 user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
-(see `Quick start` below). The `$EMPLOKE_HOME/workspaces.json` registry
-maps opaque UUIDs to absolute workspace paths.
+(see `Quick start` below). The `$EMPLOKE_HOME/global.db` SQLite registry
+maps opaque UUIDs to absolute workspace paths and stores each
+workspace's display name + defaults — there is no per-workspace
+metadata sidecar file.
 
 ## Concepts
 
-- **`Workspace`** — flat domain value: `{ id, name, createdAt, workdir,
-  defaults? }`. The `workdir` is the only filesystem field; everything
-  else is pure metadata.
+- **`Workspace`** — DDD entity (class, not interface). Constructed
+  via `Workspace.create({...})` for fresh entities and
+  `Workspace.fromStored({...})` when rehydrating from storage.
+  Carries `{ id, name, createdAt, workdir, defaults? }`. `workdir` is
+  the only filesystem field; everything else is pure metadata. Use
+  `withMetadata({...})` to derive a new instance preserving identity
+  (id / workdir / createdAt are immutable across edits).
 - **The `id`** is an opaque UUID, the URL routing key in the HTTP API.
   Stable for the lifetime of the registry entry — dashboard URLs
   survive workspace renames.
 - **The `name`** is free-form display text, edited via the sidebar's
   pencil icon. Has no routing significance.
-- **Standard subdirs** — `sessions/`, `tasks/`, `catalog/`. Created
-  at `init`; computed from `workdir`
-  by the `workspaceLayout` helper. Not stored on the type so the
-  repository contract has no on-disk path coupling.
+- **Standard subdirs** — `sessions/` and `tasks/`, plus the
+  shared per-workspace `workspace.db`. Created at `init`; computed
+  from `workdir` by the `workspaceLayout` helper. Catalog content
+  (agents/skills/mcps) lives inside `workspace.db` as BLOB rows —
+  there is no `<workspace>/catalog/` subdirectory. Subdirs are not
+  stored on the entity so the repository contract has no on-disk
+  path coupling.
 
 ## Quick start
 
 ```ts
-import { WorkspaceManager, FsWorkspaceRepository } from "@emploke/workspace";
+import { DatabaseSync } from "node:sqlite";
+import { WorkspaceManager, SqliteWorkspaceRepository } from "@emploke/workspace";
 
-const repo = new FsWorkspaceRepository({
-  indexFile: "/Users/me/.emploke/workspaces.json",
-});
+const db = new DatabaseSync("/Users/me/.emploke/global.db");
+const repo = new SqliteWorkspaceRepository({ db });
 const workspaces = new WorkspaceManager(repo);
 
 const ws = await workspaces.init({
   name: "Acme prod",
   workdir: "/Users/me/code/acme",
 });
-// → creates /Users/me/code/acme/{workspace.json,sessions,tasks,catalog}
-// → adds {id, workdir} to the index
+// → creates /Users/me/code/acme/{workspace.db,sessions,tasks}
+// → inserts {id, workdir, name, createdAt, defaults} into global.db.workspaces
 
 // `workdir` is always required at the manager layer — defaulting it
 // to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
@@ -50,7 +60,7 @@ const all = await workspaces.list();
 const back = await workspaces.read(ws.id);
 await workspaces.update(ws.id, { name: "Acme prod (renamed)" });
 await workspaces.delete(ws.id);                 // metadata-only
-await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/, catalog/, ...
+await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/
 ```
 
 The `workdir` itself is **never** removed by `delete({ purge: true })`
@@ -93,46 +103,51 @@ interface WorkspaceRepository {
 }
 ```
 
-Two implementations ship:
+Production runs `SqliteWorkspaceRepository` against
+`$EMPLOKE_HOME/global.db`. Tests use the same class against a
+`":memory:"` `DatabaseSync` (re-exported via `@emploke/workspace/testing`)
+— there is no separate in-memory implementation, matching the pattern
+the other SQLite-backed entity packages (`@emploke/task`,
+`@emploke/session`, `@emploke/catalog`) use.
 
-- **`FsWorkspaceRepository`** — production. Single `workspaces.json`
-  index protected by an advisory lock (`workspaces.json.lock` via
-  `@emploke/fs`'s `withFileLock`); per-workspace metadata at
-  `<workdir>/workspace.json` written atomically inside the same lock.
-- **`InMemoryWorkspaceRepository`** at `@emploke/workspace/testing` —
-  for fast unit tests. Mirrors the FS impl's id validation + path
-  conflict semantics so tests can't pass on inputs that production
-  would reject.
-
-> Why FS for workspace (and not SQLite)?
+> Why SQLite for the registry?
 > See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
-> for the project-wide decision rule. Workspace data is small N
-> (1–10 entries per user), trivial query surface, and
-> hand-editable JSON has real operational value.
+> for the project-wide decision rule. The registry has multi-write
+> concurrency requirements (concurrent `workspace add` calls) that
+> SQLite's atomic INSERT + UNIQUE constraints solve more cleanly than
+> the previous JSON-file + advisory-lock dance.
 
 ## On-disk wire format
 
-```jsonc
-// $EMPLOKE_HOME/workspaces.json
-{
-  "schemaVersion": 1,
-  "entries": [
-    { "id": "uuid-1", "workdir": "/abs/path", "lastOpenedAt": "..." }
-  ],
-  "currentId": "uuid-1"
-}
+```sql
+-- $EMPLOKE_HOME/global.db
+CREATE TABLE workspaces (
+  id              TEXT PRIMARY KEY,
+  workdir         TEXT NOT NULL UNIQUE,
+  name            TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  registered_at   TEXT NOT NULL,
+  last_opened_at  TEXT,
+  defaults_json   TEXT
+);
+CREATE TABLE global_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+-- e.g. ('current_workspace_id', '<uuid>')
 
-// <workspace>/workspace.json
-{
-  "schemaVersion": 1,
-  "name": "Acme prod",
-  "createdAt": "2026-05-09T12:00:00.000Z",
-  "defaults": { "runtime": "copilot", "agent": "code-reviewer" }
-}
+CREATE TABLE schema_meta (
+  pkg     TEXT NOT NULL PRIMARY KEY,
+  version INTEGER NOT NULL CHECK (version > 0)
+);
+-- workspace pkg owns one row: ('workspace', 1)
 ```
 
-`schemaVersion` is FS-repository internal — never appears on the
-domain `Workspace` type.
+Per-workspace metadata (`name`, `createdAt`, `defaults`) lives in the
+same `workspaces` row as the registry id/workdir/timing — there is
+no `<workspace>/workspace.json` sidecar. Schema version is tracked
+in the multi-row `schema_meta` table so each entity package can
+bump its own version independently.
 
 ## Errors
 
@@ -144,8 +159,7 @@ WorkspaceError
 ├── WorkspaceNotFoundError         404 — workdir gone
 ├── WorkspaceIdConflictError       409 — init({id}) collision
 ├── WorkspacePathConflictError     409 — workdir already registered
-├── WorkspaceCorruptedError        500 — workspace.json unreadable
-├── WorkspaceSchemaMismatchError   500 — schemaVersion not supported
+├── WorkspaceCorruptedError        500 — workspaces row is unreadable
 └── RegistryError / RegistryCorruptedError / RegistrySchemaMismatchError
 ```
 
@@ -162,7 +176,6 @@ const layout = workspaceLayout("/abs/workdir");
 // {
 //   sessions:  "/abs/workdir/sessions",
 //   tasks:     "/abs/workdir/tasks",
-//   catalog:   "/abs/workdir/catalog",
 // }
 ```
 

@@ -5,7 +5,7 @@
  * server lifetime** (not per-request, not per-workspace). Today that's
  * five files / directories:
  *
- *   - `<home>/workspaces.json` — registry of registered workspaces
+ *   - `<home>/global.db` — workspace registry + global state (SQLite)
  *   - `<home>/workspaces/` — parent dir for auto-allocated workspaces
  *   - `<home>/logs/` — server's rotated log files (pino-roll)
  *   - `<home>/runtime.json` — CLI lifecycle breadcrumb (pid + port + apiKey)
@@ -20,7 +20,8 @@
  * promises to its CLI clients, runtime adapters, and on-disk consumers.
  *
  * Per-workspace paths (`<workspace>/sessions/`, `<workspace>/tasks/`,
- * `<workspace>/catalog/`, ...) are NOT this module's concern — they're
+ * the per-workspace `<workspace>/workspace.db` file, ...) are NOT this
+ * module's concern — they're
  * computed by `@emploke/workspace`'s `workspaceLayout(workdir)` and
  * passed to entity managers as constructor arguments.
  *
@@ -34,8 +35,15 @@ import path from "node:path";
 /** Fallback `~/.emploke` when no `EMPLOKE_HOME` env var is set. */
 export const DEFAULT_EMPLOKE_HOME: string = path.join(homedir(), ".emploke");
 
-/** Filename (under `<home>`) for the workspace registry. */
-export const WORKSPACES_REGISTRY_FILE = "workspaces.json";
+/**
+ * Filename (under `<home>`) for the global SQLite database.
+ *
+ * Holds the workspace registry plus any other global state emploke
+ * needs to persist across workspaces (currently: which workspace is
+ * "current"). Per-workspace data lives in each workspace's own
+ * `workspace.db`, never in this file.
+ */
+export const GLOBAL_DB_FILE = "global.db";
 
 /** Subdirectory (under `<home>`) where the server writes its rotated log files. */
 export const LOGS_SUBDIR = "logs";
@@ -73,8 +81,12 @@ export const WORKSPACES_PARENT_SUBDIR = "workspaces";
 export interface EmplokePaths {
   /** User-level root, e.g. `~/.emploke`. */
   readonly home: string;
-  /** Path to the workspace registry file, `<home>/workspaces.json`. */
-  readonly registryFile: string;
+  /**
+   * Path to the global SQLite database, `<home>/global.db`. Holds the
+   * workspace registry and other cross-workspace state. Per-workspace
+   * data lives in the workspace's own `workspace.db`, not here.
+   */
+  readonly globalDbFile: string;
   /**
    * Directory the server writes its rotated log files into,
    * `<home>/logs`. Created on demand by `@emploke/logger`.
@@ -117,7 +129,7 @@ export function resolveEmplokePaths(env: NodeJS.ProcessEnv = {}): EmplokePaths {
 
   return {
     home,
-    registryFile: path.join(home, WORKSPACES_REGISTRY_FILE),
+    globalDbFile: path.join(home, GLOBAL_DB_FILE),
     logsDir: path.join(home, LOGS_SUBDIR),
     runtimeFile: path.join(home, RUNTIME_FILE_NAME),
     sharedDir: path.join(home, SHARED_SUBDIR),

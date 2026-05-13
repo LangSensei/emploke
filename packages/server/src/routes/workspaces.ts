@@ -255,7 +255,7 @@ export function workspacesRoutes(deps: {
   });
 
   // Remove a workspace. Default behaviour removes only the metadata
-  // (workspace.json + index entry); user files preserved. Pass
+  // (the row in `global.db`); user files preserved. Pass
   // `?purge=1` to also rm every emploke-owned subdirectory under the
   // workspace's workdir (sessions/, tasks/, catalog/). The workdir
   // itself is never removed.
@@ -272,9 +272,10 @@ export function workspacesRoutes(deps: {
   });
 
   // Force the cached `WorkspaceContext` for this id to be rebuilt on the
-  // next request. Use case: catalog drift — the user added an agent yaml
-  // to `<workspace>/catalog/agents/` from outside emploke (manual edit,
-  // git pull, …) and the cached `CatalogManager` snapshot is stale.
+  // next request. Use case: catalog drift — the user installed an agent
+  // through a separate process that mutated the workspace.db catalog
+  // tables out-of-band, and the cached `CatalogManager`'s SQLite
+  // handle (or downstream caches) need a clean restart.
   //
   // Returns:
   //   - 204 on success (the fresh context is also pre-loaded so the next
@@ -284,7 +285,7 @@ export function workspacesRoutes(deps: {
   //     task subprocesses; reloading would orphan them and race the
   //     fresh `recoverOrphaned` sweep. Caller cancels the tasks (or
   //     waits) and retries.
-  //   - 500 for any other load failure (e.g. corrupted workspace.json),
+  //   - 500 for any other load failure (e.g. corrupted workspace row),
   //     surfaced as `errorBody(err)` so the dashboard can show why.
   app.post("/:id/reload", async (c) => {
     const id = c.req.param("id");

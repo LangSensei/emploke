@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -50,18 +51,24 @@ ${deps}
 # Body
 `;
 
+let db: DatabaseSync;
 let repo: SqliteSkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;
 
 beforeEach(() => {
-  repo = new SqliteSkillRepository(":memory:");
+  db = new DatabaseSync(":memory:");
+  repo = new SqliteSkillRepository({ db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);
 });
 
 afterEach(() => {
-  repo.close();
+  try {
+    db.close();
+  } catch {
+    // already closed
+  }
 });
 
 // ─── resolve ──────────────────────────────────────────────────

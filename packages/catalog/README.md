@@ -22,24 +22,14 @@ What this package **does not** do:
 
 ## File-system layout
 
-The layout is hard-coded:
-
-```
-<root>/
-├── catalog.db               ← SQLite source of truth (agents, skills, mcps, files BLOBs, dep graph)
-├── agents/
-│   └── <name>/
-│       └── AGENTS.md        ← frontmatter + Markdown body, also mirrored into catalog.db on install
-├── skills/
-│   └── <name>/
-│       └── SKILL.md         ← frontmatter + Markdown body, also mirrored into catalog.db on install
-└── mcps/
-    └── <name>.json          ← single JSON file, content opaque to emploke
-```
-
-`catalog.db` is the source of truth — the loose files in `agents/`,
-`skills/` and `mcps/` are written for human inspection and are
-re-derived from the DB on any read path that wants them.
+The catalog package stores everything inside the workspace's
+shared `workspace.db` — agents, skills, MCPs, file BLOBs, the
+dependency graph, and per-entity sync metadata are all SQLite tables
+(`agents`, `skills`, `mcps`, `agent_files`, `skill_files`, …). There is
+no `<workspace>/catalog/` directory and no per-entity files on disk;
+agent and skill source content (frontmatter + Markdown body) is read
+out of the BLOB columns by the legacy `agentEntries` /
+`getSkillContent` API, not from loose files.
 
 > Why SQLite for catalog?
 > See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
@@ -50,24 +40,29 @@ re-derived from the DB on any read path that wants them.
 ## Quick start
 
 ```ts
+import { DatabaseSync } from "node:sqlite";
 import { CatalogManager } from "@emploke/catalog";
 
-const catalog = await CatalogManager.open({ catalogDir: "/path/to/workspace/catalog" });
+// Catalog now reads/writes the per-workspace shared `workspace.db`.
+// In production the workspace pkg owns the connection; here we open
+// one ourselves for illustration.
+const db = new DatabaseSync("/path/to/workspace/workspace.db");
+const catalog = await CatalogManager.open({ db });
 
 // Install
 await catalog.installSkill({ sourceDir: "/tmp/sop-prepared" });
 await catalog.installMcp({ name: "playwright", json: { type: "stdio", command: "npx", args: ["@modelcontextprotocol/server-playwright"] } });
 
 // Resolve
-const { agent, agentPath, skills, mcps } = await catalog.resolveAgent("code-reviewer");
-console.log(agentPath);          // <root>/agents/code-reviewer
+const { agent, skills, mcps } = await catalog.resolveAgent("code-reviewer");
+console.log(agent.fqn);          // "public/code-reviewer"
 console.log(skills.length);      // transitive skill deps in topological order
 console.log(mcps.length);
 
 // Or resolve a skill (for tooling / dep inspection)
-const sk = await catalog.resolveSkill("squad-lint");
-console.log(sk.skillPath);       // <root>/skills/squad-lint
-console.log(sk.skills.length);   // includes squad-lint + transitive deps
+const { skill, skills: deps } = await catalog.resolveSkill("squad-lint");
+console.log(skill.fqn);          // "public/squad-lint"
+console.log(deps.length);        // includes squad-lint + transitive deps
 
 // Update / uninstall
 await catalog.updateSkill({ name: "sop", sourceDir: "/tmp/sop-v2" });

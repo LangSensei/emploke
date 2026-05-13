@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
@@ -22,27 +23,25 @@ import {
 // ───── filesystem fixture lifecycle ────────────────────────
 
 let tasksDir: string;
-
-/**
- * Per-test repos that the helper hands out. Tracked so afterEach can
- * close them — important on Windows so leaked WAL handles don't block
- * the temp-dir `rm`. With `:memory:` this is mostly defensive (no
- * file to leak), but stays consistent with the file-backed pattern.
- */
-let openRepos: SqliteTaskRepository[] = [];
+const openDbs: DatabaseSync[] = [];
 
 function makeRepo(): SqliteTaskRepository {
-  const repo = new SqliteTaskRepository(":memory:");
-  openRepos.push(repo);
-  return repo;
+  const db = new DatabaseSync(":memory:");
+  openDbs.push(db);
+  return new SqliteTaskRepository({ db });
 }
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-tasks-root-"));
 });
 afterEach(async () => {
-  for (const r of openRepos) r.close();
-  openRepos = [];
+  for (const d of openDbs.splice(0)) {
+    try {
+      d.close();
+    } catch {
+      // already closed
+    }
+  }
   await rm(tasksDir, { recursive: true, force: true });
 });
 
@@ -590,8 +589,9 @@ describe("get / list", () => {
     // by reaching into the underlying DatabaseSync to forge a row
     // with an invalid status enum that rowToTask rejects.
     const r = recorder();
-    const repo = new SqliteTaskRepository(":memory:", { logger: r.logger });
-    openRepos.push(repo);
+    const db = new DatabaseSync(":memory:");
+    openDbs.push(db);
+    const repo = new SqliteTaskRepository({ db, logger: r.logger });
     const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
     await m.dispatch(dispatchOf()); // good row through public API
 

@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { FsWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
+import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -181,14 +182,39 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }),
   );
 
-  // Open the workspace manager backed by the FS repository. We do NOT
-  // auto-create a default workspace — the dashboard's landing page
-  // prompts the user to create one explicitly (workdir + display name).
-  // On first launch the index file is simply absent and the landing
-  // page reflects that.
-  const workspaces = new WorkspaceManager(
-    new FsWorkspaceRepository({ indexFile: paths.registryFile }),
-  );
+  // Open the workspace registry. The `global.db` SQLite file lives at
+  // `<EMPLOKE_HOME>/global.db` and holds every workspace's full record
+  // (id, workdir, name, createdAt, defaults) plus cross-workspace
+  // state (currently just the current-workspace pointer). The
+  // connection's lifetime is bound to the server process — the
+  // repository never closes it.
+  //
+  // We do NOT auto-create a default workspace — the dashboard's
+  // landing page prompts the user to create one explicitly (workdir +
+  // display name). On first launch the registry is simply empty and
+  // the landing page reflects that.
+  await mkdir(paths.home, { recursive: true });
+
+  // Best-effort upgrade hint: if the user is upgrading from a build
+  // that wrote `workspaces.json` (the pre-`global.db` registry), the
+  // file is now silently ignored. Without a hint the dashboard looks
+  // empty post-upgrade and is visually indistinguishable from data
+  // loss. We do NOT auto-migrate — workspaces are user-placed, and
+  // re-adding two or three through the dashboard is fast — but the
+  // user deserves to know what happened. Same hint for any
+  // `<workdir>/workspace.json` we encounter is emitted lazily as
+  // workspaces are loaded; this one fires once at boot for the
+  // EMPLOKE_HOME-level file.
+  const legacyRegistry = path.join(paths.home, "workspaces.json");
+  if (existsSync(legacyRegistry)) {
+    logger.warn(
+      "legacy workspaces.json found; this version reads the workspace registry from global.db instead. Re-register your workspaces via the dashboard or `emploke workspace add`. The legacy file is safe to delete after.",
+      { legacyFile: legacyRegistry, registry: paths.globalDbFile },
+    );
+  }
+
+  const globalDb = new DatabaseSync(paths.globalDbFile);
+  const workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb, logger }));
 
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces, logger });
 
@@ -237,7 +263,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // Workspace-scoped sessions and catalog. The middleware resolves :id
   // context and stashes both `sessionManager` and `catalog` on c.var; each
   // route family reads back the one it needs via the resolver. 404 if id
-  // unknown; 5xx if workspace.json missing/corrupted.
+  // unknown; 5xx if the workspace row is corrupted or workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
   sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
@@ -287,7 +313,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   logger.info("emploke server starting", {
     listen: `http://${displayHost}:${port}`,
     home: paths.home,
-    registryFile: paths.registryFile,
+    globalDb: paths.globalDbFile,
     workspaces: (await workspaces.list()).length,
     runtimes: runtimeRegistry.kinds(),
     static: serveStaticFiles ? staticDir : null,
@@ -348,6 +374,15 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     } catch (err) {
       logger.error("error during tasks shutdown", { err: errorToMeta(err) });
     }
+    try {
+      // Close the workspace registry DB after task contexts have
+      // drained so any final repository operations during shutdown
+      // (none today, but defensive against future hooks) still see an
+      // open connection.
+      globalDb.close();
+    } catch (err) {
+      logger.error("error closing global.db", { err: errorToMeta(err) });
+    }
     clearTimeout(deadline);
     process.exit(0);
   };
@@ -368,7 +403,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
  *   - 404 if the id isn't in the registry
- *   - 5xx if workspace.json is missing/corrupted (cache.load throws)
+ *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
  */
 function workspaceContextMiddleware(
   cache: WorkspaceContextCache,

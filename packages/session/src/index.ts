@@ -5,7 +5,8 @@
  * (e.g. copilot, gemini). The agent name is read from the provisioned
  * `AGENTS.md` frontmatter; runtime + createdAt + runtimeSessionId are
  * persisted via the configured `SessionRepository` (defaults to
- * `SqliteSessionRepository`, which writes to `<sessionsDir>/sessions.db`).
+ * `SqliteSessionRepository`, which writes to the per-workspace shared
+ * `workspace.db`'s `sessions` table).
  * Activity (lastActiveAt, preview) is read fresh from the runtime on
  * every list/get call. The package never spawns processes —
  * `buildInteractiveLaunch()` returns a shell-runnable `LaunchCommand`.
