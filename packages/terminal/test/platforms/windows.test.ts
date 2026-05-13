@@ -350,4 +350,62 @@ describe("spawnTerminalWith > windows", () => {
     expect(calls[0]?.file).toBe("cmd.exe");
     expect(calls[0]?.env).toBeUndefined();
   });
+
+  // Coverage gap: env *value* containing a single quote on the
+  // wt+pwsh path. We have one for `'` in cmd.args (above) and one
+  // for env values on the Linux path (linux.test.ts), but not this
+  // intersection — and the wt+pwsh layer is the only place where
+  // pwshQuote AND escapeWtSemicolons interact, so a regression in
+  // either would only surface on this specific combination.
+
+  it("escapes a single quote inside an env value via pwsh `''` doubling on the wt+pwsh path", async () => {
+    const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+      filesTable: { [wt]: true },
+      pathTable: { pwsh: "pwsh.exe" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_NOTE: "Lang's note" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    const payload = calls[0]?.args.at(-1) as string;
+    // pwsh single-quote rule: '' inside '...' is one literal '.
+    // Then escapeWtSemicolons runs over the whole string; the wt
+    // semicolon delimiter is escaped, but the pwsh '' doubling
+    // doesn't generate any `;`, so the only `\;` we expect is the
+    // separator between the env assignment and the `&` call.
+    expect(payload).toBe("$env:EMPLOKE_NOTE = 'Lang''s note'\\; & 'copilot'");
+  });
+
+  // Coverage gap: env *value* containing a literal `;` on the
+  // wt+pwsh path. The escape applies to the WHOLE -Command payload
+  // (not just the env-prefix separators), so a `;` arriving via an
+  // env value MUST also be escaped — otherwise wt would split on it
+  // mid-payload and fan out into a second tab.
+
+  it("escapes a literal `;` inside an env value to `\\;` on the wt+pwsh path", async () => {
+    const wt = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+      filesTable: { [wt]: true },
+      pathTable: { pwsh: "pwsh.exe" },
+    });
+    const cmd: LaunchCommand = {
+      ...sample,
+      env: { EMPLOKE_NOTE: "step1; step2" },
+    };
+    await spawnTerminalWith(cmd, deps);
+    const payload = calls[0]?.args.at(-1) as string;
+    // Two escaped semicolons expected: one from the env value, and
+    // one from the pwshEnvPrefix separator that goes between the
+    // assignment and the `&` call.
+    expect(payload).toBe("$env:EMPLOKE_NOTE = 'step1\\; step2'\\; & 'copilot'");
+    // Defense-in-depth: assert no UNescaped `;` slipped through. wt
+    // would treat any unescaped `;` as a tab separator.
+    expect(/[^\\];/.test(payload)).toBe(false);
+  });
 });
