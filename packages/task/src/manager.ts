@@ -426,9 +426,12 @@ export class TaskManager {
     try {
       tasks = await this.repository.list(opts);
     } catch (err) {
-      this.logger.warn("tasks: repository.list failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "tasks: repository.list failed",
+      );
       return [];
     }
 
@@ -715,9 +718,12 @@ export class TaskManager {
     try {
       candidates = await this.repository.list({ statuses: ["running"] });
     } catch (err) {
-      this.logger.warn("tasks: recoverOrphaned repository.list failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "tasks: recoverOrphaned repository.list failed",
+      );
       return;
     }
 
@@ -729,8 +735,8 @@ export class TaskManager {
         const pid = readTaskRuntimeMetadata(task).pid;
         if (typeof pid === "number" && isProcessAlive(pid)) {
           this.logger.warn(
-            "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
             { taskId: id, pid },
+            "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
           );
           return;
         }
@@ -746,10 +752,13 @@ export class TaskManager {
           );
           await this.persist(workdir, failed);
         } catch (err) {
-          this.logger.warn("tasks: failed to mark orphaned task as failure", {
-            taskId: id,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          this.logger.warn(
+            {
+              taskId: id,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            "tasks: failed to mark orphaned task as failure",
+          );
         }
       }),
     );
@@ -854,10 +863,13 @@ export class TaskManager {
       task = await this.repository.read(id);
     } catch (err) {
       if (err instanceof CorruptedTaskError) {
-        this.logger.warn("tasks: skipping corrupted task row", {
-          taskId: id,
-          reason: err.reason,
-        });
+        this.logger.warn(
+          {
+            taskId: id,
+            reason: err.reason,
+          },
+          "tasks: skipping corrupted task row",
+        );
         return null;
       }
       throw err;
@@ -866,10 +878,13 @@ export class TaskManager {
     if (task.id !== id) {
       // Defensive: directory name and id-in-row disagree. Trust the
       // directory name (it's how we found this) and surface a warning.
-      this.logger.warn("tasks: id mismatch between dir and persisted row", {
-        taskId: id,
-        persistedId: task.id,
-      });
+      this.logger.warn(
+        {
+          taskId: id,
+          persistedId: task.id,
+        },
+        "tasks: id mismatch between dir and persisted row",
+      );
     }
     return task;
   }
@@ -916,11 +931,14 @@ export class TaskManager {
       meta = await runtime.readMetadata(runtimeSessionId);
     } catch (err) {
       // Title is best-effort; don't break list/get on a runtime fault.
-      this.logger.warn("tasks: readMetadata failed", {
-        taskId: task.id,
-        runtime: runtimeName,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          taskId: task.id,
+          runtime: runtimeName,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "tasks: readMetadata failed",
+      );
       return task;
     }
     if (meta === null) return task;
@@ -971,10 +989,13 @@ export class TaskManager {
       }
       await this.persist(workdir, next);
     } catch (err) {
-      this.logger.warn("tasks: failed to persist terminal status", {
-        taskId: running.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          taskId: running.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "tasks: failed to persist terminal status",
+      );
     }
   }
 }
@@ -1043,10 +1064,13 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
   try {
     await rm(p, { recursive: true, force: true });
   } catch (err) {
-    logger.warn("tasks: failed to remove workdir during cleanup", {
-      path: p,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.warn(
+      {
+        path: p,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "tasks: failed to remove workdir during cleanup",
+    );
   }
 }
 

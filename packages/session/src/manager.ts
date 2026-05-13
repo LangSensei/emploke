@@ -143,9 +143,12 @@ export class SessionManager {
     try {
       entries = await this.repository.list(repoOpts);
     } catch (err) {
-      this.logger.warn("sessions: repository.list failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "sessions: repository.list failed",
+      );
       return [];
     }
 
@@ -276,10 +279,13 @@ export class SessionManager {
       try {
         await this.repository.patchLastLaunchMode(id, desiredMode);
       } catch (err) {
-        this.logger.warn("sessions: failed to persist lastLaunchMode", {
-          sessionId: id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        this.logger.warn(
+          {
+            sessionId: id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          "sessions: failed to persist lastLaunchMode",
+        );
       }
     }
 
@@ -315,18 +321,21 @@ export class SessionManager {
 
     const agent = await readAgentName(workdir);
     if (agent === null) {
-      this.logger.warn("sessions: skipping dir without readable AGENTS.md", { sessionId: id });
+      this.logger.warn({ sessionId: id }, "sessions: skipping dir without readable AGENTS.md");
       return null;
     }
 
     try {
       this.runtimeRegistry.get(state.runtime);
     } catch (err) {
-      this.logger.warn("sessions: skipping session with unregistered runtime", {
-        sessionId: id,
-        runtime: state.runtime,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          sessionId: id,
+          runtime: state.runtime,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "sessions: skipping session with unregistered runtime",
+      );
       return null;
     }
 
@@ -356,11 +365,14 @@ export class SessionManager {
     try {
       refreshed = await runtime.readMetadata(draft.runtimeSessionId);
     } catch (err) {
-      this.logger.warn("sessions: runtime readMetadata failed", {
-        sessionId: draft.id,
-        runtime: draft.runtime,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          sessionId: draft.id,
+          runtime: draft.runtime,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "sessions: runtime readMetadata failed",
+      );
       return draft;
     }
     if (refreshed === null) {
@@ -383,10 +395,13 @@ export class SessionManager {
     try {
       state = await this.repository.read(id);
     } catch (err) {
-      this.logger.warn("sessions: repository.read failed", {
-        sessionId: id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.logger.warn(
+        {
+          sessionId: id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "sessions: repository.read failed",
+      );
       return null;
     }
     if (state === null) return null;
@@ -400,10 +415,13 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
   try {
     await rm(p, { recursive: true, force: true });
   } catch (err) {
-    logger.warn("sessions: failed to remove workdir during cleanup", {
-      path: p,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.warn(
+      {
+        path: p,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "sessions: failed to remove workdir during cleanup",
+    );
   }
 }
 

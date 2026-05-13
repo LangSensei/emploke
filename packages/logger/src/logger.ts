@@ -1,43 +1,37 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import pino, { type DestinationStream, type LoggerOptions, type Logger as PinoLogger } from "pino";
+import pino, { type DestinationStream, type LoggerOptions } from "pino";
+
+/**
+ * `Logger` is pino's `Logger` type, re-exported. emploke commits to
+ * pino at the type level — see `docs/adr/0001-commit-to-pino.md` for
+ * the rationale. In short: the previous 4-method facade was hiding
+ * pino features (child loggers, redact, serializers) that we actually
+ * want to use across the codebase, in exchange for an abstraction that
+ * was never going to be redeemed (we're not switching off pino).
+ *
+ * Call sites use pino's API directly:
+ *   logger.info({ userId }, "user logged in");           // meta, msg
+ *   logger.info("user logged in");                       // msg only
+ *   const child = logger.child({ scope: "sessions" });   // tagged child
+ */
+export type Logger = pino.Logger;
 
 /**
  * Levels supported by `Logger`. Same ordering as pino: lower index =
  * more verbose. Filtering happens in pino itself, so a `debug` call
  * under a `warn`-or-higher logger never allocates the meta object.
  */
-export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogLevel = pino.Level;
 
 /**
- * Cross-package logging surface. Every persistence-touching manager
- * (TaskManager, SessionManager, ...) accepts an optional `logger`
- * config field with this shape. `meta` is structured context — a
- * shallow record of primitives or simple objects that the backend
- * serialises (for pino: into the log line's JSON properties).
- *
- * The interface intentionally has **no** child / withMeta / scoped
- * variants — those would couple call sites to pino's API. Callers that
- * want a "tagged" logger build a small wrapper inline (see e.g.
- * SessionManager passing `{ sessionId }` on every call).
+ * Drop-every-call sink. Backed by `pino({ level: "silent" })` — pino
+ * short-circuits at the level check so silent logging incurs no
+ * serialization or stream cost. Use as the default in any `logger?`
+ * constructor parameter, and in unit tests that don't care about log
+ * output.
  */
-export interface Logger {
-  debug(msg: string, meta?: Record<string, unknown>): void;
-  info(msg: string, meta?: Record<string, unknown>): void;
-  warn(msg: string, meta?: Record<string, unknown>): void;
-  error(msg: string, meta?: Record<string, unknown>): void;
-}
-
-/**
- * Drops every call. Use as the default in any `logger?` constructor
- * parameter, and in unit tests that don't care about log output.
- */
-export const silentLogger: Logger = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
+export const silentLogger: Logger = pino({ level: "silent" });
 
 /** Configuration for `buildLogger`. All fields are optional. */
 export interface BuildLoggerOpts {
@@ -90,8 +84,8 @@ export interface BuildLoggerOpts {
 }
 
 /**
- * Build a `Logger` backed by pino, optionally writing to a rotating
- * file destination.
+ * Build a `Logger` (i.e. `pino.Logger`), optionally writing to a
+ * rotating file destination.
  *
  * Output channels:
  *
@@ -117,8 +111,6 @@ export function buildLogger(opts: BuildLoggerOpts = {}): Logger {
     level,
   };
 
-  let pinoLogger: PinoLogger;
-
   if (opts.dir) {
     // Eagerly create the dir so pino-roll's first write doesn't ENOENT.
     mkdirSync(opts.dir, { recursive: true });
@@ -139,41 +131,9 @@ export function buildLogger(opts: BuildLoggerOpts = {}): Logger {
       level,
     };
     const transport = pino.transport({ targets: [stdoutTarget, fileTarget] });
-    pinoLogger = pino({ level } satisfies LoggerOptions, transport as DestinationStream);
-  } else {
-    const transport = pino.transport({ targets: [stdoutTarget] });
-    pinoLogger = pino({ level } satisfies LoggerOptions, transport as DestinationStream);
+    return pino({ level } satisfies LoggerOptions, transport as DestinationStream);
   }
 
-  return adapt(pinoLogger);
-}
-
-/**
- * Wrap a pino logger as our narrower `Logger`. The wrapper exists so
- * call sites stay loosely coupled to pino's API surface; if we ever
- * swap backends, only this file changes.
- *
- * Pino's call signature is `(meta, msg)` — opposite order from our
- * `(msg, meta)`. The adapter swaps them and tolerates the
- * meta-omitted overload by passing `undefined`.
- */
-function adapt(p: PinoLogger): Logger {
-  return {
-    debug: (msg, meta) => {
-      if (meta) p.debug(meta, msg);
-      else p.debug(msg);
-    },
-    info: (msg, meta) => {
-      if (meta) p.info(meta, msg);
-      else p.info(msg);
-    },
-    warn: (msg, meta) => {
-      if (meta) p.warn(meta, msg);
-      else p.warn(msg);
-    },
-    error: (msg, meta) => {
-      if (meta) p.error(meta, msg);
-      else p.error(msg);
-    },
-  };
+  const transport = pino.transport({ targets: [stdoutTarget] });
+  return pino({ level } satisfies LoggerOptions, transport as DestinationStream);
 }

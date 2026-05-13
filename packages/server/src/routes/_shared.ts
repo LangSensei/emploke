@@ -1,3 +1,4 @@
+import type { Logger } from "@emploke/logger";
 import type { Context } from "hono";
 
 /**
@@ -34,7 +35,8 @@ export async function parseJsonBody<T = unknown>(
  *     third-party stack lines)
  *   - no caller-controlled string echoed back without validation
  * Keep the diagnostic on the instance (public fields + `cause`) so the
- * route can `logServerError(err)` it; just don't bake it into `.message`.
+ * route can `c.get("logger").error({ err: errorMeta(err), ... })` it;
+ * just don't bake it into `.message`.
  */
 const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/catalog
@@ -110,30 +112,34 @@ const SAFE_ERROR_NAMES = new Set<string>([
 ]);
 
 /**
- * Log a server-side fault with the FULL diagnostic the sanitised HTTP body
- * intentionally drops. Intended for the 5xx catch path of routes that
- * surface `RuntimeProvisionFailed` / `RuntimeHeadlessLaunchFailed` /
- * `RuntimeRefreshFailed` / `RuntimeStateDeletionFailed` (whose `.message`
- * carries only the runtime kind — see issue #24 and the per-class jsdoc
- * in `packages/runtime/src/errors.ts`).
+ * Extract the diagnostic-rich subset of an error suitable for the `err`
+ * key in a structured log line. Companion to {@link errorBody}: the
+ * latter sanitises for the HTTP body, this one captures everything we
+ * want server-side. Pino picks `err` up via its standard error
+ * serializer and renders it as a structured object (name, message,
+ * stack, plus our well-known public fields and `cause`).
  *
- * Reads the structured diagnostic off well-known public fields
- * (`kind`, `workdir`, `sessionId`, `taskDir`) and the ES2022 `cause`
- * chain, and prints a single `console.error` line so operators can
- * correlate a 500 from the dashboard to the underlying spawn / fs
- * failure without digging through stacks.
+ * Reads the same well-known public fields as the previous
+ * `logServerError` did (`kind`, `workdir`, `sessionId`, `taskDir`,
+ * `configPath`) so the per-runtime spawn-failure diagnostics that
+ * issue #24 standardised on still surface in the rotated log file.
  *
- * `console.error` (rather than the structured logger) keeps this helper
- * dependency-free so routes can call it without threading the logger
- * through every module. The output goes to the same file/stderr stream
- * the structured logger uses; format intentionally matches.
+ * Returns a plain object; callers spread it into the meta record:
+ *
+ *     c.get("logger").error(
+ *       { err: errorMeta(err), workspaceId },
+ *       "5xx fault in workspaces.list",
+ *     );
  */
-export function logServerError(err: unknown): void {
+export function errorMeta(err: unknown): Record<string, unknown> {
   if (!(err instanceof Error)) {
-    console.error("[server] non-Error thrown:", String(err));
-    return;
+    return { type: "non-error", value: String(err) };
   }
-  const meta: Record<string, unknown> = { name: err.name };
+  const meta: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+  };
+  if (err.stack) meta.stack = err.stack;
   if (err.cause instanceof Error) {
     meta.cause = { name: err.cause.name, message: err.cause.message };
   } else if (err.cause !== undefined) {
@@ -143,7 +149,41 @@ export function logServerError(err: unknown): void {
     const val = (err as unknown as Record<string, unknown>)[key];
     if (val !== undefined) meta[key] = val;
   }
-  console.error(`[server] ${err.name}: ${err.message}`, meta);
+  return meta;
+}
+
+/**
+ * Log a server-side fault via the request-scoped logger. Drop-in
+ * replacement for the previous `logServerError` helper, except now the
+ * line lands in the rotated JSON file (`<emplokeHome>/logs/server-*.log`)
+ * via pino instead of going to `console.error` only — closing the
+ * file/stderr divergence that issue #58 called out.
+ *
+ * Reads `c.var.logger` (set by `requestLogger` middleware in `index.ts`)
+ * and falls through silently when no logger is on the context (e.g.
+ * tests that mount routes standalone). Returns void.
+ *
+ * Usage in route catch blocks:
+ *
+ *     } catch (err) {
+ *       const status = statusForError(err) ?? 400;
+ *       if (status >= 500) logFault(c, err, "session.create failed");
+ *       return c.json(errorBody(err), status as any);
+ *     }
+ */
+export function logFault(
+  c: Context,
+  err: unknown,
+  msg: string,
+  extra?: Record<string, unknown>,
+): void {
+  // Cast widens the no-Variables `Context` type so we can probe for
+  // the request-scoped logger without forcing every route factory to
+  // declare a `Variables: { logger: Logger }` env up-front. The check
+  // below returns silently when the logger isn't present.
+  const logger = (c.get as unknown as (k: string) => unknown)("logger") as Logger | undefined;
+  if (logger === undefined) return;
+  logger.error({ err: errorMeta(err), ...(extra ?? {}) }, msg);
 }
 
 /**

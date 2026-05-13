@@ -85,11 +85,14 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
       try {
         out.push(rowToWorkspace(row));
       } catch (err) {
-        this.logger.warn("workspaces: skipping corrupted row", {
-          workspaceId: row.id,
-          workdir: row.workdir,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+        this.logger.warn(
+          {
+            workspaceId: row.id,
+            workdir: row.workdir,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+          "workspaces: skipping corrupted row",
+        );
       }
     }
     return out;

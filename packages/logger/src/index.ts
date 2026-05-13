@@ -1,31 +1,34 @@
 /**
- * @emploke/logger — structured-logging surface used by every server-side
- * package.
+ * @emploke/logger — pino, with emploke's default configuration.
  *
- * Backed by [pino](https://github.com/pinojs/pino) under the hood for
- * three reasons:
+ * emploke commits to pino as the logging API across the whole codebase
+ * (see `docs/adr/0001-commit-to-pino.md`). The previous 4-method facade
+ * was hiding pino features (child loggers, redact, serializers) that we
+ * actually want to use, in exchange for an abstraction that was never
+ * going to be redeemed (we're not switching off pino).
  *
- * 1. **Async file writes** in a worker thread, so logging never blocks
- *    the HTTP event loop.
- * 2. **Structured (JSON) output** in production, so operators can grep,
- *    `jq`, or pipe into a log aggregator without parsing prose.
- * 3. **Pretty pretty-printing** in development via `pino-pretty`, so
- *    `pnpm dev` stays human-readable.
+ * This package provides:
  *
- * Persistence: when `dir` is supplied (server boot does this; tests
- * usually don't), pino-roll writes daily-rotated files to that
- * directory under `<basename>-YYYY-MM-DD.log` with a configurable size
- * cap and retention count. **No log lines are lost on rotation** —
- * pino-roll closes the previous file only after opening the new one.
+ * 1. `Logger` / `LogLevel` — re-exports of pino's types so consumers
+ *    don't have to import from `pino` directly. Call sites use pino's
+ *    native `(meta, msg)` API:
  *
- * The public `Logger` interface is the smallest cross-package contract.
- * It deliberately does NOT expose pino-specific methods (child loggers,
- * serializers, level configuration at runtime) so we can swap to a
- * different backend later without touching ~20 call sites.
+ *        logger.info({ userId }, "user logged in");
+ *        const child = logger.child({ scope: "sessions" });
  *
- * Test seam: `silentLogger` drops every call. Use it in unit tests that
- * don't care about logging — every manager that accepts a `logger`
- * defaults to it when none is supplied.
+ * 2. `buildLogger(opts)` — factory wired to emploke's defaults: pretty
+ *    pretty-printing in dev, JSON to stdout + rotating daily files in
+ *    server mode. The pino streams write in a worker thread so the HTTP
+ *    event loop is never blocked on disk IO.
+ *
+ * 3. `silentLogger` — a `pino({ level: "silent" })` instance to use as
+ *    the default in any `logger?` constructor parameter, and in unit
+ *    tests that don't care about log output. Pino short-circuits at the
+ *    level check so silent logging incurs no serialization cost.
+ *
+ * 4. `@emploke/logger/testing` (separate entry) — `captureLogger()`
+ *    that returns `{ logger, entries }` for tests that need to assert
+ *    on log output.
  */
 
 export {
