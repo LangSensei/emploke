@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
 import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
@@ -30,7 +29,7 @@ interface Fakes {
   skillFetcher: SkillFetcher;
   agentFetcher: AgentFetcher;
   mcpResolveAdapter: McpResolveAdapter;
-  mcpFetchTree: (origin: string) => AsyncIterable<EntryFile>;
+  mcpFetchFile: (origin: string) => Promise<string>;
   setSkill: (origin: string, files: Record<string, string>) => void;
   setAgent: (origin: string, files: Record<string, string>) => void;
   setMcp: (origin: string, name: string, content: string) => void;
@@ -65,10 +64,10 @@ function makeFakes(): Fakes {
       for (const [relPath, content] of tree(origin)) yield { relPath, content };
     },
   };
-  const mcpFetchTree = async function* (o: string): AsyncIterable<EntryFile> {
+  const mcpFetchFile = async (o: string): Promise<string> => {
     const s = mcpStore.get(o);
     if (s === undefined) throw new Error(`no MCP at ${o}`);
-    yield { relPath: "mcp.json", content: Buffer.from(s.content, "utf8") };
+    return s.content;
   };
   const mcpResolveAdapter: McpResolveAdapter = async (origin) => {
     const s = mcpStore.get(origin);
@@ -90,7 +89,7 @@ function makeFakes(): Fakes {
     skillFetcher,
     agentFetcher,
     mcpResolveAdapter,
-    mcpFetchTree,
+    mcpFetchFile,
     setSkill(o, files) {
       const m = new Map<string, Buffer>();
       for (const [k, v] of Object.entries(files)) m.set(k, Buffer.from(v, "utf8"));
@@ -144,7 +143,7 @@ beforeEach(() => {
   skillRepo = new SqliteSkillRepository({ db });
   agentRepo = new SqliteAgentRepository({ db });
   fakes = makeFakes();
-  const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchTree);
+  const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchFile);
   const skillSvc = new SkillService(skillRepo, fakes.skillFetcher);
   const agentSvc = new AgentService(agentRepo, fakes.agentFetcher);
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fakes.mcpResolveAdapter);

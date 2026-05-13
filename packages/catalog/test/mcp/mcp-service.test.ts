@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   McpNameInvalidError,
@@ -133,32 +132,17 @@ for (const backend of BACKENDS) {
     });
 
     describe("installFromOrigin", () => {
-      it("dispatches to the fetcher and installs the first yielded file", async () => {
-        fetchStub.mockReturnValueOnce(
-          asyncGen<EntryFile>([
-            { relPath: "azure.json", content: Buffer.from('{"command":"node"}') },
-          ]),
-        );
+      it("dispatches to the fetcher and installs the returned content", async () => {
+        fetchStub.mockResolvedValueOnce('{"command":"node"}');
         const m = await svc.installFromOrigin("azure/mcp", "file:/abs/azure");
         expect(m.origin).toBe("file:/abs/azure");
         expect(await svc.has("azure/mcp")).toBe(true);
+        expect(fetchStub).toHaveBeenCalledWith("file:/abs/azure");
       });
 
-      it("ignores extra files yielded by the fetcher", async () => {
-        fetchStub.mockReturnValueOnce(
-          asyncGen<EntryFile>([
-            { relPath: "first.json", content: Buffer.from('{"v":"first"}') },
-            { relPath: "second.json", content: Buffer.from('{"v":"second"}') },
-          ]),
-        );
-        await svc.installFromOrigin("x/y", "file:/abs/x");
-        const stored = JSON.parse(await svc.getContent("x/y"));
-        expect(stored.v).toBe("first");
-      });
-
-      it("throws when the fetcher yields zero files", async () => {
-        fetchStub.mockReturnValueOnce(asyncGen<EntryFile>([]));
-        await expect(svc.installFromOrigin("x/y", "file:/abs/empty")).rejects.toThrow(/zero files/);
+      it("propagates fetcher errors as-is", async () => {
+        fetchStub.mockRejectedValueOnce(new Error("upstream 404"));
+        await expect(svc.installFromOrigin("x/y", "file:/abs/x")).rejects.toThrow(/upstream 404/);
       });
     });
 
@@ -249,8 +233,4 @@ for (const backend of BACKENDS) {
       });
     });
   });
-}
-
-async function* asyncGen<T>(items: T[]): AsyncIterable<T> {
-  for (const item of items) yield item;
 }

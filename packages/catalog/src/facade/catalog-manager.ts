@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import {
-  defaultFetcherRegistry,
-  type EntryFile,
-  type FetcherRegistry,
-} from "@emploke/catalog-fetcher";
+import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { Agent } from "../agent/agent-entity.js";
 import { type AgentResolvedNode, AgentService } from "../agent/agent-service.js";
@@ -332,21 +328,24 @@ export class CatalogManager {
     const skillRepo = new SqliteSkillRepository({ db: opts.db, logger });
     const agentRepo = new SqliteAgentRepository({ db: opts.db, logger });
 
-    const mcpFetcher: McpFetcher = (origin) => fetchers.dispatch(origin);
+    const mcpFetcher: McpFetcher = (origin) =>
+      fetchers.dispatchFile(origin, "").then((b) => b.toString("utf8"));
     const skillFetcher: SkillFetcher = {
       async fetchAnchor(origin) {
-        return readFirstFile(fetchers.dispatch(origin), "SKILL.md");
+        const buf = await fetchers.dispatchFile(origin, "SKILL.md");
+        return buf.toString("utf8");
       },
       fetchTree(origin) {
-        return fetchers.dispatch(origin);
+        return fetchers.dispatchTree(origin);
       },
     };
     const agentFetcher = {
       async fetchAnchor(origin: string) {
-        return readFirstFile(fetchers.dispatch(origin), "AGENTS.md");
+        const buf = await fetchers.dispatchFile(origin, "AGENTS.md");
+        return buf.toString("utf8");
       },
       fetchTree(origin: string) {
-        return fetchers.dispatch(origin);
+        return fetchers.dispatchTree(origin);
       },
     };
 
@@ -356,7 +355,11 @@ export class CatalogManager {
 
     const resolveMcp: McpResolveAdapter = async (origin) => {
       try {
-        const content = await readFirstFile(fetchers.dispatch(origin), null);
+        // MCP origins always resolve to a single .json file: pass an
+        // empty relPath so dispatchFile reads the file at the origin's
+        // subpath directly (no tarball needed).
+        const buf = await fetchers.dispatchFile(origin, "");
+        const content = buf.toString("utf8");
         // Parse the existing _meta to recover the spec FQN. Authors
         // declare MCPs by origin in dep refs; we derive name from the
         // anchor's _meta.name field.
@@ -1300,28 +1303,6 @@ function errorToWire(err: unknown): { name: string; message: string } {
   if (err instanceof Error) return { name: err.name, message: err.message };
   if (typeof err === "string") return { name: "Error", message: err };
   return { name: "Error", message: String(err) };
-}
-
-async function readFirstFile(
-  stream: AsyncIterable<EntryFile>,
-  preferredRelPath: string | null,
-): Promise<string> {
-  let fallback: string | null = null;
-  for await (const f of stream) {
-    if (preferredRelPath !== null && f.relPath === preferredRelPath) {
-      return f.content.toString("utf8");
-    }
-    if (fallback === null) fallback = f.content.toString("utf8");
-    if (preferredRelPath === null) break;
-  }
-  if (fallback === null) {
-    throw new Error(
-      preferredRelPath !== null
-        ? `fetcher yielded no ${preferredRelPath}`
-        : "fetcher yielded zero files",
-    );
-  }
-  return fallback;
 }
 
 // silence unused-import warnings

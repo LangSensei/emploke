@@ -1,4 +1,4 @@
-import { type EntryFile, normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
+import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import { McpNotFoundError, McpOriginConflictError } from "./errors.js";
 import { Mcp } from "./mcp-entity.js";
@@ -37,12 +37,13 @@ import type { McpRepository } from "./mcp-repository.js";
  */
 
 /**
- * Fetch a single file's bytes from a URI. The catalog-fetcher's
- * `EntryFile` stream is used for symmetry with skill/agent fetchers
- * (which yield multi-file streams); for MCP we drain to the first
- * yielded file's content.
+ * Fetch the raw text content of an MCP origin. MCP origins are
+ * single-file by spec (the `<name>.json` manifest), so the fetcher
+ * returns one string rather than a stream — symmetric with how the
+ * `SkillFetcher.fetchAnchor` / `AgentFetcher.fetchAnchor` callbacks
+ * surface a single anchor file.
  */
-export type McpFetcher = (origin: string) => AsyncIterable<EntryFile>;
+export type McpFetcher = (origin: string) => Promise<string>;
 
 export class McpService {
   constructor(
@@ -76,16 +77,11 @@ export class McpService {
   }
 
   /**
-   * Install an MCP by URI: dispatch to the registered fetcher, drain
-   * to the first yielded file, then delegate to {@link install}.
-   *
-   * MCP origins are expected to resolve to a single file. If the
-   * fetcher yields multiple files, only the first is used (silently)
-   * — the spec doesn't define multi-file MCPs.
+   * Install an MCP by URI: dispatch to the registered fetcher to
+   * read the file's text, then delegate to {@link install}.
    */
   async installFromOrigin(name: string, origin: string): Promise<Mcp> {
-    const stream = this.fetch(origin);
-    const content = await readSingleFile(stream);
+    const content = await this.fetch(origin);
     return this.install(name, origin, content);
   }
 
@@ -164,16 +160,4 @@ function sameOrigin(a: string, b: string): boolean {
     // The fetcher would reject the unparseable one at fetch time anyway.
     return a === b;
   }
-}
-
-/**
- * Drain a fetcher stream to the first yielded file's bytes. MCP
- * origins are single-file by spec; if the upstream yields multiple,
- * we take the first and let the rest fall on the floor (silently).
- */
-async function readSingleFile(stream: AsyncIterable<EntryFile>): Promise<string> {
-  for await (const file of stream) {
-    return file.content.toString("utf8");
-  }
-  throw new Error("MCP fetcher yielded zero files");
 }
