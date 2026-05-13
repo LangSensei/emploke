@@ -1,43 +1,6 @@
-/**
- * On-storage shape for a session — the slice of `Session` that the
- * `SessionRepository` actually persists. Excludes:
- *
- *   - `id`: the session's identity is the storage key, not duplicated
- *     in the value
- *   - `agent`: lives in the runtime-baked `AGENTS.md`, not in
- *     repository-managed metadata (the manager combines the two when
- *     producing a full `Session`)
- *   - `lastActiveAt` / `preview`: refreshed live from the runtime on
- *     every read, never persisted (would go stale immediately)
- *   - `workdir`: derived by the manager from the workspace layout, not
- *     stored
- *   - `schemaVersion`: an FS-Repository wire-format detail, not part
- *     of the domain
- *
- * Renamed from the old `PersistedSession` to break the old
- * "Persisted*" naming convention which leaked storage shape into the
- * public surface. The new name reflects what the type *is* (the
- * persistent state of a session) without saying *how* it's stored.
- */
-export interface SessionState {
-  /** Runtime kind (e.g. `"copilot"`, `"gemini"`). */
-  readonly runtime: string;
-  /** ISO 8601 UTC timestamp at session creation. */
-  readonly createdAt: string;
-  /**
-   * Opaque id minted by the runtime for its own per-session state.
-   * `null` when not yet known (e.g. discovery-only runtimes that lazy-mint).
-   */
-  readonly runtimeSessionId: string | null;
-  /**
-   * Mode the user chose for the most recent successful `buildInteractiveLaunch`
-   * call against this session, or `undefined` if the session has never
-   * been launched. Persisted so the dashboard can default the next
-   * launch to the user's last intent (e.g. "this session is one I
-   * always run remotely"), without forcing a global preference.
-   */
-  readonly lastLaunchMode?: "local" | "remote";
-}
+import type { SessionState } from "../session-state-entity.js";
+
+export { SessionState } from "../session-state-entity.js";
 
 /**
  * Filter options for `SessionRepository.list`. Only fields the

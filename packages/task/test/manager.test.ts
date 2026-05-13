@@ -15,7 +15,7 @@ import {
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
   SqliteTaskRepository,
-  type Task,
+  Task,
   TaskManager,
   TaskNotFoundError,
 } from "../src/index.js";
@@ -1012,7 +1012,7 @@ describe("recoverOrphaned", () => {
     const id = "20260508-deadbeef";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const orphan: Task = {
+    const orphan = Task.fromStored({
       id,
       agent: "demo",
       instructions: "do something",
@@ -1020,7 +1020,7 @@ describe("recoverOrphaned", () => {
       metadata: { pid: deadPid, runtime: "copilot" },
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
-    };
+    });
     const { m, repo } = makeManager();
     await repo.save(orphan);
 
@@ -1035,7 +1035,7 @@ describe("recoverOrphaned", () => {
     const id = "20260508-cafef00d";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const done: Task = {
+    const done = Task.fromStored({
       id,
       agent: "demo",
       instructions: "did it",
@@ -1045,7 +1045,7 @@ describe("recoverOrphaned", () => {
       startedAt: "2026-05-08T01:00:01.000Z",
       endedAt: "2026-05-08T01:00:02.000Z",
       result: { output: "ok" },
-    };
+    });
     const { m, repo } = makeManager();
     await repo.save(done);
 
@@ -1078,7 +1078,7 @@ describe("recoverOrphaned", () => {
       const id = "20260508-aaaaaaaa";
       const workdir = path.join(tasksDir, id);
       await mkdir(workdir, { recursive: true });
-      const orphan: Task = {
+      const orphan = Task.fromStored({
         id,
         agent: "demo",
         instructions: "do something",
@@ -1086,7 +1086,7 @@ describe("recoverOrphaned", () => {
         metadata: { pid: livePid, runtime: "copilot" },
         createdAt: "2026-05-08T01:00:00.000Z",
         startedAt: "2026-05-08T01:00:01.000Z",
-      };
+      });
 
       const r = recorder();
       const { m, repo } = makeManager({ logger: r.logger });
@@ -1110,7 +1110,7 @@ describe("recoverOrphaned", () => {
     const id = "20260508-bbbbbbbb";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const orphan: Task = {
+    const orphan = Task.fromStored({
       id,
       agent: "demo",
       instructions: "do something",
@@ -1118,7 +1118,7 @@ describe("recoverOrphaned", () => {
       metadata: { runtime: "copilot" }, // no pid
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
-    };
+    });
     const { m, repo } = makeManager();
     await repo.save(orphan);
 

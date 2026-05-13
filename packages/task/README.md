@@ -11,9 +11,10 @@ sessions, which are interactive workdirs you `copilot` into yourself.
 
 This package ships two layers:
 
-- **Pure kernel** — `Task` value, `apply()` reducer, event types. Zero I/O.
-  Useful in tests, custom orchestrators, or anywhere you want to drive the
-  FSM directly.
+- **`Task` entity** — DDD class (`Task.create()`, `Task.fromStored()`,
+  state-transition methods `start` / `complete` / `fail` / `cancel`,
+  metadata-replace `withMetadata`). Zero I/O. Useful in tests, custom
+  orchestrators, or anywhere you want to drive the entity directly.
 - **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
   task's metadata to the `tasks` table inside the per-workspace shared
   `workspace.db` (one SQLite row per task), dispatches via
@@ -23,14 +24,14 @@ This package ships two layers:
   its own event log end-to-end — emploke does NOT mirror it back into
   the workdir).
 
-## Quick start (kernel)
+## Quick start (entity)
 
 ```ts
-import { create, apply } from "@emploke/task";
+import { Task } from "@emploke/task";
 
-const t0 = create({ agent: "writer", instructions: "Draft the post" });
-const t1 = apply(t0, { type: "start", metadata: { pid: 12345 } });
-const t2 = apply(t1, { type: "complete", output: "draft.md written" });
+const t0 = Task.create({ agent: "writer", instructions: "Draft the post" });
+const t1 = t0.start({ metadata: { pid: 12345 } });
+const t2 = t1.complete("draft.md written");
 // t2.status === "success"
 ```
 
@@ -56,10 +57,13 @@ const t = await mgr.dispatch({ agent: "writer", instructions: "..." });
 await mgr.shutdown();                   // kills live tasks, persists "server shutdown"
 ```
 
-## Task value
+## Task entity
+
+Field shape (POJO projection via `task.toJSON()` — wire-identical to
+the pre-DDD interface so existing HTTP clients see no change):
 
 ```ts
-interface Task {
+{
   id: string;
   agent: string;
   instructions: string;
@@ -73,7 +77,7 @@ interface Task {
 }
 ```
 
-The kernel knows nothing about how the task is *executed*. PIDs, session
+The entity knows nothing about how the task is *executed*. PIDs, session
 files, work directories, model identifiers — all of that lives in
 `metadata`. Use `readTaskRuntimeMetadata(task)` for a typed view of the
 runtime fields the manager folds in (`workdir`, `runtime`,
@@ -88,23 +92,23 @@ not_started ──start──► running ──complete──► success
             └──cancel─────────────────────► cancelled
 ```
 
-`success` / `failure` / `cancelled` are terminal — no further events apply.
+`success` / `failure` / `cancelled` are terminal — no further transitions apply.
 
-`apply()` throws `InvalidTransition` for illegal events.
-
-## Events
+Each transition is an instance method on `Task`; calling one against an
+illegal source status throws `InvalidTransition`:
 
 ```ts
-type TaskEvent =
-  | { type: "start"; metadata?: Record<string, unknown> }
-  | { type: "complete"; output: string; metadata?: Record<string, unknown> }
-  | { type: "fail"; error: string; metadata?: Record<string, unknown> }
-  | { type: "cancel"; metadata?: Record<string, unknown> };
+task.start({ metadata?, now? })           // not_started → running
+task.complete(output, { metadata?, now? })  // running → success
+task.fail(error, { metadata?, now? })       // running → failure
+task.cancel({ metadata?, now? })             // not_started | running → cancelled
 ```
 
-Every event accepts an optional `metadata` patch. Patches are
-**shallow-merged, last-wins** into the task's metadata. There is no
-delete operation — Task is a history accumulator.
+`metadata` is shallow-merged (last-wins) into the task's existing
+metadata. `now` defaults to `new Date().toISOString()` and is
+overridable for deterministic tests. `Task.withMetadata(metadata)`
+exists separately for the manager-side enrichment path that replaces
+the bag wholesale without changing status.
 
 ## On-disk layout
 

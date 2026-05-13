@@ -4,8 +4,6 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
-import { apply } from "./apply.js";
-import { create as createTask } from "./create.js";
 import {
   AgentNotFoundError,
   CorruptedTaskError,
@@ -17,8 +15,9 @@ import {
 import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
+import { Task } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
-import type { DispatchOpts, ListTaskOpts, Logger, Task, TaskManagerConfig } from "./types.js";
+import type { DispatchOpts, ListTaskOpts, Logger, TaskManagerConfig } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
@@ -255,7 +254,7 @@ export class TaskManager {
     //    Task FSM, `fail` is only legal from `running`, so we'd have to
     //    persist a status the kernel doesn't permit anyway).
     const createdAt = this.now().toISOString();
-    const initial = createTask({
+    const initial = Task.create({
       id,
       agent: agentName,
       instructions,
@@ -328,11 +327,10 @@ export class TaskManager {
     if (handle.runtimeSessionId !== undefined) {
       startMetaPatch.runtimeSessionId = handle.runtimeSessionId;
     }
-    const running = apply(
-      initial,
-      { type: "start", metadata: startMetaPatch },
-      this.now().toISOString(),
-    );
+    const running = initial.start({
+      metadata: startMetaPatch,
+      now: this.now().toISOString(),
+    });
     await this.persist(workdir, running);
 
     // 7. Wire post-spawn background work: watch for exit and persist
@@ -742,14 +740,9 @@ export class TaskManager {
         }
 
         try {
-          const failed = apply(
-            task,
-            {
-              type: "fail",
-              error: "orphaned (server crashed before this task ended)",
-            },
-            this.now().toISOString(),
-          );
+          const failed = task.fail("orphaned (server crashed before this task ended)", {
+            now: this.now().toISOString(),
+          });
           await this.persist(workdir, failed);
         } catch (err) {
           this.logger.warn(
@@ -948,7 +941,7 @@ export class TaskManager {
     if (meta.title !== null) enriched.title = meta.title;
     enriched.userTitled = meta.userTitled;
     if (meta.lastActiveAt !== null) enriched.lastActiveAtRuntime = meta.lastActiveAt;
-    return { ...task, metadata: enriched };
+    return task.withMetadata(enriched);
   }
 
   /** Atomic write of the persisted record. */
@@ -975,17 +968,15 @@ export class TaskManager {
         // real artifacts live on disk under `<workdir>/` and the runtime's
         // event stream sits at `<workdir>/session/`. See the JSDoc on
         // `TaskResult` in ./types.ts and the long-term design discussion.
-        next = apply(
-          running,
-          { type: "complete", output: "", metadata: metaPatch },
-          this.now().toISOString(),
-        );
+        next = running.complete("", {
+          metadata: metaPatch,
+          now: this.now().toISOString(),
+        });
       } else {
-        next = apply(
-          running,
-          { type: "fail", error: decision.reason, metadata: metaPatch },
-          this.now().toISOString(),
-        );
+        next = running.fail(decision.reason, {
+          metadata: metaPatch,
+          now: this.now().toISOString(),
+        });
       }
       await this.persist(workdir, next);
     } catch (err) {

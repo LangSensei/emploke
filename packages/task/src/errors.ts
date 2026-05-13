@@ -15,8 +15,10 @@ export class TaskError extends Error {
 }
 
 /**
- * Thrown by {@link apply} when an event is not legal in the task's current
- * status (e.g. `start` on an already-running task, or any event on a
+ * Thrown by Task state-transition methods ({@link Task.start} /
+ * {@link Task.complete} / {@link Task.fail} / {@link Task.cancel})
+ * when the call is not legal in the task's current status (e.g.
+ * `start()` on an already-running task, or any transition on a
  * terminal task).
  */
 export class InvalidTransition extends TaskError {

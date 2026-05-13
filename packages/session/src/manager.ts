@@ -12,7 +12,8 @@ import {
 } from "./errors.js";
 import { assertValidSessionId, generateSessionId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import type { SessionRepository, SessionState } from "./repositories/repository.js";
+import type { SessionRepository } from "./repositories/repository.js";
+import { SessionState } from "./repositories/repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
@@ -106,11 +107,11 @@ export class SessionManager {
         workspaceDir: this.workspaceDir,
       });
       const createdAt = this.now().toISOString();
-      const state: SessionState = {
+      const state = SessionState.create({
         runtime: runtime.kind,
         createdAt,
         runtimeSessionId,
-      };
+      });
       await this.repository.save(id, state);
       // Return the canonical fqn read back from the provisioned workdir,
       // not the caller-supplied input. They MAY differ — list() always

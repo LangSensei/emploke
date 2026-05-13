@@ -1,6 +1,6 @@
 import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
-import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
+import type { RuntimeRegistry } from "@emploke/runtime";
 import type { SessionRepository } from "./repositories/repository.js";
 
 /**

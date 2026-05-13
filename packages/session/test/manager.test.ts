@@ -258,9 +258,10 @@ describe("create()", () => {
 
     // Persisted state lives in the SQLite repository row, not in a
     // workdir sidecar. Inspect via the same handle the manager wrote
-    // through.
+    // through. `persisted` is a SessionState entity — compare its
+    // POJO projection so the assertion stays shape-only.
     const persisted = await repo.read(s.id);
-    expect(persisted).toEqual({
+    expect(persisted?.toJSON()).toEqual({
       runtime: "copilot",
       createdAt: "2026-05-08T01:05:00.000Z",
       runtimeSessionId: "12345678-1234-1234-1234-1234567890ab",
@@ -853,7 +854,7 @@ describe("buildInteractiveLaunch()", () => {
     // Fire both writes concurrently.
     await Promise.all([
       m.buildInteractiveLaunch(s.id, { remote: true }),
-      repo.save(s.id, { ...before, runtimeSessionId: "from-parallel-writer" }),
+      repo.save(s.id, before.withRuntimeSessionId("from-parallel-writer")),
     ]);
     const after = await repo.read(s.id);
     expect(after?.runtimeSessionId).toBe("from-parallel-writer");

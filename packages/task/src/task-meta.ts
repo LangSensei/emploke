@@ -1,4 +1,4 @@
-import type { Task } from "./types.js";
+import type { Task } from "./task-entity.js";
 
 /**
  * Typed reader for the runtime metadata `TaskManager` deposits on
