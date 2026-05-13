@@ -14,11 +14,21 @@ export type { Logger } from "@emploke/logger";
 export type { LaunchCommand } from "@emploke/runtime";
 
 /**
- * The canonical session value type. Owned by `@emploke/session` (the
- * Runtime layer is intentionally domain-agnostic and doesn't know
- * what a "session" is — it just sees opaque `runtimeSessionId`s).
+ * The wire-level session value type — a derived view that combines
+ * the persisted {@link Session} entity (runtime / createdAt /
+ * runtimeSessionId / lastLaunchMode) with three other sources:
+ *   - `workdir`: computed from the workspace layout
+ *   - `agent`: parsed from `<workdir>/AGENTS.md` frontmatter
+ *   - `lastActiveAt` / `preview`: refreshed live from the runtime per call
+ *
+ * `SessionView` is what `SessionManager.list()` / `.get()` returns and
+ * what `c.json(session)` ships down the HTTP wire to the dashboard.
+ *
+ * Owned by `@emploke/session` (the Runtime layer is intentionally
+ * domain-agnostic and doesn't know what a "session" is — it just sees
+ * opaque `runtimeSessionId`s).
  */
-export interface Session {
+export interface SessionView {
   readonly id: string;
   readonly workdir: string;
   readonly agent: string;
@@ -154,9 +164,3 @@ export interface DeleteSessionOpts {
    */
   readonly purge?: boolean;
 }
-
-/** Re-exported for callers that want to type-narrow on the canonical record. */
-export type SessionRecord = Session;
-
-// Internal helper used by tests and consumers; alias for legacy callers.
-export type ManagedSession = Session;

@@ -258,7 +258,7 @@ describe("create()", () => {
 
     // Persisted state lives in the SQLite repository row, not in a
     // workdir sidecar. Inspect via the same handle the manager wrote
-    // through. `persisted` is a SessionState entity — compare its
+    // through. `persisted` is a Session entity — compare its
     // POJO projection so the assertion stays shape-only.
     const persisted = await repo.read(s.id);
     expect(persisted?.toJSON()).toEqual({

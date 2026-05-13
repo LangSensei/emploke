@@ -1,6 +1,6 @@
-import type { SessionState } from "../session-state-entity.js";
+import type { Session } from "../session-entity.js";
 
-export { SessionState } from "../session-state-entity.js";
+export { Session } from "../session-entity.js";
 
 /**
  * Filter options for `SessionRepository.list`. Only fields the
@@ -50,14 +50,14 @@ export interface SessionRepository {
    * record exists. Throws a `SessionCorruptedError` when the on-disk
    * shape is invalid.
    */
-  read(id: string): Promise<SessionState | null>;
+  read(id: string): Promise<Session | null>;
 
   /**
    * Insert or replace the session's state. Atomic from a reader's
    * perspective: concurrent `read` calls see either the previous value
    * or the new one, never partial bytes.
    */
-  save(id: string, state: SessionState): Promise<void>;
+  save(id: string, state: Session): Promise<void>;
 
   /**
    * Atomically update *only* the `lastLaunchMode` column for `id`,
@@ -92,5 +92,5 @@ export interface SessionRepository {
    * post-filters by `agent` (which requires reading AGENTS.md) before
    * exposing the result to callers.
    */
-  list(opts?: ListSessionStateOpts): Promise<{ id: string; state: SessionState }[]>;
+  list(opts?: ListSessionStateOpts): Promise<{ id: string; state: Session }[]>;
 }

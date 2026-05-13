@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidSessionIdError } from "../src/errors.js";
-import { SessionState, SqliteSessionRepository } from "../src/index.js";
+import { Session, SqliteSessionRepository } from "../src/index.js";
 
 let db: DatabaseSync;
 let repo: SqliteSessionRepository;
@@ -27,8 +27,8 @@ function sample(
     runtimeSessionId?: string | null;
     lastLaunchMode?: "local" | "remote";
   } = {},
-): SessionState {
-  return SessionState.create({
+): Session {
+  return Session.create({
     runtime: overrides.runtime ?? "copilot",
     createdAt: overrides.createdAt ?? "2026-05-09T01:00:00.000Z",
     runtimeSessionId: overrides.runtimeSessionId !== undefined ? overrides.runtimeSessionId : "abc",
@@ -133,7 +133,7 @@ describe("SqliteSessionRepository", () => {
     await expect(
       repo.save(
         "../../etc",
-        SessionState.create({ runtime: "x", createdAt: "x", runtimeSessionId: null }),
+        Session.create({ runtime: "x", createdAt: "x", runtimeSessionId: null }),
       ),
     ).rejects.toBeInstanceOf(InvalidSessionIdError);
   });

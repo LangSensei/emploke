@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { InvalidSessionIdError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
-import { SessionState } from "../session-state-entity.js";
+import { Session } from "../session-entity.js";
 import type { ListSessionStateOpts, SessionRepository } from "./repository.js";
 
 /**
@@ -47,7 +47,7 @@ interface SessionRow {
  * on the shared connection.
  *
  * Row-to-entity decoding is delegated to
- * {@link SessionState.fromStored}: the repository is the source of
+ * {@link Session.fromStored}: the repository is the source of
  * bytes, the entity is the source of validation. Local helper
  * `parseRow` only handles concerns SQLite exposes (nullable
  * `last_launch_mode` column ↔ optional entity field) before handing
@@ -68,7 +68,7 @@ export class SqliteSessionRepository implements SessionRepository {
     // intentionally empty
   }
 
-  async read(id: string): Promise<SessionState | null> {
+  async read(id: string): Promise<Session | null> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     const row = this.db
       .prepare(
@@ -79,7 +79,7 @@ export class SqliteSessionRepository implements SessionRepository {
     return parseRow(id, row);
   }
 
-  async save(id: string, state: SessionState): Promise<void> {
+  async save(id: string, state: Session): Promise<void> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     this.db
       .prepare(
@@ -126,7 +126,7 @@ export class SqliteSessionRepository implements SessionRepository {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
-  async list(opts: ListSessionStateOpts = {}): Promise<{ id: string; state: SessionState }[]> {
+  async list(opts: ListSessionStateOpts = {}): Promise<{ id: string; state: Session }[]> {
     let sql = "SELECT id, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions";
     const params: string[] = [];
     if (opts.createdSince !== undefined) {
@@ -134,7 +134,7 @@ export class SqliteSessionRepository implements SessionRepository {
       params.push(opts.createdSince);
     }
     const rows = this.db.prepare(sql).all(...params) as unknown as SessionRow[];
-    const out: { id: string; state: SessionState }[] = [];
+    const out: { id: string; state: Session }[] = [];
     for (const row of rows) {
       try {
         out.push({ id: row.id, state: parseRow(row.id, row) });
@@ -191,14 +191,14 @@ export class SqliteSessionRepository implements SessionRepository {
 }
 
 /**
- * Decode a `sessions` row into a {@link SessionState} entity. The
+ * Decode a `sessions` row into a {@link Session} entity. The
  * nullable `last_launch_mode` column is mapped to the optional entity
  * field; everything else (id presence, runtime non-empty, ISO
  * timestamps, mode enum values) is validated by
- * {@link SessionState.fromStored}.
+ * {@link Session.fromStored}.
  */
-function parseRow(id: string, row: SessionRow): SessionState {
-  return SessionState.fromStored({
+function parseRow(id: string, row: SessionRow): Session {
+  return Session.fromStored({
     id,
     runtime: row.runtime,
     createdAt: row.created_at,

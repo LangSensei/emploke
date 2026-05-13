@@ -13,14 +13,14 @@ import {
 import { assertValidSessionId, generateSessionId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { SessionRepository } from "./repositories/repository.js";
-import { SessionState } from "./repositories/repository.js";
+import { Session } from "./repositories/repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   ListSessionOpts,
   Logger,
-  Session,
+  SessionView,
   SessionManagerConfig,
 } from "./types.js";
 
@@ -38,7 +38,7 @@ const MAX_CREATE_RETRIES = 5;
  * state (`runtime`, `createdAt`, `runtimeSessionId`); the *workdir* on
  * disk holds AGENTS.md plus any agent-produced files. The manager
  * combines them — together with `runtime.refresh()` for live activity —
- * into a full `Session` for downstream callers.
+ * into a full `SessionView` for downstream callers.
  */
 export class SessionManager {
   private readonly catalog: CatalogManager;
@@ -65,7 +65,7 @@ export class SessionManager {
 
   // ─── create ──────────────────────────────────────────────
 
-  async create(opts: CreateSessionOpts): Promise<Session> {
+  async create(opts: CreateSessionOpts): Promise<SessionView> {
     const agentName = opts.agent;
     if (typeof agentName !== "string" || agentName.length === 0) {
       throw new AgentNotFoundError(String(agentName));
@@ -107,7 +107,7 @@ export class SessionManager {
         workspaceDir: this.workspaceDir,
       });
       const createdAt = this.now().toISOString();
-      const state = SessionState.create({
+      const state = Session.create({
         runtime: runtime.kind,
         createdAt,
         runtimeSessionId,
@@ -137,10 +137,10 @@ export class SessionManager {
 
   // ─── list ────────────────────────────────────────────────
 
-  async list(opts: ListSessionOpts = {}): Promise<Session[]> {
+  async list(opts: ListSessionOpts = {}): Promise<SessionView[]> {
     const repoOpts: { createdSince?: string } = {};
     if (opts.createdSince !== undefined) repoOpts.createdSince = opts.createdSince;
-    let entries: { id: string; state: SessionState }[];
+    let entries: { id: string; state: Session }[];
     try {
       entries = await this.repository.list(repoOpts);
     } catch (err) {
@@ -157,7 +157,7 @@ export class SessionManager {
       entries.map((entry) => this.draftFromState(entry.id, entry.state)),
     );
 
-    const survivors: Session[] = [];
+    const survivors: SessionView[] = [];
     for (const draft of drafts) {
       if (draft === null) continue;
       if (opts.agent !== undefined && draft.agent !== opts.agent) continue;
@@ -206,7 +206,7 @@ export class SessionManager {
 
   // ─── get ─────────────────────────────────────────────────
 
-  async get(id: string): Promise<Session | null> {
+  async get(id: string): Promise<SessionView | null> {
     assertValidSessionId(id);
     return this.loadSession(id);
   }
@@ -317,7 +317,7 @@ export class SessionManager {
 
   // ─── internals ───────────────────────────────────────────
 
-  private async draftFromState(id: string, state: SessionState): Promise<Session | null> {
+  private async draftFromState(id: string, state: Session): Promise<SessionView | null> {
     const workdir = safeJoinUnderRoot(this.sessionsDir, id);
 
     const agent = await readAgentName(workdir);
@@ -353,7 +353,7 @@ export class SessionManager {
     };
   }
 
-  private async refreshSession(draft: Session): Promise<Session> {
+  private async refreshSession(draft: SessionView): Promise<SessionView> {
     const runtime = this.runtimeRegistry.get(draft.runtime);
     if (typeof runtime.readMetadata !== "function" || draft.runtimeSessionId === null) {
       // Runtime doesn't expose metadata, or we have no id to look up
@@ -391,8 +391,8 @@ export class SessionManager {
     };
   }
 
-  private async loadSession(id: string): Promise<Session | null> {
-    let state: SessionState | null;
+  private async loadSession(id: string): Promise<SessionView | null> {
+    let state: Session | null;
     try {
       state = await this.repository.read(id);
     } catch (err) {

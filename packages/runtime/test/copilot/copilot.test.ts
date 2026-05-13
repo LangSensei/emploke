@@ -4,7 +4,6 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
-import type { Session } from "../../src/index.js";
 import {
   CopilotRuntime,
   RuntimeProvisionFailed,
@@ -41,21 +40,6 @@ async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: Catal
     agents: { demo: { "AGENTS.md": agentBody } },
   });
   return { agent: await catalog.resolveAgent("public/demo"), catalog };
-}
-
-function fakeSession(over: Partial<Session> = {}): Session {
-  return {
-    id: "20260508-deadbeef",
-    workdir,
-    agent: "demo",
-    runtime: "copilot",
-    runtimeSessionId: null,
-    createdAt: "2026-05-08T01:00:00.000Z",
-    lastActiveAt: null,
-    preview: null,
-    lastLaunchMode: null,
-    ...over,
-  };
 }
 
 const FIXED_UUID = "12345678-1234-1234-1234-1234567890ab";
@@ -129,7 +113,7 @@ describe("CopilotRuntime", () => {
       await mkdir(ws, { recursive: true });
       const c = await rt.buildInteractiveLaunch(
         null,
-        fakeSession({ runtimeSessionId: null }).workdir,
+        workdir,
         ws,
       );
       expect(c.cmd).toBe("copilot");
@@ -144,7 +128,7 @@ describe("CopilotRuntime", () => {
       await mkdir(ws, { recursive: true });
       const c = await rt.buildInteractiveLaunch(
         FIXED_UUID,
-        fakeSession({ runtimeSessionId: FIXED_UUID }).workdir,
+        workdir,
         ws,
       );
       expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
@@ -156,7 +140,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       expect(await exists(sp)).toBe(false);
-      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildInteractiveLaunch(null, workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       expect(written.trustedFolders).toContain(path.resolve(ws));
     });
@@ -166,8 +150,8 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
-      await rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws);
+      await rt.buildInteractiveLaunch(null, workdir, ws);
+      await rt.buildInteractiveLaunch(null, workdir, ws);
       const written = JSON.parse(await readFile(sp, "utf8"));
       const matches = written.trustedFolders.filter((p: string) => p === path.resolve(ws));
       expect(matches).toHaveLength(1);
@@ -181,7 +165,7 @@ describe("CopilotRuntime", () => {
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       await expect(
-        rt.buildInteractiveLaunch(null, fakeSession({ runtimeSessionId: null }).workdir, ws),
+        rt.buildInteractiveLaunch(null, workdir, ws),
       ).rejects.toBeInstanceOf(TrustRegistrationFailed);
     });
   });
@@ -304,7 +288,7 @@ describe("CopilotRuntime", () => {
       for (const id of MALICIOUS_IDS) {
         const c = await rt.buildInteractiveLaunch(
           id,
-          fakeSession({ runtimeSessionId: id }).workdir,
+          workdir,
           ws,
         );
         expect(c.args).toEqual(["--yolo"]);

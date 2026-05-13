@@ -37,11 +37,11 @@ export type {
 } from "./repositories/repository.js";
 export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 export {
+  Session,
+  type SessionCreateArgs,
+  type SessionFromStoredArgs,
   type SessionLaunchMode,
-  SessionState,
-  type SessionStateCreateArgs,
-  type SessionStateFromStoredArgs,
-} from "./session-state-entity.js";
+} from "./session-entity.js";
 export type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
@@ -49,8 +49,6 @@ export type {
   LaunchCommand,
   ListSessionOpts,
   Logger,
-  ManagedSession,
-  Session,
   SessionManagerConfig,
-  SessionRecord,
+  SessionView,
 } from "./types.js";

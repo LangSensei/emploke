@@ -4,16 +4,16 @@ import {
   type LaunchCommand,
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
-  type Session,
   SessionIdAllocationFailedError,
   type SessionManager,
   SessionNotFoundError,
+  type SessionView,
   UnknownRuntimeError,
 } from "@emploke/session";
 import { describe, expect, it, vi } from "vitest";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 
-const sampleRecord: Session = {
+const sampleRecord: SessionView = {
   id: "20260508-9dfbdf05",
   workdir: "/tmp/wd",
   agent: "demo",

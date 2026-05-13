@@ -4,12 +4,12 @@ import { SessionCorruptedError } from "./errors.js";
 export type SessionLaunchMode = "local" | "remote";
 
 /**
- * Args accepted by {@link SessionState.create}. `runtimeSessionId` is
+ * Args accepted by {@link Session.create}. `runtimeSessionId` is
  * intentionally required (callers must pass `null` if not yet known)
  * so the construction site has to think about whether the runtime
  * minted an id eagerly or lazily.
  */
-export interface SessionStateCreateArgs {
+export interface SessionCreateArgs {
   /** Runtime kind (e.g. `"copilot"`, `"gemini"`). */
   readonly runtime: string;
   /** ISO 8601 UTC timestamp at session creation. */
@@ -24,11 +24,11 @@ export interface SessionStateCreateArgs {
 }
 
 /**
- * Args accepted by {@link SessionState.fromStored}. Mirrors the public
+ * Args accepted by {@link Session.fromStored}. Mirrors the public
  * field layout — the SQL row shape is a private detail of the
  * repository.
  */
-export interface SessionStateFromStoredArgs {
+export interface SessionFromStoredArgs {
   readonly id: string;
   readonly runtime: string;
   readonly createdAt: string;
@@ -37,41 +37,39 @@ export interface SessionStateFromStoredArgs {
 }
 
 /**
- * Rich domain entity representing the **persistent state** of a single
- * session — the slice of `Session` that the repository actually stores
- * (runtime, createdAt, runtimeSessionId, lastLaunchMode).
+ * Rich domain entity representing the **persisted** state of a single
+ * session — the slice that the repository actually stores (runtime,
+ * createdAt, runtimeSessionId, lastLaunchMode).
  *
- * Excludes:
- *   - `id`: the session's identity is the storage key, not duplicated
- *     in the value
- *   - `agent`: lives in the runtime-baked `AGENTS.md`, not in
- *     repository-managed metadata (the manager combines the two when
- *     producing a full `Session`)
- *   - `lastActiveAt` / `preview`: refreshed live from the runtime on
- *     every read, never persisted (would go stale immediately)
- *   - `workdir`: derived by the manager from the workspace layout, not
- *     stored
+ * Distinct from {@link SessionView} (in `./types.ts`), the wire-level
+ * projection that combines this entity with workdir (computed from
+ * layout), agent (parsed from `<workdir>/AGENTS.md` frontmatter), and
+ * lastActiveAt + preview (refreshed live from the runtime per call).
+ * The split exists because those three sources have different
+ * persistence semantics: only `Session`'s fields belong in SQLite,
+ * the rest are derived. `SessionView` is what `c.json(session)`
+ * returns; `Session` is what the SQLite repository round-trips.
  *
  * ## Construction
  *
- * - {@link SessionState.create} — for new state being persisted for
- *   the first time. Pure factory; no validation beyond shape.
- * - {@link SessionState.fromStored} — for entities reconstructed from
+ * - {@link Session.create} — for new state being persisted for the
+ *   first time. Pure factory; no validation beyond shape.
+ * - {@link Session.fromStored} — for entities reconstructed from
  *   storage. Validates every field; throws
  *   {@link SessionCorruptedError} when the row's shape is invalid.
  *
  * ## Mutation
  *
- * - {@link SessionState.withRuntimeSessionId} — record the runtime's
+ * - {@link Session.withRuntimeSessionId} — record the runtime's
  *   id once it's been minted (used by the lazy-mint refresh path).
- * - {@link SessionState.withLastLaunchMode} — record the mode the
- *   user last launched in (used by the dashboard's Resume default).
+ * - {@link Session.withLastLaunchMode} — record the mode the user
+ *   last launched in (used by the dashboard's Resume default).
  *
  * Mirrors the DDD style used by `@emploke/catalog`'s `Agent`,
  * `@emploke/workspace`'s `Workspace`, and `@emploke/task`'s `Task`.
  * See issue #84 for the rollup.
  */
-export class SessionState {
+export class Session {
   private constructor(
     private readonly _runtime: string,
     private readonly _createdAt: string,
@@ -80,28 +78,23 @@ export class SessionState {
   ) {}
 
   /**
-   * Construct a fresh session state. Pure factory; validates only the
+   * Construct a fresh session. Pure factory; validates only the
    * argument shape (TypeScript already pins the field types — the
    * factory exists to keep the construction surface symmetric with
    * `fromStored`).
    */
-  static create(args: SessionStateCreateArgs): SessionState {
-    return new SessionState(
-      args.runtime,
-      args.createdAt,
-      args.runtimeSessionId,
-      args.lastLaunchMode,
-    );
+  static create(args: SessionCreateArgs): Session {
+    return new Session(args.runtime, args.createdAt, args.runtimeSessionId, args.lastLaunchMode);
   }
 
   /**
-   * Reconstruct a session state from a storage-side row. Validates
-   * every field; throws {@link SessionCorruptedError} (carrying the
-   * stored `id` for operator triage) when the row's shape is invalid.
-   * The repository decides what to do with corrupted rows (log + skip,
-   * or rethrow).
+   * Reconstruct a session from a storage-side row. Validates every
+   * field; throws {@link SessionCorruptedError} (carrying the stored
+   * `id` for operator triage) when the row's shape is invalid. The
+   * repository decides what to do with corrupted rows (log + skip, or
+   * rethrow).
    */
-  static fromStored(args: SessionStateFromStoredArgs): SessionState {
+  static fromStored(args: SessionFromStoredArgs): Session {
     if (typeof args.runtime !== "string" || args.runtime.length === 0) {
       throw new SessionCorruptedError(args.id, "missing or invalid 'runtime'");
     }
@@ -121,12 +114,7 @@ export class SessionState {
         "'last_launch_mode' must be 'local', 'remote', or null",
       );
     }
-    return new SessionState(
-      args.runtime,
-      args.createdAt,
-      args.runtimeSessionId,
-      args.lastLaunchMode,
-    );
+    return new Session(args.runtime, args.createdAt, args.runtimeSessionId, args.lastLaunchMode);
   }
 
   get runtime(): string {
@@ -146,8 +134,8 @@ export class SessionState {
    * Record the runtime's session id once minted (used by lazy-mint
    * refresh paths). Identity (runtime / createdAt) is preserved.
    */
-  withRuntimeSessionId(runtimeSessionId: string | null): SessionState {
-    return new SessionState(this._runtime, this._createdAt, runtimeSessionId, this._lastLaunchMode);
+  withRuntimeSessionId(runtimeSessionId: string | null): Session {
+    return new Session(this._runtime, this._createdAt, runtimeSessionId, this._lastLaunchMode);
   }
 
   /**
@@ -155,15 +143,15 @@ export class SessionState {
    * to default the Resume button to the user's last intent. Identity
    * is preserved.
    */
-  withLastLaunchMode(mode: SessionLaunchMode): SessionState {
-    return new SessionState(this._runtime, this._createdAt, this._runtimeSessionId, mode);
+  withLastLaunchMode(mode: SessionLaunchMode): Session {
+    return new Session(this._runtime, this._createdAt, this._runtimeSessionId, mode);
   }
 
   /**
-   * POJO projection. Used by tests that compare states; the manager
-   * itself never serialises `SessionState` (the wire-level entity is
-   * `Session`, which the manager builds by combining `SessionState`
-   * with workdir / agent / lastActiveAt / preview).
+   * POJO projection. Used by tests that compare session contents; the
+   * manager itself never serialises a `Session` directly (the
+   * wire-level entity is `SessionView`, which the manager builds by
+   * combining `Session` with workdir + agent + lastActiveAt + preview).
    *
    * Optional `lastLaunchMode` is omitted when unset to preserve a
    * shape that round-trips through `JSON.parse(JSON.stringify(...))`.
