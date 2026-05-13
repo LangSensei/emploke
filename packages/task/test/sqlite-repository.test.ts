@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { captureLogger } from "@emploke/logger/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CorruptedTaskError,
@@ -203,14 +204,24 @@ describe("SqliteTaskRepository", () => {
     await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
-  it("list silently skips rows with corrupted metadata (warns via the injected logger)", async () => {
+  it("list silently skips rows with corrupted metadata and warns via the injected logger", async () => {
     // list() never throws on a single bad row — it logs + skips so the
-    // dashboard can render every other task. This pins the contract.
-    await repo.save(makeTask({ id: "20260101-aaaaaaaa" }));
-    await repo.save(makeTask({ id: "20260101-bbbbbbbb" }));
+    // dashboard can render every other task. This pins both halves of
+    // that contract: the corrupted row is dropped AND a structured
+    // warn is emitted carrying the offending taskId so operators can
+    // find it without re-running the query manually.
+    const { logger, entries } = captureLogger();
+    const r = new SqliteTaskRepository({ db, logger });
+    await r.save(makeTask({ id: "20260101-aaaaaaaa" }));
+    await r.save(makeTask({ id: "20260101-bbbbbbbb" }));
     db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", "20260101-bbbbbbbb");
-    const all = await repo.list();
+    const all = await r.list();
     expect(all.map((t) => t.id)).toEqual(["20260101-aaaaaaaa"]);
+    const warn = entries.find(
+      (e) => e.level === 40 && e.msg === "tasks: skipping corrupted task row",
+    );
+    expect(warn).toBeDefined();
+    expect(warn?.taskId).toBe("20260101-bbbbbbbb");
   });
 
   it("two separate :memory: connections are isolated", async () => {

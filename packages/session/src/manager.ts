@@ -20,8 +20,8 @@ import type {
   DeleteSessionOpts,
   ListSessionOpts,
   Logger,
-  SessionView,
   SessionManagerConfig,
+  SessionView,
 } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";

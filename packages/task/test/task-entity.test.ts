@@ -285,6 +285,33 @@ describe("Task.fromStored", () => {
       }),
     ).toThrow(/status must be one of/);
   });
+
+  it("throws CorruptedTaskError on non-object metadata", () => {
+    // Defence in depth: even when the repository sanitises metadata
+    // first (parseRow throws before reaching the entity), the entity
+    // factory still validates so callers that hand-build args can't
+    // produce an entity in an invalid shape.
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        instructions: "do",
+        status: "not_started",
+        metadata: null as unknown as Record<string, unknown>,
+        createdAt: fixedNow,
+      }),
+    ).toThrow(/metadata must be an object/);
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        instructions: "do",
+        status: "not_started",
+        metadata: [1, 2, 3] as unknown as Record<string, unknown>,
+        createdAt: fixedNow,
+      }),
+    ).toThrow(/metadata must be an object/);
+  });
 });
 
 describe("Task.toJSON", () => {

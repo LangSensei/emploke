@@ -20,7 +20,13 @@ export interface TaskCreateArgs {
   readonly instructions: string;
   /** Optional initial metadata (e.g. caller-supplied tags, parentTaskId). */
   readonly metadata?: Readonly<Record<string, unknown>>;
-  /** Override task id (deterministic for tests; otherwise a UUID v4). */
+  /**
+   * Override the task id (deterministic-test seam). Must match the
+   * canonical `YYYYMMDD-xxxxxxxx` format the repository enforces;
+   * `Task.create()` validates this upfront and throws
+   * {@link InvalidTaskIdError} for anything else. Omit to mint a
+   * fresh canonical id via {@link generateTaskId}.
+   */
   readonly id?: string;
   /**
    * Override creation timestamp (ISO 8601 UTC string, e.g.
