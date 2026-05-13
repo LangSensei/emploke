@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import crossSpawn from "cross-spawn";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { SpawnFn } from "../../src/copilot/launch-headless.js";
+import { defaultSpawnImpl, type SpawnFn } from "../../src/copilot/launch-headless.js";
 import {
   COPILOT_STDERR_LOG,
   COPILOT_STDOUT_LOG,
@@ -161,10 +162,26 @@ describe("launchCopilotHeadless", () => {
   // (PATHEXT iteration, .cmd / .bat wrapping post-CVE-2024-27980,
   // cmd /S quote-stripping, shell-metachar escaping) inside the
   // library. The runtime contract here is intentionally narrow:
-  // hand cross-spawn the bare bin name + argv + spawn opts. If a
-  // future maintainer reverts to native node:child_process spawn,
-  // npm-installed copilot will silently break on Windows — these
-  // tests pin the call shape to catch that regression early.
+  // hand cross-spawn the bare bin name + argv + spawn opts.
+  //
+  // The two `it` blocks below verify the call SHAPE the launcher
+  // hands to whatever spawn impl the deps inject. They cannot, by
+  // construction, catch a regression where someone reverts the
+  // production fallback `defaultSpawnImpl` from cross-spawn back
+  // to `node:child_process.spawn` — both impls would receive the
+  // same call shape, but the latter would silently break npm-
+  // installed copilot on Windows. The single-line identity test
+  // immediately below is what pins that.
+
+  it("defaultSpawnImpl is bound to cross-spawn (npm-installed copilot regression pin)", () => {
+    // If this assertion ever flips, every other test in this file
+    // can still pass while production silently breaks for any user
+    // with `copilot.cmd` rather than `copilot.exe` on PATH.
+    // Cross-spawn is the ONLY supported way to spawn `.cmd` files
+    // on Node 18.20+/20.12+ (CVE-2024-27980 mitigation), so the
+    // identity check IS the contract.
+    expect(defaultSpawnImpl).toBe(crossSpawn);
+  });
 
   it("hands the bare bin name to the spawn impl unchanged (cross-spawn handles platform quirks)", async () => {
     const { agent, catalog } = await buildAgent();

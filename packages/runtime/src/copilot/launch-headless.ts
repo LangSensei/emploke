@@ -27,6 +27,22 @@ export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
 
 /**
+ * Default spawn implementation used when `LaunchCopilotHeadlessDeps.spawn`
+ * is not injected (i.e. production code paths). Wraps `cross-spawn` so
+ * Windows footguns (PATHEXT iteration, `.cmd`/`.bat` execution post
+ * CVE-2024-27980, `cmd /S` quote-stripping) are handled transparently.
+ *
+ * Exported so a regression test can assert `defaultSpawnImpl ===
+ * crossSpawn`. Without that pin, a future maintainer could swap the
+ * fallback at line 250 from `crossSpawn` back to `node:child_process`'s
+ * native `spawn` — every existing unit test would still pass (they
+ * inject a fake at the same seam), but production would silently
+ * break for any user with an npm-installed copilot on Windows. See
+ * `launch-headless.test.ts` for the assertion that pins this.
+ */
+export const defaultSpawnImpl: SpawnFn = crossSpawn as unknown as SpawnFn;
+
+/**
  * Merge a base env (typically `process.env`) with an override map,
  * deleting any key whose override value is `undefined`. Returns a fresh
  * object so callers can hand it straight to `child_process.spawn` without
@@ -246,8 +262,11 @@ export async function launchCopilotHeadless(
     // The test seam (`deps.spawn`) lets unit tests inject a fake
     // SpawnFn — used by `launch-headless.test.ts` to capture and
     // assert on spawn args without actually launching a child.
-    // Production goes through cross-spawn; the seam never sees it.
-    const spawnImpl = deps.spawn ?? (crossSpawn as unknown as SpawnFn);
+    // Production goes through `defaultSpawnImpl` (cross-spawn); the
+    // seam never sees it. The default impl is exported above so
+    // a one-line regression test can assert it stays bound to
+    // cross-spawn — see the comment on `defaultSpawnImpl` for why.
+    const spawnImpl = deps.spawn ?? defaultSpawnImpl;
     child = spawnImpl(bin, args, {
       cwd: opts.taskDir,
       // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
