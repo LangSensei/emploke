@@ -3,6 +3,7 @@ import { createGunzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { FetchError } from "./errors.js";
 import type { EntryFile, Fetcher } from "./fetcher.js";
+import { resolveDefaultGitHubToken } from "./gh-token.js";
 import { parseOrigin } from "./origin.js";
 
 /**
@@ -13,9 +14,11 @@ import { parseOrigin } from "./origin.js";
  * gunzip + tar-extract on the fly, and yield `EntryFile` records as
  * the stream progresses. No filesystem touch; no `git` binary required.
  *
- * **Auth**: optional. If `GITHUB_TOKEN` (or `GH_TOKEN`) is set in the
- * process env, we attach `Authorization: Bearer <token>` so private
- * repos work and the rate limit goes from 60/h to 5000/h. Anonymous
+ * **Auth**: optional. The token is resolved via {@link resolveDefaultGitHubToken}
+ * which checks `GITHUB_TOKEN` / `GH_TOKEN` env vars first and then falls
+ * back to `gh auth token --hostname github.com` (cached per-host for 60s).
+ * If a token is available we attach `Authorization: Bearer <token>` so
+ * private repos work and the rate limit goes from 60/h to 5000/h. Anonymous
  * requests work fine for public repos in practice.
  *
  * **Tarball shape**: GitHub wraps the entire tree in a single top-level
@@ -45,7 +48,7 @@ export class GitHubFetcher implements Fetcher {
       "User-Agent": "emploke-catalog-fetcher",
       Accept: "application/vnd.github+json",
     };
-    const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+    const token = await resolveDefaultGitHubToken("github.com");
     if (token) headers.Authorization = `Bearer ${token}`;
 
     let response: Response;

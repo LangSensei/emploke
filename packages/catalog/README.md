@@ -86,6 +86,51 @@ All errors thrown by the public API extend `CatalogError`:
 - `HasDependents` — uninstall blocked because something still depends on the target
 - `FrontmatterError` — SKILL.md frontmatter is malformed
 
+## GitHub authentication
+
+When installing from a `https://github.com/...` origin, the catalog fetcher
+resolves a default token from a two-tier fallback chain:
+
+1. **`GITHUB_TOKEN` / `GH_TOKEN` env var** — if set, used as-is. CI
+   environments (GitHub Actions injects `GITHUB_TOKEN` automatically) and
+   advanced users who want to force a specific token hit this branch.
+2. **`gh auth token --hostname github.com`** — if the [GitHub CLI][gh] is
+   installed and authenticated, the fetcher captures its token. Cached
+   per-host for 60 seconds so a deep dependency closure doesn't spawn `gh`
+   on every fetch. emploke never persists the token.
+3. **Anonymous** — no `Authorization` header. Public repos work; private
+   repos return HTTP 404.
+
+[gh]: https://cli.github.com/
+
+### Installing from EMU / SSO-protected orgs
+
+For EMU (Enterprise Managed Users) accounts or any github.com org behind
+SAML SSO, the workflow is:
+
+```sh
+# One time — adds the EMU account alongside any existing accounts.
+gh auth login --hostname github.com --web --git-protocol https
+
+# When you want emploke to install from the EMU-protected org:
+gh auth switch --user <your-emu-username>
+
+# Then start emploke. The fetcher picks up the EMU token automatically.
+pnpm dev
+```
+
+Notes:
+
+- A PAT created manually on `github.com/settings/tokens` must be
+  authorised for the enterprise via the **"Configure SSO"** button on the
+  PAT row — otherwise the API returns HTTP 404 even with a valid-looking
+  token. Tokens minted by `gh auth login` get this for free.
+- Switching the active `gh` account takes up to 60 seconds to be reflected
+  by a long-running emploke process (the cache TTL). Restart emploke for
+  instant effect.
+- To force a specific token regardless of `gh` state, set
+  `GITHUB_TOKEN=…` in the environment — it always wins over the fallback.
+
 ## Design
 
 See the [emploke repository](https://github.com/LangSensei/emploke) for the rationale behind the API shape, the CQRS-flavoured read/write split, and the deliberately narrow scope.

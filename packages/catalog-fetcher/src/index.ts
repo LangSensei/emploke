@@ -17,6 +17,7 @@
 export { FetchError, FetcherError, OriginParseError } from "./errors.js";
 export type { EntryFile, Fetcher } from "./fetcher.js";
 export { FileFetcher } from "./file-fetcher.js";
+export { resolveDefaultGitHubToken, tryGhAuthToken } from "./gh-token.js";
 export { GitHubFetcher } from "./github-fetcher.js";
 export { normalizeOrigin, type ParsedOrigin, parseOrigin } from "./origin.js";
 export { defaultFetcherRegistry, FetcherRegistry } from "./registry.js";
