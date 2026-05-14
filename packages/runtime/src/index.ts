@@ -26,6 +26,7 @@ export {
   RuntimeDoesNotSupportRemoteError,
   RuntimeHeadlessLaunchFailed,
   RuntimeProvisionFailed,
+  RuntimeReadActivityInvalidArgs,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,

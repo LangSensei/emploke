@@ -298,7 +298,7 @@ describe("CopilotRuntime", () => {
       expect(await rt.readActivity({ runtimeSessionId: FIXED_UUID })).toBeNull();
     });
 
-    it("reads + parses + paginates events.jsonl", async () => {
+    it("paginates events.jsonl in three modes (tail / after / before)", async () => {
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });
       const lines: string[] = [];
@@ -316,28 +316,79 @@ describe("CopilotRuntime", () => {
       await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
 
+      // No limit, no pagination cursor: returns the entire log.
+      // CLI default ("give me everything").
       const all = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
       });
       expect(all?.activity).toHaveLength(10);
       expect(all?.totalItems).toBe(10);
-      expect(all?.cursor).toBeNull();
+      expect(all?.activity[0]?.seq).toBe(0);
+      expect(all?.activity[9]?.seq).toBe(9);
+      expect(all?.truncated).toBeUndefined();
 
-      const first3 = await rt.readActivity({
+      // Tail mode (limit but no cursor): returns the LATEST `limit`
+      // items. GUI default — user lands at the most recent activity.
+      const tail = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
         limit: 3,
       });
-      expect(first3?.activity).toHaveLength(3);
-      expect(first3?.cursor).toBe(2); // last seq returned in this page
-      expect(first3?.truncated?.reason).toBe("page_limit");
+      expect(tail?.activity).toHaveLength(3);
+      expect(tail?.activity[0]?.seq).toBe(7);
+      expect(tail?.activity[2]?.seq).toBe(9);
+      expect(tail?.truncated?.reason).toBe("page_limit");
+      // hasOlder derives from `activity[0].seq > 0` — no separate field.
+      expect((tail?.activity[0]?.seq ?? 0) > 0).toBe(true);
 
-      const next = await rt.readActivity({
+      // Forward (after): items strictly newer than seq, oldest-first,
+      // capped at limit. SSE polling pattern.
+      const forward = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
-        cursor: 2,
+        after: 2,
         limit: 5,
       });
-      expect(next?.activity[0]?.seq).toBe(3);
-      expect(next?.activity).toHaveLength(5);
+      expect(forward?.activity).toHaveLength(5);
+      expect(forward?.activity[0]?.seq).toBe(3);
+      expect(forward?.activity[4]?.seq).toBe(7);
+      expect(forward?.truncated?.reason).toBe("page_limit");
+
+      // Backward (before): items strictly older than seq, returns the
+      // `limit` immediately preceding the cut, still ASC-sorted.
+      // GUI "load older history" pattern.
+      const backward = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 8,
+        limit: 3,
+      });
+      expect(backward?.activity).toHaveLength(3);
+      expect(backward?.activity[0]?.seq).toBe(5);
+      expect(backward?.activity[2]?.seq).toBe(7);
+      expect(backward?.truncated?.reason).toBe("page_limit");
+
+      // Backward at the head boundary: window smaller than limit,
+      // returns whatever's available, no truncation marker, and
+      // `activity[0].seq === 0` so caller knows hasOlder = false.
+      const headBoundary = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 2,
+        limit: 5,
+      });
+      expect(headBoundary?.activity).toHaveLength(2);
+      expect(headBoundary?.activity[0]?.seq).toBe(0);
+      expect(headBoundary?.truncated).toBeUndefined();
+    });
+
+    it("rejects mutually-exclusive before + after with RuntimeReadActivityInvalidArgs", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "events.jsonl"), "");
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      // Throws before touching the file — the route layer should
+      // catch this earlier as 400, but the runtime guards in case
+      // an in-process caller bypasses the route.
+      await expect(
+        rt.readActivity({ runtimeSessionId: FIXED_UUID, before: 5, after: 2 }),
+      ).rejects.toThrow(/before.*after.*mutually exclusive/);
     });
 
     it("caps the raw read at 4MB and surfaces truncated marker", async () => {

@@ -1,5 +1,14 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type ActivityItem,
@@ -1279,13 +1288,25 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       </nav>
 
       {tab === "activity" && (
-        <div className="task-detail__body">
+        <StickToBottomScroll
+          className="task-detail__body"
+          // Reset on task switch so the new task lands at the bottom.
+          resetKey={taskId ?? ""}
+          // Follow only when a NEW tail event arrives. Using
+          // `length` would also fire on `LoadMoreSentinel` prepends,
+          // which would yank the user back to the bottom while
+          // they're scrolling up to read history — exactly the
+          // anti-pattern we're trying to avoid. The `seq` of the
+          // last item is monotonic per task and only changes when
+          // the runtime emits a new event.
+          followKey={activity?.activity[activity.activity.length - 1]?.seq ?? 0}
+        >
           <ActivityView
             activity={activity}
             activityError={activityError}
             onLoadMore={loadMoreActivity}
           />
-        </div>
+        </StickToBottomScroll>
       )}
 
       {tab === "raw" && (
@@ -1327,6 +1348,88 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         </div>
       )}
     </aside>
+  );
+}
+
+/**
+ * Scroll container that follows the bottom of its content while the
+ * user has scrolled to (or near) the bottom — matches how chat apps
+ * (Slack, Cursor agent, browser DevTools console) keep the latest
+ * line visible during live activity, without yanking the user's
+ * position when they've scrolled up to read history.
+ *
+ * Two effects:
+ *
+ * 1. **Reset effect** (keyed by `resetKey`): when the user switches
+ *    tasks, jump to the bottom unconditionally so the latest events
+ *    are visible right away. Also resets `stickToBottom = true` so
+ *    follow-on poll updates keep tracking.
+ * 2. **Follow effect** (keyed by `followKey`): each time the
+ *    activity event count changes, if the user is currently pinned
+ *    to the bottom, scroll the new content into view. If they've
+ *    scrolled up, leave their viewport position alone — the new
+ *    item appended below moves the scrollbar thumb up visually,
+ *    but the content the user was reading stays in place.
+ *
+ * `useLayoutEffect` (rather than `useEffect`) avoids the visible
+ * one-frame jump that would otherwise show the un-scrolled state
+ * before the autoscroll runs.
+ *
+ * The bottom-detection has a 4px tolerance for subpixel rounding
+ * — without it, a freshly-appended item can take the user "out of
+ * the bottom zone" by exactly the new item's height, breaking the
+ * follow loop after a single update.
+ */
+function StickToBottomScroll({
+  className,
+  resetKey,
+  followKey,
+  children,
+}: {
+  className?: string;
+  /** Changes → unconditional jump to bottom (e.g. task switch). */
+  resetKey: string | number;
+  /** Changes → scroll to bottom only if user was at bottom. */
+  followKey: string | number;
+  children: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  const isAtBottom = useCallback((el: HTMLElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+  }, []);
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = isAtBottom(el);
+  }, [isAtBottom]);
+
+  // Reset on resetKey change — task switch jumps to bottom.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey is the trigger; the body intentionally only reads the ref.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+  }, [resetKey]);
+
+  // Follow on followKey change — new events scroll into view if user
+  // was pinned to the bottom; otherwise leave their position alone.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: followKey is the trigger; the body intentionally only reads the ref.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [followKey]);
+
+  return (
+    <div ref={scrollRef} className={className} onScroll={onScroll}>
+      {children}
+    </div>
   );
 }
 

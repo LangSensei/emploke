@@ -119,3 +119,22 @@ export class RuntimeDoesNotSupportRemoteError extends Error {
     this.name = "RuntimeDoesNotSupportRemoteError";
   }
 }
+
+/**
+ * Thrown by `Runtime.readActivity` when the caller violates the
+ * `before` / `after` mutual-exclusion contract (e.g. supplies both,
+ * or supplies a negative `limit`). The route layer should reject
+ * such requests with HTTP 400 before reaching the runtime, so this
+ * is purely a defensive guard against in-process callers that bypass
+ * the route.
+ *
+ * `.message` carries the specific violation so logs are debuggable;
+ * the route layer's 400 mapping uses the raw HTTP query rather than
+ * forwarding this error's message.
+ */
+export class RuntimeReadActivityInvalidArgs extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuntimeReadActivityInvalidArgs";
+  }
+}

@@ -203,14 +203,25 @@ export interface TaskDeleteQuery {
  * Pagination is server-controlled — the manifest declares the
  * shapes; the server route enforces the default limit (50) and
  * hard maximum (500) and rejects malformed integers with 400.
+ *
+ * `before` and `after` are mutually exclusive; the route returns
+ * 400 if both are supplied. Omitting both returns the LATEST
+ * `limit` items overall (tail), which is what GUI consumers want
+ * on initial load.
  */
 export interface TaskActivityQuery {
   /**
-   * Return only items with `seq` strictly greater than this. Pass
-   * back the `cursor` from a prior response to continue. Omit on
-   * the first call to start from the head.
+   * Backward pagination: return items with `seq < before`. Returns
+   * the `limit` items immediately preceding the cut, ASC-sorted.
+   * Used by GUI consumers loading older history when the user
+   * scrolls up past the initial tail-window.
    */
-  readonly cursor?: string;
+  readonly before?: string;
+  /**
+   * Forward pagination: return items with `seq > after`. Used by
+   * SSE polling and by callers walking head-to-tail.
+   */
+  readonly after?: string;
   /**
    * Maximum items to return. Server clamps to [1, 500]; default 50
    * when omitted. Sized for LLM token budgets when this endpoint
@@ -401,18 +412,22 @@ export const ROUTES = {
    * event log into the {@link ActivityItem} discriminated union
    * declared in `@emploke/runtime` (end-to-end via
    * `Runtime.readActivity` — the route never sees a path or raw
-   * bytes). Paginated by `cursor` + `limit`; `truncated` marker is
-   * non-null when the runtime had to drop bytes/items to stay within
-   * its safety cap. 404 NoEventsYet when the runtime hasn't produced
-   * events yet (or doesn't implement the activity surface).
+   * bytes). Paginated by `before` / `after` / `limit`; `truncated`
+   * marker is non-null when the runtime had to drop bytes/items to
+   * stay within its safety cap. 404 NoEventsYet when the runtime
+   * hasn't produced events yet (or doesn't implement the activity
+   * surface).
+   *
+   * Clients derive `hasOlder` / `hasNewer` from the page window
+   * (`activity[0].seq > 0` / `activity[last].seq < totalItems - 1`)
+   * — items themselves are the cursor, no separate cursor field.
    */
   "tasks.activity": defineRoute<
     { params: TaskPathParams; query: TaskActivityQuery },
     {
       activity: readonly ActivityItem[];
       result: string | null;
-      cursor: number | null;
-      totalItems?: number;
+      totalItems: number;
       truncated?: TruncationInfo;
     }
   >("GET", "/api/workspaces/:id/tasks/:tid/activity"),

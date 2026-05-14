@@ -236,30 +236,62 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   // {ActivityItem, TaskActivityResult} vocabulary; this route just
   // forwards that result as JSON.
   //
-  // Pagination via `?cursor=<seq>&limit=<n>`. The route enforces
-  // limit in [1, 500], default 50 — sized for LLM token budgets so
-  // this surface stays MCP-safe by construction. Both params are
-  // optional; omitting cursor returns the head, omitting limit
-  // applies the 50 default.
+  // Pagination via mutually-exclusive `?before=<seq>` / `?after=<seq>`,
+  // both optional, plus `?limit=<n>`. Three modes:
+  //   - default (neither): tail — returns the latest `limit` items.
+  //     What GUI clients want on first load.
+  //   - `?after=<seq>`: forward — items with `seq > after`. Used by
+  //     SSE polling and by callers walking head-to-tail.
+  //   - `?before=<seq>`: backward — the latest `limit` items below
+  //     the cut. Used by GUI clients loading older history when the
+  //     user scrolls up past the initial tail-window.
+  //
+  // The route enforces limit in [1, 500], default 50 — sized for LLM
+  // token budgets so this surface stays MCP-safe by construction.
+  // Supplying both `before` and `after` is rejected as 400 (otherwise
+  // the runtime layer would catch it, but failing earlier is friendlier).
+  //
+  // Response shape: `{ activity, result, totalItems, truncated? }`.
+  // Clients derive `hasOlder` / `hasNewer` from the page window
+  // (`activity[0].seq > 0` / `activity[last].seq < totalItems - 1`)
+  // — no dedicated cursor fields, items themselves are the cursor.
   //
   // Returns:
-  //   - 400 on malformed cursor / limit (non-integer, negative, > max)
+  //   - 400 on malformed before / after / limit, or both pagination
+  //     params present
   //   - 404 if the task doesn't exist
   //   - 404 with code=NoEventsYet if the runtime doesn't implement
   //     `Runtime.readActivity`, or has no log for this task yet
-  //   - 200 application/json `{ activity, result, cursor, totalItems?, truncated? }`
+  //   - 200 application/json
   app.get("/:tid/activity", async (c) => {
     const id = c.req.param("tid");
-    const cursorRaw = c.req.query("cursor");
+    const beforeRaw = c.req.query("before");
+    const afterRaw = c.req.query("after");
     const limitRaw = c.req.query("limit");
 
-    let cursor: number | undefined;
-    if (cursorRaw !== undefined) {
-      const parsed = Number.parseInt(cursorRaw, 10);
-      if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== cursorRaw) {
-        return c.json({ error: "cursor must be a non-negative integer", code: "BadRequest" }, 400);
+    if (beforeRaw !== undefined && afterRaw !== undefined) {
+      return c.json(
+        { error: "before and after are mutually exclusive", code: "BadRequest" },
+        400,
+      );
+    }
+
+    let before: number | undefined;
+    if (beforeRaw !== undefined) {
+      const parsed = Number.parseInt(beforeRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== beforeRaw) {
+        return c.json({ error: "before must be a non-negative integer", code: "BadRequest" }, 400);
       }
-      cursor = parsed;
+      before = parsed;
+    }
+
+    let after: number | undefined;
+    if (afterRaw !== undefined) {
+      const parsed = Number.parseInt(afterRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== afterRaw) {
+        return c.json({ error: "after must be a non-negative integer", code: "BadRequest" }, 400);
+      }
+      after = parsed;
     }
 
     let limit: number = TASK_ACTIVITY_DEFAULT_LIMIT;
@@ -280,7 +312,8 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     let payload: Awaited<ReturnType<TaskManager["getTaskActivity"]>>;
     try {
       payload = await getManager(c).getTaskActivity(id, {
-        ...(cursor !== undefined ? { cursor } : {}),
+        ...(before !== undefined ? { before } : {}),
+        ...(after !== undefined ? { after } : {}),
         limit,
       });
     } catch (err) {

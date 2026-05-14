@@ -6,6 +6,7 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import {
   RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
+  RuntimeReadActivityInvalidArgs,
   RuntimeRefreshFailed,
   RuntimeStateDeletionFailed,
 } from "../errors.js";
@@ -334,14 +335,33 @@ export class CopilotRuntime implements Runtime {
    *     stalls when the agent has been chatty (extreme case observed:
    *     hundreds of MB after a long autonomous run).
    *   - **Per-page limit** (server-enforced via `opts.limit`): the
-   *     runtime returns at most that many items, with `cursor` set
-   *     for the next page.
+   *     runtime returns at most that many items.
+   *
+   * Pagination model (caller-driven, mutually exclusive):
+   *   - Neither `before` nor `after` set → tail: latest `limit`
+   *     items overall. GUI initial loads use this; the user lands at
+   *     the most recent activity without paging through history.
+   *   - `after = N` → forward: items with `seq > N`, oldest-first.
+   *     Used by SSE polling and by callers walking head-to-tail.
+   *   - `before = N` → backward: items with `seq < N`, returns the
+   *     `limit` items immediately preceding the cut, still sorted by
+   *     `seq` ASC. Used by GUI consumers loading older history when
+   *     the user scrolls up past the initial tail-window.
+   *   - Both → `RuntimeReadActivityInvalidArgs`. The route layer
+   *     should reject before calling the runtime; this is a
+   *     defensive guard against in-process callers bypassing the
+   *     route.
    *
    * Items are sequenced 0..N-1 across the WHOLE log (not just the
    * returned page) — `seq` is the canonical pagination cursor and
-   * matches what `streamActivity` would yield for live tail.
+   * matches what `streamActivity` would yield for live tail. Callers
+   * derive `hasOlder` / `hasNewer` from the page window
+   * (`activity[0].seq > 0`, `activity[last].seq < totalItems - 1`).
    */
   async readActivity(opts: ReadActivityOpts): Promise<ActivityResult | null> {
+    if (opts.before !== undefined && opts.after !== undefined) {
+      throw new RuntimeReadActivityInvalidArgs("readActivity: `before` and `after` are mutually exclusive");
+    }
     const id = safeCopilotId(opts.runtimeSessionId);
     if (id === null) return null;
     const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
@@ -384,34 +404,56 @@ export class CopilotRuntime implements Runtime {
     const totalItems = allItems.length;
     const result = deriveCopilotResult(raw);
 
-    // Apply pagination (cursor + limit). Defaults: return everything
-    // if no limit set; if cursor is set, return items with seq > cursor.
-    const cursor = typeof opts.cursor === "number" ? opts.cursor : undefined;
+    // Apply the pagination window per the model documented above.
     const limit = typeof opts.limit === "number" && opts.limit > 0 ? opts.limit : undefined;
-    let filtered: ActivityItem[] =
-      cursor !== undefined ? allItems.filter((i) => i.seq > cursor) : allItems;
-
+    let filtered: ActivityItem[];
     let pageTruncated: TruncationInfo | undefined;
-    if (limit !== undefined && filtered.length > limit) {
-      filtered = filtered.slice(0, limit);
-      pageTruncated = {
-        reason: "page_limit",
-        hint: `Showed ${limit} of ${allItems.length} items; pass cursor=${filtered[filtered.length - 1]?.seq} for the next page.`,
-      };
+    if (opts.after !== undefined) {
+      // Forward: items strictly after `after`, oldest-first, capped at `limit`.
+      const window = allItems.filter((i) => i.seq > (opts.after as number));
+      if (limit !== undefined && window.length > limit) {
+        filtered = window.slice(0, limit);
+        pageTruncated = {
+          reason: "page_limit",
+          hint: `Showed ${limit} items after seq ${opts.after}; ${window.length - limit} more available — request again with after=${filtered[filtered.length - 1]?.seq}.`,
+        };
+      } else {
+        filtered = window;
+      }
+    } else if (opts.before !== undefined) {
+      // Backward: items strictly before `before`, return the `limit`
+      // immediately preceding the cut (i.e., the latest below `before`),
+      // still ASC-sorted for caller convenience.
+      const window = allItems.filter((i) => i.seq < (opts.before as number));
+      if (limit !== undefined && window.length > limit) {
+        filtered = window.slice(window.length - limit);
+        pageTruncated = {
+          reason: "page_limit",
+          hint: `Showed ${limit} items before seq ${opts.before}; ${window.length - limit} more available — request again with before=${filtered[0]?.seq}.`,
+        };
+      } else {
+        filtered = window;
+      }
+    } else {
+      // Tail: latest `limit` items. No `limit` set → return everything
+      // (CLI default for "give me the whole log").
+      if (limit !== undefined && allItems.length > limit) {
+        filtered = allItems.slice(allItems.length - limit);
+        pageTruncated = {
+          reason: "page_limit",
+          hint: `Showed last ${limit} of ${allItems.length} items — request again with before=${filtered[0]?.seq} to read older history.`,
+        };
+      } else {
+        filtered = allItems;
+      }
     }
-
-    const lastSeq = filtered.length > 0 ? (filtered[filtered.length - 1]?.seq ?? null) : null;
-    const hasMore =
-      lastSeq !== null &&
-      allItems.length > 0 &&
-      lastSeq < (allItems[allItems.length - 1]?.seq ?? -1);
 
     return {
       activity: filtered,
       result,
-      cursor: hasMore ? lastSeq : null,
       totalItems,
-      // size_limit takes precedence over page_limit when both apply.
+      // size_limit (raw-read tail) takes precedence over page_limit
+      // when both apply.
       ...(truncated !== undefined
         ? { truncated }
         : pageTruncated !== undefined

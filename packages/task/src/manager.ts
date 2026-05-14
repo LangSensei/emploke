@@ -513,7 +513,7 @@ export class TaskManager {
    */
   async getTaskActivity(
     id: string,
-    opts?: { readonly cursor?: number; readonly limit?: number },
+    opts?: { readonly before?: number; readonly after?: number; readonly limit?: number },
   ): Promise<import("@emploke/runtime").ActivityResult | null> {
     const task = await this.get(id);
     if (task === null) return null;
@@ -533,7 +533,8 @@ export class TaskManager {
     if (typeof runtime.readActivity !== "function") return null;
     return runtime.readActivity({
       runtimeSessionId,
-      ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
+      ...(opts?.before !== undefined ? { before: opts.before } : {}),
+      ...(opts?.after !== undefined ? { after: opts.after } : {}),
       ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
     });
   }
