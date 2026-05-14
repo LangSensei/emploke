@@ -289,8 +289,8 @@ export class TaskManager {
         // Self-describing context bag the subprocess (and any
         // grandchildren it spawns through `emploke ...` calls)
         // inherits via process.env. Merged with the static base
-        // (server URL, API key, home) supplied at construction time.
-        // See LaunchHeadlessOpts.subprocessEnv for the rationale.
+        // (server URL, API key, shared dir) supplied at construction
+        // time. See LaunchHeadlessOpts.subprocessEnv for the rationale.
         //
         // CONCURRENCY: this object literal is freshly allocated on
         // every dispatch — never cache it on `this`. The base is
@@ -303,8 +303,10 @@ export class TaskManager {
         subprocessEnv: {
           ...this.subprocessEnvBase,
           ...(this.workspaceId !== undefined ? { EMPLOKE_WORKSPACE: this.workspaceId } : {}),
-          EMPLOKE_WORKDIR: this.workspaceDir,
-          EMPLOKE_TASK_ID: id,
+          EMPLOKE_WORKSPACE_DIR: this.workspaceDir,
+          EMPLOKE_RUN_KIND: "task",
+          EMPLOKE_RUN_ID: id,
+          EMPLOKE_RUN_DIR: workdir,
         },
       });
     } catch (err) {

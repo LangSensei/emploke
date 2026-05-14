@@ -9,7 +9,7 @@ import {
 
 const CTX: PlaceholderContext = {
   workspaceDir: "C:\\Users\\me\\code\\acme",
-  globalDir: "/home/me/.emploke/shared",
+  sharedDir: "/home/me/.emploke/shared",
 };
 
 /**
@@ -25,7 +25,7 @@ const ph = (name: string): string => `\${${name}}`;
 describe("substitutePlaceholders", () => {
   it("replaces a bare placeholder with the matching context value", () => {
     expect(substitutePlaceholders(ph("workspaceDir"), CTX, "test")).toBe("C:/Users/me/code/acme");
-    expect(substitutePlaceholders(ph("globalDir"), CTX, "test")).toBe("/home/me/.emploke/shared");
+    expect(substitutePlaceholders(ph("sharedDir"), CTX, "test")).toBe("/home/me/.emploke/shared");
   });
 
   it("converts backslashes to forward slashes so the same string works on Windows + POSIX", () => {
@@ -49,7 +49,7 @@ describe("substitutePlaceholders", () => {
   });
 
   it("substitutes multiple placeholders in one string", () => {
-    expect(substitutePlaceholders(`${ph("workspaceDir")}::${ph("globalDir")}`, CTX, "test")).toBe(
+    expect(substitutePlaceholders(`${ph("workspaceDir")}::${ph("sharedDir")}`, CTX, "test")).toBe(
       "C:/Users/me/code/acme::/home/me/.emploke/shared",
     );
   });
@@ -78,6 +78,26 @@ describe("substitutePlaceholders", () => {
     }
   });
 
+  it("rejects the legacy globalDir placeholder (renamed to sharedDir — hard rename, no back-compat)", () => {
+    // `${globalDir}` was the original name shipped with the placeholder
+    // system. The runtime's underlying field is now `sharedDir` (matches
+    // `paths.sharedDir`), and the placeholder followed suit. We chose a
+    // hard rename rather than a deprecation window because (1) emploke
+    // is pre-1.0, (2) the marketplace had only ~8 doc references at the
+    // time of the rename (all updated in a follow-up PR), and (3) a
+    // soft-warn path would let stale specs drift without forcing a fix.
+    //
+    // Pinning this here so a future "be friendly, accept both names"
+    // PR has to actively delete this test rather than just adding
+    // `globalDir` to PLACEHOLDER_NAMES — which would silently pass the
+    // generic unknown-name test.
+    expect(() => substitutePlaceholders(ph("globalDir"), CTX, "mcps:legacy")).toThrow(
+      UnknownPlaceholderError,
+    );
+    expect(PLACEHOLDER_NAMES).not.toContain("globalDir");
+    expect(PLACEHOLDER_NAMES).toContain("sharedDir");
+  });
+
   it("does NOT do shell-style fallback or default syntax (kept simple on purpose)", () => {
     // `${workspaceDir:-/fallback}` is shell syntax; we don't honour it
     // because the marketplace audience writes JSON specs, not shell
@@ -103,7 +123,7 @@ describe("substitutePlaceholdersDeep", () => {
     const input = {
       command: "npx",
       args: ["-y", "@playwright/mcp@latest", "--storage-state", `${ph("workspaceDir")}/state.json`],
-      env: { GLOBAL_CACHE: `${ph("globalDir")}/cache` },
+      env: { GLOBAL_CACHE: `${ph("sharedDir")}/cache` },
       keepAsIs: 42,
       flag: true,
       nullable: null,

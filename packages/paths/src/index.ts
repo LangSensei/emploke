@@ -9,7 +9,7 @@
  *   - `<home>/workspaces/` — parent dir for auto-allocated workspaces
  *   - `<home>/logs/` — server's rotated log files (pino-roll)
  *   - `<home>/runtime.json` — CLI lifecycle breadcrumb (pid + port)
- *   - `<home>/shared/` — runtime adapters' `${globalDir}` placeholder root
+ *   - `<home>/shared/` — runtime adapters' `${sharedDir}` placeholder root
  *
  * One overrideable knob:
  *
@@ -58,9 +58,9 @@ export const RUNTIME_FILE_NAME = "runtime.json";
 
 /**
  * Subdirectory (under `<home>`) used by runtime adapters as the resolved
- * value for the `${globalDir}` MCP placeholder. Stable per-machine path
+ * value for the `${sharedDir}` MCP placeholder. Stable per-machine path
  * shared across every workspace and runtime — spec authors get to write
- * `${globalDir}/some-state.db` without baking host paths into JSON.
+ * `${sharedDir}/some-state.db` without baking host paths into JSON.
  */
 export const SHARED_SUBDIR = "shared";
 
@@ -99,7 +99,7 @@ export interface EmplokePaths {
    */
   readonly runtimeFile: string;
   /**
-   * Directory used by runtime adapters as the `${globalDir}` placeholder
+   * Directory used by runtime adapters as the `${sharedDir}` placeholder
    * root, `<home>/shared`. Stable per-machine path that an MCP spec can
    * reference without knowing the host's `EMPLOKE_HOME` override.
    */

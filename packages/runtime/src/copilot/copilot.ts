@@ -43,7 +43,7 @@ import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
 const DEFAULT_COPILOT_CONFIG_PATH = path.join(homedir(), ".copilot", "config.json");
-const DEFAULT_GLOBAL_DIR = path.join(homedir(), ".emploke", "shared");
+const DEFAULT_SHARED_DIR = path.join(homedir(), ".emploke", "shared");
 
 export interface CopilotRuntimeConfig {
   /**
@@ -68,7 +68,7 @@ export interface CopilotRuntimeConfig {
    */
   readonly copilotConfigPath?: string;
   /**
-   * Override the directory exposed to spec authors as `${globalDir}` in
+   * Override the directory exposed to spec authors as `${sharedDir}` in
    * placeholder substitution. Defaults to `~/.emploke/shared`. Server
    * bootstrap normally derives this from `EMPLOKE_HOME` and passes it
    * explicitly so the value tracks any `EMPLOKE_HOME` override.
@@ -78,7 +78,7 @@ export interface CopilotRuntimeConfig {
    * across every workspace + session + task on the machine
    * (e.g. one playwright login the user wants every project to reuse).
    */
-  readonly globalDir?: string;
+  readonly sharedDir?: string;
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -177,14 +177,14 @@ export class CopilotRuntime implements Runtime {
 
   private readonly copilotStateDir: string;
   private readonly copilotConfigPath: string;
-  private readonly globalDir: string;
+  private readonly sharedDir: string;
   private readonly randomUUID: () => string;
   private readonly headlessDeps: Partial<LaunchCopilotHeadlessDeps>;
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
-    this.globalDir = config.globalDir ?? DEFAULT_GLOBAL_DIR;
+    this.sharedDir = config.sharedDir ?? DEFAULT_SHARED_DIR;
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
     this.headlessDeps = config.headlessDeps ?? {};
   }
@@ -197,7 +197,7 @@ export class CopilotRuntime implements Runtime {
   ): Promise<{ runtimeSessionId: string }> {
     const placeholders: PlaceholderContext = {
       workspaceDir: ctx.workspaceDir,
-      globalDir: this.globalDir,
+      sharedDir: this.sharedDir,
     };
     try {
       await provisionCopilotWorkdir(workdir, agent, catalog, placeholders);
@@ -310,7 +310,7 @@ export class CopilotRuntime implements Runtime {
       },
       {
         copilotStateDir: this.copilotStateDir,
-        globalDir: this.globalDir,
+        sharedDir: this.sharedDir,
         randomUUID: this.randomUUID,
         ...this.headlessDeps,
       },

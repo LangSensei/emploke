@@ -83,10 +83,12 @@ export class WorkspaceContextCache {
   /**
    * Static env overrides forwarded into every per-workspace
    * `TaskManager` so the spawned task subprocesses inherit a
-   * self-describing bag (server URL, API key, EMPLOKE_HOME). The
-   * per-workspace + per-task fields (`EMPLOKE_WORKSPACE`,
-   * `EMPLOKE_TASK_ID`, …) are added inside `TaskManager.dispatch` —
-   * this field carries only what the server itself contributes.
+   * self-describing bag (server URL, API key, EMPLOKE_SHARED_DIR).
+   * The per-workspace + per-run fields (`EMPLOKE_WORKSPACE`,
+   * `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_KIND`, `EMPLOKE_RUN_ID`,
+   * `EMPLOKE_RUN_DIR`) are added inside `TaskManager.dispatch` /
+   * `SessionManager.assembleLaunchEnv` — this field carries only
+   * what the server itself contributes.
    *
    * Defaults to `{}` so existing callers (notably tests) keep
    * working without having to assemble an env bag.

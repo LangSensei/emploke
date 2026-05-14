@@ -7,7 +7,7 @@ import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
 import { flattenSkillName, InvalidMcpJson } from "../../src/index.js";
 import { makeTestCatalog, type TestCatalogFixtures } from "./test-catalog.js";
 
-const TEST_PLACEHOLDERS = { workspaceDir: "/test/workspace", globalDir: "/test/global" } as const;
+const TEST_PLACEHOLDERS = { workspaceDir: "/test/workspace", sharedDir: "/test/global" } as const;
 
 let scratch: string;
 

@@ -265,11 +265,11 @@ export class SessionManager {
     );
 
     // Layer in the per-session env bag on top of whatever the runtime
-    // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKDIR /
-    // EMPLOKE_SESSION_ID. Server-supplied base adds: EMPLOKE_SERVER /
-    // EMPLOKE_HOME. Both layers are merged with the runtime's own
-    // (currently empty) env field
-    // letting a future runtime contribute its own vars (e.g. a
+    // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR /
+    // EMPLOKE_RUN_KIND="session" / EMPLOKE_RUN_ID / EMPLOKE_RUN_DIR.
+    // Server-supplied base adds: EMPLOKE_SERVER / EMPLOKE_SHARED_DIR. Both
+    // layers are merged with the runtime's own (currently empty) env
+    // field — letting a future runtime contribute its own vars (e.g. a
     // CLI-specific flag).
     //
     // CONCURRENCY: the resulting env object is a fresh shallow copy.
@@ -284,14 +284,12 @@ export class SessionManager {
     // mergeEnv approach used by the task path drops them; we do the
     // same here for symmetry.
     //
-    // assembleLaunchEnv unconditionally writes EMPLOKE_WORKDIR and
-    // EMPLOKE_SESSION_ID, so `launchEnv` is always non-empty (size ≥ 2).
-    // An earlier draft branched on `Object.keys(launchEnv).length === 0`
-    // to skip the spread when empty — dead code, since the branch was
-    // never reached. Removed in PR #95.
+    // assembleLaunchEnv unconditionally writes EMPLOKE_WORKSPACE_DIR,
+    // EMPLOKE_RUN_KIND, EMPLOKE_RUN_ID, and EMPLOKE_RUN_DIR, so
+    // `launchEnv` is always non-empty (size ≥ 4).
     const launchWithEnv: LaunchCommand = {
       ...launch,
-      env: this.assembleLaunchEnv(id, launch.env),
+      env: this.assembleLaunchEnv(id, session.workdir, launch.env),
     };
 
     // Best-effort: remember the user's last intent for this session so
@@ -332,12 +330,13 @@ export class SessionManager {
    * runtime. Order (later wins on key collision):
    *
    *   1. The server-supplied base (`subprocessEnvBase`) — typically
-   *      EMPLOKE_SERVER / EMPLOKE_HOME.
+   *      EMPLOKE_SERVER / EMPLOKE_SHARED_DIR.
    *   2. Whatever the runtime contributed via `LaunchCommand.env`
    *      (presently nothing for Copilot; reserved for future runtimes
    *      that need their own vars).
    *   3. Per-session fields: EMPLOKE_WORKSPACE (when known),
-   *      EMPLOKE_WORKDIR, EMPLOKE_SESSION_ID.
+   *      EMPLOKE_WORKSPACE_DIR, EMPLOKE_RUN_KIND="session",
+   *      EMPLOKE_RUN_ID=<sessionId>, EMPLOKE_RUN_DIR=<sessionWorkdir>.
    *
    * `undefined` values are dropped so they don't get inlined as the
    * literal string "undefined" by the shell-export prefix in
@@ -345,6 +344,7 @@ export class SessionManager {
    */
   private assembleLaunchEnv(
     sessionId: string,
+    sessionWorkdir: string,
     runtimeEnv: Readonly<Record<string, string>> | undefined,
   ): Record<string, string> {
     const out: Record<string, string> = {};
@@ -357,8 +357,10 @@ export class SessionManager {
       }
     }
     if (this.workspaceId !== undefined) out.EMPLOKE_WORKSPACE = this.workspaceId;
-    out.EMPLOKE_WORKDIR = this.workspaceDir;
-    out.EMPLOKE_SESSION_ID = sessionId;
+    out.EMPLOKE_WORKSPACE_DIR = this.workspaceDir;
+    out.EMPLOKE_RUN_KIND = "session";
+    out.EMPLOKE_RUN_ID = sessionId;
+    out.EMPLOKE_RUN_DIR = sessionWorkdir;
     return out;
   }
 

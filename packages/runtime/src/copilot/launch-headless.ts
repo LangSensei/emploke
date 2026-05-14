@@ -95,13 +95,13 @@ export interface LaunchCopilotHeadlessDeps {
    */
   readonly copilotStateDir: string;
   /**
-   * Absolute path resolved as `${globalDir}` during provision-time
+   * Absolute path resolved as `${sharedDir}` during provision-time
    * placeholder substitution in MCP specs. Required so non-interactive
    * task launch reaches the same per-machine shared dir as interactive
    * provision; the copilot runtime threads the value from
-   * `CopilotRuntimeConfig.globalDir`.
+   * `CopilotRuntimeConfig.sharedDir`.
    */
-  readonly globalDir: string;
+  readonly sharedDir: string;
   /** Path to the `copilot` executable. Defaults to bare `"copilot"` (PATH lookup via cross-spawn). */
   readonly copilotBin?: string;
   /** Test seam for id generation. */
@@ -188,7 +188,7 @@ export async function launchCopilotHeadless(
   // Step 1: provision. Distinguishable from spawn failures via error type.
   const placeholders: PlaceholderContext = {
     workspaceDir: opts.workspaceDir,
-    globalDir: deps.globalDir,
+    sharedDir: deps.sharedDir,
   };
   try {
     await provisionCopilotWorkdir(opts.taskDir, opts.agent, opts.catalog, placeholders);

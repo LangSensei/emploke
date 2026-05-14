@@ -49,7 +49,7 @@ describe("spawnTerminalWith > macOS", () => {
       ...sample,
       env: {
         EMPLOKE_WORKSPACE: "ws-uuid-1",
-        EMPLOKE_SESSION_ID: "01HZZZ",
+        EMPLOKE_RUN_ID: "01HZZZ",
         EMPLOKE_SERVER: "http://127.0.0.1:8787",
       },
     };
@@ -57,7 +57,7 @@ describe("spawnTerminalWith > macOS", () => {
     const script = calls[0]?.args[1] as string;
     // Order-preserving export with single-quoted values.
     expect(script).toContain(
-      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_SESSION_ID='01HZZZ' EMPLOKE_SERVER='http://127.0.0.1:8787' && cd '/tmp/wd' && exec 'copilot'",
+      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_RUN_ID='01HZZZ' EMPLOKE_SERVER='http://127.0.0.1:8787' && cd '/tmp/wd' && exec 'copilot'",
     );
   });
 

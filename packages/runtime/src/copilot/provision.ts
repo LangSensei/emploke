@@ -76,7 +76,7 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  *   .github/skills/<flatname>/…     — each skill's content (excluding hooks/copilot/)
  *   .github/hooks/<flatname>__<file> — merged from each skill's hooks/copilot/
  *
- * `placeholders.workspaceDir` and `placeholders.globalDir` are required;
+ * `placeholders.workspaceDir` and `placeholders.sharedDir` are required;
  * they're substituted into MCP `args` / `env` / nested string fields so
  * marketplace-shareable specs can refer to per-workspace and per-machine
  * state without baking absolute host paths into JSON.
