@@ -45,6 +45,7 @@ The tag push triggers `release.yml`, which:
 1. Verifies the tag's version matches `package.json` (would catch a typo).
 2. Builds the bundle (`prepublishOnly: pnpm bundle` in root `package.json`).
 3. Publishes via `npm publish --provenance --access public` over OIDC.
+4. Creates a GitHub Release for the tag with auto-generated notes (`gh release create --generate-notes`). Prereleases get marked as such so the GitHub UI doesn't promote them as the latest stable.
 
 If you forget step 2 after step 1, nothing breaks — the bumped
 `package.json` is on `main` but no release happens until a tag is
