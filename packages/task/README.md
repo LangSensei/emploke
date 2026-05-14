@@ -5,9 +5,10 @@ Task value type + state machine + `TaskManager` for autonomous agent runs.
 ## What is a task?
 
 A *task* is a one-shot autonomous agent invocation. You give it an agent
-name and instructions; the runtime spawns the agent, the agent works
-unattended, and you read the result when it finishes. Contrast with
-sessions, which are interactive workdirs you `copilot` into yourself.
+name, a short single-line `brief`, and an optional multi-line `details`
+body; the runtime spawns the agent, the agent works unattended, and you
+read the result when it finishes. Contrast with sessions, which are
+interactive workdirs you `copilot` into yourself.
 
 This package ships two layers:
 
@@ -29,7 +30,11 @@ This package ships two layers:
 ```ts
 import { Task } from "@emploke/task";
 
-const t0 = Task.create({ agent: "writer", instructions: "Draft the post" });
+const t0 = Task.create({
+  agent: "writer",
+  brief: "Draft the post",
+  details: "Tone: warm. Length: ~600 words.",
+});
 const t1 = t0.start({ metadata: { pid: 12345 } });
 const t2 = t1.complete("draft.md written");
 // t2.status === "success"
@@ -53,7 +58,11 @@ const mgr = new TaskManager({
 });
 
 await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boot
-const t = await mgr.dispatch({ agent: "writer", instructions: "..." });
+const t = await mgr.dispatch({
+  agent: "writer",
+  brief: "Draft the post",
+  details: "Tone: warm. Length: ~600 words.", // optional
+});
 // t.status === "running" — the subprocess has been spawned; poll mgr.get(t.id)
 // for status changes, fetch the runtime-parsed activity timeline via
 // mgr.getTaskActivity(t.id, { before, after, limit }) for paginated reads
@@ -66,14 +75,14 @@ await mgr.shutdown();                   // kills live tasks, persists "server sh
 
 ## Task entity
 
-Field shape (POJO projection via `task.toJSON()` — wire-identical to
-the pre-DDD interface so existing HTTP clients see no change):
+Field shape (POJO projection via `task.toJSON()`):
 
 ```ts
 {
   id: string;
   agent: string;
-  instructions: string;
+  brief: string;        // short single-line title (≤ 200 chars by wire contract)
+  details?: string;     // optional long-form body (multi-line allowed)
   status: "not_started" | "running" | "success" | "failure" | "cancelled";
   metadata: Record<string, unknown>;
   createdAt: string;   // ISO 8601 UTC, e.g. "2025-06-01T12:00:00.000Z"

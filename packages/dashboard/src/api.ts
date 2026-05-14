@@ -743,8 +743,8 @@ export const updateWorkspaceMetadata = async (
 // ─ Tasks (workspace-scoped) ─
 //
 // A Task is an autonomous one-shot agent invocation: dispatch a brief +
-// instructions, the runtime spawns the agent, and the dashboard polls for
-// terminal status. Each runtime publishes its own native event log; the
+// optional details, the runtime spawns the agent, and the dashboard polls
+// for terminal status. Each runtime publishes its own native event log; the
 // server fetches the parsed timeline via the runtime's `readActivity`
 // surface (`/api/.../tasks/:tid/activity`) which returns runtime-neutral
 // `ActivityItem[]`. Filename, format, and on-disk layout of the underlying
@@ -770,7 +770,10 @@ export interface TaskResult {
 export interface TaskRecord {
   id: string;
   agent: string;
-  instructions: string;
+  /** Short single-line task title (≤ 200 chars). Always present. */
+  brief: string;
+  /** Optional long-form task body. Multi-line allowed. Omitted when not provided. */
+  details?: string;
   status: TaskStatus;
   /**
    * Open-shape metadata. Includes runtime bookkeeping fields like
@@ -816,10 +819,12 @@ export const getTask = (id: string): Promise<TaskRecord> =>
 
 export const dispatchTask = async (
   agent: string,
-  instructions: string,
+  brief: string,
+  details?: string,
   runtime?: string,
 ): Promise<TaskRecord> => {
-  const body: Record<string, string> = { agent, instructions };
+  const body: Record<string, string> = { agent, brief };
+  if (details !== undefined && details !== "") body.details = details;
   if (runtime !== undefined) body.runtime = runtime;
   return mutateJson<TaskRecord>(`${workspacePrefix()}/tasks`, jsonInit("POST", body));
 };

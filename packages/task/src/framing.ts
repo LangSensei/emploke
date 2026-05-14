@@ -1,11 +1,12 @@
 /**
- * File-based task instructions contract — see issue #109.
+ * File-based task brief + details contract — see issue #109.
  *
- * The Task layer materializes the user's `instructions` to a file
- * inside the task workdir (`TASK.md`) and creates two empty agent-
- * managed subdirectories (`temp/` for scratch, `artifact/` for user-
- * visible output). The runtime then receives only a short, fixed
- * ASCII framing prompt that points the agent at those files.
+ * The Task layer materializes the user-supplied `brief` (+ optional
+ * `details`) to a file inside the task workdir (`TASK.md`) and creates
+ * two empty agent-managed subdirectories (`temp/` for scratch,
+ * `artifact/` for user-visible output). The runtime then receives
+ * only a short, fixed ASCII framing prompt that points the agent at
+ * those files.
  *
  * Why: on Windows, `cmd.exe` treats LF inside a `/c` payload as a
  * statement separator. Any user-supplied LF in the spawn argv would
@@ -18,11 +19,11 @@
  *
  * The runtime layer remains unchanged: it still receives `prompt` as
  * a single argv element via {@link import("@emploke/runtime").LaunchHeadlessOpts}.
- * Only the *value* changes — from the user's instructions to a fixed
+ * Only the *value* changes — from the user-supplied bytes to a fixed
  * framing prompt that tells the agent to read TASK.md.
  */
 
-/** Filename inside the task workdir holding the user's instructions verbatim. */
+/** Filename inside the task workdir holding the user-authored brief + details. */
 export const TASK_FILENAME = "TASK.md";
 
 /** Subdirectory inside the task workdir for agent scratch files. Agent-managed; not surfaced to the user. */
@@ -61,3 +62,31 @@ export function assertFramingPromptIsSafe(s: string): void {
 // multiple lines. Fires at module-import time so the failure is
 // loud and the test suite catches it on every run.
 assertFramingPromptIsSafe(TASK_FRAMING_PROMPT_COPILOT);
+
+/**
+ * Render the user-supplied `brief` (+ optional `details`) into the
+ * canonical TASK.md byte sequence. Two shapes:
+ *
+ *   - brief-only: `# <brief>\n` (single line, trailing LF, no body)
+ *   - brief + details: `# <brief>\n\n<details>\n` (header, blank
+ *     separator line, body, trailing LF)
+ *
+ * `details === undefined` and `details === ""` both collapse to the
+ * brief-only shape — an empty body is indistinguishable from no body
+ * for the agent's purposes, and emitting `# brief\n\n\n` would just
+ * leave a confusing dangling blank section.
+ *
+ * UTF-8 / no BOM is the caller's responsibility (the manager passes
+ * `{ encoding: "utf8" }` to `writeFile`, which never emits a BOM).
+ */
+export function formatTaskMd(brief: string, details: string | undefined): string {
+  if (details === undefined || details.length === 0) {
+    return `# ${brief}\n`;
+  }
+  // Ensure exactly one trailing LF on the body — without it, editors /
+  // diff tools complain about "no newline at end of file" and an
+  // agent's downstream `read TASK.md` paths see a slightly different
+  // byte count between brief-only and brief+details cases.
+  const trimmed = details.endsWith("\n") ? details : `${details}\n`;
+  return `# ${brief}\n\n${trimmed}`;
+}

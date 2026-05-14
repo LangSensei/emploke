@@ -126,8 +126,19 @@ export interface TaskManagerConfig {
 export interface DispatchOpts {
   /** Catalog name of the agent to run. Required. */
   readonly agent: string;
-  /** Free-form prompt / instructions for the agent. */
-  readonly instructions: string;
+  /**
+   * Short, single-line task title (≤ 200 chars by contract; the
+   * server validates the wire shape). Doubles as the displayed label
+   * everywhere — task list rows, detail panel header, CLI table.
+   * Materialized as the `# <brief>` header in `<workdir>/TASK.md`.
+   */
+  readonly brief: string;
+  /**
+   * Optional long-form task body. When present, written as the
+   * markdown body of `<workdir>/TASK.md` under the `# <brief>` header.
+   * Multi-line allowed; `undefined`/empty produces a brief-only TASK.md.
+   */
+  readonly details?: string;
   /** Override the configured `defaultRuntime`. */
   readonly runtime?: string;
 }

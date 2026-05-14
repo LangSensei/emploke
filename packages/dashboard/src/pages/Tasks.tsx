@@ -269,11 +269,16 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   );
   usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
-  const onDispatched = async (agent: string, instructions: string, runtime: string | undefined) => {
+  const onDispatched = async (
+    agent: string,
+    brief: string,
+    details: string | undefined,
+    runtime: string | undefined,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await dispatchTask(agent, instructions, runtime);
+      const created = await dispatchTask(agent, brief, details, runtime);
       if (!mountedRef.current) return;
       setDispatchOpen(false);
       setRerunFrom(null);
@@ -608,37 +613,22 @@ interface TaskListItemProps {
  *
  * Two-row visual hierarchy:
  *   row 1: status pill · agent chip · runtime chip · — spacer — · delete
- *   row 2: instructions (title-prominent) · full id (mono, muted)
+ *   row 2: brief (title-prominent) · full id (mono, muted)
  *   row 3: relative time / duration (muted)
  *
- * Instructions are the actual *content* of a task — the id is a
- * disambiguator, not a name. So instructions get the title role and id
- * gets relegated to the subtitle, matching how GitHub Issues shows
- * "title #42" rather than "#42 with title".
+ * The `brief` IS the user-supplied task title (post-#111 refactor:
+ * Copilot's auto-generated session `name` reflects the framing prompt
+ * rather than the user's task, so deriving headlines from runtime
+ * metadata is no longer reliable). Same vibe as GitHub Issues
+ * showing "title #42" rather than "#42 with title".
  */
 function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
   const isRunning = task.status === "running" || task.status === "not_started";
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
-  // Pull the first non-empty line of instructions as the headline,
-  // unless the runtime has supplied a shorter display title (Copilot's
-  // workspace.yaml `name` / `summary`). Runtime-derived titles are 5-7
-  // words sized for list rendering; they're stable (set once when the
-  // CLI generates them, then preserved unless the user renames) so
-  // they don't shift on poll. Falls through to the instructions
-  // first-line for tasks where no title is available yet.
-  const runtimeTitle =
-    typeof task.metadata?.title === "string" && task.metadata.title.length > 0
-      ? (task.metadata.title as string)
-      : null;
-  const headline =
-    runtimeTitle ??
-    task.instructions
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .find((s) => s.length > 0) ??
-    "(empty instructions)";
+  const headline = task.brief;
+  const tooltip = task.details ? `${task.brief}\n\n${task.details}` : task.brief;
   return (
     <li
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${
@@ -671,7 +661,7 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
           <TrashIcon />
         </button>
       </div>
-      <div className="task-list__item-headline" title={task.instructions}>
+      <div className="task-list__item-headline" title={tooltip}>
         {headline}
       </div>
       {/* Footer is plain muted text, not chips. Agent + runtime are
@@ -767,8 +757,15 @@ interface DispatchModalProps {
   /** Pre-fill values from a previous task ("re-run"). null = blank form. */
   prefill: TaskRecord | null;
   onClose: () => void;
-  onDispatch: (agent: string, instructions: string, runtime: string | undefined) => void;
+  onDispatch: (
+    agent: string,
+    brief: string,
+    details: string | undefined,
+    runtime: string | undefined,
+  ) => void;
 }
+
+const BRIEF_MAX_LENGTH = 200;
 
 function DispatchModal({
   open,
@@ -781,7 +778,8 @@ function DispatchModal({
 }: DispatchModalProps) {
   const [agent, setAgent] = useState<string>("");
   const [runtime, setRuntime] = useState<string>("");
-  const [instructions, setInstructions] = useState("");
+  const [brief, setBrief] = useState("");
+  const [details, setDetails] = useState("");
 
   // Reset form on open. When `prefill` is set we seed from the source
   // task — useful for re-dispatching a failed task with the same params
@@ -796,18 +794,33 @@ function DispatchModal({
           ? (prefill.metadata.runtime as string)
           : (runtimes[0] ?? "");
       setRuntime(prefRuntime);
-      setInstructions(prefill.instructions);
+      setBrief(prefill.brief);
+      setDetails(prefill.details ?? "");
     } else {
       setAgent(agents[0]?.agent.fqn ?? "");
       setRuntime(runtimes[0] ?? "");
-      setInstructions("");
+      setBrief("");
+      setDetails("");
     }
   }, [open, agents, runtimes, prefill]);
 
+  const briefTrimmed = brief.trim();
+  const briefValid =
+    briefTrimmed.length > 0 &&
+    briefTrimmed.length <= BRIEF_MAX_LENGTH &&
+    !briefTrimmed.includes("\n") &&
+    !briefTrimmed.includes("\r");
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!agent || !instructions.trim()) return;
-    onDispatch(agent, instructions.trim(), runtime || undefined);
+    if (!agent || !briefValid) return;
+    const detailsTrimmed = details.trim();
+    onDispatch(
+      agent,
+      briefTrimmed,
+      detailsTrimmed.length > 0 ? details : undefined,
+      runtime || undefined,
+    );
   };
 
   return (
@@ -860,18 +873,35 @@ function DispatchModal({
               )}
             </select>
           </label>
-          <label htmlFor="task-instructions">
+          <label htmlFor="task-brief">
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Instructions
+              Brief
+            </div>
+            <input
+              id="task-brief"
+              className="input"
+              type="text"
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              placeholder="Single-line task title (≤ 200 chars)"
+              maxLength={BRIEF_MAX_LENGTH}
+              required
+              disabled={busy}
+              style={{ width: "100%", fontFamily: "inherit" }}
+            />
+          </label>
+          <label htmlFor="task-details">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Details (optional)
             </div>
             <textarea
-              id="task-instructions"
+              id="task-details"
               className="input"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder="What should the agent do?"
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder="Long-form context for the agent (optional, multi-line)"
               rows={8}
-              required
+              disabled={busy}
               style={{ width: "100%", resize: "vertical", fontFamily: "inherit" }}
             />
           </label>
@@ -883,7 +913,7 @@ function DispatchModal({
           <button
             type="submit"
             className="btn btn--primary"
-            disabled={busy || !agent || !instructions.trim()}
+            disabled={busy || !agent || !briefValid}
           >
             {busy ? (prefill ? "Re-running…" : "Dispatching…") : prefill ? "Re-run" : "Dispatch"}
           </button>
@@ -1215,21 +1245,10 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       : undefined;
   const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
-  // Runtime-supplied display title (Copilot writes it into
-  // `workspace.yaml`'s `name`/`summary`; the runtime adapter folds
-  // it into `metadata.title`). It's a curated 5-7 word label sized
-  // for headline use, distinct from `instructions` (which can be
-  // multi-paragraph). The list item already uses it; mirror the
-  // same rule here so the detail page also leads with the
-  // human-readable name instead of the opaque task id.
-  //
-  // No fallback to "first line of instructions": the full
-  // instructions render right below this header, so a derived
-  // title would just duplicate visible text. Tasks without a
-  // runtime title get no `<h2>` row — the layout collapses
-  // gracefully to today's id-led header.
-  const title =
-    typeof metadata.title === "string" && metadata.title.length > 0 ? metadata.title : null;
+  // The user-supplied `brief` is the canonical task title (post-#111
+  // refactor). Lead the panel with it; fall back to the task id only
+  // while the task object hasn't loaded yet.
+  const title = task?.brief ?? null;
   const isRunning = task && (task.status === "running" || task.status === "not_started");
 
   return (
@@ -1253,7 +1272,7 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
               type="button"
               className="btn btn--ghost"
               onClick={() => onRerun(task)}
-              title="Re-dispatch with the same agent + instructions"
+              title="Re-dispatch with the same agent + brief + details"
             >
               Re-run
             </button>
@@ -1310,7 +1329,7 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
             )}
           </div>
         )}
-        {task?.instructions && <TaskInstructions text={task.instructions} />}
+        {task?.details && <TaskDetails text={task.details} />}
         {task?.failure && (
           <div className="alert alert--error" style={{ margin: 0 }}>
             <strong>Failure:</strong> {task.failure.error}
@@ -1402,7 +1421,8 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
           <pre className="task-detail__events">
             {JSON.stringify(
               {
-                instructions: task.instructions,
+                brief: task.brief,
+                ...(task.details !== undefined ? { details: task.details } : {}),
                 metadata: task.metadata,
                 result: task.result,
                 failure: task.failure,
@@ -1964,50 +1984,48 @@ function ToolDisplay({ content }: { content: string }) {
 // ─ helpers ─
 
 /**
- * Detail-header instructions with collapse-by-default for long
- * inputs. Short instructions render plain (the existing 4-line CSS
- * clamp is enough); long ones use a button + state toggle so the
- * user can expand to read the full text without the header eating
- * half the viewport.
+ * Detail-header body with collapse-by-default for long task details.
+ * Short bodies render plain (the existing 4-line CSS clamp is enough);
+ * long ones use a button + state toggle so the user can expand to read
+ * the full text without the header eating half the viewport.
  *
  * Toggle uses the same button + state pattern as `ResultSection` /
  * `ToolDisplay` rather than `<details>/<summary>`: the latter
  * forces the summary to stay on screen, so opening the disclosure
  * would render BOTH the preview and the full content at once.
  *
- * The tag-line below the form already serves as the task's
- * persistent "title"; the unmutable instructions are the source of
- * truth, not a runtime-derived preview (which would be unstable
- * and shift every poll). See the comment in TaskDetail's render.
+ * The brief above already serves as the task's persistent title;
+ * `details` is the optional long-form body the user authored at
+ * dispatch time. See the comment in TaskDetail's render.
  */
-const TASK_INSTRUCTIONS_PREVIEW_CHARS = 320;
-function TaskInstructions({ text }: { text: string }) {
+const TASK_DETAILS_PREVIEW_CHARS = 320;
+function TaskDetails({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
-  const isLong = text.length > TASK_INSTRUCTIONS_PREVIEW_CHARS;
+  const isLong = text.length > TASK_DETAILS_PREVIEW_CHARS;
   if (!isLong) {
     return (
-      <p className="task-detail__instructions" title={text}>
+      <p className="task-detail__details" title={text}>
         {text}
       </p>
     );
   }
   // Cut on a word boundary near the threshold for a cleaner preview.
-  const cut = text.lastIndexOf(" ", TASK_INSTRUCTIONS_PREVIEW_CHARS);
-  const preview = `${text.slice(0, cut > 0 ? cut : TASK_INSTRUCTIONS_PREVIEW_CHARS)}…`;
+  const cut = text.lastIndexOf(" ", TASK_DETAILS_PREVIEW_CHARS);
+  const preview = `${text.slice(0, cut > 0 ? cut : TASK_DETAILS_PREVIEW_CHARS)}…`;
   return (
     <div>
       {expanded ? (
         <p
           id={bodyId}
-          className="task-detail__instructions"
+          className="task-detail__details"
           title={text}
           style={{ WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
         >
           {text}
         </p>
       ) : (
-        <p id={bodyId} className="task-detail__instructions" title={text}>
+        <p id={bodyId} className="task-detail__details" title={text}>
           {preview}
         </p>
       )}

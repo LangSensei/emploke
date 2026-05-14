@@ -189,7 +189,19 @@ export interface TaskListQuery {
 /** POST /api/workspaces/:id/tasks body. */
 export interface TaskDispatchBody {
   readonly agent: string;
-  readonly instructions: string;
+  /**
+   * Short, single-line task title. Required. Must be ≤ 200 chars
+   * after trim and may not contain `\n` or `\r` (the displayed
+   * label is single-line everywhere). The route layer rejects
+   * violations with 400.
+   */
+  readonly brief: string;
+  /**
+   * Optional long-form task body. Multi-line allowed; rendered as
+   * the markdown body of `<workdir>/TASK.md` under the `# <brief>`
+   * header. Omit for a brief-only task.
+   */
+  readonly details?: string;
   readonly runtime?: string;
 }
 

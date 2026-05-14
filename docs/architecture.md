@@ -249,7 +249,7 @@ Tailscale). A misconfigured non-loopback bind fails fast at startup.
 └── tasks/<id>/                  one-shot autonomous dispatch — workdir for agent artifacts
     ├── AGENTS.md                materialised from catalog at create time (runtime.provision)
     ├── .mcp.json                merged from agent's MCP deps (runtime.provision)
-    ├── TASK.md                  user's instructions, byte-for-byte (TaskManager.dispatch)
+    ├── TASK.md                  user-supplied brief + optional details (TaskManager.dispatch writes `# <brief>\n` or `# <brief>\n\n<details>\n`)
     ├── temp/                    agent scratch (created empty; not surfaced to the user)
     ├── artifact/                user-visible task output (created empty; agent-managed)
     ├── stderr.log               CLI errors (the runtime owns its event log via readActivity, NOT mirrored here)
@@ -259,13 +259,15 @@ Tailscale). A misconfigured non-loopback bind fails fast at startup.
 The `TASK.md` + `temp/` + `artifact/` triple is the Task layer's
 **file contract** with the agent (issue #109). The agent receives a
 short fixed framing prompt via the spawn argv that points it at this
-layout; the user's `instructions` is **not** passed via argv — it
-lives byte-for-byte in `TASK.md`. This eliminates a class of
-silent-degradation bugs on Windows where any LF in user-supplied
-prompt bytes truncated `cmd.exe`'s parsing of the spawn argv,
-silently dropping `--output-format json` / `--resume` / etc.
-The framing constants live in `packages/task/src/framing.ts` and are
-selected per runtime kind; today only `copilot` is registered.
+layout; the user-supplied `brief` (+ optional `details`) is **not**
+passed via argv — they live byte-for-byte in `TASK.md` (rendered as
+`# <brief>\n\n<details>\n`, or just `# <brief>\n` when details is
+absent). This eliminates a class of silent-degradation bugs on
+Windows where any LF in user-supplied prompt bytes truncated
+`cmd.exe`'s parsing of the spawn argv, silently dropping
+`--output-format json` / `--resume` / etc. The framing constants
+live in `packages/task/src/framing.ts` and are selected per runtime
+kind; today only `copilot` is registered.
 
 `temp/` and `artifact/` are agent-managed after creation; emploke
 does not prune them. Future work could surface `artifact/` in the

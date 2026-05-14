@@ -11,13 +11,29 @@ const VALID_STATUSES = new Set<TaskStatus>([
 ]);
 
 /**
- * Args accepted by {@link Task.create}. Every field except `agent` and
- * `instructions` is optional; the factory fills in the rest.
+ * Args accepted by {@link Task.create}. `agent` and `brief` are
+ * required; everything else is optional and the factory fills in
+ * defaults.
  */
 export interface TaskCreateArgs {
   /** Logical agent identifier. Opaque to the kernel. */
   readonly agent: string;
-  readonly instructions: string;
+  /**
+   * Short, single-line task title (≤ 200 chars by contract; the
+   * server validates the wire shape). Doubles as the displayed
+   * label everywhere — task list rows, detail panel header, CLI
+   * `task list` table, etc. The kernel does not enforce the length
+   * cap on the entity itself; the route layer is the seam where
+   * untrusted bytes are validated. Within the entity, `brief` is
+   * required to be a non-empty string.
+   */
+  readonly brief: string;
+  /**
+   * Optional long-form task body. Rendered as the markdown body of
+   * `<workdir>/TASK.md` when present (under the `# <brief>` header).
+   * Multi-line allowed.
+   */
+  readonly details?: string;
   /** Optional initial metadata (e.g. caller-supplied tags, parentTaskId). */
   readonly metadata?: Readonly<Record<string, unknown>>;
   /**
@@ -46,7 +62,8 @@ export interface TaskCreateArgs {
 export interface TaskFromStoredArgs {
   readonly id: string;
   readonly agent: string;
-  readonly instructions: string;
+  readonly brief: string;
+  readonly details?: string;
   readonly status: TaskStatus;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
@@ -78,12 +95,12 @@ export interface TaskTransitionOpts {
 /**
  * Rich domain entity representing a single autonomous task.
  *
- * Identity = `id`, immutable. `agent` / `instructions` / `createdAt`
- * are also immutable for the lifetime of the task — every state-
- * transition method ({@link Task.start} / {@link Task.complete} /
- * {@link Task.fail} / {@link Task.cancel}) preserves them. The runtime
- * never inspects `metadata` — it's an open-shape bag for runtime-
- * specific bookkeeping (PID, runtime session id, work dir, …).
+ * Identity = `id`, immutable. `agent` / `brief` / `details` /
+ * `createdAt` are also immutable for the lifetime of the task — every
+ * state-transition method ({@link Task.start} / {@link Task.complete}
+ * / {@link Task.fail} / {@link Task.cancel}) preserves them. The
+ * runtime never inspects `metadata` — it's an open-shape bag for
+ * runtime-specific bookkeeping (PID, runtime session id, work dir, …).
  *
  * ## Construction
  *
@@ -113,7 +130,7 @@ export interface TaskTransitionOpts {
  *
  * {@link Task.withMetadata} replaces the metadata bag wholesale
  * without changing status. Used by `TaskManager` to fold in
- * runtime-supplied display metadata (title / lastActiveAt) on read,
+ * runtime-supplied display metadata (lastActiveAtRuntime) on read,
  * which is not a state transition.
  *
  * Mirrors the DDD style used by `@emploke/catalog`'s `Agent` and
@@ -123,7 +140,8 @@ export class Task {
   private constructor(
     private readonly _id: string,
     private readonly _agent: string,
-    private readonly _instructions: string,
+    private readonly _brief: string,
+    private readonly _details: string | undefined,
     private readonly _status: TaskStatus,
     private readonly _metadata: Readonly<Record<string, unknown>>,
     private readonly _createdAt: string,
@@ -150,10 +168,20 @@ export class Task {
   static create(args: TaskCreateArgs): Task {
     const id = args.id ?? generateTaskId();
     if (args.id !== undefined) assertValidTaskId(id);
+    if (typeof args.brief !== "string" || args.brief.length === 0) {
+      // Defensive: the route layer enforces non-empty + length + single-
+      // line at the wire boundary, but the entity is the last line of
+      // defence against in-process callers (tests, future orchestrators)
+      // that bypass the route. Empty brief would render as a blank task
+      // title in the dashboard, which is the very bug this refactor
+      // exists to prevent.
+      throw new TypeError("Task.create: brief must be a non-empty string");
+    }
     return new Task(
       id,
       args.agent,
-      args.instructions,
+      args.brief,
+      args.details,
       "not_started",
       Object.freeze({ ...(args.metadata ?? {}) }),
       args.createdAt ?? new Date().toISOString(),
@@ -176,8 +204,11 @@ export class Task {
     if (typeof args.agent !== "string") {
       throw new CorruptedTaskError(args.id, "task.agent must be a string");
     }
-    if (typeof args.instructions !== "string") {
-      throw new CorruptedTaskError(args.id, "task.instructions must be a string");
+    if (typeof args.brief !== "string" || args.brief.length === 0) {
+      throw new CorruptedTaskError(args.id, "task.brief must be a non-empty string");
+    }
+    if (args.details !== undefined && typeof args.details !== "string") {
+      throw new CorruptedTaskError(args.id, "task.details, when present, must be a string");
     }
     if (typeof args.status !== "string" || !VALID_STATUSES.has(args.status)) {
       throw new CorruptedTaskError(
@@ -198,7 +229,8 @@ export class Task {
     return new Task(
       args.id,
       args.agent,
-      args.instructions,
+      args.brief,
+      args.details,
       args.status,
       Object.freeze({ ...args.metadata }),
       args.createdAt,
@@ -215,8 +247,11 @@ export class Task {
   get agent(): string {
     return this._agent;
   }
-  get instructions(): string {
-    return this._instructions;
+  get brief(): string {
+    return this._brief;
+  }
+  get details(): string | undefined {
+    return this._details;
   }
   get status(): TaskStatus {
     return this._status;
@@ -320,7 +355,7 @@ export class Task {
   /**
    * Replace the metadata bag wholesale, preserving status + timing +
    * result + failure. Used by `TaskManager` to fold in runtime-
-   * supplied display metadata (title / lastActiveAt) on read paths,
+   * supplied display metadata (lastActiveAtRuntime) on read paths,
    * which is **not** a state transition.
    *
    * Callers that want a shallow merge do it themselves before passing
@@ -331,7 +366,8 @@ export class Task {
     return new Task(
       this._id,
       this._agent,
-      this._instructions,
+      this._brief,
+      this._details,
       this._status,
       Object.freeze({ ...metadata }),
       this._createdAt,
@@ -347,15 +383,17 @@ export class Task {
   /**
    * Public POJO projection. Called automatically by `JSON.stringify`
    * (e.g. by the server's `c.json(task)` route helpers), so HTTP
-   * clients see the same field layout as the pre-DDD Task interface.
-   * Optional fields (`startedAt`, `endedAt`, `result`, `failure`) are
-   * omitted when unset to preserve byte-identical wire shape.
+   * clients see the same field layout as the in-process entity.
+   * Optional fields (`details`, `startedAt`, `endedAt`, `result`,
+   * `failure`) are omitted when unset to keep the wire shape minimal
+   * — same convention `startedAt` etc. follow today.
    */
   toJSON(): Record<string, unknown> {
     return {
       id: this._id,
       agent: this._agent,
-      instructions: this._instructions,
+      brief: this._brief,
+      ...(this._details !== undefined ? { details: this._details } : {}),
       status: this._status,
       metadata: this._metadata,
       createdAt: this._createdAt,
@@ -370,7 +408,7 @@ export class Task {
 
   /**
    * Internal builder shared by every state-transition method.
-   * Identity (id / agent / instructions / createdAt) is preserved
+   * Identity (id / agent / brief / details / createdAt) is preserved
    * verbatim; the transition's own fields override.
    */
   private transition(patch: {
@@ -384,7 +422,8 @@ export class Task {
     return new Task(
       this._id,
       this._agent,
-      this._instructions,
+      this._brief,
+      this._details,
       patch.status,
       patch.metadata,
       this._createdAt,

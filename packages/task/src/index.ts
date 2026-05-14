@@ -6,7 +6,7 @@
  * ```ts
  * import { Task } from "@emploke/task";
  *
- * const t0 = Task.create({ agent: "writer", instructions: "Draft the post" });
+ * const t0 = Task.create({ agent: "writer", brief: "Draft the post", details: "Tone: warm" });
  * const t1 = t0.start({ metadata: { pid: 12345 } });
  * const t2 = t1.complete("draft.md written");
  * // t2.status === "success", t2.result?.output === "draft.md written"
@@ -42,6 +42,7 @@ export {
 } from "./errors.js";
 export {
   assertFramingPromptIsSafe,
+  formatTaskMd,
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
   TASK_FRAMING_PROMPT_COPILOT,

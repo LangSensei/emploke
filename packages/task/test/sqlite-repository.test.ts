@@ -45,7 +45,8 @@ function makeTask(
   overrides: {
     id?: string;
     agent?: string;
-    instructions?: string;
+    brief?: string;
+    details?: string;
     status?: TaskStatus;
     metadata?: Readonly<Record<string, unknown>>;
     createdAt?: string;
@@ -58,7 +59,8 @@ function makeTask(
   return Task.fromStored({
     id: overrides.id ?? ID,
     agent: overrides.agent ?? "writer",
-    instructions: overrides.instructions ?? "do the thing",
+    brief: overrides.brief ?? "do the thing",
+    ...(overrides.details !== undefined ? { details: overrides.details } : {}),
     status: overrides.status ?? "running",
     metadata: overrides.metadata ?? {},
     createdAt: overrides.createdAt ?? CREATED_AT,
@@ -75,6 +77,19 @@ describe("SqliteTaskRepository", () => {
     await repo.save(sample);
     const back = await repo.read(ID);
     expect(back?.toJSON()).toEqual(sample.toJSON());
+  });
+
+  it("save + read round-trips details when present", async () => {
+    const sample = makeTask({ details: "first line\nsecond line\n你好" });
+    await repo.save(sample);
+    const back = await repo.read(ID);
+    expect(back?.details).toBe("first line\nsecond line\n你好");
+  });
+
+  it("save + read leaves details undefined when not provided", async () => {
+    await repo.save(makeTask());
+    const back = await repo.read(ID);
+    expect(back?.details).toBeUndefined();
   });
 
   it("read returns null for missing id", async () => {
@@ -235,5 +250,179 @@ describe("SqliteTaskRepository", () => {
     expect(await b.read(ID)).toBeNull();
     dbA.close();
     dbB.close();
+  });
+});
+
+describe("SqliteTaskRepository — v1 → v2 migration", () => {
+  // Pre-1.0 hard cut: a v1 workspace.db with the old `instructions`
+  // column is migrated in place to v2 (`brief` + `details`). The
+  // brief is back-filled from the first 200 chars of `instructions`
+  // (best-effort heuristic — v1 had no length cap, v2 enforces 200);
+  // the full text is preserved verbatim in `details` so no user data
+  // is lost.
+  function seedV1Schema(d: DatabaseSync): void {
+    d.exec(`
+      CREATE TABLE schema_meta (
+        pkg     TEXT PRIMARY KEY NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0)
+      );
+      CREATE TABLE tasks (
+        id              TEXT PRIMARY KEY,
+        agent           TEXT NOT NULL,
+        runtime         TEXT,
+        status          TEXT NOT NULL,
+        instructions    TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        started_at      TEXT,
+        ended_at        TEXT,
+        result_output   TEXT,
+        failure_error   TEXT,
+        metadata        TEXT NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO schema_meta (pkg, version) VALUES ('task', 1);
+    `);
+  }
+
+  it("migrates a short instructions row: brief = full instructions, details = full instructions", () => {
+    const d = new DatabaseSync(":memory:");
+    try {
+      seedV1Schema(d);
+      d.prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "20260101-aaaaaaaa",
+        "writer",
+        "copilot",
+        "success",
+        "Draft the post",
+        "2026-01-01T00:00:00.000Z",
+        "{}",
+      );
+
+      // Construction triggers ensureSchema → migrateV1ToV2.
+      const r = new SqliteTaskRepository({ db: d });
+      const back = d
+        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
+        .get("20260101-aaaaaaaa") as { brief: string; details: string };
+      expect(back.brief).toBe("Draft the post");
+      expect(back.details).toBe("Draft the post");
+
+      // Schema version bumped.
+      const v = d.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
+        version: number;
+      };
+      expect(v.version).toBe(2);
+
+      // Read through the repo: full task entity is reconstructed.
+      void r;
+    } finally {
+      d.close();
+    }
+  });
+
+  it("migrates a long instructions row: brief truncated to 200, details preserved verbatim", () => {
+    const d = new DatabaseSync(":memory:");
+    try {
+      seedV1Schema(d);
+      const longText = `${"A".repeat(250)} END`; // 254 chars
+      d.prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "20260101-bbbbbbbb",
+        "writer",
+        "copilot",
+        "success",
+        longText,
+        "2026-01-01T00:00:00.000Z",
+        "{}",
+      );
+
+      new SqliteTaskRepository({ db: d });
+      const back = d
+        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
+        .get("20260101-bbbbbbbb") as { brief: string; details: string };
+      expect(back.brief.length).toBe(200);
+      expect(back.brief).toBe("A".repeat(200));
+      // Full original text preserved in details — no data loss.
+      expect(back.details).toBe(longText);
+    } finally {
+      d.close();
+    }
+  });
+
+  it("migrates an empty instructions row to brief='(untitled)' so the v2 entity invariant survives", () => {
+    // v1 had no non-empty constraint on instructions (`TEXT NOT NULL`
+    // accepts empty strings). v2 rejects empty briefs at the entity
+    // boundary, so an empty migrated row would otherwise become
+    // unreadable. Coerce to a placeholder so the row stays parseable;
+    // the operator can rename / archive at leisure.
+    const d = new DatabaseSync(":memory:");
+    try {
+      seedV1Schema(d);
+      d.prepare(
+        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "20260101-cccccccc",
+        "writer",
+        "copilot",
+        "success",
+        "",
+        "2026-01-01T00:00:00.000Z",
+        "{}",
+      );
+
+      new SqliteTaskRepository({ db: d });
+      const back = d
+        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
+        .get("20260101-cccccccc") as { brief: string; details: string };
+      expect(back.brief).toBe("(untitled)");
+      expect(back.details).toBe("");
+    } finally {
+      d.close();
+    }
+  });
+
+  it("preserves all non-instructions columns across migration", async () => {
+    const d = new DatabaseSync(":memory:");
+    try {
+      seedV1Schema(d);
+      d.prepare(
+        `INSERT INTO tasks (
+           id, agent, runtime, status, instructions, created_at, started_at,
+           ended_at, result_output, failure_error, metadata
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "20260101-dddddddd",
+        "writer",
+        "copilot",
+        "failure",
+        "did the thing",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:01.000Z",
+        "2026-01-01T00:00:02.000Z",
+        null,
+        "boom",
+        '{"pid":1234}',
+      );
+
+      const r = new SqliteTaskRepository({ db: d });
+      const rows = await r.list();
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      expect(row.id).toBe("20260101-dddddddd");
+      expect(row.agent).toBe("writer");
+      expect(row.status).toBe("failure");
+      expect(row.brief).toBe("did the thing");
+      expect(row.details).toBe("did the thing");
+      expect(row.startedAt).toBe("2026-01-01T00:00:01.000Z");
+      expect(row.endedAt).toBe("2026-01-01T00:00:02.000Z");
+      expect(row.failure?.error).toBe("boom");
+      expect(row.metadata).toEqual({ pid: 1234, runtime: "copilot" });
+    } finally {
+      d.close();
+    }
   });
 });

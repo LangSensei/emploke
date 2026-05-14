@@ -145,8 +145,26 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     if (typeof body.agent !== "string" || body.agent.trim() === "") {
       return c.json({ error: "agent is required (string)" }, 400);
     }
-    if (typeof body.instructions !== "string" || body.instructions.trim() === "") {
-      return c.json({ error: "instructions is required (string)" }, 400);
+    if (typeof body.brief !== "string") {
+      return c.json({ error: "brief is required (string)" }, 400);
+    }
+    const briefTrimmed = body.brief.trim();
+    if (briefTrimmed.length === 0) {
+      return c.json({ error: "brief must be non-empty after trim" }, 400);
+    }
+    if (briefTrimmed.includes("\n") || briefTrimmed.includes("\r")) {
+      // Brief is the displayed label everywhere — task list rows,
+      // detail panel header, CLI table. Multi-line input would
+      // break the layout and tooltips. Keep the single-line
+      // contract enforced at the wire boundary so downstream
+      // consumers (dashboard, CLI, future MCP) never have to defend.
+      return c.json({ error: "brief must be a single line (no newline characters)" }, 400);
+    }
+    if (briefTrimmed.length > BRIEF_MAX_LENGTH) {
+      return c.json({ error: `brief must be ${BRIEF_MAX_LENGTH} characters or fewer` }, 400);
+    }
+    if (body.details !== undefined && typeof body.details !== "string") {
+      return c.json({ error: "details, when present, must be a string" }, 400);
     }
     if (body.runtime !== undefined && typeof body.runtime !== "string") {
       return c.json({ error: "runtime, when present, must be a string" }, 400);
@@ -154,7 +172,8 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     try {
       const task = await getManager(c).dispatch({
         agent: body.agent,
-        instructions: body.instructions,
+        brief: briefTrimmed,
+        ...(typeof body.details === "string" ? { details: body.details } : {}),
         ...(typeof body.runtime === "string" ? { runtime: body.runtime } : {}),
       });
       logEvent(c, "task dispatched", {
@@ -420,3 +439,12 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
 const TASK_ACTIVITY_DEFAULT_LIMIT = 50;
 /** Hard maximum `limit` accepted from callers. Defends the dashboard / MCP from blowing memory. */
 const TASK_ACTIVITY_MAX_LIMIT = 500;
+
+/**
+ * Maximum length of `brief` accepted from clients. Surfaced from the
+ * dispatch route as a 400 when exceeded. Sized to fit a single line in
+ * the dashboard list (~2 lines wrapped on a 360px column at the
+ * default font size); also bounds the SQLite column width and the
+ * displayed task title across CLI / dashboard / future MCP tools.
+ */
+const BRIEF_MAX_LENGTH = 200;
