@@ -360,7 +360,9 @@ export class CopilotRuntime implements Runtime {
    */
   async readActivity(opts: ReadActivityOpts): Promise<ActivityResult | null> {
     if (opts.before !== undefined && opts.after !== undefined) {
-      throw new RuntimeReadActivityInvalidArgs("readActivity: `before` and `after` are mutually exclusive");
+      throw new RuntimeReadActivityInvalidArgs(
+        "readActivity: `before` and `after` are mutually exclusive",
+      );
     }
     const id = safeCopilotId(opts.runtimeSessionId);
     if (id === null) return null;

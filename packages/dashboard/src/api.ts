@@ -952,13 +952,21 @@ export interface TruncationInfo {
 export interface TaskActivity {
   activity: ActivityItem[];
   result: string | null;
-  cursor: number | null;
-  totalItems?: number;
+  totalItems: number;
   truncated?: TruncationInfo;
 }
 
 export interface FetchTaskActivityOpts {
-  cursor?: number;
+  /**
+   * Backward pagination: returns items with `seq < before`. Mutually
+   * exclusive with `after`; both → 400 from the server.
+   */
+  before?: number;
+  /**
+   * Forward pagination: returns items with `seq > after`. Used by
+   * polling and by callers walking head-to-tail.
+   */
+  after?: number;
   limit?: number;
 }
 
@@ -967,7 +975,8 @@ export const fetchTaskActivity = async (
   opts: FetchTaskActivityOpts = {},
 ): Promise<TaskActivity | null> => {
   const usp = new URLSearchParams();
-  if (opts.cursor !== undefined) usp.append("cursor", String(opts.cursor));
+  if (opts.before !== undefined) usp.append("before", String(opts.before));
+  if (opts.after !== undefined) usp.append("after", String(opts.after));
   if (opts.limit !== undefined) usp.append("limit", String(opts.limit));
   const qs = usp.toString();
   const url = `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity${qs ? `?${qs}` : ""}`;

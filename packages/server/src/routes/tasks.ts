@@ -270,10 +270,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     const limitRaw = c.req.query("limit");
 
     if (beforeRaw !== undefined && afterRaw !== undefined) {
-      return c.json(
-        { error: "before and after are mutually exclusive", code: "BadRequest" },
-        400,
-      );
+      return c.json({ error: "before and after are mutually exclusive", code: "BadRequest" }, 400);
     }
 
     let before: number | undefined;

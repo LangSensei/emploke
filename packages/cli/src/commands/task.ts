@@ -165,7 +165,8 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
   if (opts.follow === true && opts.before !== undefined) {
     return {
       exitCode: 2,
-      stderr: "--before cannot be combined with --follow (--follow resumes forward only; pass --after instead)\n",
+      stderr:
+        "--before cannot be combined with --follow (--follow resumes forward only; pass --after instead)\n",
     };
   }
   const client = await makeClient(opts);
