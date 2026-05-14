@@ -1665,9 +1665,16 @@ function ActivityRow({ item }: { item: ActivityItem }) {
  * toggle. The threshold is a soft preview cap — the bounded
  * `.activity-row__pre` style provides a vertical scroll backstop
  * regardless.
+ *
+ * Toggle uses the same button + state pattern as `ResultSection` /
+ * `TaskInstructions` rather than `<details>/<summary>`: the latter
+ * forces the summary to stay on screen, so opening the disclosure
+ * would render BOTH the preview and the full content at once.
  */
 const TOOL_DISPLAY_PREVIEW_CHARS = 240;
 function ToolDisplay({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const isLong = content.length > TOOL_DISPLAY_PREVIEW_CHARS;
   if (!isLong) {
     return (
@@ -1685,15 +1692,34 @@ function ToolDisplay({ content }: { content: string }) {
       ? `${previewSrc.slice(0, TOOL_DISPLAY_PREVIEW_CHARS)}…`
       : previewSrc;
   return (
-    <details>
-      <summary style={{ cursor: "pointer", fontSize: 12 }}>
-        {preview}
-        <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
-          (show full {content.length.toLocaleString()} chars)
-        </span>
-      </summary>
-      <pre className="activity-row__pre">{content}</pre>
-    </details>
+    <div>
+      {expanded ? (
+        <pre id={bodyId} className="activity-row__pre">
+          {content}
+        </pre>
+      ) : (
+        <p id={bodyId} className="activity-row__body" style={{ fontSize: 12 }}>
+          {preview}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        style={{
+          marginTop: 4,
+          background: "none",
+          border: "none",
+          color: "var(--color-link, #58a6ff)",
+          cursor: "pointer",
+          padding: 0,
+          fontSize: 11,
+        }}
+      >
+        {expanded ? "Show less" : `Show full (${content.length.toLocaleString()} chars)`}
+      </button>
+    </div>
   );
 }
 
@@ -1702,9 +1728,14 @@ function ToolDisplay({ content }: { content: string }) {
 /**
  * Detail-header instructions with collapse-by-default for long
  * inputs. Short instructions render plain (the existing 4-line CSS
- * clamp is enough); long ones use a `<details>` toggle so the user
- * can expand to read the full text without the header eating half
- * the viewport.
+ * clamp is enough); long ones use a button + state toggle so the
+ * user can expand to read the full text without the header eating
+ * half the viewport.
+ *
+ * Toggle uses the same button + state pattern as `ResultSection` /
+ * `ToolDisplay` rather than `<details>/<summary>`: the latter
+ * forces the summary to stay on screen, so opening the disclosure
+ * would render BOTH the preview and the full content at once.
  *
  * The tag-line below the form already serves as the task's
  * persistent "title"; the unmutable instructions are the source of
@@ -1713,6 +1744,8 @@ function ToolDisplay({ content }: { content: string }) {
  */
 const TASK_INSTRUCTIONS_PREVIEW_CHARS = 320;
 function TaskInstructions({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const isLong = text.length > TASK_INSTRUCTIONS_PREVIEW_CHARS;
   if (!isLong) {
     return (
@@ -1725,24 +1758,39 @@ function TaskInstructions({ text }: { text: string }) {
   const cut = text.lastIndexOf(" ", TASK_INSTRUCTIONS_PREVIEW_CHARS);
   const preview = `${text.slice(0, cut > 0 ? cut : TASK_INSTRUCTIONS_PREVIEW_CHARS)}…`;
   return (
-    <details className="task-detail__instructions-details">
-      <summary
-        className="task-detail__instructions"
-        style={{ cursor: "pointer", listStyle: "none" }}
-        title={text}
+    <div>
+      {expanded ? (
+        <p
+          id={bodyId}
+          className="task-detail__instructions"
+          title={text}
+          style={{ WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
+        >
+          {text}
+        </p>
+      ) : (
+        <p id={bodyId} className="task-detail__instructions" title={text}>
+          {preview}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        style={{
+          marginTop: 4,
+          background: "none",
+          border: "none",
+          color: "var(--color-link, #58a6ff)",
+          cursor: "pointer",
+          padding: 0,
+          fontSize: 11,
+        }}
       >
-        {preview}{" "}
-        <span className="muted" style={{ fontSize: 11 }}>
-          (show full {text.length.toLocaleString()} chars)
-        </span>
-      </summary>
-      <p
-        className="task-detail__instructions"
-        style={{ marginTop: 8, WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
-      >
-        {text}
-      </p>
-    </details>
+        {expanded ? "Show less" : `Show full (${text.length.toLocaleString()} chars)`}
+      </button>
+    </div>
   );
 }
 
