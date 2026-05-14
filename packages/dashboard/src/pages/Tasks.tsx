@@ -1146,11 +1146,27 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       : undefined;
   const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
+  // Runtime-supplied display title (Copilot writes it into
+  // `workspace.yaml`'s `name`/`summary`; the runtime adapter folds
+  // it into `metadata.title`). It's a curated 5-7 word label sized
+  // for headline use, distinct from `instructions` (which can be
+  // multi-paragraph). The list item already uses it; mirror the
+  // same rule here so the detail page also leads with the
+  // human-readable name instead of the opaque task id.
+  //
+  // No fallback to "first line of instructions": the full
+  // instructions render right below this header, so a derived
+  // title would just duplicate visible text. Tasks without a
+  // runtime title get no `<h2>` row — the layout collapses
+  // gracefully to today's id-led header.
+  const title =
+    typeof metadata.title === "string" && metadata.title.length > 0 ? metadata.title : null;
   const isRunning = task && (task.status === "running" || task.status === "not_started");
 
   return (
     <aside className="tasks-pane__detail">
       <header className="task-detail__head">
+        {title && <h2 className="task-detail__title">{title}</h2>}
         <div className="task-detail__head-row">
           <code className="task-detail__id" title={taskId}>
             {taskId}
