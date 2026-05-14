@@ -338,7 +338,7 @@ describe("launchCopilotHeadless", () => {
         workspaceDir: scratch,
         subprocessEnv: {
           EMPLOKE_WORKSPACE: "ws-uuid-1",
-          EMPLOKE_RUN_ID: "01HZZZ",
+          EMPLOKE_WORK_ID: "01HZZZ",
           EMPLOKE_SERVER: "http://127.0.0.1:8787",
         },
       },
@@ -351,7 +351,7 @@ describe("launchCopilotHeadless", () => {
     );
     const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
     expect(opts.env.EMPLOKE_WORKSPACE).toBe("ws-uuid-1");
-    expect(opts.env.EMPLOKE_RUN_ID).toBe("01HZZZ");
+    expect(opts.env.EMPLOKE_WORK_ID).toBe("01HZZZ");
     expect(opts.env.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     // PATH (or similar) from process.env is still there — we layered, didn't replace.
     expect(opts.env.PATH ?? opts.env.Path).toBeDefined();
