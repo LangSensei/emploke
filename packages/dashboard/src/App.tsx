@@ -22,7 +22,7 @@ import { CatalogPage, type CatalogTab } from "./pages/Catalog";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
-import { TasksPage } from "./pages/Tasks";
+import { TasksPage } from "./pages/tasks";
 import { startClockSync } from "./serverClock";
 import { formatRelative } from "./utils/time";
 
