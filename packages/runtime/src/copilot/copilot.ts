@@ -491,17 +491,15 @@ export class CopilotRuntime implements Runtime {
       // we use the count of items in the historical content as the
       // starting seq so subsequent items continue the sequence.
       const startSeq =
-        typeof opts.cursor === "number"
-          ? opts.cursor + 1
+        typeof opts.after === "number"
+          ? opts.after + 1
           : parseCopilotActivity(await readFile(eventsPath, "utf8")).length;
       parser = new CopilotActivityStreamParser(startSeq);
     } catch {
       // File doesn't exist yet (task hasn't started writing). Start
       // from offset 0, seq 0; we'll catch up when it appears.
       offset = 0;
-      parser = new CopilotActivityStreamParser(
-        typeof opts.cursor === "number" ? opts.cursor + 1 : 0,
-      );
+      parser = new CopilotActivityStreamParser(typeof opts.after === "number" ? opts.after + 1 : 0);
     }
 
     let buffer = "";

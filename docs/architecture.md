@@ -289,7 +289,7 @@ interface Runtime {
   readMetadata?(runtimeSessionId):                                    // optional: title / lastActiveAt
     Promise<RuntimeSessionMetadata | null>;
   readActivity?(opts):                                                // optional: parsed timeline,
-    Promise<ActivityResult | null>;                                   //   paginated by cursor + limit
+    Promise<ActivityResult | null>;                                   //   tail-first; before/after/limit
   streamActivity?(opts): AsyncIterable<ActivityItem>;                 // optional: live SSE tail
 
   // Maintenance
@@ -531,8 +531,10 @@ To add e.g. a Gemini adapter:
 3. Implement `readActivity` (and ideally `streamActivity`) to read
    your runtime's per-conversation log end-to-end (find file → read →
    parse → derive headline) and return runtime-neutral `ActivityItem[]`
-   plus `result`. Pagination via `cursor` + `limit` is mandatory for
-   `readActivity`; `streamActivity` honours `opts.signal` for
+   plus `result`. Tail-first pagination via `before` / `after` /
+   `limit` is mandatory for `readActivity` (omit both directional
+   params for the latest `limit` items — what GUI consumers want on
+   first load); `streamActivity` honours `opts.signal` for
    cleanup. Implement `readMetadata` if the CLI surfaces a session-
    level display title. The dashboard / CLI / future MCP renders
    `ActivityItem`s without ever seeing your log format or path.

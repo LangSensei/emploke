@@ -391,6 +391,60 @@ describe("CopilotRuntime", () => {
       ).rejects.toThrow(/before.*after.*mutually exclusive/);
     });
 
+    it("handles pagination boundary edge cases (before=0, after=lastSeq, oversized limit)", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const lines: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        lines.push(
+          JSON.stringify({
+            type: "user.message",
+            id: `u${i}`,
+            parentId: null,
+            timestamp: "2026-05-12T03:54:11.016Z",
+            data: { content: `msg ${i}` },
+          }),
+        );
+      }
+      await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+
+      // before=0: no items have seq < 0, so the page is empty AND
+      // there's no truncation marker (we're at the head boundary,
+      // not page-limited). totalItems still reflects the whole log.
+      const beforeZero = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 0,
+        limit: 10,
+      });
+      expect(beforeZero?.activity).toHaveLength(0);
+      expect(beforeZero?.totalItems).toBe(5);
+      expect(beforeZero?.truncated).toBeUndefined();
+
+      // after=lastSeq: no items beyond the tail, empty page, no
+      // truncation marker. Polling pattern: client just sees no new
+      // events and polls again later.
+      const afterTail = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        after: 4,
+        limit: 10,
+      });
+      expect(afterTail?.activity).toHaveLength(0);
+      expect(afterTail?.totalItems).toBe(5);
+      expect(afterTail?.truncated).toBeUndefined();
+
+      // limit > totalItems with no directional opt: returns the whole
+      // log (tail mode), no truncation marker — the cap wasn't actually
+      // hit because the log fit inside it.
+      const oversized = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        limit: 9999,
+      });
+      expect(oversized?.activity).toHaveLength(5);
+      expect(oversized?.totalItems).toBe(5);
+      expect(oversized?.truncated).toBeUndefined();
+    });
+
     it("caps the raw read at 4MB and surfaces truncated marker", async () => {
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });

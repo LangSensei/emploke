@@ -345,12 +345,12 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     let stream: AsyncIterable<import("@emploke/runtime").ActivityItem> | null;
     try {
       const lastEventId = c.req.header("Last-Event-ID");
-      const cursor =
+      const after =
         lastEventId !== undefined && /^\d+$/.test(lastEventId)
           ? Number.parseInt(lastEventId, 10)
           : undefined;
       stream = await getManager(c).getTaskActivityStream(id, {
-        ...(cursor !== undefined ? { cursor } : {}),
+        ...(after !== undefined ? { after } : {}),
         signal: c.req.raw.signal,
       });
     } catch (err) {

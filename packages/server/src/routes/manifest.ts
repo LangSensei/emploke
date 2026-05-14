@@ -400,14 +400,6 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid",
   ),
   /**
-   * Query params for `GET .../tasks/:tid/activity`. All optional.
-   * `cursor` returns items with seq strictly greater than the value;
-   * `limit` caps the page (server enforces a default of 50 and a
-   * hard maximum of 500). Both parameters arrive as URL strings —
-   * the route parses to integers and rejects malformed values with
-   * 400.
-   */
-  /**
    * Runtime-neutral activity timeline: the runtime parses its own
    * event log into the {@link ActivityItem} discriminated union
    * declared in `@emploke/runtime` (end-to-end via

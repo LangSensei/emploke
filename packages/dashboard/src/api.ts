@@ -997,14 +997,20 @@ export const fetchTaskActivity = async (
  *
  * The `Last-Event-ID` reconnection header is set by the browser's
  * native EventSource using the `id:` field on each frame the
- * server emits — no manual cursor bookkeeping required.
+ * server emits — no manual bookkeeping required.
  */
 export interface ActivityStreamHandle {
   close(): void;
 }
 
 export interface SubscribeTaskActivityOpts {
-  cursor?: number;
+  /**
+   * Resume from this seq (exclusive) on FIRST connect — server reads
+   * it from a query-param fallback and uses it as the SSE start
+   * point. After the first frame the browser's EventSource takes
+   * over via `Last-Event-ID` for transport-drop reconnects.
+   */
+  after?: number;
   onItem: (item: ActivityItem) => void;
   onEnd?: () => void;
   onError?: (err: Error) => void;
@@ -1018,9 +1024,9 @@ export const subscribeTaskActivity = (
   // EventSource doesn't support custom headers cross-browser, so we
   // can't pass Last-Event-ID on first connect via headers — but the
   // browser DOES set it on RECONNECT after a transport drop, which
-  // is the case that matters most. For first-connect cursor resume
-  // we'd need a query-param fallback; deferred (caller can do a
-  // one-shot fetchTaskActivity({ cursor }) before subscribing).
+  // is the case that matters most. For first-connect resume the
+  // caller can do a one-shot fetchTaskActivity({ after }) before
+  // subscribing and stitch the result into their state.
   const es = new EventSource(url);
   es.addEventListener("activity", (ev) => {
     try {
