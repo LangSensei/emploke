@@ -1,5 +1,5 @@
 import type { ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, existsSync, type WriteStream } from "node:fs";
 import { mkdir as nodeMkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
@@ -8,7 +8,7 @@ import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.j
 import type { PlaceholderContext } from "../placeholders.js";
 import type { RuntimeExit, RuntimeHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
-import { provisionCopilotWorkdir } from "./provision.js";
+import { COPILOT_MCP_CONFIG, provisionCopilotWorkdir } from "./provision.js";
 
 /**
  * File names for side-channel stdout/stderr capture under the task
@@ -25,6 +25,39 @@ import { provisionCopilotWorkdir } from "./provision.js";
  */
 export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
+
+/**
+ * Re-exported workspace `.mcp.json` filename. The single source of truth
+ * lives in `provision.ts` (the actual writer); the launcher's existence
+ * probe and `--additional-mcp-config` argv consume it from here. Kept as
+ * a re-export so `@emploke/runtime` consumers see a stable symbol on the
+ * launch-headless surface.
+ */
+export { COPILOT_MCP_CONFIG };
+
+/**
+ * Argv fragment appended to non-interactive `copilot -p` when the spawn
+ * cwd contains a workspace `.mcp.json`. Two separate argv entries (NOT a
+ * single combined string) — matches how the Copilot CLI parses long
+ * options with values and keeps the call shape symmetric with every
+ * other flag in {@link buildCopilotHeadlessArgs}.
+ *
+ * The leading `@` tells Copilot CLI "load from this file path"; the path
+ * is relative because the child process's cwd is `taskDir`, which is
+ * exactly where `provisionCopilotWorkdir` wrote the file. This avoids
+ * any host-path resolution gymnastics.
+ *
+ * Why this exists at all: the upstream Copilot CLI silently SKIPS
+ * workspace-level `.mcp.json` MCP servers in non-interactive (`-p`)
+ * mode — they're filtered out before any start attempt and never appear
+ * in the agent's tool surface, with no warning. Passing
+ * `--additional-mcp-config` re-routes the same file through the loader
+ * that `-p` honours, so workspace MCPs become available to task agents.
+ *
+ * Tracked: emploke #105 / upstream github/copilot-cli#3313.
+ */
+const ADDITIONAL_MCP_CONFIG_FLAG = "--additional-mcp-config";
+const ADDITIONAL_MCP_CONFIG_VALUE = `@./${COPILOT_MCP_CONFIG}`;
 
 /**
  * Default spawn implementation used when `LaunchCopilotHeadlessDeps.spawn`
@@ -154,6 +187,72 @@ export interface LaunchCopilotHeadlessOpts {
 }
 
 /**
+ * Inputs to {@link buildCopilotHeadlessArgs}.
+ *
+ * `mcpConfigExists` is computed by the caller (one `existsSync` against
+ * `<taskDir>/.mcp.json`) so the helper itself stays pure and trivially
+ * unit-testable.
+ */
+export interface BuildCopilotHeadlessArgsOpts {
+  readonly prompt: string;
+  readonly runtimeSessionId: string;
+  readonly taskDir: string;
+  /**
+   * Whether `<taskDir>/.mcp.json` is present at the moment of spawn. When
+   * true, the helper appends `--additional-mcp-config @./.mcp.json` so
+   * workspace MCP servers actually load under `copilot -p` (see
+   * {@link ADDITIONAL_MCP_CONFIG_FLAG} for the upstream-bug context).
+   */
+  readonly mcpConfigExists: boolean;
+}
+
+/**
+ * Build the argv passed to `cross-spawn` for a non-interactive
+ * (`copilot -p`) launch. Pure function — same inputs always produce the
+ * same array — so it can be exercised by unit tests without spawning a
+ * real child process or mocking `node:fs`.
+ *
+ * Flag rationale (kept here so the launcher body doesn't have to inline
+ * a wall of comments around an array literal):
+ *
+ *   - `--allow-all`: required for non-interactive mode (per
+ *     `copilot --help`). Unblocks tool / path / URL confirmation prompts.
+ *   - `--no-ask-user`: disables the `ask_user` tool so the agent can't
+ *     pause waiting for input we'll never deliver.
+ *   - `--output-format json`: makes stdout a JSONL of events. We don't
+ *     currently consume that stream — the canonical event log lives at
+ *     `<sessionDir>/events.jsonl` and the dashboard reads it through
+ *     the runtime's `readActivity` surface — but the flag stays on so
+ *     a future progress-streaming UI can attach to stdout without
+ *     changing the spawn arguments.
+ *   - `-C <taskDir>`: redundant with `cwd` but belt-and-suspenders for
+ *     tools that introspect argv.
+ *   - `--additional-mcp-config @./.mcp.json` (conditional): workaround
+ *     for the upstream `-p` mode silently dropping workspace
+ *     `.mcp.json` servers. Appended only when the file actually exists
+ *     in `taskDir` so we don't pass a flag with nothing to load. See
+ *     emploke #105 / upstream github/copilot-cli#3313.
+ */
+export function buildCopilotHeadlessArgs(opts: BuildCopilotHeadlessArgsOpts): string[] {
+  const args: string[] = [
+    "-p",
+    opts.prompt,
+    "--resume",
+    opts.runtimeSessionId,
+    "--allow-all",
+    "--no-ask-user",
+    "--output-format",
+    "json",
+    "-C",
+    opts.taskDir,
+  ];
+  if (opts.mcpConfigExists) {
+    args.push(ADDITIONAL_MCP_CONFIG_FLAG, ADDITIONAL_MCP_CONFIG_VALUE);
+  }
+  return args;
+}
+
+/**
  * Spawn `copilot -p <prompt> --resume=<uuid>` against `taskDir` and return
  * a live {@link RuntimeHandle}. The CLI runs unattended (`--allow-all`,
  * `--no-ask-user`) and emits structured events into its per-session state
@@ -217,28 +316,22 @@ export async function launchCopilotHeadless(
   }
 
   // Step 3: spawn.
-  // `--allow-all` is required for non-interactive mode (per copilot --help)
-  // and unblocks tool/path/url confirmation prompts. `--no-ask-user`
-  // disables the ask_user tool so the agent can't pause waiting for input
-  // we'll never deliver. `--output-format json` makes stdout a JSONL of
-  // events. We don't currently consume that stream — the canonical event
-  // log lives at `<sessionDir>/events.jsonl` and the dashboard reads it
-  // through the runtime's `readActivity` surface — but the flag stays
-  // on so a future progress-streaming UI can attach to stdout without
-  // changing the spawn arguments. `-C` is redundant with `cwd` but
-  // belt-and-suspenders for tools that introspect argv.
-  const args = [
-    "-p",
-    opts.prompt,
-    "--resume",
-    sessionId,
-    "--allow-all",
-    "--no-ask-user",
-    "--output-format",
-    "json",
-    "-C",
-    opts.taskDir,
-  ];
+  // Build argv via the pure helper so the construction is exercised by
+  // unit tests without spawning a real child. The conditional
+  // `--additional-mcp-config` flag (see helper JSDoc) is gated on a
+  // single sync `existsSync` against `<taskDir>/.mcp.json`. The probe
+  // runs AFTER `provisionCopilotWorkdir` (Step 1) so we observe the
+  // file the provisioner just wrote when the agent declares MCPs;
+  // when the agent has no MCPs no file exists and the flag is
+  // omitted, matching upstream's "nothing to load" expectation.
+  const mcpConfigPath = path.join(opts.taskDir, COPILOT_MCP_CONFIG);
+  const mcpConfigExists = existsSync(mcpConfigPath);
+  const args = buildCopilotHeadlessArgs({
+    prompt: opts.prompt,
+    runtimeSessionId: sessionId,
+    taskDir: opts.taskDir,
+    mcpConfigExists,
+  });
 
   let child: ChildProcess;
   try {

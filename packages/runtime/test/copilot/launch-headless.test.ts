@@ -1,12 +1,17 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import crossSpawn from "cross-spawn";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSpawnImpl, type SpawnFn } from "../../src/copilot/launch-headless.js";
+import {
+  buildCopilotHeadlessArgs,
+  COPILOT_MCP_CONFIG,
+  defaultSpawnImpl,
+  type SpawnFn,
+} from "../../src/copilot/launch-headless.js";
 import {
   COPILOT_STDERR_LOG,
   COPILOT_STDOUT_LOG,
@@ -140,6 +145,77 @@ describe("launchCopilotHeadless", () => {
     const opts = fake.captures?.options as { cwd: string; stdio: unknown };
     expect(opts.cwd).toBe(taskDir);
     expect(opts.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  // Workaround for upstream github/copilot-cli#3313 (tracked in emploke
+  // #105): in non-interactive mode, the CLI silently filters out
+  // workspace-level `.mcp.json` MCP servers — they never appear in the
+  // agent's tool surface and emit no warning. Routing the same file
+  // through `--additional-mcp-config @./.mcp.json` makes them load.
+  //
+  // The launcher gates the flag on `existsSync(<taskDir>/.mcp.json)` so
+  // we don't pass a flag with nothing to load when the resolved agent
+  // declares zero MCPs (provisionCopilotWorkdir skips the file in that
+  // case). The existence probe runs AFTER provision so an agent that
+  // contributes MCPs gets the flag the very first launch.
+  it("appends --additional-mcp-config when <taskDir>/.mcp.json exists at spawn time", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    // Pre-write `.mcp.json` into the task dir to simulate the file the
+    // provisioner would write for an MCP-bearing agent. The demo agent
+    // used here declares no MCPs, so without this write the file would
+    // be absent — that's what the no-flag test below covers.
+    await writeFile(
+      path.join(taskDir, COPILOT_MCP_CONFIG),
+      JSON.stringify({ mcpServers: { example: { command: "noop" } } }),
+      "utf8",
+    );
+    await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        sharedDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+      },
+    );
+    const args = fake.captures?.args ?? [];
+    // Two argv entries (NOT a single combined string), appended at the
+    // tail so the rest of the call shape stays stable.
+    expect(args).toEqual([
+      "-p",
+      "x",
+      "--resume",
+      FIXED_UUID,
+      "--allow-all",
+      "--no-ask-user",
+      "--output-format",
+      "json",
+      "-C",
+      taskDir,
+      "--additional-mcp-config",
+      "@./.mcp.json",
+    ]);
+  });
+
+  it("omits --additional-mcp-config when <taskDir>/.mcp.json is absent", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn();
+    // No `.mcp.json` written; demo agent has no MCPs so provision skips
+    // the file. The launcher must not pass the flag — upstream rejects
+    // `--additional-mcp-config` pointing at a non-existent path.
+    await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        sharedDir: scratch,
+        randomUUID: () => FIXED_UUID,
+        spawn: fake.spawn,
+      },
+    );
+    const args = fake.captures?.args ?? [];
+    expect(args).not.toContain("--additional-mcp-config");
+    expect(args).not.toContain("@./.mcp.json");
   });
 
   it("honours an injected copilotBin override", async () => {
@@ -630,5 +706,61 @@ describe("launchCopilotHeadless", () => {
     // exit so the manager doesn't hang).
     const result = await handle.exit;
     expect(result).toEqual({ code: null, signal: null });
+  });
+});
+
+// Pure-function smoke tests for the argv builder. The launcher tests
+// above already exercise both branches end-to-end via the live
+// `existsSync` probe; these direct tests pin the contract of the
+// helper itself so a future caller (e.g. another runtime adapter
+// reusing the flag set) can rely on a stable shape without spinning
+// up the full launch machinery.
+describe("buildCopilotHeadlessArgs", () => {
+  it("returns the base argv when mcpConfigExists=false", () => {
+    const args = buildCopilotHeadlessArgs({
+      prompt: "p",
+      runtimeSessionId: "rid-123",
+      taskDir: "/abs/task",
+      mcpConfigExists: false,
+    });
+    expect(args).toEqual([
+      "-p",
+      "p",
+      "--resume",
+      "rid-123",
+      "--allow-all",
+      "--no-ask-user",
+      "--output-format",
+      "json",
+      "-C",
+      "/abs/task",
+    ]);
+  });
+
+  it("appends the two-argv --additional-mcp-config pair when mcpConfigExists=true", () => {
+    const args = buildCopilotHeadlessArgs({
+      prompt: "p",
+      runtimeSessionId: "rid-123",
+      taskDir: "/abs/task",
+      mcpConfigExists: true,
+    });
+    // Tail-appended so prefix-sensitive consumers (none today, but
+    // the contract is "stable prefix + optional flags after `-C`")
+    // keep working.
+    expect(args.slice(-2)).toEqual(["--additional-mcp-config", "@./.mcp.json"]);
+    expect(args.length).toBe(12);
+  });
+
+  it("does not mutate inputs and returns a fresh array each call", () => {
+    const opts = {
+      prompt: "p",
+      runtimeSessionId: "rid",
+      taskDir: "/t",
+      mcpConfigExists: true,
+    } as const;
+    const a = buildCopilotHeadlessArgs(opts);
+    const b = buildCopilotHeadlessArgs(opts);
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b); // distinct array instances
   });
 });

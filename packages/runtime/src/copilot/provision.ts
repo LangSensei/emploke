@@ -14,7 +14,14 @@ import {
 import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
-const MCP_CONFIG_PATH = ".mcp.json";
+/**
+ * Filename of the workspace-level MCP config that this module writes
+ * inside the spawn cwd (i.e. `taskDir`) when the resolved agent declares
+ * any MCP servers. Single source of truth for the `.mcp.json` literal —
+ * `launch-headless.ts` re-exports this so its existence probe and the
+ * `--additional-mcp-config` argv stay in lockstep with the writer here.
+ */
+export const COPILOT_MCP_CONFIG = ".mcp.json";
 
 /**
  * Separator used to flatten scoped names into single directory segments.
@@ -215,7 +222,7 @@ async function writeMcpConfig(
     }
   }
 
-  const dest = path.join(workdir, MCP_CONFIG_PATH);
+  const dest = path.join(workdir, COPILOT_MCP_CONFIG);
   const json = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
   await writeFile(dest, json, "utf8");
 }
