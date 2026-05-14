@@ -60,8 +60,7 @@ work for single-machine use; only set what you need to override.
 | Env var              | Default        | Purpose                                                                                                  |
 | -------------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
 | `PORT`               | `8787`         | HTTP listen port.                                                                                        |
-| `EMPLOKE_HOST`       | `127.0.0.1`    | Bind address. **Non-loopback values require `EMPLOKE_API_KEY`** — emploke refuses to start otherwise.    |
-| `EMPLOKE_API_KEY`    | —              | When set, every `/api/*` request must carry `Authorization: Bearer <key>`. Required for non-loopback.    |
+| `EMPLOKE_HOST`       | `127.0.0.1`    | Bind address. emploke is **loopback-only** — non-loopback values are refused at startup. For remote access, expose the loopback socket through SSH port-forward, a reverse proxy (mTLS / OIDC), or a mesh VPN (Tailscale, …). |
 | `EMPLOKE_HOME`       | `~/.emploke`   | Where the global SQLite registry (`global.db`) lives.                                                  |
 | `EMPLOKE_LOG_LEVEL`  | `info`         | `debug` / `info` / `warn` / `error`.                                                                     |
 | `EMPLOKE_LOG_FORMAT` | `pretty`       | `pretty` (dev terminal) or `json` (log aggregators).                                                     |
@@ -97,7 +96,7 @@ two layers of commands:
 | `emploke`          | Print top-level help (alias for `emploke help`).                                                                                                                         |
 | `emploke help [c]` | Top-level help, or per-subcommand help when `c` is given.                                                                                                                |
 | `emploke serve`    | Run the server in the foreground — current dev behaviour. Honours every env var in the *Configuration* table; flags override env.                                        |
-| `emploke start`    | Spawn the server as a detached background process. Records pid / port / api-key in `<EMPLOKE_HOME>/runtime.json` (mode `0600` when an api-key is set). Idempotent.       |
+| `emploke start`    | Spawn the server as a detached background process. Records pid + port in `<EMPLOKE_HOME>/runtime.json`. Idempotent.       |
 | `emploke stop`     | SIGTERM the recorded pid, wait for graceful shutdown (escalates to SIGKILL after 30 s), then delete `runtime.json`. Idempotent. *Windows note:* `process.kill` maps to `TerminateProcess` — there is no graceful equivalent on Windows; the server's atomic-write persistence keeps state consistent regardless. |
 | `emploke restart`  | `stop` then `start` with the same flags.                                                                                                                                 |
 | `emploke status`   | Print one-line health summary. Exit codes: `0` running + healthy, `3` not running, `4` running but `/api/health` not responding. `--json` for scripts.                   |
@@ -144,7 +143,6 @@ emploke catalog mcp install <origin> --name namespace/short
 Common flags on every API command:
 
 - `--server <url>` — overrides `EMPLOKE_SERVER` and `runtime.json`. Defaults to `http://127.0.0.1:8787`.
-- `--api-key <key>` — overrides `EMPLOKE_API_KEY` and `runtime.json`.
 - `--workspace <id>` — workspace-scoped commands. Overrides `EMPLOKE_WORKSPACE` and the server's `currentWorkspace`.
 - `--output <fmt>` / `--json` — `table` (human-friendly default) or `json` (for scripting).
 

@@ -8,7 +8,7 @@
  *   - `<home>/global.db` — workspace registry + global state (SQLite)
  *   - `<home>/workspaces/` — parent dir for auto-allocated workspaces
  *   - `<home>/logs/` — server's rotated log files (pino-roll)
- *   - `<home>/runtime.json` — CLI lifecycle breadcrumb (pid + port + apiKey)
+ *   - `<home>/runtime.json` — CLI lifecycle breadcrumb (pid + port)
  *   - `<home>/shared/` — runtime adapters' `${sharedDir}` placeholder root
  *
  * One overrideable knob:
@@ -51,7 +51,7 @@ export const LOGS_SUBDIR = "logs";
 /**
  * Filename (under `<home>`) for the CLI lifecycle breadcrumb. Written by
  * `emploke start`, read by `emploke status` / `stop` / `connect`, deleted
- * by `emploke stop`. Records pid + host + port + apiKey of the running
+ * by `emploke stop`. Records pid + host + port of the running
  * server so a later CLI invocation can find and talk to it.
  */
 export const RUNTIME_FILE_NAME = "runtime.json";
@@ -95,7 +95,7 @@ export interface EmplokePaths {
   /**
    * Path to the CLI lifecycle breadcrumb, `<home>/runtime.json`. Created
    * by `emploke start`, deleted by `emploke stop`. Reading it tells you
-   * pid + host + port + apiKey of the locally-running server.
+   * pid + host + port of the locally-running server.
    */
   readonly runtimeFile: string;
   /**

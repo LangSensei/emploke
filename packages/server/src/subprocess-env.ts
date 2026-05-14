@@ -4,21 +4,16 @@
  * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_*`) are
  * layered on top inside `TaskManager.dispatch` /
  * `SessionManager.assembleLaunchEnv`; this helper is for fields the
- * server itself owns (where to dial back, how to authenticate, where
- * the cross-workspace shared state directory lives).
+ * server itself owns (where to dial back, where the cross-workspace
+ * shared state directory lives).
  *
  * Why a dedicated module:
  *   - Keeps `index.ts` focused on Hono wiring instead of env munging.
  *   - The `0.0.0.0` → loopback rewrite has subtle platform behaviour and
  *     deserves its own dock-test surface.
- *   - Spawned children should not see secrets unless absolutely
- *     necessary, so we always go through this single chokepoint
- *     instead of sprinkling `process.env.EMPLOKE_API_KEY` reads across
- *     the codebase.
  *
- * Variables emitted (always set unless flagged optional):
- *   - EMPLOKE_SERVER     — `http://<host>:<port>` (always set)
- *   - EMPLOKE_API_KEY    — only when the server has one configured
+ * Variables emitted (all required):
+ *   - EMPLOKE_SERVER     — `http://<host>:<port>`
  *   - EMPLOKE_SHARED_DIR — `<EMPLOKE_HOME>/shared`, the canonical
  *                         cross-workspace state directory. Same path
  *                         the runtime exposes to MCP specs as
@@ -37,11 +32,14 @@
  * as `127.0.0.1` for outbound). Loopback is the only address
  * guaranteed to work from a same-host child, so we normalise here.
  * `::` (IPv6 wildcard) gets the same treatment for symmetry.
+ *
+ * No auth env: emploke ships no auth layer (the server binds loopback-
+ * only; remote access is delegated to SSH / reverse proxy / mesh VPN).
+ * There is therefore no `EMPLOKE_API_KEY` and no analogue.
  */
 export function buildSubprocessEnvBase(input: {
   hostname: string;
   port: number;
-  apiKey?: string;
   sharedDir: string;
 }): NodeJS.ProcessEnv {
   const dialableHost =
@@ -50,18 +48,23 @@ export function buildSubprocessEnvBase(input: {
     EMPLOKE_SERVER: `http://${dialableHost}:${input.port}`,
     EMPLOKE_SHARED_DIR: input.sharedDir,
     // EXPLICIT NEGATIVE: scrub `EMPLOKE_HOME` from every spawned
-    // subprocess. The server itself reads `process.env.EMPLOKE_HOME`
+    // task subprocess. The server itself reads `process.env.EMPLOKE_HOME`
     // to find its own state directory, so the value is in the parent
     // env by construction. Without this `undefined` the spawn's env
     // inheritance would leak the path through, contradicting the
     // public contract (see docs/architecture.md "Runtime env
-    // contract"). Both `mergeEnv` (task path) and the terminal-side
-    // shell-env helpers honour `undefined` as "delete this key".
+    // contract"). The task path goes through `mergeEnv` in
+    // `packages/runtime/src/copilot/launch-headless.ts`, which
+    // honours `undefined` as "delete this key from the parent env".
+    //
+    // The session-interactive path (`SessionManager.assembleLaunchEnv`)
+    // intentionally filters `undefined` values out before reaching
+    // the terminal-side shell-env helpers, so the parent's
+    // `EMPLOKE_HOME` leaks through ambient inheritance — that's by
+    // design, see "Deliberately not exposed" in architecture.md:
+    // user-driven terminals own their shell state.
     EMPLOKE_HOME: undefined,
   };
-  if (input.apiKey !== undefined && input.apiKey.length > 0) {
-    env.EMPLOKE_API_KEY = input.apiKey;
-  }
   // Freeze: this object is shared by reference into every per-workspace
   // `TaskManager` (via `WorkspaceContextCache`) and read on every
   // `dispatch()`. A stray mutation anywhere would silently leak

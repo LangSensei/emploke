@@ -143,8 +143,8 @@ Why one DB per scope rather than one DB per entity:
   `<workspace>/tasks/<id>/` are the agent's own product dirs. emploke
   creates them and bakes a starter `AGENTS.md` / `.mcp.json` from the
   catalog; the agent owns everything else inside.
-- **Server lifecycle** — `<EMPLOKE_HOME>/runtime.json` (pid + port +
-  apiKey) stays a JSON file for ops ergonomics. Port-binding is the
+- **Server lifecycle** — `<EMPLOKE_HOME>/runtime.json` (pid + port)
+  stays a JSON file for ops ergonomics. Port-binding is the
   actual mutex; SQLite's atomic-write would buy nothing here.
 - **Logs** — `<EMPLOKE_HOME>/logs/` is rotated JSONL via `pino-roll`.
 
@@ -229,10 +229,13 @@ A `WorkspaceContextCache` lazily mints + retains per-workspace
 manager instances behind that URL prefix; cache invalidation happens
 on workspace deletion or metadata update.
 
-The server is **loopback-only by default**; non-loopback `EMPLOKE_HOST`
-requires `EMPLOKE_API_KEY` (Bearer-token check on every `/api/*`
-request) and emploke refuses to start otherwise. A misconfigured
-production deploy fails fast.
+The server is **loopback-only**: it refuses to bind to anything other
+than `127.0.0.1` / `::1`. emploke ships no built-in auth, on the
+principle that "rolling our own" is rarely the right answer for a
+single-user local-first dashboard. For remote access, expose the
+loopback socket through a layer designed for auth (SSH port-forward,
+reverse proxy with mTLS / OIDC, mesh VPN with peer auth such as
+Tailscale). A misconfigured non-loopback bind fails fast at startup.
 
 ## Per-workspace layout
 
@@ -328,8 +331,7 @@ rely on; everything else in the env is "best effort, host-dependent".
 
 | Variable | Type | When set | Meaning |
 | -------- | ---- | -------- | ------- |
-| `EMPLOKE_SERVER`        | URL string | always | `http://<host>:<port>` the server is listening on. `0.0.0.0` / `::` are rewritten to `127.0.0.1` so the child can dial loopback. |
-| `EMPLOKE_API_KEY`       | string     | only when the server has one configured | Bearer token the child uses against `EMPLOKE_SERVER`. |
+| `EMPLOKE_SERVER`        | URL string | always | `http://<host>:<port>` the server is listening on. `0.0.0.0` / `::` are rewritten to `127.0.0.1` so the child can dial loopback. emploke binds loopback-only (no auth layer); see "Deliberately not exposed". |
 | `EMPLOKE_SHARED_DIR`    | abs path   | always | `<EMPLOKE_HOME>/shared` — the canonical machine-shared writable directory. Same path the runtime exposes to MCP specs as `${sharedDir}`. Pick this for state shared across workspaces (a single playwright login, a model cache). |
 | `EMPLOKE_WORKSPACE`     | UUID       | always (per run) | Workspace id (routing key for the HTTP API; `emploke ... --workspace <id>` accepts it). |
 | `EMPLOKE_WORKSPACE_DIR` | abs path   | always (per run) | Workspace root on disk. Same path the runtime exposes to MCP specs as `${workspaceDir}`. Pick this for state private to one workspace. |
@@ -355,6 +357,14 @@ rely on; everything else in the env is "best effort, host-dependent".
   inherited from the server process verbatim. Agents and skills
   that need any of these should declare them in their own
   documentation; emploke only guarantees the table above.
+- **Auth credentials**: there is no `EMPLOKE_API_KEY` (or analogue).
+  emploke ships no auth layer — the server refuses to bind anywhere
+  but loopback (`assertBindIsSafe` rejects non-loopback hosts at
+  startup). Remote access is delegated to a system-level layer
+  designed for it (SSH port-forward, reverse proxy with mTLS / OIDC,
+  mesh VPN with peer auth). Children reach the server purely by
+  dialing `EMPLOKE_SERVER` from the same host; no token threading
+  through subprocess env, no SSE auth gap.
 
 ### Why these specific variables
 
@@ -400,7 +410,7 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 | Path | Owner | Notes |
 | ---- | ----- | ----- |
 | `global.db`        | server               | SQLite — workspace registry (id → workdir + currentId) plus other cross-workspace state. |
-| `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
+| `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port of the running server. |
 | `logs/`            | server               | Rotated server logs (pino-roll). |
 | `shared/`          | runtime adapters     | `${sharedDir}` placeholder root for MCP specs. |
 

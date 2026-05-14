@@ -88,8 +88,6 @@ export class ApiError extends Error {
 export interface ApiClientOpts {
   /** Base URL the server is listening on (no trailing slash). */
   readonly baseUrl: string;
-  /** Bearer token sent on every request when set. */
-  readonly apiKey?: string;
   /** Override `globalThis.fetch` (for tests, polyfills, agents). */
   readonly fetch?: typeof fetch;
 }
@@ -126,12 +124,10 @@ type CallArgs<K extends RouteKey> =
  */
 export class ApiClient {
   private readonly baseUrl: string;
-  private readonly apiKey: string | undefined;
   private readonly fetchFn: typeof fetch;
 
   constructor(opts: ApiClientOpts) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
-    this.apiKey = opts.apiKey;
     this.fetchFn = opts.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -209,7 +205,6 @@ export class ApiClient {
     }
 
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
     const init: RequestInit = { method: route.method, headers };
     if (opts?.body !== undefined) {
       headers["Content-Type"] = "application/json";

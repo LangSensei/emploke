@@ -52,9 +52,9 @@ export const defaultSpawnImpl: SpawnFn = crossSpawn as unknown as SpawnFn;
  * `env` as "actually set the variable to the literal string 'undefined'"
  * on some platforms (the value goes through a `String()` conversion).
  * That's almost never what the caller wants when they pass
- * `EMPLOKE_API_KEY: process.env.EMPLOKE_API_KEY` and the upstream env
- * has no key set. Stripping `undefined` before spawn means downstream
- * `process.env.EMPLOKE_API_KEY` is genuinely `undefined` rather than
+ * `EMPLOKE_HOME: process.env.EMPLOKE_HOME` and the upstream env
+ * has no value set. Stripping `undefined` before spawn means downstream
+ * `process.env.EMPLOKE_HOME` is genuinely `undefined` rather than
  * the string "undefined". The same convention is used by every
  * `process.env`-aware helper we've built so the runtime stays
  * predictable across platforms.

@@ -34,7 +34,6 @@ export interface StartOpts {
   readonly home?: string;
   readonly port?: number;
   readonly host?: string;
-  readonly apiKey?: string;
   readonly serveStatic?: boolean;
   readonly staticDir?: string;
   readonly logLevel?: "debug" | "info" | "warn" | "error";
@@ -67,7 +66,6 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   const home = paths.home;
   const port = opts.port ?? Number(env.PORT || 8787);
   const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
-  const apiKey = opts.apiKey ?? env.EMPLOKE_API_KEY;
   const healthTimeoutMs = opts.healthTimeoutMs ?? 30_000;
 
   // Step 1 — idempotency check.
@@ -105,14 +103,6 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   const logFd = logFh.fd;
 
   // Step 3 — assemble argv for the detached child.
-  //
-  // `EMPLOKE_API_KEY` is intentionally NOT passed as a CLI flag: argv is
-  // visible to other local users via `/proc/<pid>/cmdline` (linux),
-  // `ps aux` (macos), and similar. The env var below is the secret-safe
-  // channel; runServer reads `opts.apiKey ?? env.EMPLOKE_API_KEY` so the
-  // server still picks it up. Same reason `--static-dir` / `--log-*` are
-  // forwarded via env where convenient — argv exposure is the default
-  // hostile surface and we minimise it.
   const selfBin = opts.selfBin ?? resolveSelfBin();
   const nodeArgs = opts.nodeArgs ?? [];
   const childArgs: string[] = [
@@ -131,17 +121,13 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
 
   // Step 4 — child env. We re-export EMPLOKE_HOME / PORT / EMPLOKE_HOST
   // so the child sees the same values whether they came from the
-  // operator's env or were passed via flags. EMPLOKE_API_KEY is only
-  // forwarded when set, otherwise we explicitly delete it so the child
-  // doesn't inherit a stale value from the parent shell.
+  // operator's env or were passed via flags.
   const childEnv: NodeJS.ProcessEnv = {
     ...env,
     EMPLOKE_HOME: home,
     PORT: String(port),
     EMPLOKE_HOST: host,
   };
-  if (apiKey !== undefined && apiKey !== "") childEnv.EMPLOKE_API_KEY = apiKey;
-  else childEnv.EMPLOKE_API_KEY = undefined;
   if (opts.staticDir !== undefined) childEnv.EMPLOKE_STATIC_DIR = opts.staticDir;
   if (opts.logLevel !== undefined) childEnv.EMPLOKE_LOG_LEVEL = opts.logLevel;
   if (opts.logFormat !== undefined) childEnv.EMPLOKE_LOG_FORMAT = opts.logFormat;
@@ -181,9 +167,6 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
     startedAt: new Date().toISOString(),
     serverArgs: childArgs,
   };
-  if (apiKey !== undefined && apiKey !== "") {
-    (rf as { apiKey?: string }).apiKey = apiKey;
-  }
   await writeRuntimeFile(home, rf);
 
   // Step 7 — wait for the server to actually accept requests.

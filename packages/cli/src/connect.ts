@@ -1,18 +1,17 @@
 /**
- * Resolve where to talk to the server (`baseUrl`), what auth to send
- * (`apiKey`), and which workspace to scope workspace-aware commands to
- * (`workspaceId`).
+ * Resolve where to talk to the server (`baseUrl`) and which workspace to
+ * scope workspace-aware commands to (`workspaceId`).
  *
  * Precedence (top wins):
- *  - explicit CLI flags (`--server`, `--api-key`, `--workspace`)
- *  - environment (`EMPLOKE_SERVER`, `EMPLOKE_API_KEY`, `EMPLOKE_WORKSPACE`)
- *  - `<EMPLOKE_HOME>/runtime.json` (host/port/apiKey from a recent
+ *  - explicit CLI flags (`--server`, `--workspace`)
+ *  - environment (`EMPLOKE_SERVER`, `EMPLOKE_WORKSPACE`)
+ *  - `<EMPLOKE_HOME>/runtime.json` (host/port from a recent
  *    `emploke start`) — for **connection** only
  *  - hard defaults (`http://127.0.0.1:8787`)
  *
- * The runtime-file fallback covers connection (host/port/apiKey) so a
- * freshly-started local server is usable without env wiring. There is
- * NO equivalent fallback for the workspace id — every workspace-scoped
+ * The runtime-file fallback covers connection (host/port) so a freshly-
+ * started local server is usable without env wiring. There is NO
+ * equivalent fallback for the workspace id — every workspace-scoped
  * command requires `--workspace` or `EMPLOKE_WORKSPACE` explicitly.
  * The previous server-side `currentWorkspace` fallback was removed
  * because it's shared mutable state across every client and races with
@@ -27,15 +26,12 @@ import { readRuntimeFile } from "./runtime-file.js";
 export interface ConnectFlags {
   /** Override `EMPLOKE_SERVER`. Trailing slash stripped by the client. */
   readonly server?: string;
-  /** Override `EMPLOKE_API_KEY`. Empty string is treated as unset. */
-  readonly apiKey?: string;
   /** Override `EMPLOKE_HOME` for runtime.json lookup. */
   readonly home?: string;
 }
 
 export interface ConnectionInfo {
   readonly baseUrl: string;
-  readonly apiKey: string | undefined;
 }
 
 /** Default base URL when nothing else is configured. */
@@ -43,16 +39,14 @@ export const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 
 /**
  * Resolve where to send HTTP requests. Pure async — no side effects
- * beyond reading `runtime.json`. Always returns a `baseUrl`; `apiKey`
- * stays undefined when unauthenticated mode is in play.
+ * beyond reading `runtime.json`. Always returns a `baseUrl`.
  */
 export async function resolveConnection(flags: ConnectFlags = {}): Promise<ConnectionInfo> {
   const env = process.env;
 
   let baseUrl = nonEmpty(flags.server) ?? nonEmpty(env.EMPLOKE_SERVER);
-  let apiKey = nonEmpty(flags.apiKey) ?? nonEmpty(env.EMPLOKE_API_KEY);
 
-  if (!baseUrl || !apiKey) {
+  if (!baseUrl) {
     const paths = resolveEmplokePaths(
       flags.home !== undefined ? { ...env, EMPLOKE_HOME: flags.home } : env,
     );
@@ -64,17 +58,13 @@ export async function resolveConnection(flags: ConnectFlags = {}): Promise<Conne
       // are still honoured; absent both, we fall through to defaults.
     }
     if (rt) {
-      if (!baseUrl) {
-        const host = rt.host === "0.0.0.0" ? "127.0.0.1" : rt.host;
-        baseUrl = `http://${host}:${rt.port}`;
-      }
-      if (!apiKey && rt.apiKey) apiKey = rt.apiKey;
+      const host = rt.host === "0.0.0.0" ? "127.0.0.1" : rt.host;
+      baseUrl = `http://${host}:${rt.port}`;
     }
   }
 
   return {
     baseUrl: baseUrl ?? DEFAULT_BASE_URL,
-    apiKey,
   };
 }
 
@@ -85,11 +75,7 @@ export async function resolveConnection(flags: ConnectFlags = {}): Promise<Conne
  */
 export async function makeClient(flags: ConnectFlags = {}): Promise<ApiClient> {
   const conn = await resolveConnection(flags);
-  return new ApiClient(
-    conn.apiKey !== undefined
-      ? { baseUrl: conn.baseUrl, apiKey: conn.apiKey }
-      : { baseUrl: conn.baseUrl },
-  );
+  return new ApiClient({ baseUrl: conn.baseUrl });
 }
 
 export interface WorkspaceFlags extends ConnectFlags {
