@@ -1005,10 +1005,17 @@ export interface ActivityStreamHandle {
 
 export interface SubscribeTaskActivityOpts {
   /**
-   * Resume from this seq (exclusive) on FIRST connect — server reads
-   * it from a query-param fallback and uses it as the SSE start
-   * point. After the first frame the browser's EventSource takes
-   * over via `Last-Event-ID` for transport-drop reconnects.
+   * Resume from this seq (exclusive). Currently a placeholder for
+   * future use — the SSE EventSource API doesn't support custom
+   * headers cross-browser, so we cannot propagate this on FIRST
+   * connect (no query-param fallback wired through yet). On
+   * RECONNECT (transport drop), the browser sets `Last-Event-ID`
+   * automatically from the `id:` field on each frame the server
+   * emits — which the server route reads as `after`. So in the
+   * reconnect case, resume Just Works without anyone passing this
+   * field. For first-connect history catch-up the caller should do
+   * a one-shot {@link fetchTaskActivity} `{ after }` and stitch the
+   * result before subscribing.
    */
   after?: number;
   onItem: (item: ActivityItem) => void;

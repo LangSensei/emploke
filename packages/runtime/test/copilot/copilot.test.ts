@@ -532,5 +532,67 @@ describe("CopilotRuntime", () => {
       expect((collected[0] as { kind: string; text: string }).kind).toBe("user");
       expect((collected[0] as { text: string }).text).toBe("live!");
     });
+
+    it("resumes from `after` (exclusive) so SSE Last-Event-ID reconnects skip already-seen seqs", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const eventsPath = path.join(dir, "events.jsonl");
+      // Pre-seed 3 historical lines (seqs 0,1,2) so the iterator's
+      // post-resume parser starts numbering at the right offset.
+      const seed = (i: number) =>
+        `${JSON.stringify({
+          type: "user.message",
+          id: `u${i}`,
+          parentId: null,
+          timestamp: "2026-05-12T03:54:11.016Z",
+          data: { content: `seed ${i}` },
+        })}\n`;
+      await writeFile(eventsPath, `${seed(0)}${seed(1)}${seed(2)}`);
+
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const ac = new AbortController();
+      const collected: { seq: number; text: string }[] = [];
+
+      const iterPromise = (async () => {
+        for await (const item of rt.streamActivity({
+          runtimeSessionId: FIXED_UUID,
+          // Last-Event-ID equivalent: the client already saw seq 1, so
+          // the runtime should yield items with seq > 1 only. The
+          // historical seq-2 line is already on disk but lives BELOW
+          // the offset (= file size at subscription time), so it
+          // doesn't get re-yielded — only newly appended bytes are.
+          after: 1,
+          signal: ac.signal,
+        })) {
+          collected.push({
+            seq: (item as { seq: number }).seq,
+            text: (item as { text?: string }).text ?? "",
+          });
+        }
+      })();
+
+      const { appendFile } = await import("node:fs/promises");
+      const { setTimeout: delay } = await import("node:timers/promises");
+      await delay(300);
+      // Append two NEW lines after subscription. They should be
+      // numbered seq 2, 3 (continuing from `after + 1 = 2`). The
+      // pre-existing seq-2 line is below the subscription offset,
+      // so the freshly-written line gets seq 2 too — note that the
+      // stream parser numbers off the `after`-derived startSeq, NOT
+      // the file's historical content. This is the documented
+      // SSE-resume contract.
+      await appendFile(eventsPath, seed(3));
+      await appendFile(eventsPath, seed(4));
+      await delay(500);
+      ac.abort();
+      await iterPromise;
+
+      // We saw the two new appends, numbered starting from after+1.
+      expect(collected.length).toBe(2);
+      expect(collected[0]?.seq).toBe(2);
+      expect(collected[1]?.seq).toBe(3);
+      expect(collected[0]?.text).toBe("seed 3");
+      expect(collected[1]?.text).toBe("seed 4");
+    });
   });
 });
