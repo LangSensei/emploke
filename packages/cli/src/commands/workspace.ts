@@ -2,9 +2,9 @@
  * `emploke workspace …` — 8 subcommands wrapping the workspace HTTP
  * surface (list / add / current / use / show / update / rm / reload).
  *
- * Every command takes `--server` / `--api-key` / `--output` (some also
- * `--json` shorthand). Workspace-scoped flags (`--workspace`) live in
- * the family commands (`session`, `task`, `catalog`).
+ * Every command takes `--server` / `--output` (some also `--json`
+ * shorthand). Workspace-scoped flags (`--workspace`) live in the family
+ * commands (`session`, `task`, `catalog`).
  */
 
 import { makeClient } from "../connect.js";

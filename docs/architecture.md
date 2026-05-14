@@ -143,8 +143,8 @@ Why one DB per scope rather than one DB per entity:
   `<workspace>/tasks/<id>/` are the agent's own product dirs. emploke
   creates them and bakes a starter `AGENTS.md` / `.mcp.json` from the
   catalog; the agent owns everything else inside.
-- **Server lifecycle** — `<EMPLOKE_HOME>/runtime.json` (pid + port +
-  apiKey) stays a JSON file for ops ergonomics. Port-binding is the
+- **Server lifecycle** — `<EMPLOKE_HOME>/runtime.json` (pid + port)
+  stays a JSON file for ops ergonomics. Port-binding is the
   actual mutex; SQLite's atomic-write would buy nothing here.
 - **Logs** — `<EMPLOKE_HOME>/logs/` is rotated JSONL via `pino-roll`.
 
@@ -339,7 +339,7 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 | Path | Owner | Notes |
 | ---- | ----- | ----- |
 | `global.db`        | server               | SQLite — workspace registry (id → workdir + currentId) plus other cross-workspace state. |
-| `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
+| `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port of the running server. |
 | `logs/`            | server               | Rotated server logs (pino-roll). |
 | `shared/`          | runtime adapters     | `${globalDir}` placeholder root for MCP specs. |
 

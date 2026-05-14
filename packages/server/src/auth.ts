@@ -11,6 +11,12 @@
 export function isLoopbackBind(host: string): boolean {
   if (host === "127.0.0.1" || host === "localhost") return true;
   if (host === "::1" || host === "[::1]") return true;
+  // IPv4-mapped IPv6 loopback (`::ffff:127.0.0.1`, optionally bracketed)
+  // — Node's dual-stack sockets normalise this to v4 loopback at bind
+  // time, so it's just as safe as the literal v4 form. Cheaper to
+  // recognise here than to leave a paper-cut for users who explicitly
+  // type the v6 form.
+  if (host.startsWith("::ffff:127.") || host.startsWith("[::ffff:127.")) return true;
   // Other 127.x.x.x addresses are also loopback per RFC 5735, but we
   // expect production users to spell them as 127.0.0.1.
   return host.startsWith("127.");

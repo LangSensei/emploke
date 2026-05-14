@@ -15,6 +15,15 @@ describe("isLoopbackBind", () => {
     expect(isLoopbackBind("[::1]")).toBe(true);
   });
 
+  it("recognises IPv4-mapped IPv6 loopback (::ffff:127.x.x.x, bracketed or bare)", () => {
+    // Node's dual-stack sockets normalise this to v4 loopback at bind
+    // time. Refusing it would be a paper-cut for users who explicitly
+    // type the v6 form.
+    expect(isLoopbackBind("::ffff:127.0.0.1")).toBe(true);
+    expect(isLoopbackBind("[::ffff:127.0.0.1]")).toBe(true);
+    expect(isLoopbackBind("::ffff:127.0.0.2")).toBe(true);
+  });
+
   it("recognises any 127.x.x.x address", () => {
     expect(isLoopbackBind("127.0.0.2")).toBe(true);
     expect(isLoopbackBind("127.255.255.255")).toBe(true);

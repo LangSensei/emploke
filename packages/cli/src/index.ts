@@ -817,9 +817,9 @@ function optionalString<K extends string>(
 }
 
 /**
- * Apply the common API-call flags (`--server`, `--api-key`, `--output`,
- * `--json`) to a command. Pulled into a helper so each registration
- * stays one `.option(...)` chain shorter.
+ * Apply the common API-call flags (`--server`, `--output`, `--json`)
+ * to a command. Pulled into a helper so each registration stays one
+ * `.option(...)` chain shorter.
  */
 function withConnectFlags(c: Command): Command {
   return c
