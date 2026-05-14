@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,7 @@ import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
+  assertFramingPromptIsSafe,
   CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
@@ -16,6 +17,10 @@ import {
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
   SqliteTaskRepository,
+  TASK_ARTIFACT_SUBDIR,
+  TASK_FILENAME,
+  TASK_FRAMING_PROMPT_COPILOT,
+  TASK_TEMP_SUBDIR,
   Task,
   TaskManager,
   TaskNotFoundError,
@@ -374,7 +379,10 @@ describe("dispatch — happy path", () => {
     expect(t.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
 
     expect(rt.dispatchCalls).toHaveLength(1);
-    expect(rt.dispatchCalls[0].prompt).toBe("Plant a tree.");
+    // Per issue #109: the user's `instructions` is no longer passed
+    // via the spawn argv — it lives in `<workdir>/TASK.md`. The
+    // runtime receives only the fixed framing prompt.
+    expect(rt.dispatchCalls[0].prompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
 
     const meta = readTaskRuntimeMetadata(t);
     expect(meta.workdir).toBe(path.join(tasksDir, t.id));
@@ -387,6 +395,94 @@ describe("dispatch — happy path", () => {
     const persisted = await repo.read(t.id);
     expect(persisted?.status).toBe("running");
     expect(persisted?.id).toBe(t.id);
+  });
+});
+
+// ───── issue #109: file-based instructions + workdir contract ─────
+
+describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
+  it("writes <workdir>/TASK.md byte-equal to the user's instructions (UTF-8, no BOM)", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+
+    // Multi-line + multi-byte UTF-8 (CJK + emoji) covers two things:
+    //   1. LF inside instructions used to corrupt the spawn argv on
+    //      Windows (Bug A in #109). Now LF is fine in TASK.md.
+    //   2. Non-ASCII bytes round-trip cleanly through writeFile.
+    const instructions = "Line one.\nLine two.\n你好 🌳";
+    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions }));
+
+    const meta = readTaskRuntimeMetadata(t);
+    const taskMdPath = path.join(meta.workdir as string, TASK_FILENAME);
+    // Read as raw bytes — assert no BOM prefix and exact byte-equality.
+    const buf = await readFile(taskMdPath);
+    expect(buf[0]).not.toBe(0xef); // no UTF-8 BOM
+    expect(buf.equals(Buffer.from(instructions, "utf8"))).toBe(true);
+  });
+
+  it("creates <workdir>/temp/ and <workdir>/artifact/ as empty directories", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+
+    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "x" }));
+    const meta = readTaskRuntimeMetadata(t);
+    const wd = meta.workdir as string;
+
+    const tempStat = await stat(path.join(wd, TASK_TEMP_SUBDIR));
+    const artifactStat = await stat(path.join(wd, TASK_ARTIFACT_SUBDIR));
+    expect(tempStat.isDirectory()).toBe(true);
+    expect(artifactStat.isDirectory()).toBe(true);
+
+    expect(await readdir(path.join(wd, TASK_TEMP_SUBDIR))).toEqual([]);
+    expect(await readdir(path.join(wd, TASK_ARTIFACT_SUBDIR))).toEqual([]);
+  });
+
+  it("passes the framing prompt (NOT the user instructions) as the runtime spawn prompt", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+
+    // An instructions value that would have triggered Bug A — embedded
+    // LF, would have truncated the cmd.exe argv on Windows.
+    await m.dispatch(
+      dispatchOf({
+        agent: "demo",
+        instructions: "first line\nsecond line\nthird line",
+      }),
+    );
+
+    expect(rt.dispatchCalls).toHaveLength(1);
+    const sentPrompt = rt.dispatchCalls[0].prompt;
+    // Exactly the fixed copilot framing prompt — no user bytes leak in.
+    expect(sentPrompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
+    expect(sentPrompt.includes("\n")).toBe(false);
+    expect(sentPrompt.includes("\r")).toBe(false);
+    expect(/[^\x20-\x7E]/.test(sentPrompt)).toBe(false);
+  });
+});
+
+describe("framing prompt invariant guard", () => {
+  it("accepts a single-line printable-ASCII string", () => {
+    expect(() => assertFramingPromptIsSafe("hello world 123 .,;:!?")).not.toThrow();
+  });
+
+  it("rejects an LF-containing string", () => {
+    expect(() => assertFramingPromptIsSafe("line1\nline2")).toThrow(/single-line printable ASCII/);
+  });
+
+  it("rejects a CR-containing string", () => {
+    expect(() => assertFramingPromptIsSafe("line1\rline2")).toThrow(/single-line printable ASCII/);
+  });
+
+  it("rejects a non-ASCII byte (e.g. CJK)", () => {
+    expect(() => assertFramingPromptIsSafe("hello 你好")).toThrow(/single-line printable ASCII/);
+  });
+
+  it("rejects a control byte (e.g. tab)", () => {
+    expect(() => assertFramingPromptIsSafe("col1\tcol2")).toThrow(/single-line printable ASCII/);
+  });
+
+  it("the production copilot framing prompt itself passes the guard", () => {
+    expect(() => assertFramingPromptIsSafe(TASK_FRAMING_PROMPT_COPILOT)).not.toThrow();
   });
 });
 
@@ -705,7 +801,10 @@ describe("get / list", () => {
       const reg = new RuntimeRegistry();
       reg.register(copilot);
       reg.register(gemini);
-      const { m } = makeManager({ registry: reg, runtime: copilot });
+      const { m } = makeManager({
+        registry: reg,
+        runtime: copilot,
+      });
       await m.dispatch(dispatchOf({ runtime: "copilot" }));
       await m.dispatch(dispatchOf({ runtime: "gemini" }));
 
