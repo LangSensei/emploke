@@ -8,7 +8,7 @@ import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.j
 import type { PlaceholderContext } from "../placeholders.js";
 import type { RuntimeExit, RuntimeHandle } from "../types.js";
 import { generateCopilotSessionId } from "./ids.js";
-import { provisionCopilotWorkdir } from "./provision.js";
+import { COPILOT_MCP_CONFIG, provisionCopilotWorkdir } from "./provision.js";
 
 /**
  * File names for side-channel stdout/stderr capture under the task
@@ -27,13 +27,13 @@ export const COPILOT_STDOUT_LOG = "stdout.log";
 export const COPILOT_STDERR_LOG = "stderr.log";
 
 /**
- * Filename that `provisionCopilotWorkdir` writes inside the spawn cwd
- * (i.e. `taskDir`) when the resolved agent declares any MCP servers.
- * Kept as a constant so the launcher's existence probe and the
- * `--additional-mcp-config` argv stay in lockstep with the writer in
- * `provision.ts` (`MCP_CONFIG_PATH`).
+ * Re-exported workspace `.mcp.json` filename. The single source of truth
+ * lives in `provision.ts` (the actual writer); the launcher's existence
+ * probe and `--additional-mcp-config` argv consume it from here. Kept as
+ * a re-export so `@emploke/runtime` consumers see a stable symbol on the
+ * launch-headless surface.
  */
-export const COPILOT_MCP_CONFIG = ".mcp.json";
+export { COPILOT_MCP_CONFIG };
 
 /**
  * Argv fragment appended to non-interactive `copilot -p` when the spawn
