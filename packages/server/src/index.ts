@@ -12,7 +12,7 @@ import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace"
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
-import { assertBindIsSafe, bearerAuth, isLoopbackBind } from "./auth.js";
+import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
@@ -92,8 +92,6 @@ export interface RunServerOpts {
   readonly port?: number;
   /** Override `EMPLOKE_HOST`. Defaults to `"127.0.0.1"`. */
   readonly host?: string;
-  /** Override `EMPLOKE_API_KEY`. Empty / unset = no auth. */
-  readonly apiKey?: string;
   /**
    * Serve the dashboard SPA from `staticDir`. Default `false` (dev mode —
    * Vite serves the dashboard separately). The bundled binary's `bin.ts`
@@ -149,14 +147,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const port = opts.port ?? Number(env.PORT || 8787);
   // Bind to loopback by default — the server exposes destructive endpoints
   // (DELETE /api/workspaces/:id/catalog/skills/:name, etc.) and is intended
-  // as a single-user local dashboard. To intentionally expose on the LAN, set
-  // EMPLOKE_HOST=0.0.0.0 AND set EMPLOKE_API_KEY=<token>. Non-loopback bind
-  // without an API key is refused at startup (see assertBindIsSafe in ./auth).
+  // as a single-user local dashboard. Non-loopback bind is refused at
+  // startup (see assertBindIsSafe in ./auth). For remote access, expose
+  // the loopback socket through SSH port-forward, a reverse proxy, or
+  // a mesh VPN — all of which terminate auth at a layer designed for it.
   const hostname = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
-  // When set, every /api/* request must carry `Authorization: Bearer <key>`
-  // (or `?apiKey=<key>` for dashboards that can't easily set headers).
-  // Empty / unset = no auth (only safe for loopback bind).
-  const apiKey = opts.apiKey ?? env.EMPLOKE_API_KEY;
   const staticDir =
     opts.staticDir ?? env.EMPLOKE_STATIC_DIR ?? resolveStaticDir(import.meta.dirname);
   // In source-mode dev, the dashboard is served by Vite on its own port and the
@@ -164,7 +159,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // defaults this to true so the SPA is served alongside /api on one port.
   const serveStaticFiles = opts.serveStatic ?? false;
 
-  assertBindIsSafe(hostname, apiKey);
+  assertBindIsSafe(hostname);
 
   // Logger: rotated JSON files under <home>/logs (default) plus stdout
   // for the operator. Level + format honour env so dev can stay pretty
@@ -215,12 +210,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     // so dialing 0.0.0.0 would be a misconfiguration on Windows
     // (refused) and a no-op on macOS/Linux. Loopback is the only
     // address guaranteed to work from a child.
-    //
-    // `EMPLOKE_API_KEY` is conditionally added so unset upstream means
-    // genuinely unset downstream (mergeEnv in launch-headless drops
-    // undefined values, but we also keep them out of the static bag
-    // for clarity in logs / tests).
-    subprocessEnvBase: buildSubprocessEnvBase({ hostname, port, apiKey, home: paths.home }),
+    subprocessEnvBase: buildSubprocessEnvBase({ hostname, port, home: paths.home }),
   });
 
   const app = new Hono();
@@ -253,10 +243,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       startedAtMs,
     }),
   );
-
-  if (apiKey && apiKey.trim() !== "") {
-    app.use("/api/*", bearerAuth(apiKey.trim()));
-  }
 
   app.route(
     "/api/config",
@@ -336,7 +322,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       workspaces: (await workspaces.list()).length,
       runtimes: runtimeRegistry.kinds(),
       static: serveStaticFiles ? staticDir : null,
-      auth: apiKey && apiKey.trim() !== "" ? "bearer" : "disabled",
       logsDir: paths.logsDir,
     },
     "emploke server starting",
@@ -344,7 +329,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   if (!isLoopbackBind(hostname)) {
     logger.warn(
       { host: hostname },
-      "server is reachable from the network; rotate EMPLOKE_API_KEY if it leaks",
+      "server is reachable from the network; emploke does not ship its own auth — terminate auth at a reverse proxy",
     );
   }
   const server = serve({ fetch: app.fetch, port, hostname });

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,29 +37,6 @@ describe("runtime-file", () => {
     await writeRuntimeFile(home, payload);
     const read = await readRuntimeFile(home);
     expect(read).toEqual(payload);
-  });
-
-  it("write tightens permissions to 0600 when an apiKey is recorded", async () => {
-    if (process.platform === "win32") {
-      // Windows ignores POSIX mode bits; the per-user home is the
-      // protection. Just assert the file was written.
-      await writeRuntimeFile(home, makePayload({ apiKey: "secret" }));
-      expect(await readRuntimeFile(home)).not.toBeNull();
-      return;
-    }
-    await writeRuntimeFile(home, makePayload({ apiKey: "secret" }));
-    const st = await stat(runtimeFilePath(home));
-    // Mask away type bits.
-    expect(st.mode & 0o777).toBe(0o600);
-  });
-
-  it("does not chmod when apiKey is absent (writeJsonAtomic default mode)", async () => {
-    if (process.platform === "win32") return;
-    await writeRuntimeFile(home, makePayload());
-    const st = await stat(runtimeFilePath(home));
-    // Default mode from `writeFile` is 0666 minus umask; we only assert
-    // it isn't 0600 (i.e. we didn't accidentally tighten when not asked).
-    expect(st.mode & 0o600).toBe(0o600);
   });
 
   it("write is atomic — concurrent reads see a complete payload, never partial bytes", async () => {

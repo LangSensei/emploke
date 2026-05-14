@@ -4,18 +4,12 @@
  * so a later CLI invocation can find the running server, talk to it, and
  * clean up after it.
  *
- * Sensitive: when `apiKey` is recorded, the file is `chmod 0600` on POSIX
- * so a same-host non-owner cannot read the API key out of it. Windows ACLs
- * are not adjusted (the `chmod` syscall has no ACL semantics there); the
- * Windows `<home>` is per-user already, which provides equivalent
- * protection.
- *
  * Atomic writes use `@emploke/fs.writeJsonAtomic` so a second `emploke
  * status` invocation racing the writer never sees a half-written JSON
  * payload.
  */
 
-import { chmod, mkdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomic } from "@emploke/fs";
 import { RUNTIME_FILE_NAME } from "@emploke/paths";
@@ -34,13 +28,6 @@ export interface RuntimeFile {
   readonly host: string;
   /** Listening port (mirrors `PORT` passed to `start`). */
   readonly port: number;
-  /**
-   * API key the server expects on `/api/*` requests. Only present when a
-   * key was passed to `start`. Allows other CLI invocations on the same
-   * host to talk to the server without re-supplying the key. File is
-   * `chmod 0600` when this field is set.
-   */
-  readonly apiKey?: string;
   /** ISO 8601 timestamp captured at `start` time. */
   readonly startedAt: string;
   /**
@@ -83,22 +70,12 @@ export async function readRuntimeFile(home: string): Promise<RuntimeFile | null>
 
 /**
  * Atomically write the runtime file. Creates `<home>` first because the
- * user may have wiped it between sessions. When `apiKey` is present, the
- * file is `chmod 0600` (best-effort: the chmod is a no-op for ACLs on
- * Windows, but the Windows `<home>` is already per-user).
+ * user may have wiped it between sessions.
  */
 export async function writeRuntimeFile(home: string, value: RuntimeFile): Promise<void> {
   await mkdir(home, { recursive: true });
   const p = runtimeFilePath(home);
   await writeJsonAtomic(p, value);
-  if (value.apiKey !== undefined && value.apiKey !== "") {
-    try {
-      await chmod(p, 0o600);
-    } catch {
-      // POSIX: shouldn't happen for an owner-writable file we just created.
-      // Windows: chmod can't tighten ACLs; skip silently.
-    }
-  }
 }
 
 /** Idempotent delete. Tolerates a missing file (already cleaned up). */

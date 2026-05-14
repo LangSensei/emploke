@@ -14,7 +14,6 @@ import { type RunServerOpts, runServer } from "@emploke/server";
 export interface ServeOpts {
   readonly port?: number;
   readonly host?: string;
-  readonly apiKey?: string;
   /** Defaults to `true` (production binary behaviour). Pass `false` for source-mode dev. */
   readonly serveStatic?: boolean;
   readonly staticDir?: string;
@@ -31,9 +30,6 @@ export async function serve(opts: ServeOpts = {}): Promise<never> {
   }
   if (opts.host !== undefined) {
     (runOpts as { host?: string }).host = opts.host;
-  }
-  if (opts.apiKey !== undefined) {
-    (runOpts as { apiKey?: string }).apiKey = opts.apiKey;
   }
   if (opts.staticDir !== undefined) {
     (runOpts as { staticDir?: string }).staticDir = opts.staticDir;

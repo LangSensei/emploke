@@ -267,8 +267,8 @@ export class SessionManager {
     // Layer in the per-session env bag on top of whatever the runtime
     // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKDIR /
     // EMPLOKE_SESSION_ID. Server-supplied base adds: EMPLOKE_SERVER /
-    // EMPLOKE_API_KEY (when set) / EMPLOKE_HOME. Both layers are
-    // merged with the runtime's own (currently empty) env field
+    // EMPLOKE_HOME. Both layers are merged with the runtime's own
+    // (currently empty) env field
     // letting a future runtime contribute its own vars (e.g. a
     // CLI-specific flag).
     //
@@ -332,7 +332,7 @@ export class SessionManager {
    * runtime. Order (later wins on key collision):
    *
    *   1. The server-supplied base (`subprocessEnvBase`) — typically
-   *      EMPLOKE_SERVER / EMPLOKE_API_KEY / EMPLOKE_HOME.
+   *      EMPLOKE_SERVER / EMPLOKE_HOME.
    *   2. Whatever the runtime contributed via `LaunchCommand.env`
    *      (presently nothing for Copilot; reserved for future runtimes
    *      that need their own vars).

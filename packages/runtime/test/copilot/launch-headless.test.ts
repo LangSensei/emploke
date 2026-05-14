@@ -314,8 +314,8 @@ describe("launchCopilotHeadless", () => {
   it("subprocessEnv with explicit `undefined` deletes the inherited variable", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
-    const original = process.env.EMPLOKE_API_KEY;
-    process.env.EMPLOKE_API_KEY = "leaked-from-server-env";
+    const original = process.env.EMPLOKE_LEGACY_VAR;
+    process.env.EMPLOKE_LEGACY_VAR = "leaked-from-server-env";
     try {
       await launchCopilotHeadless(
         {
@@ -324,12 +324,12 @@ describe("launchCopilotHeadless", () => {
           catalog,
           prompt: "x",
           workspaceDir: scratch,
-          // Server has no API key configured — caller passes
-          // `undefined` rather than branching on whether the key is
-          // set upstream. mergeEnv must drop the entry entirely so
-          // the child sees `process.env.EMPLOKE_API_KEY === undefined`
+          // Caller wants the inherited variable explicitly suppressed
+          // — passing `undefined` rather than branching on whether the
+          // value is set upstream. mergeEnv must drop the entry
+          // entirely so the child sees `process.env.X === undefined`
           // rather than the literal string "undefined".
-          subprocessEnv: { EMPLOKE_API_KEY: undefined },
+          subprocessEnv: { EMPLOKE_LEGACY_VAR: undefined },
         },
         {
           copilotStateDir: stateDir,
@@ -339,11 +339,11 @@ describe("launchCopilotHeadless", () => {
         },
       );
       const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
-      expect(opts.env.EMPLOKE_API_KEY).toBeUndefined();
-      expect("EMPLOKE_API_KEY" in opts.env).toBe(false);
+      expect(opts.env.EMPLOKE_LEGACY_VAR).toBeUndefined();
+      expect("EMPLOKE_LEGACY_VAR" in opts.env).toBe(false);
     } finally {
-      if (original === undefined) delete process.env.EMPLOKE_API_KEY;
-      else process.env.EMPLOKE_API_KEY = original;
+      if (original === undefined) delete process.env.EMPLOKE_LEGACY_VAR;
+      else process.env.EMPLOKE_LEGACY_VAR = original;
     }
   });
 

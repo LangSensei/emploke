@@ -129,9 +129,8 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
       </dl>
 
       <p className="topbar__crumb" style={{ marginTop: 16 }}>
-        Set <code>EMPLOKE_HOST=0.0.0.0</code> on the server to expose the dashboard on the local
-        network (warning: enables destructive endpoints over LAN — also set{" "}
-        <code>EMPLOKE_API_KEY</code>).
+        emploke binds to <code>127.0.0.1</code> and ships no built-in auth. For remote access,
+        expose the loopback socket through SSH port-forward, a reverse proxy, or a mesh VPN.
       </p>
     </div>
   );
