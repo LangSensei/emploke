@@ -13,6 +13,9 @@ export {
   isCopilotSessionId,
 } from "./copilot/ids.js";
 export {
+  type BuildCopilotHeadlessArgsOpts,
+  buildCopilotHeadlessArgs,
+  COPILOT_MCP_CONFIG,
   COPILOT_STDERR_LOG,
   COPILOT_STDOUT_LOG,
   type LaunchCopilotHeadlessDeps,
