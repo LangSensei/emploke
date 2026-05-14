@@ -136,8 +136,18 @@ export interface TaskActivityOpts extends CommonFlags {
   readonly tid: string;
   /** Tail the live activity stream over SSE; exits when the task terminates. */
   readonly follow?: boolean;
-  /** Only return items with seq > cursor. Forwarded as ?cursor= query param. */
-  readonly cursor?: number;
+  /**
+   * Backward pagination: return items with `seq < before`. Mutually
+   * exclusive with --after; rejected by the server as 400 if both
+   * are supplied. Use to walk older history one page at a time.
+   */
+  readonly before?: number;
+  /**
+   * Forward pagination: return items with `seq > after`. With
+   * --follow, sent as `Last-Event-ID: <after>` to resume the SSE
+   * stream from that seq. Without --follow, used as `?after=` query.
+   */
+  readonly after?: number;
   /** Maximum items per page. Server clamps to [1, 500]; default 50. */
   readonly limit?: number;
 }
@@ -146,16 +156,29 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
   if (typeof opts.tid !== "string" || opts.tid.trim() === "") {
     return { exitCode: 2, stderr: "task id is required\n" };
   }
+  if (opts.before !== undefined && opts.after !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--before and --after are mutually exclusive\n",
+    };
+  }
+  if (opts.follow === true && opts.before !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--before cannot be combined with --follow (--follow resumes forward only; pass --after instead)\n",
+    };
+  }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
 
     if (opts.follow === true) {
-      return await followTaskActivity(client, id, opts.tid, opts.cursor);
+      return await followTaskActivity(client, id, opts.tid, opts.after);
     }
 
-    const query: { cursor?: string; limit?: string } = {};
-    if (opts.cursor !== undefined) query.cursor = String(opts.cursor);
+    const query: { before?: string; after?: string; limit?: string } = {};
+    if (opts.before !== undefined) query.before = String(opts.before);
+    if (opts.after !== undefined) query.after = String(opts.after);
     if (opts.limit !== undefined) query.limit = String(opts.limit);
     const payload = await client.call("tasks.activity", {
       params: { id, tid: opts.tid },
@@ -179,35 +202,26 @@ export async function taskActivity(opts: TaskActivityOpts): Promise<CommandResul
  * stream closes cleanly. Exits non-zero on transport / framing
  * errors. SIGINT (Ctrl+C) terminates the process between frames.
  *
- * Resume: pass `cursor` to send `Last-Event-ID: <cursor>` so the
+ * Resume: pass `after` to send `Last-Event-ID: <after>` so the
  * server replays from that seq. Conversely, on every clean / mid-
  * stream-error exit we print `last seq: <N>` to stderr so the next
  * invocation can resume:
  *
- *   emploke task activity <tid> --follow                          # tail from now
- *   emploke task activity <tid> --follow --cursor 1234            # resume from seq 1234
+ *   emploke task activity <tid> --follow                       # tail from now
+ *   emploke task activity <tid> --follow --after 1234          # resume from seq 1234
  *
  * Inside Ctrl+C the process dies between frames and stderr is not
  * written; recover the last seq from stdout instead
  * (`... | tail -1 | jq .seq`) since each printed item carries its
  * own `seq`.
- *
- * Implementation notes:
- *   - Uses `apiClient.callRaw()` to get the raw `Response` (the
- *     manifest declares the route as `never` response so `call()`
- *     would type-error).
- *   - Hand-parses the SSE wire format (lines split by \n, frames
- *     separated by \n\n; we care about `event:`, `data:`, and
- *     `id:` fields). Avoids pulling in `eventsource-parser` for
- *     ~3KB; the framing is too simple to need it.
  */
 export async function followTaskActivity(
   client: import("../api-client.js").ApiClient,
   id: string,
   tid: string,
-  cursor: number | undefined,
+  after: number | undefined,
 ): Promise<CommandResult> {
-  const headers = cursor !== undefined ? { "Last-Event-ID": String(cursor) } : undefined;
+  const headers = after !== undefined ? { "Last-Event-ID": String(after) } : undefined;
   const res = await client.callRaw("tasks.activity.stream", {
     params: { id, tid },
     ...(headers !== undefined ? { headers } : {}),
@@ -233,10 +247,10 @@ export async function followTaskActivity(
   const reader = res.body.getReader();
   let buffer = "";
   let stdout = "";
-  // Seed lastSeq from the resume cursor so a stream that immediately
+  // Seed lastSeq from the resume `after` so a stream that immediately
   // ends (no items replayed) still produces a recoverable hint —
-  // e.g. resume cursor was already at HEAD.
-  let lastSeq: string | undefined = cursor !== undefined ? String(cursor) : undefined;
+  // e.g. resume `after` was already at HEAD.
+  let lastSeq: string | undefined = after !== undefined ? String(after) : undefined;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -303,7 +317,7 @@ function parseSseFrame(frame: string): { event: string; data: string; id?: strin
     } else if (line.startsWith("id:")) {
       // id: per SSE spec — used by `tasks.activity.stream` to expose
       // each item's monotonic `seq`. Tracking it is what makes
-      // --cursor resume work.
+      // `--after` resume work.
       id = line.slice(3).trim();
     }
     // Ignore `retry:` and comments — we don't need them client-side.

@@ -446,8 +446,12 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Print the runtime-parsed activity timeline (JSON)")
     .option("-f, --follow", "Tail live activity over SSE; exits when task terminates")
     .option(
-      "--cursor <seq>",
-      "Resume from this seq. With --follow, sent as Last-Event-ID; without, used as ?cursor= query.",
+      "--before <seq>",
+      "Backward pagination: return items with seq < before. Mutually exclusive with --after; cannot combine with --follow.",
+    )
+    .option(
+      "--after <seq>",
+      "Forward pagination: items with seq > after. With --follow, sent as Last-Event-ID.",
     )
     .option(
       "--limit <n>",
@@ -455,22 +459,37 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
       (v) => Number.parseInt(v, 10),
     )
     .action(async (tid: string, opts: Record<string, unknown>) => {
-      // Validate `--cursor` up front. The CLI used to silently drop a
-      // non-numeric `--cursor abc` (parseInt → NaN, dropped at
-      // `Number.isFinite`) and SEND a negative `--cursor -1` to the
-      // server (the SSE handler's `^\d+$` check then silently fell
-      // through to "tail from now"). Both are invisible-to-user
-      // mistakes that look like bugs in the server. Reject early.
-      if (opts.cursor !== undefined) {
-        const raw = typeof opts.cursor === "string" ? opts.cursor : String(opts.cursor);
-        const parsed = Number.parseInt(raw, 10);
-        if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== raw.trim()) {
-          slot.result = {
-            exitCode: 2,
-            stderr: `--cursor must be a non-negative integer (got ${JSON.stringify(raw)})\n`,
+      // Validate `--before` / `--after` up front. Same rationale as the
+      // historical --cursor check: a negative or non-numeric value
+      // would silently fall through to "tail from now", looking like
+      // a server bug. Reject loudly.
+      const validateSeqFlag = (
+        flagName: string,
+        raw: unknown,
+      ): { ok: true; value?: number } | { ok: false; result: CommandResult } => {
+        if (raw === undefined) return { ok: true };
+        const str = typeof raw === "string" ? raw : String(raw);
+        const parsed = Number.parseInt(str, 10);
+        if (!Number.isFinite(parsed) || parsed < 0 || `${parsed}` !== str.trim()) {
+          return {
+            ok: false,
+            result: {
+              exitCode: 2,
+              stderr: `${flagName} must be a non-negative integer (got ${JSON.stringify(str)})\n`,
+            },
           };
-          return;
         }
+        return { ok: true, value: parsed };
+      };
+      const beforeCheck = validateSeqFlag("--before", opts.before);
+      if (!beforeCheck.ok) {
+        slot.result = beforeCheck.result;
+        return;
+      }
+      const afterCheck = validateSeqFlag("--after", opts.after);
+      if (!afterCheck.ok) {
+        slot.result = afterCheck.result;
+        return;
       }
       // `--limit` is meaningless under `--follow` (SSE streams until
       // the task terminates; there's no per-page cap). Silent
@@ -485,18 +504,13 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         };
         return;
       }
-      const cursor =
-        typeof opts.cursor === "string"
-          ? Number.parseInt(opts.cursor, 10)
-          : typeof opts.cursor === "number"
-            ? opts.cursor
-            : undefined;
       const limit = typeof opts.limit === "number" ? opts.limit : undefined;
       slot.result = await taskActivity({
         ...parseWorkspaceFlags(opts),
         tid,
         follow: opts.follow === true,
-        ...(cursor !== undefined && Number.isFinite(cursor) ? { cursor } : {}),
+        ...(beforeCheck.value !== undefined ? { before: beforeCheck.value } : {}),
+        ...(afterCheck.value !== undefined ? { after: afterCheck.value } : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
     });

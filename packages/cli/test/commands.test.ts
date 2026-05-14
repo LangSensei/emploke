@@ -217,25 +217,49 @@ describe("API commands (integration)", () => {
     expect(res.stderr.toLowerCase()).toContain("agent");
   });
 
-  it("`task activity --cursor abc` rejects non-numeric cursor with usage exit 2", async () => {
+  it("`task activity --after abc` rejects non-numeric value with usage exit 2", async () => {
     // No round-trip — validation happens in the CLI argv layer before
     // we even resolve the workspace. The previous behaviour silently
-    // dropped a non-numeric cursor (parseInt → NaN, then
+    // dropped a non-numeric pagination flag (parseInt → NaN, then
     // `Number.isFinite` filter), making it look like the server had
     // ignored the resume request.
-    const res = await run(["task", "activity", "tid-x", "--cursor", "abc"], env);
+    const res = await run(["task", "activity", "tid-x", "--after", "abc"], env);
     expect(res.exitCode).toBe(2);
-    expect(res.stderr).toContain("--cursor");
+    expect(res.stderr).toContain("--after");
     expect(res.stderr.toLowerCase()).toContain("non-negative integer");
   });
 
-  it("`task activity --cursor -1` rejects negative cursor", async () => {
+  it("`task activity --after -1` rejects negative value", async () => {
     // Used to silently send Last-Event-ID: -1 to the server, which
     // its `^\d+$` check then dropped — looked like the resume request
     // was honoured but produced no replay.
-    const res = await run(["task", "activity", "tid-x", "--cursor", "-1"], env);
+    const res = await run(["task", "activity", "tid-x", "--after", "-1"], env);
     expect(res.exitCode).toBe(2);
-    expect(res.stderr).toContain("--cursor");
+    expect(res.stderr).toContain("--after");
+  });
+
+  it("`task activity --before abc` rejects non-numeric value", async () => {
+    const res = await run(["task", "activity", "tid-x", "--before", "abc"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("--before");
+    expect(res.stderr.toLowerCase()).toContain("non-negative integer");
+  });
+
+  it("`task activity --before 5 --after 3` rejects mutually-exclusive combo", async () => {
+    // Server also returns 400 on the same combo, but failing in CLI
+    // is faster + clearer (no round-trip, exit 2 = usage error).
+    const res = await run(["task", "activity", "tid-x", "--before", "5", "--after", "3"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr.toLowerCase()).toContain("mutually exclusive");
+  });
+
+  it("`task activity --before 5 --follow` rejects (--before is one-shot only)", async () => {
+    // SSE is forward-only by definition; `--before` describes a
+    // backward window. Combining them is nonsensical.
+    const res = await run(["task", "activity", "tid-x", "--before", "5", "--follow"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("--before");
+    expect(res.stderr).toContain("--follow");
   });
 
   it("`task activity --follow --limit 10` rejects the conflicting combo", async () => {

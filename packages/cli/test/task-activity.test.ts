@@ -5,8 +5,8 @@
  * The test feeds a synthetic SSE Response (built around a
  * `ReadableStream` of UTF-8 frames) into a mock-fetch ApiClient, and
  * asserts:
- *  - `Last-Event-ID` is sent on the request iff the caller passes a
- *    `cursor`.
+ *  - `Last-Event-ID` is sent on the request iff the caller passes
+ *    `after`.
  *  - Each printed item lands on its own NDJSON line.
  *  - `event: end` exits 0; `event: error` exits 1 with stderr.
  *  - Whenever at least one frame carried `id:`, the result's stderr
@@ -63,7 +63,7 @@ function activityFrame(seq: number, payload: object): string {
 }
 
 describe("followTaskActivity", () => {
-  it("does NOT send Last-Event-ID when called without a cursor", async () => {
+  it("does NOT send Last-Event-ID when called without `after`", async () => {
     const { fetchFn, captured } = makeSseFetch(["event: end\ndata: {}"]);
     const client = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
     const r = await followTaskActivity(client, "ws-1", "20260601-abcd1234", undefined);
@@ -71,7 +71,7 @@ describe("followTaskActivity", () => {
     expect(captured[0]?.headers["Last-Event-ID"]).toBeUndefined();
   });
 
-  it("sends Last-Event-ID: <cursor> when a cursor is provided", async () => {
+  it("sends Last-Event-ID: <after> when a `after` is provided", async () => {
     const { fetchFn, captured } = makeSseFetch(["event: end\ndata: {}"]);
     const client = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
     await followTaskActivity(client, "ws-1", "20260601-abcd1234", 1234);
@@ -108,9 +108,9 @@ describe("followTaskActivity", () => {
     expect(r.stderr).toBe("last seq: 9\n");
   });
 
-  it("seeds lastSeq from the resume cursor when no frames carry id", async () => {
-    // Server replays nothing because cursor was already at HEAD; the
-    // hint should still echo the cursor so the user can re-resume
+  it("seeds lastSeq from the resume `after` when no frames carry id", async () => {
+    // Server replays nothing because `after` was already at HEAD; the
+    // hint should still echo the `after` value so the user can re-resume
     // from the same point next time.
     const { fetchFn } = makeSseFetch(["event: end\ndata: {}"]);
     const client = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
@@ -118,7 +118,7 @@ describe("followTaskActivity", () => {
     expect(r.stderr).toBe("last seq: 42\n");
   });
 
-  it("does NOT print a resume hint when no cursor and no frames had id", async () => {
+  it("does NOT print a resume hint when no `after` and no frames had id", async () => {
     const { fetchFn } = makeSseFetch(["event: end\ndata: {}"]);
     const client = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
     const r = await followTaskActivity(client, "ws-1", "tid", undefined);
