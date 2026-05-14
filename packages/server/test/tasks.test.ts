@@ -16,7 +16,7 @@ import { tasksRoutes } from "../src/routes/tasks.js";
 const sampleTask: Task = {
   id: "20260601-abcd1234",
   agent: "writer",
-  instructions: "Draft the post",
+  brief: "Draft the post",
   status: "running",
   metadata: {
     workdir: "/tmp/wd",
@@ -26,7 +26,7 @@ const sampleTask: Task = {
   },
   createdAt: "2026-06-01T00:00:00.000Z",
   startedAt: "2026-06-01T00:00:01.000Z",
-};
+} as unknown as Task;
 
 function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): TaskManager {
   const stub: Partial<Record<keyof TaskManager, unknown>> = {
@@ -131,13 +131,13 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ instructions: "go" }),
+      body: JSON.stringify({ brief: "go" }),
     });
     expect(res.status).toBe(400);
     expect(m.dispatch).not.toHaveBeenCalled();
   });
 
-  it("POST / requires instructions", async () => {
+  it("POST / requires brief", async () => {
     const m = stubManager({});
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
@@ -145,6 +145,84 @@ describe("tasksRoutes", () => {
       body: JSON.stringify({ agent: "writer" }),
     });
     expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/brief/);
+    expect(m.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("POST / rejects empty brief (whitespace-only)", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: "   " }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/non-empty/);
+    expect(m.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("POST / rejects brief containing newline (single-line contract)", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: "first line\nsecond line" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/single line/);
+    expect(m.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("POST / rejects brief containing carriage return", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: "first\rsecond" }),
+    });
+    expect(res.status).toBe(400);
+    expect(m.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("POST / rejects brief longer than 200 characters", async () => {
+    const m = stubManager({});
+    const longBrief = "A".repeat(201);
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: longBrief }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/200 characters/);
+    expect(m.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("POST / accepts brief at exactly 200 characters", async () => {
+    const m = stubManager({});
+    const exactBrief = "A".repeat(200);
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: exactBrief }),
+    });
+    expect(res.status).toBe(201);
+    expect(m.dispatch).toHaveBeenCalledWith({ agent: "writer", brief: exactBrief });
+  });
+
+  it("POST / rejects non-string details", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: "ok", details: 7 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/details/);
     expect(m.dispatch).not.toHaveBeenCalled();
   });
 
@@ -153,22 +231,41 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "hi", runtime: 7 }),
+      body: JSON.stringify({ agent: "writer", brief: "hi", runtime: 7 }),
     });
     expect(res.status).toBe(400);
   });
 
-  it("POST / dispatches and returns 201", async () => {
+  it("POST / dispatches and returns 201 with brief only", async () => {
     const m = stubManager({});
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "Draft the post" }),
+      body: JSON.stringify({ agent: "writer", brief: "Draft the post" }),
     });
     expect(res.status).toBe(201);
     expect(m.dispatch).toHaveBeenCalledWith({
       agent: "writer",
-      instructions: "Draft the post",
+      brief: "Draft the post",
+    });
+  });
+
+  it("POST / forwards optional details when present", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent: "writer",
+        brief: "Draft the post",
+        details: "Tone: warm.\nLength: short.",
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(m.dispatch).toHaveBeenCalledWith({
+      agent: "writer",
+      brief: "Draft the post",
+      details: "Tone: warm.\nLength: short.",
     });
   });
 
@@ -177,13 +274,27 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "go", runtime: "claude" }),
+      body: JSON.stringify({ agent: "writer", brief: "go", runtime: "claude" }),
     });
     expect(res.status).toBe(201);
     expect(m.dispatch).toHaveBeenCalledWith({
       agent: "writer",
-      instructions: "go",
+      brief: "go",
       runtime: "claude",
+    });
+  });
+
+  it("POST / trims whitespace from brief before dispatch", async () => {
+    const m = stubManager({});
+    const res = await tasksRoutes(() => m).request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "writer", brief: "   Draft the post   " }),
+    });
+    expect(res.status).toBe(201);
+    expect(m.dispatch).toHaveBeenCalledWith({
+      agent: "writer",
+      brief: "Draft the post",
     });
   });
 
@@ -196,7 +307,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "ghost", instructions: "go" }),
+      body: JSON.stringify({ agent: "ghost", brief: "go" }),
     });
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -212,7 +323,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "go" }),
+      body: JSON.stringify({ agent: "writer", brief: "go" }),
     });
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -235,7 +346,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+      body: JSON.stringify({ agent: "public/writer", brief: "go" }),
     });
     expect(res.status).toBe(409);
     const body = await res.json();
@@ -258,7 +369,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+      body: JSON.stringify({ agent: "public/writer", brief: "go" }),
     });
     expect(res.status).toBe(409);
     const body = await res.json();
@@ -281,7 +392,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "public/writer", instructions: "go" }),
+      body: JSON.stringify({ agent: "public/writer", brief: "go" }),
     });
     expect(res.status).toBe(409);
     const body = await res.json();
@@ -385,7 +496,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "x" }),
+      body: JSON.stringify({ agent: "writer", brief: "x" }),
     });
     expect(res.status).toBe(500);
   });
@@ -399,7 +510,7 @@ describe("tasksRoutes", () => {
     const res = await tasksRoutes(() => m).request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "writer", instructions: "x" }),
+      body: JSON.stringify({ agent: "writer", brief: "x" }),
     });
     expect(res.status).toBe(500);
   });

@@ -411,13 +411,43 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(taskCmd.command("dispatch"))
     .description("Dispatch a new task")
     .requiredOption("--agent <name>", "Agent to run")
-    .requiredOption("--instructions <text>", "Instructions to give the agent")
+    .requiredOption(
+      "--brief <text>",
+      "Single-line task title (required, ≤200 chars). Doubles as the displayed label.",
+    )
+    .option("--details <text>", "Optional long-form task body (multi-line allowed)")
+    .option("--details-file <path>", "Read details from a file (mutually exclusive with --details)")
     .option("--runtime <kind>", "Runtime override (default: workspace default)")
     .action(async (opts: Record<string, unknown>) => {
+      const detailsInline = pickString(opts, "details");
+      const detailsFile = pickString(opts, "detailsFile");
+      if (detailsInline !== undefined && detailsFile !== undefined) {
+        // Prefer a hard usage error over silent precedence: the user
+        // almost certainly meant something specific, and dropping one
+        // of the two would just make the resulting TASK.md confusing.
+        slot.result = {
+          exitCode: 2,
+          stderr: "--details and --details-file are mutually exclusive\n",
+        };
+        return;
+      }
+      let details: string | undefined = detailsInline;
+      if (detailsFile !== undefined) {
+        try {
+          details = readFileSync(detailsFile, "utf8");
+        } catch (err) {
+          slot.result = {
+            exitCode: 2,
+            stderr: `failed to read --details-file: ${(err as Error).message}\n`,
+          };
+          return;
+        }
+      }
       slot.result = await taskDispatch({
         ...parseWorkspaceFlags(opts),
         agent: pickString(opts, "agent") ?? "",
-        instructions: pickString(opts, "instructions") ?? "",
+        brief: pickString(opts, "brief") ?? "",
+        ...(details !== undefined ? { details } : {}),
         ...optionalString(opts, "runtime"),
       });
     });

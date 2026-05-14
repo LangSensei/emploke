@@ -13,6 +13,7 @@ import {
   CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
+  formatTaskMd,
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
@@ -150,6 +151,18 @@ class StubRuntime implements Runtime {
   /** If set, deleteState throws this — to test runtime-failure aborts. */
   deleteStateError: Error | null = null;
 
+  /**
+   * Optional canned response for `readMetadata`. When undefined the
+   * stub omits the `readMetadata` method entirely (mirroring runtimes
+   * that don't expose display metadata). Set to a literal value to
+   * exercise the manager's enrichment path; tests assert that
+   * `metadata.title` / `metadata.userTitled` are NOT injected into
+   * the task even when the runtime supplies them — the task
+   * `brief` field is the source of truth post-#111.
+   */
+  readMetadataResponse: import("@emploke/runtime").RuntimeSessionMetadata | null | undefined =
+    undefined;
+
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
   readonly dispatchCalls: {
@@ -186,6 +199,14 @@ class StubRuntime implements Runtime {
   get launchHeadless(): Runtime["launchHeadless"] | undefined {
     if (!this.dispatchSupported) return undefined;
     return async (opts) => this.spawnHandle(opts);
+  }
+
+  // readMetadata is only exposed when a canned response is configured,
+  // so tests that don't care about enrichment look like runtimes that
+  // simply don't implement the optional surface.
+  get readMetadata(): Runtime["readMetadata"] | undefined {
+    if (this.readMetadataResponse === undefined) return undefined;
+    return async () => this.readMetadataResponse ?? null;
   }
 
   private async spawnHandle(opts: {
@@ -328,7 +349,7 @@ const flushMicrotasks = async (n = 1) => {
 
 const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
   agent: "demo",
-  instructions: "Do the thing.",
+  brief: "Do the thing.",
   ...overrides,
 });
 
@@ -370,18 +391,21 @@ describe("dispatch — happy path", () => {
     const rt = new StubRuntime();
     const { m, repo } = makeManager({ runtime: rt });
 
-    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "Plant a tree." }));
+    const t = await m.dispatch(
+      dispatchOf({ agent: "demo", brief: "Plant a tree.", details: "Choose oak." }),
+    );
 
     expect(t.agent).toBe("demo");
-    expect(t.instructions).toBe("Plant a tree.");
+    expect(t.brief).toBe("Plant a tree.");
+    expect(t.details).toBe("Choose oak.");
     expect(t.status).toBe("running");
     expect(t.startedAt).toBe("2026-05-08T01:05:00.000Z");
     expect(t.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
 
     expect(rt.dispatchCalls).toHaveLength(1);
-    // Per issue #109: the user's `instructions` is no longer passed
-    // via the spawn argv — it lives in `<workdir>/TASK.md`. The
-    // runtime receives only the fixed framing prompt.
+    // Per issue #109: the user's task body is no longer passed via
+    // the spawn argv — it lives in `<workdir>/TASK.md`. The runtime
+    // receives only the fixed framing prompt.
     expect(rt.dispatchCalls[0].prompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
 
     const meta = readTaskRuntimeMetadata(t);
@@ -395,36 +419,58 @@ describe("dispatch — happy path", () => {
     const persisted = await repo.read(t.id);
     expect(persisted?.status).toBe("running");
     expect(persisted?.id).toBe(t.id);
+    expect(persisted?.brief).toBe("Plant a tree.");
+    expect(persisted?.details).toBe("Choose oak.");
+  });
+
+  it("dispatch defaults details to undefined when omitted", async () => {
+    const rt = new StubRuntime();
+    const { m, repo } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf({ brief: "Just the brief" }));
+    expect(t.details).toBeUndefined();
+    const persisted = await repo.read(t.id);
+    expect(persisted?.details).toBeUndefined();
   });
 });
 
-// ───── issue #109: file-based instructions + workdir contract ─────
+// ───── issue #109: file-based brief + details + workdir contract ─────
 
 describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
-  it("writes <workdir>/TASK.md byte-equal to the user's instructions (UTF-8, no BOM)", async () => {
+  it("writes <workdir>/TASK.md as `# <brief>\\n` when no details given (UTF-8, no BOM)", async () => {
+    const rt = new StubRuntime();
+    const { m } = makeManager({ runtime: rt });
+
+    const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "Plant a tree" }));
+    const meta = readTaskRuntimeMetadata(t);
+    const taskMdPath = path.join(meta.workdir as string, TASK_FILENAME);
+    const buf = await readFile(taskMdPath);
+    expect(buf[0]).not.toBe(0xef); // no UTF-8 BOM
+    expect(buf.equals(Buffer.from("# Plant a tree\n", "utf8"))).toBe(true);
+  });
+
+  it("writes <workdir>/TASK.md as `# <brief>\\n\\n<details>\\n` when details given", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
 
     // Multi-line + multi-byte UTF-8 (CJK + emoji) covers two things:
-    //   1. LF inside instructions used to corrupt the spawn argv on
+    //   1. LF inside details used to corrupt the spawn argv on
     //      Windows (Bug A in #109). Now LF is fine in TASK.md.
     //   2. Non-ASCII bytes round-trip cleanly through writeFile.
-    const instructions = "Line one.\nLine two.\n你好 🌳";
-    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions }));
-
+    const details = "Line one.\nLine two.\n你好 🌳";
+    const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "Plant a tree", details }));
     const meta = readTaskRuntimeMetadata(t);
     const taskMdPath = path.join(meta.workdir as string, TASK_FILENAME);
-    // Read as raw bytes — assert no BOM prefix and exact byte-equality.
     const buf = await readFile(taskMdPath);
     expect(buf[0]).not.toBe(0xef); // no UTF-8 BOM
-    expect(buf.equals(Buffer.from(instructions, "utf8"))).toBe(true);
+    const expected = `# Plant a tree\n\n${details}\n`;
+    expect(buf.equals(Buffer.from(expected, "utf8"))).toBe(true);
   });
 
   it("creates <workdir>/temp/ and <workdir>/artifact/ as empty directories", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
 
-    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "x" }));
+    const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
     const meta = readTaskRuntimeMetadata(t);
     const wd = meta.workdir as string;
 
@@ -437,16 +483,17 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
     expect(await readdir(path.join(wd, TASK_ARTIFACT_SUBDIR))).toEqual([]);
   });
 
-  it("passes the framing prompt (NOT the user instructions) as the runtime spawn prompt", async () => {
+  it("passes the framing prompt (NOT the user-supplied bytes) as the runtime spawn prompt", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
 
-    // An instructions value that would have triggered Bug A — embedded
-    // LF, would have truncated the cmd.exe argv on Windows.
+    // Details that would have triggered Bug A — embedded LF, would
+    // have truncated the cmd.exe argv on Windows.
     await m.dispatch(
       dispatchOf({
         agent: "demo",
-        instructions: "first line\nsecond line\nthird line",
+        brief: "multi-line input",
+        details: "first line\nsecond line\nthird line",
       }),
     );
 
@@ -483,6 +530,38 @@ describe("framing prompt invariant guard", () => {
 
   it("the production copilot framing prompt itself passes the guard", () => {
     expect(() => assertFramingPromptIsSafe(TASK_FRAMING_PROMPT_COPILOT)).not.toThrow();
+  });
+});
+
+describe("formatTaskMd", () => {
+  // brief-only and brief+details produce the canonical TASK.md
+  // shapes the agent contract relies on. Empty / undefined details
+  // collapse to the brief-only shape — an empty body would just
+  // leave a confusing dangling blank section after the `# brief\n\n`
+  // header.
+  it("renders brief-only as `# <brief>\\n` (no body, no blank line)", () => {
+    expect(formatTaskMd("Plant a tree", undefined)).toBe("# Plant a tree\n");
+  });
+
+  it("treats empty-string details as brief-only", () => {
+    expect(formatTaskMd("Plant a tree", "")).toBe("# Plant a tree\n");
+  });
+
+  it("renders brief + details as `# <brief>\\n\\n<details>\\n`", () => {
+    expect(formatTaskMd("Plant a tree", "Choose oak")).toBe("# Plant a tree\n\nChoose oak\n");
+  });
+
+  it("does not double up trailing newlines when details already ends with LF", () => {
+    expect(formatTaskMd("Plant a tree", "Choose oak\n")).toBe("# Plant a tree\n\nChoose oak\n");
+  });
+
+  it("preserves multi-line details verbatim under the header", () => {
+    const body = "Step 1: pick site.\nStep 2: dig.\n\nStep 3: water weekly.";
+    expect(formatTaskMd("Plant a tree", body)).toBe(`# Plant a tree\n\n${body}\n`);
+  });
+
+  it("preserves multi-byte UTF-8 in details (CJK, emoji)", () => {
+    expect(formatTaskMd("Plant", "你好 🌳")).toBe("# Plant\n\n你好 🌳\n");
   });
 });
 
@@ -689,11 +768,11 @@ describe("get / list", () => {
       // step the seed enough that distinct dispatches land on distinct ids.
       randomBytes: seqRandom(1),
     });
-    const t1 = await m.dispatch(dispatchOf({ instructions: "first" }));
+    const t1 = await m.dispatch(dispatchOf({ brief: "first" }));
     nowMs += 60_000;
-    const t2 = await m.dispatch(dispatchOf({ instructions: "second" }));
+    const t2 = await m.dispatch(dispatchOf({ brief: "second" }));
     nowMs += 60_000;
-    const t3 = await m.dispatch(dispatchOf({ instructions: "third" }));
+    const t3 = await m.dispatch(dispatchOf({ brief: "third" }));
 
     const all = await m.list();
     expect(all.map((t) => t.id)).toEqual([t3.id, t2.id, t1.id]);
@@ -721,8 +800,8 @@ describe("get / list", () => {
     ).db;
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         "20260101-deadbeef",
@@ -730,6 +809,7 @@ describe("get / list", () => {
         "copilot",
         "bogus_status",
         "i",
+        null,
         "2026-01-01T00:00:00.000Z",
         "{}",
       );
@@ -757,10 +837,10 @@ describe("get / list", () => {
     const id = "20260101-deadbeef";
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
     await expect(m.get(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -821,32 +901,32 @@ describe("get / list", () => {
         now: () => new Date(nowMs),
         randomBytes: seqRandom(1),
       });
-      await m.dispatch(dispatchOf({ instructions: "old" }));
+      await m.dispatch(dispatchOf({ brief: "old" }));
       nowMs += 60_000;
       const cutoff = new Date(nowMs).toISOString();
       nowMs += 60_000;
-      await m.dispatch(dispatchOf({ instructions: "new" }));
+      await m.dispatch(dispatchOf({ brief: "new" }));
 
       const recent = await m.list({ createdSince: cutoff });
       expect(recent).toHaveLength(1);
-      expect(recent[0].instructions).toBe("new");
+      expect(recent[0].brief).toBe("new");
     });
 
     it("filters by status set (running|success|failure|cancelled|not_started)", async () => {
       const rt = new StubRuntime();
       const { m } = makeManager({ runtime: rt });
-      const a = await m.dispatch(dispatchOf({ instructions: "a" }));
+      const a = await m.dispatch(dispatchOf({ brief: "a" }));
       void rt.handles[0].exit({ code: 0, signal: null });
       await awaitTerminal(m, a.id);
-      await m.dispatch(dispatchOf({ instructions: "b" })); // stays running
+      await m.dispatch(dispatchOf({ brief: "b" })); // stays running
 
       const onlyRunning = await m.list({ statuses: ["running"] });
       expect(onlyRunning).toHaveLength(1);
-      expect(onlyRunning[0].instructions).toBe("b");
+      expect(onlyRunning[0].brief).toBe("b");
 
       const onlySuccess = await m.list({ statuses: ["success"] });
       expect(onlySuccess).toHaveLength(1);
-      expect(onlySuccess[0].instructions).toBe("a");
+      expect(onlySuccess[0].brief).toBe("a");
 
       const both = await m.list({ statuses: ["running", "success"] });
       expect(both).toHaveLength(2);
@@ -860,15 +940,15 @@ describe("get / list", () => {
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
         }),
       });
-      await m.dispatch(dispatchOf({ agent: "writer", instructions: "w1" }));
-      await m.dispatch(dispatchOf({ agent: "reviewer", instructions: "r1" }));
-      const target = await m.dispatch(dispatchOf({ agent: "writer", instructions: "w2" }));
+      await m.dispatch(dispatchOf({ agent: "writer", brief: "w1" }));
+      await m.dispatch(dispatchOf({ agent: "reviewer", brief: "r1" }));
+      const target = await m.dispatch(dispatchOf({ agent: "writer", brief: "w2" }));
       void rt.handles[2].exit({ code: 0, signal: null });
       await awaitTerminal(m, target.id);
 
       const writersDone = await m.list({ agent: "writer", statuses: ["success"] });
       expect(writersDone).toHaveLength(1);
-      expect(writersDone[0].instructions).toBe("w2");
+      expect(writersDone[0].brief).toBe("w2");
     });
   });
 });
@@ -983,10 +1063,10 @@ describe("delete", () => {
     ).db;
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -1003,10 +1083,10 @@ describe("delete", () => {
     ).db;
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, "demo", "copilot", "bogus_status", "i", "2026-01-01T00:00:00.000Z", "{}");
+      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
     await m.delete(id, { purge: true });
     expect(await safeStat(workdir)).toBeNull();
   });
@@ -1087,8 +1167,8 @@ describe("shutdown", () => {
     rt.autoExitOnKill = true;
     const { m } = makeManager({ runtime: rt });
 
-    const t1 = await m.dispatch(dispatchOf({ instructions: "a" }));
-    const t2 = await m.dispatch(dispatchOf({ instructions: "b" }));
+    const t1 = await m.dispatch(dispatchOf({ brief: "a" }));
+    const t2 = await m.dispatch(dispatchOf({ brief: "b" }));
 
     await m.shutdown();
 
@@ -1195,7 +1275,7 @@ describe("recoverOrphaned", () => {
     const orphan = Task.fromStored({
       id,
       agent: "demo",
-      instructions: "do something",
+      brief: "do something",
       status: "running",
       metadata: { pid: deadPid, runtime: "copilot" },
       createdAt: "2026-05-08T01:00:00.000Z",
@@ -1218,7 +1298,7 @@ describe("recoverOrphaned", () => {
     const done = Task.fromStored({
       id,
       agent: "demo",
-      instructions: "did it",
+      brief: "did it",
       status: "success",
       metadata: {},
       createdAt: "2026-05-08T01:00:00.000Z",
@@ -1261,7 +1341,7 @@ describe("recoverOrphaned", () => {
       const orphan = Task.fromStored({
         id,
         agent: "demo",
-        instructions: "do something",
+        brief: "do something",
         status: "running",
         metadata: { pid: livePid, runtime: "copilot" },
         createdAt: "2026-05-08T01:00:00.000Z",
@@ -1293,7 +1373,7 @@ describe("recoverOrphaned", () => {
     const orphan = Task.fromStored({
       id,
       agent: "demo",
-      instructions: "do something",
+      brief: "do something",
       status: "running",
       metadata: { runtime: "copilot" }, // no pid
       createdAt: "2026-05-08T01:00:00.000Z",
@@ -1396,7 +1476,7 @@ describe("dispatch — subprocess env injection", () => {
       workspaceId: "ws-uuid-alpha",
       subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
     });
-    const t = await m.dispatch(dispatchOf({ agent: "demo", instructions: "go" }));
+    const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "go" }));
 
     expect(rt.dispatchCalls).toHaveLength(1);
     const env = rt.dispatchCalls[0].subprocessEnv;
@@ -1416,7 +1496,7 @@ describe("dispatch — subprocess env injection", () => {
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
-    await m.dispatch(dispatchOf({ agent: "demo", instructions: "go" }));
+    await m.dispatch(dispatchOf({ agent: "demo", brief: "go" }));
 
     const env = rt.dispatchCalls[0].subprocessEnv;
     expect(env).toBeDefined();
@@ -1434,8 +1514,8 @@ describe("dispatch — subprocess env injection", () => {
       randomBytes: seqRandom(),
     });
     const [t1, t2] = await Promise.all([
-      m.dispatch(dispatchOf({ agent: "demo", instructions: "a" })),
-      m.dispatch(dispatchOf({ agent: "demo", instructions: "b" })),
+      m.dispatch(dispatchOf({ agent: "demo", brief: "a" })),
+      m.dispatch(dispatchOf({ agent: "demo", brief: "b" })),
     ]);
 
     expect(t1.id).not.toBe(t2.id);
@@ -1474,8 +1554,8 @@ describe("dispatch — subprocess env injection", () => {
     });
 
     await Promise.all([
-      managerA.dispatch(dispatchOf({ agent: "demo", instructions: "x" })),
-      managerB.dispatch(dispatchOf({ agent: "demo", instructions: "y" })),
+      managerA.dispatch(dispatchOf({ agent: "demo", brief: "x" })),
+      managerB.dispatch(dispatchOf({ agent: "demo", brief: "y" })),
     ]);
 
     expect(rtA.dispatchCalls[0].subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-A");
@@ -1501,7 +1581,7 @@ describe("dispatch — subprocess env injection", () => {
         EMPLOKE_SERVER: "http://127.0.0.1:8787",
       },
     });
-    await m.dispatch(dispatchOf({ agent: "demo", instructions: "x" }));
+    await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
     const env = rt.dispatchCalls[0].subprocessEnv;
     expect(env?.EMPLOKE_WORKSPACE).toBe("real-workspace");
     expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
@@ -1535,9 +1615,81 @@ describe("dispatch — subprocess env injection", () => {
         EMPLOKE_HOME: undefined,
       }) as NodeJS.ProcessEnv,
     });
-    await m.dispatch(dispatchOf({ agent: "demo", instructions: "x" }));
+    await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
     const env = rt.dispatchCalls[0].subprocessEnv ?? {};
     expect("EMPLOKE_HOME" in env).toBe(true);
     expect(env.EMPLOKE_HOME).toBeUndefined();
+  });
+});
+
+// ───── runtime metadata enrichment (post-#111 cleanup) ─────
+
+describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", () => {
+  // Post-#111: Copilot's auto-generated session `name` reflects the
+  // framing prompt rather than the user's task, so deriving a task
+  // headline from runtime metadata is actively misleading. The
+  // first-class `Task.brief` field is now the only source of truth
+  // for the displayed label. The runtime layer's `readMetadata`
+  // surface is preserved (Session still uses it for `preview` via
+  // `readCopilotWorkspaceYaml`), but the task manager's enrichment
+  // path no longer folds `title` / `userTitled` into the metadata bag.
+  it("does NOT inject metadata.title even when the runtime supplies one", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: "irrelevant runtime-derived title",
+      userTitled: false,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf({ brief: "Real brief" }));
+
+    const refreshed = await m.get(t.id);
+    expect(refreshed?.brief).toBe("Real brief");
+    expect("title" in (refreshed?.metadata ?? {})).toBe(false);
+    expect("userTitled" in (refreshed?.metadata ?? {})).toBe(false);
+  });
+
+  it("does NOT inject metadata.userTitled even when the runtime reports user_named=true", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: "user-renamed",
+      userTitled: true,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf({ brief: "Authoritative brief" }));
+
+    const refreshed = await m.get(t.id);
+    expect(refreshed?.brief).toBe("Authoritative brief");
+    expect("title" in (refreshed?.metadata ?? {})).toBe(false);
+    expect("userTitled" in (refreshed?.metadata ?? {})).toBe(false);
+  });
+
+  it("DOES still inject metadata.lastActiveAtRuntime so dashboards can show recency", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: null,
+      userTitled: false,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf({ brief: "Brief" }));
+
+    const refreshed = await m.get(t.id);
+    expect(refreshed?.metadata.lastActiveAtRuntime).toBe("2026-05-08T01:30:00.000Z");
+  });
+
+  it("leaves metadata untouched when runtime returns null lastActiveAt", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: null,
+      userTitled: false,
+      lastActiveAt: null,
+    };
+    const { m } = makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf({ brief: "Brief" }));
+
+    const refreshed = await m.get(t.id);
+    expect("lastActiveAtRuntime" in (refreshed?.metadata ?? {})).toBe(false);
   });
 });

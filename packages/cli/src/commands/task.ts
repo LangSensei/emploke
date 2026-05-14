@@ -60,7 +60,10 @@ export async function taskList(opts: TaskListOpts = {}): Promise<CommandResult> 
 // ─── dispatch ──────────────────────────────────────────────────────────
 export interface TaskDispatchOpts extends CommonFlags {
   readonly agent: string;
-  readonly instructions: string;
+  /** Short, single-line task title (≤ 200 chars). Required. */
+  readonly brief: string;
+  /** Optional long-form task body. Multi-line allowed. */
+  readonly details?: string;
   readonly runtime?: string;
 }
 
@@ -68,16 +71,27 @@ export async function taskDispatch(opts: TaskDispatchOpts): Promise<CommandResul
   if (typeof opts.agent !== "string" || opts.agent.trim() === "") {
     return { exitCode: 2, stderr: "missing required --agent <name>\n" };
   }
-  if (typeof opts.instructions !== "string" || opts.instructions.trim() === "") {
-    return { exitCode: 2, stderr: "missing required --instructions <text>\n" };
+  if (typeof opts.brief !== "string" || opts.brief.trim() === "") {
+    return { exitCode: 2, stderr: "missing required --brief <text>\n" };
+  }
+  if (opts.brief.includes("\n") || opts.brief.includes("\r")) {
+    return {
+      exitCode: 2,
+      stderr:
+        "--brief must be a single line (no newline characters); pass long content via --details\n",
+    };
+  }
+  if (opts.brief.trim().length > 200) {
+    return { exitCode: 2, stderr: "--brief must be 200 characters or fewer\n" };
   }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const body: { agent: string; instructions: string; runtime?: string } = {
+    const body: { agent: string; brief: string; details?: string; runtime?: string } = {
       agent: opts.agent,
-      instructions: opts.instructions,
+      brief: opts.brief.trim(),
     };
+    if (opts.details !== undefined) body.details = opts.details;
     if (opts.runtime !== undefined) body.runtime = opts.runtime;
     const task = await client.call("tasks.dispatch", { params: { id }, body });
     const fmt = pickFormat(opts, "table");

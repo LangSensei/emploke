@@ -13,6 +13,7 @@ import {
   TaskNotFoundError,
 } from "./errors.js";
 import {
+  formatTaskMd,
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
   TASK_FRAMING_PROMPT_COPILOT,
@@ -229,7 +230,8 @@ export class TaskManager {
         id,
         workdir,
         agentName,
-        instructions: opts.instructions,
+        brief: opts.brief,
+        details: opts.details,
         runtime,
         resolveResult,
       });
@@ -242,11 +244,12 @@ export class TaskManager {
     id: string;
     workdir: string;
     agentName: string;
-    instructions: string;
+    brief: string;
+    details: string | undefined;
     runtime: Runtime;
     resolveResult: AgentResolveResult;
   }): Promise<Task> {
-    const { id, workdir, agentName, instructions, runtime, resolveResult } = args;
+    const { id, workdir, agentName, brief, details, runtime, resolveResult } = args;
     // Re-narrow `runtime.launchHeadless` for TypeScript. The caller
     // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
     // before reserving the workdir, so this guard is only here to
@@ -267,7 +270,8 @@ export class TaskManager {
     const initial = Task.create({
       id,
       agent: agentName,
-      instructions,
+      brief,
+      ...(details !== undefined ? { details } : {}),
       createdAt,
       metadata: {
         workdir,
@@ -281,16 +285,16 @@ export class TaskManager {
       throw err;
     }
 
-    // 4b. Materialize the user's instructions to `<workdir>/TASK.md`
-    //     and create the agent-managed `temp/` + `artifact/`
-    //     subdirectories. See packages/task/src/framing.ts for why
-    //     instructions live in a file rather than the spawn argv
-    //     (issue #109 — Bug A: cmd.exe argv-LF interaction silently
-    //     dropping copilot CLI flags on Windows). Failure here is
-    //     pre-spawn, so we roll back the workdir to mirror the
-    //     existing pre-spawn rollback pattern (no ghost row/dir).
+    // 4b. Materialize the user's brief (+ optional details) to
+    //     `<workdir>/TASK.md` and create the agent-managed `temp/` +
+    //     `artifact/` subdirectories. See packages/task/src/framing.ts
+    //     for why the body lives in a file rather than the spawn
+    //     argv (issue #109 — Bug A: cmd.exe argv-LF interaction
+    //     silently dropping copilot CLI flags on Windows). Failure
+    //     here is pre-spawn, so we roll back the workdir to mirror
+    //     the existing pre-spawn rollback pattern (no ghost row/dir).
     try {
-      await writeFile(path.join(workdir, TASK_FILENAME), instructions, {
+      await writeFile(path.join(workdir, TASK_FILENAME), formatTaskMd(brief, details), {
         encoding: "utf8",
       });
       await mkdir(path.join(workdir, TASK_TEMP_SUBDIR), { recursive: true });
@@ -310,9 +314,9 @@ export class TaskManager {
         agent: resolveResult,
         catalog: this.catalog,
         // Fixed single-line ASCII framing prompt. The user's
-        // `instructions` is NOT passed via argv anymore — it lives
-        // byte-for-byte in `<workdir>/TASK.md` (written above) and
-        // the framing prompt tells the agent to read it. Today
+        // `brief` + `details` are NOT passed via argv anymore — they
+        // live byte-for-byte in `<workdir>/TASK.md` (written above)
+        // and the framing prompt tells the agent to read it. Today
         // `copilot` is the only headless-capable runtime; when a
         // second one arrives, switch on `runtime.kind` here.
         prompt: TASK_FRAMING_PROMPT_COPILOT,
@@ -500,11 +504,12 @@ export class TaskManager {
       return d !== 0 ? d : b.id.localeCompare(a.id);
     });
 
-    // Enrich with runtime-supplied display metadata (title, etc.) in
-    // parallel. Each call is one small file read on the runtime's
-    // own state dir; we Promise.all so a list of N tasks pays
-    // O(1) wall-clock instead of O(N). Failures are silent — title
-    // is a nice-to-have, the dashboard falls through to instructions.
+    // Enrich with runtime-supplied display metadata
+    // (lastActiveAtRuntime). Each call is one small file read on
+    // the runtime's own state dir; we Promise.all so a list of N
+    // tasks pays O(1) wall-clock instead of O(N). Failures are
+    // silent — lastActiveAtRuntime is a nice-to-have, the
+    // dashboard renders fine without it.
     return Promise.all(tasks.map((t) => this.enrichWithRuntimeMetadata(t)));
   }
 
@@ -939,29 +944,31 @@ export class TaskManager {
   }
 
   /**
-   * Fold runtime-supplied display metadata (title, etc.) into a
-   * loaded task. Returns the same task object when:
+   * Fold runtime-supplied display metadata (lastActiveAtRuntime)
+   * into a loaded task. Returns the same task object when:
    *   - the runtime is unknown / unregistered (silent)
    *   - the runtime doesn't implement `readMetadata` (silent)
-   *   - the runtime returns null (no title available yet)
-   *   - the runtime call throws (logged at debug; we fall back to
-   *     the persisted view)
+   *   - the runtime returns null (no metadata available yet)
+   *   - the runtime call throws (logged; we fall back to the
+   *     persisted view)
    *
-   * On success, returns a NEW task object with `metadata.title`
-   * (and `metadata.userTitled` / `metadata.lastActiveAtRuntime`)
-   * merged in. Pure — never mutates the input task.
+   * On success, returns a NEW task object with
+   * `metadata.lastActiveAtRuntime` merged in. Pure — never
+   * mutates the input task.
    *
-   * Does NOT persist. Title is derived from the runtime's own
-   * source of truth (Copilot's `workspace.yaml`); persisting our
-   * snapshot would just duplicate state that the runtime can
-   * regenerate on demand. The dashboard / CLI sees the latest
-   * value on every list/get call without a write loop.
+   * Does NOT persist. The runtime's own state is the source of
+   * truth; persisting our snapshot would just duplicate state that
+   * the runtime can regenerate on demand. The dashboard / CLI sees
+   * the latest value on every list/get call without a write loop.
    *
-   * Honours the runtime's `userTitled` flag: when true, the user
-   * has explicitly renamed via the runtime CLI, so consumers
-   * SHOULD treat the title as authoritative even if a future
-   * regenerate path tries to overwrite. We surface the flag so
-   * the dashboard's own rename UX (when added) can defer to it.
+   * NOTE: the legacy `metadata.title` / `metadata.userTitled` keys
+   * are deliberately NOT injected here anymore. Post-#109 the
+   * Copilot-generated session `name` reflects the framing prompt,
+   * not the user's task, so the derived title was actively
+   * misleading as a task headline. The Task entity's first-class
+   * `brief` field is now the source of truth for the displayed
+   * label. `readCopilotWorkspaceYaml` itself stays — it's still
+   * used by `Session` for the session preview field.
    */
   private async enrichWithRuntimeMetadata(task: Task): Promise<Task> {
     const runtimeName = task.metadata.runtime;
@@ -979,7 +986,8 @@ export class TaskManager {
     try {
       meta = await runtime.readMetadata(runtimeSessionId);
     } catch (err) {
-      // Title is best-effort; don't break list/get on a runtime fault.
+      // lastActiveAtRuntime is best-effort; don't break list/get on a
+      // runtime fault.
       this.logger.warn(
         {
           taskId: task.id,
@@ -991,12 +999,13 @@ export class TaskManager {
       return task;
     }
     if (meta === null) return task;
+    if (meta.lastActiveAt === null) return task;
     // Open-shape merge — only set the keys we care about, preserve
     // everything else verbatim.
-    const enriched: Record<string, unknown> = { ...task.metadata };
-    if (meta.title !== null) enriched.title = meta.title;
-    enriched.userTitled = meta.userTitled;
-    if (meta.lastActiveAt !== null) enriched.lastActiveAtRuntime = meta.lastActiveAt;
+    const enriched: Record<string, unknown> = {
+      ...task.metadata,
+      lastActiveAtRuntime: meta.lastActiveAt,
+    };
     return task.withMetadata(enriched);
   }
 

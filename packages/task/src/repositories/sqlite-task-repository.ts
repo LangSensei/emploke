@@ -6,14 +6,25 @@ import { Task } from "../task-entity.js";
 import type { ListTaskOpts, TaskStatus } from "../types.js";
 import type { TaskRepository } from "./repository.js";
 
-const TASK_PKG_SCHEMA_VERSION = 1;
+/**
+ * Bumped from 1 → 2 for the `instructions` → `brief`+`details` split
+ * (pre-1.0 hard cut; see PR refactor/task-brief-details). Older v1
+ * databases are migrated in-place by {@link migrateV1ToV2}; the
+ * `brief` value is back-filled from the first 200 chars of the
+ * legacy `instructions` column (best-effort heuristic — the v1
+ * column had no length cap so longer values truncate at the v2
+ * contract). The full original text is preserved verbatim in the
+ * new `details` column.
+ */
+const TASK_PKG_SCHEMA_VERSION = 2;
 
 interface TaskRow {
   id: string;
   agent: string;
   runtime: string | null;
   status: string;
-  instructions: string;
+  brief: string;
+  details: string | null;
   created_at: string;
   started_at: string | null;
   ended_at: string | null;
@@ -65,7 +76,7 @@ export class SqliteTaskRepository implements TaskRepository {
     if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
     const row = this.db
       .prepare(
-        `SELECT id, agent, runtime, status, instructions, created_at, started_at, ended_at,
+        `SELECT id, agent, runtime, status, brief, details, created_at, started_at, ended_at,
                 result_output, failure_error, metadata
          FROM tasks WHERE id = ?`,
       )
@@ -87,14 +98,15 @@ export class SqliteTaskRepository implements TaskRepository {
     const metaJson = JSON.stringify(metaForJson);
     this.db
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, started_at,
+        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, started_at,
                             ended_at, result_output, failure_error, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            agent = excluded.agent,
            runtime = excluded.runtime,
            status = excluded.status,
-           instructions = excluded.instructions,
+           brief = excluded.brief,
+           details = excluded.details,
            created_at = excluded.created_at,
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
@@ -107,7 +119,8 @@ export class SqliteTaskRepository implements TaskRepository {
         task.agent,
         runtime,
         task.status,
-        task.instructions,
+        task.brief,
+        task.details ?? null,
         task.createdAt,
         task.startedAt ?? null,
         task.endedAt ?? null,
@@ -142,7 +155,7 @@ export class SqliteTaskRepository implements TaskRepository {
       where.push(`status IN (${placeholders})`);
       params.push(...opts.statuses);
     }
-    let sql = `SELECT id, agent, runtime, status, instructions, created_at, started_at, ended_at,
+    let sql = `SELECT id, agent, runtime, status, brief, details, created_at, started_at, ended_at,
                       result_output, failure_error, metadata FROM tasks`;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     const rows = this.db.prepare(sql).all(...params) as unknown as TaskRow[];
@@ -164,17 +177,69 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   private ensureSchema(): void {
+    // Bootstrap the schema_meta table so we can read the current
+    // version unconditionally. The `tasks` table is created lazily
+    // depending on which version path we land on (fresh install vs
+    // upgrade) so we never have to retro-fit a v1 CREATE TABLE
+    // before the migration has run.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS schema_meta (
         pkg     TEXT PRIMARY KEY NOT NULL,
         version INTEGER NOT NULL CHECK (version > 0)
       );
+    `);
+    const existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as
+      | { version: number }
+      | undefined;
+
+    if (existing === undefined) {
+      // Fresh install (or never saw a tasks table): create the
+      // current schema directly. `IF NOT EXISTS` covers the edge
+      // case where another build path created the table without a
+      // schema_meta row (we don't ship that path, but defending
+      // against it keeps the call idempotent under retries).
+      this.createV2Schema();
+      this.db
+        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
+        .run("task", TASK_PKG_SCHEMA_VERSION);
+      return;
+    }
+
+    if (existing.version === TASK_PKG_SCHEMA_VERSION) {
+      // Already at HEAD: assert the table exists (defensive — a
+      // partially-written install could have schema_meta but no
+      // tasks table) and return.
+      this.createV2Schema();
+      return;
+    }
+
+    if (existing.version === 1) {
+      // pre-1.0 hard cut: migrate v1 (`instructions`) → v2
+      // (`brief` + `details`) in a single transaction. `brief` is
+      // back-filled from the first 200 chars of `instructions` to
+      // honour the new wire contract; the original text is
+      // preserved verbatim in `details` so no user data is lost.
+      migrateV1ToV2(this.db);
+      this.db
+        .prepare("UPDATE schema_meta SET version = ? WHERE pkg = ?")
+        .run(TASK_PKG_SCHEMA_VERSION, "task");
+      return;
+    }
+
+    throw new Error(
+      `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
+    );
+  }
+
+  private createV2Schema(): void {
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id              TEXT PRIMARY KEY,
         agent           TEXT NOT NULL,
         runtime         TEXT,
         status          TEXT NOT NULL,
-        instructions    TEXT NOT NULL,
+        brief           TEXT NOT NULL,
+        details         TEXT,
         created_at      TEXT NOT NULL,
         started_at      TEXT,
         ended_at        TEXT,
@@ -187,19 +252,6 @@ export class SqliteTaskRepository implements TaskRepository {
       CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
       CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
     `);
-    const existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as
-      | { version: number }
-      | undefined;
-    if (existing === undefined) {
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("task", TASK_PKG_SCHEMA_VERSION);
-      return;
-    }
-    if (existing.version === TASK_PKG_SCHEMA_VERSION) return;
-    throw new Error(
-      `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
-    );
   }
 }
 
@@ -216,7 +268,8 @@ export class SqliteTaskRepository implements TaskRepository {
  *     so the entity sees the same shape callers passed in originally.
  *
  * Everything else (id format, status enum, ISO timestamps,
- * metadata-is-an-object) is validated by {@link Task.fromStored}.
+ * metadata-is-an-object, brief non-empty) is validated by
+ * {@link Task.fromStored}.
  */
 function parseRow(id: string, row: TaskRow): Task {
   let metaParsed: unknown;
@@ -239,7 +292,8 @@ function parseRow(id: string, row: TaskRow): Task {
   return Task.fromStored({
     id,
     agent: row.agent,
-    instructions: row.instructions,
+    brief: row.brief,
+    ...(row.details !== null ? { details: row.details } : {}),
     status: row.status as TaskStatus,
     metadata,
     createdAt: row.created_at,
@@ -248,4 +302,77 @@ function parseRow(id: string, row: TaskRow): Task {
     ...(row.result_output !== null ? { result: { output: row.result_output } } : {}),
     ...(row.failure_error !== null ? { failure: { error: row.failure_error } } : {}),
   });
+}
+
+/**
+ * Migrate `tasks` from v1 (single `instructions TEXT NOT NULL`
+ * column) to v2 (`brief TEXT NOT NULL`, `details TEXT NULL`). SQLite
+ * doesn't support `ALTER COLUMN`, so we use the canonical
+ * "create new table → copy rows → drop old → rename" dance inside a
+ * transaction.
+ *
+ * Back-fill rule: `brief` = first 200 chars of `instructions`,
+ * `details` = full `instructions`. This is intentionally lossy on the
+ * brief to honour the new wire contract (the route layer rejects
+ * `brief.length > 200`); the full text is preserved verbatim in
+ * `details` so no user content is lost.
+ *
+ * Empty-instructions edge case: a v1 row with `instructions = ""`
+ * would translate to `brief = ""`, which v2 rejects via
+ * `Task.fromStored`. We coerce empty briefs to a placeholder so the
+ * row stays parseable; the operator can then re-run / archive at
+ * leisure. Same defensive principle applied for very long values:
+ * the substring is a hard slice, no semantic awareness.
+ */
+function migrateV1ToV2(db: DatabaseSync): void {
+  // The transaction lets us rebuild the table atomically — a crash
+  // mid-migration leaves the original `tasks` intact rather than a
+  // half-renamed pair. Prepared statements would be overkill (the SQL
+  // is one-shot) but exec() of a multi-statement payload is the
+  // standard idiom.
+  db.exec(`
+    BEGIN;
+    CREATE TABLE tasks_v2 (
+      id              TEXT PRIMARY KEY,
+      agent           TEXT NOT NULL,
+      runtime         TEXT,
+      status          TEXT NOT NULL,
+      brief           TEXT NOT NULL,
+      details         TEXT,
+      created_at      TEXT NOT NULL,
+      started_at      TEXT,
+      ended_at        TEXT,
+      result_output   TEXT,
+      failure_error   TEXT,
+      metadata        TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO tasks_v2 (
+      id, agent, runtime, status, brief, details, created_at,
+      started_at, ended_at, result_output, failure_error, metadata
+    )
+    SELECT
+      id,
+      agent,
+      runtime,
+      status,
+      CASE
+        WHEN length(instructions) = 0 THEN '(untitled)'
+        ELSE substr(instructions, 1, 200)
+      END AS brief,
+      instructions AS details,
+      created_at,
+      started_at,
+      ended_at,
+      result_output,
+      failure_error,
+      metadata
+    FROM tasks;
+    DROP TABLE tasks;
+    ALTER TABLE tasks_v2 RENAME TO tasks;
+    CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
+    CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
+    CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
+    CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
+    COMMIT;
+  `);
 }

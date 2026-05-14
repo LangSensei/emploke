@@ -2610,7 +2610,7 @@ button {
 }
 
 /* Headline = the agent name. Sessions don't have a status enum or
-   an instructions string the way Tasks do, so the most identifying
+   a brief/details pair the way Tasks do, so the most identifying
    thing is "which agent does this session run". Wraps gracefully
    on narrow columns (long agent names like "langsensei/foo-bar"
    show on two lines instead of being truncated). */
@@ -2824,7 +2824,7 @@ button {
 }
 
 /*  Two-row body (replaces the old single meta/time pair).
-    The headline IS the task — instructions get the title role and visual
+    The headline IS the task — `brief` gets the title role and visual
     weight; the id and time live as footer metadata, matching how GitHub
     Issues / Linear render "title above id". */
 
@@ -2834,7 +2834,7 @@ button {
   color: var(--color-text);
   /* Allow up to two lines so the headline isn't truncated mid-word
      in narrow columns; the third-line+ clamp keeps row heights
-     bounded. The hover title carries the full instructions. */
+     bounded. The hover title carries the brief plus details. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -2941,10 +2941,9 @@ button {
 }
 
 .task-detail__title {
-  /* Curated runtime-supplied label (Copilot's workspace.yaml
-     name/summary, surfaced as `metadata.title`). Sized as the
-     panel's primary heading; falls back to no-render when the
-     runtime hasn't supplied a title. */
+  /* User-supplied `Task.brief` (≤ 200 chars, single-line). Sized
+     as the panel's primary heading; falls back to no-render when
+     the task object hasn't loaded yet. */
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
@@ -2988,7 +2987,7 @@ button {
   margin-right: 2px;
 }
 
-.task-detail__instructions {
+.task-detail__details {
   margin: 0;
   font-size: 13px;
   color: var(--color-text);

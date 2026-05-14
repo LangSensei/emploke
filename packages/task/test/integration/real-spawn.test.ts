@@ -132,7 +132,7 @@ const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
 
 const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
   agent: "exit-zero",
-  instructions: "smoke",
+  brief: "smoke",
   runtime: "node-test",
   ...overrides,
 });

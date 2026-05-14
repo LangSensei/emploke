@@ -212,9 +212,47 @@ describe("API commands (integration)", () => {
   });
 
   it("`emploke task dispatch` errors clearly when agent is missing", async () => {
-    const res = await run(["task", "dispatch", "--instructions", "noop"], env);
+    const res = await run(["task", "dispatch", "--brief", "noop"], env);
     expect(res.exitCode).toBe(2);
     expect(res.stderr.toLowerCase()).toContain("agent");
+  });
+
+  it("`emploke task dispatch` errors clearly when --brief is missing", async () => {
+    const res = await run(["task", "dispatch", "--agent", "writer"], env);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr.toLowerCase()).toContain("brief");
+  });
+
+  it("`emploke task dispatch --brief 'multi\\nline'` rejects newline-containing brief", async () => {
+    // Brief is the displayed task title across the dashboard / CLI;
+    // single-line is enforced at the CLI argv layer so the user
+    // gets a clear exit-2 instead of a 400 round-trip.
+    const res = await run(
+      ["task", "dispatch", "--agent", "writer", "--brief", "first\nsecond"],
+      env,
+    );
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr.toLowerCase()).toContain("brief");
+  });
+
+  it("`task dispatch --details + --details-file` rejects mutually-exclusive combo", async () => {
+    const res = await run(
+      [
+        "task",
+        "dispatch",
+        "--agent",
+        "writer",
+        "--brief",
+        "ok",
+        "--details",
+        "inline",
+        "--details-file",
+        "some-file.md",
+      ],
+      env,
+    );
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr.toLowerCase()).toContain("mutually exclusive");
   });
 
   it("`task activity --after abc` rejects non-numeric value with usage exit 2", async () => {

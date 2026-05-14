@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidTaskIdError, InvalidTransition } from "../src/errors.js";
+import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "../src/errors.js";
 import { Task } from "../src/task-entity.js";
 import type { TaskStatus } from "../src/types.js";
 
@@ -10,48 +10,64 @@ const makeTask = (overrides: { metadata?: Readonly<Record<string, unknown>> } = 
   Task.create({
     id: FIXED_ID,
     agent: "a",
-    instructions: "go",
+    brief: "go",
     createdAt: fixedNow,
     ...(overrides.metadata !== undefined ? { metadata: overrides.metadata } : {}),
   });
 
 describe("Task.create", () => {
-  it("starts in not_started with no result/failure/started/ended", () => {
-    const t = Task.create({ agent: "a", instructions: "do" });
+  it("starts in not_started with no result/failure/started/ended/details", () => {
+    const t = Task.create({ agent: "a", brief: "do" });
     expect(t.status).toBe("not_started");
     expect(t.result).toBeUndefined();
     expect(t.failure).toBeUndefined();
     expect(t.startedAt).toBeUndefined();
     expect(t.endedAt).toBeUndefined();
+    expect(t.details).toBeUndefined();
+  });
+
+  it("captures details when provided", () => {
+    const t = Task.create({ agent: "a", brief: "do", details: "Tone: warm.\nLength: short." });
+    expect(t.details).toBe("Tone: warm.\nLength: short.");
+  });
+
+  it("rejects empty brief at the entity boundary (defence-in-depth)", () => {
+    // The route layer enforces non-empty + length + single-line at the
+    // wire boundary, but the entity is the last line of defence
+    // against in-process callers (tests, future orchestrators) that
+    // would bypass the route. An empty brief would render as a blank
+    // task title in the dashboard — the very bug this refactor exists
+    // to prevent.
+    expect(() => Task.create({ agent: "a", brief: "" })).toThrow(TypeError);
   });
 
   it("mints distinct canonical task ids by default (YYYYMMDD-xxxxxxxx)", () => {
-    const a = Task.create({ agent: "x", instructions: "" });
-    const b = Task.create({ agent: "x", instructions: "" });
+    const a = Task.create({ agent: "x", brief: "go" });
+    const b = Task.create({ agent: "x", brief: "go" });
     expect(a.id).not.toBe(b.id);
     expect(a.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
   });
 
   it("honours an explicit canonical id override", () => {
-    const t = Task.create({ agent: "a", instructions: "", id: FIXED_ID });
+    const t = Task.create({ agent: "a", brief: "go", id: FIXED_ID });
     expect(t.id).toBe(FIXED_ID);
   });
 
   it("rejects an explicit non-canonical id (matches the repo's storage contract)", () => {
-    expect(() => Task.create({ agent: "a", instructions: "", id: "fixed-id" })).toThrow(
+    expect(() => Task.create({ agent: "a", brief: "go", id: "fixed-id" })).toThrow(
       InvalidTaskIdError,
     );
   });
 
   it("honours an explicit createdAt override", () => {
     const stamp = "2025-12-31T23:59:59.999Z";
-    const t = Task.create({ agent: "a", instructions: "", createdAt: stamp });
+    const t = Task.create({ agent: "a", brief: "go", createdAt: stamp });
     expect(t.createdAt).toBe(stamp);
   });
 
   it("defaults createdAt to a parseable ISO 8601 timestamp", () => {
     const before = Date.now();
-    const t = Task.create({ agent: "a", instructions: "" });
+    const t = Task.create({ agent: "a", brief: "go" });
     const after = Date.now();
     const parsed = Date.parse(t.createdAt);
     expect(parsed).toBeGreaterThanOrEqual(before);
@@ -60,12 +76,12 @@ describe("Task.create", () => {
 
   it("captures caller-supplied metadata", () => {
     const md = { creator: "alice", priority: 5 };
-    const t = Task.create({ agent: "a", instructions: "", metadata: md });
+    const t = Task.create({ agent: "a", brief: "go", metadata: md });
     expect(t.metadata).toEqual(md);
   });
 
   it("defaults metadata to an empty object", () => {
-    const t = Task.create({ agent: "a", instructions: "" });
+    const t = Task.create({ agent: "a", brief: "go" });
     expect(t.metadata).toEqual({});
   });
 });
@@ -117,6 +133,19 @@ describe("Task — happy paths", () => {
     const parsed = Date.parse(r.startedAt as string);
     expect(parsed).toBeGreaterThanOrEqual(before);
     expect(parsed).toBeLessThanOrEqual(after);
+  });
+
+  it("transitions preserve brief + details verbatim", () => {
+    const t = Task.create({
+      id: FIXED_ID,
+      agent: "a",
+      brief: "the brief",
+      details: "long body",
+      createdAt: fixedNow,
+    });
+    const r = t.start({ now: fixedNow }).complete("ok", { now: fixedNow });
+    expect(r.brief).toBe("the brief");
+    expect(r.details).toBe("long body");
   });
 });
 
@@ -231,13 +260,14 @@ describe("Task.withMetadata", () => {
       metadata: { pid: 7 },
       now: fixedNow,
     });
-    const r = t.withMetadata({ title: "fresh" });
-    expect(r.metadata).toEqual({ title: "fresh" });
+    const r = t.withMetadata({ lastActiveAtRuntime: "2026-01-01T00:00:00.000Z" });
+    expect(r.metadata).toEqual({ lastActiveAtRuntime: "2026-01-01T00:00:00.000Z" });
     expect(r.status).toBe("running");
     expect(r.startedAt).toBe(fixedNow);
     expect(r.id).toBe(t.id);
     expect(r.agent).toBe(t.agent);
-    expect(r.instructions).toBe(t.instructions);
+    expect(r.brief).toBe(t.brief);
+    expect(r.details).toBe(t.details);
     expect(r.createdAt).toBe(t.createdAt);
   });
 });
@@ -247,7 +277,7 @@ describe("Task.fromStored", () => {
     const t = Task.fromStored({
       id: FIXED_ID,
       agent: "a",
-      instructions: "do",
+      brief: "do",
       status: "success",
       metadata: { pid: 100 },
       createdAt: fixedNow,
@@ -258,6 +288,20 @@ describe("Task.fromStored", () => {
     expect(t.status).toBe("success");
     expect(t.result).toEqual({ output: "ok" });
     expect(t.metadata).toEqual({ pid: 100 });
+    expect(t.details).toBeUndefined();
+  });
+
+  it("rebuilds with details when present", () => {
+    const t = Task.fromStored({
+      id: FIXED_ID,
+      agent: "a",
+      brief: "do",
+      details: "long",
+      status: "not_started",
+      metadata: {},
+      createdAt: fixedNow,
+    });
+    expect(t.details).toBe("long");
   });
 
   it("throws InvalidTaskIdError on a malformed id", () => {
@@ -265,7 +309,7 @@ describe("Task.fromStored", () => {
       Task.fromStored({
         id: "../../etc",
         agent: "a",
-        instructions: "do",
+        brief: "do",
         status: "not_started",
         metadata: {},
         createdAt: fixedNow,
@@ -278,12 +322,39 @@ describe("Task.fromStored", () => {
       Task.fromStored({
         id: FIXED_ID,
         agent: "a",
-        instructions: "do",
+        brief: "do",
         status: "invented" as TaskStatus,
         metadata: {},
         createdAt: fixedNow,
       }),
     ).toThrow(/status must be one of/);
+  });
+
+  it("throws CorruptedTaskError on empty brief", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "",
+        status: "not_started",
+        metadata: {},
+        createdAt: fixedNow,
+      }),
+    ).toThrow(CorruptedTaskError);
+  });
+
+  it("throws CorruptedTaskError on non-string details", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        details: 42 as unknown as string,
+        status: "not_started",
+        metadata: {},
+        createdAt: fixedNow,
+      }),
+    ).toThrow(/details, when present, must be a string/);
   });
 
   it("throws CorruptedTaskError on non-object metadata", () => {
@@ -295,7 +366,7 @@ describe("Task.fromStored", () => {
       Task.fromStored({
         id: FIXED_ID,
         agent: "a",
-        instructions: "do",
+        brief: "do",
         status: "not_started",
         metadata: null as unknown as Record<string, unknown>,
         createdAt: fixedNow,
@@ -305,7 +376,7 @@ describe("Task.fromStored", () => {
       Task.fromStored({
         id: FIXED_ID,
         agent: "a",
-        instructions: "do",
+        brief: "do",
         status: "not_started",
         metadata: [1, 2, 3] as unknown as Record<string, unknown>,
         createdAt: fixedNow,
@@ -321,11 +392,24 @@ describe("Task.toJSON", () => {
     expect(wire).toEqual({
       id: FIXED_ID,
       agent: "a",
-      instructions: "go",
+      brief: "go",
       status: "not_started",
       metadata: { creator: "alice" },
       createdAt: fixedNow,
     });
+  });
+
+  it("omits optional details when undefined; includes when set", () => {
+    const noDetails = JSON.parse(JSON.stringify(makeTask()));
+    expect("details" in noDetails).toBe(false);
+    const withDetails = Task.create({
+      id: FIXED_ID,
+      agent: "a",
+      brief: "go",
+      details: "extra",
+      createdAt: fixedNow,
+    });
+    expect(JSON.parse(JSON.stringify(withDetails)).details).toBe("extra");
   });
 
   it("includes optional fields only when present", () => {
