@@ -100,14 +100,17 @@ var table.
 
 ## Security defaults
 
-- **Loopback-only by default.** `EMPLOKE_HOST` defaults to `127.0.0.1`.
-- **Non-loopback requires `EMPLOKE_API_KEY`.** Setting `EMPLOKE_HOST` to
-  e.g. `0.0.0.0` without `EMPLOKE_API_KEY` causes `createServer` to
-  refuse to start. A misconfigured production deploy fails fast at
-  boot, not silently exposes the catalog to the LAN.
-- **Bearer-token check on every `/api/*` request** when
-  `EMPLOKE_API_KEY` is set. Failure is 401 without leaking
-  whether the token format was bad vs the comparison failed.
+- **Loopback-only.** `EMPLOKE_HOST` defaults to `127.0.0.1`. Setting it
+  to anything else (e.g. `0.0.0.0`) causes startup to refuse with a
+  clear error — emploke does not ship its own auth layer, on the
+  principle that "rolling our own" is rarely the right answer for a
+  single-user local-first dashboard.
+- **For remote access**, expose the loopback socket through a layer
+  designed for auth: SSH port-forward
+  (`ssh -L 8787:127.0.0.1:8787 user@host`), a reverse proxy with
+  mTLS / OIDC (nginx, Caddy, Traefik), or a mesh VPN with peer auth
+  (Tailscale, Nebula, WireGuard). All three preserve the loopback bind
+  on the emploke side.
 
 ## Error mapping
 

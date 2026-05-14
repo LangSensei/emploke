@@ -84,9 +84,9 @@ export interface SessionManagerConfig {
    * Static env overrides merged into every session-launch env bag on
    * top of the per-session additions assembled in
    * `buildInteractiveLaunch()`. Production wires this from the server
-   * with `EMPLOKE_SERVER`, `EMPLOKE_API_KEY` (when set), and
-   * `EMPLOKE_HOME` so a shell launched by `session spawn` can call
-   * back into the same server it was launched from. Tests typically
+   * with `EMPLOKE_SERVER` and `EMPLOKE_HOME` so a shell launched by
+   * `session spawn` can call back into the same server it was launched
+   * from. Tests typically
    * leave this unset.
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;

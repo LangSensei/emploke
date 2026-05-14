@@ -20,8 +20,7 @@ import type { MiddlewareHandler } from "hono";
  * every few seconds and the noise drowns real signal.
  *
  * Order constraint: must run AFTER `requestLogger()` (reads
- * `c.var.logger`) and ideally BEFORE `bearerAuth` (so 401s from auth
- * still produce an access line).
+ * `c.var.logger`).
  */
 const SLOW_REQUEST_MS = 2000;
 const QUIET_PATHS = new Set(["/api/health"]);

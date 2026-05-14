@@ -229,10 +229,13 @@ A `WorkspaceContextCache` lazily mints + retains per-workspace
 manager instances behind that URL prefix; cache invalidation happens
 on workspace deletion or metadata update.
 
-The server is **loopback-only by default**; non-loopback `EMPLOKE_HOST`
-requires `EMPLOKE_API_KEY` (Bearer-token check on every `/api/*`
-request) and emploke refuses to start otherwise. A misconfigured
-production deploy fails fast.
+The server is **loopback-only**: it refuses to bind to anything other
+than `127.0.0.1` / `::1`. emploke ships no built-in auth, on the
+principle that "rolling our own" is rarely the right answer for a
+single-user local-first dashboard. For remote access, expose the
+loopback socket through a layer designed for auth (SSH port-forward,
+reverse proxy with mTLS / OIDC, mesh VPN with peer auth such as
+Tailscale). A misconfigured non-loopback bind fails fast at startup.
 
 ## Per-workspace layout
 

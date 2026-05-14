@@ -11,7 +11,6 @@ import type { CommandResult } from "../result.js";
 
 export interface RuntimeListOpts {
   readonly server?: string;
-  readonly apiKey?: string;
   readonly home?: string;
   readonly output?: string;
   readonly json?: boolean;

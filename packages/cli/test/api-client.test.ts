@@ -49,7 +49,7 @@ function makeClient(responses: MockResponse[]): {
       headers: r.contentType ? { "content-type": r.contentType } : {},
     });
   };
-  const client = new ApiClient({ baseUrl: "http://test.local", apiKey: "secret", fetch: fetchFn });
+  const client = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
   return { client, calls };
 }
 
@@ -73,7 +73,6 @@ describe("ApiClient", () => {
     expect(result.status).toBe("ok");
     expect(calls[0]?.url).toBe("http://test.local/api/health");
     expect(calls[0]?.method).toBe("GET");
-    expect(calls[0]?.headers.Authorization).toBe("Bearer secret");
     expect(calls[0]?.body).toBeUndefined();
   });
 
@@ -182,28 +181,6 @@ describe("ApiClient", () => {
     expect(calls[0]?.url).toBe("http://test.local/api/health");
   });
 
-  it("omits Authorization when no apiKey is configured", async () => {
-    const calls: CallRecord[] = [];
-    const fetchFn: typeof fetch = async (input, init) => {
-      const headers: Record<string, string> = {};
-      if (init?.headers) {
-        for (const [k, v] of Object.entries(init.headers as Record<string, string>)) {
-          headers[k] = v;
-        }
-      }
-      calls.push({
-        url: String(input),
-        method: String(init?.method ?? "GET"),
-        headers,
-        body: undefined,
-      });
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    };
-    const c = new ApiClient({ baseUrl: "http://test.local", fetch: fetchFn });
-    await c.call("health.get");
-    expect(calls[0]?.headers.Authorization).toBeUndefined();
-  });
-
   it("forwards opts.headers verbatim onto the request", async () => {
     const { client, calls } = makeClient([
       { status: 200, contentType: "text/event-stream", body: "" },
@@ -215,9 +192,8 @@ describe("ApiClient", () => {
       headers: { "Last-Event-ID": "1234" },
     });
     expect(calls[0]?.headers["Last-Event-ID"]).toBe("1234");
-    // The built-ins are still set:
+    // The Accept built-in is still set:
     expect(calls[0]?.headers.Accept).toBe("application/json");
-    expect(calls[0]?.headers.Authorization).toBe("Bearer secret");
   });
 
   // Wire-shape pin for the catalog install routes.

@@ -13,7 +13,6 @@ import type { CommandResult } from "../result.js";
 
 interface CommonFlags {
   readonly server?: string;
-  readonly apiKey?: string;
   readonly home?: string;
   readonly workspace?: string;
   readonly output?: string;

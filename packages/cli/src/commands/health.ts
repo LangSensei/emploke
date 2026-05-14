@@ -15,7 +15,6 @@ import type { CommandResult } from "../result.js";
 
 export interface HealthOpts {
   readonly server?: string;
-  readonly apiKey?: string;
   readonly home?: string;
   readonly output?: string;
   readonly json?: boolean;

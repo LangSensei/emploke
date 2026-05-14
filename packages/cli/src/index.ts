@@ -159,7 +159,6 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Run the emploke server in the foreground")
     .option("-p, --port <port>", "Listen port (env: PORT, default 8787)")
     .option("--host <host>", "Bind host (env: EMPLOKE_HOST, default 127.0.0.1)")
-    .option("--api-key <key>", "Require this bearer token on /api/* (env: EMPLOKE_API_KEY)")
     .option("--no-serve-static", "Do not serve the dashboard SPA")
     .option("--static-dir <dir>", "Override the dashboard SPA directory")
     .option("--log-level <level>", "Log level (debug | info | warn | error)")
@@ -173,7 +172,6 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Start the emploke server as a detached background process")
     .option("-p, --port <port>", "Listen port (env: PORT, default 8787)")
     .option("--host <host>", "Bind host (env: EMPLOKE_HOST, default 127.0.0.1)")
-    .option("--api-key <key>", "Require this bearer token on /api/* (env: EMPLOKE_API_KEY)")
     .option("--no-serve-static", "Do not serve the dashboard SPA")
     .option("--static-dir <dir>", "Override the dashboard SPA directory")
     .option("--log-level <level>", "Log level (debug | info | warn | error)")
@@ -194,7 +192,6 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Stop and start the emploke server")
     .option("-p, --port <port>", "Listen port (env: PORT, default 8787)")
     .option("--host <host>", "Bind host (env: EMPLOKE_HOST, default 127.0.0.1)")
-    .option("--api-key <key>", "Require this bearer token on /api/* (env: EMPLOKE_API_KEY)")
     .option("--no-serve-static", "Do not serve the dashboard SPA")
     .option("--static-dir <dir>", "Override the dashboard SPA directory")
     .option("--log-level <level>", "Log level (debug | info | warn | error)")
@@ -762,7 +759,6 @@ function parseServeFlags(opts: Record<string, unknown>): ServeOpts {
   if (typeof port === "number") out.port = port;
   else if (typeof port === "string" && port !== "") out.port = Number(port);
   if (typeof opts.host === "string") out.host = opts.host;
-  if (typeof opts.apiKey === "string") out.apiKey = opts.apiKey;
   if (opts.serveStatic === false) out.serveStatic = false;
   if (typeof opts.staticDir === "string") out.staticDir = opts.staticDir;
   const level = opts.logLevel;
@@ -776,7 +772,6 @@ function parseServeFlags(opts: Record<string, unknown>): ServeOpts {
 
 interface ConnectFlagOpts {
   server?: string;
-  apiKey?: string;
   output?: string;
   json?: boolean;
 }
@@ -789,8 +784,6 @@ function parseConnectFlags(opts: Record<string, unknown>): ConnectFlagOpts {
   const out: ConnectFlagOpts = {};
   const server = pickString(opts, "server");
   if (server !== undefined) out.server = server;
-  const apiKey = pickString(opts, "apiKey");
-  if (apiKey !== undefined) out.apiKey = apiKey;
   const output = pickString(opts, "output");
   if (output !== undefined) out.output = output;
   if (opts.json === true) out.json = true;
@@ -831,7 +824,6 @@ function optionalString<K extends string>(
 function withConnectFlags(c: Command): Command {
   return c
     .option("--server <url>", "Server URL (env: EMPLOKE_SERVER, runtime.json)")
-    .option("--api-key <key>", "Bearer token for /api/* (env: EMPLOKE_API_KEY, runtime.json)")
     .option("--output <fmt>", "Output format: table | json")
     .option("--json", "Shorthand for --output json");
 }

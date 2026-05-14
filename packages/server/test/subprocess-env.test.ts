@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildSubprocessEnvBase } from "../src/subprocess-env.js";
 
 describe("buildSubprocessEnvBase", () => {
-  it("emits EMPLOKE_SERVER + EMPLOKE_HOME with no api key when none given", () => {
+  it("emits EMPLOKE_SERVER + EMPLOKE_HOME", () => {
     const env = buildSubprocessEnvBase({
       hostname: "127.0.0.1",
       port: 8787,
@@ -10,27 +10,6 @@ describe("buildSubprocessEnvBase", () => {
     });
     expect(env.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     expect(env.EMPLOKE_HOME).toBe("/var/lib/emploke");
-    expect("EMPLOKE_API_KEY" in env).toBe(false);
-  });
-
-  it("includes EMPLOKE_API_KEY when set + non-empty", () => {
-    const env = buildSubprocessEnvBase({
-      hostname: "127.0.0.1",
-      port: 8787,
-      home: "/h",
-      apiKey: "secret-token",
-    });
-    expect(env.EMPLOKE_API_KEY).toBe("secret-token");
-  });
-
-  it("treats empty-string apiKey as unset", () => {
-    const env = buildSubprocessEnvBase({
-      hostname: "127.0.0.1",
-      port: 8787,
-      home: "/h",
-      apiKey: "",
-    });
-    expect("EMPLOKE_API_KEY" in env).toBe(false);
   });
 
   it("rewrites 0.0.0.0 wildcard to loopback for the dialable URL", () => {

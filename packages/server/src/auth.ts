@@ -1,13 +1,12 @@
-import type { Logger } from "@emploke/logger";
-import type { Context } from "hono";
-
 /**
- * Loopback addresses that don't require auth: anything that's only
- * reachable from this machine. We check the literal configured value
- * rather than resolving DNS — the user typed it; the user owns it.
+ * Loopback addresses that are safe to bind to without authentication —
+ * anything reachable only from this machine.
  *
  * Anything else (`0.0.0.0`, a LAN IP, a public hostname) is treated as
- * "exposed to the network" and the caller must gate it with an API key.
+ * "exposed to the network" and rejected at startup. emploke does not
+ * ship its own auth layer; for remote access, terminate elsewhere
+ * (SSH port-forward, reverse proxy with mTLS / OIDC, Tailscale, …)
+ * and keep the server bound to loopback.
  */
 export function isLoopbackBind(host: string): boolean {
   if (host === "127.0.0.1" || host === "localhost") return true;
@@ -18,102 +17,26 @@ export function isLoopbackBind(host: string): boolean {
 }
 
 /**
- * Refuse to start when the server would be reachable from the network
- * without authentication. The check runs before any port binding so a
- * misconfigured deployment fails closed at startup rather than silently
- * exposing destructive endpoints (DELETE /api/skills/:name etc.).
+ * Refuse to start when the configured bind would be reachable from the
+ * network. The check runs before any port binding so a misconfigured
+ * deployment fails closed at startup rather than silently exposing
+ * destructive endpoints (DELETE /api/skills/:name etc.).
+ *
+ * Auth was removed deliberately (issue #98 follow-up): the previous
+ * built-in `EMPLOKE_API_KEY` Bearer scheme was a half-finished
+ * shared-secret with a real SSE auth gap (browser `EventSource` cannot
+ * send custom headers), and "rolling our own auth" is rarely the right
+ * answer for a single-user local-first dashboard. Operators who need
+ * remote access should terminate auth at a layer designed for it.
  */
-export function assertBindIsSafe(host: string, key: string | undefined): void {
+export function assertBindIsSafe(host: string): void {
   if (isLoopbackBind(host)) return;
-  if (key && key.trim() !== "") return;
   throw new Error(
-    `Refusing to bind to ${host} without authentication. Either:\n` +
-      `  - bind to a loopback address (EMPLOKE_HOST=127.0.0.1, the default), or\n` +
-      `  - set EMPLOKE_API_KEY=<token> to require Bearer auth on /api/* requests.\n` +
-      `Without one of these, anyone on this network could call destructive endpoints ` +
-      `(DELETE /api/skills/:name, POST /api/sessions/:id/spawn, etc.).`,
+    `Refusing to bind to ${host}. emploke binds to loopback only.\n` +
+      `For remote access, expose the loopback socket through a layer designed for auth:\n` +
+      `  - SSH port-forward: ssh -L 8787:127.0.0.1:8787 user@host\n` +
+      `  - Reverse proxy with mTLS / OIDC (nginx, Caddy, Traefik, …) in front of 127.0.0.1:8787\n` +
+      `  - Mesh VPN with peer auth (Tailscale, Nebula, WireGuard, …)\n` +
+      `Set EMPLOKE_HOST=127.0.0.1 (the default) to silence this error.`,
   );
-}
-
-/**
- * Length-safe constant-time string compare. Avoids the timing oracle that
- * a naïve `a === b` introduces when one operand is attacker-controlled
- * (Node's `===` short-circuits on the first mismatched character).
- *
- * We intentionally don't use `crypto.timingSafeEqual` because it requires
- * equal-length Buffers and our inputs are arbitrary strings; manually
- * comparing char codes is just as constant-time within the same length
- * and avoids the allocation footgun.
- */
-export function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-/**
- * Hono middleware that requires `Authorization: Bearer <key>`. A
- * `?apiKey=<key>` query string is also accepted as a fallback for
- * browsers that can't easily set headers, but **prefer the Bearer
- * header in production**: query parameters are recorded in HTTP access
- * logs (nginx, upstream proxies, browser history, Referer headers when
- * the page links out), so a key sent via query is far more likely to
- * leak than one sent in the header.
- *
- * Compares the presented key with `expected` in constant time. Only
- * mounted by `index.ts` when `EMPLOKE_API_KEY` is set — when unset
- * (loopback-only deployment) requests pass through without this gate.
- *
- * Returns a Hono middleware function (async (c, next) => …). Failures
- * respond with 401 + `{ error: "unauthorized", code: "Unauthorized" }`
- * so the dashboard can branch on `code` like with other typed errors.
- *
- * **Auth events**: when a request is rejected, a `warn`-level structured
- * log line is emitted via the request-scoped logger (when one is
- * available on `c.var.logger`) recording the failure mode (missing
- * header / wrong key), the request path, and a sanitised user-agent.
- * **The presented key is never logged** — only its presence and a
- * length-bucketed fingerprint, so brute-force probing leaves a signal
- * without the log itself becoming a credential leak vector.
- */
-export function bearerAuth(expected: string) {
-  return async (c: Context, next: () => Promise<void>): Promise<Response | undefined> => {
-    const header = c.req.header("authorization");
-    let presented: string | null = null;
-    let mode: "header" | "query" | "absent" = "absent";
-    if (header?.toLowerCase().startsWith("bearer ")) {
-      presented = header.slice(7).trim();
-      mode = "header";
-    } else {
-      const q = c.req.query("apiKey");
-      if (typeof q === "string" && q.length > 0) {
-        presented = q;
-        mode = "query";
-      }
-    }
-    if (presented === null || !constantTimeEqual(presented, expected)) {
-      // Request-scoped logger is set by `requestLogger` middleware;
-      // when missing (e.g. tests that mount bearerAuth standalone) we
-      // skip the log without throwing.
-      const logger = (c.get as unknown as (k: string) => unknown)("logger") as Logger | undefined;
-      if (logger !== undefined) {
-        logger.warn(
-          {
-            path: c.req.path,
-            method: c.req.method,
-            credentialMode: mode,
-            credentialLen: presented?.length ?? 0,
-            userAgent: c.req.header("user-agent")?.slice(0, 80),
-          },
-          "auth: bearer check failed",
-        );
-      }
-      return c.json({ error: "unauthorized", code: "Unauthorized" }, 401);
-    }
-    await next();
-    return undefined;
-  };
 }

@@ -99,9 +99,9 @@ export interface TaskManagerConfig {
   /**
    * Static env overrides merged into every task subprocess on top of
    * the per-task additions assembled in `dispatch()`. Production wires
-   * this from the server with `EMPLOKE_SERVER`, `EMPLOKE_API_KEY`
-   * (when set), and `EMPLOKE_HOME` so the spawned CLI can call back
-   * into the same server it was launched from. Tests typically leave
+   * this from the server with `EMPLOKE_SERVER` and `EMPLOKE_HOME` so
+   * the spawned CLI can call back into the same server it was launched
+   * from. Tests typically leave
    * this unset.
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
