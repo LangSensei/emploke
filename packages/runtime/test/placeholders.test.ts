@@ -78,6 +78,26 @@ describe("substitutePlaceholders", () => {
     }
   });
 
+  it("rejects the legacy globalDir placeholder (renamed to sharedDir — hard rename, no back-compat)", () => {
+    // `${globalDir}` was the original name shipped with the placeholder
+    // system. The runtime's underlying field is now `sharedDir` (matches
+    // `paths.sharedDir`), and the placeholder followed suit. We chose a
+    // hard rename rather than a deprecation window because (1) emploke
+    // is pre-1.0, (2) the marketplace had only ~8 doc references at the
+    // time of the rename (all updated in a follow-up PR), and (3) a
+    // soft-warn path would let stale specs drift without forcing a fix.
+    //
+    // Pinning this here so a future "be friendly, accept both names"
+    // PR has to actively delete this test rather than just adding
+    // `globalDir` to PLACEHOLDER_NAMES — which would silently pass the
+    // generic unknown-name test.
+    expect(() => substitutePlaceholders(ph("globalDir"), CTX, "mcps:legacy")).toThrow(
+      UnknownPlaceholderError,
+    );
+    expect(PLACEHOLDER_NAMES).not.toContain("globalDir");
+    expect(PLACEHOLDER_NAMES).toContain("sharedDir");
+  });
+
   it("does NOT do shell-style fallback or default syntax (kept simple on purpose)", () => {
     // `${workspaceDir:-/fallback}` is shell syntax; we don't honour it
     // because the marketplace audience writes JSON specs, not shell
