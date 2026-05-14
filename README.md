@@ -44,8 +44,9 @@ Walk through:
    an `AGENTS.md` (a [Claude-style agent](https://www.claude.com/news/agent-skills);
    any directory with valid frontmatter works). Skills + MCPs the agent
    depends on go in the same way.
-3. **Dispatch a task** in the Tasks tab — pick the agent, type instructions,
-   click *Dispatch*. The agent runs unattended in a new sandbox under
+3. **Dispatch a task** in the Tasks tab — pick the agent, write a brief
+   (one-line goal) and optional details, click *Dispatch*. The agent runs
+   unattended in a new sandbox under
    `tasks/<id>/`; the dashboard shows the live event stream and folds the
    exit into a final `success` / `failure` / `cancelled` status.
 4. **Or open a session** in the Sessions tab — interactive workdir; emploke
@@ -127,7 +128,7 @@ emploke workspace rm <id> --purge
 # sessions and tasks (workspace-scoped; pass --workspace <id> to override the env above)
 emploke session new --agent writer
 emploke session list --agent writer --json
-emploke task dispatch --agent triage --instructions "Scan recent issues"
+emploke task dispatch --agent triage --brief "Scan recent issues"
 emploke task list --status running,success
 emploke task events <tid>     # one-shot dump of the runtime's NDJSON log
 emploke task activity <tid>   # runtime-parsed activity timeline (JSON)
