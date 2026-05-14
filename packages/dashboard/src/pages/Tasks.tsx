@@ -1,5 +1,14 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type ActivityItem,
@@ -919,10 +928,10 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   }, []);
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
-  const loadingMoreRef = useRef(false);
+  const loadingOlderRef = useRef(false);
   // Mirror of the activity state, kept in a ref so callbacks (notably
-  // loadMoreActivity, which can fire from IntersectionObserver any
-  // time) read the latest cursor without re-creating their closure
+  // loadOlderActivity, which can fire from IntersectionObserver any
+  // time) read the latest seq window without re-creating their closure
   // on every state change. setState updaters are async, so the
   // earlier "snapshot via setState((prev) => prev)" trick raced the
   // first IntersectionObserver fire and bailed early — leaving the
@@ -931,57 +940,72 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   const activityRef = useRef<TaskActivity | null>(null);
 
   /**
-   * Append the next page of activity items. Called when the user
-   * scrolls to the bottom of the timeline (sentinel intersects).
-   * Reads the cursor from `activityRef` (kept in sync via the
-   * activity-state effect below) so the closure never staleness-bails
-   * on a quickly-clicked sentinel.
+   * Prepend the previous page of activity items. Called when the user
+   * scrolls to the TOP of the timeline (top sentinel intersects).
+   * Reads the oldest currently-loaded seq from `activityRef` and asks
+   * for the page immediately preceding it.
    *
-   * No-ops when there's nothing more to load (cursor === null) or
-   * when a page fetch is already in flight. Errors are surfaced
-   * via the existing activityError channel.
+   * No-ops when there's no older page (oldest seq already 0) or when
+   * a page fetch is already in flight. Errors are surfaced via the
+   * existing activityError channel.
+   *
+   * Important: the `StickToBottomScroll` parent ignores prepends (its
+   * `followKey` tracks the LAST item's seq, not the count) so the
+   * user's reading position is preserved automatically. The scroll
+   * anchor compensation (keep the user's viewport content stable
+   * after the list grows at the top) lives in the sentinel
+   * component below — see `LoadOlderSentinel`.
    */
-  const loadMoreActivity = useCallback(async (): Promise<void> => {
+  const loadOlderActivity = useCallback(async (): Promise<void> => {
     if (!taskId) return;
-    if (loadingMoreRef.current) return;
-    const cursor = activityRef.current?.cursor ?? null;
-    if (cursor === null) return;
-    loadingMoreRef.current = true;
+    if (loadingOlderRef.current) return;
+    const a = activityRef.current;
+    if (a === null || a.activity.length === 0) return;
+    const oldestSeq = a.activity[0]?.seq;
+    if (oldestSeq === undefined || oldestSeq <= 0) return;
+    loadingOlderRef.current = true;
     try {
-      const next = await fetchTaskActivity(taskId, { cursor, limit: 50 });
+      const next = await fetchTaskActivity(taskId, { before: oldestSeq, limit: 50 });
       if (!mountedRef.current) return;
       if (next === null) return;
       setActivity((prev) => {
         if (prev === null) return next;
-        // Merge by seq (last-write-wins) — same approach the SSE
-        // handler uses, so a tool_call that's been mutated locally
-        // doesn't get clobbered by an older snapshot from the page.
+        // Merge by seq (last-write-wins for any overlap, though there
+        // shouldn't be any since the new page is strictly older).
         const bySeq = new Map<number, ActivityItem>();
-        for (const it of prev.activity) bySeq.set(it.seq, it);
         for (const it of next.activity) bySeq.set(it.seq, it);
+        for (const it of prev.activity) bySeq.set(it.seq, it);
         const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
         return {
           activity: merged,
-          // Newer headline result (next page tail) wins; falls back to
-          // existing if the next page didn't include a final answer.
-          result: next.result ?? prev.result,
-          cursor: next.cursor,
+          // Existing headline result wins (it's from the tail and
+          // always newer than anything we'd find by scrolling up).
+          result: prev.result ?? next.result,
+          // totalItems is authoritative for the WHOLE log, so the
+          // server tells us the same value either way; prefer the
+          // freshest (might increase between calls if the task is
+          // still running).
           totalItems: next.totalItems ?? prev.totalItems,
-          ...(next.truncated !== undefined ? { truncated: next.truncated } : {}),
+          // Truncation marker on the prepended page is about the
+          // raw-read tail cap, which doesn't apply here — the older
+          // page that we successfully fetched is, by definition, not
+          // the one that hit the cap. Keep whichever the existing
+          // state has.
+          ...(prev.truncated !== undefined ? { truncated: prev.truncated } : {}),
         };
       });
     } catch (e) {
       if (!mountedRef.current) return;
       setActivityError((e as Error).message);
     } finally {
-      loadingMoreRef.current = false;
+      loadingOlderRef.current = false;
     }
   }, [taskId]);
 
   // Keep the ref synced with the latest activity state so
-  // loadMoreActivity can read the current cursor without taking
-  // `activity` as a dep (which would re-create the callback on
-  // every SSE tick and thrash IntersectionObserver).
+  // loadOlderActivity can read the current oldest seq without taking
+  // `activity` as a dep (which would re-create the callback on every
+  // SSE tick and thrash IntersectionObserver).
   useEffect(() => {
     activityRef.current = activity;
   }, [activity]);
@@ -999,29 +1023,55 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     try {
       // Always fetch:
       //   - task metadata (cheap; drives status badge, header, result fallback)
-      //   - activity timeline (small parsed JSON; drives Activity tab,
-      //     Result panel, AND the Raw tab — which now just renders the
-      //     activity payload as JSON, no separate request needed)
+      //   - activity timeline tail (small parsed JSON; drives Activity
+      //     tab, Result panel, AND the Raw tab — which now just renders
+      //     the activity payload as JSON, no separate request needed)
+      //
+      // On poll re-fetches we use forward-pagination from the
+      // currently-known last seq when possible — much cheaper than
+      // re-fetching the full tail every cycle. First load always
+      // fetches the latest 50 (no `after` set).
+      const known = activityRef.current;
+      const lastSeq =
+        known !== null && known.activity.length > 0
+          ? known.activity[known.activity.length - 1]?.seq
+          : undefined;
       await Promise.all([
         getTask(taskId).then((t) => {
           if (!mountedRef.current || token !== taskTokenRef.current) return;
           setTask(t);
         }),
-        // Match server-side default `limit=50` — sized for snappy
-        // first paint and reused page-size for subsequent
-        // auto-loads. The IntersectionObserver sentinel near the
-        // bottom of the list fetches additional pages as the user
-        // scrolls, so a long autonomous task progressively renders
-        // 50 items at a time without an upfront cost.
-        fetchTaskActivity(taskId, { limit: 50 })
+        fetchTaskActivity(taskId, lastSeq !== undefined ? { after: lastSeq } : { limit: 50 })
           .then((a) => {
             if (!mountedRef.current || token !== taskTokenRef.current) return;
-            setActivity(a);
+            if (a === null) {
+              setActivity(null);
+              setActivityError(null);
+              return;
+            }
+            // Forward fetch: merge into existing state. Initial fetch
+            // (`lastSeq === undefined`): replace.
+            if (lastSeq === undefined) {
+              setActivity(a);
+            } else {
+              setActivity((prev) => {
+                if (prev === null) return a;
+                const bySeq = new Map<number, ActivityItem>();
+                for (const it of prev.activity) bySeq.set(it.seq, it);
+                for (const it of a.activity) bySeq.set(it.seq, it);
+                const merged = Array.from(bySeq.values()).sort((x, y) => x.seq - y.seq);
+                return {
+                  activity: merged,
+                  result: a.result ?? prev.result,
+                  totalItems: a.totalItems ?? prev.totalItems,
+                  ...(a.truncated !== undefined ? { truncated: a.truncated } : {}),
+                };
+              });
+            }
             setActivityError(null);
           })
           .catch((e) => {
             if (!mountedRef.current || token !== taskTokenRef.current) return;
-            setActivity(null);
             setActivityError((e as Error).message);
           }),
       ]);
@@ -1041,9 +1091,14 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     // Always reset the per-task fetched state when the URL switches
     // tasks. Without this, switching from task A to task B leaves A's
     // activity in state and the next render shows A's payload under B's
-    // header until the new fetch resolves.
+    // header until the new fetch resolves. The ref must be cleared
+    // synchronously so refreshDetail (called below) doesn't see the
+    // previous task's last-seq and issue an `?after=N` against the new
+    // task — setActivity(null) is async and the syncing useEffect runs
+    // a render later.
     setTask(null);
     setActivity(null);
+    activityRef.current = null;
     setActivityError(null);
     if (!taskId) return;
     void refreshDetail();
@@ -1079,8 +1134,22 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
           bySeq.set(item.seq, item);
           const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
           return prev !== null
-            ? { ...prev, activity: merged }
-            : { activity: merged, result: null, cursor: null };
+            ? {
+                ...prev,
+                activity: merged,
+                // Live tail items are by definition extending the
+                // total so we update totalItems to stay >= max(seq+1).
+                totalItems: Math.max(prev.totalItems, item.seq + 1),
+              }
+            : {
+                activity: merged,
+                result: null,
+                // Best-effort bootstrap when the very first thing we
+                // see is an SSE item (no prior REST snapshot). The next
+                // REST poll will replace this with the authoritative
+                // server count.
+                totalItems: item.seq + 1,
+              };
         });
       },
       onError: (err) => {
@@ -1146,11 +1215,27 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       : undefined;
   const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
+  // Runtime-supplied display title (Copilot writes it into
+  // `workspace.yaml`'s `name`/`summary`; the runtime adapter folds
+  // it into `metadata.title`). It's a curated 5-7 word label sized
+  // for headline use, distinct from `instructions` (which can be
+  // multi-paragraph). The list item already uses it; mirror the
+  // same rule here so the detail page also leads with the
+  // human-readable name instead of the opaque task id.
+  //
+  // No fallback to "first line of instructions": the full
+  // instructions render right below this header, so a derived
+  // title would just duplicate visible text. Tasks without a
+  // runtime title get no `<h2>` row — the layout collapses
+  // gracefully to today's id-led header.
+  const title =
+    typeof metadata.title === "string" && metadata.title.length > 0 ? metadata.title : null;
   const isRunning = task && (task.status === "running" || task.status === "not_started");
 
   return (
     <aside className="tasks-pane__detail">
       <header className="task-detail__head">
+        {title && <h2 className="task-detail__title">{title}</h2>}
         <div className="task-detail__head-row">
           <code className="task-detail__id" title={taskId}>
             {taskId}
@@ -1263,13 +1348,31 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       </nav>
 
       {tab === "activity" && (
-        <div className="task-detail__body">
+        <StickToBottomScroll
+          className="task-detail__body"
+          // Reset on task switch so the new task lands at the bottom.
+          resetKey={taskId ?? ""}
+          // Follow only when a NEW tail event arrives. Using
+          // `length` would also fire on `LoadOlderSentinel` prepends,
+          // which would yank the user back to the bottom while
+          // they're scrolling up to read history — exactly the
+          // anti-pattern we're trying to avoid. The `seq` of the
+          // last item is monotonic per task and only changes when
+          // the runtime emits a new event.
+          followKey={activity?.activity[activity.activity.length - 1]?.seq ?? 0}
+          // Top-anchor: when the FIRST item's seq decreases (older
+          // history was prepended), preserve the user's reading
+          // position by adjusting scrollTop by the prepended block's
+          // height. Without this the content under the user's eyes
+          // would shift down by exactly the prepended height.
+          topAnchorKey={activity?.activity[0]?.seq ?? 0}
+        >
           <ActivityView
             activity={activity}
             activityError={activityError}
-            onLoadMore={loadMoreActivity}
+            onLoadOlder={loadOlderActivity}
           />
-        </div>
+        </StickToBottomScroll>
       )}
 
       {tab === "raw" && (
@@ -1315,6 +1418,141 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 }
 
 /**
+ * Scroll container that follows the bottom of its content while the
+ * user has scrolled to (or near) the bottom — matches how chat apps
+ * (Slack, Cursor agent, browser DevTools console) keep the latest
+ * line visible during live activity, without yanking the user's
+ * position when they've scrolled up to read history.
+ *
+ * Three effects:
+ *
+ * 1. **Reset effect** (keyed by `resetKey`): when the user switches
+ *    tasks, jump to the bottom unconditionally so the latest events
+ *    are visible right away. Also resets `stickToBottom = true` so
+ *    follow-on poll updates keep tracking.
+ * 2. **Follow effect** (keyed by `followKey`): each time the
+ *    activity event count changes, if the user is currently pinned
+ *    to the bottom, scroll the new content into view. If they've
+ *    scrolled up, leave their viewport position alone — the new
+ *    item appended below moves the scrollbar thumb up visually,
+ *    but the content the user was reading stays in place.
+ * 3. **Top-anchor effect** (keyed by `topAnchorKey`): when older
+ *    history is prepended (the first item's seq decreases), the
+ *    naive behavior is to keep `scrollTop` constant — but the
+ *    content the user was reading shifts DOWN by the height of the
+ *    prepended block. We compensate by adding `(newScrollHeight -
+ *    oldScrollHeight)` to `scrollTop`, which preserves the user's
+ *    reading position. Only runs when the user has scrolled away
+ *    from the bottom (otherwise the follow effect handles it).
+ *
+ * `useLayoutEffect` (rather than `useEffect`) avoids the visible
+ * one-frame jump that would otherwise show the un-scrolled state
+ * before the autoscroll runs.
+ *
+ * The bottom-detection has a 4px tolerance for subpixel rounding
+ * — without it, a freshly-appended item can take the user "out of
+ * the bottom zone" by exactly the new item's height, breaking the
+ * follow loop after a single update.
+ */
+function StickToBottomScroll({
+  className,
+  resetKey,
+  followKey,
+  topAnchorKey,
+  children,
+}: {
+  className?: string;
+  /** Changes → unconditional jump to bottom (e.g. task switch). */
+  resetKey: string | number;
+  /** Changes → scroll to bottom only if user was at bottom. */
+  followKey: string | number;
+  /**
+   * Changes → preserve reading position when content was prepended.
+   * Should be the seq (or unique key) of the FIRST item in the list.
+   * When this number decreases, we know a prepend happened and we
+   * adjust `scrollTop` by the height delta. Optional: when omitted,
+   * scroll-anchor behavior is disabled.
+   */
+  topAnchorKey?: string | number;
+  children: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  const isAtBottom = useCallback((el: HTMLElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+  }, []);
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = isAtBottom(el);
+  }, [isAtBottom]);
+
+  // Reset on resetKey change — task switch jumps to bottom.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey is the trigger; the body intentionally only reads the ref.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+  }, [resetKey]);
+
+  // Follow on followKey change — new events scroll into view if user
+  // was pinned to the bottom; otherwise leave their position alone.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: followKey is the trigger; the body intentionally only reads the ref.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [followKey]);
+
+  // Top-anchor effect — preserve reading position on prepend.
+  //
+  // We track the previous topAnchorKey + scrollHeight in refs so the
+  // next render can compute the delta. The first render initializes
+  // the refs and skips adjustment (no prior measurement to compare
+  // against). A "prepend" is detected when the topAnchorKey changes
+  // AND, if both old and new are numbers, the new value is smaller
+  // (older items have lower seq) — this rules out the "task switched
+  // to a different first-item" case (handled by resetKey).
+  const prevScrollHeightRef = useRef(0);
+  const prevTopAnchorRef = useRef<string | number | undefined>(topAnchorKey);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: topAnchorKey is the trigger; refs are intentionally read inside.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const prevKey = prevTopAnchorRef.current;
+    const prevHeight = prevScrollHeightRef.current;
+    if (
+      topAnchorKey !== undefined &&
+      prevKey !== undefined &&
+      prevKey !== topAnchorKey &&
+      typeof prevKey === "number" &&
+      typeof topAnchorKey === "number" &&
+      topAnchorKey < prevKey &&
+      prevHeight > 0 &&
+      !stickToBottomRef.current
+    ) {
+      const delta = el.scrollHeight - prevHeight;
+      if (delta > 0) {
+        el.scrollTop += delta;
+      }
+    }
+    prevTopAnchorRef.current = topAnchorKey;
+    prevScrollHeightRef.current = el.scrollHeight;
+  }, [topAnchorKey]);
+
+  return (
+    <div ref={scrollRef} className={className} onScroll={onScroll}>
+      {children}
+    </div>
+  );
+}
+
+/**
  * Activity tab — runtime-neutral timeline of user / assistant /
  * summary entries. The runtime is responsible for filtering out the
  * low-signal events (handshake, model preference, system prompts);
@@ -1327,11 +1565,11 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
 function ActivityView({
   activity,
   activityError,
-  onLoadMore,
+  onLoadOlder,
 }: {
   activity: TaskActivity | null;
   activityError: string | null;
-  onLoadMore: () => Promise<void>;
+  onLoadOlder: () => Promise<void>;
 }) {
   if (activity === null) {
     if (activityError) {
@@ -1347,6 +1585,12 @@ function ActivityView({
   if (activity.activity.length === 0) {
     return <p className="muted">No activity yet for this task.</p>;
   }
+  // Older history is available iff the oldest currently-loaded item is
+  // not seq 0 (i.e. there exist seqs lower than what we have). The
+  // sentinel renders ABOVE the list so when the user scrolls UP
+  // towards history, intersection fires and we load the previous page.
+  const oldestSeq = activity.activity[0]?.seq ?? 0;
+  const hasOlder = oldestSeq > 0;
   return (
     <>
       {activity.truncated !== undefined && activity.truncated.reason === "size_limit" && (
@@ -1367,6 +1611,9 @@ function ActivityView({
           . Older events were skipped to keep the page responsive.
         </div>
       )}
+      {hasOlder && (
+        <LoadOlderSentinel onIntersect={onLoadOlder} activity={activity} oldestSeq={oldestSeq} />
+      )}
       <ol className="activity-list">
         {activity.activity.map((item) => (
           // `seq` is monotonic per task and unique within the timeline,
@@ -1375,43 +1622,37 @@ function ActivityView({
           <ActivityRow key={item.seq} item={item} />
         ))}
       </ol>
-      {activity.cursor !== null && (
-        <LoadMoreSentinel onIntersect={onLoadMore} activity={activity} />
-      )}
     </>
   );
 }
 
 /**
- * Bottom-of-list sentinel that triggers the next page fetch when
+ * Top-of-list sentinel that triggers the previous page fetch when
  * scrolled into view. Uses IntersectionObserver with a generous
- * rootMargin so the next page starts loading slightly before the
- * user actually reaches the bottom (smoother UX than waiting for
+ * rootMargin so the previous page starts loading slightly before
+ * the user actually reaches the top (smoother UX than waiting for
  * the spinner to appear).
  *
- * Re-observes when `activity.cursor` changes — this fires the next
- * page after the current one is appended (in case the sentinel is
- * still in view because the new page didn't fill the viewport).
+ * Re-observes when `oldestSeq` changes — this fires the next
+ * older-page after the current one is prepended (in case the
+ * sentinel is still in view because the new page didn't fill
+ * the viewport).
  */
-function LoadMoreSentinel({
+function LoadOlderSentinel({
   onIntersect,
   activity,
+  oldestSeq,
 }: {
   onIntersect: () => Promise<void>;
   activity: TaskActivity;
+  oldestSeq: number;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
-  // Capture cursor so the effect's dep list has a value Biome
-  // recognises as in-scope. We re-observe whenever cursor advances:
-  // after a page is appended the sentinel may still be in view (the
-  // newly-rendered items didn't push it past the fold), and a fresh
-  // observe-cycle is what fires IntersectionObserver again.
-  const cursor = activity.cursor;
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
-    // Reference cursor in the body so the dep list isn't "extra".
-    void cursor;
+    // Reference oldestSeq in the body so the dep list isn't "extra".
+    void oldestSeq;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -1425,17 +1666,14 @@ function LoadMoreSentinel({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [onIntersect, cursor]);
+  }, [onIntersect, oldestSeq]);
   return (
     <div
       ref={sentinelRef}
       className="muted"
       style={{ padding: "10px 0", textAlign: "center", fontSize: 12 }}
     >
-      Loading more
-      {activity.totalItems !== undefined &&
-        ` (${activity.activity.length} of ${activity.totalItems})`}
-      …
+      Loading older history ({activity.activity.length} of {activity.totalItems})…
     </div>
   );
 }
@@ -1665,9 +1903,16 @@ function ActivityRow({ item }: { item: ActivityItem }) {
  * toggle. The threshold is a soft preview cap — the bounded
  * `.activity-row__pre` style provides a vertical scroll backstop
  * regardless.
+ *
+ * Toggle uses the same button + state pattern as `ResultSection` /
+ * `TaskInstructions` rather than `<details>/<summary>`: the latter
+ * forces the summary to stay on screen, so opening the disclosure
+ * would render BOTH the preview and the full content at once.
  */
 const TOOL_DISPLAY_PREVIEW_CHARS = 240;
 function ToolDisplay({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const isLong = content.length > TOOL_DISPLAY_PREVIEW_CHARS;
   if (!isLong) {
     return (
@@ -1685,15 +1930,34 @@ function ToolDisplay({ content }: { content: string }) {
       ? `${previewSrc.slice(0, TOOL_DISPLAY_PREVIEW_CHARS)}…`
       : previewSrc;
   return (
-    <details>
-      <summary style={{ cursor: "pointer", fontSize: 12 }}>
-        {preview}
-        <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
-          (show full {content.length.toLocaleString()} chars)
-        </span>
-      </summary>
-      <pre className="activity-row__pre">{content}</pre>
-    </details>
+    <div>
+      {expanded ? (
+        <pre id={bodyId} className="activity-row__pre">
+          {content}
+        </pre>
+      ) : (
+        <p id={bodyId} className="activity-row__body" style={{ fontSize: 12 }}>
+          {preview}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        style={{
+          marginTop: 4,
+          background: "none",
+          border: "none",
+          color: "var(--color-link, #58a6ff)",
+          cursor: "pointer",
+          padding: 0,
+          fontSize: 11,
+        }}
+      >
+        {expanded ? "Show less" : `Show full (${content.length.toLocaleString()} chars)`}
+      </button>
+    </div>
   );
 }
 
@@ -1702,9 +1966,14 @@ function ToolDisplay({ content }: { content: string }) {
 /**
  * Detail-header instructions with collapse-by-default for long
  * inputs. Short instructions render plain (the existing 4-line CSS
- * clamp is enough); long ones use a `<details>` toggle so the user
- * can expand to read the full text without the header eating half
- * the viewport.
+ * clamp is enough); long ones use a button + state toggle so the
+ * user can expand to read the full text without the header eating
+ * half the viewport.
+ *
+ * Toggle uses the same button + state pattern as `ResultSection` /
+ * `ToolDisplay` rather than `<details>/<summary>`: the latter
+ * forces the summary to stay on screen, so opening the disclosure
+ * would render BOTH the preview and the full content at once.
  *
  * The tag-line below the form already serves as the task's
  * persistent "title"; the unmutable instructions are the source of
@@ -1713,6 +1982,8 @@ function ToolDisplay({ content }: { content: string }) {
  */
 const TASK_INSTRUCTIONS_PREVIEW_CHARS = 320;
 function TaskInstructions({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const isLong = text.length > TASK_INSTRUCTIONS_PREVIEW_CHARS;
   if (!isLong) {
     return (
@@ -1725,24 +1996,39 @@ function TaskInstructions({ text }: { text: string }) {
   const cut = text.lastIndexOf(" ", TASK_INSTRUCTIONS_PREVIEW_CHARS);
   const preview = `${text.slice(0, cut > 0 ? cut : TASK_INSTRUCTIONS_PREVIEW_CHARS)}…`;
   return (
-    <details className="task-detail__instructions-details">
-      <summary
-        className="task-detail__instructions"
-        style={{ cursor: "pointer", listStyle: "none" }}
-        title={text}
+    <div>
+      {expanded ? (
+        <p
+          id={bodyId}
+          className="task-detail__instructions"
+          title={text}
+          style={{ WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
+        >
+          {text}
+        </p>
+      ) : (
+        <p id={bodyId} className="task-detail__instructions" title={text}>
+          {preview}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        style={{
+          marginTop: 4,
+          background: "none",
+          border: "none",
+          color: "var(--color-link, #58a6ff)",
+          cursor: "pointer",
+          padding: 0,
+          fontSize: 11,
+        }}
       >
-        {preview}{" "}
-        <span className="muted" style={{ fontSize: 11 }}>
-          (show full {text.length.toLocaleString()} chars)
-        </span>
-      </summary>
-      <p
-        className="task-detail__instructions"
-        style={{ marginTop: 8, WebkitLineClamp: "unset", maxHeight: 320, overflowY: "auto" }}
-      >
-        {text}
-      </p>
-    </details>
+        {expanded ? "Show less" : `Show full (${text.length.toLocaleString()} chars)`}
+      </button>
+    </div>
   );
 }
 

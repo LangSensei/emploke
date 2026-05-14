@@ -503,9 +503,9 @@ export class TaskManager {
    *
    * Pagination is owned by the runtime (it's the only layer that
    * knows its own log layout); the manager just forwards
-   * `cursor` / `limit` and the runtime's `truncated` marker. The
-   * server route enforces the [1, 500] limit clamp before reaching
-   * here.
+   * `before` / `after` / `limit` and the runtime's `truncated` marker.
+   * The server route enforces the [1, 500] limit clamp and the
+   * `before`/`after` mutex before reaching here.
    *
    * Read errors after the runtime found its log (e.g. permission
    * error mid-read) propagate; they're true server faults and should
@@ -513,7 +513,7 @@ export class TaskManager {
    */
   async getTaskActivity(
     id: string,
-    opts?: { readonly cursor?: number; readonly limit?: number },
+    opts?: { readonly before?: number; readonly after?: number; readonly limit?: number },
   ): Promise<import("@emploke/runtime").ActivityResult | null> {
     const task = await this.get(id);
     if (task === null) return null;
@@ -533,7 +533,8 @@ export class TaskManager {
     if (typeof runtime.readActivity !== "function") return null;
     return runtime.readActivity({
       runtimeSessionId,
-      ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
+      ...(opts?.before !== undefined ? { before: opts.before } : {}),
+      ...(opts?.after !== undefined ? { after: opts.after } : {}),
       ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
     });
   }
@@ -554,7 +555,7 @@ export class TaskManager {
    */
   async getTaskActivityStream(
     id: string,
-    opts: { readonly cursor?: number; readonly signal?: AbortSignal },
+    opts: { readonly after?: number; readonly signal?: AbortSignal },
   ): Promise<AsyncIterable<import("@emploke/runtime").ActivityItem> | null> {
     const task = await this.get(id);
     if (task === null) return null;
@@ -575,7 +576,7 @@ export class TaskManager {
     if (typeof runtime.streamActivity !== "function") return null;
     return runtime.streamActivity({
       runtimeSessionId,
-      ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}),
+      ...(opts.after !== undefined ? { after: opts.after } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
   }

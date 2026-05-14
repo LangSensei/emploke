@@ -56,7 +56,8 @@ await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boo
 const t = await mgr.dispatch({ agent: "writer", instructions: "..." });
 // t.status === "running" — the subprocess has been spawned; poll mgr.get(t.id)
 // for status changes, fetch the runtime-parsed activity timeline via
-// mgr.getTaskActivity(t.id, { cursor, limit }) for paginated reads, or
+// mgr.getTaskActivity(t.id, { before, after, limit }) for paginated reads
+// (omit both before/after for the latest `limit` items — tail), or
 // subscribe to mgr.getTaskActivityStream(t.id, { signal }) for a live
 // AsyncIterable<ActivityItem> while the task is still running.
 
@@ -133,9 +134,9 @@ agent artifacts.
 
 The runtime adapter owns its own per-task event log end-to-end —
 emploke does NOT mirror it inside the workdir. The runtime exposes
-the parsed timeline through `Runtime.readActivity?(opts)` (paginated
-by `cursor` + `limit`, with a `truncated` marker for source-side
-caps) and an optional `Runtime.streamActivity?(opts)` (AsyncIterable
+the parsed timeline through `Runtime.readActivity?(opts)` (tail-first,
+paginated by `before` / `after` / `limit`, with a `truncated` marker
+for source-side caps) and an optional `Runtime.streamActivity?(opts)` (AsyncIterable
 of `ActivityItem`s for live tail). For Copilot this reads
 `<copilotStateDir>/<id>/events.jsonl` with a 4 MB cap; future
 runtimes that store their log as a single file, a SQLite row, or

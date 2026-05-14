@@ -443,5 +443,57 @@ describe("tasksRoutes", () => {
       const body = await res.json();
       expect(body).toEqual(payload);
     });
+
+    it("forwards before / after / limit query params to the manager", async () => {
+      const getTaskActivity = vi.fn(async () => null);
+      const m = stubManager({ getTaskActivity });
+      const r = tasksRoutes(() => m);
+
+      // Default: no pagination params, default limit 50 applied by route.
+      await r.request(`/${sampleTask.id}/activity`);
+      expect(getTaskActivity).toHaveBeenLastCalledWith(sampleTask.id, { limit: 50 });
+
+      // after only.
+      await r.request(`/${sampleTask.id}/activity?after=42`);
+      expect(getTaskActivity).toHaveBeenLastCalledWith(sampleTask.id, { after: 42, limit: 50 });
+
+      // before only.
+      await r.request(`/${sampleTask.id}/activity?before=100&limit=20`);
+      expect(getTaskActivity).toHaveBeenLastCalledWith(sampleTask.id, {
+        before: 100,
+        limit: 20,
+      });
+    });
+
+    it("400 when both before and after are supplied (mutually exclusive)", async () => {
+      // The runtime layer also guards this, but failing earlier in the
+      // route is friendlier — the client gets a clear 400 rather than
+      // having the request hit the runtime and bubble back as a 500.
+      const m = stubManager({ getTaskActivity: vi.fn(async () => null) });
+      const res = await tasksRoutes(() => m).request(
+        `/${sampleTask.id}/activity?before=10&after=5`,
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.code).toBe("BadRequest");
+      expect(body.error).toContain("mutually exclusive");
+    });
+
+    it.each([
+      { name: "before negative", q: "before=-1" },
+      { name: "before non-integer", q: "before=abc" },
+      { name: "before floating point", q: "before=1.5" },
+      { name: "after negative", q: "after=-1" },
+      { name: "after non-integer", q: "after=xyz" },
+      { name: "limit zero", q: "limit=0" },
+      { name: "limit > max", q: "limit=10000" },
+      { name: "limit non-integer", q: "limit=abc" },
+    ])("400 on malformed query: $name", async ({ q }) => {
+      const m = stubManager({ getTaskActivity: vi.fn(async () => null) });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/activity?${q}`);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.code).toBe("BadRequest");
+    });
   });
 });

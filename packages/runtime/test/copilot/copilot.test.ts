@@ -298,7 +298,7 @@ describe("CopilotRuntime", () => {
       expect(await rt.readActivity({ runtimeSessionId: FIXED_UUID })).toBeNull();
     });
 
-    it("reads + parses + paginates events.jsonl", async () => {
+    it("paginates events.jsonl in three modes (tail / after / before)", async () => {
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });
       const lines: string[] = [];
@@ -316,28 +316,133 @@ describe("CopilotRuntime", () => {
       await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
 
+      // No limit, no pagination cursor: returns the entire log.
+      // CLI default ("give me everything").
       const all = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
       });
       expect(all?.activity).toHaveLength(10);
       expect(all?.totalItems).toBe(10);
-      expect(all?.cursor).toBeNull();
+      expect(all?.activity[0]?.seq).toBe(0);
+      expect(all?.activity[9]?.seq).toBe(9);
+      expect(all?.truncated).toBeUndefined();
 
-      const first3 = await rt.readActivity({
+      // Tail mode (limit but no cursor): returns the LATEST `limit`
+      // items. GUI default — user lands at the most recent activity.
+      const tail = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
         limit: 3,
       });
-      expect(first3?.activity).toHaveLength(3);
-      expect(first3?.cursor).toBe(2); // last seq returned in this page
-      expect(first3?.truncated?.reason).toBe("page_limit");
+      expect(tail?.activity).toHaveLength(3);
+      expect(tail?.activity[0]?.seq).toBe(7);
+      expect(tail?.activity[2]?.seq).toBe(9);
+      expect(tail?.truncated?.reason).toBe("page_limit");
+      // hasOlder derives from `activity[0].seq > 0` — no separate field.
+      expect((tail?.activity[0]?.seq ?? 0) > 0).toBe(true);
 
-      const next = await rt.readActivity({
+      // Forward (after): items strictly newer than seq, oldest-first,
+      // capped at limit. SSE polling pattern.
+      const forward = await rt.readActivity({
         runtimeSessionId: FIXED_UUID,
-        cursor: 2,
+        after: 2,
         limit: 5,
       });
-      expect(next?.activity[0]?.seq).toBe(3);
-      expect(next?.activity).toHaveLength(5);
+      expect(forward?.activity).toHaveLength(5);
+      expect(forward?.activity[0]?.seq).toBe(3);
+      expect(forward?.activity[4]?.seq).toBe(7);
+      expect(forward?.truncated?.reason).toBe("page_limit");
+
+      // Backward (before): items strictly older than seq, returns the
+      // `limit` immediately preceding the cut, still ASC-sorted.
+      // GUI "load older history" pattern.
+      const backward = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 8,
+        limit: 3,
+      });
+      expect(backward?.activity).toHaveLength(3);
+      expect(backward?.activity[0]?.seq).toBe(5);
+      expect(backward?.activity[2]?.seq).toBe(7);
+      expect(backward?.truncated?.reason).toBe("page_limit");
+
+      // Backward at the head boundary: window smaller than limit,
+      // returns whatever's available, no truncation marker, and
+      // `activity[0].seq === 0` so caller knows hasOlder = false.
+      const headBoundary = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 2,
+        limit: 5,
+      });
+      expect(headBoundary?.activity).toHaveLength(2);
+      expect(headBoundary?.activity[0]?.seq).toBe(0);
+      expect(headBoundary?.truncated).toBeUndefined();
+    });
+
+    it("rejects mutually-exclusive before + after with RuntimeReadActivityInvalidArgs", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "events.jsonl"), "");
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      // Throws before touching the file — the route layer should
+      // catch this earlier as 400, but the runtime guards in case
+      // an in-process caller bypasses the route.
+      await expect(
+        rt.readActivity({ runtimeSessionId: FIXED_UUID, before: 5, after: 2 }),
+      ).rejects.toThrow(/before.*after.*mutually exclusive/);
+    });
+
+    it("handles pagination boundary edge cases (before=0, after=lastSeq, oversized limit)", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const lines: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        lines.push(
+          JSON.stringify({
+            type: "user.message",
+            id: `u${i}`,
+            parentId: null,
+            timestamp: "2026-05-12T03:54:11.016Z",
+            data: { content: `msg ${i}` },
+          }),
+        );
+      }
+      await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+
+      // before=0: no items have seq < 0, so the page is empty AND
+      // there's no truncation marker (we're at the head boundary,
+      // not page-limited). totalItems still reflects the whole log.
+      const beforeZero = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        before: 0,
+        limit: 10,
+      });
+      expect(beforeZero?.activity).toHaveLength(0);
+      expect(beforeZero?.totalItems).toBe(5);
+      expect(beforeZero?.truncated).toBeUndefined();
+
+      // after=lastSeq: no items beyond the tail, empty page, no
+      // truncation marker. Polling pattern: client just sees no new
+      // events and polls again later.
+      const afterTail = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        after: 4,
+        limit: 10,
+      });
+      expect(afterTail?.activity).toHaveLength(0);
+      expect(afterTail?.totalItems).toBe(5);
+      expect(afterTail?.truncated).toBeUndefined();
+
+      // limit > totalItems with no directional opt: returns the whole
+      // log (tail mode), no truncation marker — the cap wasn't actually
+      // hit because the log fit inside it.
+      const oversized = await rt.readActivity({
+        runtimeSessionId: FIXED_UUID,
+        limit: 9999,
+      });
+      expect(oversized?.activity).toHaveLength(5);
+      expect(oversized?.totalItems).toBe(5);
+      expect(oversized?.truncated).toBeUndefined();
     });
 
     it("caps the raw read at 4MB and surfaces truncated marker", async () => {
@@ -426,6 +531,68 @@ describe("CopilotRuntime", () => {
       expect(collected.length).toBeGreaterThanOrEqual(1);
       expect((collected[0] as { kind: string; text: string }).kind).toBe("user");
       expect((collected[0] as { text: string }).text).toBe("live!");
+    });
+
+    it("resumes from `after` (exclusive) so SSE Last-Event-ID reconnects skip already-seen seqs", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const eventsPath = path.join(dir, "events.jsonl");
+      // Pre-seed 3 historical lines (seqs 0,1,2) so the iterator's
+      // post-resume parser starts numbering at the right offset.
+      const seed = (i: number) =>
+        `${JSON.stringify({
+          type: "user.message",
+          id: `u${i}`,
+          parentId: null,
+          timestamp: "2026-05-12T03:54:11.016Z",
+          data: { content: `seed ${i}` },
+        })}\n`;
+      await writeFile(eventsPath, `${seed(0)}${seed(1)}${seed(2)}`);
+
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const ac = new AbortController();
+      const collected: { seq: number; text: string }[] = [];
+
+      const iterPromise = (async () => {
+        for await (const item of rt.streamActivity({
+          runtimeSessionId: FIXED_UUID,
+          // Last-Event-ID equivalent: the client already saw seq 1, so
+          // the runtime should yield items with seq > 1 only. The
+          // historical seq-2 line is already on disk but lives BELOW
+          // the offset (= file size at subscription time), so it
+          // doesn't get re-yielded — only newly appended bytes are.
+          after: 1,
+          signal: ac.signal,
+        })) {
+          collected.push({
+            seq: (item as { seq: number }).seq,
+            text: (item as { text?: string }).text ?? "",
+          });
+        }
+      })();
+
+      const { appendFile } = await import("node:fs/promises");
+      const { setTimeout: delay } = await import("node:timers/promises");
+      await delay(300);
+      // Append two NEW lines after subscription. They should be
+      // numbered seq 2, 3 (continuing from `after + 1 = 2`). The
+      // pre-existing seq-2 line is below the subscription offset,
+      // so the freshly-written line gets seq 2 too — note that the
+      // stream parser numbers off the `after`-derived startSeq, NOT
+      // the file's historical content. This is the documented
+      // SSE-resume contract.
+      await appendFile(eventsPath, seed(3));
+      await appendFile(eventsPath, seed(4));
+      await delay(500);
+      ac.abort();
+      await iterPromise;
+
+      // We saw the two new appends, numbered starting from after+1.
+      expect(collected.length).toBe(2);
+      expect(collected[0]?.seq).toBe(2);
+      expect(collected[1]?.seq).toBe(3);
+      expect(collected[0]?.text).toBe("seed 3");
+      expect(collected[1]?.text).toBe("seed 4");
     });
   });
 });

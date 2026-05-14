@@ -2940,6 +2940,19 @@ button {
   border-bottom: 1px solid var(--color-border);
 }
 
+.task-detail__title {
+  /* Curated runtime-supplied label (Copilot's workspace.yaml
+     name/summary, surfaced as `metadata.title`). Sized as the
+     panel's primary heading; falls back to no-render when the
+     runtime hasn't supplied a title. */
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
 .task-detail__head-row {
   display: flex;
   align-items: center;
@@ -2980,6 +2993,14 @@ button {
   font-size: 13px;
   color: var(--color-text);
   line-height: 1.45;
+  /* Preserve authored newlines + indentation. Without this the
+     expanded body collapses bullets, headers, and paragraphs into
+     a single wall of text — the source has structure (numbered
+     lists, double-newlines between sections), it should render
+     that way. `word-break: break-word` keeps long unbreakable
+     tokens (URLs, hashes) from blowing out the panel width. */
+  white-space: pre-wrap;
+  word-break: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;

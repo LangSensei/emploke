@@ -82,9 +82,11 @@ interface Runtime {
    * Optional: read + parse the runtime's per-conversation event log
    * into the runtime-neutral {@link ActivityItem} discriminated
    * union (`user | assistant | thinking | tool_call | system | summary`),
-   * plus the agent's headline result. Paginated by `cursor` + `limit`;
-   * surfaces `truncated` when the source had to be capped (e.g. raw
-   * file size exceeded the per-runtime cap).
+   * plus the agent's headline result. Tail-first pagination via
+   * `before` / `after` (mutually exclusive) + `limit`; omit both for
+   * the latest `limit` items (the GUI default). Surfaces `truncated`
+   * when the source had to be capped (e.g. raw file size exceeded
+   * the per-runtime cap).
    */
   readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
 
@@ -203,9 +205,11 @@ Skill order is the topological order the catalog produced.
    runtime-neutral `ActivityItem[]` + a derived "headline result"
    string. The dashboard / CLI / future MCP consumers render
    `ActivityItem`s without seeing your log format or storage path.
-   Pagination via `cursor` + `limit` is mandatory for
-   `readActivity`; `streamActivity` honours `opts.signal` for
-   cleanup on HTTP-client disconnect.
+   Tail-first pagination via `before` / `after` / `limit` is mandatory
+   for `readActivity` (omit both directional params for the latest
+   `limit` items — what GUI consumers want on first load);
+   `streamActivity` honours `opts.signal` for cleanup on HTTP-client
+   disconnect.
 5. Implement `readMetadata` if the CLI surfaces a session-level
    display title (Copilot's `workspace.yaml.name`).
 6. Register in `packages/server/src/runtime-registry.ts`.

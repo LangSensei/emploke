@@ -165,9 +165,14 @@ export interface Runtime {
    * Throws on real I/O / parse errors so the route layer can surface
    * 5xx for genuine faults.
    *
-   * Pagination via `opts.cursor` + `opts.limit`. Truncation surfaces
-   * in {@link TruncationInfo}; consumers MUST surface it so the user
-   * doesn't render a partial timeline as if it were complete.
+   * Tail-first pagination via `opts.before` / `opts.after` (mutually
+   * exclusive) + `opts.limit`; omit both for the latest `limit` items
+   * (tail). Items themselves are the cursor — `seq` is monotonic per
+   * log; consumers derive `hasOlder` / `hasNewer` from
+   * `activity[0].seq > 0` and `activity[last].seq < totalItems - 1`.
+   * Truncation surfaces in {@link TruncationInfo}; consumers MUST
+   * surface it so the user doesn't render a partial timeline as if
+   * it were complete.
    */
   readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
 
@@ -373,13 +378,33 @@ export interface ReadActivityOpts {
   /** The runtime session id to read activity for. */
   readonly runtimeSessionId: string;
   /**
-   * Return only items with `seq > cursor`. When omitted, the runtime
-   * returns the most recent `limit` items.
+   * Forward pagination: return only items with `seq > after`. Used by
+   * SSE polling and by callers walking the timeline head-to-tail.
+   *
+   * Mutually exclusive with {@link before}; supplying both is a
+   * `RuntimeReadActivityInvalidArgs` from the runtime layer (the route
+   * layer should reject as 400 before reaching the runtime).
    */
-  readonly cursor?: number;
+  readonly after?: number;
+  /**
+   * Backward pagination: return only items with `seq < before`. Used
+   * by GUI consumers loading older history when the user scrolls up
+   * past the initial tail-window.
+   *
+   * Returns the LATEST `limit` items below the cut (i.e., the chunk
+   * immediately preceding `before`), still sorted by `seq` ASC for
+   * caller convenience.
+   */
+  readonly before?: number;
   /**
    * Maximum number of items to return. Server enforces a default
    * (50) and a hard maximum (500) before calling into the runtime.
+   *
+   * Default-tail semantics: when neither {@link after} nor
+   * {@link before} is set, the runtime returns the LATEST `limit`
+   * items overall (the tail). This is what GUI initial loads want;
+   * a CLI walking the full history starts from `after = -1` and
+   * loops until the response is empty.
    */
   readonly limit?: number;
 }
@@ -389,11 +414,14 @@ export interface StreamActivityOpts {
   /** The runtime session id to stream activity for. */
   readonly runtimeSessionId: string;
   /**
-   * Resume from this seq number (exclusive). Used by SSE reconnection.
-   * When omitted, the stream starts from the next event written to
-   * the log — it does NOT replay history.
+   * Resume from this seq number (exclusive) — i.e. the stream
+   * yields items with `seq > after`. Used by SSE reconnection
+   * (the server reads `Last-Event-ID` and forwards it here). When
+   * omitted, the stream starts from the next event written to
+   * the log — it does NOT replay history. Forward-only by design;
+   * use {@link Runtime.readActivity}'s `before` for backward paging.
    */
-  readonly cursor?: number;
+  readonly after?: number;
   /**
    * Caller's abort signal. The runtime MUST stop tailing and clean
    * up file handles / watchers when this fires.
@@ -409,18 +437,29 @@ export interface StreamActivityOpts {
  *
  * Pagination + truncation:
  *
- * - `cursor` is the seq number to pass back as `opts.cursor` for the
- *   next page; `null` when this page is the tail.
+ * - `activity` is `seq`-ASC sorted regardless of which direction
+ *   was requested. Items themselves are the cursor — there is no
+ *   separate `cursor` / `nextCursor` field. Callers derive
+ *   `hasOlder` / `hasNewer` from `activity[0].seq > 0` and
+ *   `activity[last].seq < totalItems - 1`.
+ * - `totalItems` is authoritative for the WHOLE log (not just the
+ *   page) so consumers can compute window position + scrollbar
+ *   density without an extra round-trip.
  * - `truncated` is non-null when the runtime had to drop bytes /
  *   items to stay within the safety cap.
  */
 export interface ActivityResult {
   readonly activity: readonly ActivityItem[];
   readonly result: string | null;
-  /** seq to pass as next `opts.cursor`; null when caller has the tail. */
-  readonly cursor: number | null;
-  /** Total items in the underlying log, when known. */
-  readonly totalItems?: number;
+  /**
+   * Total items in the underlying log. Always present so that GUI
+   * consumers can compute `hasOlder` / `hasNewer` from the page
+   * window (`activity[0].seq > 0` and
+   * `activity[last].seq < totalItems - 1`) without needing
+   * dedicated cursor fields. Authoritative for the WHOLE log even
+   * when truncation dropped some items from the page.
+   */
+  readonly totalItems: number;
   readonly truncated?: TruncationInfo;
 }
 

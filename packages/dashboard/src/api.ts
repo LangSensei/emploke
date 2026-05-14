@@ -952,13 +952,21 @@ export interface TruncationInfo {
 export interface TaskActivity {
   activity: ActivityItem[];
   result: string | null;
-  cursor: number | null;
-  totalItems?: number;
+  totalItems: number;
   truncated?: TruncationInfo;
 }
 
 export interface FetchTaskActivityOpts {
-  cursor?: number;
+  /**
+   * Backward pagination: returns items with `seq < before`. Mutually
+   * exclusive with `after`; both → 400 from the server.
+   */
+  before?: number;
+  /**
+   * Forward pagination: returns items with `seq > after`. Used by
+   * polling and by callers walking head-to-tail.
+   */
+  after?: number;
   limit?: number;
 }
 
@@ -967,7 +975,8 @@ export const fetchTaskActivity = async (
   opts: FetchTaskActivityOpts = {},
 ): Promise<TaskActivity | null> => {
   const usp = new URLSearchParams();
-  if (opts.cursor !== undefined) usp.append("cursor", String(opts.cursor));
+  if (opts.before !== undefined) usp.append("before", String(opts.before));
+  if (opts.after !== undefined) usp.append("after", String(opts.after));
   if (opts.limit !== undefined) usp.append("limit", String(opts.limit));
   const qs = usp.toString();
   const url = `${workspacePrefix()}/tasks/${encodeURIComponent(id)}/activity${qs ? `?${qs}` : ""}`;
@@ -988,14 +997,27 @@ export const fetchTaskActivity = async (
  *
  * The `Last-Event-ID` reconnection header is set by the browser's
  * native EventSource using the `id:` field on each frame the
- * server emits — no manual cursor bookkeeping required.
+ * server emits — no manual bookkeeping required.
  */
 export interface ActivityStreamHandle {
   close(): void;
 }
 
 export interface SubscribeTaskActivityOpts {
-  cursor?: number;
+  /**
+   * Resume from this seq (exclusive). Currently a placeholder for
+   * future use — the SSE EventSource API doesn't support custom
+   * headers cross-browser, so we cannot propagate this on FIRST
+   * connect (no query-param fallback wired through yet). On
+   * RECONNECT (transport drop), the browser sets `Last-Event-ID`
+   * automatically from the `id:` field on each frame the server
+   * emits — which the server route reads as `after`. So in the
+   * reconnect case, resume Just Works without anyone passing this
+   * field. For first-connect history catch-up the caller should do
+   * a one-shot {@link fetchTaskActivity} `{ after }` and stitch the
+   * result before subscribing.
+   */
+  after?: number;
   onItem: (item: ActivityItem) => void;
   onEnd?: () => void;
   onError?: (err: Error) => void;
@@ -1009,9 +1031,9 @@ export const subscribeTaskActivity = (
   // EventSource doesn't support custom headers cross-browser, so we
   // can't pass Last-Event-ID on first connect via headers — but the
   // browser DOES set it on RECONNECT after a transport drop, which
-  // is the case that matters most. For first-connect cursor resume
-  // we'd need a query-param fallback; deferred (caller can do a
-  // one-shot fetchTaskActivity({ cursor }) before subscribing).
+  // is the case that matters most. For first-connect resume the
+  // caller can do a one-shot fetchTaskActivity({ after }) before
+  // subscribing and stitch the result into their state.
   const es = new EventSource(url);
   es.addEventListener("activity", (ev) => {
     try {
