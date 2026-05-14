@@ -870,7 +870,7 @@ describe("buildInteractiveLaunch()", () => {
   // See SessionManagerConfig.subprocessEnv for the rationale; same
   // contract as TaskManager.
 
-  it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_RUN_* onto the LaunchCommand", async () => {
+  it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_* onto the LaunchCommand", async () => {
     const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
