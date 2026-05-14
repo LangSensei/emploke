@@ -7,9 +7,10 @@ Maintainer-only. Customer-facing install instructions live in the root
 
 The `@langsensei/emploke` npm package is published by a tag-triggered
 GitHub Actions workflow ([`.github/workflows/release.yml`](../.github/workflows/release.yml)).
-Tag a version, push, the workflow builds the bundle and publishes via
-[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC,
-no long-lived token).
+Tag a version, push, and the workflow builds the bundle, publishes to
+npm via [Trusted Publishing](https://docs.npmjs.com/trusted-publishers)
+(OIDC, no long-lived token), and creates a GitHub Release with
+auto-generated notes.
 
 ## Cutting a release
 
@@ -78,7 +79,9 @@ git push origin vX.Y.Z-rc.0
 
 Versions containing a `-` (e.g. `0.2.1-rc.0`) are published with the `next`
 npm dist-tag rather than `latest`, so `npm install -g @langsensei/emploke`
-keeps installing the stable line.
+keeps installing the stable line. The matching GitHub Release is also
+marked as a prerelease so the repo's Releases page does not promote it
+as the latest stable.
 
 ## Safety rails
 
@@ -115,6 +118,19 @@ git push origin vX.Y.Z                  # triggers workflow again
 If the source itself is broken, just cut a fresh release with a higher
 version following the normal two-step flow above. Don't try to re-publish
 the same version with different bytes — npm forbids overwrite.
+
+### npm published but GitHub Release missing
+
+If `npm publish` succeeded but the `Create GitHub Release` step failed
+(rare — usually a transient `gh` API hiccup), npm has the package and
+the tag exists but the Releases page is missing the entry. Recover with:
+
+```sh
+gh release create vX.Y.Z --title vX.Y.Z --generate-notes
+# Add `--prerelease` for prereleases (versions with a `-`).
+```
+
+No need to re-tag or re-publish — the npm side is already done.
 
 ## One-time setup (already done)
 
