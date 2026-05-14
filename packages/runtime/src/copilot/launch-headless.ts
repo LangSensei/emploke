@@ -227,7 +227,7 @@ export interface BuildCopilotHeadlessArgsOpts {
  *     changing the spawn arguments.
  *   - `-C <taskDir>`: redundant with `cwd` but belt-and-suspenders for
  *     tools that introspect argv.
- *   - `--additional-mcp-config @./.mcp.json` (conditional): worksaround
+ *   - `--additional-mcp-config @./.mcp.json` (conditional): workaround
  *     for the upstream `-p` mode silently dropping workspace
  *     `.mcp.json` servers. Appended only when the file actually exists
  *     in `taskDir` so we don't pass a flag with nothing to load. See
