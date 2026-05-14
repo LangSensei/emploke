@@ -1,7 +1,7 @@
 /**
  * Builds the static portion of the env bag that the server hands to
  * every emploke-spawned subprocess. Per-run additions
- * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_*`) are
+ * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_WORK_*`) are
  * layered on top inside `TaskManager.dispatch` /
  * `SessionManager.assembleLaunchEnv`; this helper is for fields the
  * server itself owns (where to dial back, where the cross-workspace

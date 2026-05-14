@@ -266,7 +266,7 @@ export class SessionManager {
 
     // Layer in the per-session env bag on top of whatever the runtime
     // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR /
-    // EMPLOKE_RUN_KIND="session" / EMPLOKE_RUN_ID / EMPLOKE_RUN_DIR.
+    // EMPLOKE_WORK_KIND="session" / EMPLOKE_WORK_ID / EMPLOKE_WORK_DIR.
     // Server-supplied base adds: EMPLOKE_SERVER / EMPLOKE_SHARED_DIR. Both
     // layers are merged with the runtime's own (currently empty) env
     // field — letting a future runtime contribute its own vars (e.g. a
@@ -285,7 +285,7 @@ export class SessionManager {
     // same here for symmetry.
     //
     // assembleLaunchEnv unconditionally writes EMPLOKE_WORKSPACE_DIR,
-    // EMPLOKE_RUN_KIND, EMPLOKE_RUN_ID, and EMPLOKE_RUN_DIR, so
+    // EMPLOKE_WORK_KIND, EMPLOKE_WORK_ID, and EMPLOKE_WORK_DIR, so
     // `launchEnv` is always non-empty (size ≥ 4).
     const launchWithEnv: LaunchCommand = {
       ...launch,
@@ -335,8 +335,8 @@ export class SessionManager {
    *      (presently nothing for Copilot; reserved for future runtimes
    *      that need their own vars).
    *   3. Per-session fields: EMPLOKE_WORKSPACE (when known),
-   *      EMPLOKE_WORKSPACE_DIR, EMPLOKE_RUN_KIND="session",
-   *      EMPLOKE_RUN_ID=<sessionId>, EMPLOKE_RUN_DIR=<sessionWorkdir>.
+   *      EMPLOKE_WORKSPACE_DIR, EMPLOKE_WORK_KIND="session",
+   *      EMPLOKE_WORK_ID=<sessionId>, EMPLOKE_WORK_DIR=<sessionWorkdir>.
    *
    * `undefined` values are dropped so they don't get inlined as the
    * literal string "undefined" by the shell-export prefix in
@@ -358,9 +358,9 @@ export class SessionManager {
     }
     if (this.workspaceId !== undefined) out.EMPLOKE_WORKSPACE = this.workspaceId;
     out.EMPLOKE_WORKSPACE_DIR = this.workspaceDir;
-    out.EMPLOKE_RUN_KIND = "session";
-    out.EMPLOKE_RUN_ID = sessionId;
-    out.EMPLOKE_RUN_DIR = sessionWorkdir;
+    out.EMPLOKE_WORK_KIND = "session";
+    out.EMPLOKE_WORK_ID = sessionId;
+    out.EMPLOKE_WORK_DIR = sessionWorkdir;
     return out;
   }
 

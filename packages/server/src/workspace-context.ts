@@ -85,8 +85,8 @@ export class WorkspaceContextCache {
    * `TaskManager` so the spawned task subprocesses inherit a
    * self-describing bag (server URL, API key, EMPLOKE_SHARED_DIR).
    * The per-workspace + per-run fields (`EMPLOKE_WORKSPACE`,
-   * `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_KIND`, `EMPLOKE_RUN_ID`,
-   * `EMPLOKE_RUN_DIR`) are added inside `TaskManager.dispatch` /
+   * `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_WORK_KIND`, `EMPLOKE_WORK_ID`,
+   * `EMPLOKE_WORK_DIR`) are added inside `TaskManager.dispatch` /
    * `SessionManager.assembleLaunchEnv` — this field carries only
    * what the server itself contributes.
    *

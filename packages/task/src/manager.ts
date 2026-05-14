@@ -304,9 +304,9 @@ export class TaskManager {
           ...this.subprocessEnvBase,
           ...(this.workspaceId !== undefined ? { EMPLOKE_WORKSPACE: this.workspaceId } : {}),
           EMPLOKE_WORKSPACE_DIR: this.workspaceDir,
-          EMPLOKE_RUN_KIND: "task",
-          EMPLOKE_RUN_ID: id,
-          EMPLOKE_RUN_DIR: workdir,
+          EMPLOKE_WORK_KIND: "task",
+          EMPLOKE_WORK_ID: id,
+          EMPLOKE_WORK_DIR: workdir,
         },
       });
     } catch (err) {

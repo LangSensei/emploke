@@ -139,7 +139,7 @@ describe("spawnTerminalWith > linux", () => {
     });
     const cmd: LaunchCommand = {
       ...sample,
-      env: { EMPLOKE_WORKSPACE: "ws-uuid-1", EMPLOKE_RUN_ID: "01HZZZ" },
+      env: { EMPLOKE_WORKSPACE: "ws-uuid-1", EMPLOKE_WORK_ID: "01HZZZ" },
     };
     await spawnTerminalWith(cmd, deps);
     expect(calls[0]?.args).toEqual([
@@ -147,7 +147,7 @@ describe("spawnTerminalWith > linux", () => {
       "--",
       "sh",
       "-lc",
-      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_RUN_ID='01HZZZ' && cd '/tmp/wd' && exec 'copilot'",
+      "export EMPLOKE_WORKSPACE='ws-uuid-1' EMPLOKE_WORK_ID='01HZZZ' && cd '/tmp/wd' && exec 'copilot'",
     ]);
   });
 

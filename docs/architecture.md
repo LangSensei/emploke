@@ -335,9 +335,9 @@ rely on; everything else in the env is "best effort, host-dependent".
 | `EMPLOKE_SHARED_DIR`    | abs path   | always | `<EMPLOKE_HOME>/shared` — the canonical machine-shared writable directory. Same path the runtime exposes to MCP specs as `${sharedDir}`. Pick this for state shared across workspaces (a single playwright login, a model cache). |
 | `EMPLOKE_WORKSPACE`     | UUID       | always (per run) | Workspace id (routing key for the HTTP API; `emploke ... --workspace <id>` accepts it). |
 | `EMPLOKE_WORKSPACE_DIR` | abs path   | always (per run) | Workspace root on disk. Same path the runtime exposes to MCP specs as `${workspaceDir}`. Pick this for state private to one workspace. |
-| `EMPLOKE_RUN_KIND`      | `task` \| `session` | always (per run) | Discriminator for the run that's about to start. |
-| `EMPLOKE_RUN_ID`        | string     | always (per run) | This run's id (e.g. `20260514-abc12345`). Same value the dashboard / CLI uses as the URL key. |
-| `EMPLOKE_RUN_DIR`       | abs path   | always (per run) | This run's workdir on disk (`<workspace>/tasks/<id>/` for tasks, `<workspace>/sessions/<id>/` for sessions). Same value as the spawned process's `cwd`. |
+| `EMPLOKE_WORK_KIND`     | `task` \| `session` | always (per run) | Discriminator for the run that's about to start. |
+| `EMPLOKE_WORK_ID`       | string     | always (per run) | This run's id (e.g. `20260514-abc12345`). Same value the dashboard / CLI uses as the URL key. |
+| `EMPLOKE_WORK_DIR`      | abs path   | always (per run) | This run's workdir on disk (`<workspace>/tasks/<id>/` for tasks, `<workspace>/sessions/<id>/` for sessions). Same value as the spawned process's `cwd`. |
 
 ### Deliberately not exposed
 
@@ -385,7 +385,7 @@ conversation.
 
 Skills and agents that need a workspace-private path should read
 `EMPLOKE_WORKSPACE_DIR`, never derive it from `cwd` (which is
-`EMPLOKE_RUN_DIR`, two levels under `EMPLOKE_WORKSPACE_DIR`).
+`EMPLOKE_WORK_DIR`, two levels under `EMPLOKE_WORKSPACE_DIR`).
 Skills and agents that need a machine-shared path should read
 `EMPLOKE_SHARED_DIR`. The variables are stable across emploke's
 internal layout changes — even if the on-disk shape moves, the env

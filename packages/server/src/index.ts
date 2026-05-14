@@ -203,7 +203,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     logger,
     // Static env bag merged into every task subprocess. Per-run
     // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
-    // `EMPLOKE_RUN_KIND`, `EMPLOKE_RUN_ID`, `EMPLOKE_RUN_DIR`) are
+    // `EMPLOKE_WORK_KIND`, `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`) are
     // layered on inside `TaskManager.dispatch` /
     // `SessionManager.assembleLaunchEnv`.
     //

@@ -887,12 +887,12 @@ describe("buildInteractiveLaunch()", () => {
     expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
     expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
-    expect(launch.env?.EMPLOKE_RUN_KIND).toBe("session");
-    expect(launch.env?.EMPLOKE_RUN_ID).toBe(s.id);
-    // Per-session workdir lives at <sessionsDir>/<id>/ — RUN_DIR is
+    expect(launch.env?.EMPLOKE_WORK_KIND).toBe("session");
+    expect(launch.env?.EMPLOKE_WORK_ID).toBe(s.id);
+    // Per-session workdir lives at <sessionsDir>/<id>/ — WORK_DIR is
     // the cwd the user lands in; WORKSPACE_DIR is one level up's
     // workspace root.
-    expect(launch.env?.EMPLOKE_RUN_DIR).toBe(s.workdir);
+    expect(launch.env?.EMPLOKE_WORK_DIR).toBe(s.workdir);
   });
 
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
@@ -908,7 +908,7 @@ describe("buildInteractiveLaunch()", () => {
     const launch = await m.buildInteractiveLaunch(s.id);
     // Per-session fields still populated even without a workspaceId.
     expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
-    expect(launch.env?.EMPLOKE_RUN_ID).toBe(s.id);
+    expect(launch.env?.EMPLOKE_WORK_ID).toBe(s.id);
     expect("EMPLOKE_WORKSPACE" in (launch.env ?? {})).toBe(false);
   });
 
