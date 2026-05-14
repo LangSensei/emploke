@@ -273,7 +273,7 @@ describe("spawnTerminalWith > windows", () => {
       ...sample,
       env: {
         EMPLOKE_WORKSPACE: "ws-uuid-1",
-        EMPLOKE_SESSION_ID: "01HZZZ",
+        EMPLOKE_RUN_ID: "01HZZZ",
       },
     };
     await spawnTerminalWith(cmd, deps);
@@ -282,7 +282,7 @@ describe("spawnTerminalWith > windows", () => {
     // then the `&` call operator. The pwsh quoting doubles `'` to `''`
     // (none in these values) and leaves everything else literal.
     expect(payload).toBe(
-      "$env:EMPLOKE_WORKSPACE = 'ws-uuid-1'\\; $env:EMPLOKE_SESSION_ID = '01HZZZ'\\; & 'copilot'",
+      "$env:EMPLOKE_WORKSPACE = 'ws-uuid-1'\\; $env:EMPLOKE_RUN_ID = '01HZZZ'\\; & 'copilot'",
     );
   });
 

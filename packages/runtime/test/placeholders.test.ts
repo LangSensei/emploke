@@ -9,7 +9,7 @@ import {
 
 const CTX: PlaceholderContext = {
   workspaceDir: "C:\\Users\\me\\code\\acme",
-  globalDir: "/home/me/.emploke/shared",
+  sharedDir: "/home/me/.emploke/shared",
 };
 
 /**
@@ -25,7 +25,7 @@ const ph = (name: string): string => `\${${name}}`;
 describe("substitutePlaceholders", () => {
   it("replaces a bare placeholder with the matching context value", () => {
     expect(substitutePlaceholders(ph("workspaceDir"), CTX, "test")).toBe("C:/Users/me/code/acme");
-    expect(substitutePlaceholders(ph("globalDir"), CTX, "test")).toBe("/home/me/.emploke/shared");
+    expect(substitutePlaceholders(ph("sharedDir"), CTX, "test")).toBe("/home/me/.emploke/shared");
   });
 
   it("converts backslashes to forward slashes so the same string works on Windows + POSIX", () => {
@@ -49,7 +49,7 @@ describe("substitutePlaceholders", () => {
   });
 
   it("substitutes multiple placeholders in one string", () => {
-    expect(substitutePlaceholders(`${ph("workspaceDir")}::${ph("globalDir")}`, CTX, "test")).toBe(
+    expect(substitutePlaceholders(`${ph("workspaceDir")}::${ph("sharedDir")}`, CTX, "test")).toBe(
       "C:/Users/me/code/acme::/home/me/.emploke/shared",
     );
   });
@@ -103,7 +103,7 @@ describe("substitutePlaceholdersDeep", () => {
     const input = {
       command: "npx",
       args: ["-y", "@playwright/mcp@latest", "--storage-state", `${ph("workspaceDir")}/state.json`],
-      env: { GLOBAL_CACHE: `${ph("globalDir")}/cache` },
+      env: { GLOBAL_CACHE: `${ph("sharedDir")}/cache` },
       keepAsIs: 42,
       flag: true,
       nullable: null,

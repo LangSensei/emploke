@@ -178,11 +178,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({
-      // Resolve `${globalDir}` placeholders in MCP specs against
+      // Resolve `${sharedDir}` placeholders in MCP specs against
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
       // directory without baking host paths into JSON. The literal subdir
       // name lives in `@emploke/paths` (`SHARED_SUBDIR`).
-      globalDir: paths.sharedDir,
+      sharedDir: paths.sharedDir,
     }),
   );
 
@@ -206,9 +206,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     runtimeRegistry,
     workspaces,
     logger,
-    // Static env bag merged into every task subprocess. Per-task
-    // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_TASK_ID`,
-    // `EMPLOKE_WORKDIR`) are layered on inside `TaskManager.dispatch`.
+    // Static env bag merged into every task subprocess. Per-run
+    // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
+    // `EMPLOKE_RUN_KIND`, `EMPLOKE_RUN_ID`, `EMPLOKE_RUN_DIR`) are
+    // layered on inside `TaskManager.dispatch` /
+    // `SessionManager.assembleLaunchEnv`.
     //
     // `EMPLOKE_SERVER` resolves to a loopback URL when the server is
     // bound to 0.0.0.0 — the spawned subprocess runs on the same host,
@@ -220,7 +222,19 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     // genuinely unset downstream (mergeEnv in launch-headless drops
     // undefined values, but we also keep them out of the static bag
     // for clarity in logs / tests).
-    subprocessEnvBase: buildSubprocessEnvBase({ hostname, port, apiKey, home: paths.home }),
+    //
+    // `EMPLOKE_SHARED_DIR` is the cross-workspace machine-shared
+    // state directory — same path the runtime exposes to MCP specs as
+    // `${sharedDir}`. The service-internal `<EMPLOKE_HOME>` itself
+    // (which holds `global.db`, `runtime.json`, `logs/`) is
+    // deliberately NOT exposed to subprocesses — agents have no
+    // business touching it.
+    subprocessEnvBase: buildSubprocessEnvBase({
+      hostname,
+      port,
+      apiKey,
+      sharedDir: paths.sharedDir,
+    }),
   });
 
   const app = new Hono();

@@ -67,7 +67,7 @@ function buildAppForTest(): Hono {
   // independent of the registry's contents. We register a real one to
   // mirror production fidelity.
   const runtimeRegistry = new RuntimeRegistry();
-  runtimeRegistry.register(new CopilotRuntime({ globalDir: "/tmp/shared" }));
+  runtimeRegistry.register(new CopilotRuntime({ sharedDir: "/tmp/shared" }));
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
 
   app.route(

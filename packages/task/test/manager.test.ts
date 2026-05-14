@@ -1283,8 +1283,8 @@ async function spawnAndReap(): Promise<number> {
 //      across all dispatches; it is NOT mutated by dispatch.
 //   2. Each dispatch builds a FRESH per-task object on top of the
 //      base — never reuses a previous dispatch's object.
-//   3. Per-task fields (EMPLOKE_TASK_ID) are unique per dispatch.
-//   4. Per-workspace fields (EMPLOKE_WORKSPACE, EMPLOKE_WORKDIR)
+//   3. Per-task fields (EMPLOKE_RUN_ID) are unique per dispatch.
+//   4. Per-workspace fields (EMPLOKE_WORKSPACE, EMPLOKE_WORKSPACE_DIR)
 //      come from the manager's own immutable config.
 //   5. Two managers built for two different workspaces, dispatching
 //      concurrently, must produce disjoint env bags — no leakage.
@@ -1305,8 +1305,13 @@ describe("dispatch — subprocess env injection", () => {
     expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     expect(env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
     // workspaceDir defaults to tasksDir in the test harness.
-    expect(env?.EMPLOKE_WORKDIR).toBe(tasksDir);
-    expect(env?.EMPLOKE_TASK_ID).toBe(t.id);
+    expect(env?.EMPLOKE_WORKSPACE_DIR).toBe(tasksDir);
+    expect(env?.EMPLOKE_RUN_KIND).toBe("task");
+    expect(env?.EMPLOKE_RUN_ID).toBe(t.id);
+    // Per-task workdir lives at <tasksDir>/<id>/ — it's the cwd the
+    // runtime spawns into AND the value an agent should treat as
+    // "my own outputs go here".
+    expect(env?.EMPLOKE_RUN_DIR).toBe(rt.dispatchCalls[0].workdir);
   });
 
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
@@ -1318,11 +1323,11 @@ describe("dispatch — subprocess env injection", () => {
     expect(env).toBeDefined();
     expect("EMPLOKE_WORKSPACE" in (env ?? {})).toBe(false);
     // Per-task fields are still set even without a workspaceId.
-    expect(env?.EMPLOKE_WORKDIR).toBe(tasksDir);
-    expect(env?.EMPLOKE_TASK_ID).toMatch(/^\d{8}-[0-9a-f]{8}$/);
+    expect(env?.EMPLOKE_WORKSPACE_DIR).toBe(tasksDir);
+    expect(env?.EMPLOKE_RUN_ID).toMatch(/^\d{8}-[0-9a-f]{8}$/);
   });
 
-  it("two concurrent dispatches on the same manager get disjoint EMPLOKE_TASK_IDs (no shared bag)", async () => {
+  it("two concurrent dispatches on the same manager get disjoint EMPLOKE_RUN_IDs (no shared bag)", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({
       runtime: rt,
@@ -1336,7 +1341,7 @@ describe("dispatch — subprocess env injection", () => {
 
     expect(t1.id).not.toBe(t2.id);
     expect(rt.dispatchCalls).toHaveLength(2);
-    const ids = rt.dispatchCalls.map((c) => c.subprocessEnv?.EMPLOKE_TASK_ID);
+    const ids = rt.dispatchCalls.map((c) => c.subprocessEnv?.EMPLOKE_RUN_ID);
     expect(new Set(ids).size).toBe(2);
     // Both should belong to the same workspace.
     for (const c of rt.dispatchCalls) {

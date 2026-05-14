@@ -1,10 +1,11 @@
 /**
  * Builds the static portion of the env bag that the server hands to
- * every task-spawned subprocess. Per-task additions
- * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKDIR`, `EMPLOKE_TASK_ID`) are layered
- * on top inside `TaskManager.dispatch`; this helper is for fields the
+ * every emploke-spawned subprocess. Per-run additions
+ * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_*`) are
+ * layered on top inside `TaskManager.dispatch` /
+ * `SessionManager.assembleLaunchEnv`; this helper is for fields the
  * server itself owns (where to dial back, how to authenticate, where
- * `<emploke home>` lives).
+ * the cross-workspace shared state directory lives).
  *
  * Why a dedicated module:
  *   - Keeps `index.ts` focused on Hono wiring instead of env munging.
@@ -15,10 +16,20 @@
  *     instead of sprinkling `process.env.EMPLOKE_API_KEY` reads across
  *     the codebase.
  *
- * Variables emitted (all optional unless noted):
- *   - EMPLOKE_SERVER  — `http://<host>:<port>` (always set)
- *   - EMPLOKE_API_KEY — only when the server has one configured
- *   - EMPLOKE_HOME    — paths.home (always set)
+ * Variables emitted (always set unless flagged optional):
+ *   - EMPLOKE_SERVER     — `http://<host>:<port>` (always set)
+ *   - EMPLOKE_API_KEY    — only when the server has one configured
+ *   - EMPLOKE_SHARED_DIR — `<EMPLOKE_HOME>/shared`, the canonical
+ *                         cross-workspace state directory. Same path
+ *                         the runtime exposes to MCP specs as
+ *                         `${sharedDir}`. Agents and skills that need
+ *                         "machine-shared writable state" (playwright
+ *                         logins re-used across workspaces, model
+ *                         caches, …) read this. The service-internal
+ *                         `<EMPLOKE_HOME>` itself (which holds
+ *                         `global.db`, `runtime.json`, `logs/`) is
+ *                         deliberately NOT exposed — agents have no
+ *                         business touching it.
  *
  * Hostname rewrite: a server bound to `0.0.0.0` accepts connections
  * on every interface, but a child dialing `0.0.0.0` is platform-
@@ -31,13 +42,22 @@ export function buildSubprocessEnvBase(input: {
   hostname: string;
   port: number;
   apiKey?: string;
-  home: string;
+  sharedDir: string;
 }): NodeJS.ProcessEnv {
   const dialableHost =
     input.hostname === "0.0.0.0" || input.hostname === "::" ? "127.0.0.1" : input.hostname;
   const env: NodeJS.ProcessEnv = {
     EMPLOKE_SERVER: `http://${dialableHost}:${input.port}`,
-    EMPLOKE_HOME: input.home,
+    EMPLOKE_SHARED_DIR: input.sharedDir,
+    // EXPLICIT NEGATIVE: scrub `EMPLOKE_HOME` from every spawned
+    // subprocess. The server itself reads `process.env.EMPLOKE_HOME`
+    // to find its own state directory, so the value is in the parent
+    // env by construction. Without this `undefined` the spawn's env
+    // inheritance would leak the path through, contradicting the
+    // public contract (see docs/architecture.md "Runtime env
+    // contract"). Both `mergeEnv` (task path) and the terminal-side
+    // shell-env helpers honour `undefined` as "delete this key".
+    EMPLOKE_HOME: undefined,
   };
   if (input.apiKey !== undefined && input.apiKey.length > 0) {
     env.EMPLOKE_API_KEY = input.apiKey;

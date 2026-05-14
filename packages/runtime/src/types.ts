@@ -268,8 +268,9 @@ export interface LaunchHeadlessOpts {
    * Extra environment variables merged into the spawned subprocess on
    * top of the server's own `process.env`. Used to give every emploke-
    * controlled child a self-describing context bag (`EMPLOKE_WORKSPACE`,
-   * `EMPLOKE_WORKDIR`, `EMPLOKE_TASK_ID`, `EMPLOKE_SERVER`,
-   * `EMPLOKE_API_KEY`, `EMPLOKE_HOME`, …).
+   * `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_RUN_KIND`, `EMPLOKE_RUN_ID`,
+   * `EMPLOKE_RUN_DIR`, `EMPLOKE_SERVER`, `EMPLOKE_API_KEY`,
+   * `EMPLOKE_SHARED_DIR`).
    *
    * Why this exists: AI-agent harnesses run each tool call in a fresh
    * shell, so per-shell `export EMPLOKE_WORKSPACE=...` does not survive.

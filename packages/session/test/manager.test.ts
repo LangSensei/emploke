@@ -870,7 +870,7 @@ describe("buildInteractiveLaunch()", () => {
   // See SessionManagerConfig.subprocessEnv for the rationale; same
   // contract as TaskManager.
 
-  it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKDIR / EMPLOKE_SESSION_ID onto the LaunchCommand", async () => {
+  it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_RUN_* onto the LaunchCommand", async () => {
     const rt = new StubRuntime();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -886,8 +886,13 @@ describe("buildInteractiveLaunch()", () => {
     expect(launch.env).toBeDefined();
     expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
-    expect(launch.env?.EMPLOKE_WORKDIR).toBe(scratch);
-    expect(launch.env?.EMPLOKE_SESSION_ID).toBe(s.id);
+    expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
+    expect(launch.env?.EMPLOKE_RUN_KIND).toBe("session");
+    expect(launch.env?.EMPLOKE_RUN_ID).toBe(s.id);
+    // Per-session workdir lives at <sessionsDir>/<id>/ — RUN_DIR is
+    // the cwd the user lands in; WORKSPACE_DIR is one level up's
+    // workspace root.
+    expect(launch.env?.EMPLOKE_RUN_DIR).toBe(s.workdir);
   });
 
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
@@ -902,8 +907,8 @@ describe("buildInteractiveLaunch()", () => {
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
     // Per-session fields still populated even without a workspaceId.
-    expect(launch.env?.EMPLOKE_WORKDIR).toBe(scratch);
-    expect(launch.env?.EMPLOKE_SESSION_ID).toBe(s.id);
+    expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
+    expect(launch.env?.EMPLOKE_RUN_ID).toBe(s.id);
     expect("EMPLOKE_WORKSPACE" in (launch.env ?? {})).toBe(false);
   });
 

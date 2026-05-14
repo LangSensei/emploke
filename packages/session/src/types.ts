@@ -85,9 +85,9 @@ export interface SessionManagerConfig {
    * top of the per-session additions assembled in
    * `buildInteractiveLaunch()`. Production wires this from the server
    * with `EMPLOKE_SERVER`, `EMPLOKE_API_KEY` (when set), and
-   * `EMPLOKE_HOME` so a shell launched by `session spawn` can call
-   * back into the same server it was launched from. Tests typically
-   * leave this unset.
+   * `EMPLOKE_SHARED_DIR` so a shell launched by `session spawn` can
+   * call back into the same server it was launched from and write to
+   * the machine-shared dir. Tests typically leave this unset.
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
   /**

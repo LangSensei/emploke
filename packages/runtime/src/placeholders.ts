@@ -20,7 +20,7 @@
  *                     workspace — playwright cookies tied to one
  *                     project, repo-scoped credential caches.
  *
- *   ${globalDir}      a stable per-user directory (`<EMPLOKE_HOME>/shared`
+ *   ${sharedDir}      a stable per-user directory (`<EMPLOKE_HOME>/shared`
  *                     by default). Pick this for state that should be
  *                     SHARED across all workspaces / sessions / tasks
  *                     on this machine — a single playwright login the
@@ -70,7 +70,7 @@
 const PLACEHOLDER_RE = /\$\{([^}]+)\}/g;
 
 /** Names of supported placeholders, public so callers can validate / autocomplete. */
-export const PLACEHOLDER_NAMES = ["workspaceDir", "globalDir"] as const;
+export const PLACEHOLDER_NAMES = ["workspaceDir", "sharedDir"] as const;
 export type PlaceholderName = (typeof PLACEHOLDER_NAMES)[number];
 
 /**
@@ -79,10 +79,15 @@ export type PlaceholderName = (typeof PLACEHOLDER_NAMES)[number];
  * any default — providing the values is the caller's responsibility
  * (server bootstrap derives them from `EMPLOKE_HOME` and the active
  * workspace's `workdir`).
+ *
+ * The field name `sharedDir` matches the placeholder vocabulary
+ * (`${sharedDir}`) AND the env var emploke injects into spawned
+ * subprocesses (`EMPLOKE_SHARED_DIR`) — three names for one concept,
+ * deliberately consistent across the contract surface.
  */
 export interface PlaceholderContext {
   readonly workspaceDir: string;
-  readonly globalDir: string;
+  readonly sharedDir: string;
 }
 
 export class UnknownPlaceholderError extends Error {
@@ -114,7 +119,7 @@ export function substitutePlaceholders(
 ): string {
   return input.replace(PLACEHOLDER_RE, (_match, name: string) => {
     if (name === "workspaceDir") return toForwardSlash(ctx.workspaceDir);
-    if (name === "globalDir") return toForwardSlash(ctx.globalDir);
+    if (name === "sharedDir") return toForwardSlash(ctx.sharedDir);
     throw new UnknownPlaceholderError(name, source);
   });
 }

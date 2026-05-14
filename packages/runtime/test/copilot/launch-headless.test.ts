@@ -85,7 +85,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "hello", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -101,7 +101,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "hi", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -118,7 +118,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "do thing", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -149,7 +149,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         copilotBin: "C:\\fake\\copilot.exe",
@@ -190,7 +190,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "say hi", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         // Bare name. Production goes through cross-spawn which
@@ -225,7 +225,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         copilotBin: "/opt/local/bin/copilot",
@@ -241,7 +241,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -262,20 +262,20 @@ describe("launchCopilotHeadless", () => {
         workspaceDir: scratch,
         subprocessEnv: {
           EMPLOKE_WORKSPACE: "ws-uuid-1",
-          EMPLOKE_TASK_ID: "01HZZZ",
+          EMPLOKE_RUN_ID: "01HZZZ",
           EMPLOKE_SERVER: "http://127.0.0.1:8787",
         },
       },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
     const opts = fake.captures?.options as { env: NodeJS.ProcessEnv };
     expect(opts.env.EMPLOKE_WORKSPACE).toBe("ws-uuid-1");
-    expect(opts.env.EMPLOKE_TASK_ID).toBe("01HZZZ");
+    expect(opts.env.EMPLOKE_RUN_ID).toBe("01HZZZ");
     expect(opts.env.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     // PATH (or similar) from process.env is still there — we layered, didn't replace.
     expect(opts.env.PATH ?? opts.env.Path).toBeDefined();
@@ -298,7 +298,7 @@ describe("launchCopilotHeadless", () => {
         },
         {
           copilotStateDir: stateDir,
-          globalDir: scratch,
+          sharedDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
@@ -333,7 +333,7 @@ describe("launchCopilotHeadless", () => {
         },
         {
           copilotStateDir: stateDir,
-          globalDir: scratch,
+          sharedDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
@@ -354,7 +354,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -370,7 +370,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -386,7 +386,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -402,7 +402,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -418,7 +418,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -437,7 +437,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -457,7 +457,7 @@ describe("launchCopilotHeadless", () => {
         { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
-          globalDir: scratch,
+          sharedDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn,
         },
@@ -483,7 +483,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn,
         spawnTimeoutMs: 50,
@@ -519,7 +519,7 @@ describe("launchCopilotHeadless", () => {
         },
         {
           copilotStateDir: stateDir,
-          globalDir: scratch,
+          sharedDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
@@ -538,7 +538,7 @@ describe("launchCopilotHeadless", () => {
         { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
-          globalDir: scratch,
+          sharedDir: scratch,
           randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
           mkdir: failingMkdir,
@@ -554,7 +554,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -581,7 +581,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
@@ -612,7 +612,7 @@ describe("launchCopilotHeadless", () => {
       { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
       {
         copilotStateDir: stateDir,
-        globalDir: scratch,
+        sharedDir: scratch,
         randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },

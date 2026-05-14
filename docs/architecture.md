@@ -317,6 +317,70 @@ replace the FS repo without changing a line of runtime code — rows
 have no on-disk path to give back, but they have content streams just
 fine.
 
+## Runtime env contract — vars exposed to spawned subprocesses
+
+emploke spawns the third-party CLI (Copilot today, Gemini / Claude
+tomorrow) as a child process for every task / interactive session
+launch. The child inherits the server's `process.env` plus a fixed
+set of `EMPLOKE_*` variables that emploke contributes itself. This is
+the **public contract** for what an agent / skill / sub-shell can
+rely on; everything else in the env is "best effort, host-dependent".
+
+| Variable | Type | When set | Meaning |
+| -------- | ---- | -------- | ------- |
+| `EMPLOKE_SERVER`        | URL string | always | `http://<host>:<port>` the server is listening on. `0.0.0.0` / `::` are rewritten to `127.0.0.1` so the child can dial loopback. |
+| `EMPLOKE_API_KEY`       | string     | only when the server has one configured | Bearer token the child uses against `EMPLOKE_SERVER`. |
+| `EMPLOKE_SHARED_DIR`    | abs path   | always | `<EMPLOKE_HOME>/shared` — the canonical machine-shared writable directory. Same path the runtime exposes to MCP specs as `${sharedDir}`. Pick this for state shared across workspaces (a single playwright login, a model cache). |
+| `EMPLOKE_WORKSPACE`     | UUID       | always (per run) | Workspace id (routing key for the HTTP API; `emploke ... --workspace <id>` accepts it). |
+| `EMPLOKE_WORKSPACE_DIR` | abs path   | always (per run) | Workspace root on disk. Same path the runtime exposes to MCP specs as `${workspaceDir}`. Pick this for state private to one workspace. |
+| `EMPLOKE_RUN_KIND`      | `task` \| `session` | always (per run) | Discriminator for the run that's about to start. |
+| `EMPLOKE_RUN_ID`        | string     | always (per run) | This run's id (e.g. `20260514-abc12345`). Same value the dashboard / CLI uses as the URL key. |
+| `EMPLOKE_RUN_DIR`       | abs path   | always (per run) | This run's workdir on disk (`<workspace>/tasks/<id>/` for tasks, `<workspace>/sessions/<id>/` for sessions). Same value as the spawned process's `cwd`. |
+
+### Deliberately not exposed
+
+- **`EMPLOKE_HOME`** in the **task** path: agents that run inside
+  `emploke task dispatch` see `process.env.EMPLOKE_HOME === undefined`
+  even though the server itself uses it to find `global.db` /
+  `runtime.json` / `logs/`. The base subprocess env explicitly sets
+  `EMPLOKE_HOME: undefined` so `mergeEnv` strips the inherited value
+  before spawn. Rationale: AI-agent tasks should never touch the
+  service-internal directory tree; the only piece they legitimately
+  need is `EMPLOKE_SHARED_DIR` and that's exposed separately.
+- **`EMPLOKE_HOME`** in **interactive session launches**: the user is
+  driving a terminal they own, the shell already has `EMPLOKE_HOME`
+  set if they care, and the launch command path doesn't override it.
+  Treat `EMPLOKE_HOME` as ambient host state, not a session contract.
+- **Other shell state**: `cwd`, `PATH`, terminal env, and so on are
+  inherited from the server process verbatim. Agents and skills
+  that need any of these should declare them in their own
+  documentation; emploke only guarantees the table above.
+
+### Why these specific variables
+
+The contract exists to solve the **fresh-shell problem** that
+surfaces when AI-agent harnesses (Copilot CLI, Claude, …) run each
+tool call in a brand-new shell. Per-shell `export
+EMPLOKE_WORKSPACE=...` doesn't survive between calls; the agent
+either has to re-export every call (forgettable, error-prone) or
+pass `--workspace <id>` on every command (verbose, easy to typo
+across two workspaces). Plumbing the identity through the very
+binary the agent shells out to (`emploke task dispatch`) means
+subsequent `emploke ...` calls inside the resulting subprocess
+inherit the identity automatically — no setup step, no chance of
+cross-workspace bleed because the agent rebuilt its env mid-
+conversation.
+
+### What downstream code should do with it
+
+Skills and agents that need a workspace-private path should read
+`EMPLOKE_WORKSPACE_DIR`, never derive it from `cwd` (which is
+`EMPLOKE_RUN_DIR`, two levels under `EMPLOKE_WORKSPACE_DIR`).
+Skills and agents that need a machine-shared path should read
+`EMPLOKE_SHARED_DIR`. The variables are stable across emploke's
+internal layout changes — even if the on-disk shape moves, the env
+names stay.
+
 ## Filesystem contract
 
 Everything emploke writes under `<EMPLOKE_HOME>` (default `~/.emploke`)
@@ -338,7 +402,7 @@ Beyond the per-workspace tree, `<EMPLOKE_HOME>` holds:
 | `global.db`        | server               | SQLite — workspace registry (id → workdir + currentId) plus other cross-workspace state. |
 | `runtime.json`     | CLI lifecycle        | Written by `emploke start`; pid + port + apiKey of the running server. `chmod 0600` when an apiKey is present. |
 | `logs/`            | server               | Rotated server logs (pino-roll). |
-| `shared/`          | runtime adapters     | `${globalDir}` placeholder root for MCP specs. |
+| `shared/`          | runtime adapters     | `${sharedDir}` placeholder root for MCP specs. |
 
 ### Ownership boundaries
 
