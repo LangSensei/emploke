@@ -2993,6 +2993,14 @@ button {
   font-size: 13px;
   color: var(--color-text);
   line-height: 1.45;
+  /* Preserve authored newlines + indentation. Without this the
+     expanded body collapses bullets, headers, and paragraphs into
+     a single wall of text — the source has structure (numbered
+     lists, double-newlines between sections), it should render
+     that way. `word-break: break-word` keeps long unbreakable
+     tokens (URLs, hashes) from blowing out the panel width. */
+  white-space: pre-wrap;
+  word-break: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
