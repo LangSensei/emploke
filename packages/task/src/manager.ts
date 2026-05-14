@@ -1,5 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
@@ -12,6 +12,12 @@ import {
   TaskIdAllocationFailedError,
   TaskNotFoundError,
 } from "./errors.js";
+import {
+  framingPromptFor,
+  TASK_ARTIFACT_SUBDIR,
+  TASK_FILENAME,
+  TASK_TEMP_SUBDIR,
+} from "./framing.js";
 import { assertValidTaskId, generateTaskId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
@@ -88,6 +94,7 @@ export class TaskManager {
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
+  private readonly framingPromptByRuntime: Readonly<Record<string, string>> | undefined;
 
   /** id → live record for tasks whose subprocess this manager still owns. */
   private readonly live = new Map<string, LiveTask>();
@@ -136,6 +143,7 @@ export class TaskManager {
     this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
+    this.framingPromptByRuntime = config.framingPromptByRuntime;
   }
 
   // ─── dispatch ────────────────────────────────────────────
@@ -275,6 +283,25 @@ export class TaskManager {
       throw err;
     }
 
+    // 4b. Materialize the user's instructions to `<workdir>/TASK.md`
+    //     and create the agent-managed `temp/` + `artifact/`
+    //     subdirectories. See packages/task/src/framing.ts for why
+    //     instructions live in a file rather than the spawn argv
+    //     (issue #109 — Bug A: cmd.exe argv-LF interaction silently
+    //     dropping copilot CLI flags on Windows). Failure here is
+    //     pre-spawn, so we roll back the workdir to mirror the
+    //     existing pre-spawn rollback pattern (no ghost row/dir).
+    try {
+      await writeFile(path.join(workdir, TASK_FILENAME), instructions, {
+        encoding: "utf8",
+      });
+      await mkdir(path.join(workdir, TASK_TEMP_SUBDIR), { recursive: true });
+      await mkdir(path.join(workdir, TASK_ARTIFACT_SUBDIR), { recursive: true });
+    } catch (err) {
+      await safeRm(workdir, this.logger);
+      throw err;
+    }
+
     // 5. Spawn. The runtime owns the subprocess and gives us back a
     //    handle. Failures here (provision throws, spawn ENOENT, ...) are
     //    pre-running, so we rollback the workdir and rethrow.
@@ -284,7 +311,11 @@ export class TaskManager {
         workdir,
         agent: resolveResult,
         catalog: this.catalog,
-        prompt: instructions,
+        // Fixed single-line ASCII framing prompt (per runtime kind).
+        // The user's `instructions` is NOT passed via argv anymore —
+        // it lives byte-for-byte in `<workdir>/TASK.md` (written
+        // above) and the framing prompt tells the agent to read it.
+        prompt: framingPromptFor(runtime.kind, this.framingPromptByRuntime),
         workspaceDir: this.workspaceDir,
         // Self-describing context bag the subprocess (and any
         // grandchildren it spawns through `emploke ...` calls)

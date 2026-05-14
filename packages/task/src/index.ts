@@ -41,6 +41,14 @@ export {
   TaskNotFoundError,
 } from "./errors.js";
 export {
+  assertFramingPromptIsSafe,
+  framingPromptFor,
+  TASK_ARTIFACT_SUBDIR,
+  TASK_FILENAME,
+  TASK_FRAMING_PROMPT_COPILOT,
+  TASK_TEMP_SUBDIR,
+} from "./framing.js";
+export {
   assertValidTaskId,
   generateTaskId,
   TASK_ID_RE,

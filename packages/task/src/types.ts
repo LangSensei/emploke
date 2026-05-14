@@ -120,6 +120,21 @@ export interface TaskManagerConfig {
   readonly now?: () => Date;
   /** Test seam: random source for id generation. */
   readonly randomBytes?: (n: number) => Buffer;
+  /**
+   * Optional override for the per-runtime framing prompt map (issue #109).
+   *
+   * Production omits this and gets the package default
+   * (`{ copilot: TASK_FRAMING_PROMPT_COPILOT }`). Tests that drive
+   * dispatch with a stub runtime kind (e.g. `gemini`, `node-test`)
+   * pass a map containing those kinds so dispatch can resolve a
+   * prompt without modifying production constants.
+   *
+   * If a non-empty map is supplied, the manager looks up runtime
+   * kinds **only** in this map and ignores the default. This keeps
+   * test isolation explicit: a test that registers `gemini` here
+   * doesn't accidentally inherit `copilot` mappings.
+   */
+  readonly framingPromptByRuntime?: Readonly<Record<string, string>>;
 }
 
 /** Inputs to `TaskManager.dispatch`. */
