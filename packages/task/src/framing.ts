@@ -36,7 +36,6 @@ export const TASK_ARTIFACT_SUBDIR = "artifact";
  *
  * Kept on ONE line so `cmd.exe` never sees an LF inside the `/c`
  * payload (see module docstring for the cmd.exe argv-LF interaction).
- * Per-runtime in the future; today `copilot` is the only kind.
  *
  * Do NOT edit this constant to span multiple lines. The startup-time
  * invariant guard ({@link assertFramingPromptIsSafe}) will reject any
@@ -55,39 +54,6 @@ export function assertFramingPromptIsSafe(s: string): void {
   if (s.includes("\n") || s.includes("\r") || /[^\x20-\x7E]/.test(s)) {
     throw new Error("framing prompt must be single-line printable ASCII");
   }
-}
-
-/**
- * Map of runtime kind → framing prompt. Lookup helper isolates the
- * "what prompt for which runtime" decision in one place so adding a
- * new runtime is one entry, not a scattered conditional.
- */
-const FRAMING_PROMPT_BY_RUNTIME: Readonly<Record<string, string>> = {
-  copilot: TASK_FRAMING_PROMPT_COPILOT,
-};
-
-/**
- * Resolve the framing prompt for the given runtime kind. Throws if
- * the runtime has no registered prompt — adding a new headless-capable
- * runtime is a deliberate decision and should fail loudly here rather
- * than fall back to a wrong prompt.
- *
- * `overrides`, when supplied (`TaskManagerConfig.framingPromptByRuntime`),
- * is consulted **instead of** the package default. This keeps test
- * isolation explicit (a test stub kind doesn't inherit production
- * mappings) and never silently changes production behavior — the
- * server omits the override and gets the default map.
- */
-export function framingPromptFor(
-  runtimeKind: string,
-  overrides?: Readonly<Record<string, string>>,
-): string {
-  const map = overrides ?? FRAMING_PROMPT_BY_RUNTIME;
-  const p = map[runtimeKind];
-  if (p === undefined) {
-    throw new Error(`no framing prompt registered for runtime kind: ${runtimeKind}`);
-  }
-  return p;
 }
 
 // Startup-time invariant: prevents a future maintainer from

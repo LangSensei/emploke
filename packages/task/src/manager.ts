@@ -13,9 +13,9 @@ import {
   TaskNotFoundError,
 } from "./errors.js";
 import {
-  framingPromptFor,
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
+  TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
 import { assertValidTaskId, generateTaskId } from "./ids.js";
@@ -94,7 +94,6 @@ export class TaskManager {
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
-  private readonly framingPromptByRuntime: Readonly<Record<string, string>> | undefined;
 
   /** id → live record for tasks whose subprocess this manager still owns. */
   private readonly live = new Map<string, LiveTask>();
@@ -143,7 +142,6 @@ export class TaskManager {
     this.repository = config.repository;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
-    this.framingPromptByRuntime = config.framingPromptByRuntime;
   }
 
   // ─── dispatch ────────────────────────────────────────────
@@ -311,11 +309,13 @@ export class TaskManager {
         workdir,
         agent: resolveResult,
         catalog: this.catalog,
-        // Fixed single-line ASCII framing prompt (per runtime kind).
-        // The user's `instructions` is NOT passed via argv anymore —
-        // it lives byte-for-byte in `<workdir>/TASK.md` (written
-        // above) and the framing prompt tells the agent to read it.
-        prompt: framingPromptFor(runtime.kind, this.framingPromptByRuntime),
+        // Fixed single-line ASCII framing prompt. The user's
+        // `instructions` is NOT passed via argv anymore — it lives
+        // byte-for-byte in `<workdir>/TASK.md` (written above) and
+        // the framing prompt tells the agent to read it. Today
+        // `copilot` is the only headless-capable runtime; when a
+        // second one arrives, switch on `runtime.kind` here.
+        prompt: TASK_FRAMING_PROMPT_COPILOT,
         workspaceDir: this.workspaceDir,
         // Self-describing context bag the subprocess (and any
         // grandchildren it spawns through `emploke ...` calls)

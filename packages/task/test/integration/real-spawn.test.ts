@@ -31,7 +31,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DispatchOpts,
   SqliteTaskRepository,
-  TASK_FRAMING_PROMPT_COPILOT,
   type Task,
   TaskManager,
 } from "../../src/index.js";
@@ -165,14 +164,6 @@ const makeManager = (
     tasksDir,
     workspaceDir: tasksDir,
     repository: repo,
-    // Per issue #109, dispatch resolves a framing prompt by runtime
-    // kind. This integration test uses a `node-test` stub runtime;
-    // register it in the override map so dispatch can resolve a
-    // prompt without modifying the production map (which only knows
-    // `copilot`).
-    framingPromptByRuntime: {
-      "node-test": TASK_FRAMING_PROMPT_COPILOT,
-    },
   });
   return { m, repo };
 };

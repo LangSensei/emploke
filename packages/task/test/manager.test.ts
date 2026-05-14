@@ -343,7 +343,6 @@ const makeManager = (
     repository?: SqliteTaskRepository;
     workspaceId?: string;
     subprocessEnv?: NodeJS.ProcessEnv;
-    framingPromptByRuntime?: Readonly<Record<string, string>>;
   } = {},
 ): { m: TaskManager; repo: SqliteTaskRepository } => {
   const rt = overrides.runtime ?? new StubRuntime();
@@ -360,9 +359,6 @@ const makeManager = (
     repository: repo,
     ...(overrides.workspaceId !== undefined ? { workspaceId: overrides.workspaceId } : {}),
     ...(overrides.subprocessEnv !== undefined ? { subprocessEnv: overrides.subprocessEnv } : {}),
-    ...(overrides.framingPromptByRuntime !== undefined
-      ? { framingPromptByRuntime: overrides.framingPromptByRuntime }
-      : {}),
   });
   return { m, repo };
 };
@@ -805,17 +801,9 @@ describe("get / list", () => {
       const reg = new RuntimeRegistry();
       reg.register(copilot);
       reg.register(gemini);
-      // Per issue #109, dispatch resolves a framing prompt by runtime
-      // kind. Production only registers `copilot`; tests that drive a
-      // stub kind (here, `gemini`) must include it in the override
-      // map so the dispatch resolves a prompt instead of throwing.
       const { m } = makeManager({
         registry: reg,
         runtime: copilot,
-        framingPromptByRuntime: {
-          copilot: TASK_FRAMING_PROMPT_COPILOT,
-          gemini: TASK_FRAMING_PROMPT_COPILOT,
-        },
       });
       await m.dispatch(dispatchOf({ runtime: "copilot" }));
       await m.dispatch(dispatchOf({ runtime: "gemini" }));
