@@ -1,5 +1,5 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
@@ -8,6 +8,7 @@ import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
+  InvalidTransition,
   ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
@@ -653,95 +654,161 @@ export class TaskManager {
     });
   }
 
+  // ─── cancel ──────────────────────────────────────────────
+
+  /**
+   * User-initiated cancellation of a live task. Kills the subprocess
+   * (SIGTERM via the runtime's best-effort `handle.kill()`), waits
+   * for the exit watcher to persist the terminal status, and returns
+   * the cancelled `Task` (status='cancelled', `cancellation.kind='user'`).
+   *
+   * Contract:
+   *   - **Idempotency**: terminal-state input throws
+   *     {@link InvalidTransition}; route maps to 409. Concurrent
+   *     `cancel(id)` calls also collapse to the same terminal write —
+   *     the first call owns the kill, subsequent calls await the same
+   *     `live.settled` and then throw {@link InvalidTransition}.
+   *   - **Orphan-safe**: if the task is `running` but has no live
+   *     entry (an undetected orphan that `recoverOrphaned` missed),
+   *     synthesises a terminal decision and routes through
+   *     `applyTerminal` so the persisted row has the same shape as
+   *     the normal-path output. Logs a warn so the operator knows
+   *     `recoverOrphaned` has a gap. No error to user.
+   *   - **Race defence (ADR-001 R-1)**: refuses with
+   *     {@link InvalidTransition} if `dispatchInProgress.has(id)` is
+   *     true. External HTTP callers can't reach this branch (id is
+   *     unknown until dispatch returns), but pinning the invariant
+   *     protects future internal callers (queueing, agent
+   *     self-extension, parallel test fixtures, etc).
+   *   - **Awaits `live.settled`** before returning so the next read
+   *     sees `cancelled`.
+   *   - **Throws {@link TaskNotFoundError}** if the id doesn't exist.
+   *   - **Refuses while shutting down**: throws
+   *     {@link ManagerShuttingDownError}. The route layer maps this
+   *     to 503 (mirrors the dispatch() refusal).
+   */
+  async cancel(id: string): Promise<Task> {
+    assertValidTaskId(id);
+    if (this.shuttingDown) throw new ManagerShuttingDownError();
+
+    // R-1 defence: refuse if a concurrent dispatch is mid-flight for
+    // this id. External HTTP callers cannot reach this branch (the id
+    // is unknown until dispatch returns); kept to pin the invariant for
+    // internal callers (queueing, agent self-extension, parallel test
+    // fixtures, etc).
+    if (this.dispatchInProgress.has(id)) {
+      throw new InvalidTransition("running", "cancel-during-dispatch");
+    }
+
+    const workdir = safeJoinUnderRoot(this.tasksDir, id);
+    const existing = await this.loadTask(id, workdir);
+    if (existing === null) throw new TaskNotFoundError(id);
+    if (
+      existing.status === "success" ||
+      existing.status === "failure" ||
+      existing.status === "cancelled"
+    ) {
+      throw new InvalidTransition(existing.status, "cancel");
+    }
+
+    const live = this.live.get(id);
+    if (live !== undefined) {
+      // Concurrent-cancel coordination: the first caller observes
+      // `killReason === null` and "owns" the kill. Subsequent callers
+      // observe the prior reason, await the same `settled` promise,
+      // and then throw InvalidTransition so the route maps to 409
+      // for the second + Nth caller. Pins T3.
+      const wasFirstToCancel = live.killReason === null;
+      if (wasFirstToCancel) {
+        live.killReason = "cancel";
+        try {
+          live.handle.kill();
+        } catch {
+          // Already dead.
+        }
+      }
+      try {
+        await live.settled;
+      } catch {
+        // settled is constructed to never reject.
+      }
+      if (!wasFirstToCancel) {
+        throw new InvalidTransition("cancelled", "cancel");
+      }
+    } else {
+      // Orphan path: undetected by recoverOrphaned. Route through
+      // applyTerminal with a synthesised decision so the persisted row
+      // shape matches the normal-path output (exitCode=null,
+      // exitSignal=null in metadata; cancellation kind/message in the
+      // entity payload).
+      this.logger.warn(
+        { taskId: id },
+        "tasks: cancelling row in running status with no live subprocess (orphan)",
+      );
+      await this.applyTerminal(workdir, existing, {
+        kind: "cancelled",
+        cancellation: {
+          kind: "orphan",
+          message: "cancelled (recovered from inconsistent state)",
+        },
+        exitCode: null,
+        exitSignal: null,
+      });
+    }
+
+    const final = await this.loadTask(id, workdir);
+    if (final === null) throw new TaskNotFoundError(id);
+    return final;
+  }
+
   // ─── delete ──────────────────────────────────────────────
 
   /**
-   * Remove a task. Default ("archive") removes only the task's metadata
-   * row; the workdir is left on disk so the user can inspect agent
-   * artifacts after the fact.
+   * Remove a task. Post-ADR-001 this verb only ever removes records —
+   * it never touches subprocesses. The task MUST be in a terminal
+   * status (`success` / `failure` / `cancelled`) before `delete()` is
+   * called; non-terminal input throws {@link InvalidTransition} and
+   * the route layer maps that to 409 (use `cancel()` first if the
+   * task is still running).
+   *
+   * Default ("archive") removes only the task's metadata row; the
+   * workdir is left on disk so the user can inspect agent artifacts
+   * after the fact.
    *
    * `{ purge: true }` is the hard-delete path:
-   *   1. Kill any live subprocess (always; metadata removal alone would
-   *      orphan it).
-   *   2. Ask the runtime to wipe its per-task state (e.g. Copilot's
+   *   1. Ask the runtime to wipe its per-task state (e.g. Copilot's
    *      `<copilotStateDir>/<runtimeSessionId>/`) via
    *      `runtime.deleteState`. Runtime first so a permission-denied
    *      or network failure aborts BEFORE any local removal — same
-   *      ordering as `SessionManager.delete`. Runtimes without per-task
-   *      state simply omit the method and we skip this step.
-   *   3. Remove the metadata row from the repository.
-   *   4. `rm -rf` the workdir.
+   *      ordering as `SessionManager.delete`. Runtimes without
+   *      per-task state simply omit the method and we skip this step.
+   *   2. Remove the metadata row from the repository.
+   *   3. `rm -rf` the workdir.
    *
-   * `purge: true` also implies "skip metadata validation" — a task
-   * whose metadata row is corrupted or missing (parse failure, future
-   * `CURRENT_SCHEMA_VERSION` bump, stray workdir from a prior emploke
-   * version) would otherwise be undeletable through the public API.
-   * Mirrors `rm -rf` semantics for that recovery path; we skip the
-   * runtime state cleanup in that case because there's no metadata
-   * to read the runtime session id from.
-   *
-   * Throws `TaskNotFoundError` when no task with `id` exists (and, in
-   * default mode, when the metadata is unreadable).
+   * Throws `TaskNotFoundError` when no task with `id` exists.
+   * Throws `InvalidTransition(currentStatus, 'delete')` when the task
+   * exists but is not terminal.
    */
   async delete(id: string, opts: { purge?: boolean } = {}): Promise<void> {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
-    // Resolve the existing task (metadata row) when we can. In purge
-    // mode we still try to load it so we can hand metadata to the
-    // runtime for state cleanup — but we tolerate failure and fall
-    // back to the directory-existence check (rm -rf semantics).
-    let existing: Task | null = null;
-    try {
-      existing = await this.loadTask(id, workdir);
-    } catch (err) {
-      if (opts.purge !== true) throw err;
-      // purge mode: corrupted row is acceptable; we'll detect via stat below.
+    const existing = await this.loadTask(id, workdir);
+    if (existing === null) {
+      throw new TaskNotFoundError(id);
+    }
+    if (
+      existing.status !== "success" &&
+      existing.status !== "failure" &&
+      existing.status !== "cancelled"
+    ) {
+      // ADR-001 §3.5: delete requires terminal status. Cancel the
+      // task first (POST /tasks/:id/cancel; emploke task cancel <tid>)
+      // before deleting.
+      throw new InvalidTransition(existing.status, "delete");
     }
 
     if (opts.purge === true) {
-      if (existing === null) {
-        // Existence check via stat(): we still want a 404 if the dir
-        // truly doesn't exist (so the dashboard's optimistic UI can
-        // distinguish "already gone" from "deleted now"), but we
-        // accept a missing/corrupt metadata row.
-        let dirExists: boolean;
-        try {
-          const st = await stat(workdir);
-          dirExists = st.isDirectory();
-        } catch {
-          dirExists = false;
-        }
-        if (!dirExists) {
-          throw new TaskNotFoundError(id);
-        }
-      }
-    } else if (existing === null) {
-      throw new TaskNotFoundError(id);
-    }
-
-    const live = this.live.get(id);
-    if (live !== undefined) {
-      this.live.delete(id);
-      // ADR-001 will tighten delete to refuse non-terminal tasks in a
-      // follow-up commit; until then, mark the kill as a 'cancel' so
-      // the exit watcher records the canonical user-initiated terminal
-      // state (the closest match to the existing legacy semantics of
-      // "delete kills the subprocess on the user's behalf").
-      live.killReason = "cancel";
-      try {
-        live.handle.kill();
-      } catch {
-        // Already dead. Continue.
-      }
-      try {
-        await live.settled;
-      } catch {
-        // Defensive — settled is constructed to never reject.
-      }
-    }
-
-    if (opts.purge === true && existing !== null) {
       // Wipe the runtime's per-task state BEFORE we touch local rows
       // / workdir, so a runtime failure leaves a recoverable state
       // (row + workdir intact, user can retry). No-op when the
