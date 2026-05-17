@@ -674,7 +674,11 @@ describe("exit watcher", () => {
     void rt.handles[0].exit({ code: 17, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failure");
-    expect(after.failure?.error).toMatch(/exited with code 17/);
+    expect(after.failure?.kind).toBe("exited");
+    expect(after.failure?.message).toMatch(/exited with code 17/);
+    if (after.failure?.kind === "exited") {
+      expect(after.failure.exitCode).toBe(17);
+    }
     expect(readTaskRuntimeMetadata(after).exitCode).toBe(17);
   });
 
@@ -686,7 +690,11 @@ describe("exit watcher", () => {
     void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failure");
-    expect(after.failure?.error).toMatch(/SIGTERM/);
+    expect(after.failure?.kind).toBe("signal");
+    expect(after.failure?.message).toMatch(/SIGTERM/);
+    if (after.failure?.kind === "signal") {
+      expect(after.failure.signal).toBe("SIGTERM");
+    }
     expect(readTaskRuntimeMetadata(after).exitSignal).toBe("SIGTERM");
   });
 });
@@ -1162,7 +1170,7 @@ describe("delete", () => {
 });
 
 describe("shutdown", () => {
-  it("kills all live tasks and marks them failure with reason 'server shutdown'", async () => {
+  it("kills all live tasks and marks them failure with kind='shutdown'", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
     const { m } = makeManager({ runtime: rt });
@@ -1176,8 +1184,10 @@ describe("shutdown", () => {
     const a2 = await m.get(t2.id);
     expect(a1?.status).toBe("failure");
     expect(a2?.status).toBe("failure");
-    expect(a1?.failure?.error).toBe("server shutdown");
-    expect(a2?.failure?.error).toBe("server shutdown");
+    expect(a1?.failure?.kind).toBe("shutdown");
+    expect(a2?.failure?.kind).toBe("shutdown");
+    expect(a1?.failure?.message).toBe("server shutdown");
+    expect(a2?.failure?.message).toBe("server shutdown");
   });
 
   it("refuses new dispatch after shutdown is called", async () => {
@@ -1288,7 +1298,8 @@ describe("recoverOrphaned", () => {
 
     const after = await m.get(id);
     expect(after?.status).toBe("failure");
-    expect(after?.failure?.error).toMatch(/orphaned/);
+    expect(after?.failure?.kind).toBe("orphan");
+    expect(after?.failure?.message).toMatch(/orphaned/);
   });
 
   it("leaves terminal tasks unchanged", async () => {
@@ -1386,7 +1397,8 @@ describe("recoverOrphaned", () => {
 
     const after = await m.get(id);
     expect(after?.status).toBe("failure");
-    expect(after?.failure?.error).toMatch(/orphaned/);
+    expect(after?.failure?.kind).toBe("orphan");
+    expect(after?.failure?.message).toMatch(/orphaned/);
   });
 });
 

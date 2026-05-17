@@ -35,6 +35,7 @@ export {
   EntryNotReadyError,
   InvalidTaskIdError,
   InvalidTransition,
+  ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskError,
   TaskIdAllocationFailedError,
@@ -67,6 +68,7 @@ export { readTaskRuntimeMetadata, type TaskRuntimeMetadata } from "./task-meta.j
 export type {
   DispatchOpts,
   ListTaskOpts,
+  TaskCancellation,
   TaskFailure,
   TaskManagerConfig,
   TaskResult,

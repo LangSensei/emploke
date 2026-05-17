@@ -3,7 +3,7 @@ import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
 import { Task } from "../task-entity.js";
-import type { ListTaskOpts, TaskStatus } from "../types.js";
+import type { ListTaskOpts, TaskCancellation, TaskFailure, TaskStatus } from "../types.js";
 import type { TaskRepository } from "./repository.js";
 
 /**
@@ -15,8 +15,17 @@ import type { TaskRepository } from "./repository.js";
  * column had no length cap so longer values truncate at the v2
  * contract). The full original text is preserved verbatim in the
  * new `details` column.
+ *
+ * Bumped from 2 → 3 for ADR-001's structured TaskFailure /
+ * TaskCancellation discriminated unions. The migration is purely
+ * additive (`ALTER TABLE ADD COLUMN` for five nullable columns —
+ * `failure_kind`, `failure_exit_code`, `failure_signal`,
+ * `cancellation_kind`, `cancellation_message`); see
+ * {@link migrateV2ToV3}. Legacy `failure_error`-only rows are
+ * synthesised at read time as `{ kind: 'internal', message: <text> }`
+ * with a one-line warning so operators can spot the legacy pattern.
  */
-const TASK_PKG_SCHEMA_VERSION = 2;
+const TASK_PKG_SCHEMA_VERSION = 3;
 
 interface TaskRow {
   id: string;
@@ -29,7 +38,28 @@ interface TaskRow {
   started_at: string | null;
   ended_at: string | null;
   result_output: string | null;
+  /**
+   * Reused as the storage column for `TaskFailure.message` post-ADR-001.
+   * For rows written before v3 this is the only failure-related column
+   * populated, and the read path synthesises a typed
+   * `{ kind: 'internal', message: failure_error }` value with a
+   * one-line warning.
+   */
   failure_error: string | null;
+  /**
+   * Discriminator for `TaskFailure`. NULL for legacy v2 rows; the
+   * read path synthesises `{ kind: 'internal', ... }` when this is
+   * NULL but `failure_error` is populated.
+   */
+  failure_kind: string | null;
+  /** Populated only when `failure_kind === 'exited'`. */
+  failure_exit_code: number | null;
+  /** Populated only when `failure_kind === 'signal'`. */
+  failure_signal: string | null;
+  /** Discriminator for `TaskCancellation`. NULL for legacy cancelled rows. */
+  cancellation_kind: string | null;
+  /** `TaskCancellation.message`. NULL for legacy cancelled rows. */
+  cancellation_message: string | null;
   metadata: string;
 }
 
@@ -77,12 +107,13 @@ export class SqliteTaskRepository implements TaskRepository {
     const row = this.db
       .prepare(
         `SELECT id, agent, runtime, status, brief, details, created_at, started_at, ended_at,
-                result_output, failure_error, metadata
+                result_output, failure_error, failure_kind, failure_exit_code, failure_signal,
+                cancellation_kind, cancellation_message, metadata
          FROM tasks WHERE id = ?`,
       )
       .get(id) as TaskRow | undefined;
     if (row === undefined) return null;
-    return parseRow(id, row);
+    return parseRow(id, row, this.logger);
   }
 
   async save(task: Task): Promise<void> {
@@ -96,11 +127,30 @@ export class SqliteTaskRepository implements TaskRepository {
       metaForJson = rest;
     }
     const metaJson = JSON.stringify(metaForJson);
+
+    // Decompose typed payloads back into columnar storage.
+    //
+    // `failure_error` is REUSED as the storage column for
+    // `TaskFailure.message` post-ADR-001 — this avoids adding a
+    // sixth `failure_message` column for what is conceptually the
+    // same field as the legacy `failure_error`. The discriminator
+    // (`failure_kind`) plus the variant-specific extras
+    // (`failure_exit_code`, `failure_signal`) live in the new columns.
+    const failure = task.failure;
+    const cancellation = task.cancellation;
+    const failureKind = failure?.kind ?? null;
+    const failureMessage = failure?.message ?? null;
+    const failureExitCode = failure?.kind === "exited" ? failure.exitCode : null;
+    const failureSignal = failure?.kind === "signal" ? failure.signal : null;
+    const cancellationKind = cancellation?.kind ?? null;
+    const cancellationMessage = cancellation?.message ?? null;
+
     this.db
       .prepare(
         `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, started_at,
-                            ended_at, result_output, failure_error, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ended_at, result_output, failure_error, failure_kind, failure_exit_code,
+                            failure_signal, cancellation_kind, cancellation_message, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            agent = excluded.agent,
            runtime = excluded.runtime,
@@ -112,6 +162,11 @@ export class SqliteTaskRepository implements TaskRepository {
            ended_at = excluded.ended_at,
            result_output = excluded.result_output,
            failure_error = excluded.failure_error,
+           failure_kind = excluded.failure_kind,
+           failure_exit_code = excluded.failure_exit_code,
+           failure_signal = excluded.failure_signal,
+           cancellation_kind = excluded.cancellation_kind,
+           cancellation_message = excluded.cancellation_message,
            metadata = excluded.metadata`,
       )
       .run(
@@ -125,7 +180,12 @@ export class SqliteTaskRepository implements TaskRepository {
         task.startedAt ?? null,
         task.endedAt ?? null,
         task.result?.output ?? null,
-        task.failure?.error ?? null,
+        failureMessage,
+        failureKind,
+        failureExitCode,
+        failureSignal,
+        cancellationKind,
+        cancellationMessage,
         metaJson,
       );
   }
@@ -156,13 +216,14 @@ export class SqliteTaskRepository implements TaskRepository {
       params.push(...opts.statuses);
     }
     let sql = `SELECT id, agent, runtime, status, brief, details, created_at, started_at, ended_at,
-                      result_output, failure_error, metadata FROM tasks`;
+                      result_output, failure_error, failure_kind, failure_exit_code, failure_signal,
+                      cancellation_kind, cancellation_message, metadata FROM tasks`;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     const rows = this.db.prepare(sql).all(...params) as unknown as TaskRow[];
     const out: Task[] = [];
     for (const row of rows) {
       try {
-        out.push(parseRow(row.id, row));
+        out.push(parseRow(row.id, row, this.logger));
       } catch (err) {
         this.logger.warn(
           {
@@ -198,7 +259,7 @@ export class SqliteTaskRepository implements TaskRepository {
       // case where another build path created the table without a
       // schema_meta row (we don't ship that path, but defending
       // against it keeps the call idempotent under retries).
-      this.createV2Schema();
+      this.createCurrentSchema();
       this.db
         .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
         .run("task", TASK_PKG_SCHEMA_VERSION);
@@ -209,43 +270,64 @@ export class SqliteTaskRepository implements TaskRepository {
       // Already at HEAD: assert the table exists (defensive — a
       // partially-written install could have schema_meta but no
       // tasks table) and return.
-      this.createV2Schema();
+      this.createCurrentSchema();
       return;
     }
 
-    if (existing.version === 1) {
+    // Staged migration. Each migrator updates the on-disk schema
+    // in-place; we walk the chain from the persisted version up to
+    // HEAD without intermediate schema_meta writes (the version
+    // bump only commits once the entire chain succeeds, so a
+    // mid-chain crash leaves the DB at the previous known-good
+    // version and the next bootstrap retries from that point).
+    let effective = existing.version;
+    if (effective === 1) {
       // pre-1.0 hard cut: migrate v1 (`instructions`) → v2
       // (`brief` + `details`) in a single transaction. `brief` is
       // back-filled from the first 200 chars of `instructions` to
       // honour the new wire contract; the original text is
       // preserved verbatim in `details` so no user data is lost.
       migrateV1ToV2(this.db);
-      this.db
-        .prepare("UPDATE schema_meta SET version = ? WHERE pkg = ?")
-        .run(TASK_PKG_SCHEMA_VERSION, "task");
-      return;
+      effective = 2;
     }
-
-    throw new Error(
-      `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
-    );
+    if (effective === 2) {
+      // ADR-001: additive columns for the typed TaskFailure /
+      // TaskCancellation unions. All new columns are nullable so
+      // existing rows need no rewrite — see {@link parseRow} for
+      // the legacy `failure_error`-only fallback.
+      migrateV2ToV3(this.db);
+      effective = 3;
+    }
+    if (effective !== TASK_PKG_SCHEMA_VERSION) {
+      throw new Error(
+        `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
+      );
+    }
+    this.db
+      .prepare("UPDATE schema_meta SET version = ? WHERE pkg = ?")
+      .run(TASK_PKG_SCHEMA_VERSION, "task");
   }
 
-  private createV2Schema(): void {
+  private createCurrentSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
-        id              TEXT PRIMARY KEY,
-        agent           TEXT NOT NULL,
-        runtime         TEXT,
-        status          TEXT NOT NULL,
-        brief           TEXT NOT NULL,
-        details         TEXT,
-        created_at      TEXT NOT NULL,
-        started_at      TEXT,
-        ended_at        TEXT,
-        result_output   TEXT,
-        failure_error   TEXT,
-        metadata        TEXT NOT NULL DEFAULT '{}'
+        id                    TEXT PRIMARY KEY,
+        agent                 TEXT NOT NULL,
+        runtime               TEXT,
+        status                TEXT NOT NULL,
+        brief                 TEXT NOT NULL,
+        details               TEXT,
+        created_at            TEXT NOT NULL,
+        started_at            TEXT,
+        ended_at              TEXT,
+        result_output         TEXT,
+        failure_error         TEXT,
+        failure_kind          TEXT,
+        failure_exit_code     INTEGER,
+        failure_signal        TEXT,
+        cancellation_kind     TEXT,
+        cancellation_message  TEXT,
+        metadata              TEXT NOT NULL DEFAULT '{}'
       );
       CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
       CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
@@ -265,13 +347,20 @@ export class SqliteTaskRepository implements TaskRepository {
  *     format we chose for this column);
  *   - the `runtime` value is a promoted column extracted from the
  *     metadata bag at save time; we re-fold it back into the bag here
- *     so the entity sees the same shape callers passed in originally.
+ *     so the entity sees the same shape callers passed in originally;
+ *   - the `failure_*` and `cancellation_*` columns are reassembled
+ *     into the typed {@link TaskFailure} / {@link TaskCancellation}
+ *     discriminated unions ADR-001 introduced. Legacy rows written
+ *     before the schema bump have `failure_error` populated but
+ *     `failure_kind` NULL — those are synthesised to
+ *     `{ kind: 'internal', message }` with a one-line warning so
+ *     operators can spot the pattern.
  *
  * Everything else (id format, status enum, ISO timestamps,
- * metadata-is-an-object, brief non-empty) is validated by
- * {@link Task.fromStored}.
+ * metadata-is-an-object, brief non-empty, failure/cancellation shape +
+ * status-pairing) is validated by {@link Task.fromStored}.
  */
-function parseRow(id: string, row: TaskRow): Task {
+function parseRow(id: string, row: TaskRow, logger: Logger): Task {
   let metaParsed: unknown;
   try {
     metaParsed = JSON.parse(row.metadata);
@@ -289,6 +378,10 @@ function parseRow(id: string, row: TaskRow): Task {
   if (row.runtime !== null) {
     metadata = { ...metadata, runtime: row.runtime };
   }
+
+  const failure = reassembleFailure(id, row, logger);
+  const cancellation = reassembleCancellation(id, row, logger);
+
   return Task.fromStored({
     id,
     agent: row.agent,
@@ -300,8 +393,111 @@ function parseRow(id: string, row: TaskRow): Task {
     ...(row.started_at !== null ? { startedAt: row.started_at } : {}),
     ...(row.ended_at !== null ? { endedAt: row.ended_at } : {}),
     ...(row.result_output !== null ? { result: { output: row.result_output } } : {}),
-    ...(row.failure_error !== null ? { failure: { error: row.failure_error } } : {}),
+    ...(failure !== undefined ? { failure } : {}),
+    ...(cancellation !== undefined ? { cancellation } : {}),
   });
+}
+
+/**
+ * Rebuild a {@link TaskFailure} from the columnar storage shape.
+ *
+ *   - both columns NULL                  → returns undefined (non-failure row)
+ *   - `failure_kind` populated           → reconstruct the matching variant
+ *                                          (`exited` reads `failure_exit_code`,
+ *                                          `signal` reads `failure_signal`,
+ *                                          the rest carry just `kind` +
+ *                                          `message`)
+ *   - `failure_kind` NULL but
+ *     `failure_error` populated          → legacy v2 row written before
+ *                                          ADR-001; synthesise
+ *                                          `{ kind: 'internal', message }`
+ *                                          and emit a one-line warn so
+ *                                          operators can spot the pattern.
+ *
+ * Throws {@link CorruptedTaskError} on a `failure_kind` value outside
+ * the closed union (defends against future schema drift or
+ * column-level tampering).
+ */
+function reassembleFailure(id: string, row: TaskRow, logger: Logger): TaskFailure | undefined {
+  if (row.failure_kind === null) {
+    if (row.failure_error === null) return undefined;
+    // Legacy row: ADR-001 documents synthesising
+    // `{ kind: 'internal', message }`. Emit a warn so operators see
+    // the pattern in their logs and can plan a re-save if needed.
+    logger.warn(
+      { taskId: id, failureError: row.failure_error },
+      "tasks: legacy failure row synthesised as kind='internal'",
+    );
+    return { kind: "internal", message: row.failure_error };
+  }
+  const message = row.failure_error ?? "";
+  switch (row.failure_kind) {
+    case "exited": {
+      if (row.failure_exit_code === null) {
+        throw new CorruptedTaskError(
+          id,
+          "failure_exit_code is required when failure_kind='exited'",
+        );
+      }
+      return { kind: "exited", exitCode: row.failure_exit_code, message };
+    }
+    case "signal": {
+      if (row.failure_signal === null) {
+        throw new CorruptedTaskError(id, "failure_signal is required when failure_kind='signal'");
+      }
+      return { kind: "signal", signal: row.failure_signal as NodeJS.Signals, message };
+    }
+    case "shutdown":
+    case "orphan":
+    case "internal":
+      return { kind: row.failure_kind, message };
+    default:
+      throw new CorruptedTaskError(
+        id,
+        `failure_kind ${JSON.stringify(row.failure_kind)} is outside the closed union`,
+      );
+  }
+}
+
+/**
+ * Rebuild a {@link TaskCancellation} from columnar storage.
+ *
+ *   - both columns NULL → returns undefined (non-cancelled row)
+ *   - `cancellation_kind` populated → reconstruct the matching variant
+ *   - `cancellation_kind` NULL but `status === 'cancelled'` → no
+ *     legacy producer existed before ADR-001 (the kernel never wrote a
+ *     `cancelled` row), but defend by synthesising
+ *     `{ kind: 'user', message: 'cancelled by user' }` so a hand-
+ *     crafted legacy row or a future schema-drift case stays parseable.
+ */
+function reassembleCancellation(
+  id: string,
+  row: TaskRow,
+  logger: Logger,
+): TaskCancellation | undefined {
+  if (row.cancellation_kind === null) {
+    if (row.status !== "cancelled") return undefined;
+    // Status is cancelled but no kind/message recorded. No legacy
+    // producer existed before ADR-001 (TaskManager never wrote a
+    // `cancelled` row pre-ADR), but we defend so that a hand-rolled
+    // legacy row or a future schema drift case parses.
+    logger.warn(
+      { taskId: id },
+      "tasks: legacy cancelled row missing cancellation_kind; synthesised as kind='user'",
+    );
+    return { kind: "user", message: "cancelled by user" };
+  }
+  const message = row.cancellation_message ?? "";
+  switch (row.cancellation_kind) {
+    case "user":
+    case "orphan":
+      return { kind: row.cancellation_kind, message };
+    default:
+      throw new CorruptedTaskError(
+        id,
+        `cancellation_kind ${JSON.stringify(row.cancellation_kind)} is outside the closed union`,
+      );
+  }
 }
 
 /**
@@ -373,6 +569,35 @@ function migrateV1ToV2(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
     CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
     CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
+    COMMIT;
+  `);
+}
+
+/**
+ * Migrate `tasks` from v2 → v3 for ADR-001's structured
+ * `TaskFailure` / `TaskCancellation` discriminated unions.
+ *
+ * Purely additive: five new nullable columns. No existing data needs
+ * to move; the legacy `failure_error` column is REUSED as the storage
+ * column for `TaskFailure.message` (see {@link parseRow}), and the
+ * read path synthesises `{ kind: 'internal', message: failure_error }`
+ * for rows whose `failure_kind` is NULL — which is every v2 row.
+ *
+ * We deliberately do NOT use the rename-dance from v1→v2 here: that
+ * dance was required because the `instructions` column had to be split
+ * into two NOT-NULL columns. v2→v3 only adds nullable columns, so
+ * `ALTER TABLE ADD COLUMN` is sufficient and avoids the per-row
+ * rewrite cost of CREATE+INSERT+DROP+RENAME on workspaces with many
+ * tasks.
+ */
+function migrateV2ToV3(db: DatabaseSync): void {
+  db.exec(`
+    BEGIN;
+    ALTER TABLE tasks ADD COLUMN failure_kind         TEXT;
+    ALTER TABLE tasks ADD COLUMN failure_exit_code    INTEGER;
+    ALTER TABLE tasks ADD COLUMN failure_signal       TEXT;
+    ALTER TABLE tasks ADD COLUMN cancellation_kind    TEXT;
+    ALTER TABLE tasks ADD COLUMN cancellation_message TEXT;
     COMMIT;
   `);
 }

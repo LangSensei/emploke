@@ -8,6 +8,7 @@ import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
+  ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
@@ -24,7 +25,13 @@ import { safeJoinUnderRoot } from "./paths.js";
 import type { TaskRepository } from "./repositories/repository.js";
 import { Task } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
-import type { DispatchOpts, ListTaskOpts, TaskManagerConfig } from "./types.js";
+import type {
+  DispatchOpts,
+  ListTaskOpts,
+  TaskCancellation,
+  TaskFailure,
+  TaskManagerConfig,
+} from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
@@ -34,15 +41,40 @@ const MAX_CREATE_RETRIES = 5;
  * subprocess exits and the post-exit fs writes complete, the entry is
  * dropped from the map.
  *
- * `killedByUs` is the mutable flag that distinguishes "we (manager)
- * intentionally terminated this subprocess" (via `delete()` or
- * `shutdown()`) from "the subprocess exited on its own". It is checked
- * by the exit watcher when classifying the terminal state — without
- * it, a process that exits cleanly (`code: 0`) at the same instant as
- * `shutdown()` runs would race against the global flag and be
- * mis-recorded as `failure: "server shutdown"` rather than `success`.
- * Per-task scope ensures one task's shutdown override doesn't bleed
- * into another's natural exit.
+ * `killReason` is the mutable flag the exit watcher reads AT exit time
+ * to classify the terminal status. It says "why did this manager
+ * invoke handle.kill() for this task". Values:
+ *   - `null`       — subprocess exited on its own (success / non-zero / signal)
+ *   - `'shutdown'` — `TaskManager.shutdown()` killed it (server going down)
+ *   - `'cancel'`   — `TaskManager.cancel(id)` killed it (user-initiated)
+ *
+ * `delete()` no longer sets this — after ADR-001, `delete()` requires
+ * the task be terminal and never kills a subprocess. Orphan recovery
+ * is a separate code path (`recoverOrphaned()` at boot) and also
+ * doesn't go through `decideTerminal`.
+ *
+ * CONCURRENT WRITE SEMANTICS: `cancel()` and `shutdown()` can both
+ * reach the same `LiveTask`. The design is last-write-wins for the
+ * `killReason` slot. In practice they don't compete: `shutdown()`
+ * acquires the global `shuttingDown` flag before iterating, and
+ * `cancel()` refuses if `shuttingDown` is true. The only window
+ * where both can fire is when `cancel()` has passed its
+ * `shuttingDown` check and dropped into the live-kill block at the
+ * exact moment `shutdown()` begins. The outcome (terminal kind =
+ * 'cancelled' OR 'failure: shutdown') is non-deterministic but BOTH
+ * outcomes are semantically correct — the task did not finish on
+ * its own, the recorded reason names a real cause. The
+ * cancel-during-shutdown test accepts either. We do NOT add a
+ * first-write-wins helper because the non-determinism is irreducible
+ * and harmless.
+ *
+ * Within a single verb, concurrent cancel() invocations DO coordinate:
+ * the first call observes `killReason === null` and "owns" the kill;
+ * subsequent concurrent callers observe `killReason === 'cancel'`,
+ * await the same `settled` promise, and then throw
+ * `InvalidTransition('cancelled', 'cancel')` so the route maps to
+ * 409 for the second + third + Nth caller. This pins
+ * cancel-concurrent-same-id (ADR test T3).
  */
 interface LiveTask {
   readonly id: string;
@@ -50,12 +82,10 @@ interface LiveTask {
   /** Resolves once the post-exit persistence has finished (success or failure path). */
   readonly settled: Promise<void>;
   /**
-   * Set to true when `delete()` or `shutdown()` calls `handle.kill()`
-   * for this task. The exit watcher reads this AT exit time (not at the
-   * moment shutdown began) so a clean self-exit racing with shutdown is
-   * still classified as `success`, not `failure: "server shutdown"`.
+   * Why this manager invoked handle.kill() for this task. Read by the
+   * exit watcher AT exit time to classify the terminal state.
    */
-  killedByUs: boolean;
+  killReason: "shutdown" | "cancel" | null;
 }
 
 /**
@@ -151,8 +181,10 @@ export class TaskManager {
     if (this.shuttingDown) {
       // Refuse new work once shutdown has been called. Avoids a race where
       // a request is mid-flight when the SIGTERM lands and we end up
-      // spawning a subprocess we have to immediately kill.
-      throw new Error("task manager is shutting down; refusing new dispatches");
+      // spawning a subprocess we have to immediately kill. ADR-001
+      // promoted this to a typed error so the route layer maps to 503
+      // (was: bare Error falling through to 400).
+      throw new ManagerShuttingDownError();
     }
 
     // 1. Resolve agent. Bare-Error throws from the resolver are rewrapped
@@ -371,7 +403,7 @@ export class TaskManager {
         // exit promise should never reject by construction.
       }
       await safeRm(workdir, this.logger);
-      throw new Error("task manager is shutting down; refusing new dispatches");
+      throw new ManagerShuttingDownError();
     }
 
     // 6. Apply `start` and persist the running record. From this point
@@ -415,7 +447,7 @@ export class TaskManager {
     const liveEntry: LiveTask = {
       id,
       handle,
-      killedByUs: false,
+      killReason: null,
       // `settled` is filled in just below; we need the object reference
       // first so the IIFE can close over it.
       settled: undefined as unknown as Promise<void>,
@@ -433,10 +465,14 @@ export class TaskManager {
         exitInfo = await handle.exit;
       } catch (err) {
         // Should not happen — handle.exit is built from child events that
-        // resolve, never reject. Treat as unknown failure.
+        // resolve, never reject. Classify as `internal` so the failure
+        // wire shape carries a typed kind operators can branch on.
         await this.applyTerminal(workdir, running, {
-          ok: false,
-          reason: `exit watcher rejected: ${err instanceof Error ? err.message : String(err)}`,
+          kind: "failure",
+          failure: {
+            kind: "internal",
+            message: `exit watcher rejected: ${err instanceof Error ? err.message : String(err)}`,
+          },
           exitCode: null,
           exitSignal: null,
         });
@@ -444,11 +480,11 @@ export class TaskManager {
         return;
       }
 
-      // Read killedByUs AT exit time, per the LiveTask JSDoc. If the
+      // Read killReason AT exit time, per the LiveTask JSDoc. If the
       // task self-exited cleanly with `code: 0` while `shutdown()` was
       // running but had not yet invoked `kill()` for this task, this
-      // flag is still false and we record `success`.
-      const decision = decideTerminal(exitInfo, liveEntry.killedByUs);
+      // flag is still null and we record `success`.
+      const decision = decideTerminal(exitInfo, liveEntry.killReason);
       await this.applyTerminal(workdir, running, decision);
       this.live.delete(id);
     })();
@@ -687,7 +723,12 @@ export class TaskManager {
     const live = this.live.get(id);
     if (live !== undefined) {
       this.live.delete(id);
-      live.killedByUs = true;
+      // ADR-001 will tighten delete to refuse non-terminal tasks in a
+      // follow-up commit; until then, mark the kill as a 'cancel' so
+      // the exit watcher records the canonical user-initiated terminal
+      // state (the closest match to the existing legacy semantics of
+      // "delete kills the subprocess on the user's behalf").
+      live.killReason = "cancel";
       try {
         live.handle.kill();
       } catch {
@@ -803,9 +844,15 @@ export class TaskManager {
         }
 
         try {
-          const failed = task.fail("orphaned (server crashed before this task ended)", {
-            now: this.now().toISOString(),
-          });
+          const failed = task.fail(
+            {
+              kind: "orphan",
+              message: "orphaned (server crashed before this task ended)",
+            },
+            {
+              now: this.now().toISOString(),
+            },
+          );
           await this.persist(workdir, failed);
         } catch (err) {
           this.logger.warn(
@@ -863,14 +910,14 @@ export class TaskManager {
 
     const snapshot = [...this.live.values()];
     for (const l of snapshot) {
-      // Mark the task as killed-by-us before invoking kill(), so the
-      // exit watcher's decideTerminal() call records `failure: server
-      // shutdown` rather than reading the natural exit reason. Per-task
-      // scope (rather than a global flag) means another task that
-      // self-exits cleanly mid-shutdown is still classified as
+      // Mark the task as killed-by-shutdown before invoking kill(), so
+      // the exit watcher's decideTerminal() call records `failure: {
+      // kind:'shutdown' }` rather than reading the natural exit reason.
+      // Per-task scope (rather than a global flag) means another task
+      // that self-exits cleanly mid-shutdown is still classified as
       // `success` — the kill flag only flips for tasks we actually
       // killed.
-      l.killedByUs = true;
+      l.killReason = "shutdown";
       try {
         l.handle.kill();
       } catch {
@@ -878,8 +925,8 @@ export class TaskManager {
       }
     }
     // Wait for every exit watcher to finish persisting its terminal
-    // status. The watcher reads `liveEntry.killedByUs` AT exit time to
-    // decide between "server shutdown" and the natural exit reason.
+    // status. The watcher reads `liveEntry.killReason` AT exit time
+    // to decide between `failure: shutdown` / `cancelled` / natural.
     await Promise.allSettled(snapshot.map((l) => l.settled));
   }
 
@@ -1026,22 +1073,31 @@ export class TaskManager {
     };
     let next: Task;
     try {
-      if (decision.ok) {
-        // `output: ""` is intentional under the runtime-driven completion
-        // model: the kernel records that the agent finished cleanly, but
-        // does not synthesise a "what did it produce" string. The agent's
-        // real artifacts live on disk under `<workdir>/` and the runtime's
-        // event stream sits at `<workdir>/session/`. See the JSDoc on
-        // `TaskResult` in ./types.ts and the long-term design discussion.
-        next = running.complete("", {
-          metadata: metaPatch,
-          now: this.now().toISOString(),
-        });
-      } else {
-        next = running.fail(decision.reason, {
-          metadata: metaPatch,
-          now: this.now().toISOString(),
-        });
+      switch (decision.kind) {
+        case "success":
+          // `output: ""` is intentional under the runtime-driven completion
+          // model: the kernel records that the agent finished cleanly, but
+          // does not synthesise a "what did it produce" string. The agent's
+          // real artifacts live on disk under `<workdir>/` and the runtime's
+          // event stream sits at `<workdir>/session/`. See the JSDoc on
+          // `TaskResult` in ./types.ts and the long-term design discussion.
+          next = running.complete("", {
+            metadata: metaPatch,
+            now: this.now().toISOString(),
+          });
+          break;
+        case "failure":
+          next = running.fail(decision.failure, {
+            metadata: metaPatch,
+            now: this.now().toISOString(),
+          });
+          break;
+        case "cancelled":
+          next = running.cancel(decision.cancellation, {
+            metadata: metaPatch,
+            now: this.now().toISOString(),
+          });
+          break;
       }
       await this.persist(workdir, next);
     } catch (err) {
@@ -1058,58 +1114,98 @@ export class TaskManager {
 
 // ─── module-private helpers ────────────────────────────────
 
-interface TerminalDecision {
-  readonly ok: boolean;
-  readonly reason: string; // empty when ok
-  readonly exitCode: number | null;
-  readonly exitSignal: NodeJS.Signals | null;
-}
+/**
+ * Outcome of classifying a subprocess exit. Discriminated by `kind`
+ * so {@link TaskManager.applyTerminal} can dispatch typed transitions
+ * to the entity (`complete` / `fail` / `cancel`). `exitCode` and
+ * `exitSignal` stay on the decision (not on the failure payload)
+ * because they're metadata-side bookkeeping — populated into
+ * `Task.metadata.{exitCode, exitSignal}` regardless of terminal kind
+ * (the `success` path also wants `exitCode=0` recorded there).
+ */
+type TerminalDecision =
+  | {
+      readonly kind: "success";
+      readonly exitCode: number | null;
+      readonly exitSignal: NodeJS.Signals | null;
+    }
+  | {
+      readonly kind: "failure";
+      readonly failure: TaskFailure;
+      readonly exitCode: number | null;
+      readonly exitSignal: NodeJS.Signals | null;
+    }
+  | {
+      readonly kind: "cancelled";
+      readonly cancellation: TaskCancellation;
+      readonly exitCode: number | null;
+      readonly exitSignal: NodeJS.Signals | null;
+    };
 
 /**
- * Translate a subprocess exit into a Task FSM transition.
+ * Translate a subprocess exit into a typed terminal decision.
  *
- *   - killedByUs    → failure, "server shutdown" (regardless of code/signal,
- *                     because we asked for it via `delete()` or `shutdown()`)
- *   - exit code 0   → success
- *   - exit code N   → failure, "exited with code N"
- *   - signal X      → failure, "terminated by signal X"
+ *   - killReason === 'cancel'   → cancelled, kind='user'
+ *   - killReason === 'shutdown' → failure,   kind='shutdown'
+ *   - exit code 0               → success
+ *   - exit code N (non-zero)    → failure,   kind='exited'
+ *   - exit signal X             → failure,   kind='signal'
  *
- * The `killedByUs` flag is read AT exit time from the per-task LiveTask
+ * The `killReason` is read AT exit time from the per-task LiveTask
  * record (not at the moment shutdown began), so a clean self-exit with
- * `code: 0` racing against `shutdown()` is still classified as `success`
- * unless this manager actually invoked `kill()` for this task.
+ * `code: 0` racing against `shutdown()` is still classified as
+ * `success` unless this manager actually invoked `kill()` for this task.
  */
 function decideTerminal(
   exitInfo: { code: number | null; signal: NodeJS.Signals | null },
-  killedByUs: boolean,
+  killReason: "shutdown" | "cancel" | null,
 ): TerminalDecision {
-  if (killedByUs) {
+  if (killReason === "cancel") {
     return {
-      ok: false,
-      reason: "server shutdown",
+      kind: "cancelled",
+      cancellation: { kind: "user", message: "cancelled by user" },
+      exitCode: exitInfo.code,
+      exitSignal: exitInfo.signal,
+    };
+  }
+  if (killReason === "shutdown") {
+    return {
+      kind: "failure",
+      failure: { kind: "shutdown", message: "server shutdown" },
       exitCode: exitInfo.code,
       exitSignal: exitInfo.signal,
     };
   }
   if (exitInfo.code === 0) {
     return {
-      ok: true,
-      reason: "",
+      kind: "success",
       exitCode: 0,
       exitSignal: exitInfo.signal,
     };
   }
   if (exitInfo.signal !== null) {
     return {
-      ok: false,
-      reason: `terminated by signal ${exitInfo.signal}`,
+      kind: "failure",
+      failure: {
+        kind: "signal",
+        signal: exitInfo.signal,
+        message: `terminated by signal ${exitInfo.signal}`,
+      },
       exitCode: exitInfo.code,
       exitSignal: exitInfo.signal,
     };
   }
   return {
-    ok: false,
-    reason: `exited with code ${exitInfo.code}`,
+    kind: "failure",
+    // exitInfo.code !== 0 (checked above) and exitInfo.signal === null —
+    // the remaining case is a non-zero exit code. `code` is typed
+    // `number | null` for the signal/clean-exit alternatives, but in
+    // this branch it must be a number; assert for the type system.
+    failure: {
+      kind: "exited",
+      exitCode: exitInfo.code as number,
+      message: `exited with code ${exitInfo.code}`,
+    },
     exitCode: exitInfo.code,
     exitSignal: exitInfo.signal,
   };
