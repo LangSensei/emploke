@@ -70,7 +70,14 @@ import {
 import { type StartOpts, start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
-import { taskActivity, taskDispatch, taskList, taskRm, taskShow } from "./commands/task.js";
+import {
+  taskActivity,
+  taskCancel,
+  taskDispatch,
+  taskList,
+  taskRm,
+  taskShow,
+} from "./commands/task.js";
 import {
   workspaceAdd,
   workspaceCurrent,
@@ -459,7 +466,9 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(taskCmd.command("rm"))
     .argument("<tid>", "Task id")
-    .description("Remove a task")
+    .description(
+      "Remove a task. Requires task to be in a terminal state. Use 'task cancel' first if still running.",
+    )
     .option(
       "--purge",
       "Hard delete: also remove the task workdir and the runtime's per-task state (default is archive — row only)",
@@ -470,6 +479,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         tid,
         purge: opts.purge === true,
       });
+    });
+  withWorkspaceFlags(taskCmd.command("cancel"))
+    .argument("<tid>", "Task id")
+    .description(
+      "Cancel a running task. Sends SIGTERM and marks cancelled. Use 'task rm' afterward to also delete the record.",
+    )
+    .action(async (tid: string, opts: Record<string, unknown>) => {
+      slot.result = await taskCancel({ ...parseWorkspaceFlags(opts), tid });
     });
   withWorkspaceFlags(taskCmd.command("activity"))
     .argument("<tid>", "Task id")

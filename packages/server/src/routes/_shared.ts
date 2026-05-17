@@ -92,6 +92,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "EntryNotReadyError",
   "TaskError",
   "InvalidTransition",
+  "ManagerShuttingDownError",
   // @emploke/terminal (surface via /:id/spawn)
   "NoTerminalFoundError",
   "TerminalSpawnFailedError",

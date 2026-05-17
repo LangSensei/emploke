@@ -412,6 +412,25 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid",
   ),
   /**
+   * Cancel a running task — ADR-001 §3.6. POST (state transition;
+   * DELETE belongs to tasks.delete). No request body in v1
+   * (--reason flag is out of scope per ADR §5).
+   *
+   * Status mappings:
+   *   - 200 + Task — happy path; the response Task carries
+   *     `cancellation: { kind: 'user', message: 'cancelled by user' }`.
+   *   - 404 — TaskNotFoundError (unknown id).
+   *   - 409 — InvalidTransition; body is the structured envelope
+   *     `{ error, code: 'InvalidTransition', status: <prev>,
+   *     transition: 'cancel' }` (R-6 pinned shape) so the dashboard
+   *     can branch typed on `code`.
+   *   - 503 — ManagerShuttingDownError (server is restarting).
+   */
+  "tasks.cancel": defineRoute<{ params: TaskPathParams }, Task>(
+    "POST",
+    "/api/workspaces/:id/tasks/:tid/cancel",
+  ),
+  /**
    * Runtime-neutral activity timeline: the runtime parses its own
    * event log into the {@link ActivityItem} discriminated union
    * declared in `@emploke/runtime` (end-to-end via

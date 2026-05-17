@@ -4,6 +4,8 @@ import {
   CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
+  InvalidTransition,
+  ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   type Task,
   TaskIdAllocationFailedError,
@@ -34,6 +36,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
     get: vi.fn(async () => sampleTask),
     dispatch: vi.fn(async () => sampleTask),
     delete: vi.fn(async () => undefined),
+    cancel: vi.fn(async () => sampleTask),
     recoverOrphaned: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
     getTaskActivity: vi.fn(async () => null),
@@ -605,6 +608,126 @@ describe("tasksRoutes", () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.code).toBe("BadRequest");
+    });
+  });
+
+  // ─── ADR-001: cancel route + delete 409 + 503 mappings ───────────────
+  describe("POST /:tid/cancel", () => {
+    it("200 + cancelled Task on the happy path", async () => {
+      const cancelledTask = {
+        ...sampleTask,
+        status: "cancelled",
+        endedAt: "2026-06-01T00:00:05.000Z",
+        cancellation: { kind: "user", message: "cancelled by user" },
+      } as unknown as Task;
+      const cancel = vi.fn(async () => cancelledTask);
+      const m = stubManager({ cancel });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/cancel`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe("cancelled");
+      expect(body.cancellation).toEqual({ kind: "user", message: "cancelled by user" });
+      expect(cancel).toHaveBeenCalledWith(sampleTask.id);
+    });
+
+    it("404 when the task is missing", async () => {
+      const m = stubManager({
+        cancel: vi.fn(async () => {
+          throw new TaskNotFoundError(sampleTask.id);
+        }),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/cancel`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.code).toBe("TaskNotFoundError");
+    });
+
+    it("409 + structured InvalidTransition body when the task is already terminal", async () => {
+      const m = stubManager({
+        cancel: vi.fn(async () => {
+          throw new InvalidTransition("success", "cancel");
+        }),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/cancel`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      // R-6: structured envelope so the dashboard branches on code.
+      expect(body.code).toBe("InvalidTransition");
+      expect(body.status).toBe("success");
+      expect(body.transition).toBe("cancel");
+      expect(typeof body.error).toBe("string");
+    });
+
+    it("503 when the manager is shutting down", async () => {
+      const m = stubManager({
+        cancel: vi.fn(async () => {
+          throw new ManagerShuttingDownError();
+        }),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/cancel`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe("ManagerShuttingDownError");
+    });
+  });
+
+  describe("DELETE /:tid — ADR-001 §3.5 terminal-only", () => {
+    it("409 + structured InvalidTransition body when the task is non-terminal", async () => {
+      const m = stubManager({
+        delete: vi.fn(async () => {
+          throw new InvalidTransition("running", "delete");
+        }),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`, { method: "DELETE" });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      // R-6: same envelope shape as the cancel handler — only the
+      // transition discriminator differs so the dashboard can branch
+      // its 409 handler typed.
+      expect(body.code).toBe("InvalidTransition");
+      expect(body.status).toBe("running");
+      expect(body.transition).toBe("delete");
+      expect(typeof body.error).toBe("string");
+    });
+  });
+
+  // T6 — closes the pre-existing dispatch-side gap (was throwing a bare
+  // Error that collapsed to 400) plus pins the new cancel-side mapping.
+  describe("503 on shutdown — pinned for dispatch and cancel", () => {
+    it("POST / (dispatch) returns 503 when the manager is shutting down", async () => {
+      const m = stubManager({
+        dispatch: vi.fn(async () => {
+          throw new ManagerShuttingDownError();
+        }),
+      });
+      const res = await tasksRoutes(() => m).request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent: "writer", brief: "x" }),
+      });
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe("ManagerShuttingDownError");
+    });
+
+    it("POST /:tid/cancel returns 503 when the manager is shutting down", async () => {
+      const m = stubManager({
+        cancel: vi.fn(async () => {
+          throw new ManagerShuttingDownError();
+        }),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/cancel`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(503);
     });
   });
 });

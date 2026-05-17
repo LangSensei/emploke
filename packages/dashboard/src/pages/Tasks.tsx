@@ -1332,7 +1332,7 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         {task?.details && <TaskDetails text={task.details} />}
         {task?.failure && (
           <div className="alert alert--error" style={{ margin: 0 }}>
-            <strong>Failure:</strong> {task.failure.error}
+            <strong>Failure:</strong> {task.failure.message}
             {exitCode !== undefined && exitCode !== null && <> (exit {exitCode})</>}
             {exitSignal && <> [signal {exitSignal}]</>}
           </div>
