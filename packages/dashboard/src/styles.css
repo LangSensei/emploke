@@ -2959,6 +2959,26 @@ button {
   flex-wrap: wrap;
 }
 
+/*  Chrome row: title fills the left, [× Close] pinned top-right. align-items
+    is `flex-start` so a long wrapped title doesn't drag the Close button
+    down with it. Convention matches Linear/Slack/Gmail side-panel close.  */
+.task-detail__chrome-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/*  State-conditional task action row (Cancel / Run again… / Delete).
+    Right-aligned within the header, visually separated from the
+    [× Close] chrome above so Cancel↔Close misclicks are minimised.  */
+.task-detail__actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .task-detail__id {
   font-family: var(--font-mono);
   font-size: 12px;
