@@ -8,7 +8,15 @@
  */
 
 import { makeClient, resolveWorkspace } from "../connect.js";
-import { formatError, formatJson, formatRecord, formatTable, pickFormat } from "../output.js";
+import {
+  formatError,
+  formatJson,
+  formatRecord,
+  formatTable,
+  isInvalidTransition,
+  isStatusError,
+  pickFormat,
+} from "../output.js";
 import type { CommandResult } from "../result.js";
 
 interface CommonFlags {
@@ -140,6 +148,45 @@ export async function taskRm(opts: TaskRmOpts): Promise<CommandResult> {
     if (opts.purge) query.purge = "1";
     await client.call("tasks.delete", { params: { id, tid: opts.tid }, query });
     return { exitCode: 0, stdout: `task ${opts.tid} removed\n` };
+  } catch (err) {
+    // ADR-001 §3.10: `task rm` on a non-terminal task now surfaces a
+    // 409 with code='InvalidTransition' + transition='delete'. Append
+    // a one-line hint pointing the user at `task cancel` so the
+    // terminal experience matches the dashboard's typed CTA.
+    if (isStatusError(err, 409) && isInvalidTransition(err, "delete")) {
+      const base = formatError(err);
+      return {
+        exitCode: 4,
+        stderr: `${base.stderr ?? ""}Hint: use 'emploke task cancel ${opts.tid}' first.\n`,
+      };
+    }
+    return formatError(err);
+  }
+}
+
+// ─── cancel ────────────────────────────────────────────────────────────
+export interface TaskCancelOpts extends CommonFlags {
+  readonly tid: string;
+}
+
+/**
+ * `emploke task cancel <tid>` — POSTs to `tasks.cancel` and prints
+ * either the updated Task as JSON or a one-line confirmation. Mirrors
+ * the existing `task rm` shape; new in ADR-001 §3.7. Exits 0 on
+ * success; on a 409 (already terminal), `formatError` surfaces the
+ * structured body and the user sees the typed message.
+ */
+export async function taskCancel(opts: TaskCancelOpts): Promise<CommandResult> {
+  if (typeof opts.tid !== "string" || opts.tid.trim() === "") {
+    return { exitCode: 2, stderr: "task id is required\n" };
+  }
+  const client = await makeClient(opts);
+  try {
+    const id = await resolveWorkspace(opts);
+    const task = await client.call("tasks.cancel", { params: { id, tid: opts.tid } });
+    const fmt = pickFormat(opts, "table");
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(task) };
+    return { exitCode: 0, stdout: `task ${opts.tid} cancelled\n` };
   } catch (err) {
     return formatError(err);
   }

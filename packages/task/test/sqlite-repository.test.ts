@@ -53,7 +53,8 @@ function makeTask(
     startedAt?: string;
     endedAt?: string;
     result?: { output: string };
-    failure?: { error: string };
+    failure?: import("../src/types.js").TaskFailure;
+    cancellation?: import("../src/types.js").TaskCancellation;
   } = {},
 ): Task {
   return Task.fromStored({
@@ -68,6 +69,7 @@ function makeTask(
     ...(overrides.endedAt !== undefined ? { endedAt: overrides.endedAt } : {}),
     ...(overrides.result !== undefined ? { result: overrides.result } : {}),
     ...(overrides.failure !== undefined ? { failure: overrides.failure } : {}),
+    ...(overrides.cancellation !== undefined ? { cancellation: overrides.cancellation } : {}),
   });
 }
 
@@ -111,7 +113,7 @@ describe("SqliteTaskRepository", () => {
     expect(await repo.list({ runtime: "anything" })).toHaveLength(0);
   });
 
-  it("save preserves optional terminal fields (result.output, failure.error, started/ended)", async () => {
+  it("save preserves optional terminal fields (result, failure, cancellation, started/ended)", async () => {
     const success = makeTask({
       status: "success",
       startedAt: "2026-05-09T01:00:01.000Z",
@@ -125,10 +127,19 @@ describe("SqliteTaskRepository", () => {
       status: "failure",
       startedAt: "2026-05-09T01:00:01.000Z",
       endedAt: "2026-05-09T01:00:03.000Z",
-      failure: { error: "boom" },
+      failure: { kind: "exited", exitCode: 17, message: "exited with code 17" },
     });
     await repo.save(failure);
     expect((await repo.read(ID))?.toJSON()).toEqual(failure.toJSON());
+
+    const cancelled = makeTask({
+      status: "cancelled",
+      startedAt: "2026-05-09T01:00:01.000Z",
+      endedAt: "2026-05-09T01:00:03.000Z",
+      cancellation: { kind: "user", message: "cancelled by user" },
+    });
+    await repo.save(cancelled);
+    expect((await repo.read(ID))?.toJSON()).toEqual(cancelled.toJSON());
   });
 
   it("save is idempotent (INSERT OR REPLACE)", async () => {
@@ -192,7 +203,13 @@ describe("SqliteTaskRepository", () => {
   it("list with multiple statuses uses IN (...)", async () => {
     await repo.save(makeTask({ id: "20260101-aaaaaaaa", status: "running" }));
     await repo.save(makeTask({ id: "20260101-bbbbbbbb", status: "success" }));
-    await repo.save(makeTask({ id: "20260101-cccccccc", status: "failure" }));
+    await repo.save(
+      makeTask({
+        id: "20260101-cccccccc",
+        status: "failure",
+        failure: { kind: "internal", message: "x" },
+      }),
+    );
     const r = await repo.list({ statuses: ["success", "failure"] });
     expect(r.map((t) => t.id).sort()).toEqual(["20260101-bbbbbbbb", "20260101-cccccccc"]);
   });
@@ -300,7 +317,8 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
         "{}",
       );
 
-      // Construction triggers ensureSchema → migrateV1ToV2.
+      // Construction triggers ensureSchema → migrateV1ToV2 → migrateV2ToV3
+      // (staged migration walks v1 all the way to current HEAD).
       const r = new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -308,11 +326,11 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
       expect(back.brief).toBe("Draft the post");
       expect(back.details).toBe("Draft the post");
 
-      // Schema version bumped.
+      // Schema version bumped to current HEAD (3).
       const v = d.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
         version: number;
       };
-      expect(v.version).toBe(2);
+      expect(v.version).toBe(3);
 
       // Read through the repo: full task entity is reconstructed.
       void r;
@@ -419,7 +437,9 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
       expect(row.details).toBe("did the thing");
       expect(row.startedAt).toBe("2026-01-01T00:00:01.000Z");
       expect(row.endedAt).toBe("2026-01-01T00:00:02.000Z");
-      expect(row.failure?.error).toBe("boom");
+      // Post-ADR-001: a row with failure_error but no failure_kind is
+      // synthesised as `{ kind: 'internal', message }` (legacy fallback).
+      expect(row.failure).toEqual({ kind: "internal", message: "boom" });
       expect(row.metadata).toEqual({ pid: 1234, runtime: "copilot" });
     } finally {
       d.close();

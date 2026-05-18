@@ -674,7 +674,11 @@ describe("exit watcher", () => {
     void rt.handles[0].exit({ code: 17, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failure");
-    expect(after.failure?.error).toMatch(/exited with code 17/);
+    expect(after.failure?.kind).toBe("exited");
+    expect(after.failure?.message).toMatch(/exited with code 17/);
+    if (after.failure?.kind === "exited") {
+      expect(after.failure.exitCode).toBe(17);
+    }
     expect(readTaskRuntimeMetadata(after).exitCode).toBe(17);
   });
 
@@ -686,7 +690,11 @@ describe("exit watcher", () => {
     void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failure");
-    expect(after.failure?.error).toMatch(/SIGTERM/);
+    expect(after.failure?.kind).toBe("signal");
+    expect(after.failure?.message).toMatch(/SIGTERM/);
+    if (after.failure?.kind === "signal") {
+      expect(after.failure.signal).toBe("SIGTERM");
+    }
     expect(readTaskRuntimeMetadata(after).exitSignal).toBe("SIGTERM");
   });
 });
@@ -953,7 +961,7 @@ describe("get / list", () => {
   });
 });
 
-describe("delete", () => {
+describe("delete (terminal-only post ADR-001)", () => {
   it("default delete removes metadata; workdir preserved", async () => {
     const rt = new StubRuntime();
     const { m } = makeManager({ runtime: rt });
@@ -981,78 +989,25 @@ describe("delete", () => {
     expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
   });
 
-  it("kills a live task before removing metadata (purge=true also removes workdir)", async () => {
-    const rt = new StubRuntime();
-    rt.autoExitOnKill = true;
-    const { m } = makeManager({ runtime: rt });
-    const t = await m.dispatch(dispatchOf());
-
-    await m.delete(t.id, { purge: true });
-
-    expect(rt.handles[0].killed).toBe(true);
-    expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
-  });
-
-  // Regression for the delete/exit-watcher race: deleting a live task
-  // races the kill against the exit watcher's terminal-status persist.
-  // The watcher should NOT log "failed to persist terminal status"
-  // when its writeFile loses to our rm — kill+rm+drain must serialise
-  // cleanly.
-  it("does not log 'failed to persist terminal status' when deleting a live task", async () => {
-    const rt = new StubRuntime();
-    rt.autoExitOnKill = true;
-    const r = recorder();
-    const { m } = makeManager({ runtime: rt, logger: r.logger });
-    const t = await m.dispatch(dispatchOf());
-
-    await m.delete(t.id, { purge: true });
-
-    expect(rt.handles[0].killed).toBe(true);
-    expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
-    const offenders = r.calls.filter((c) => c.msg.includes("failed to persist terminal status"));
-    expect(offenders).toEqual([]);
-  });
-
   it("throws TaskNotFoundError for an unknown id", async () => {
     const { m } = makeManager();
     await expect(m.delete("20260101-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
-  // Without `purge`, a stray workdir whose row was never persisted (or
-  // was wiped) is undeletable through the public API: loadTask returns
-  // null → delete throws TaskNotFoundError → operators can't clean up.
-  // With `purge: true`, the directory's existence is enough (mirrors
-  // `rm -rf`). Reframed from the old "corrupt task.json" version: under
-  // SQLite, the equivalent escape-hatch case is "workdir on disk, no
-  // row in DB" — which is the natural outcome of a row deleted out of
-  // band, or a workdir created by a prior emploke version after wipe.
-  it("purge: true removes a stray workdir even when no task row exists", async () => {
-    const id = "20260508-c0ffee01";
-    const workdir = path.join(tasksDir, id);
-    await mkdir(workdir, { recursive: true });
-
-    const { m } = makeManager();
-
-    // Default mode: no row → loadTask returns null → not deletable.
-    await expect(m.delete(id)).rejects.toBeInstanceOf(TaskNotFoundError);
-
-    // purge=true: gone.
-    await m.delete(id, { purge: true });
-    expect(await safeStat(workdir)).toBeNull();
-  });
-
-  it("purge: true still returns TaskNotFoundError when the directory truly doesn't exist", async () => {
+  it("purge: true also returns TaskNotFoundError when the row doesn't exist", async () => {
+    // ADR-001 removed the stat-based escape hatch — a workdir with no
+    // row is no longer wipeable through delete(); sqlite3 CLI is the
+    // recovery channel for that case (§3.5).
     const { m } = makeManager();
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
   });
 
-  // Twin tests for the corrupted-row-on-delete path. Default (archive)
-  // mode must surface the corruption so operators see it; purge mode
-  // must tolerate it so the workdir + row can still be wiped via the
-  // stat-based escape hatch (mirrors `rm -rf` semantics).
-  it("default delete propagates CorruptedTaskError (operator sees the corruption)", async () => {
+  // Default mode reads via loadTask which throws CorruptedTaskError;
+  // ADR-001 removed the previous purge-tolerance for corrupted rows,
+  // so both default AND purge propagate the error now.
+  it("propagates CorruptedTaskError (operator sees the corruption)", async () => {
     const repo = makeRepo();
     const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
     const id = "20260101-deadbeef";
@@ -1068,27 +1023,6 @@ describe("delete", () => {
       )
       .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
-  });
-
-  it("purge: true tolerates a corrupted row and falls back to the stat escape hatch", async () => {
-    const repo = makeRepo();
-    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
-    const id = "20260101-deadbeef";
-    const workdir = path.join(tasksDir, id);
-    await mkdir(workdir, { recursive: true });
-    const rawDb = (
-      repo as unknown as {
-        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
-      }
-    ).db;
-    rawDb
-      .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
-    await m.delete(id, { purge: true });
-    expect(await safeStat(workdir)).toBeNull();
   });
 
   // Mirrors SessionManager.delete({purge:true}): runtime per-task state
@@ -1142,27 +1076,10 @@ describe("delete", () => {
     expect(await m.get(t.id)).not.toBeNull();
     expect(await safeStat(path.join(tasksDir, t.id))).not.toBeNull();
   });
-
-  // The "stray workdir" recovery path has no metadata to read, so the
-  // runtime cleanup is silently skipped. This is the rm -rf escape hatch
-  // for purge — losing some runtime state is acceptable when the row's
-  // gone anyway.
-  it("purge: true skips runtime.deleteState when no metadata row exists", async () => {
-    const id = "20260508-c0ffee02";
-    const workdir = path.join(tasksDir, id);
-    await mkdir(workdir, { recursive: true });
-
-    const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
-    await m.delete(id, { purge: true });
-
-    expect(rt.deleteStateCalls).toEqual([]);
-    expect(await safeStat(workdir)).toBeNull();
-  });
 });
 
 describe("shutdown", () => {
-  it("kills all live tasks and marks them failure with reason 'server shutdown'", async () => {
+  it("kills all live tasks and marks them failure with kind='shutdown'", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
     const { m } = makeManager({ runtime: rt });
@@ -1176,8 +1093,10 @@ describe("shutdown", () => {
     const a2 = await m.get(t2.id);
     expect(a1?.status).toBe("failure");
     expect(a2?.status).toBe("failure");
-    expect(a1?.failure?.error).toBe("server shutdown");
-    expect(a2?.failure?.error).toBe("server shutdown");
+    expect(a1?.failure?.kind).toBe("shutdown");
+    expect(a2?.failure?.kind).toBe("shutdown");
+    expect(a1?.failure?.message).toBe("server shutdown");
+    expect(a2?.failure?.message).toBe("server shutdown");
   });
 
   it("refuses new dispatch after shutdown is called", async () => {
@@ -1288,7 +1207,8 @@ describe("recoverOrphaned", () => {
 
     const after = await m.get(id);
     expect(after?.status).toBe("failure");
-    expect(after?.failure?.error).toMatch(/orphaned/);
+    expect(after?.failure?.kind).toBe("orphan");
+    expect(after?.failure?.message).toMatch(/orphaned/);
   });
 
   it("leaves terminal tasks unchanged", async () => {
@@ -1386,7 +1306,8 @@ describe("recoverOrphaned", () => {
 
     const after = await m.get(id);
     expect(after?.status).toBe("failure");
-    expect(after?.failure?.error).toMatch(/orphaned/);
+    expect(after?.failure?.kind).toBe("orphan");
+    expect(after?.failure?.message).toMatch(/orphaned/);
   });
 });
 

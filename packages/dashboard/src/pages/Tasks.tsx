@@ -12,6 +12,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type ActivityItem,
+  cancelTask,
   deleteTask,
   dispatchTask,
   fetchTaskActivity,
@@ -21,10 +22,12 @@ import {
   type ServerConfig,
   subscribeTaskActivity,
   type TaskActivity,
+  type TaskCancellation,
+  type TaskFailure,
   type TaskRecord,
   type TaskStatus,
 } from "../api";
-import { PlusIcon, RefreshIcon, TrashIcon } from "../components/Icons";
+import { CloseIcon, PlusIcon, RefreshIcon, StopIcon, TrashIcon } from "../components/Icons";
 import { Modal } from "../components/Modal";
 import { usePollWithBackoff } from "../hooks/usePollWithBackoff";
 import { serverNow } from "../serverClock";
@@ -45,10 +48,11 @@ interface TasksProps {
  */
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 
-// `cancelled` is currently unreachable — the kernel exposes the status (see
-// `TaskStatus` in @emploke/task) but no manager API emits a cancel event yet.
-// The label/tone are wired up so a future user-cancel API drops in without
-// UI work; until then users will only ever see the other four statuses.
+// ADR-001 made `cancelled` first-class: TaskManager.cancel(id) +
+// POST /tasks/:id/cancel + `emploke task cancel` all produce this
+// status. STATUS_LABEL / STATUS_TONE entries are unchanged from the
+// reserved-for-future scaffolding; the dashboard now renders the
+// matching UI affordances.
 const STATUS_LABEL: Record<TaskStatus, string> = {
   not_started: "Not started",
   running: "Running",
@@ -151,6 +155,24 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
    * `setDeleteTarget(...)`.
    */
   const [deletePurge, setDeletePurge] = useState(false);
+
+  /**
+   * Cancel-confirm modal target. Replaces the previous native browser
+   * confirm() path (which looked broken under Linux/Windows native
+   * chrome and blocked the JS event loop). Both the row-level Cancel
+   * and the detail-panel Cancel route through this modal so the
+   * confirmation surface matches Delete and stays themable. `null`
+   * = modal closed.
+   */
+  const [cancelTarget, setCancelTarget] = useState<TaskRecord | null>(null);
+  /** True while the cancel API call is in flight (footer button label flips). */
+  const [cancelBusy, setCancelBusy] = useState(false);
+  /**
+   * Last cancel-call error, shown inline at the top of the modal so the
+   * user can read it without losing the rest of the confirmation
+   * context. Cleared on every modal open and on success.
+   */
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   // Re-run-prefill state: when set, opens the DispatchModal pre-filled
   // with these values so "re-run" is one click + Enter rather than a
@@ -310,6 +332,66 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       if (mountedRef.current) setBusy(false);
     }
   };
+
+  /**
+   * Open the cancel-confirm modal for a task. Both the row Cancel and
+   * the detail-panel Cancel route through here. Confirming inside the
+   * modal calls `onConfirmCancel` below, which is where the actual
+   * `cancelTask(...)` API call lives — the route used to inline a
+   * native browser confirm() here, but those looked broken on
+   * Linux/Windows and blocked the event loop. See spec decision 5.
+   */
+  const requestCancel = useCallback((target: TaskRecord) => {
+    setCancelError(null);
+    setCancelTarget(target);
+  }, []);
+
+  const closeCancelModal = useCallback(() => {
+    // Don't allow close while the cancel API call is in flight — the
+    // footer buttons disable themselves and the modal close X is
+    // controlled here, so this guards backdrop / ESC closes too.
+    if (cancelBusy) return;
+    setCancelTarget(null);
+    setCancelError(null);
+  }, [cancelBusy]);
+
+  /**
+   * Confirm-cancel handler. Inlined here (rather than calling a
+   * page-level `onCancel` indirection) because the modal owns the
+   * busy state and the inline error surface — keeping the logic in
+   * one place removes an indirection. On 409 (already terminal) we
+   * treat the call as a benign race: close the modal silently and
+   * let the next `refresh()` re-sync. On any other error keep the
+   * modal open and surface the message inline so the user can
+   * decide whether to retry. Snapshot `cancelTarget` into `target`
+   * up-front so the async work doesn't depend on mutable state
+   * that another effect could clear mid-flight.
+   */
+  const onConfirmCancel = useCallback(async () => {
+    if (!cancelTarget || cancelBusy) return;
+    const target = cancelTarget;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await cancelTask(target.id);
+      if (!mountedRef.current) return;
+      setCancelTarget(null);
+      await refresh();
+    } catch (e) {
+      if (!mountedRef.current) return;
+      const msg = (e as Error).message;
+      // 409 = already terminal; the next refresh re-syncs state, so
+      // we treat it as a benign race rather than surface a banner.
+      if (/409/.test(msg)) {
+        setCancelTarget(null);
+        await refresh();
+        return;
+      }
+      setCancelError(msg);
+    } finally {
+      if (mountedRef.current) setCancelBusy(false);
+    }
+  }, [cancelTarget, cancelBusy, refresh]);
 
   /** Open the dispatch modal pre-populated with another task's params. */
   const onRerun = (source: TaskRecord) => {
@@ -506,6 +588,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
                   selected={selectedId === t.id}
                   onSelect={() => setSelectedId(t.id)}
                   onDelete={() => setDeleteTarget(t)}
+                  onCancel={() => requestCancel(t)}
                 />
               ))}
             </ul>
@@ -516,6 +599,8 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
               taskId={selectedId}
               onClose={() => setSelectedId(null)}
               onRerun={onRerun}
+              onCancel={requestCancel}
+              onRequestDelete={setDeleteTarget}
               pollIntervalMs={pollIntervalMs}
             />
           )}
@@ -535,6 +620,49 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         onDispatch={onDispatched}
       />
 
+      {/* Cancel-confirm modal (spec decision 5). Replaces the previous
+          native browser confirm() flow which looked broken on
+          Linux/Windows native chrome and blocked the event loop. Both
+          the row Cancel and the detail Cancel buttons set
+          `cancelTarget`; the modal's confirm button runs the actual
+          API call via `onConfirmCancel`. */}
+      {cancelTarget && (
+        <Modal open={true} onClose={closeCancelModal} title="Cancel task" size="default">
+          <div className="modal__body">
+            {cancelError && (
+              <div className="alert alert--error" style={{ marginBottom: 10 }}>
+                ⚠️ {cancelError}
+              </div>
+            )}
+            <p>
+              Cancel task <code>{cancelTarget.id}</code>? Sends SIGTERM and marks the task as
+              cancelled. Partial output may be lost.
+            </p>
+            <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
+              {cancelTarget.brief}
+            </p>
+          </div>
+          <div className="modal__footer">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={closeCancelModal}
+              disabled={cancelBusy}
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={onConfirmCancel}
+              disabled={cancelBusy}
+            >
+              {cancelBusy ? "Cancelling…" : "Cancel task"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {deleteTarget && (
         <Modal
           open={true}
@@ -545,10 +673,14 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
           title="Delete task"
           size="default"
         >
+          {/* Per spec decision 6: the non-terminal branch is unreachable
+              now that the row Delete button only appears on terminal
+              tasks (decision 1) AND the detail-panel Delete only appears
+              in the terminal action row. Removing it kills dead code
+              and stops future drift. */}
           <div className="modal__body">
             <p>
               Delete task <code>{deleteTarget.id}</code>?
-              {deleteTarget.status === "running" ? " The subprocess will be killed first." : ""}
             </p>
             <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
               By default, the workdir is preserved on disk so you can inspect the agent's output
@@ -604,6 +736,21 @@ interface TaskListItemProps {
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  /**
+   * ADR-001 §3.11.1(b): for non-terminal tasks the row-level affordance
+   * is "Cancel", not "Delete". Delete is disabled for non-terminal rows
+   * (server would 409 anyway), so we replace the action rather than
+   * present a click target that always fails.
+   *
+   * The callback opens the page-level cancel-confirm <Modal>; the
+   * actual `cancelTask(...)` API call lives inside the modal's
+   * confirm handler. The local `cancelling` state + try/finally on
+   * this row is preserved from commit ce03d2e6 — it still no-ops
+   * a rapid double-click during the synchronous modal-open, even
+   * though the visible side-effect (button disabled briefly) is
+   * negligible now that the API round-trip moved to the modal.
+   */
+  onCancel: () => Promise<void> | void;
 }
 
 /**
@@ -622,9 +769,16 @@ interface TaskListItemProps {
  * metadata is no longer reliable). Same vibe as GitHub Issues
  * showing "title #42" rather than "#42 with title".
  */
-function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps) {
+function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
   const isRunning = task.status === "running" || task.status === "not_started";
+  // Per-row Cancel debounce: rapid double-clicks would otherwise fan
+  // out into N HTTP round-trips + N toast notifications. Disabling the
+  // button while the request is in flight keeps the affordance honest
+  // (one click, one cancel). The state naturally tears down when the
+  // row's `isRunning` transitions to false and the button is replaced
+  // by the Delete affordance.
+  const [cancelling, setCancelling] = useState(false);
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
   const headline = task.brief;
@@ -648,18 +802,47 @@ function TaskListItem({ task, selected, onSelect, onDelete }: TaskListItemProps)
     >
       <div className="task-list__item-head">
         <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon task-list__item-remove"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label="Delete task"
-          title="Delete task"
-        >
-          <TrashIcon />
-        </button>
+        {isRunning ? (
+          // Non-terminal row: Cancel (opens the cancel-confirm modal,
+          // which then POSTs tasks.cancel on confirm). Delete is
+          // server-rejected for non-terminal tasks per ADR-001 §3.5,
+          // so showing it here as the affordance would just frustrate
+          // the user. The bare `✕` glyph was replaced with the
+          // <StopIcon /> (filled rounded square) so the action reads
+          // visually as "stop the run" rather than a generic close.
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon task-list__item-remove"
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (cancelling) return;
+              setCancelling(true);
+              try {
+                await onCancel();
+              } finally {
+                setCancelling(false);
+              }
+            }}
+            disabled={cancelling}
+            aria-label={`Cancel task ${task.brief}`}
+            title="Cancel task (sends SIGTERM)"
+          >
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon task-list__item-remove"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label={`Delete task ${task.brief}`}
+            title="Delete task"
+          >
+            <TrashIcon />
+          </button>
+        )}
       </div>
       <div className="task-list__item-headline" title={tooltip}>
         {headline}
@@ -832,6 +1015,16 @@ function DispatchModal({
     >
       <form onSubmit={onSubmit}>
         <div className="modal__body">
+          {/* Spec decision 8: when re-running from a still-running
+              source, surface the sibling-task semantics explicitly so
+              the user understands this dispatches a NEW task — the
+              source keeps running unaffected. */}
+          {prefill && (prefill.status === "running" || prefill.status === "not_started") && (
+            <div className="alert alert--info" style={{ marginBottom: 10 }}>
+              Source task is still running. This will dispatch a new task; the source will keep
+              running.
+            </div>
+          )}
           <label htmlFor="task-agent">
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
               Agent
@@ -915,7 +1108,13 @@ function DispatchModal({
             className="btn btn--primary"
             disabled={busy || !agent || !briefValid}
           >
-            {busy ? (prefill ? "Re-running…" : "Dispatching…") : prefill ? "Re-run" : "Dispatch"}
+            {busy
+              ? prefill
+                ? "Running again"
+                : "Dispatching…"
+              : prefill
+                ? "Run again"
+                : "Dispatch"}
           </button>
         </div>
       </form>
@@ -927,18 +1126,38 @@ interface TaskDetailPanelProps {
   taskId: string | null;
   onClose: () => void;
   onRerun: (task: TaskRecord) => void;
+  /**
+   * ADR-001 §3.11.1(c): the detail-panel Cancel button opens the
+   * page-level cancel-confirm <Modal>. The actual `cancelTask(...)`
+   * call lives in that modal's confirm handler, so this callback is
+   * synchronous (just routes the click to the page-level
+   * `requestCancel` setter).
+   */
+  onCancel: (task: TaskRecord) => void;
+  /**
+   * Opens the page-level delete-confirm <Modal>. Same path the row
+   * Trash button uses — the detail panel just dispatches to the
+   * existing `setDeleteTarget` setter at the page level.
+   */
+  onRequestDelete: (task: TaskRecord) => void;
   /** Auto-refresh cadence while the displayed task is running (ms). */
   pollIntervalMs: number;
 }
 
 type DetailTab = "activity" | "raw" | "metadata";
 
-function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetailPanelProps) {
+function TaskDetailPanel({
+  taskId,
+  onClose,
+  onRerun,
+  onCancel,
+  onRequestDelete,
+  pollIntervalMs,
+}: TaskDetailPanelProps) {
   const [task, setTask] = useState<TaskRecord | null>(null);
   const [activity, setActivity] = useState<TaskActivity | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [tab, setTab] = useState<DetailTab>("activity");
-  const [loading, setLoading] = useState(false);
 
   // Race guards mirroring the list view (see TasksPage.refresh):
   //   * `mountedRef` for the standard unmount-during-fetch case
@@ -1049,7 +1268,6 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
     inFlightRef.current = true;
     const token = taskId;
     taskTokenRef.current = token;
-    setLoading(true);
     try {
       // Always fetch:
       //   - task metadata (cheap; drives status badge, header, result fallback)
@@ -1111,9 +1329,6 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
       setActivityError((e as Error).message);
     } finally {
       inFlightRef.current = false;
-      if (mountedRef.current && token === taskTokenRef.current) {
-        setLoading(false);
-      }
     }
   }, [taskId]);
 
@@ -1236,8 +1451,12 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   }
 
   // Pull the runtime exit fields out of metadata where the kernel keeps
-  // them. `failure.error` is the human-readable reason; the kernel-level
-  // failure type only carries that one field.
+  // them. Post-ADR-001 the typed `failure` itself carries `kind`
+  // (discriminator: `exited` | `signal` | `shutdown` | `orphan` |
+  // `internal`) plus `message` (human-readable); the `exited` /
+  // `signal` variants also carry the structured `exitCode` / `signal`
+  // fields inline, but we still read the metadata mirrors here so the
+  // header chip works for pre-typed-union (legacy) rows too.
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
   const exitCode =
     typeof metadata.exitCode === "number" || metadata.exitCode === null
@@ -1254,7 +1473,24 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
   return (
     <aside className="tasks-pane__detail">
       <header className="task-detail__head">
-        {title && <h2 className="task-detail__title">{title}</h2>}
+        {/* Chrome row: title on the left, [× Close] pinned top-right.
+            Close is navigation chrome, not a task action — separating
+            it from the task-action row below eliminates the
+            Cancel↔Close misclick risk we had when both lived in the
+            same button strip (spec decision 2). Uses <CloseIcon /> for
+            visual consistency with <Modal>'s close glyph. */}
+        <div className="task-detail__chrome-row">
+          {title ? <h2 className="task-detail__title">{title}</h2> : <span aria-hidden="true" />}
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={onClose}
+            aria-label="Close detail"
+            title="Close"
+          >
+            <CloseIcon />
+          </button>
+        </div>
         <div className="task-detail__head-row">
           <code className="task-detail__id" title={taskId}>
             {taskId}
@@ -1266,36 +1502,6 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
               pulse={isRunning ?? false}
             />
           )}
-          <span className="task-detail__head-spacer" />
-          {task && (
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() => onRerun(task)}
-              title="Re-dispatch with the same agent + brief + details"
-            >
-              Re-run
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon"
-            onClick={refreshDetail}
-            disabled={loading}
-            aria-label="Refresh detail"
-            title="Refresh"
-          >
-            <RefreshIcon className={loading ? "spin" : undefined} />
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon"
-            onClick={onClose}
-            aria-label="Close detail"
-            title="Close"
-          >
-            ✕
-          </button>
         </div>
         {task && (
           <div className="task-detail__statbar">
@@ -1331,10 +1537,53 @@ function TaskDetailPanel({ taskId, onClose, onRerun, pollIntervalMs }: TaskDetai
         )}
         {task?.details && <TaskDetails text={task.details} />}
         {task?.failure && (
-          <div className="alert alert--error" style={{ margin: 0 }}>
-            <strong>Failure:</strong> {task.failure.error}
-            {exitCode !== undefined && exitCode !== null && <> (exit {exitCode})</>}
-            {exitSignal && <> [signal {exitSignal}]</>}
+          <FailureBlock failure={task.failure} exitCode={exitCode} exitSignal={exitSignal} />
+        )}
+        {task?.cancellation && (
+          <CancellationBlock cancellation={task.cancellation} endedAt={task.endedAt} />
+        )}
+        {/* State-conditional task action row. Mutually exclusive states
+            → mutually exclusive UI: non-terminal shows [Cancel]; terminal
+            shows [Run again…] [Delete]. The Refresh button that used to
+            live in this row was removed (spec decision 4) — running tasks
+            live-stream via SSE + poll, terminal tasks have immutable
+            payload, so the click is always redundant. */}
+        {task && (
+          <div className="task-detail__actions-row">
+            {isRunning ? (
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => onCancel(task)}
+                aria-label={`Cancel task ${task.brief}`}
+                title="Send SIGTERM and mark cancelled"
+              >
+                <StopIcon />
+                <span>Cancel</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={() => onRerun(task)}
+                  title="Re-dispatch with the same agent + brief + details"
+                >
+                  <RefreshIcon />
+                  <span>Run again</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--danger"
+                  onClick={() => onRequestDelete(task)}
+                  aria-label={`Delete task ${task.brief}`}
+                  title="Delete task record"
+                >
+                  <TrashIcon />
+                  <span>Delete</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </header>
@@ -2121,5 +2370,92 @@ function ResultSection({ text }: { text: string }) {
         {expanded ? "Show less" : `Show full (${text.length.toLocaleString()} chars)`}
       </button>
     </section>
+  );
+}
+
+/**
+ * Failure block — switches on the {@link TaskFailure} `kind` so the
+ * dashboard renders typed copy per variant (ADR-001 §3.11.1(d)).
+ *
+ *   - exited   → "exited with code N"
+ *   - signal   → "terminated by SIGTERM" (etc.)
+ *   - shutdown → softer "Stopped: server was shut down" (operational,
+ *                not error — uses `.alert--info`)
+ *   - orphan   → "server crashed before this task finished"
+ *   - internal → "internal error  <message>"
+ *
+ * `exitCode` / `exitSignal` come from `Task.metadata` (the runtime
+ * stores them there for every terminal kind) and are appended as
+ * inline detail when present, matching the pre-ADR-001 rendering.
+ */
+function FailureBlock({
+  failure,
+  exitCode,
+  exitSignal,
+}: {
+  failure: TaskFailure;
+  exitCode: number | null | undefined;
+  exitSignal: string | undefined;
+}) {
+  const isOperational = failure.kind === "shutdown";
+  const alertClass = isOperational ? "alert alert--info" : "alert alert--error";
+  const label = isOperational ? "Stopped" : "Failure";
+  let body: string;
+  switch (failure.kind) {
+    case "exited":
+      body = `exited with code ${failure.exitCode}`;
+      break;
+    case "signal":
+      body = `terminated by ${failure.signal}`;
+      break;
+    case "shutdown":
+      body = "server was shut down";
+      break;
+    case "orphan":
+      body = "server crashed before this task finished";
+      break;
+    case "internal":
+      body = `internal error — ${failure.message}`;
+      break;
+  }
+  return (
+    <div className={alertClass} style={{ margin: 0 }}>
+      <strong>{label}:</strong> {body}
+      {failure.kind !== "exited" && exitCode !== undefined && exitCode !== null && (
+        <> (exit {exitCode})</>
+      )}
+      {failure.kind !== "signal" && exitSignal && <> [signal {exitSignal}]</>}
+    </div>
+  );
+}
+
+/**
+ * Cancellation block — symmetric to {@link FailureBlock} (ADR-001
+ * §3.11.1(e)). Uses `.alert--info` (muted, not red) since cancellation
+ * is operator-intended state, not an error condition.
+ *
+ *   - user   → "Cancelled by user (at <endedAt>)"
+ *   - orphan → "Cancelled (recovered from inconsistent state)"
+ */
+function CancellationBlock({
+  cancellation,
+  endedAt,
+}: {
+  cancellation: TaskCancellation;
+  endedAt: string | undefined;
+}) {
+  let body: string;
+  switch (cancellation.kind) {
+    case "user":
+      body = endedAt ? `Cancelled by user (at ${formatAbsolute(endedAt)})` : "Cancelled by user";
+      break;
+    case "orphan":
+      body = "Cancelled (recovered from inconsistent state)";
+      break;
+  }
+  return (
+    <div className="alert alert--info" style={{ margin: 0 }}>
+      {body}
+    </div>
   );
 }

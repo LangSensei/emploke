@@ -753,15 +753,39 @@ export const updateWorkspaceMetadata = async (
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
 /**
- * Task failure shape — matches the kernel's `TaskFailure` exactly. The
- * field is `error` (not `reason`) and there are no nested exit fields:
- * exit code/signal live in `metadata.exitCode` / `metadata.exitSignal`
- * because they're runtime-specific bookkeeping, not part of the abstract
- * Task value model.
+ * Why a task ended in `failure`. Discriminated by `kind` (ADR-001
+ * §3.12). Mirrors `@emploke/task` `TaskFailure` exactly. The
+ * dashboard is a browser bundle so this is duplicated, not imported;
+ * keep in lockstep with the entity definition when it changes.
+ *
+ *   - exited   → subprocess exited non-zero (carries `exitCode`)
+ *   - signal   → terminated by OS signal (carries `signal`)
+ *   - shutdown → TaskManager.shutdown() killed it
+ *   - orphan   → recoverOrphaned marked a row whose owner crashed
+ *   - internal → kernel-side fault (covers legacy v2 rows too)
+ *
+ * Exit code / signal in metadata.exitCode / metadata.exitSignal are
+ * unchanged — they're runtime-specific bookkeeping, populated for
+ * every terminal kind including success.
  */
-export interface TaskFailure {
-  error: string;
-}
+export type TaskFailure =
+  | { kind: "exited"; exitCode: number; message: string }
+  | { kind: "signal"; signal: string; message: string }
+  | { kind: "shutdown"; message: string }
+  | { kind: "orphan"; message: string }
+  | { kind: "internal"; message: string };
+
+/**
+ * Why a task ended in `cancelled`. Discriminated by `kind` (ADR-001
+ * §3.12). Mirrors `@emploke/task` `TaskCancellation`.
+ *
+ *   - user   → TaskManager.cancel(id) (operator request)
+ *   - orphan → cancel() on a running row with no live entry
+ *              (recovery path; see ADR-001 §3.4)
+ */
+export type TaskCancellation =
+  | { kind: "user"; message: string }
+  | { kind: "orphan"; message: string };
 
 export interface TaskResult {
   output: string;
@@ -787,6 +811,12 @@ export interface TaskRecord {
   endedAt?: string;
   result?: TaskResult;
   failure?: TaskFailure;
+  /**
+   * Present iff status='cancelled' (ADR-001). Pre-ADR-001 servers
+   * never produce this field because cancellation wasn't reachable;
+   * additive — old dashboards ignore it gracefully.
+   */
+  cancellation?: TaskCancellation;
 }
 
 /**
@@ -838,8 +868,33 @@ export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
   // workdir + runtime state all go, in that order — runtime first
   // so a runtime failure aborts before any local removal (mirrors
   // session-delete semantics).
+  //
+  // Post-ADR-001 §3.5: server returns 409 when the task is still
+  // running (mutate() throws the typed envelope; callers parse
+  // `code` + `transition` to render the "cancel first" CTA).
   const qs = opts?.purge ? "?purge=1" : "";
   return mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
+};
+
+/**
+ * Cancel a running task (ADR-001 §3.11.1(a)). POSTs to
+ * `/tasks/:id/cancel`; awaits the server's response (which itself
+ * awaits `live.settled`), so the returned `TaskRecord` already has
+ * status='cancelled' and the `cancellation` field populated.
+ *
+ * Throws on:
+ *   - 404 → task gone (caller should drop the row from optimistic state)
+ *   - 409 → task already terminal (caller should refresh + render
+ *     whatever it became — the server includes the structured envelope
+ *     `{ code: 'InvalidTransition', status, transition: 'cancel' }`
+ *     so the UI can branch typed)
+ *   - 503 → server is shutting down (one-shot toast + retry once the
+ *     restart finishes)
+ */
+export const cancelTask = (id: string): Promise<TaskRecord> => {
+  return mutateJson<TaskRecord>(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
 };
 
 /**

@@ -219,3 +219,29 @@ export function pickFormat(
   if (flags?.output === "table") return "table";
   return defaultFormat;
 }
+
+/**
+ * Is `err` an {@link ApiError} carrying exactly the given HTTP status?
+ * ADR-001 §3.10 needs this so `task rm` can detect a 409 from the
+ * server's terminal-only delete tightening and append a hint pointing
+ * the user at `task cancel` — `formatError` alone surfaces the
+ * structured envelope but doesn't branch.
+ */
+export function isStatusError(err: unknown, status: number): boolean {
+  return err instanceof ApiError && err.status === status;
+}
+
+/**
+ * Is `err` the structured InvalidTransition envelope the server
+ * emits from `tasks.cancel` / `tasks.delete` 409s? Optionally pin
+ * the transition discriminator (e.g. `"delete"` so `task rm`'s hint
+ * only fires for the right shape and not on an unrelated 409).
+ */
+export function isInvalidTransition(err: unknown, transition?: string): boolean {
+  if (!(err instanceof ApiError)) return false;
+  const body = err.body as { code?: unknown; transition?: unknown } | undefined;
+  if (typeof body !== "object" || body === null) return false;
+  if (body.code !== "InvalidTransition") return false;
+  if (transition === undefined) return true;
+  return body.transition === transition;
+}

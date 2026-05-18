@@ -25,16 +25,17 @@ import type { RuntimeRegistry } from "@emploke/runtime";
 /**
  * Status lifecycle: `not_started → running → success | failure | cancelled`.
  *
- * Note on `cancelled`: `Task.cancel()` accepts the transition from both
- * `not_started` and `running`, but `TaskManager` does not currently
- * call it. A subprocess killed during `delete()` has its workdir
- * removed before any terminal event is applied; a subprocess killed
- * during `shutdown()` is recorded as `failure` with reason "server
- * shutdown". The `cancelled` status is therefore reserved for a future
- * user-cancel API (e.g. `TaskManager.cancel(id)` + a `POST .../cancel`
- * route) that lets users distinguish "I asked it to stop" from "it
- * crashed". The dashboard already renders a `Cancelled` label so the
- * UI need not change when that API arrives.
+ * `cancelled` is produced by `TaskManager.cancel(id)` (the user-initiated
+ * verb introduced in ADR-001). `Task.cancel()` still accepts the
+ * transition from both `not_started` and `running` so a future queueing
+ * layer can cancel a not-yet-dispatched entry; today the Manager only
+ * ever sees `running` cancellations (dispatch immediately transitions
+ * to running before the first save). `failure` covers everything else
+ * the subprocess might do — crashing, exiting non-zero, getting
+ * SIGTERM'd by `shutdown()`, or being marked orphan by `recoverOrphaned`.
+ *
+ * `delete(id)` no longer touches subprocesses after ADR-001; it requires
+ * the task to be terminal first and removes only the record.
  */
 export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
 
@@ -62,9 +63,48 @@ export interface TaskResult {
   readonly output: string;
 }
 
-export interface TaskFailure {
-  readonly error: string;
-}
+/**
+ * Why a task ended in `failure` status. Discriminated by `kind`; each
+ * variant carries the minimum extra context useful to operators.
+ * `message` is the human-readable summary the dashboard renders.
+ *
+ * Variants:
+ *  - `exited`   — subprocess exited with a non-zero code; carries `exitCode`.
+ *  - `signal`   — subprocess was terminated by an OS signal; carries `signal`.
+ *  - `shutdown` — `TaskManager.shutdown()` killed the subprocess (server stop).
+ *  - `orphan`   — `recoverOrphaned` marked a row whose owning process is gone.
+ *  - `internal` — kernel-side fault (e.g. exit watcher rejected); covers
+ *                 the legacy-row read path (rows written before this ADR
+ *                 had only a free-string `failure_error` column — those
+ *                 surface as `{ kind: 'internal', message }`).
+ */
+export type TaskFailure =
+  | { readonly kind: "exited"; readonly exitCode: number; readonly message: string }
+  | { readonly kind: "signal"; readonly signal: NodeJS.Signals; readonly message: string }
+  | { readonly kind: "shutdown"; readonly message: string }
+  | { readonly kind: "orphan"; readonly message: string }
+  | { readonly kind: "internal"; readonly message: string };
+
+/**
+ * Why a task ended in `cancelled` status. Discriminated by `kind`.
+ *
+ * Variants:
+ *  - `user`   — `TaskManager.cancel(id)` killed a live subprocess at the
+ *               operator's request (today the only normal source).
+ *  - `orphan` — `cancel(id)` was called on a `running` row that has no
+ *               live entry (an undetected orphan that `recoverOrphaned`
+ *               missed). The cancel routes through `applyTerminal` with
+ *               this kind so the persisted row has the same shape as
+ *               the normal path. The operator sees a one-line warning
+ *               in the server log.
+ *
+ * Discriminator is `kind` (not `source`) to stay consistent with
+ * {@link TaskFailure} and to fit future event-shaped variants
+ * (`timeout`, `cascade`, `budget`) that aren't actors.
+ */
+export type TaskCancellation =
+  | { readonly kind: "user"; readonly message: string }
+  | { readonly kind: "orphan"; readonly message: string };
 
 // ─── TaskManager-side types ───────────────────────────────────
 

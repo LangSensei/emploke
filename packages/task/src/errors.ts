@@ -127,7 +127,7 @@ export class TaskIdAllocationFailedError extends TaskError {
 /**
  * Thrown when `TaskRepository.read` finds a persisted row whose shape
  * or `schemaVersion` is incompatible with the current build. Manager's
- * `recoverOrphaned` may catch and quarantine; direct `read(id)` callers
+ * `recoverOrphaned` path may catch and quarantine; direct `read(id)` callers
  * (e.g. the dashboard's "open task" path) propagate it as a 5xx.
  */
 export class CorruptedTaskError extends TaskError {
@@ -136,5 +136,22 @@ export class CorruptedTaskError extends TaskError {
     public readonly reason: string,
   ) {
     super(`task ${id} is corrupted: ${reason}`);
+  }
+}
+
+/**
+ * Thrown by `TaskManager.dispatch()` and `TaskManager.cancel()` when
+ * the manager has begun shutting down. The HTTP route maps this to
+ * **503 Service Unavailable** so callers (CLI, dashboard) can show a
+ * one-shot "server is restarting" toast and retry once the new server
+ * is up.
+ *
+ * Previously both `dispatch()` sites threw a bare `Error("…shutting
+ * down…")` and fell through to the default 400 mapping; ADR-001
+ * promoted this to a typed error so both verbs map cleanly to 503.
+ */
+export class ManagerShuttingDownError extends TaskError {
+  constructor() {
+    super("task manager is shutting down");
   }
 }

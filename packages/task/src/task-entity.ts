@@ -1,6 +1,6 @@
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
 import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
-import type { TaskFailure, TaskResult, TaskStatus } from "./types.js";
+import type { TaskCancellation, TaskFailure, TaskResult, TaskStatus } from "./types.js";
 
 const VALID_STATUSES = new Set<TaskStatus>([
   "not_started",
@@ -71,6 +71,7 @@ export interface TaskFromStoredArgs {
   readonly endedAt?: string;
   readonly result?: TaskResult;
   readonly failure?: TaskFailure;
+  readonly cancellation?: TaskCancellation;
 }
 
 /**
@@ -149,6 +150,7 @@ export class Task {
     private readonly _endedAt: string | undefined,
     private readonly _result: TaskResult | undefined,
     private readonly _failure: TaskFailure | undefined,
+    private readonly _cancellation: TaskCancellation | undefined,
   ) {}
 
   /**
@@ -185,6 +187,7 @@ export class Task {
       "not_started",
       Object.freeze({ ...(args.metadata ?? {}) }),
       args.createdAt ?? new Date().toISOString(),
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -226,6 +229,33 @@ export class Task {
     ) {
       throw new CorruptedTaskError(args.id, "task.metadata must be an object");
     }
+    // Per-payload shape validation. The wire / DB stores typed unions
+    // (TaskFailure / TaskCancellation), so reject anything that doesn't
+    // carry a `kind` + `message` pair when the corresponding payload is
+    // present. The repository synthesises legacy rows into
+    // `{ kind: 'internal' | 'user', message: <stored-text> }` shapes
+    // before reaching this validator — see sqlite-task-repository.ts
+    // for the legacy-row fallback.
+    if (args.failure !== undefined) {
+      assertTaskFailureShape(args.id, args.failure);
+    }
+    if (args.cancellation !== undefined) {
+      assertTaskCancellationShape(args.id, args.cancellation);
+    }
+    // Cross-field invariants: every terminal status carries exactly
+    // its own payload, non-terminal statuses carry none. The repository
+    // legacy-row code is responsible for synthesising minimum-viable
+    // payloads when the on-disk row is missing them; by the time
+    // fromStored runs, the shape contract is binding.
+    if (args.status === "failure" && args.failure === undefined) {
+      throw new CorruptedTaskError(args.id, "task.failure is required when status is 'failure'");
+    }
+    if (args.status === "cancelled" && args.cancellation === undefined) {
+      throw new CorruptedTaskError(
+        args.id,
+        "task.cancellation is required when status is 'cancelled'",
+      );
+    }
     return new Task(
       args.id,
       args.agent,
@@ -238,6 +268,7 @@ export class Task {
       args.endedAt,
       args.result,
       args.failure,
+      args.cancellation,
     );
   }
 
@@ -273,6 +304,9 @@ export class Task {
   }
   get failure(): TaskFailure | undefined {
     return this._failure;
+  }
+  get cancellation(): TaskCancellation | undefined {
+    return this._cancellation;
   }
 
   // ─── state transitions ────────────────────────────────────
@@ -314,40 +348,44 @@ export class Task {
   }
 
   /**
-   * Transition `running → failure`, recording `error` for operator
+   * Transition `running → failure`, attaching `failure` for operator
    * visibility. Throws {@link InvalidTransition} from any other status.
+   *
+   * Post-ADR-001 the payload is a {@link TaskFailure} discriminated
+   * union (not a bare string) so consumers can branch typed on
+   * `failure.kind` instead of parsing the human message.
    */
-  fail(error: string, opts: TaskTransitionOpts = {}): Task {
+  fail(failure: TaskFailure, opts: TaskTransitionOpts = {}): Task {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "fail");
     }
     return this.transition({
       status: "failure",
       endedAt: opts.now ?? new Date().toISOString(),
-      failure: { error },
+      failure,
       metadata: this.mergeMetadata(opts.metadata),
     });
   }
 
   /**
    * Transition to `cancelled`. Legal from both `not_started` (so
-   * pre-flight failures — e.g. provisioner can't write to disk —
-   * can be reported without first moving the task to `running`) and
+   * pre-flight failures — e.g. provisioner can't write to disk — can
+   * be reported without first moving the task to `running`) and
    * `running`. Throws {@link InvalidTransition} from terminal statuses.
    *
-   * Note: `TaskManager` does not currently emit this transition; a
-   * subprocess killed during `delete()` has its workdir removed
-   * before any terminal event is applied, and `shutdown()` records
-   * `failure` with reason "server shutdown". `cancel` is reserved
-   * for a future user-cancel API (see the JSDoc on `TaskStatus`).
+   * Post-ADR-001 the payload is a {@link TaskCancellation} discriminated
+   * union. Today only `TaskManager.cancel(id)` produces this transition
+   * (with `kind: 'user'` or `kind: 'orphan'` for the orphan recovery
+   * path); the entity itself stays open to future variants.
    */
-  cancel(opts: TaskTransitionOpts = {}): Task {
+  cancel(cancellation: TaskCancellation, opts: TaskTransitionOpts = {}): Task {
     if (this._status !== "not_started" && this._status !== "running") {
       throw new InvalidTransition(this._status, "cancel");
     }
     return this.transition({
       status: "cancelled",
       endedAt: opts.now ?? new Date().toISOString(),
+      cancellation,
       metadata: this.mergeMetadata(opts.metadata),
     });
   }
@@ -375,6 +413,7 @@ export class Task {
       this._endedAt,
       this._result,
       this._failure,
+      this._cancellation,
     );
   }
 
@@ -385,8 +424,12 @@ export class Task {
    * (e.g. by the server's `c.json(task)` route helpers), so HTTP
    * clients see the same field layout as the in-process entity.
    * Optional fields (`details`, `startedAt`, `endedAt`, `result`,
-   * `failure`) are omitted when unset to keep the wire shape minimal
-   * — same convention `startedAt` etc. follow today.
+   * `failure`, `cancellation`) are omitted when unset to keep the wire
+   * shape minimal — same convention `startedAt` etc. follow today.
+   *
+   * Exactly one of `result` / `failure` / `cancellation` is present
+   * for terminal statuses (success / failure / cancelled respectively);
+   * none of them appear for non-terminal statuses.
    */
   toJSON(): Record<string, unknown> {
     return {
@@ -401,6 +444,7 @@ export class Task {
       ...(this._endedAt !== undefined ? { endedAt: this._endedAt } : {}),
       ...(this._result !== undefined ? { result: this._result } : {}),
       ...(this._failure !== undefined ? { failure: this._failure } : {}),
+      ...(this._cancellation !== undefined ? { cancellation: this._cancellation } : {}),
     };
   }
 
@@ -418,6 +462,7 @@ export class Task {
     readonly endedAt?: string;
     readonly result?: TaskResult;
     readonly failure?: TaskFailure;
+    readonly cancellation?: TaskCancellation;
   }): Task {
     return new Task(
       this._id,
@@ -431,6 +476,7 @@ export class Task {
       patch.endedAt !== undefined ? patch.endedAt : this._endedAt,
       patch.result !== undefined ? patch.result : this._result,
       patch.failure !== undefined ? patch.failure : this._failure,
+      patch.cancellation !== undefined ? patch.cancellation : this._cancellation,
     );
   }
 
@@ -445,5 +491,48 @@ export class Task {
   ): Readonly<Record<string, unknown>> {
     if (patch === undefined) return this._metadata;
     return Object.freeze({ ...this._metadata, ...patch });
+  }
+}
+
+// ─── payload shape validators ───────────────────────────────
+
+const FAILURE_KINDS = new Set(["exited", "signal", "shutdown", "orphan", "internal"]);
+const CANCELLATION_KINDS = new Set(["user", "orphan"]);
+
+function assertTaskFailureShape(id: string, value: TaskFailure): void {
+  if (value === null || typeof value !== "object") {
+    throw new CorruptedTaskError(id, "task.failure must be an object");
+  }
+  const v = value as { kind?: unknown; message?: unknown; exitCode?: unknown; signal?: unknown };
+  if (typeof v.kind !== "string" || !FAILURE_KINDS.has(v.kind)) {
+    throw new CorruptedTaskError(
+      id,
+      `task.failure.kind must be one of: ${[...FAILURE_KINDS].join(", ")}`,
+    );
+  }
+  if (typeof v.message !== "string") {
+    throw new CorruptedTaskError(id, "task.failure.message must be a string");
+  }
+  if (v.kind === "exited" && typeof v.exitCode !== "number") {
+    throw new CorruptedTaskError(id, "task.failure.exitCode must be a number when kind='exited'");
+  }
+  if (v.kind === "signal" && typeof v.signal !== "string") {
+    throw new CorruptedTaskError(id, "task.failure.signal must be a string when kind='signal'");
+  }
+}
+
+function assertTaskCancellationShape(id: string, value: TaskCancellation): void {
+  if (value === null || typeof value !== "object") {
+    throw new CorruptedTaskError(id, "task.cancellation must be an object");
+  }
+  const v = value as { kind?: unknown; message?: unknown };
+  if (typeof v.kind !== "string" || !CANCELLATION_KINDS.has(v.kind)) {
+    throw new CorruptedTaskError(
+      id,
+      `task.cancellation.kind must be one of: ${[...CANCELLATION_KINDS].join(", ")}`,
+    );
+  }
+  if (typeof v.message !== "string") {
+    throw new CorruptedTaskError(id, "task.cancellation.message must be a string");
   }
 }

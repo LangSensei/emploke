@@ -103,26 +103,28 @@ describe("Task — happy paths", () => {
     expect(r.failure).toBeUndefined();
   });
 
-  it("fail: running → failure, captures error", () => {
+  it("fail: running → failure, captures the typed failure payload", () => {
     const running = makeTask().start({ now: fixedNow });
-    const r = running.fail("boom", { now: fixedNow });
+    const r = running.fail({ kind: "internal", message: "boom" }, { now: fixedNow });
     expect(r.status).toBe("failure");
-    expect(r.failure).toEqual({ error: "boom" });
+    expect(r.failure).toEqual({ kind: "internal", message: "boom" });
     expect(r.result).toBeUndefined();
   });
 
-  it("cancel: running → cancelled", () => {
+  it("cancel: running → cancelled, captures the typed cancellation payload", () => {
     const running = makeTask().start({ now: fixedNow });
-    const r = running.cancel({ now: fixedNow });
+    const r = running.cancel({ kind: "user", message: "cancelled by user" }, { now: fixedNow });
     expect(r.status).toBe("cancelled");
     expect(r.endedAt).toBe(fixedNow);
+    expect(r.cancellation).toEqual({ kind: "user", message: "cancelled by user" });
   });
 
   it("cancel: not_started → cancelled (allowed for pre-flight failures)", () => {
-    const r = makeTask().cancel({ now: fixedNow });
+    const r = makeTask().cancel({ kind: "user", message: "no go" }, { now: fixedNow });
     expect(r.status).toBe("cancelled");
     expect(r.startedAt).toBeUndefined();
     expect(r.endedAt).toBe(fixedNow);
+    expect(r.cancellation).toEqual({ kind: "user", message: "no go" });
   });
 
   it("transition methods use a default `now` when not provided", () => {
@@ -153,7 +155,9 @@ describe("Task — invalid transitions", () => {
   it("rejects complete and fail while still in not_started", () => {
     const t = makeTask();
     expect(() => t.complete("x", { now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => t.fail("x", { now: fixedNow })).toThrow(InvalidTransition);
+    expect(() => t.fail({ kind: "internal", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
   });
 
   it("rejects start on a running task", () => {
@@ -165,23 +169,35 @@ describe("Task — invalid transitions", () => {
     const success = makeTask().start({ now: fixedNow }).complete("y", { now: fixedNow });
     expect(() => success.start({ now: fixedNow })).toThrow(InvalidTransition);
     expect(() => success.complete("x", { now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => success.fail("x", { now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => success.cancel({ now: fixedNow })).toThrow(InvalidTransition);
+    expect(() => success.fail({ kind: "internal", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
+    expect(() => success.cancel({ kind: "user", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
   });
 
   it("rejects every transition on a terminal failure task", () => {
-    const failed = makeTask().start({ now: fixedNow }).fail("no", { now: fixedNow });
+    const failed = makeTask()
+      .start({ now: fixedNow })
+      .fail({ kind: "internal", message: "no" }, { now: fixedNow });
     expect(() => failed.complete("x", { now: fixedNow })).toThrow(InvalidTransition);
     expect(() => failed.start({ now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => failed.cancel({ now: fixedNow })).toThrow(InvalidTransition);
+    expect(() => failed.cancel({ kind: "user", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
   });
 
   it("rejects every transition on a terminal cancelled task", () => {
-    const cancelled = makeTask().cancel({ now: fixedNow });
+    const cancelled = makeTask().cancel({ kind: "user", message: "no go" }, { now: fixedNow });
     expect(() => cancelled.start({ now: fixedNow })).toThrow(InvalidTransition);
     expect(() => cancelled.complete("x", { now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => cancelled.fail("x", { now: fixedNow })).toThrow(InvalidTransition);
-    expect(() => cancelled.cancel({ now: fixedNow })).toThrow(InvalidTransition);
+    expect(() => cancelled.fail({ kind: "internal", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
+    expect(() => cancelled.cancel({ kind: "user", message: "x" }, { now: fixedNow })).toThrow(
+      InvalidTransition,
+    );
   });
 
   it("InvalidTransition exposes from-status and event type", () => {
@@ -221,13 +237,19 @@ describe("Task — metadata merge on transitions", () => {
 
   it("fail / cancel also accept metadata", () => {
     const running = makeTask().start({ now: fixedNow });
-    const failed = running.fail("x", { metadata: { lastSession: "abc" }, now: fixedNow });
+    const failed = running.fail(
+      { kind: "internal", message: "x" },
+      { metadata: { lastSession: "abc" }, now: fixedNow },
+    );
     expect(failed.metadata).toEqual({ lastSession: "abc" });
 
-    const cancelled = makeTask().cancel({
-      metadata: { reason: "user-aborted" },
-      now: fixedNow,
-    });
+    const cancelled = makeTask().cancel(
+      { kind: "user", message: "user-aborted" },
+      {
+        metadata: { reason: "user-aborted" },
+        now: fixedNow,
+      },
+    );
     expect(cancelled.metadata).toEqual({ reason: "user-aborted" });
   });
 
@@ -422,5 +444,127 @@ describe("Task.toJSON", () => {
       result: { output: "ok" },
     });
     expect(wire.failure).toBeUndefined();
+    expect(wire.cancellation).toBeUndefined();
+  });
+
+  it("includes the typed failure payload on serialised failure tasks", () => {
+    const failed = makeTask()
+      .start({ now: fixedNow })
+      .fail({ kind: "exited", exitCode: 17, message: "exited with code 17" }, { now: fixedNow });
+    const wire = JSON.parse(JSON.stringify(failed));
+    expect(wire.failure).toEqual({ kind: "exited", exitCode: 17, message: "exited with code 17" });
+    expect(wire.cancellation).toBeUndefined();
+    expect(wire.result).toBeUndefined();
+  });
+
+  it("includes the typed cancellation payload on serialised cancelled tasks", () => {
+    const cancelled = makeTask().cancel(
+      { kind: "user", message: "cancelled by user" },
+      { now: fixedNow },
+    );
+    const wire = JSON.parse(JSON.stringify(cancelled));
+    expect(wire.cancellation).toEqual({ kind: "user", message: "cancelled by user" });
+    expect(wire.failure).toBeUndefined();
+    expect(wire.result).toBeUndefined();
+  });
+});
+
+describe("Task.fromStored — typed payload invariants (ADR-001)", () => {
+  it("rejects status='failure' without a failure payload", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "failure",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+      }),
+    ).toThrow(/task.failure is required when status is 'failure'/);
+  });
+
+  it("rejects status='cancelled' without a cancellation payload", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "cancelled",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+      }),
+    ).toThrow(/task.cancellation is required when status is 'cancelled'/);
+  });
+
+  it("rejects an out-of-union failure kind", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "failure",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+        // biome-ignore lint/suspicious/noExplicitAny: testing a corrupted shape
+        failure: { kind: "bogus", message: "no" } as any,
+      }),
+    ).toThrow(/task.failure.kind must be one of/);
+  });
+
+  it("rejects an out-of-union cancellation kind", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "cancelled",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+        // biome-ignore lint/suspicious/noExplicitAny: testing a corrupted shape
+        cancellation: { kind: "ghost", message: "no" } as any,
+      }),
+    ).toThrow(/task.cancellation.kind must be one of/);
+  });
+
+  it("requires exitCode on failure.kind='exited'", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "failure",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+        // biome-ignore lint/suspicious/noExplicitAny: testing a corrupted shape
+        failure: { kind: "exited", message: "no" } as any,
+      }),
+    ).toThrow(/exitCode must be a number/);
+  });
+
+  it("requires signal on failure.kind='signal'", () => {
+    expect(() =>
+      Task.fromStored({
+        id: FIXED_ID,
+        agent: "a",
+        brief: "do",
+        status: "failure",
+        metadata: {},
+        createdAt: fixedNow,
+        startedAt: fixedNow,
+        endedAt: fixedNow,
+        // biome-ignore lint/suspicious/noExplicitAny: testing a corrupted shape
+        failure: { kind: "signal", message: "no" } as any,
+      }),
+    ).toThrow(/signal must be a string/);
   });
 });

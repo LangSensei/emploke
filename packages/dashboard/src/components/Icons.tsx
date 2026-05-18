@@ -81,6 +81,15 @@ export const TrashIcon = (p: IconProps) =>
 
 export const CloseIcon = (p: IconProps) => SVG(<path d="M6 18 18 6M6 6l12 12" />, p);
 
+/**
+ * Filled rounded-square ("stop" affordance) — used by the row + detail
+ * Cancel buttons in the Tasks page. The child <rect> overrides the
+ * `SVG()` helper's outline defaults so the glyph reads as a solid
+ * filled square (visual mental model: ⏹ stop).
+ */
+export const StopIcon = (p: IconProps) =>
+  SVG(<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none" />, p);
+
 export const InfoIcon = (p: IconProps) =>
   SVG(
     <>

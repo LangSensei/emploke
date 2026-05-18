@@ -4,7 +4,9 @@ import {
   CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
+  InvalidTransition,
   type ListTaskOpts,
+  ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   type TaskManager,
@@ -40,6 +42,14 @@ function statusForError(err: unknown): number | null {
   // agent, install the missing dep, etc.). 409 mirrors how
   // `HasDependentsError` is mapped on the catalog side.
   if (err instanceof EntryNotReadyError) return 409;
+  // ADR-001: cancel on a terminal task, or delete on a non-terminal
+  // task, throws InvalidTransition. Same mapping pattern as
+  // EntryNotReadyError above — the dashboard branches on `code` +
+  // `transition` from the structured 409 body.
+  if (err instanceof InvalidTransition) return 409;
+  // ADR-001: dispatch + cancel refuse during shutdown so the caller
+  // can show a one-shot "server restarting" toast and retry.
+  if (err instanceof ManagerShuttingDownError) return 503;
   // Server-side / host faults → 5xx. These match the analogous
   // mappings in sessions.ts (SessionIdAllocationFailedError → 500,
   // RuntimeProvisionFailed → 500). Falling through to the default 400
@@ -54,6 +64,34 @@ function statusForError(err: unknown): number | null {
   // captures both via `errorMeta`.
   if (err instanceof CorruptedTaskError) return 500;
   return null;
+}
+
+/**
+ * Build the structured 409 body that pairs with an InvalidTransition
+ * thrown out of cancel() / delete() / similar verbs.
+ *
+ * Shape (R-6 pinned):
+ *   {
+ *     error:      "<human message>",
+ *     code:       "InvalidTransition",
+ *     status:     "<current TaskStatus>",
+ *     transition: "<verb>",
+ *   }
+ *
+ * The dashboard's 409 handler branches `switch (body.code)`; with
+ * this body shape it can render typed CTAs (e.g. "cancel first" hint
+ * on a non-terminal delete) without parsing prose.
+ */
+function invalidTransitionBody(
+  err: InvalidTransition,
+  transition: string,
+): { error: string; code: string; status: string; transition: string } {
+  return {
+    error: err.message,
+    code: "InvalidTransition",
+    status: err.from,
+    transition,
+  };
 }
 
 /**
@@ -225,16 +263,20 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     }
   });
 
-  // Delete a task. Default ("archive") removes only the task's metadata
-  // row; the workdir contents (stderr.log, agent-produced files) and
-  // the runtime's per-task event log stay on disk so the user can
-  // inspect the run after the fact. Pass `?purge=1` for the hard-
-  // delete path: row + workdir + runtime state, in that order
-  // (runtime first so a runtime-side failure aborts before any local
-  // removal — mirrors session-delete semantics). `purge=1` also
-  // skips metadata validation, mirroring `rm -rf` for cleanup of
-  // tasks whose row is corrupted or schema-mismatched across an
-  // emploke upgrade.
+  // Delete a task. **ADR-001 §3.5: terminal-only.** Calling DELETE
+  // on a `running` / `not_started` task now returns 409 with a
+  // structured body so the dashboard can render typed CTA → use
+  // `tasks.cancel` first. Default ("archive") removes only the
+  // task's metadata row; the workdir contents (stderr.log,
+  // agent-produced files) and the runtime's per-task event log stay
+  // on disk so the user can inspect the run after the fact. Pass
+  // `?purge=1` for the hard-delete path: row + workdir + runtime
+  // state, in that order (runtime first so a runtime-side failure
+  // aborts before any local removal — mirrors session-delete
+  // semantics).
+  //
+  // The pre-ADR-001 "corrupted row" + "stray workdir" escape hatches
+  // are gone (sqlite3 CLI is the recovery channel per §3.5).
   app.delete("/:tid", async (c) => {
     const id = c.req.param("tid");
     const purge = c.req.query("purge") === "1";
@@ -245,6 +287,48 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
     } catch (err) {
       const status = statusForError(err) ?? 400;
       if (status >= 500) logFault(c, err, "tasks.delete: 5xx fault", { taskId: id, purge });
+      if (err instanceof InvalidTransition) {
+        // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
+        return c.json(invalidTransitionBody(err, "delete"), status as any);
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: see above.
+      return c.json(errorBody(err), status as any);
+    }
+  });
+
+  // POST /:tid/cancel — ADR-001 §3.6. User-initiated cancellation of
+  // a running task. POSTs the cancellation as a state transition
+  // (DELETE belongs to tasks.delete, which only ever removes records
+  // post-ADR-001). No request body in v1; the server kills the
+  // subprocess (SIGTERM), waits for the exit watcher to persist
+  // `cancelled`, and returns the updated Task.
+  //
+  // The returned Task's `cancellation.kind` is normally `'user'`
+  // (live subprocess killed at the operator's request), but the
+  // manager will produce `'orphan'` when the row was `running` yet
+  // had no live entry — the same terminal write applies, so the
+  // dashboard renders symmetrically. See the full enumeration on
+  // the `tasks.cancel` entry in `manifest.ts`.
+  //
+  // Errors:
+  //   - 404 (TaskNotFoundError): unknown id
+  //   - 409 (InvalidTransition): task already terminal → body carries
+  //     `{ code, status, transition: 'cancel' }` so dashboard branches
+  //     typed (R-6 pinned shape)
+  //   - 503 (ManagerShuttingDownError): server is shutting down
+  app.post("/:tid/cancel", async (c) => {
+    const id = c.req.param("tid");
+    try {
+      const task = await getManager(c).cancel(id);
+      logEvent(c, "task cancelled", { taskId: id });
+      return c.json(task);
+    } catch (err) {
+      const status = statusForError(err) ?? 400;
+      if (status >= 500) logFault(c, err, "tasks.cancel: 5xx fault", { taskId: id });
+      if (err instanceof InvalidTransition) {
+        // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
+        return c.json(invalidTransitionBody(err, "cancel"), status as any);
+      }
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
