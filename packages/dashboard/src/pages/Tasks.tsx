@@ -1110,10 +1110,10 @@ function DispatchModal({
           >
             {busy
               ? prefill
-                ? "Running again…"
+                ? "Running again"
                 : "Dispatching…"
               : prefill
-                ? "Run again…"
+                ? "Run again"
                 : "Dispatch"}
           </button>
         </div>
@@ -1570,7 +1570,7 @@ function TaskDetailPanel({
                   title="Re-dispatch with the same agent + brief + details"
                 >
                   <RefreshIcon />
-                  <span>Run again…</span>
+                  <span>Run again</span>
                 </button>
                 <button
                   type="button"
