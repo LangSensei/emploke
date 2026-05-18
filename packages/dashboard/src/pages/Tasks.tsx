@@ -549,7 +549,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
                   selected={selectedId === t.id}
                   onSelect={() => setSelectedId(t.id)}
                   onDelete={() => setDeleteTarget(t)}
-                  onCancel={() => void onCancel(t)}
+                  onCancel={() => onCancel(t)}
                 />
               ))}
             </ul>
@@ -710,8 +710,14 @@ interface TaskListItemProps {
    * is "Cancel", not "Delete". Delete is disabled for non-terminal rows
    * (server would 409 anyway), so we replace the action rather than
    * present a click target that always fails.
+   *
+   * Returns the in-flight Promise so the row can disable its Cancel
+   * button until the request settles (per-row debounce). Without the
+   * debounce, rapid double-clicks fan out into N HTTP round-trips +
+   * N toast notifications even though ADR-001's 409 InvalidTransition
+   * makes the extras harmless.
    */
-  onCancel: () => void;
+  onCancel: () => Promise<void> | void;
 }
 
 /**
@@ -733,6 +739,13 @@ interface TaskListItemProps {
 function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
   const isRunning = task.status === "running" || task.status === "not_started";
+  // Per-row Cancel debounce: rapid double-clicks would otherwise fan
+  // out into N HTTP round-trips + N toast notifications. Disabling the
+  // button while the request is in flight keeps the affordance honest
+  // (one click, one cancel). The state naturally tears down when the
+  // row's `isRunning` transitions to false and the button is replaced
+  // by the Delete affordance.
+  const [cancelling, setCancelling] = useState(false);
   const runtime =
     typeof task.metadata?.runtime === "string" ? (task.metadata.runtime as string) : null;
   const headline = task.brief;
@@ -766,10 +779,17 @@ function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskList
           <button
             type="button"
             className="btn btn--ghost btn--icon task-list__item-remove"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
-              onCancel();
+              if (cancelling) return;
+              setCancelling(true);
+              try {
+                await onCancel();
+              } finally {
+                setCancelling(false);
+              }
             }}
+            disabled={cancelling}
             aria-label={`Cancel task ${task.brief}`}
             title="Cancel task (sends SIGTERM)"
           >
@@ -1374,8 +1394,12 @@ function TaskDetailPanel({
   }
 
   // Pull the runtime exit fields out of metadata where the kernel keeps
-  // them. `failure.error` is the human-readable reason; the kernel-level
-  // failure type only carries that one field.
+  // them. Post-ADR-001 the typed `failure` itself carries `kind`
+  // (discriminator: `exited` | `signal` | `shutdown` | `orphan` |
+  // `internal`) plus `message` (human-readable); the `exited` /
+  // `signal` variants also carry the structured `exitCode` / `signal`
+  // fields inline, but we still read the metadata mirrors here so the
+  // header chip works for pre-typed-union (legacy) rows too.
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
   const exitCode =
     typeof metadata.exitCode === "number" || metadata.exitCode === null

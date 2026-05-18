@@ -417,14 +417,24 @@ export const ROUTES = {
    * (--reason flag is out of scope per ADR §5).
    *
    * Status mappings:
-   *   - 200 + Task — happy path; the response Task carries
-   *     `cancellation: { kind: 'user', message: 'cancelled by user' }`.
+   *   - 200 + Task — happy path; the response Task carries a
+   *     {@link TaskCancellation}. The `cancellation.kind` enumerates as:
+   *       - `'user'`   — the normal path: the manager killed a live
+   *         subprocess at the operator's request. `message` is
+   *         `'cancelled by user'`.
+   *       - `'orphan'` — `cancel(id)` was called on a `running` row
+   *         whose live entry has gone (an undetected orphan that
+   *         `recoverOrphaned` missed). The row is reconciled to
+   *         `cancelled` via the same terminal write so the dashboard
+   *         renders symmetrically.
    *   - 404 — TaskNotFoundError (unknown id).
    *   - 409 — InvalidTransition; body is the structured envelope
    *     `{ error, code: 'InvalidTransition', status: <prev>,
    *     transition: 'cancel' }` (R-6 pinned shape) so the dashboard
    *     can branch typed on `code`.
-   *   - 503 — ManagerShuttingDownError (server is restarting).
+   *   - 503 — ManagerShuttingDownError (server is restarting). No
+   *     `cancellation` is produced — the call refuses outright so the
+   *     caller can retry once the manager is up.
    */
   "tasks.cancel": defineRoute<{ params: TaskPathParams }, Task>(
     "POST",

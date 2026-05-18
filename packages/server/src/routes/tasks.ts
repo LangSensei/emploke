@@ -303,6 +303,13 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   // subprocess (SIGTERM), waits for the exit watcher to persist
   // `cancelled`, and returns the updated Task.
   //
+  // The returned Task's `cancellation.kind` is normally `'user'`
+  // (live subprocess killed at the operator's request), but the
+  // manager will produce `'orphan'` when the row was `running` yet
+  // had no live entry — the same terminal write applies, so the
+  // dashboard renders symmetrically. See the full enumeration on
+  // the `tasks.cancel` entry in `manifest.ts`.
+  //
   // Errors:
   //   - 404 (TaskNotFoundError): unknown id
   //   - 409 (InvalidTransition): task already terminal → body carries

@@ -81,6 +81,43 @@ describe("legacy v2 failure row read fallback", () => {
     const synthWarns = cap.calls.filter((c) => c.msg.includes("legacy failure row"));
     expect(synthWarns).toHaveLength(1);
   });
+
+  it("dedupes the synthesised-legacy-failure warn to once per task id per process", async () => {
+    const id = "20260518-dddddddd";
+    // Same legacy v2 shape as above, but we read the row N times via
+    // both `read()` and `list()` to simulate dashboard list-refresh
+    // polling load. The warn must fire exactly once per id — without
+    // the dedup it would fire N times and flood operator logs.
+    const cap = captureLogger();
+    const repo = new SqliteTaskRepository({ db, logger: cap.logger });
+    db.prepare(
+      `INSERT INTO tasks (
+         id, agent, runtime, status, brief, details, created_at, started_at,
+         ended_at, result_output, failure_error, metadata
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      "writer",
+      "copilot",
+      "failure",
+      "do the thing",
+      null,
+      "2026-05-18T00:00:00.000Z",
+      "2026-05-18T00:00:01.000Z",
+      "2026-05-18T00:00:05.000Z",
+      null,
+      "legacy boom",
+      "{}",
+    );
+
+    await repo.read(id);
+    await repo.read(id);
+    await repo.list();
+    await repo.read(id);
+
+    const synthWarns = cap.calls.filter((c) => c.msg.includes("legacy failure row"));
+    expect(synthWarns).toHaveLength(1);
+  });
 });
 
 describe("legacy cancelled row read fallback", () => {

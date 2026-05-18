@@ -90,6 +90,15 @@ interface TaskRow {
 export class SqliteTaskRepository implements TaskRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
+  /**
+   * Task IDs whose legacy v2 failure row we've already emitted a
+   * "synthesised as kind='internal'" warn for. The warn would otherwise
+   * fire on every read (e.g. dashboard list-refresh polls), flooding
+   * operator logs. The Set is process-lifetime — on startup it is empty
+   * so the first warn after a restart still fires once per affected
+   * row, which is the operator signal we want without the volume.
+   */
+  private readonly warnedLegacyFailureRows = new Set<string>();
 
   constructor(opts: { db: DatabaseSync; logger?: Logger }) {
     this.db = opts.db;
@@ -113,7 +122,7 @@ export class SqliteTaskRepository implements TaskRepository {
       )
       .get(id) as TaskRow | undefined;
     if (row === undefined) return null;
-    return parseRow(id, row, this.logger);
+    return parseRow(id, row, this.logger, this.warnedLegacyFailureRows);
   }
 
   async save(task: Task): Promise<void> {
@@ -223,7 +232,7 @@ export class SqliteTaskRepository implements TaskRepository {
     const out: Task[] = [];
     for (const row of rows) {
       try {
-        out.push(parseRow(row.id, row, this.logger));
+        out.push(parseRow(row.id, row, this.logger, this.warnedLegacyFailureRows));
       } catch (err) {
         this.logger.warn(
           {
@@ -360,7 +369,12 @@ export class SqliteTaskRepository implements TaskRepository {
  * metadata-is-an-object, brief non-empty, failure/cancellation shape +
  * status-pairing) is validated by {@link Task.fromStored}.
  */
-function parseRow(id: string, row: TaskRow, logger: Logger): Task {
+function parseRow(
+  id: string,
+  row: TaskRow,
+  logger: Logger,
+  warnedLegacyFailureRows: Set<string>,
+): Task {
   let metaParsed: unknown;
   try {
     metaParsed = JSON.parse(row.metadata);
@@ -379,7 +393,7 @@ function parseRow(id: string, row: TaskRow, logger: Logger): Task {
     metadata = { ...metadata, runtime: row.runtime };
   }
 
-  const failure = reassembleFailure(id, row, logger);
+  const failure = reassembleFailure(id, row, logger, warnedLegacyFailureRows);
   const cancellation = reassembleCancellation(id, row, logger);
 
   return Task.fromStored({
@@ -413,21 +427,36 @@ function parseRow(id: string, row: TaskRow, logger: Logger): Task {
  *                                          `{ kind: 'internal', message }`
  *                                          and emit a one-line warn so
  *                                          operators can spot the pattern.
+ *                                          The warn is deduped per task id
+ *                                          via `warnedLegacyFailureRows`
+ *                                          so list-refresh polls don't
+ *                                          flood the log.
  *
  * Throws {@link CorruptedTaskError} on a `failure_kind` value outside
  * the closed union (defends against future schema drift or
  * column-level tampering).
  */
-function reassembleFailure(id: string, row: TaskRow, logger: Logger): TaskFailure | undefined {
+function reassembleFailure(
+  id: string,
+  row: TaskRow,
+  logger: Logger,
+  warnedLegacyFailureRows: Set<string>,
+): TaskFailure | undefined {
   if (row.failure_kind === null) {
     if (row.failure_error === null) return undefined;
     // Legacy row: ADR-001 documents synthesising
     // `{ kind: 'internal', message }`. Emit a warn so operators see
-    // the pattern in their logs and can plan a re-save if needed.
-    logger.warn(
-      { taskId: id, failureError: row.failure_error },
-      "tasks: legacy failure row synthesised as kind='internal'",
-    );
+    // the pattern in their logs and can plan a re-save if needed —
+    // but only once per task id per process. Without the dedup the
+    // warn fires on every read, and dashboard list-refresh polls
+    // would flood the operator log for the same row.
+    if (!warnedLegacyFailureRows.has(id)) {
+      warnedLegacyFailureRows.add(id);
+      logger.warn(
+        { taskId: id, failureError: row.failure_error },
+        "tasks: legacy failure row synthesised as kind='internal'",
+      );
+    }
     return { kind: "internal", message: row.failure_error };
   }
   const message = row.failure_error ?? "";
