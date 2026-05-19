@@ -292,7 +292,6 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
 
 function rowToWorkspace(row: WorkspaceRow): Workspace {
   return Workspace.fromStored({
-    dir: row.workspace_dir,
     id: row.id,
     workspaceDir: row.workspace_dir,
     name: row.name,

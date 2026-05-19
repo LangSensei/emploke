@@ -80,32 +80,35 @@ export class Workspace {
    * Reconstruct a `Workspace` from storage (e.g. a SQLite row). Same
    * validation as {@link Workspace.create}, but failures throw
    * {@link WorkspaceCorruptedError} carrying the `workspaceDir` for
-   * operator triage instead of the input-validation errors. Use `dir`
-   * to scope the error message — typically the row's `workspace_dir`
-   * value.
+   * operator triage instead of the input-validation errors used by
+   * {@link Workspace.create}.
    */
   static fromStored(args: {
-    dir: string;
     id: string;
     workspaceDir: string;
     name: string;
     createdAt: string;
   }): Workspace {
     if (!isValidWorkspaceId(args.id)) {
-      throw new WorkspaceCorruptedError(args.dir, `invalid 'id' (must be a UUID): ${args.id}`);
+      throw new WorkspaceCorruptedError(
+        args.workspaceDir,
+        `invalid 'id' (must be a UUID): ${args.id}`,
+      );
     }
     if (typeof args.name !== "string" || args.name.length === 0) {
-      throw new WorkspaceCorruptedError(args.dir, "missing or non-string 'name'");
+      throw new WorkspaceCorruptedError(args.workspaceDir, "missing or non-string 'name'");
     }
     try {
       assertValidDisplayName(args.name);
     } catch (err) {
-      throw new WorkspaceCorruptedError(args.dir, `invalid 'name': ${(err as Error).message}`, {
-        cause: err,
-      });
+      throw new WorkspaceCorruptedError(
+        args.workspaceDir,
+        `invalid 'name': ${(err as Error).message}`,
+        { cause: err },
+      );
     }
     if (typeof args.createdAt !== "string" || args.createdAt.length === 0) {
-      throw new WorkspaceCorruptedError(args.dir, "missing or invalid 'createdAt'");
+      throw new WorkspaceCorruptedError(args.workspaceDir, "missing or invalid 'createdAt'");
     }
     return new Workspace(args.id, path.resolve(args.workspaceDir), args.name, args.createdAt);
   }
