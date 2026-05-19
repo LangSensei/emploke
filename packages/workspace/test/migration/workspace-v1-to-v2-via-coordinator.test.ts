@@ -1,7 +1,7 @@
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runPkgMigrationsSync } from "../../src/migration/index.js";
+import { runPkgMigrations } from "../../src/migration/index.js";
 import { WORKSPACE_MIGRATIONS } from "../../src/migrations/index.js";
 import { SqliteWorkspaceRepository } from "../../src/repositories/sqlite-workspace-repository.js";
 
@@ -58,7 +58,7 @@ describe("workspace v1→v2 migration applied via MigrationCoordinator", () => {
   // shape — becomes the template for the rest of the v1-batch issues
   // (#118, #119, #120, #122).
 
-  it("drops defaults_json, renames workdir → workspace_dir, preserves every other column", () => {
+  it("drops defaults_json, renames workdir → workspace_dir, preserves every other column", async () => {
     seedV1Schema(db);
     db.prepare(
       `INSERT INTO workspaces (
@@ -87,7 +87,7 @@ describe("workspace v1→v2 migration applied via MigrationCoordinator", () => {
       "{}",
     );
 
-    runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 
     // schema_meta bumped from 1 → 2 (only one step, not silently skipped).
     const ver = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("workspace") as {
@@ -162,10 +162,10 @@ describe("workspace v1→v2 migration applied via MigrationCoordinator", () => {
     expect(beta.last_opened_at).toBeNull();
   });
 
-  it("is idempotent: re-running against an already-v2 DB applies no migrations", () => {
+  it("is idempotent: re-running against an already-v2 DB applies no migrations", async () => {
     seedV1Schema(db);
-    runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
-    const result = runPkgMigrationsSync(db, [
+    await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    const result = await runPkgMigrations(db, [
       { pkg: "workspace", migrations: WORKSPACE_MIGRATIONS },
     ]);
     expect(result.applied).toEqual([]);
@@ -188,7 +188,7 @@ describe("workspace v1→v2 migration applied via MigrationCoordinator", () => {
       '{"runtime":"copilot"}',
     );
 
-    runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 
     const repo = new SqliteWorkspaceRepository({ db });
     const back = await repo.read(UUID_A);

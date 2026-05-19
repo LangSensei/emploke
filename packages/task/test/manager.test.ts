@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
@@ -33,14 +33,13 @@ import {
 let tasksDir: string;
 const openDbs: DatabaseSync[] = [];
 
-function makeRepo(): SqliteTaskRepository {
+async function makeRepo(): Promise<SqliteTaskRepository> {
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
-  // Sync bootstrap: TASK_MIGRATIONS contains DDL-only migrations
-  // with no async backfill/verify, so the sync coordinator path is
-  // safe and lets every existing synchronous test fixture build
-  // its repo without async plumbing.
-  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  // TASK_MIGRATIONS contains DDL-only migrations today, but we still
+  // bootstrap via the async runner so tests use the same code path
+  // production does (issue #133 — async-only).
+  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   return new SqliteTaskRepository({ db });
 }
 
@@ -355,7 +354,7 @@ const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
   ...overrides,
 });
 
-const makeManager = (
+const makeManager = async (
   overrides: {
     catalog?: CatalogManager;
     runtime?: Runtime;
@@ -367,10 +366,10 @@ const makeManager = (
     workspaceId?: string;
     subprocessEnv?: NodeJS.ProcessEnv;
   } = {},
-): { m: TaskManager; repo: SqliteTaskRepository } => {
+): Promise<{ m: TaskManager; repo: SqliteTaskRepository }> => {
   const rt = overrides.runtime ?? new StubRuntime();
   const registry = overrides.registry ?? makeRegistry(rt);
-  const repo = overrides.repository ?? makeRepo();
+  const repo = overrides.repository ?? (await makeRepo());
   const m = new TaskManager({
     catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
     runtimeRegistry: registry,
@@ -391,7 +390,7 @@ const makeManager = (
 describe("dispatch — happy path", () => {
   it("creates dir, persists running task to repository, populates runtime metadata, returns Task", async () => {
     const rt = new StubRuntime();
-    const { m, repo } = makeManager({ runtime: rt });
+    const { m, repo } = await makeManager({ runtime: rt });
 
     const t = await m.dispatch(
       dispatchOf({ agent: "demo", brief: "Plant a tree.", details: "Choose oak." }),
@@ -426,7 +425,7 @@ describe("dispatch — happy path", () => {
 
   it("dispatch defaults details to undefined when omitted", async () => {
     const rt = new StubRuntime();
-    const { m, repo } = makeManager({ runtime: rt });
+    const { m, repo } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf({ brief: "Just the brief" }));
     expect(t.details).toBeUndefined();
     const persisted = await repo.read(t.id);
@@ -439,7 +438,7 @@ describe("dispatch — happy path", () => {
 describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
   it("writes <workdir>/TASK.md as `# <brief>\\n` when no details given (UTF-8, no BOM)", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "Plant a tree" }));
     const meta = readTaskRuntimeMetadata(t);
@@ -451,7 +450,7 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
 
   it("writes <workdir>/TASK.md as `# <brief>\\n\\n<details>\\n` when details given", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     // Multi-line + multi-byte UTF-8 (CJK + emoji) covers two things:
     //   1. LF inside details used to corrupt the spawn argv on
@@ -469,7 +468,7 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
 
   it("creates <workdir>/temp/ and <workdir>/artifact/ as empty directories", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
     const meta = readTaskRuntimeMetadata(t);
@@ -486,7 +485,7 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
 
   it("passes the framing prompt (NOT the user-supplied bytes) as the runtime spawn prompt", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     // Details that would have triggered Bug A — embedded LF, would
     // have truncated the cmd.exe argv on Windows.
@@ -568,7 +567,7 @@ describe("formatTaskMd", () => {
 
 describe("dispatch — error paths", () => {
   it("AgentNotFoundError when catalog cannot resolve the agent", async () => {
-    const { m } = makeManager({
+    const { m } = await makeManager({
       catalog: stubCatalog({ resolveError: new Error("nope") }),
     });
     await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(AgentNotFoundError);
@@ -578,14 +577,14 @@ describe("dispatch — error paths", () => {
   });
 
   it("AgentNotFoundError when caller passes empty/invalid agent name", async () => {
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatch", async () => {
     const rt = new StubRuntime();
     rt.dispatchSupported = false;
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(RuntimeDoesNotSupportTasksError);
     const entries = await safeReaddir(tasksDir);
     expect(entries).toEqual([]);
@@ -594,7 +593,7 @@ describe("dispatch — error paths", () => {
   it("rolls back the workdir when the runtime throws during dispatch", async () => {
     const rt = new StubRuntime();
     rt.dispatchError = new Error("boom in spawn");
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
     const entries = await safeReaddir(tasksDir);
@@ -602,7 +601,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when the agent is blocked due to prereqs", async () => {
-    const { m } = makeManager({
+    const { m } = await makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { needsPrereqsAck: true } },
@@ -621,7 +620,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when the agent is blocked because it was disabled by user", async () => {
-    const { m } = makeManager({
+    const { m } = await makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { disabledByUser: true } },
@@ -633,7 +632,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("EntryNotReadyError when a transitive dep is blocked (cascade)", async () => {
-    const { m } = makeManager({
+    const { m } = await makeManager({
       catalog: stubCatalog({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: {
@@ -655,7 +654,7 @@ describe("dispatch — error paths", () => {
 describe("exit watcher", () => {
   it("exit code 0 → status=success, output empty, exitCode=0", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: 0, signal: null });
@@ -669,7 +668,7 @@ describe("exit watcher", () => {
 
   it("exit code != 0 → status=failure, error mentions code", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: 17, signal: null });
@@ -685,7 +684,7 @@ describe("exit watcher", () => {
 
   it("exit by signal → status=failure, error mentions signal", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
@@ -710,14 +709,14 @@ describe("liveCount", () => {
   // directly to keep the cache-side contract isolated; this is where
   // the implementation contract itself is exercised end-to-end.
 
-  it("returns 0 on a fresh manager with no dispatches", () => {
-    const { m } = makeManager();
+  it("returns 0 on a fresh manager with no dispatches", async () => {
+    const { m } = await makeManager();
     expect(m.liveCount()).toBe(0);
   });
 
   it("counts a live task between dispatch and exit, drops back to 0 after terminal", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     expect(m.liveCount()).toBe(0);
     const t = await m.dispatch(dispatchOf());
@@ -742,7 +741,7 @@ describe("liveCount", () => {
     // the leak.
     const rt = new StubRuntime();
     rt.dispatchError = new Error("boom in spawn");
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     expect(m.liveCount()).toBe(0);
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/boom in spawn/);
@@ -752,25 +751,25 @@ describe("liveCount", () => {
 
 describe("get / list", () => {
   it("get() returns null for an id whose dir doesn't exist", async () => {
-    const { m } = makeManager();
+    const { m } = await makeManager();
     expect(await m.get("20260101-deadbeef")).toBeNull();
   });
 
   it("get() throws InvalidTaskIdError for malformed ids", async () => {
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await expect(m.get("../escape")).rejects.toBeInstanceOf(InvalidTaskIdError);
   });
 
   it("list() returns [] when tasksDir doesn't exist yet", async () => {
     await rm(tasksDir, { recursive: true, force: true });
-    const { m } = makeManager();
+    const { m } = await makeManager();
     expect(await m.list()).toEqual([]);
   });
 
   it("list() returns dispatched tasks newest-first", async () => {
     const rt = new StubRuntime();
     let nowMs = Date.parse("2026-05-08T01:00:00.000Z");
-    const { m } = makeManager({
+    const { m } = await makeManager({
       runtime: rt,
       now: () => new Date(nowMs),
       // Each dispatch uses 2 random buffers (one per id-gen attempt). We
@@ -796,9 +795,9 @@ describe("get / list", () => {
     const r = recorder();
     const db = new DatabaseSync(":memory:");
     openDbs.push(db);
-    runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
     const repo = new SqliteTaskRepository({ db, logger: r.logger });
-    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
     await m.dispatch(dispatchOf()); // good row through public API
 
     // Forge a row whose status is outside the closed enum; rowToTask
@@ -836,8 +835,8 @@ describe("get / list", () => {
   // for a tampered/bit-rotted row, and the next save would round-trip
   // an empty `{}` over the corrupt blob.
   it("get() propagates CorruptedTaskError instead of returning null", async () => {
-    const repo = makeRepo();
-    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    const repo = await makeRepo();
+    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
     // Forge the same kind of bogus row the list() test uses.
     const rawDb = (
       repo as unknown as {
@@ -856,7 +855,7 @@ describe("get / list", () => {
 
   it("list() ignores directories whose name doesn't match the task id pattern", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     await m.dispatch(dispatchOf());
     await mkdir(path.join(tasksDir, "garbage-dir"), { recursive: true });
 
@@ -870,7 +869,7 @@ describe("get / list", () => {
   describe("list(opts) — server-side filter", () => {
     it("filters by exact agent match", async () => {
       const rt = new StubRuntime();
-      const { m } = makeManager({
+      const { m } = await makeManager({
         runtime: rt,
         catalog: stubCatalog({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
@@ -891,7 +890,7 @@ describe("get / list", () => {
       const reg = new RuntimeRegistry();
       reg.register(copilot);
       reg.register(gemini);
-      const { m } = makeManager({
+      const { m } = await makeManager({
         registry: reg,
         runtime: copilot,
       });
@@ -906,7 +905,7 @@ describe("get / list", () => {
     it("filters by createdSince (lexicographic on ISO 8601)", async () => {
       const rt = new StubRuntime();
       let nowMs = Date.parse("2026-05-08T01:00:00.000Z");
-      const { m } = makeManager({
+      const { m } = await makeManager({
         runtime: rt,
         now: () => new Date(nowMs),
         randomBytes: seqRandom(1),
@@ -924,7 +923,7 @@ describe("get / list", () => {
 
     it("filters by status set (running|success|failure|cancelled|not_started)", async () => {
       const rt = new StubRuntime();
-      const { m } = makeManager({ runtime: rt });
+      const { m } = await makeManager({ runtime: rt });
       const a = await m.dispatch(dispatchOf({ brief: "a" }));
       void rt.handles[0].exit({ code: 0, signal: null });
       await awaitTerminal(m, a.id);
@@ -944,7 +943,7 @@ describe("get / list", () => {
 
     it("combines multiple filters with AND semantics", async () => {
       const rt = new StubRuntime();
-      const { m } = makeManager({
+      const { m } = await makeManager({
         runtime: rt,
         catalog: stubCatalog({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
@@ -966,7 +965,7 @@ describe("get / list", () => {
 describe("delete (terminal-only post ADR-001)", () => {
   it("default delete removes metadata; workdir preserved", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -981,7 +980,7 @@ describe("delete (terminal-only post ADR-001)", () => {
 
   it("purge=true removes the entire workdir", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -992,7 +991,7 @@ describe("delete (terminal-only post ADR-001)", () => {
   });
 
   it("throws TaskNotFoundError for an unknown id", async () => {
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await expect(m.delete("20260101-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
@@ -1000,7 +999,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     // ADR-001 removed the stat-based escape hatch — a workdir with no
     // row is no longer wipeable through delete(); sqlite3 CLI is the
     // recovery channel for that case (§3.5).
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -1010,8 +1009,8 @@ describe("delete (terminal-only post ADR-001)", () => {
   // ADR-001 removed the previous purge-tolerance for corrupted rows,
   // so both default AND purge propagate the error now.
   it("propagates CorruptedTaskError (operator sees the corruption)", async () => {
-    const repo = makeRepo();
-    const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
+    const repo = await makeRepo();
+    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
     const id = "20260101-deadbeef";
     const rawDb = (
       repo as unknown as {
@@ -1032,7 +1031,7 @@ describe("delete (terminal-only post ADR-001)", () => {
   // up too, otherwise purge leaks events.jsonl + transcripts forever.
   it("purge: true asks the runtime to wipe its per-task state, with task metadata", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -1049,7 +1048,7 @@ describe("delete (terminal-only post ADR-001)", () => {
   // "operators can recover the agent's product after a delete" intent.
   it("default delete does NOT call runtime.deleteState", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -1065,7 +1064,7 @@ describe("delete (terminal-only post ADR-001)", () => {
   it("aborts BEFORE removing the row + workdir when runtime.deleteState throws", async () => {
     const rt = new StubRuntime();
     rt.deleteStateError = new Error("permission denied wiping state dir");
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
@@ -1084,7 +1083,7 @@ describe("shutdown", () => {
   it("kills all live tasks and marks them failure with kind='shutdown'", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
 
     const t1 = await m.dispatch(dispatchOf({ brief: "a" }));
     const t2 = await m.dispatch(dispatchOf({ brief: "b" }));
@@ -1103,13 +1102,13 @@ describe("shutdown", () => {
 
   it("refuses new dispatch after shutdown is called", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     await m.shutdown();
     await expect(m.dispatch(dispatchOf())).rejects.toThrow(/shutting down/);
   });
 
   it("is idempotent — calling shutdown twice doesn't throw", async () => {
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await m.shutdown();
     await m.shutdown();
   });
@@ -1121,7 +1120,7 @@ describe("shutdown", () => {
   // that beat us to the punch with a clean exit still records `success`.
   it("does not misclassify a self-exiting task as 'server shutdown'", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     // Trigger the natural success exit BEFORE invoking shutdown. The
@@ -1164,7 +1163,7 @@ describe("shutdown", () => {
           return original.call(rt, opts);
         },
     });
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const dispatched = m.dispatch(dispatchOf());
 
     // Flip shutdown while the dispatch is parked inside spawnHold.
@@ -1201,7 +1200,7 @@ describe("recoverOrphaned", () => {
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
     });
-    const { m, repo } = makeManager();
+    const { m, repo } = await makeManager();
     await repo.save(orphan);
 
     await m.recoverOrphaned();
@@ -1227,7 +1226,7 @@ describe("recoverOrphaned", () => {
       endedAt: "2026-05-08T01:00:02.000Z",
       result: { output: "ok" },
     });
-    const { m, repo } = makeManager();
+    const { m, repo } = await makeManager();
     await repo.save(done);
 
     await m.recoverOrphaned();
@@ -1239,7 +1238,7 @@ describe("recoverOrphaned", () => {
 
   it("is a no-op when the tasks directory doesn't exist", async () => {
     await rm(tasksDir, { recursive: true, force: true });
-    const { m } = makeManager();
+    const { m } = await makeManager();
     await expect(m.recoverOrphaned()).resolves.toBeUndefined();
   });
 });
@@ -1308,7 +1307,7 @@ async function awaitTerminal(m: TaskManager, id: string): Promise<Task> {
 describe("dispatch — subprocess env injection", () => {
   it("threads workspaceId, workspaceDir, taskId into runtime.launchHeadless as EMPLOKE_* vars", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({
+    const { m } = await makeManager({
       runtime: rt,
       workspaceId: "ws-uuid-alpha",
       subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
@@ -1332,7 +1331,7 @@ describe("dispatch — subprocess env injection", () => {
 
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     await m.dispatch(dispatchOf({ agent: "demo", brief: "go" }));
 
     const env = rt.dispatchCalls[0].subprocessEnv;
@@ -1345,7 +1344,7 @@ describe("dispatch — subprocess env injection", () => {
 
   it("two concurrent dispatches on the same manager get disjoint EMPLOKE_WORK_IDs (no shared bag)", async () => {
     const rt = new StubRuntime();
-    const { m } = makeManager({
+    const { m } = await makeManager({
       runtime: rt,
       workspaceId: "ws-uuid-1",
       randomBytes: seqRandom(),
@@ -1377,14 +1376,14 @@ describe("dispatch — subprocess env injection", () => {
     const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
 
     const rtA = new StubRuntime();
-    const { m: managerA } = makeManager({
+    const { m: managerA } = await makeManager({
       runtime: rtA,
       workspaceId: "ws-A",
       subprocessEnv: sharedBase,
     });
 
     const rtB = new StubRuntime();
-    const { m: managerB } = makeManager({
+    const { m: managerB } = await makeManager({
       runtime: rtB,
       workspaceId: "ws-B",
       subprocessEnv: sharedBase,
@@ -1410,7 +1409,7 @@ describe("dispatch — subprocess env injection", () => {
     // pinned. The manager's own workspaceId must still win — base is
     // a default, not a hard pin.
     const rt = new StubRuntime();
-    const { m } = makeManager({
+    const { m } = await makeManager({
       runtime: rt,
       workspaceId: "real-workspace",
       subprocessEnv: {
@@ -1443,7 +1442,7 @@ describe("dispatch — subprocess env injection", () => {
     // every spawned task. This test pins the spread + reference path
     // through the manager.
     const rt = new StubRuntime();
-    const { m } = makeManager({
+    const { m } = await makeManager({
       runtime: rt,
       workspaceId: "ws-uuid-x",
       subprocessEnv: Object.freeze({
@@ -1477,7 +1476,7 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
       userTitled: false,
       lastActiveAt: "2026-05-08T01:30:00.000Z",
     };
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf({ brief: "Real brief" }));
 
     const refreshed = await m.get(t.id);
@@ -1493,7 +1492,7 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
       userTitled: true,
       lastActiveAt: "2026-05-08T01:30:00.000Z",
     };
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf({ brief: "Authoritative brief" }));
 
     const refreshed = await m.get(t.id);
@@ -1509,7 +1508,7 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
       userTitled: false,
       lastActiveAt: "2026-05-08T01:30:00.000Z",
     };
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf({ brief: "Brief" }));
 
     const refreshed = await m.get(t.id);
@@ -1523,7 +1522,7 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
       userTitled: false,
       lastActiveAt: null,
     };
-    const { m } = makeManager({ runtime: rt });
+    const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf({ brief: "Brief" }));
 
     const refreshed = await m.get(t.id);

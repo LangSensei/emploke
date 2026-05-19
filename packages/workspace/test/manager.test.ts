@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegistrySchemaMismatchError,
-  runPkgMigrationsSync,
+  runPkgMigrations,
   SqliteWorkspaceRepository,
   WORKSPACE_MIGRATIONS,
   WorkspaceCorruptedError,
@@ -21,7 +21,7 @@ let db: DatabaseSync;
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-ws-mgr-"));
   db = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 });
 afterEach(async () => {
   try {

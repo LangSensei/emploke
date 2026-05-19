@@ -13,11 +13,6 @@ import { SKILL_MIGRATIONS } from "../../src/skill/migrations/index.js";
  * against a fresh `:memory:` DB must first run this helper so the
  * `schema_meta` rows for `catalog_agent`, `catalog_skill` and
  * `catalog_mcp` are present.
- *
- * As of issue #122 the v1→v2 catalog migrations declare backfill
- * hooks, so the sync variant (`runPkgMigrationsSync`) is no longer
- * usable; tests must `await bootstrapCatalogDb(db)` before
- * constructing any catalog repository.
  */
 export async function bootstrapCatalogDb(db: DatabaseSync): Promise<void> {
   await runPkgMigrations(db, [

@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import {
-  runPkgMigrationsSync,
+  runPkgMigrations,
   SqliteWorkspaceRepository,
   WORKSPACE_MIGRATIONS,
   WorkspaceManager,
@@ -28,7 +28,7 @@ const openCaches: WorkspaceContextCache[] = [];
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-wsctx-"));
   globalDb = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+  await runPkgMigrations(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 });
 afterEach(async () => {
   for (const c of openCaches.splice(0)) c.closeAll();

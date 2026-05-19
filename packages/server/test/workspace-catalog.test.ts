@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import {
-  runPkgMigrationsSync,
+  runPkgMigrations,
   SqliteWorkspaceRepository,
   WORKSPACE_MIGRATIONS,
   type Workspace,
@@ -24,7 +24,7 @@ let cache: WorkspaceContextCache;
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
   globalDb = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+  await runPkgMigrations(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
   workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(

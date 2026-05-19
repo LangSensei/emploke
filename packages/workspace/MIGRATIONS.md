@@ -89,7 +89,7 @@ packages/workspace/src/migration/
 ├── coordinator.ts        ← MigrationCoordinator class
 ├── topo-sort.ts          ← Kahn's algorithm + cycle detection
 ├── errors.ts             ← typed error classes
-├── run-pkg-migrations.ts ← convenience runner (sync + async)
+├── run-pkg-migrations.ts ← convenience async runner
 └── index.ts              ← public exports
 
 packages/<pkg>/src/migrations/
@@ -166,7 +166,7 @@ const TASK_PKG_SCHEMA_VERSION = 4; // was 3
 ### Step 4: write a regression test
 
 Land a test in `packages/<pkg>/test/migration/` that seeds a v(N) DB
-shape, runs `runPkgMigrationsSync(db, [{ pkg, migrations: <PKG>_MIGRATIONS }])`,
+shape, runs `await runPkgMigrations(db, [{ pkg, migrations: <PKG>_MIGRATIONS }])`,
 and asserts the post-migration state. See
 `packages/task/test/migration/task-v2-to-v3-via-coordinator.test.ts`
 for the template.
@@ -197,8 +197,8 @@ tables:
    call in `packages/server/src/workspace-context.ts` (for
    workspace.db-resident pkgs) or `packages/server/src/index.ts`
    (for global.db-resident pkgs).
-6. Update test fixtures to call `runPkgMigrationsSync` before
-   constructing the repository.
+6. Update test fixtures to `await runPkgMigrations(db, [{ pkg, migrations: <PKG>_MIGRATIONS }])`
+   before constructing the repository.
 
 ## Conventions
 
@@ -256,10 +256,11 @@ archive, `.ceo/decisions.log`); don't relitigate without a new ADR.
 ## Test helpers
 
 - `runPkgMigrations(db, [{pkg, migrations}, …])` — async runner.
-  Production code uses this.
-- `runPkgMigrationsSync(db, [{pkg, migrations}, …])` — sync
-  runner for test fixtures whose migrations have no async hooks.
-  Throws if any migration declares a `backfill` / `verify` hook —
-  use the async runner there instead.
+  Production code uses this; test fixtures call it from
+  `beforeEach(async () => { await runPkgMigrations(…) })`. There is
+  no sync variant: every pkg's migrations participate in the same
+  framework, and as of #122 some migrations declare async backfill
+  hooks, so a sync runner cannot satisfy the full surface. See #133
+  for the consolidation rationale.
 
-Both helpers are exported from `@emploke/workspace`.
+Exported from `@emploke/workspace`.
