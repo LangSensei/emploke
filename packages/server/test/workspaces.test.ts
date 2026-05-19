@@ -44,7 +44,7 @@ async function makeApp() {
   );
   const cache = new WorkspaceContextCache({ runtimeRegistry, workspaces: manager });
   openCaches.push(cache);
-  // The default workspace parent is per-test-scratch so omitted-workdir
+  // The default workspace parent is per-test-scratch so omitted-workspaceDir
   // requests land somewhere isolated and get cleaned up by afterEach.
   const defaultWorkspaceParent = path.join(scratch, "default-workspaces");
   return {
@@ -94,12 +94,12 @@ describe("workspacesRoutes — POST /", () => {
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workdir: wsDir, name: "Workspace One" }),
+      body: JSON.stringify({ workspaceDir: wsDir, name: "Workspace One" }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; name: string; workdir: string };
+    const body = (await res.json()) as { id: string; name: string; workspaceDir: string };
     expect(body.name).toBe("Workspace One");
-    expect(body.workdir).toBe(path.resolve(wsDir));
+    expect(body.workspaceDir).toBe(path.resolve(wsDir));
     expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(await manager.read(body.id)).not.toBeNull();
   });
@@ -109,12 +109,12 @@ describe("workspacesRoutes — POST /", () => {
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workdir: path.join(scratch, "ws2") }),
+      body: JSON.stringify({ workspaceDir: path.join(scratch, "ws2") }),
     });
     expect(res.status).toBe(400);
   });
 
-  it("auto-generates a UUID-named workdir under defaultWorkspaceParent when workdir is omitted", async () => {
+  it("auto-generates a UUID-named workspaceDir under defaultWorkspaceParent when omitted", async () => {
     const { app, defaultWorkspaceParent } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
@@ -122,35 +122,35 @@ describe("workspacesRoutes — POST /", () => {
       body: JSON.stringify({ name: "no-dir" }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; name: string; workdir: string };
+    const body = (await res.json()) as { id: string; name: string; workspaceDir: string };
     expect(body.name).toBe("no-dir");
-    // The auto-generated workdir lives under the parent we configured;
-    // its basename matches the workspace's UUID — tying the registry id
-    // to the on-disk dir name keeps "which folder belongs to which
-    // workspace?" answerable from the path alone.
+    // The auto-generated workspaceDir lives under the parent we
+    // configured; its basename matches the workspace's UUID — tying the
+    // registry id to the on-disk dir name keeps "which folder belongs
+    // to which workspace?" answerable from the path alone.
     const expectedPrefix = path.resolve(defaultWorkspaceParent) + path.sep;
-    expect(body.workdir.startsWith(expectedPrefix)).toBe(true);
-    expect(path.basename(body.workdir)).toBe(body.id);
+    expect(body.workspaceDir.startsWith(expectedPrefix)).toBe(true);
+    expect(path.basename(body.workspaceDir)).toBe(body.id);
   });
 
-  it("rejects empty-string workdir (use omission to pick the default)", async () => {
+  it("rejects empty-string workspaceDir (use omission to pick the default)", async () => {
     const { app } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "blank-dir", workdir: "   " }),
+      body: JSON.stringify({ name: "blank-dir", workspaceDir: "   " }),
     });
     expect(res.status).toBe(400);
   });
 
-  it("returns 409 on duplicate workdir", async () => {
+  it("returns 409 on duplicate workspaceDir", async () => {
     const { app } = await makeApp();
     const wsDir = path.join(scratch, "ws-dup");
     const post = async () =>
       app.request("/", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workdir: wsDir, name: "Dup" }),
+        body: JSON.stringify({ workspaceDir: wsDir, name: "Dup" }),
       });
     expect((await post()).status).toBe(201);
     expect((await post()).status).toBe(409);
@@ -161,7 +161,7 @@ describe("workspacesRoutes — POST /", () => {
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workdir: path.join(scratch, "ws-empty"), name: "" }),
+      body: JSON.stringify({ workspaceDir: path.join(scratch, "ws-empty"), name: "" }),
     });
     expect(res.status).toBe(400);
   });
@@ -171,19 +171,45 @@ describe("workspacesRoutes — POST /", () => {
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workdir: path.join(scratch, "ws-unicode"), name: "工作区 1" }),
+      body: JSON.stringify({ workspaceDir: path.join(scratch, "ws-unicode"), name: "工作区 1" }),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { name: string };
     expect(body.name).toBe("工作区 1");
+  });
+
+  it("silently drops the legacy `workdir` + `defaults` fields (wire break, issue #121)", async () => {
+    // Pre-v2 callers used `workdir` and `defaults` on the create body.
+    // Both are gone in v2; the server doesn't 400, it just ignores
+    // them. The fresh workspace ends up with an auto-allocated
+    // workspaceDir because the new field is absent.
+    const { app, defaultWorkspaceParent } = await makeApp();
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "legacy-shape",
+        workdir: path.join(scratch, "would-have-been-here"),
+        defaults: { runtime: "gemini" },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(
+      (body as { workspaceDir: string }).workspaceDir.startsWith(
+        path.resolve(defaultWorkspaceParent) + path.sep,
+      ),
+    ).toBe(true);
+    expect(body.defaults).toBeUndefined();
+    expect(body.workdir).toBeUndefined();
   });
 });
 
 describe("workspacesRoutes — list / get / current / delete", () => {
   it("GET / lists registered workspaces", async () => {
     const { app, manager } = await makeApp();
-    await manager.init({ name: "A", workdir: path.join(scratch, "a") });
-    await manager.init({ name: "B", workdir: path.join(scratch, "b") });
+    await manager.init({ name: "A", workspaceDir: path.join(scratch, "a") });
+    await manager.init({ name: "B", workspaceDir: path.join(scratch, "b") });
     const res = await app.request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { name: string }[];
@@ -192,7 +218,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
 
   it("GET /:id returns the workspace", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Hello", workdir: path.join(scratch, "h") });
+    const ws = await manager.init({ name: "Hello", workspaceDir: path.join(scratch, "h") });
     const res = await app.request(`/${ws.id}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string; name: string };
@@ -208,7 +234,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
 
   it("PUT /current sets the current workspace", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Cur", workdir: path.join(scratch, "cur") });
+    const ws = await manager.init({ name: "Cur", workspaceDir: path.join(scratch, "cur") });
     const res = await app.request("/current", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -220,33 +246,33 @@ describe("workspacesRoutes — list / get / current / delete", () => {
 
   it("DELETE /:id default removes only metadata; user files preserved", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Del", workdir: path.join(scratch, "del") });
+    const ws = await manager.init({ name: "Del", workspaceDir: path.join(scratch, "del") });
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "user-file.txt"), "user", "utf8");
     const res = await app.request(`/${ws.id}`, { method: "DELETE" });
     expect(res.status).toBe(204);
     expect(await manager.read(ws.id)).toBeNull();
-    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user");
+    expect(await fs.readFile(path.join(ws.workspaceDir, "user-file.txt"), "utf8")).toBe("user");
   });
 
   it("DELETE /:id?purge=1 also removes emploke-owned subdirs", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Purge", workdir: path.join(scratch, "purge") });
+    const ws = await manager.init({ name: "Purge", workspaceDir: path.join(scratch, "purge") });
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user", "utf8");
-    await fs.writeFile(path.join(ws.workdir, "sessions", "drop.txt"), "agent", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "user-file.txt"), "user", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "sessions", "drop.txt"), "agent", "utf8");
 
     const res = await app.request(`/${ws.id}?purge=1`, { method: "DELETE" });
     expect(res.status).toBe(204);
-    await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
-    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user");
+    await expect(fs.stat(path.join(ws.workspaceDir, "sessions"))).rejects.toThrow();
+    expect(await fs.readFile(path.join(ws.workspaceDir, "user-file.txt"), "utf8")).toBe("user");
   });
 });
 
 describe("workspacesRoutes — PATCH /:id", () => {
   it("renames the display name", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Old", workdir: path.join(scratch, "x") });
+    const ws = await manager.init({ name: "Old", workspaceDir: path.join(scratch, "x") });
     const res = await app.request(`/${ws.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -263,7 +289,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
 
   it("returns 400 when no patchable fields are present", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "X", workdir: path.join(scratch, "y") });
+    const ws = await manager.init({ name: "X", workspaceDir: path.join(scratch, "y") });
     const res = await app.request(`/${ws.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -274,7 +300,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
 
   it("returns 400 on empty display name", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "X", workdir: path.join(scratch, "z") });
+    const ws = await manager.init({ name: "X", workspaceDir: path.join(scratch, "z") });
     const res = await app.request(`/${ws.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -301,14 +327,14 @@ describe("workspacesRoutes — PATCH /:id", () => {
 describe("workspacesRoutes — POST /:id/reload", () => {
   it("returns 204 on cold cache (no entry yet)", async () => {
     const { app, manager } = await makeApp();
-    const ws = await manager.init({ name: "Cold", workdir: path.join(scratch, "cold") });
+    const ws = await manager.init({ name: "Cold", workspaceDir: path.join(scratch, "cold") });
     const res = await app.request(`/${ws.id}/reload`, { method: "POST" });
     expect(res.status).toBe(204);
   });
 
   it("returns 204 and rebuilds the cached context after a warm hit", async () => {
     const { app, manager, cache } = await makeApp();
-    const ws = await manager.init({ name: "Warm", workdir: path.join(scratch, "warm") });
+    const ws = await manager.init({ name: "Warm", workspaceDir: path.join(scratch, "warm") });
     const before = await cache.get(ws.id);
     expect(before).not.toBeNull();
     const res = await app.request(`/${ws.id}/reload`, { method: "POST" });
@@ -331,7 +357,7 @@ describe("workspacesRoutes — POST /:id/reload", () => {
 
   it("returns 409 with WorkspaceHasLiveTasksError when tasks are live", async () => {
     const { app, manager, cache } = await makeApp();
-    const ws = await manager.init({ name: "Live", workdir: path.join(scratch, "live") });
+    const ws = await manager.init({ name: "Live", workspaceDir: path.join(scratch, "live") });
     const ctx = await cache.get(ws.id);
     expect(ctx).not.toBeNull();
     // Spawning a real subprocess just to flip liveCount > 0 would make
@@ -390,7 +416,7 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     const res = await root.request("/", {
       method: "POST",
       headers: { "content-type": "application/json", "x-request-id": "req-create" },
-      body: JSON.stringify({ workdir: path.join(scratch, "obs-create"), name: "Obs Create" }),
+      body: JSON.stringify({ workspaceDir: path.join(scratch, "obs-create"), name: "Obs Create" }),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
@@ -404,7 +430,7 @@ describe("workspacesRoutes — observability (issue #58)", () => {
 
   it("DELETE /:id emits a 'workspace deleted' info line", async () => {
     const { root, cap, manager } = await makeWiredApp();
-    const ws = await manager.init({ name: "Doomed", workdir: path.join(scratch, "doomed") });
+    const ws = await manager.init({ name: "Doomed", workspaceDir: path.join(scratch, "doomed") });
     cap.entries.length = 0;
 
     const res = await root.request(`/${ws.id}`, { method: "DELETE" });

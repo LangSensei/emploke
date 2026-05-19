@@ -4,45 +4,43 @@ import { type Logger, silentLogger } from "@emploke/logger";
 import {
   RegistryNotBootstrappedError,
   RegistrySchemaMismatchError,
-  WorkspaceCorruptedError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "../errors.js";
 import { isValidWorkspaceId } from "../names.js";
-import { Workspace, type WorkspaceDefaults } from "../workspace-entity.js";
+import { Workspace } from "../workspace-entity.js";
 import type { WorkspaceRepository } from "./repository.js";
 
-const WORKSPACE_PKG_SCHEMA_VERSION = 1;
+const WORKSPACE_PKG_SCHEMA_VERSION = 2;
 
 /** Key in `global_state` holding the current-workspace pointer. */
 const CURRENT_WORKSPACE_KEY = "current_workspace_id";
 
 interface WorkspaceRow {
   id: string;
-  workdir: string;
+  workspace_dir: string;
   name: string;
   created_at: string;
   registered_at: string;
   last_opened_at: string | null;
-  defaults_json: string;
 }
 
 /**
  * SQLite-backed `WorkspaceRepository`. Every workspace's complete
- * record — id, workdir, name, createdAt, defaults, plus
- * registry-only timing fields — lives in a single `workspaces` row
- * inside `<EMPLOKE_HOME>/global.db`. There is no per-workspace
- * metadata file (no `workspace.json`); a workspace folder contains
- * only emploke's per-workspace `workspace.db` plus agent-owned files.
+ * record — id, `workspace_dir`, name, createdAt, plus registry-only
+ * timing fields — lives in a single `workspaces` row inside
+ * `<EMPLOKE_HOME>/global.db`. There is no per-workspace metadata file
+ * (no `workspace.json`); a workspace folder contains only emploke's
+ * per-workspace `workspace.db` plus agent-owned files.
  *
  * The earlier design split "registry" (`global.db`) from "metadata"
- * (`<workdir>/workspace.json`) under the assumption that a workspace
- * folder should be self-describing if copied to another machine.
- * In practice emploke is a server-centric tool — workspace folders
- * are agent workdirs, not portable bundles — and the split cost
- * `list()` an N+1 file-read fan-out for every dashboard refresh.
+ * (`<workspaceDir>/workspace.json`) under the assumption that a
+ * workspace folder should be self-describing if copied to another
+ * machine. In practice emploke is a server-centric tool — workspace
+ * folders are agent workdirs, not portable bundles — and the split
+ * cost `list()` an N+1 file-read fan-out for every dashboard refresh.
  * Consolidating into a single SQLite row makes `list()` one indexed
  * scan and removes the JSON sidecar entirely.
  */
@@ -78,7 +76,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
   async list(): Promise<Workspace[]> {
     const rows = this.db
       .prepare(
-        `SELECT id, workdir, name, created_at, registered_at, last_opened_at, defaults_json
+        `SELECT id, workspace_dir, name, created_at, registered_at, last_opened_at
          FROM workspaces ORDER BY registered_at`,
       )
       .all() as unknown as WorkspaceRow[];
@@ -90,7 +88,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
         this.logger.warn(
           {
             workspaceId: row.id,
-            workdir: row.workdir,
+            workspaceDir: row.workspace_dir,
             reason: err instanceof Error ? err.message : String(err),
           },
           "workspaces: skipping corrupted row",
@@ -104,7 +102,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     if (!isValidWorkspaceId(id)) return null;
     const row = this.db
       .prepare(
-        `SELECT id, workdir, name, created_at, registered_at, last_opened_at, defaults_json
+        `SELECT id, workspace_dir, name, created_at, registered_at, last_opened_at
          FROM workspaces WHERE id = ?`,
       )
       .get(id) as WorkspaceRow | undefined;
@@ -116,20 +114,19 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     if (!isValidWorkspaceId(workspace.id)) {
       throw new WorkspaceIdInvalidError(workspace.id);
     }
-    const resolvedWorkdir = path.resolve(workspace.workdir);
-    const defaultsJson = workspace.defaults ? JSON.stringify(workspace.defaults) : "{}";
+    const resolvedWorkspaceDir = path.resolve(workspace.workspaceDir);
 
     this.runInTransaction(() => {
       // Path-conflict check stays for defence in depth — although
       // `WorkspaceManager.update` only flows through `withMetadata`
-      // (which preserves workdir), the public repository contract
-      // accepts an arbitrary `Workspace`, so a buggy caller could
-      // still pass a colliding workdir.
+      // (which preserves workspaceDir), the public repository
+      // contract accepts an arbitrary `Workspace`, so a buggy caller
+      // could still pass a colliding workspaceDir.
       const conflict = this.db
-        .prepare("SELECT id FROM workspaces WHERE workdir = ? AND id != ?")
-        .get(resolvedWorkdir, workspace.id) as { id: string } | undefined;
+        .prepare("SELECT id FROM workspaces WHERE workspace_dir = ? AND id != ?")
+        .get(resolvedWorkspaceDir, workspace.id) as { id: string } | undefined;
       if (conflict) {
-        throw new WorkspacePathConflictError(resolvedWorkdir, conflict.id);
+        throw new WorkspacePathConflictError(resolvedWorkspaceDir, conflict.id);
       }
       // Strict UPDATE — no upsert. If a concurrent `delete(id)` landed
       // between the manager's read() and save() calls, the row no
@@ -141,10 +138,10 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
       const result = this.db
         .prepare(
           `UPDATE workspaces
-              SET workdir = ?, name = ?, defaults_json = ?
+              SET workspace_dir = ?, name = ?
               WHERE id = ?`,
         )
-        .run(resolvedWorkdir, workspace.name, defaultsJson, workspace.id);
+        .run(resolvedWorkspaceDir, workspace.name, workspace.id);
       if (result.changes === 0) {
         throw new WorkspaceNotRegisteredError(workspace.id);
       }
@@ -155,8 +152,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     if (!isValidWorkspaceId(workspace.id)) {
       throw new WorkspaceIdInvalidError(workspace.id);
     }
-    const resolvedWorkdir = path.resolve(workspace.workdir);
-    const defaultsJson = workspace.defaults ? JSON.stringify(workspace.defaults) : "{}";
+    const resolvedWorkspaceDir = path.resolve(workspace.workspaceDir);
 
     this.runInTransaction(() => {
       const idConflict = this.db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(workspace.id);
@@ -164,23 +160,22 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
         throw new WorkspaceIdConflictError(workspace.id);
       }
       const pathConflict = this.db
-        .prepare("SELECT id FROM workspaces WHERE workdir = ?")
-        .get(resolvedWorkdir) as { id: string } | undefined;
+        .prepare("SELECT id FROM workspaces WHERE workspace_dir = ?")
+        .get(resolvedWorkspaceDir) as { id: string } | undefined;
       if (pathConflict) {
-        throw new WorkspacePathConflictError(resolvedWorkdir, pathConflict.id);
+        throw new WorkspacePathConflictError(resolvedWorkspaceDir, pathConflict.id);
       }
       this.db
         .prepare(
-          `INSERT INTO workspaces (id, workdir, name, created_at, registered_at, last_opened_at, defaults_json)
-           VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+          `INSERT INTO workspaces (id, workspace_dir, name, created_at, registered_at, last_opened_at)
+           VALUES (?, ?, ?, ?, ?, NULL)`,
         )
         .run(
           workspace.id,
-          resolvedWorkdir,
+          resolvedWorkspaceDir,
           workspace.name,
           workspace.createdAt,
           new Date().toISOString(),
-          defaultsJson,
         );
     });
   }
@@ -296,38 +291,10 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
 }
 
 function rowToWorkspace(row: WorkspaceRow): Workspace {
-  let defaults: WorkspaceDefaults | undefined;
-  if (row.defaults_json && row.defaults_json !== "{}") {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.defaults_json);
-    } catch (err) {
-      throw new WorkspaceCorruptedError(
-        row.workdir,
-        `defaults_json is not valid JSON: ${(err as Error).message}`,
-      );
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new WorkspaceCorruptedError(row.workdir, "defaults_json must decode to an object");
-    }
-    const d = parsed as Record<string, unknown>;
-    if (d.runtime !== undefined && typeof d.runtime !== "string") {
-      throw new WorkspaceCorruptedError(row.workdir, "defaults.runtime must be a string");
-    }
-    if (d.agent !== undefined && typeof d.agent !== "string") {
-      throw new WorkspaceCorruptedError(row.workdir, "defaults.agent must be a string");
-    }
-    defaults = {
-      ...(typeof d.runtime === "string" ? { runtime: d.runtime } : {}),
-      ...(typeof d.agent === "string" ? { agent: d.agent } : {}),
-    };
-  }
   return Workspace.fromStored({
-    dir: row.workdir,
     id: row.id,
-    workdir: row.workdir,
+    workspaceDir: row.workspace_dir,
     name: row.name,
     createdAt: row.created_at,
-    ...(defaults ? { defaults } : {}),
   });
 }

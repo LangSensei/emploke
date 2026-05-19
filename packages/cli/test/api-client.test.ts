@@ -117,7 +117,7 @@ describe("ApiClient", () => {
       {
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify({ id: "w1", name: "Sandbox", createdAt: "t", workdir: "/x" }),
+        body: JSON.stringify({ id: "w1", name: "Sandbox", createdAt: "t", workspaceDir: "/x" }),
       },
     ]);
     const ws = await client.call("workspaces.create", {

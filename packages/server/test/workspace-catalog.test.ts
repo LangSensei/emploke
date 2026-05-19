@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 async function ensureWorkspace(name: string): Promise<Workspace> {
-  return workspaces.init({ name, workdir: path.join(scratch, name) });
+  return workspaces.init({ name, workspaceDir: path.join(scratch, name) });
 }
 
 function mountApp() {
@@ -105,8 +105,8 @@ describe("workspace-scoped catalog routes", () => {
     // as files on disk — there is no `<workspace>/catalog/` subdir.
     // Distinct CatalogManager instances are sufficient evidence of
     // isolation since each is bound to a different per-workspace db.
-    expect(ctxA.workspace.workdir).toBe(a.workdir);
-    expect(ctxB.workspace.workdir).toBe(b.workdir);
+    expect(ctxA.workspace.workspaceDir).toBe(a.workspaceDir);
+    expect(ctxB.workspace.workspaceDir).toBe(b.workspaceDir);
   });
 
   it("memoises catalog per workspace", async () => {

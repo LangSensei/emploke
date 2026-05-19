@@ -196,8 +196,8 @@ function LandingPage() {
                       <span className="landing__card-name">{display}</span>
                       {isRecent && <span className="landing__card-badge">Recent</span>}
                     </div>
-                    <div className="landing__card-path" title={ws.workdir}>
-                      {ws.workdir}
+                    <div className="landing__card-path" title={ws.workspaceDir}>
+                      {ws.workspaceDir}
                     </div>
                     <div className="landing__card-footer">
                       <span className="landing__card-meta">
@@ -292,7 +292,7 @@ function AddWorkspaceModal({ open, onClose, onCreated }: AddWorkspaceModalProps)
     try {
       const created = await addWorkspace({
         name: trimmedName,
-        ...(trimmedPath !== "" ? { workdir: trimmedPath } : {}),
+        ...(trimmedPath !== "" ? { workspaceDir: trimmedPath } : {}),
       });
       onCreated(created.id);
     } catch (err) {
@@ -400,7 +400,7 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
           Remove <code>{display}</code> from emploke?
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          Path: <code>{target.workdir}</code>
+          Path: <code>{target.workspaceDir}</code>
         </p>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           The workspace files on disk are kept untouched. Only emploke's metadata (the registry

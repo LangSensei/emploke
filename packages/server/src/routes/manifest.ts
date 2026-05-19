@@ -116,13 +116,17 @@ export type RouteRes<R> = R extends RouteSpec<RouteRequest, infer Res> ? Res : n
  * Wire shape of a workspace as returned by the workspaces routes. Subset
  * of `@emploke/workspace.Workspace` — only the fields the dashboard /
  * CLI need; internal book-keeping fields stay private to the manager.
+ *
+ * `workspaceDir` (was `workdir` pre-v2) is the workspace's root
+ * directory; `workdir` is reserved for derived per-entity working
+ * directories (see `WorkspaceUpdatePatch` / `Session.workdir` /
+ * `Task.workdir`).
  */
 export interface WorkspaceSummary {
   readonly id: string;
   readonly name: string;
   readonly createdAt: string;
-  readonly workdir: string;
-  readonly defaults?: Record<string, unknown>;
+  readonly workspaceDir: string;
 }
 
 /** POST /api/workspaces body. */
@@ -130,9 +134,7 @@ export interface WorkspaceCreateBody {
   /** Display name (required). */
   readonly name: string;
   /** Absolute filesystem path. When omitted, server mints `<EMPLOKE_HOME>/workspaces/<uuid>`. */
-  readonly workdir?: string;
-  /** Default per-workspace overrides (e.g. preferred runtime). */
-  readonly defaults?: Record<string, unknown>;
+  readonly workspaceDir?: string;
 }
 
 /** PUT /api/workspaces/current body. */

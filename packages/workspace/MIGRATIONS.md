@@ -21,7 +21,7 @@ schema_meta
 ┌──────────────────┬─────────┐
 │ pkg              │ version │
 ├──────────────────┼─────────┤
-│ workspace        │ 1       │   (global.db)
+│ workspace        │ 2       │   (global.db)
 │ task             │ 3       │   (workspace.db)
 │ session          │ 1       │   (workspace.db)
 │ catalog_agent    │ 1       │   (workspace.db)

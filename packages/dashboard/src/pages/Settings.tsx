@@ -83,7 +83,7 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
         <dd>
           {currentEntry ? (
             <code>
-              {currentEntry.workdir}
+              {currentEntry.workspaceDir}
               {config?.pathSeparator ?? "/"}catalog
             </code>
           ) : (
@@ -119,7 +119,7 @@ export function SettingsPage({ serverUrl, config, currentWorkspaceId, workspaces
 
         <dt>Workspace path</dt>
         <dd>
-          <code>{fmt(currentEntry?.workdir)}</code>
+          <code>{fmt(currentEntry?.workspaceDir)}</code>
         </dd>
 
         <dt>Registered workspaces</dt>
