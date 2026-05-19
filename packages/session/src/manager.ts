@@ -111,17 +111,19 @@ export class SessionManager {
         workspaceDir: this.workspaceDir,
       });
       const createdAt = this.now().toISOString();
+      // v2 (issue #120): agent is persisted as a first-class column on
+      // the session row. The provisioner has just written AGENTS.md
+      // with the canonical scope/name pair (potentially differing
+      // from `agentName` if the user passed an alias); read it back so
+      // the persisted row matches what `list()` would surface.
+      const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
       const state = Session.create({
         runtime: runtime.kind,
+        agent: canonicalAgent,
         createdAt,
         runtimeSessionId,
       });
       await this.repository.save(id, state);
-      // Return the canonical fqn read back from the provisioned workdir,
-      // not the caller-supplied input. They MAY differ — list() always
-      // reports the on-disk fqn, and the two should agree so the UI
-      // can match newly-created sessions to filter selections.
-      const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
       return {
         id,
         workdir,
@@ -142,8 +144,13 @@ export class SessionManager {
   // ─── list ────────────────────────────────────────────────
 
   async list(opts: ListSessionOpts = {}): Promise<SessionView[]> {
-    const repoOpts: { createdSince?: string } = {};
+    // v2 (issue #120): both filters push down to the SQLite layer.
+    // `agent` is now a first-class indexed column on `sessions`, so
+    // the manager no longer scans every workdir's AGENTS.md just to
+    // discard the non-matching rows.
+    const repoOpts: { createdSince?: string; agent?: string } = {};
     if (opts.createdSince !== undefined) repoOpts.createdSince = opts.createdSince;
+    if (opts.agent !== undefined) repoOpts.agent = opts.agent;
     let entries: { id: string; state: Session }[];
     try {
       entries = await this.repository.list(repoOpts);
@@ -164,7 +171,6 @@ export class SessionManager {
     const survivors: SessionView[] = [];
     for (const draft of drafts) {
       if (draft === null) continue;
-      if (opts.agent !== undefined && draft.agent !== opts.agent) continue;
       survivors.push(draft);
     }
 
@@ -364,6 +370,77 @@ export class SessionManager {
     return out;
   }
 
+  // ─── backfillAgentColumn ─────────────────────────────────
+
+  /**
+   * v2 migration follow-up (issue #120). The SQL migration adds the
+   * `agent` column with a `''` default for existing v1 rows; this
+   * method finds those rows and resolves the canonical FQN by reading
+   * `<sessionsDir>/<id>/AGENTS.md` (the same helper `create()` uses
+   * for the read-back-after-provision check).
+   *
+   * Rows whose AGENTS.md is missing / unreadable / malformed stay at
+   * `''` and surface a one-line structured warning so an operator can
+   * spot the corruption. Such rows are then dropped from `list()` /
+   * `get()` results by `Session.fromStored`'s non-empty-agent check —
+   * matching the pre-v2 behaviour where the same condition caused
+   * the row to be silently filtered out.
+   *
+   * Idempotent: a second call simply finds no `''` rows and exits.
+   * The `WorkspaceContextCache` invokes this once on first construction
+   * of each manager, before the context is exposed to route handlers,
+   * so the first `list()` call already sees the populated column.
+   * No race because the call is awaited before the context is cached.
+   */
+  async backfillAgentColumn(): Promise<void> {
+    let ids: readonly string[];
+    try {
+      ids = await this.repository.findEmptyAgentIds();
+    } catch (err) {
+      this.logger.warn(
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "sessions: backfillAgentColumn lookup failed",
+      );
+      return;
+    }
+    for (const id of ids) {
+      const workdir = safeJoinUnderRoot(this.sessionsDir, id);
+      let agent: string | null;
+      try {
+        agent = await readAgentName(workdir);
+      } catch (err) {
+        this.logger.warn(
+          {
+            sessionId: id,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+          "sessions: backfillAgentColumn readAgentName threw",
+        );
+        continue;
+      }
+      if (agent === null) {
+        this.logger.warn(
+          { sessionId: id, reason: "AGENTS.md missing or unreadable" },
+          "sessions: backfillAgentColumn left row at empty agent",
+        );
+        continue;
+      }
+      try {
+        await this.repository.setAgent(id, agent);
+      } catch (err) {
+        this.logger.warn(
+          {
+            sessionId: id,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+          "sessions: backfillAgentColumn setAgent failed",
+        );
+      }
+    }
+  }
+
   // ─── close ───────────────────────────────────────────────
 
   /**
@@ -391,12 +468,12 @@ export class SessionManager {
   private async draftFromState(id: string, state: Session): Promise<SessionView | null> {
     const workdir = safeJoinUnderRoot(this.sessionsDir, id);
 
-    const agent = await readAgentName(workdir);
-    if (agent === null) {
-      this.logger.warn({ sessionId: id }, "sessions: skipping dir without readable AGENTS.md");
-      return null;
-    }
-
+    // v2 (issue #120): the agent FQN is persisted on the row. We no
+    // longer parse AGENTS.md on every list/get — that scan was the
+    // motivation for the v2 refactor. The backfill path
+    // (`backfillAgentColumn`) still reads AGENTS.md once on first
+    // load, but the steady-state hot path never touches the FS for
+    // the agent field.
     try {
       this.runtimeRegistry.get(state.runtime);
     } catch (err) {
@@ -414,7 +491,7 @@ export class SessionManager {
     return {
       id,
       workdir,
-      agent,
+      agent: state.agent,
       runtime: state.runtime,
       runtimeSessionId: state.runtimeSessionId,
       createdAt: state.createdAt,

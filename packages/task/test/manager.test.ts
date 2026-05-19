@@ -659,11 +659,13 @@ describe("exit watcher", () => {
 
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
-    expect(after.status).toBe("success");
-    expect(after.result?.output).toBe("");
+    expect(after.status).toBe("succeeded");
+    expect(after.success?.output).toBe("");
+    // v4 (issue #119) stopped mirroring exitCode/exitSignal into
+    // metadata; the success path has no per-exit telemetry to record.
     const meta = readTaskRuntimeMetadata(after);
-    expect(meta.exitCode).toBe(0);
-    expect(meta.exitSignal).toBeNull();
+    expect(meta.exitCode).toBeUndefined();
+    expect(meta.exitSignal).toBeUndefined();
   });
 
   it("exit code != 0 → status=failure, error mentions code", async () => {
@@ -673,13 +675,13 @@ describe("exit watcher", () => {
 
     void rt.handles[0].exit({ code: 17, signal: null });
     const after = await awaitTerminal(m, t.id);
-    expect(after.status).toBe("failure");
+    expect(after.status).toBe("failed");
     expect(after.failure?.kind).toBe("exited");
     expect(after.failure?.message).toMatch(/exited with code 17/);
     if (after.failure?.kind === "exited") {
       expect(after.failure.exitCode).toBe(17);
     }
-    expect(readTaskRuntimeMetadata(after).exitCode).toBe(17);
+    expect(readTaskRuntimeMetadata(after).exitCode).toBeUndefined();
   });
 
   it("exit by signal → status=failure, error mentions signal", async () => {
@@ -689,13 +691,13 @@ describe("exit watcher", () => {
 
     void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
     const after = await awaitTerminal(m, t.id);
-    expect(after.status).toBe("failure");
+    expect(after.status).toBe("failed");
     expect(after.failure?.kind).toBe("signal");
     expect(after.failure?.message).toMatch(/SIGTERM/);
     if (after.failure?.kind === "signal") {
       expect(after.failure.signal).toBe("SIGTERM");
     }
-    expect(readTaskRuntimeMetadata(after).exitSignal).toBe("SIGTERM");
+    expect(readTaskRuntimeMetadata(after).exitSignal).toBeUndefined();
   });
 });
 
@@ -809,18 +811,19 @@ describe("get / list", () => {
     ).db;
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         "20260101-deadbeef",
         "demo",
         "copilot",
-        "bogus_status",
+        "standalone",
+        "running",
         "i",
         null,
         "2026-01-01T00:00:00.000Z",
-        "{}",
+        "2026-01-01T00:00:00.000Z",
+        "not-valid-json{",
       );
 
     const all = await m.list();
@@ -846,10 +849,20 @@ describe("get / list", () => {
     const id = "20260101-deadbeef";
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
+      .run(
+        id,
+        "demo",
+        "copilot",
+        "standalone",
+        "running",
+        "i",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        "not-valid-json{",
+      );
     await expect(m.get(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -933,11 +946,11 @@ describe("get / list", () => {
       expect(onlyRunning).toHaveLength(1);
       expect(onlyRunning[0].brief).toBe("b");
 
-      const onlySuccess = await m.list({ statuses: ["success"] });
+      const onlySuccess = await m.list({ statuses: ["succeeded"] });
       expect(onlySuccess).toHaveLength(1);
       expect(onlySuccess[0].brief).toBe("a");
 
-      const both = await m.list({ statuses: ["running", "success"] });
+      const both = await m.list({ statuses: ["running", "succeeded"] });
       expect(both).toHaveLength(2);
     });
 
@@ -955,7 +968,7 @@ describe("get / list", () => {
       void rt.handles[2].exit({ code: 0, signal: null });
       await awaitTerminal(m, target.id);
 
-      const writersDone = await m.list({ agent: "writer", statuses: ["success"] });
+      const writersDone = await m.list({ agent: "writer", statuses: ["succeeded"] });
       expect(writersDone).toHaveLength(1);
       expect(writersDone[0].brief).toBe("w2");
     });
@@ -1019,10 +1032,20 @@ describe("delete (terminal-only post ADR-001)", () => {
     ).db;
     rawDb
       .prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, brief, details, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, "demo", "copilot", "bogus_status", "i", null, "2026-01-01T00:00:00.000Z", "{}");
+      .run(
+        id,
+        "demo",
+        "copilot",
+        "standalone",
+        "running",
+        "i",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        "not-valid-json{",
+      );
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -1092,8 +1115,8 @@ describe("shutdown", () => {
 
     const a1 = await m.get(t1.id);
     const a2 = await m.get(t2.id);
-    expect(a1?.status).toBe("failure");
-    expect(a2?.status).toBe("failure");
+    expect(a1?.status).toBe("failed");
+    expect(a2?.status).toBe("failed");
     expect(a1?.failure?.kind).toBe("shutdown");
     expect(a2?.failure?.kind).toBe("shutdown");
     expect(a1?.failure?.message).toBe("server shutdown");
@@ -1129,13 +1152,13 @@ describe("shutdown", () => {
     // does to other live tasks.
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
-    expect(after.status).toBe("success");
+    expect(after.status).toBe("succeeded");
 
     // Now shutdown is a no-op for this task (already terminal, dropped
     // from this.live by the watcher).
     await m.shutdown();
     const final = await m.get(t.id);
-    expect(final?.status).toBe("success");
+    expect(final?.status).toBe("succeeded");
     expect(final?.failure).toBeUndefined();
   });
 
@@ -1195,6 +1218,7 @@ describe("recoverOrphaned", () => {
       id,
       agent: "demo",
       brief: "do something",
+      origin: "standalone",
       status: "running",
       metadata: { runtime: "copilot" },
       createdAt: "2026-05-08T01:00:00.000Z",
@@ -1206,7 +1230,7 @@ describe("recoverOrphaned", () => {
     await m.recoverOrphaned();
 
     const after = await m.get(id);
-    expect(after?.status).toBe("failure");
+    expect(after?.status).toBe("failed");
     expect(after?.failure?.kind).toBe("orphan");
     expect(after?.failure?.message).toMatch(/orphaned/);
   });
@@ -1219,12 +1243,13 @@ describe("recoverOrphaned", () => {
       id,
       agent: "demo",
       brief: "did it",
-      status: "success",
+      origin: "standalone",
+      status: "succeeded",
       metadata: {},
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
       endedAt: "2026-05-08T01:00:02.000Z",
-      result: { output: "ok" },
+      success: { output: "ok" },
     });
     const { m, repo } = await makeManager();
     await repo.save(done);
@@ -1232,8 +1257,8 @@ describe("recoverOrphaned", () => {
     await m.recoverOrphaned();
 
     const after = await m.get(id);
-    expect(after?.status).toBe("success");
-    expect(after?.result?.output).toBe("ok");
+    expect(after?.status).toBe("succeeded");
+    expect(after?.success?.output).toBe("ok");
   });
 
   it("is a no-op when the tasks directory doesn't exist", async () => {

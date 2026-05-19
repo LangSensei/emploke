@@ -34,7 +34,7 @@ describe("TaskManager.cancel — already-terminal input", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(InvalidTransition);
-    expect((err as InvalidTransition).from).toBe("success");
+    expect((err as InvalidTransition).from).toBe("succeeded");
     expect((err as InvalidTransition).eventType).toBe("cancel");
   });
 
@@ -48,7 +48,7 @@ describe("TaskManager.cancel — already-terminal input", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(InvalidTransition);
-    expect((err as InvalidTransition).from).toBe("failure");
+    expect((err as InvalidTransition).from).toBe("failed");
   });
 
   it("throws InvalidTransition on a cancelled task (second cancel)", async () => {

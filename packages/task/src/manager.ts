@@ -32,6 +32,7 @@ import type {
   TaskCancellation,
   TaskFailure,
   TaskManagerConfig,
+  TaskOrigin,
 } from "./types.js";
 
 const DEFAULT_RUNTIME = "copilot";
@@ -265,6 +266,7 @@ export class TaskManager {
         agentName,
         brief: opts.brief,
         details: opts.details,
+        origin: opts.origin ?? "standalone",
         runtime,
         resolveResult,
       });
@@ -279,10 +281,11 @@ export class TaskManager {
     agentName: string;
     brief: string;
     details: string | undefined;
+    origin: TaskOrigin;
     runtime: Runtime;
     resolveResult: AgentResolveResult;
   }): Promise<Task> {
-    const { id, workdir, agentName, brief, details, runtime, resolveResult } = args;
+    const { id, workdir, agentName, brief, details, origin, runtime, resolveResult } = args;
     // Re-narrow `runtime.launchHeadless` for TypeScript. The caller
     // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
     // before reserving the workdir, so this guard is only here to
@@ -294,22 +297,23 @@ export class TaskManager {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
-    // 4. Persist the initial Task in `not_started`. If anything below
-    //    fails, we rollback the workdir entirely — pre-spawn failures
-    //    should not leave a ghost failure-status task on disk (per the
-    //    Task FSM, `fail` is only legal from `running`, so we'd have to
-    //    persist a status the kernel doesn't permit anyway).
+    // 4. Persist the initial Task. Status is `running` from create
+    //    time (v4 dropped the `not_started` placeholder — see TaskStatus).
+    //    If anything below fails, we roll back the workdir entirely;
+    //    pre-spawn failures should not leave a ghost row on disk.
     const createdAt = this.now().toISOString();
+    const initialMeta: Record<string, unknown> = {
+      workdir,
+      runtime: runtime.kind,
+    };
     const initial = Task.create({
       id,
       agent: agentName,
       brief,
       ...(details !== undefined ? { details } : {}),
+      origin,
       createdAt,
-      metadata: {
-        workdir,
-        runtime: runtime.kind,
-      },
+      metadata: initialMeta,
     });
     try {
       await this.persist(workdir, initial);
@@ -407,23 +411,23 @@ export class TaskManager {
       throw new ManagerShuttingDownError();
     }
 
-    // 6. Apply `start` and persist the running record. From this point
-    //    on, terminal status comes from the exit watcher; a write failure
-    //    here would leave us inconsistent (subprocess up, disk says
-    //    not_started), so we do NOT roll back — we surface the error to
-    //    the caller with the subprocess still live and the dir still
-    //    on disk. The orphan recovery path will mark it failed at the
-    //    next bootstrap if the server then restarts. In practice this
-    //    write is local fs to a dir we just created, so it does not fail.
-    const startMetaPatch: Record<string, unknown> = {};
+    // 6. Fold runtime-session id into metadata (the runtime supplies it
+    //    after spawn). Status is already `running` from create-time, so
+    //    there is no separate state transition here; we just refresh
+    //    the metadata bag and persist. A write failure here would leave
+    //    us inconsistent (subprocess up, disk lacks the runtimeSessionId
+    //    needed to find its event log), so we do NOT roll back — we
+    //    surface the error to the caller with the subprocess still live
+    //    and the row still on disk. The orphan recovery path will mark
+    //    it failed at the next bootstrap if the server then restarts.
+    let running: Task = initial;
     if (handle.runtimeSessionId !== undefined) {
-      startMetaPatch.runtimeSessionId = handle.runtimeSessionId;
+      running = initial.withMetadata({
+        ...initial.metadata,
+        runtimeSessionId: handle.runtimeSessionId,
+      });
+      await this.persist(workdir, running);
     }
-    const running = initial.start({
-      metadata: startMetaPatch,
-      now: this.now().toISOString(),
-    });
-    await this.persist(workdir, running);
 
     // 7. Wire post-spawn background work: watch for exit and persist
     //    the terminal status. The runtime owns its own per-task state
@@ -467,13 +471,11 @@ export class TaskManager {
         // resolve, never reject. Classify as `internal` so the failure
         // wire shape carries a typed kind operators can branch on.
         await this.applyTerminal(workdir, running, {
-          kind: "failure",
+          kind: "failed",
           failure: {
             kind: "internal",
             message: `exit watcher rejected: ${err instanceof Error ? err.message : String(err)}`,
           },
-          exitCode: null,
-          exitSignal: null,
         });
         this.live.delete(id);
         return;
@@ -633,7 +635,7 @@ export class TaskManager {
     // Streaming a terminal task is wasted work — the iterator would
     // immediately yield nothing and close. Force callers to use the
     // one-shot endpoint for that case.
-    if (task.status !== "running" && task.status !== "not_started") return null;
+    if (task.status !== "running") return null;
     const meta = readTaskRuntimeMetadata(task);
     if (typeof meta.runtime !== "string") return null;
     const runtimeSessionId = pickRuntimeSessionId(task.metadata);
@@ -702,8 +704,8 @@ export class TaskManager {
     const existing = await this.loadTask(id, workdir);
     if (existing === null) throw new TaskNotFoundError(id);
     if (
-      existing.status === "success" ||
-      existing.status === "failure" ||
+      existing.status === "succeeded" ||
+      existing.status === "failed" ||
       existing.status === "cancelled"
     ) {
       throw new InvalidTransition(existing.status, "cancel");
@@ -736,9 +738,9 @@ export class TaskManager {
     } else {
       // Orphan path: undetected by recoverOrphaned. Route through
       // applyTerminal with a synthesised decision so the persisted row
-      // shape matches the normal-path output (exitCode=null,
-      // exitSignal=null in metadata; cancellation kind/message in the
-      // entity payload).
+      // shape matches the normal-path output. v4 folded the orphan
+      // cancellation variant into `cascade`, since no caller branches
+      // on the orphan flavour specifically.
       this.logger.warn(
         { taskId: id },
         "tasks: cancelling row in running status with no live subprocess (orphan)",
@@ -746,11 +748,9 @@ export class TaskManager {
       await this.applyTerminal(workdir, existing, {
         kind: "cancelled",
         cancellation: {
-          kind: "orphan",
+          kind: "cascade",
           message: "cancelled (recovered from inconsistent state)",
         },
-        exitCode: null,
-        exitSignal: null,
       });
     }
 
@@ -796,8 +796,8 @@ export class TaskManager {
       throw new TaskNotFoundError(id);
     }
     if (
-      existing.status !== "success" &&
-      existing.status !== "failure" &&
+      existing.status !== "succeeded" &&
+      existing.status !== "failed" &&
       existing.status !== "cancelled"
     ) {
       // ADR-001 §3.5: delete requires terminal status. Cancel the
@@ -1108,40 +1108,44 @@ export class TaskManager {
     await this.repository.save(task);
   }
 
-  /** Apply the terminal event to a running task and persist. */
+  /**
+   * Apply the terminal event to a running task and persist. v4
+   * (issue #119) dropped the convention of mirroring `exitCode` /
+   * `exitSignal` into the open-shape `metadata` bag — those values
+   * now live exclusively inside `failure.exitCode` / `failure.signal`
+   * when relevant (`exited` / `signal` variants). Consumers that
+   * previously read `metadata.exitCode` should branch on `failure.kind`
+   * and read the typed field instead.
+   */
   private async applyTerminal(
     workdir: string,
     running: Task,
     decision: TerminalDecision,
   ): Promise<void> {
-    const metaPatch: Record<string, unknown> = {
-      exitCode: decision.exitCode,
-      exitSignal: decision.exitSignal,
-    };
     let next: Task;
     try {
       switch (decision.kind) {
-        case "success":
+        case "succeeded":
           // `output: ""` is intentional under the runtime-driven completion
           // model: the kernel records that the agent finished cleanly, but
           // does not synthesise a "what did it produce" string. The agent's
-          // real artifacts live on disk under `<workdir>/` and the runtime's
-          // event stream sits at `<workdir>/session/`. See the JSDoc on
-          // `TaskResult` in ./types.ts and the long-term design discussion.
-          next = running.complete("", {
-            metadata: metaPatch,
-            now: this.now().toISOString(),
-          });
+          // real artifacts live on disk under `<workdir>/` and the runtime
+          // owns its per-task event stream. See the JSDoc on `TaskSuccess`
+          // in ./types.ts.
+          next = running.complete(
+            { output: "" },
+            {
+              now: this.now().toISOString(),
+            },
+          );
           break;
-        case "failure":
+        case "failed":
           next = running.fail(decision.failure, {
-            metadata: metaPatch,
             now: this.now().toISOString(),
           });
           break;
         case "cancelled":
           next = running.cancel(decision.cancellation, {
-            metadata: metaPatch,
             now: this.now().toISOString(),
           });
           break;
@@ -1164,44 +1168,24 @@ export class TaskManager {
 /**
  * Outcome of classifying a subprocess exit. Discriminated by `kind`
  * so {@link TaskManager.applyTerminal} can dispatch typed transitions
- * to the entity (`complete` / `fail` / `cancel`). `exitCode` and
- * `exitSignal` stay on the decision (not on the failure payload)
- * because they're metadata-side bookkeeping — populated into
- * `Task.metadata.{exitCode, exitSignal}` regardless of terminal kind
- * (the `success` path also wants `exitCode=0` recorded there).
+ * to the entity (`complete` / `fail` / `cancel`). v4 (issue #119)
+ * dropped the parallel `exitCode` / `exitSignal` fields here — the
+ * exit-code / signal context, when relevant, lives inside the typed
+ * `failure` payload (`exited` / `signal` variants).
  */
 type TerminalDecision =
-  | {
-      readonly kind: "success";
-      readonly exitCode: number | null;
-      readonly exitSignal: NodeJS.Signals | null;
-    }
-  | {
-      readonly kind: "failure";
-      readonly failure: TaskFailure;
-      readonly exitCode: number | null;
-      readonly exitSignal: NodeJS.Signals | null;
-    }
-  | {
-      readonly kind: "cancelled";
-      readonly cancellation: TaskCancellation;
-      readonly exitCode: number | null;
-      readonly exitSignal: NodeJS.Signals | null;
-    };
+  | { readonly kind: "succeeded" }
+  | { readonly kind: "failed"; readonly failure: TaskFailure }
+  | { readonly kind: "cancelled"; readonly cancellation: TaskCancellation };
 
 /**
  * Translate a subprocess exit into a typed terminal decision.
  *
  *   - killReason === 'cancel'   → cancelled, kind='user'
- *   - killReason === 'shutdown' → failure,   kind='shutdown'
- *   - exit code 0               → success
- *   - exit code N (non-zero)    → failure,   kind='exited'
- *   - exit signal X             → failure,   kind='signal'
- *
- * The `killReason` is read AT exit time from the per-task LiveTask
- * record (not at the moment shutdown began), so a clean self-exit with
- * `code: 0` racing against `shutdown()` is still classified as
- * `success` unless this manager actually invoked `kill()` for this task.
+ *   - killReason === 'shutdown' → failed,    kind='shutdown'
+ *   - exit code 0               → succeeded
+ *   - exit code N (non-zero)    → failed,    kind='exited'
+ *   - exit signal X             → failed,    kind='signal'
  */
 function decideTerminal(
   exitInfo: { code: number | null; signal: NodeJS.Signals | null },
@@ -1211,50 +1195,34 @@ function decideTerminal(
     return {
       kind: "cancelled",
       cancellation: { kind: "user", message: "cancelled by user" },
-      exitCode: exitInfo.code,
-      exitSignal: exitInfo.signal,
     };
   }
   if (killReason === "shutdown") {
     return {
-      kind: "failure",
+      kind: "failed",
       failure: { kind: "shutdown", message: "server shutdown" },
-      exitCode: exitInfo.code,
-      exitSignal: exitInfo.signal,
     };
   }
   if (exitInfo.code === 0) {
-    return {
-      kind: "success",
-      exitCode: 0,
-      exitSignal: exitInfo.signal,
-    };
+    return { kind: "succeeded" };
   }
   if (exitInfo.signal !== null) {
     return {
-      kind: "failure",
+      kind: "failed",
       failure: {
         kind: "signal",
         signal: exitInfo.signal,
         message: `terminated by signal ${exitInfo.signal}`,
       },
-      exitCode: exitInfo.code,
-      exitSignal: exitInfo.signal,
     };
   }
   return {
-    kind: "failure",
-    // exitInfo.code !== 0 (checked above) and exitInfo.signal === null —
-    // the remaining case is a non-zero exit code. `code` is typed
-    // `number | null` for the signal/clean-exit alternatives, but in
-    // this branch it must be a number; assert for the type system.
+    kind: "failed",
     failure: {
       kind: "exited",
       exitCode: exitInfo.code as number,
       message: `exited with code ${exitInfo.code}`,
     },
-    exitCode: exitInfo.code,
-    exitSignal: exitInfo.signal,
   };
 }
 

@@ -1,14 +1,15 @@
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
 import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
-import type { TaskCancellation, TaskFailure, TaskResult, TaskStatus } from "./types.js";
+import type {
+  TaskCancellation,
+  TaskFailure,
+  TaskOrigin,
+  TaskStatus,
+  TaskSuccess,
+} from "./types.js";
 
-const VALID_STATUSES = new Set<TaskStatus>([
-  "not_started",
-  "running",
-  "success",
-  "failure",
-  "cancelled",
-]);
+const VALID_STATUSES = new Set<TaskStatus>(["running", "succeeded", "failed", "cancelled"]);
+const VALID_ORIGINS = new Set<TaskOrigin>(["standalone", "workflow"]);
 
 /**
  * Args accepted by {@link Task.create}. `agent` and `brief` are
@@ -22,33 +23,23 @@ export interface TaskCreateArgs {
    * Short, single-line task title (≤ 200 chars by contract; the
    * server validates the wire shape). Doubles as the displayed
    * label everywhere — task list rows, detail panel header, CLI
-   * `task list` table, etc. The kernel does not enforce the length
-   * cap on the entity itself; the route layer is the seam where
-   * untrusted bytes are validated. Within the entity, `brief` is
-   * required to be a non-empty string.
+   * `task list` table, etc.
    */
   readonly brief: string;
-  /**
-   * Optional long-form task body. Rendered as the markdown body of
-   * `<workdir>/TASK.md` when present (under the `# <brief>` header).
-   * Multi-line allowed.
-   */
+  /** Optional long-form task body. */
   readonly details?: string;
   /** Optional initial metadata (e.g. caller-supplied tags, parentTaskId). */
   readonly metadata?: Readonly<Record<string, unknown>>;
   /**
-   * Override the task id (deterministic-test seam). Must match the
-   * canonical `YYYYMMDD-xxxxxxxx` format the repository enforces;
-   * `Task.create()` validates this upfront and throws
-   * {@link InvalidTaskIdError} for anything else. Omit to mint a
-   * fresh canonical id via {@link generateTaskId}.
+   * Who launched this task. Defaults to `'standalone'` when omitted —
+   * a direct CLI / dashboard / MCP call. Workflow / future scheduler
+   * call sites pass the matching {@link TaskOrigin} so dashboard /
+   * CLI default views can hide non-standalone tasks.
    */
+  readonly origin?: TaskOrigin;
+  /** Override the task id (deterministic-test seam). */
   readonly id?: string;
-  /**
-   * Override creation timestamp (ISO 8601 UTC string, e.g.
-   * `"2025-01-01T00:00:00.000Z"`). Defaults to `new Date().toISOString()`.
-   * Deterministic-test seam.
-   */
+  /** Override creation timestamp (ISO 8601 UTC string). */
   readonly createdAt?: string;
 }
 
@@ -58,84 +49,66 @@ export interface TaskCreateArgs {
  *
  * `id` is required (the row's primary key); the rest are storage-side
  * fields that {@link Task.fromStored} validates before construction.
+ *
+ * v4 (issue #119): `startedAt` is required (post-migration every row
+ * has a non-null value — new dispatches set it at create time, legacy
+ * rows backfill from `createdAt`). The terminal-payload fields
+ * (`success` / `failure` / `cancellation`) are typed unions, not flat
+ * column tuples.
  */
 export interface TaskFromStoredArgs {
   readonly id: string;
   readonly agent: string;
   readonly brief: string;
   readonly details?: string;
+  readonly origin: TaskOrigin;
   readonly status: TaskStatus;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
-  readonly startedAt?: string;
+  readonly startedAt: string;
   readonly endedAt?: string;
-  readonly result?: TaskResult;
+  readonly success?: TaskSuccess;
   readonly failure?: TaskFailure;
   readonly cancellation?: TaskCancellation;
 }
 
-/**
- * Common opts accepted by every state-transition method. Both fields
- * are optional; sensible defaults apply when omitted.
- */
+/** Common opts accepted by every state-transition method. */
 export interface TaskTransitionOpts {
-  /**
-   * Metadata patch to shallow-merge (last-wins) into the task's
-   * existing metadata bag. Same semantics across `start` / `complete`
-   * / `fail` / `cancel`. Omit to leave metadata untouched.
-   */
+  /** Metadata patch to shallow-merge (last-wins) into the existing bag. */
   readonly metadata?: Readonly<Record<string, unknown>>;
-  /**
-   * ISO 8601 UTC timestamp to record on `startedAt` (for `start`) or
-   * `endedAt` (for `complete` / `fail` / `cancel`). Defaults to
-   * `new Date().toISOString()` — overridable for deterministic tests.
-   */
+  /** ISO 8601 UTC timestamp to record on `endedAt`. */
   readonly now?: string;
 }
 
 /**
  * Rich domain entity representing a single autonomous task.
  *
- * Identity = `id`, immutable. `agent` / `brief` / `details` /
- * `createdAt` are also immutable for the lifetime of the task — every
- * state-transition method ({@link Task.start} / {@link Task.complete}
- * / {@link Task.fail} / {@link Task.cancel}) preserves them. The
- * runtime never inspects `metadata` — it's an open-shape bag for
- * runtime-specific bookkeeping (PID, runtime session id, work dir, …).
+ * Identity = `id`, immutable. `agent` / `brief` / `details` / `origin`
+ * / `createdAt` / `startedAt` are immutable for the lifetime of the
+ * task — every state-transition method preserves them. The runtime
+ * never inspects `metadata` — it's an open-shape bag for runtime-
+ * specific bookkeeping (PID, runtime session id, work dir, …).
  *
  * ## Construction
  *
  * - {@link Task.create} — for new tasks. Mints id + createdAt by
- *   default; status starts at `not_started`. Test seams accept
- *   overrides for both.
+ *   default. Status starts directly at `running` (v4 dropped the
+ *   `not_started` placeholder — see {@link TaskStatus}). `startedAt`
+ *   is set to `createdAt` at create time so the column can be
+ *   `NOT NULL` in the schema.
  * - {@link Task.fromStored} — for entities reconstructed from
  *   storage. Validates every field; throws {@link InvalidTaskIdError}
  *   (id syntax) or {@link CorruptedTaskError} (everything else).
  *
  * ## State machine
  *
- * The legal transitions are:
+ *   running ──complete─► succeeded
+ *   running ──fail─────► failed
+ *   running ──cancel───► cancelled
  *
- *   not_started ──start────► running
- *   not_started ──cancel───► cancelled   (allowed for pre-flight failures)
- *   running     ──complete─► success
- *   running     ──fail─────► failure
- *   running     ──cancel───► cancelled
- *
- * Terminal statuses (`success` / `failure` / `cancelled`) accept no
- * further transitions. Each method throws
- * {@link InvalidTransition} when called against an illegal source
- * status.
- *
- * ## Metadata enrichment
- *
- * {@link Task.withMetadata} replaces the metadata bag wholesale
- * without changing status. Used by `TaskManager` to fold in
- * runtime-supplied display metadata (lastActiveAtRuntime) on read,
- * which is not a state transition.
- *
- * Mirrors the DDD style used by `@emploke/catalog`'s `Agent` and
- * `@emploke/workspace`'s `Workspace`. See issue #84 for the rollup.
+ * Terminal statuses (`succeeded` / `failed` / `cancelled`) accept no
+ * further transitions. Each method throws {@link InvalidTransition}
+ * when called against an illegal source status.
  */
 export class Task {
   private constructor(
@@ -143,51 +116,42 @@ export class Task {
     private readonly _agent: string,
     private readonly _brief: string,
     private readonly _details: string | undefined,
+    private readonly _origin: TaskOrigin,
     private readonly _status: TaskStatus,
     private readonly _metadata: Readonly<Record<string, unknown>>,
     private readonly _createdAt: string,
-    private readonly _startedAt: string | undefined,
+    private readonly _startedAt: string,
     private readonly _endedAt: string | undefined,
-    private readonly _result: TaskResult | undefined,
+    private readonly _success: TaskSuccess | undefined,
     private readonly _failure: TaskFailure | undefined,
     private readonly _cancellation: TaskCancellation | undefined,
   ) {}
 
   /**
-   * Construct a fresh task in `not_started` status. Pure factory: the
-   * only ambient effects are `generateTaskId()` (which calls
-   * `crypto.randomBytes` + `new Date()` for the canonical
-   * `YYYYMMDD-xxxxxxxx` id format) and `new Date().toISOString()`
-   * (for `createdAt`).
-   *
-   * Both can be overridden via {@link TaskCreateArgs.id} /
-   * {@link TaskCreateArgs.createdAt} for deterministic tests; an
-   * explicit `id` is validated against {@link TASK_ID_RE} so the
-   * entity can never carry an id the repository would reject at save
-   * time. Use {@link Task.fromStored} when reconstructing a task from
-   * a row that was written under an older schema.
+   * Construct a fresh task in `running` status. `startedAt` is set to
+   * `createdAt` (v4 collapsed the `not_started` placeholder — there
+   * is no intermediate state between dispatch and the subprocess
+   * actually starting). Pure factory aside from the deterministic-
+   * seamed `generateTaskId` and `new Date().toISOString()`.
    */
   static create(args: TaskCreateArgs): Task {
     const id = args.id ?? generateTaskId();
     if (args.id !== undefined) assertValidTaskId(id);
     if (typeof args.brief !== "string" || args.brief.length === 0) {
-      // Defensive: the route layer enforces non-empty + length + single-
-      // line at the wire boundary, but the entity is the last line of
-      // defence against in-process callers (tests, future orchestrators)
-      // that bypass the route. Empty brief would render as a blank task
-      // title in the dashboard, which is the very bug this refactor
-      // exists to prevent.
       throw new TypeError("Task.create: brief must be a non-empty string");
     }
+    const createdAt = args.createdAt ?? new Date().toISOString();
+    const origin = args.origin ?? "standalone";
     return new Task(
       id,
       args.agent,
       args.brief,
       args.details,
-      "not_started",
+      origin,
+      "running",
       Object.freeze({ ...(args.metadata ?? {}) }),
-      args.createdAt ?? new Date().toISOString(),
-      undefined,
+      createdAt,
+      createdAt,
       undefined,
       undefined,
       undefined,
@@ -199,8 +163,7 @@ export class Task {
    * Reconstruct a task from a storage-side row. Validates every field
    * — id format, status enum, ISO timestamps, metadata shape — and
    * throws {@link InvalidTaskIdError} (id syntax) or
-   * {@link CorruptedTaskError} (everything else). The repository
-   * decides what to do with corrupted rows (log + skip, or rethrow).
+   * {@link CorruptedTaskError} (everything else).
    */
   static fromStored(args: TaskFromStoredArgs): Task {
     if (!TASK_ID_RE.test(args.id)) throw new InvalidTaskIdError(args.id);
@@ -213,6 +176,12 @@ export class Task {
     if (args.details !== undefined && typeof args.details !== "string") {
       throw new CorruptedTaskError(args.id, "task.details, when present, must be a string");
     }
+    if (typeof args.origin !== "string" || !VALID_ORIGINS.has(args.origin as TaskOrigin)) {
+      throw new CorruptedTaskError(
+        args.id,
+        `task.origin must be one of: ${[...VALID_ORIGINS].join(", ")}`,
+      );
+    }
     if (typeof args.status !== "string" || !VALID_STATUSES.has(args.status)) {
       throw new CorruptedTaskError(
         args.id,
@@ -222,6 +191,9 @@ export class Task {
     if (typeof args.createdAt !== "string") {
       throw new CorruptedTaskError(args.id, "task.created_at must be a string");
     }
+    if (typeof args.startedAt !== "string" || args.startedAt.length === 0) {
+      throw new CorruptedTaskError(args.id, "task.started_at must be a non-empty string");
+    }
     if (
       args.metadata === null ||
       typeof args.metadata !== "object" ||
@@ -229,26 +201,22 @@ export class Task {
     ) {
       throw new CorruptedTaskError(args.id, "task.metadata must be an object");
     }
-    // Per-payload shape validation. The wire / DB stores typed unions
-    // (TaskFailure / TaskCancellation), so reject anything that doesn't
-    // carry a `kind` + `message` pair when the corresponding payload is
-    // present. The repository synthesises legacy rows into
-    // `{ kind: 'internal' | 'user', message: <stored-text> }` shapes
-    // before reaching this validator — see sqlite-task-repository.ts
-    // for the legacy-row fallback.
+    if (args.success !== undefined) {
+      assertTaskSuccessShape(args.id, args.success);
+    }
     if (args.failure !== undefined) {
       assertTaskFailureShape(args.id, args.failure);
     }
     if (args.cancellation !== undefined) {
       assertTaskCancellationShape(args.id, args.cancellation);
     }
-    // Cross-field invariants: every terminal status carries exactly
-    // its own payload, non-terminal statuses carry none. The repository
-    // legacy-row code is responsible for synthesising minimum-viable
-    // payloads when the on-disk row is missing them; by the time
-    // fromStored runs, the shape contract is binding.
-    if (args.status === "failure" && args.failure === undefined) {
-      throw new CorruptedTaskError(args.id, "task.failure is required when status is 'failure'");
+    // Cross-field invariants: every terminal status carries its own
+    // payload (and only its own), non-terminal statuses carry none.
+    if (args.status === "succeeded" && args.success === undefined) {
+      throw new CorruptedTaskError(args.id, "task.success is required when status is 'succeeded'");
+    }
+    if (args.status === "failed" && args.failure === undefined) {
+      throw new CorruptedTaskError(args.id, "task.failure is required when status is 'failed'");
     }
     if (args.status === "cancelled" && args.cancellation === undefined) {
       throw new CorruptedTaskError(
@@ -261,12 +229,13 @@ export class Task {
       args.agent,
       args.brief,
       args.details,
+      args.origin,
       args.status,
       Object.freeze({ ...args.metadata }),
       args.createdAt,
       args.startedAt,
       args.endedAt,
-      args.result,
+      args.success,
       args.failure,
       args.cancellation,
     );
@@ -284,6 +253,9 @@ export class Task {
   get details(): string | undefined {
     return this._details;
   }
+  get origin(): TaskOrigin {
+    return this._origin;
+  }
   get status(): TaskStatus {
     return this._status;
   }
@@ -293,14 +265,14 @@ export class Task {
   get createdAt(): string {
     return this._createdAt;
   }
-  get startedAt(): string | undefined {
+  get startedAt(): string {
     return this._startedAt;
   }
   get endedAt(): string | undefined {
     return this._endedAt;
   }
-  get result(): TaskResult | undefined {
-    return this._result;
+  get success(): TaskSuccess | undefined {
+    return this._success;
   }
   get failure(): TaskFailure | undefined {
     return this._failure;
@@ -312,55 +284,31 @@ export class Task {
   // ─── state transitions ────────────────────────────────────
 
   /**
-   * Transition `not_started → running`. Throws {@link InvalidTransition}
-   * from any other status.
+   * Transition `running → succeeded`, attaching the typed success
+   * payload. Throws {@link InvalidTransition} from any other status.
    */
-  start(opts: TaskTransitionOpts = {}): Task {
-    if (this._status !== "not_started") {
-      throw new InvalidTransition(this._status, "start");
-    }
-    return this.transition({
-      status: "running",
-      startedAt: opts.now ?? new Date().toISOString(),
-      metadata: this.mergeMetadata(opts.metadata),
-    });
-  }
-
-  /**
-   * Transition `running → success`, attaching `output` as the result.
-   * Throws {@link InvalidTransition} from any other status.
-   *
-   * `output` semantics: see the JSDoc on `TaskResult` in `./types.ts`.
-   * Today emploke always passes `""` here under the runtime-driven
-   * completion model; the field is pre-positioned for an
-   * agent-driven completion model that lands a structured summary.
-   */
-  complete(output: string, opts: TaskTransitionOpts = {}): Task {
+  complete(success: TaskSuccess, opts: TaskTransitionOpts = {}): Task {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "complete");
     }
     return this.transition({
-      status: "success",
+      status: "succeeded",
       endedAt: opts.now ?? new Date().toISOString(),
-      result: { output },
+      success,
       metadata: this.mergeMetadata(opts.metadata),
     });
   }
 
   /**
-   * Transition `running → failure`, attaching `failure` for operator
+   * Transition `running → failed`, attaching `failure` for operator
    * visibility. Throws {@link InvalidTransition} from any other status.
-   *
-   * Post-ADR-001 the payload is a {@link TaskFailure} discriminated
-   * union (not a bare string) so consumers can branch typed on
-   * `failure.kind` instead of parsing the human message.
    */
   fail(failure: TaskFailure, opts: TaskTransitionOpts = {}): Task {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "fail");
     }
     return this.transition({
-      status: "failure",
+      status: "failed",
       endedAt: opts.now ?? new Date().toISOString(),
       failure,
       metadata: this.mergeMetadata(opts.metadata),
@@ -368,18 +316,11 @@ export class Task {
   }
 
   /**
-   * Transition to `cancelled`. Legal from both `not_started` (so
-   * pre-flight failures — e.g. provisioner can't write to disk — can
-   * be reported without first moving the task to `running`) and
-   * `running`. Throws {@link InvalidTransition} from terminal statuses.
-   *
-   * Post-ADR-001 the payload is a {@link TaskCancellation} discriminated
-   * union. Today only `TaskManager.cancel(id)` produces this transition
-   * (with `kind: 'user'` or `kind: 'orphan'` for the orphan recovery
-   * path); the entity itself stays open to future variants.
+   * Transition `running → cancelled`. Throws {@link InvalidTransition}
+   * from any other status.
    */
   cancel(cancellation: TaskCancellation, opts: TaskTransitionOpts = {}): Task {
-    if (this._status !== "not_started" && this._status !== "running") {
+    if (this._status !== "running") {
       throw new InvalidTransition(this._status, "cancel");
     }
     return this.transition({
@@ -392,13 +333,7 @@ export class Task {
 
   /**
    * Replace the metadata bag wholesale, preserving status + timing +
-   * result + failure. Used by `TaskManager` to fold in runtime-
-   * supplied display metadata (lastActiveAtRuntime) on read paths,
-   * which is **not** a state transition.
-   *
-   * Callers that want a shallow merge do it themselves before passing
-   * the merged bag — keeping replace-only here avoids a second
-   * `merge?` flag every caller would otherwise have to pick.
+   * success / failure / cancellation payloads.
    */
   withMetadata(metadata: Readonly<Record<string, unknown>>): Task {
     return new Task(
@@ -406,12 +341,13 @@ export class Task {
       this._agent,
       this._brief,
       this._details,
+      this._origin,
       this._status,
       Object.freeze({ ...metadata }),
       this._createdAt,
       this._startedAt,
       this._endedAt,
-      this._result,
+      this._success,
       this._failure,
       this._cancellation,
     );
@@ -420,16 +356,15 @@ export class Task {
   // ─── serialisation ─────────────────────────────────────────
 
   /**
-   * Public POJO projection. Called automatically by `JSON.stringify`
-   * (e.g. by the server's `c.json(task)` route helpers), so HTTP
+   * Public POJO projection. Called by `JSON.stringify`, so HTTP
    * clients see the same field layout as the in-process entity.
-   * Optional fields (`details`, `startedAt`, `endedAt`, `result`,
-   * `failure`, `cancellation`) are omitted when unset to keep the wire
-   * shape minimal — same convention `startedAt` etc. follow today.
    *
-   * Exactly one of `result` / `failure` / `cancellation` is present
-   * for terminal statuses (success / failure / cancelled respectively);
-   * none of them appear for non-terminal statuses.
+   * Optional fields (`details`, `endedAt`, `success`, `failure`,
+   * `cancellation`) are omitted when unset to keep the wire shape
+   * minimal. `startedAt` is non-optional in v4 and always present.
+   *
+   * Exactly one of `success` / `failure` / `cancellation` is present
+   * for the matching terminal status; none appear for `running`.
    */
   toJSON(): Record<string, unknown> {
     return {
@@ -437,12 +372,13 @@ export class Task {
       agent: this._agent,
       brief: this._brief,
       ...(this._details !== undefined ? { details: this._details } : {}),
+      origin: this._origin,
       status: this._status,
       metadata: this._metadata,
       createdAt: this._createdAt,
-      ...(this._startedAt !== undefined ? { startedAt: this._startedAt } : {}),
+      startedAt: this._startedAt,
       ...(this._endedAt !== undefined ? { endedAt: this._endedAt } : {}),
-      ...(this._result !== undefined ? { result: this._result } : {}),
+      ...(this._success !== undefined ? { success: this._success } : {}),
       ...(this._failure !== undefined ? { failure: this._failure } : {}),
       ...(this._cancellation !== undefined ? { cancellation: this._cancellation } : {}),
     };
@@ -450,17 +386,11 @@ export class Task {
 
   // ─── internals ─────────────────────────────────────────────
 
-  /**
-   * Internal builder shared by every state-transition method.
-   * Identity (id / agent / brief / details / createdAt) is preserved
-   * verbatim; the transition's own fields override.
-   */
   private transition(patch: {
     readonly status: TaskStatus;
     readonly metadata: Readonly<Record<string, unknown>>;
-    readonly startedAt?: string;
     readonly endedAt?: string;
-    readonly result?: TaskResult;
+    readonly success?: TaskSuccess;
     readonly failure?: TaskFailure;
     readonly cancellation?: TaskCancellation;
   }): Task {
@@ -469,23 +399,18 @@ export class Task {
       this._agent,
       this._brief,
       this._details,
+      this._origin,
       patch.status,
       patch.metadata,
       this._createdAt,
-      patch.startedAt !== undefined ? patch.startedAt : this._startedAt,
+      this._startedAt,
       patch.endedAt !== undefined ? patch.endedAt : this._endedAt,
-      patch.result !== undefined ? patch.result : this._result,
+      patch.success !== undefined ? patch.success : this._success,
       patch.failure !== undefined ? patch.failure : this._failure,
       patch.cancellation !== undefined ? patch.cancellation : this._cancellation,
     );
   }
 
-  /**
-   * Shallow-merge an optional metadata patch into the existing bag.
-   * Returns the existing reference unchanged when no patch is given —
-   * tests pin this contract because callers (and serialisation
-   * round-trips) sometimes assert metadata identity.
-   */
   private mergeMetadata(
     patch: Readonly<Record<string, unknown>> | undefined,
   ): Readonly<Record<string, unknown>> {
@@ -497,7 +422,17 @@ export class Task {
 // ─── payload shape validators ───────────────────────────────
 
 const FAILURE_KINDS = new Set(["exited", "signal", "shutdown", "orphan", "internal"]);
-const CANCELLATION_KINDS = new Set(["user", "orphan"]);
+const CANCELLATION_KINDS = new Set(["user", "cascade"]);
+
+function assertTaskSuccessShape(id: string, value: TaskSuccess): void {
+  if (value === null || typeof value !== "object") {
+    throw new CorruptedTaskError(id, "task.success must be an object");
+  }
+  const v = value as { output?: unknown };
+  if (typeof v.output !== "string") {
+    throw new CorruptedTaskError(id, "task.success.output must be a string");
+  }
+}
 
 function assertTaskFailureShape(id: string, value: TaskFailure): void {
   if (value === null || typeof value !== "object") {

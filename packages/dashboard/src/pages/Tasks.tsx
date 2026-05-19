@@ -54,18 +54,16 @@ const DEFAULT_POLL_INTERVAL_MS = 4000;
 // reserved-for-future scaffolding; the dashboard now renders the
 // matching UI affordances.
 const STATUS_LABEL: Record<TaskStatus, string> = {
-  not_started: "Not started",
   running: "Running",
-  success: "Success",
-  failure: "Failure",
+  succeeded: "Succeeded",
+  failed: "Failed",
   cancelled: "Cancelled",
 };
 
 const STATUS_TONE: Record<TaskStatus, string> = {
-  not_started: "muted",
   running: "info",
-  success: "ok",
-  failure: "warn",
+  succeeded: "ok",
+  failed: "warn",
   cancelled: "muted",
 };
 
@@ -285,10 +283,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   // server is unreachable, so a sleeping laptop or restarted server no
   // longer floods the network panel with red ECONNREFUSED rows.
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const anyRunning = useMemo(
-    () => tasks.some((t) => t.status === "running" || t.status === "not_started"),
-    [tasks],
-  );
+  const anyRunning = useMemo(() => tasks.some((t) => t.status === "running"), [tasks]);
   usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
   const onDispatched = async (
@@ -771,7 +766,7 @@ interface TaskListItemProps {
  */
 function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
-  const isRunning = task.status === "running" || task.status === "not_started";
+  const isRunning = task.status === "running";
   // Per-row Cancel debounce: rapid double-clicks would otherwise fan
   // out into N HTTP round-trips + N toast notifications. Disabling the
   // button while the request is in flight keeps the affordance honest
@@ -898,19 +893,11 @@ function StatusBadge({
 /**
  * Smart relative-time line for a task row. Shows the most informative
  * timestamp for each lifecycle stage:
- *   - not_started: "queued 2m ago"
  *   - running: "running for 1m 23s"  (live elapsed)
  *   - terminal: "ran 5m 12s · ended 2h ago"
  * Tooltip carries the absolute timestamp for forensic precision.
  */
 function TaskRelativeTime({ task }: { task: TaskRecord }) {
-  if (task.status === "not_started") {
-    return (
-      <span className="muted" title={formatAbsolute(task.createdAt)}>
-        queued {formatRelative(task.createdAt)}
-      </span>
-    );
-  }
   if (task.status === "running" && task.startedAt) {
     return (
       <span className="muted" title={formatAbsolute(task.startedAt)}>
@@ -1019,7 +1006,7 @@ function DispatchModal({
               source, surface the sibling-task semantics explicitly so
               the user understands this dispatches a NEW task — the
               source keeps running unaffected. */}
-          {prefill && (prefill.status === "running" || prefill.status === "not_started") && (
+          {prefill && prefill.status === "running" && (
             <div className="alert alert--info" style={{ marginBottom: 10 }}>
               Source task is still running. This will dispatch a new task; the source will keep
               running.
@@ -1353,7 +1340,7 @@ function TaskDetailPanel({
   // without a manual refresh click. Cadence comes from the parent (which
   // sources it from /api/config) so list view and detail view stay in
   // sync. Backoff matches the list-view loop above.
-  const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
+  const detailPollEnabled = !!task && task.status === "running";
   usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
 
   // Live tail via SSE while the task is running. The poll above keeps
@@ -1429,10 +1416,10 @@ function TaskDetailPanel({
   // Computed up here so `useState` for the expand toggle stays at the
   // top of the hook order.
   const headlineResult =
-    task?.status === "success"
+    task?.status === "succeeded"
       ? (activity?.result ??
-        (typeof task?.result?.output === "string" && task.result.output.length > 0
-          ? task.result.output
+        (typeof task?.success?.output === "string" && task.success.output.length > 0
+          ? task.success.output
           : null))
       : null;
 
@@ -1450,25 +1437,20 @@ function TaskDetailPanel({
     );
   }
 
-  // Pull the runtime exit fields out of metadata where the kernel keeps
-  // them. Post-ADR-001 the typed `failure` itself carries `kind`
-  // (discriminator: `exited` | `signal` | `shutdown` | `orphan` |
-  // `internal`) plus `message` (human-readable); the `exited` /
-  // `signal` variants also carry the structured `exitCode` / `signal`
-  // fields inline, but we still read the metadata mirrors here so the
-  // header chip works for pre-typed-union (legacy) rows too.
+  // Read the runtime exit fields from the typed `failure` payload
+  // (v4 / issue #119 stopped mirroring exitCode / exitSignal into
+  // metadata; consumers branch on `failure.kind` and read the typed
+  // fields directly).
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
-  const exitCode =
-    typeof metadata.exitCode === "number" || metadata.exitCode === null
-      ? (metadata.exitCode as number | null)
-      : undefined;
-  const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
+  const failure = task?.failure;
+  const exitCode = failure?.kind === "exited" ? failure.exitCode : undefined;
+  const exitSignal = failure?.kind === "signal" ? failure.signal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
   // The user-supplied `brief` is the canonical task title (post-#111
   // refactor). Lead the panel with it; fall back to the task id only
   // while the task object hasn't loaded yet.
   const title = task?.brief ?? null;
-  const isRunning = task && (task.status === "running" || task.status === "not_started");
+  const isRunning = task && task.status === "running";
 
   return (
     <aside className="tasks-pane__detail">
@@ -1672,9 +1654,11 @@ function TaskDetailPanel({
               {
                 brief: task.brief,
                 ...(task.details !== undefined ? { details: task.details } : {}),
+                origin: task.origin,
                 metadata: task.metadata,
-                result: task.result,
+                success: task.success,
                 failure: task.failure,
+                cancellation: task.cancellation,
               },
               null,
               2,
@@ -2449,8 +2433,11 @@ function CancellationBlock({
     case "user":
       body = endedAt ? `Cancelled by user (at ${formatAbsolute(endedAt)})` : "Cancelled by user";
       break;
-    case "orphan":
-      body = "Cancelled (recovered from inconsistent state)";
+    case "cascade":
+      body = "Cancelled (cascade — recovered from inconsistent state)";
+      break;
+    default:
+      body = "Cancelled";
       break;
   }
   return (

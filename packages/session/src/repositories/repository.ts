@@ -3,10 +3,10 @@ import type { Session } from "../session-entity.js";
 export { Session } from "../session-entity.js";
 
 /**
- * Filter options for `SessionRepository.list`. Only fields the
- * repository can evaluate on its own appear here — the `agent` filter
- * lives in `SessionManager.list` because agent identity is determined
- * by reading `AGENTS.md`, not the repository's metadata.
+ * Filter options for `SessionRepository.list`. v2 (issue #120)
+ * promoted `agent` from an FS-derived JS-side post-filter to a
+ * persisted column the SQLite repository can evaluate directly via
+ * `WHERE agent = ?` on the new `sessions_agent_idx` index.
  */
 export interface ListSessionStateOpts {
   /**
@@ -15,6 +15,13 @@ export interface ListSessionStateOpts {
    * compare is just `state.createdAt >= opts.createdSince`.
    */
   readonly createdSince?: string;
+  /**
+   * Filter to sessions whose persisted `agent` (FQN) matches this
+   * exact value. v2-only — the column did not exist in v1; before the
+   * migration this filter was applied JS-side after an N-way AGENTS.md
+   * scan, see `SessionManager.list` history for context.
+   */
+  readonly agent?: string;
 }
 
 /**
@@ -65,18 +72,26 @@ export interface SessionRepository {
    * does not exist (mirrors `delete`'s idempotent semantics — callers
    * should not have to pre-check existence just to record a UI hint).
    *
-   * This exists as a field-scoped escape hatch from the read-merge-save
-   * race in `SessionManager.buildInteractiveLaunch`: two concurrent
-   * `buildInteractiveLaunch(id, { remote })` calls (e.g. user clicks "Resume Local"
-   * in tab A and "Resume Remote" in tab B) used to lose one another's
-   * `lastLaunchMode` write, and could in principle also clobber any
-   * other field that some third path was concurrently updating. With
-   * this method the column is updated in a single SQL statement, so
-   * concurrent calls just resolve last-writer-wins on the column itself
-   * without affecting `runtimeSessionId` / `runtime` / `createdAt`.
-   * See issue #56.
+   * See issue #56 for the historical race rationale.
    */
   patchLastLaunchMode(id: string, mode: "local" | "remote"): Promise<void>;
+
+  /**
+   * Set the persisted `agent` (FQN) for an existing row. Used by
+   * `SessionManager.backfillAgentColumn` to populate the v2 column
+   * for rows migrated up from v1 (which seeded `''` as the default).
+   * No-op on missing rows.
+   */
+  setAgent(id: string, agent: string): Promise<void>;
+
+  /**
+   * Return the ids of every row whose persisted `agent` column is the
+   * empty string. Used exclusively by the v1→v2 backfill (issue #120):
+   * such rows are rejected by `Session.fromStored`'s non-empty-agent
+   * check, so the normal `read` / `list` paths cannot surface them —
+   * we need a direct id lookup that skips entity validation.
+   */
+  findEmptyAgentIds(): Promise<readonly string[]>;
 
   /**
    * Remove the session's state. Idempotent: deleting a missing id is a

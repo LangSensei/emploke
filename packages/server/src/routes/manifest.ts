@@ -44,7 +44,7 @@ import type {
 } from "@emploke/catalog";
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
 import type { SessionView } from "@emploke/session";
-import type { Task, TaskStatus } from "@emploke/task";
+import type { Task, TaskOrigin, TaskStatus } from "@emploke/task";
 import type { WorkspaceUpdatePatch } from "@emploke/workspace";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
 import type { ServerConfig } from "./config.js";
@@ -179,13 +179,20 @@ export type SessionSpawnRes =
   | { readonly ok: true; readonly launcher: string; readonly display: string }
   | { readonly ok: false; readonly error: string; readonly code: string; readonly display: string };
 
-/** GET /api/workspaces/:id/tasks query params. CSV `status` is parsed server-side. */
+/** GET /api/workspaces/:id/tasks query params. CSV `status` / `origin` are parsed server-side. */
 export interface TaskListQuery {
   readonly agent?: string;
   readonly runtime?: string;
   readonly createdSince?: string;
   /** Comma-separated list of {@link TaskStatus}. */
   readonly status?: string;
+  /**
+   * Comma-separated list of {@link TaskOrigin}. v4 (issue #119): filter
+   * out workflow-launched tasks by default in callers that want the
+   * "what I dispatched" view (CLI's `task list`, dashboard's default
+   * tab).
+   */
+  readonly origin?: string;
 }
 
 /** POST /api/workspaces/:id/tasks body. */

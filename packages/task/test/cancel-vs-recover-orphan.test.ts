@@ -41,9 +41,8 @@ describe("TaskManager.cancel — vs recoverOrphaned", () => {
       id,
       agent: "demo",
       brief: "orphan",
+      origin: "standalone",
       status: "running",
-      // `running` task with no recorded process — recoverOrphaned
-      // marks it failed at the next bootstrap sweep.
       metadata: { runtime: "copilot" },
       createdAt: "2026-05-18T01:00:00.000Z",
       startedAt: "2026-05-18T01:00:01.000Z",
@@ -58,7 +57,7 @@ describe("TaskManager.cancel — vs recoverOrphaned", () => {
 
     // The orphan is now terminal — failure:orphan.
     const afterRecover = await fx.m.get(id);
-    expect(afterRecover?.status).toBe("failure");
+    expect(afterRecover?.status).toBe("failed");
     expect(afterRecover?.failure?.kind).toBe("orphan");
 
     // cancel() against this terminal row throws InvalidTransition
@@ -68,6 +67,6 @@ describe("TaskManager.cancel — vs recoverOrphaned", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(InvalidTransition);
-    expect((err as InvalidTransition).from).toBe("failure");
+    expect((err as InvalidTransition).from).toBe("failed");
   });
 });

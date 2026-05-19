@@ -38,6 +38,7 @@ describe("TaskManager.cancel — orphan path shape parity", () => {
       id: orphanId,
       agent: "demo",
       brief: "orphan",
+      origin: "standalone",
       status: "running",
       metadata: { pid: 99998, runtime: "copilot" },
       createdAt: "2026-05-18T01:00:00.000Z",
@@ -54,21 +55,16 @@ describe("TaskManager.cancel — orphan path shape parity", () => {
     expect(normal.cancellation).toBeDefined();
     expect(orphan.cancellation).toBeDefined();
 
-    // The discriminator is the only deliberate difference.
+    // The discriminator is the only deliberate difference. v4 folded
+    // the pre-v4 'orphan' cancellation kind into 'cascade'.
     expect(normal.cancellation?.kind).toBe("user");
-    expect(orphan.cancellation?.kind).toBe("orphan");
+    expect(orphan.cancellation?.kind).toBe("cascade");
 
-    // Both rows carry exitCode + exitSignal in metadata (synthesised
-    // to null for the orphan path; populated from the kill's SIGTERM
-    // for the normal path).
-    expect("exitCode" in normal.metadata).toBe(true);
-    expect("exitCode" in orphan.metadata).toBe(true);
-    expect("exitSignal" in normal.metadata).toBe(true);
-    expect("exitSignal" in orphan.metadata).toBe(true);
-
-    // Orphan path: both null (no real subprocess to ask).
-    expect(orphan.metadata.exitCode).toBeNull();
-    expect(orphan.metadata.exitSignal).toBeNull();
+    // v4 (issue #119): exitCode / exitSignal are no longer mirrored
+    // into metadata for either path — consumers read from the typed
+    // failure payload when relevant (cancellation has no exit info).
+    expect("exitCode" in normal.metadata).toBe(false);
+    expect("exitCode" in orphan.metadata).toBe(false);
 
     // Both have endedAt populated.
     expect(normal.endedAt).toBeDefined();

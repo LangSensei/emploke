@@ -11,6 +11,7 @@ import {
   SqliteTaskRepository,
   TASK_MIGRATIONS,
   Task,
+  type TaskOrigin,
   type TaskStatus,
 } from "../src/index.js";
 
@@ -36,26 +37,19 @@ afterEach(async () => {
 const ID = "20260509-aabbccdd";
 const CREATED_AT = "2026-05-09T01:00:00.000Z";
 
-/**
- * Build a Task in any status — `Task.fromStored` is the only public
- * factory that lets the test stand a task up directly in `running` /
- * `success` / `failure` / `cancelled` without going through the
- * transition methods. That's exactly its job: rehydrating from
- * storage. We use it here as a test-shape factory because the
- * storage seam is what the repository tests are about.
- */
 function makeTask(
   overrides: {
     id?: string;
     agent?: string;
     brief?: string;
     details?: string;
+    origin?: TaskOrigin;
     status?: TaskStatus;
     metadata?: Readonly<Record<string, unknown>>;
     createdAt?: string;
     startedAt?: string;
     endedAt?: string;
-    result?: { output: string };
+    success?: { output: string };
     failure?: import("../src/types.js").TaskFailure;
     cancellation?: import("../src/types.js").TaskCancellation;
   } = {},
@@ -65,12 +59,13 @@ function makeTask(
     agent: overrides.agent ?? "writer",
     brief: overrides.brief ?? "do the thing",
     ...(overrides.details !== undefined ? { details: overrides.details } : {}),
+    origin: overrides.origin ?? "standalone",
     status: overrides.status ?? "running",
     metadata: overrides.metadata ?? {},
     createdAt: overrides.createdAt ?? CREATED_AT,
-    ...(overrides.startedAt !== undefined ? { startedAt: overrides.startedAt } : {}),
+    startedAt: overrides.startedAt ?? CREATED_AT,
     ...(overrides.endedAt !== undefined ? { endedAt: overrides.endedAt } : {}),
-    ...(overrides.result !== undefined ? { result: overrides.result } : {}),
+    ...(overrides.success !== undefined ? { success: overrides.success } : {}),
     ...(overrides.failure !== undefined ? { failure: overrides.failure } : {}),
     ...(overrides.cancellation !== undefined ? { cancellation: overrides.cancellation } : {}),
   });
@@ -97,6 +92,12 @@ describe("SqliteTaskRepository", () => {
     expect(back?.details).toBeUndefined();
   });
 
+  it("save preserves the origin column", async () => {
+    await repo.save(makeTask({ origin: "workflow" }));
+    const back = await repo.read(ID);
+    expect(back?.origin).toBe("workflow");
+  });
+
   it("read returns null for missing id", async () => {
     expect(await repo.read("20260509-deadbeef")).toBeNull();
   });
@@ -116,28 +117,25 @@ describe("SqliteTaskRepository", () => {
     expect(await repo.list({ runtime: "anything" })).toHaveLength(0);
   });
 
-  it("save preserves optional terminal fields (result, failure, cancellation, started/ended)", async () => {
-    const success = makeTask({
-      status: "success",
-      startedAt: "2026-05-09T01:00:01.000Z",
+  it("save preserves optional terminal fields (success, failure, cancellation, ended)", async () => {
+    const succeeded = makeTask({
+      status: "succeeded",
       endedAt: "2026-05-09T01:00:05.000Z",
-      result: { output: "all good" },
+      success: { output: "all good" },
     });
-    await repo.save(success);
-    expect((await repo.read(ID))?.toJSON()).toEqual(success.toJSON());
+    await repo.save(succeeded);
+    expect((await repo.read(ID))?.toJSON()).toEqual(succeeded.toJSON());
 
-    const failure = makeTask({
-      status: "failure",
-      startedAt: "2026-05-09T01:00:01.000Z",
+    const failed = makeTask({
+      status: "failed",
       endedAt: "2026-05-09T01:00:03.000Z",
       failure: { kind: "exited", exitCode: 17, message: "exited with code 17" },
     });
-    await repo.save(failure);
-    expect((await repo.read(ID))?.toJSON()).toEqual(failure.toJSON());
+    await repo.save(failed);
+    expect((await repo.read(ID))?.toJSON()).toEqual(failed.toJSON());
 
     const cancelled = makeTask({
       status: "cancelled",
-      startedAt: "2026-05-09T01:00:01.000Z",
       endedAt: "2026-05-09T01:00:03.000Z",
       cancellation: { kind: "user", message: "cancelled by user" },
     });
@@ -147,10 +145,12 @@ describe("SqliteTaskRepository", () => {
 
   it("save is idempotent (INSERT OR REPLACE)", async () => {
     await repo.save(makeTask());
-    await repo.save(makeTask({ status: "success", result: { output: "done" } }));
+    await repo.save(
+      makeTask({ status: "succeeded", success: { output: "done" }, endedAt: CREATED_AT }),
+    );
     const back = await repo.read(ID);
-    expect(back?.status).toBe("success");
-    expect(back?.result?.output).toBe("done");
+    expect(back?.status).toBe("succeeded");
+    expect(back?.success?.output).toBe("done");
   });
 
   it("delete removes the row; subsequent read returns null", async () => {
@@ -165,8 +165,6 @@ describe("SqliteTaskRepository", () => {
 
   it("read/save reject malformed ids with InvalidTaskIdError", async () => {
     await expect(repo.read("../../etc/passwd")).rejects.toBeInstanceOf(InvalidTaskIdError);
-    // `Task.fromStored` rejects malformed ids before construction —
-    // the test asserts the bad-id rejection at the entity boundary.
     expect(() => makeTask({ id: "../../etc" })).toThrow(InvalidTaskIdError);
   });
 
@@ -182,13 +180,17 @@ describe("SqliteTaskRepository", () => {
       agent: "writer",
       status: "running",
       createdAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
       metadata: { runtime: "copilot" },
     });
     const b = makeTask({
       id: "20260601-bbbbbbbb",
       agent: "reviewer",
-      status: "success",
+      status: "succeeded",
       createdAt: "2026-06-01T00:00:00.000Z",
+      startedAt: "2026-06-01T00:00:00.000Z",
+      endedAt: "2026-06-01T00:00:01.000Z",
+      success: { output: "" },
       metadata: { runtime: "gemini" },
     });
     await repo.save(a);
@@ -196,7 +198,7 @@ describe("SqliteTaskRepository", () => {
 
     expect((await repo.list()).map((t) => t.id).sort()).toEqual([a.id, b.id].sort());
     expect((await repo.list({ agent: "writer" })).map((t) => t.id)).toEqual([a.id]);
-    expect((await repo.list({ statuses: ["success"] })).map((t) => t.id)).toEqual([b.id]);
+    expect((await repo.list({ statuses: ["succeeded"] })).map((t) => t.id)).toEqual([b.id]);
     expect(
       (await repo.list({ createdSince: "2026-03-01T00:00:00.000Z" })).map((t) => t.id),
     ).toEqual([b.id]);
@@ -205,29 +207,32 @@ describe("SqliteTaskRepository", () => {
 
   it("list with multiple statuses uses IN (...)", async () => {
     await repo.save(makeTask({ id: "20260101-aaaaaaaa", status: "running" }));
-    await repo.save(makeTask({ id: "20260101-bbbbbbbb", status: "success" }));
+    await repo.save(
+      makeTask({
+        id: "20260101-bbbbbbbb",
+        status: "succeeded",
+        endedAt: CREATED_AT,
+        success: { output: "" },
+      }),
+    );
     await repo.save(
       makeTask({
         id: "20260101-cccccccc",
-        status: "failure",
+        status: "failed",
+        endedAt: CREATED_AT,
         failure: { kind: "internal", message: "x" },
       }),
     );
-    const r = await repo.list({ statuses: ["success", "failure"] });
+    const r = await repo.list({ statuses: ["succeeded", "failed"] });
     expect(r.map((t) => t.id).sort()).toEqual(["20260101-bbbbbbbb", "20260101-cccccccc"]);
   });
 
   it("rejects opening a workspace.db with a future schema version for the task pkg", async () => {
-    // Bump the task pkg's row to a future version and re-construct.
     db.prepare("UPDATE schema_meta SET version = 999 WHERE pkg = ?").run("task");
     expect(() => new SqliteTaskRepository({ db })).toThrow(/schema mismatch/);
   });
 
   it("read throws CorruptedTaskError when metadata column is not valid JSON", async () => {
-    // Regression: storage-side bit-rot in the JSON metadata column
-    // must surface as a typed corruption, not silently degrade to {}.
-    // Tampered/truncated rows could otherwise round-trip a valid-looking
-    // task whose runtime metadata was lost on disk.
     await repo.save(makeTask());
     db.prepare("UPDATE tasks SET metadata = ? WHERE id = ?").run("not-json{", ID);
     await expect(repo.read(ID)).rejects.toBeInstanceOf(CorruptedTaskError);
@@ -240,11 +245,6 @@ describe("SqliteTaskRepository", () => {
   });
 
   it("list silently skips rows with corrupted metadata and warns via the injected logger", async () => {
-    // list() never throws on a single bad row — it logs + skips so the
-    // dashboard can render every other task. This pins both halves of
-    // that contract: the corrupted row is dropped AND a structured
-    // warn is emitted carrying the offending taskId so operators can
-    // find it without re-running the query manually.
     const { logger, entries } = captureLogger();
     const r = new SqliteTaskRepository({ db, logger });
     await r.save(makeTask({ id: "20260101-aaaaaaaa" }));
@@ -272,180 +272,5 @@ describe("SqliteTaskRepository", () => {
     expect(await b.read(ID)).toBeNull();
     dbA.close();
     dbB.close();
-  });
-});
-
-describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
-  // Pre-1.0 hard cut: a v1 workspace.db with the old `instructions`
-  // column is migrated in place to v2 (`brief` + `details`). Post
-  // issue-#123 the migration coordinator owns DDL — the repository's
-  // ensureSchema is version-check-only — so these tests seed a v1
-  // shape on disk and then run the coordinator to drive the chain
-  // v1 → v2 → v3 against existing data.
-  function seedV1Schema(d: DatabaseSync): void {
-    d.exec(`
-      CREATE TABLE schema_meta (
-        pkg     TEXT PRIMARY KEY NOT NULL,
-        version INTEGER NOT NULL CHECK (version > 0)
-      );
-      CREATE TABLE tasks (
-        id              TEXT PRIMARY KEY,
-        agent           TEXT NOT NULL,
-        runtime         TEXT,
-        status          TEXT NOT NULL,
-        instructions    TEXT NOT NULL,
-        created_at      TEXT NOT NULL,
-        started_at      TEXT,
-        ended_at        TEXT,
-        result_output   TEXT,
-        failure_error   TEXT,
-        metadata        TEXT NOT NULL DEFAULT '{}'
-      );
-      INSERT INTO schema_meta (pkg, version) VALUES ('task', 1);
-    `);
-  }
-
-  it("migrates a short instructions row: brief = full instructions, details = full instructions", async () => {
-    const d = new DatabaseSync(":memory:");
-    try {
-      seedV1Schema(d);
-      d.prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "20260101-aaaaaaaa",
-        "writer",
-        "copilot",
-        "success",
-        "Draft the post",
-        "2026-01-01T00:00:00.000Z",
-        "{}",
-      );
-
-      // Coordinator walks the chain v1 → v2 → v3 (skipping v0→v1
-      // because schema_meta.task is already at 1). Then the repo's
-      // version-check passes and the entity factory rehydrates.
-      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-      const r = new SqliteTaskRepository({ db: d });
-      const back = d
-        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
-        .get("20260101-aaaaaaaa") as { brief: string; details: string };
-      expect(back.brief).toBe("Draft the post");
-      expect(back.details).toBe("Draft the post");
-
-      // Schema version bumped to current HEAD (3).
-      const v = d.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
-        version: number;
-      };
-      expect(v.version).toBe(3);
-
-      void r;
-    } finally {
-      d.close();
-    }
-  });
-
-  it("migrates a long instructions row: brief truncated to 200, details preserved verbatim", async () => {
-    const d = new DatabaseSync(":memory:");
-    try {
-      seedV1Schema(d);
-      const longText = `${"A".repeat(250)} END`; // 254 chars
-      d.prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "20260101-bbbbbbbb",
-        "writer",
-        "copilot",
-        "success",
-        longText,
-        "2026-01-01T00:00:00.000Z",
-        "{}",
-      );
-
-      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-      new SqliteTaskRepository({ db: d });
-      const back = d
-        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
-        .get("20260101-bbbbbbbb") as { brief: string; details: string };
-      expect(back.brief.length).toBe(200);
-      expect(back.brief).toBe("A".repeat(200));
-      expect(back.details).toBe(longText);
-    } finally {
-      d.close();
-    }
-  });
-
-  it("migrates an empty instructions row to brief='(untitled)' so the v2 entity invariant survives", async () => {
-    const d = new DatabaseSync(":memory:");
-    try {
-      seedV1Schema(d);
-      d.prepare(
-        `INSERT INTO tasks (id, agent, runtime, status, instructions, created_at, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "20260101-cccccccc",
-        "writer",
-        "copilot",
-        "success",
-        "",
-        "2026-01-01T00:00:00.000Z",
-        "{}",
-      );
-
-      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-      new SqliteTaskRepository({ db: d });
-      const back = d
-        .prepare("SELECT brief, details FROM tasks WHERE id = ?")
-        .get("20260101-cccccccc") as { brief: string; details: string };
-      expect(back.brief).toBe("(untitled)");
-      expect(back.details).toBe("");
-    } finally {
-      d.close();
-    }
-  });
-
-  it("preserves all non-instructions columns across migration", async () => {
-    const d = new DatabaseSync(":memory:");
-    try {
-      seedV1Schema(d);
-      d.prepare(
-        `INSERT INTO tasks (
-           id, agent, runtime, status, instructions, created_at, started_at,
-           ended_at, result_output, failure_error, metadata
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "20260101-dddddddd",
-        "writer",
-        "copilot",
-        "failure",
-        "did the thing",
-        "2026-01-01T00:00:00.000Z",
-        "2026-01-01T00:00:01.000Z",
-        "2026-01-01T00:00:02.000Z",
-        null,
-        "boom",
-        '{"pid":1234}',
-      );
-
-      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-      const r = new SqliteTaskRepository({ db: d });
-      const rows = await r.list();
-      expect(rows).toHaveLength(1);
-      const row = rows[0] as (typeof rows)[number];
-      expect(row.id).toBe("20260101-dddddddd");
-      expect(row.agent).toBe("writer");
-      expect(row.status).toBe("failure");
-      expect(row.brief).toBe("did the thing");
-      expect(row.details).toBe("did the thing");
-      expect(row.startedAt).toBe("2026-01-01T00:00:01.000Z");
-      expect(row.endedAt).toBe("2026-01-01T00:00:02.000Z");
-      // Post-ADR-001: a row with failure_error but no failure_kind is
-      // synthesised as `{ kind: 'internal', message }` (legacy fallback).
-      expect(row.failure).toEqual({ kind: "internal", message: "boom" });
-      expect(row.metadata).toEqual({ pid: 1234, runtime: "copilot" });
-    } finally {
-      d.close();
-    }
   });
 });

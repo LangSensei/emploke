@@ -746,23 +746,31 @@ export const updateWorkspaceMetadata = async (
 // `ActivityItem[]`. Filename, format, and on-disk layout of the underlying
 // log stay inside the runtime adapter; the dashboard never sees them.
 
-export type TaskStatus = "not_started" | "running" | "success" | "failure" | "cancelled";
+export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 
 /**
- * Why a task ended in `failure`. Discriminated by `kind` (ADR-001
- * §3.12). Mirrors `@emploke/task` `TaskFailure` exactly. The
- * dashboard is a browser bundle so this is duplicated, not imported;
- * keep in lockstep with the entity definition when it changes.
+ * Who launched this task (issue #119). String union to match
+ * `@emploke/task` `TaskOrigin`. Dashboards default the list query to
+ * `'standalone'` so workflow-launched tasks don't pollute the "what I
+ * dispatched" view.
+ */
+export type TaskOrigin = "standalone" | "workflow";
+
+/**
+ * Why a task ended in `failed`. Discriminated by `kind` (issue #119).
+ * Mirrors `@emploke/task` `TaskFailure` exactly. The dashboard is a
+ * browser bundle so this is duplicated, not imported; keep in lockstep
+ * with the entity definition when it changes.
  *
  *   - exited   → subprocess exited non-zero (carries `exitCode`)
  *   - signal   → terminated by OS signal (carries `signal`)
  *   - shutdown → TaskManager.shutdown() killed it
  *   - orphan   → recoverOrphaned marked a row whose owner crashed
- *   - internal → kernel-side fault (covers legacy v2 rows too)
+ *   - internal → kernel-side fault
  *
- * Exit code / signal in metadata.exitCode / metadata.exitSignal are
- * unchanged — they're runtime-specific bookkeeping, populated for
- * every terminal kind including success.
+ * Exit code / signal now live exclusively inside the typed `failure`
+ * payload — v4 (issue #119) stopped writing the `metadata.exitCode` /
+ * `metadata.exitSignal` mirrors.
  */
 export type TaskFailure =
   | { kind: "exited"; exitCode: number; message: string }
@@ -772,19 +780,20 @@ export type TaskFailure =
   | { kind: "internal"; message: string };
 
 /**
- * Why a task ended in `cancelled`. Discriminated by `kind` (ADR-001
- * §3.12). Mirrors `@emploke/task` `TaskCancellation`.
+ * Why a task ended in `cancelled` (issue #119).
  *
- *   - user   → TaskManager.cancel(id) (operator request)
- *   - orphan → cancel() on a running row with no live entry
- *              (recovery path; see ADR-001 §3.4)
+ *   - user    → TaskManager.cancel(id) (operator request)
+ *   - cascade → reconciliation / parent-side cancellation (v4 folded
+ *               the pre-v4 'orphan' variant in here)
  */
 export type TaskCancellation =
   | { kind: "user"; message: string }
-  | { kind: "orphan"; message: string };
+  | { kind: "cascade"; message: string };
 
-export interface TaskResult {
+export interface TaskSuccess {
   output: string;
+  deliverable?: unknown;
+  artifacts?: readonly string[];
 }
 
 export interface TaskRecord {
@@ -794,32 +803,33 @@ export interface TaskRecord {
   brief: string;
   /** Optional long-form task body. Multi-line allowed. Omitted when not provided. */
   details?: string;
+  /** Who launched this task (issue #119). */
+  origin: TaskOrigin;
   status: TaskStatus;
   /**
    * Open-shape metadata. Includes runtime bookkeeping fields like
-   * `workdir`, `runtime`, `runtimeSessionId`, `exitCode`,
-   * `exitSignal` — the runtime owns the keys, the kernel doesn't inspect.
+   * `workdir`, `runtime`, `runtimeSessionId`. v4 (issue #119) stopped
+   * mirroring `exitCode` / `exitSignal` here — read from `failure.exitCode`
+   * / `failure.signal` instead.
    */
   metadata: Record<string, unknown>;
   /** ISO 8601 string. */
   createdAt: string;
-  startedAt?: string;
+  /** ISO 8601 string. v4 (issue #119): non-null — set at create time. */
+  startedAt: string;
   endedAt?: string;
-  result?: TaskResult;
+  /** Populated iff status='succeeded'. */
+  success?: TaskSuccess;
+  /** Populated iff status='failed'. */
   failure?: TaskFailure;
-  /**
-   * Present iff status='cancelled' (ADR-001). Pre-ADR-001 servers
-   * never produce this field because cancellation wasn't reachable;
-   * additive — old dashboards ignore it gracefully.
-   */
+  /** Populated iff status='cancelled'. */
   cancellation?: TaskCancellation;
 }
 
 /**
  * Optional server-side filters for `listTasks`. Mirrors the server's
- * `ListTaskOpts` (which mirrors `ListSessionOpts` in the sessions
- * surface). Omitted fields are not sent on the wire and the server
- * returns the full set.
+ * `ListTaskOpts`. Omitted fields are not sent on the wire and the
+ * server returns the matching set.
  */
 export interface ListTasksOpts {
   agent?: string;
@@ -828,6 +838,13 @@ export interface ListTasksOpts {
   createdSince?: string;
   /** Statuses to include. The server joins with `,` for the query. */
   statuses?: TaskStatus[];
+  /**
+   * Origin filter (issue #119). `'all'` disables the filter and
+   * returns every origin; any other value is forwarded verbatim.
+   * Default behaviour at call sites is `'standalone'` (matches the
+   * dashboard's "what I dispatched" tab).
+   */
+  origin?: TaskOrigin | "all";
 }
 
 export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
@@ -836,6 +853,7 @@ export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
   if (opts.runtime) qs.set("runtime", opts.runtime);
   if (opts.createdSince) qs.set("createdSince", opts.createdSince);
   if (opts.statuses && opts.statuses.length > 0) qs.set("status", opts.statuses.join(","));
+  if (opts.origin && opts.origin !== "all") qs.set("origin", opts.origin);
   const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
   return fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks${suffix}`, "tasks");
 };

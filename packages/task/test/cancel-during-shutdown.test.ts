@@ -51,10 +51,10 @@ describe("TaskManager.cancel — concurrent with shutdown", () => {
     const final = await fx.m.get(dispatched.id);
     expect(final).not.toBeNull();
     const status = final?.status;
-    expect(status === "cancelled" || status === "failure").toBe(true);
+    expect(status === "cancelled" || status === "failed").toBe(true);
     if (status === "cancelled") {
       expect(final?.cancellation?.kind).toBe("user");
-    } else if (status === "failure") {
+    } else if (status === "failed") {
       expect(final?.failure?.kind).toBe("shutdown");
       expect(final?.failure?.message).toBe("server shutdown");
     }

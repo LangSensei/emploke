@@ -88,12 +88,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-aaaaaaaa", "writer", "copilot",
+      "20260518-aaaaaaaa",
+      "writer",
+      "copilot",
       "success", // → succeeded
-      "do the thing", "details body",
-      "2026-05-18T00:00:00.000Z", "2026-05-18T00:00:01.000Z", "2026-05-18T00:00:05.000Z",
-      "all done", null, '{"pid":1234}',
-      null, null, null, null, null,
+      "do the thing",
+      "details body",
+      "2026-05-18T00:00:00.000Z",
+      "2026-05-18T00:00:01.000Z",
+      "2026-05-18T00:00:05.000Z",
+      "all done",
+      null,
+      '{"pid":1234}',
+      null,
+      null,
+      null,
+      null,
+      null,
     );
     db.prepare(
       `INSERT INTO tasks (
@@ -103,12 +114,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-bbbbbbbb", "writer", "copilot",
+      "20260518-bbbbbbbb",
+      "writer",
+      "copilot",
       "failure", // → failed
-      "bad task", null,
-      "2026-05-18T01:00:00.000Z", "2026-05-18T01:00:01.000Z", "2026-05-18T01:00:03.000Z",
-      null, "boom", "{}",
-      "exited", 137, null, null, null,
+      "bad task",
+      null,
+      "2026-05-18T01:00:00.000Z",
+      "2026-05-18T01:00:01.000Z",
+      "2026-05-18T01:00:03.000Z",
+      null,
+      "boom",
+      "{}",
+      "exited",
+      137,
+      null,
+      null,
+      null,
     );
     db.prepare(
       `INSERT INTO tasks (
@@ -118,12 +140,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-cccccccc", "writer", "copilot",
+      "20260518-cccccccc",
+      "writer",
+      "copilot",
       "failure", // signal variant
-      "killed task", null,
-      "2026-05-18T02:00:00.000Z", "2026-05-18T02:00:01.000Z", "2026-05-18T02:00:02.000Z",
-      null, "received SIGTERM", "{}",
-      "signal", null, "SIGTERM", null, null,
+      "killed task",
+      null,
+      "2026-05-18T02:00:00.000Z",
+      "2026-05-18T02:00:01.000Z",
+      "2026-05-18T02:00:02.000Z",
+      null,
+      "received SIGTERM",
+      "{}",
+      "signal",
+      null,
+      "SIGTERM",
+      null,
+      null,
     );
     db.prepare(
       `INSERT INTO tasks (
@@ -133,12 +166,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-dddddddd", "writer", "copilot",
+      "20260518-dddddddd",
+      "writer",
+      "copilot",
       "cancelled",
-      "cancelled task", null,
-      "2026-05-18T03:00:00.000Z", "2026-05-18T03:00:01.000Z", "2026-05-18T03:00:04.000Z",
-      null, null, "{}",
-      null, null, null, "user", "user requested",
+      "cancelled task",
+      null,
+      "2026-05-18T03:00:00.000Z",
+      "2026-05-18T03:00:01.000Z",
+      "2026-05-18T03:00:04.000Z",
+      null,
+      null,
+      "{}",
+      null,
+      null,
+      null,
+      "user",
+      "user requested",
     );
     // Running row (no terminal payload at all)
     db.prepare(
@@ -149,12 +193,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-eeeeeeee", "writer", "copilot",
+      "20260518-eeeeeeee",
+      "writer",
+      "copilot",
       "running",
-      "live task", null,
-      "2026-05-18T04:00:00.000Z", "2026-05-18T04:00:01.000Z", null,
-      null, null, "{}",
-      null, null, null, null, null,
+      "live task",
+      null,
+      "2026-05-18T04:00:00.000Z",
+      "2026-05-18T04:00:01.000Z",
+      null,
+      null,
+      null,
+      "{}",
+      null,
+      null,
+      null,
+      null,
+      null,
     );
     // Legacy v2-shape failed row (failure_kind NULL, only failure_error).
     db.prepare(
@@ -165,12 +220,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-ffffffff", "writer", "copilot",
+      "20260518-ffffffff",
+      "writer",
+      "copilot",
       "failure",
-      "legacy fail", null,
-      "2026-05-18T05:00:00.000Z", "2026-05-18T05:00:01.000Z", "2026-05-18T05:00:02.000Z",
-      null, "legacy v2 boom", "{}",
-      null, null, null, null, null,
+      "legacy fail",
+      null,
+      "2026-05-18T05:00:00.000Z",
+      "2026-05-18T05:00:01.000Z",
+      "2026-05-18T05:00:02.000Z",
+      null,
+      "legacy v2 boom",
+      "{}",
+      null,
+      null,
+      null,
+      null,
+      null,
     );
     // Edge: row with started_at NULL — should be COALESCEd to created_at.
     db.prepare(
@@ -181,12 +247,23 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
         cancellation_kind, cancellation_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "20260518-99999999", "writer", "copilot",
+      "20260518-99999999",
+      "writer",
+      "copilot",
       "running",
-      "no started_at", null,
-      "2026-05-18T06:00:00.000Z", null, null,
-      null, null, "{}",
-      null, null, null, null, null,
+      "no started_at",
+      null,
+      "2026-05-18T06:00:00.000Z",
+      null,
+      null,
+      null,
+      null,
+      "{}",
+      null,
+      null,
+      null,
+      null,
+      null,
     );
 
     runMigrations(db);
@@ -391,10 +468,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     );
 
     const result = runMigrations(db);
-    expect(result.applied.map((m) => `${m.fromVersion}→${m.toVersion}`)).toEqual([
-      "2→3",
-      "3→4",
-    ]);
+    expect(result.applied.map((m) => `${m.fromVersion}→${m.toVersion}`)).toEqual(["2→3", "3→4"]);
 
     const ver = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
       version: number;

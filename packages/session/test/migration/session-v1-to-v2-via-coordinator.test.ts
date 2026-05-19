@@ -76,13 +76,7 @@ describe("session v1 → v2 migration (issue #120) — schema shape", () => {
     db.prepare(
       `INSERT INTO sessions (id, runtime, created_at, runtime_session_id, last_launch_mode)
        VALUES (?, ?, ?, ?, ?)`,
-    ).run(
-      "20260518-bbbbbbbb",
-      "copilot",
-      "2026-05-18T01:00:00.000Z",
-      null,
-      null,
-    );
+    ).run("20260518-bbbbbbbb", "copilot", "2026-05-18T01:00:00.000Z", null, null);
 
     runMigrations(db);
 
@@ -141,21 +135,11 @@ describe("session v1 → v2 migration (issue #120) — schema shape", () => {
     db.prepare(
       `INSERT INTO sessions (id, runtime, created_at, runtime_session_id, agent)
        VALUES (?, ?, ?, NULL, ?)`,
-    ).run(
-      "20260518-aaaaaaaa",
-      "copilot",
-      "2026-05-18T00:00:00.000Z",
-      "public/writer",
-    );
+    ).run("20260518-aaaaaaaa", "copilot", "2026-05-18T00:00:00.000Z", "public/writer");
     db.prepare(
       `INSERT INTO sessions (id, runtime, created_at, runtime_session_id, agent)
        VALUES (?, ?, ?, NULL, ?)`,
-    ).run(
-      "20260518-bbbbbbbb",
-      "copilot",
-      "2026-05-18T01:00:00.000Z",
-      "public/reader",
-    );
+    ).run("20260518-bbbbbbbb", "copilot", "2026-05-18T01:00:00.000Z", "public/reader");
 
     const matches = db.prepare("SELECT id FROM sessions WHERE agent = ?").all("public/writer") as {
       id: string;
