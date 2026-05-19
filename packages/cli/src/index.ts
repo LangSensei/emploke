@@ -584,9 +584,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(catalogSkill.command("show"))
     .argument("<name>", "Skill name (FQN)")
-    .description("Show one skill's content")
+    .description("Show one skill's entry (or just the anchor with --anchor)")
+    .option("--anchor", "Fetch only the SKILL.md anchor bytes via the dedicated endpoint")
     .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogSkillShow({ ...parseWorkspaceFlags(opts), name });
+      slot.result = await catalogSkillShow({
+        ...parseWorkspaceFlags(opts),
+        name,
+        anchor: opts.anchor === true,
+      });
     });
   withWorkspaceFlags(catalogSkill.command("install"))
     .argument("<origin>", "Skill origin")
@@ -665,9 +670,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(catalogAgent.command("show"))
     .argument("<name>", "Agent name (FQN)")
-    .description("Show one agent's content")
+    .description("Show one agent's entry (or just the anchor with --anchor)")
+    .option("--anchor", "Fetch only the AGENTS.md anchor bytes via the dedicated endpoint")
     .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogAgentShow({ ...parseWorkspaceFlags(opts), name });
+      slot.result = await catalogAgentShow({
+        ...parseWorkspaceFlags(opts),
+        name,
+        anchor: opts.anchor === true,
+      });
     });
   withWorkspaceFlags(catalogAgent.command("install"))
     .argument("<origin>", "Agent origin")

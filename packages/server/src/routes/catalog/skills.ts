@@ -40,6 +40,18 @@ export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     }
   });
 
+  app.get("/:name{.+}/anchor", async (c) => {
+    const catalog = getCatalog(c);
+    const name = c.req.param("name");
+    try {
+      const content = await catalog.getSkillContent(name);
+      return c.json({ content });
+    } catch (e: unknown) {
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
+      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    }
+  });
+
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");

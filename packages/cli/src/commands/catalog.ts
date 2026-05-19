@@ -145,6 +145,8 @@ export async function catalogSkillResolve(opts: CatalogSkillResolveOpts): Promis
 
 export interface CatalogSkillShowOpts extends CommonFlags {
   readonly name: string;
+  /** When true, fetch the SKILL.md anchor bytes via the dedicated endpoint instead of the entry. */
+  readonly anchor?: boolean;
 }
 
 export async function catalogSkillShow(opts: CatalogSkillShowOpts): Promise<CommandResult> {
@@ -154,6 +156,16 @@ export async function catalogSkillShow(opts: CatalogSkillShowOpts): Promise<Comm
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
+    if (opts.anchor === true) {
+      // Dedicated anchor endpoint (issue #122) — returns just the
+      // SKILL.md bytes without the surrounding entry metadata. Use the
+      // raw bytes as stdout so callers can `>` pipe them straight to a
+      // file.
+      const res = await client.call("catalog.skills.anchor", {
+        params: { id, name: opts.name },
+      });
+      return { exitCode: 0, stdout: res.content };
+    }
     const skill = await client.call("catalog.skills.get", {
       params: { id, name: opts.name },
     });
@@ -386,6 +398,8 @@ export async function catalogAgentResolve(opts: CatalogAgentResolveOpts): Promis
 
 export interface CatalogAgentShowOpts extends CommonFlags {
   readonly name: string;
+  /** When true, fetch the AGENTS.md anchor bytes via the dedicated endpoint instead of the entry. */
+  readonly anchor?: boolean;
 }
 
 export async function catalogAgentShow(opts: CatalogAgentShowOpts): Promise<CommandResult> {
@@ -395,6 +409,14 @@ export async function catalogAgentShow(opts: CatalogAgentShowOpts): Promise<Comm
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
+    if (opts.anchor === true) {
+      // Dedicated anchor endpoint (issue #122). Same rationale as
+      // `catalogSkillShow` above.
+      const res = await client.call("catalog.agents.anchor", {
+        params: { id, name: opts.name },
+      });
+      return { exitCode: 0, stdout: res.content };
+    }
     const agent = await client.call("catalog.agents.get", {
       params: { id, name: opts.name },
     });

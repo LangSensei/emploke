@@ -282,6 +282,11 @@ export type SkillWithContent = SkillEntry & { readonly content: string };
 /** GET /api/workspaces/:id/catalog/agents/:name response. */
 export type AgentWithContent = AgentEntry & { readonly content: string };
 
+/** GET /api/workspaces/:id/catalog/{agents,skills}/:name/anchor response (issue #122). */
+export interface AnchorResponse {
+  readonly content: string;
+}
+
 /** GET /api/workspaces/:id/catalog/mcps/:name response. */
 export type McpWithContent = McpMetadata & { readonly content: string };
 
@@ -504,6 +509,10 @@ export const ROUTES = {
     "GET",
     "/api/workspaces/:id/catalog/skills/:name",
   ),
+  "catalog.skills.anchor": defineRoute<{ params: CatalogResourcePathParams }, AnchorResponse>(
+    "GET",
+    "/api/workspaces/:id/catalog/skills/:name/anchor",
+  ),
   "catalog.skills.install": defineRoute<
     { params: WorkspacePathParams; body: SkillInstallBody },
     CatalogInstallResult
@@ -545,6 +554,10 @@ export const ROUTES = {
   "catalog.agents.get": defineRoute<{ params: CatalogResourcePathParams }, AgentWithContent>(
     "GET",
     "/api/workspaces/:id/catalog/agents/:name",
+  ),
+  "catalog.agents.anchor": defineRoute<{ params: CatalogResourcePathParams }, AnchorResponse>(
+    "GET",
+    "/api/workspaces/:id/catalog/agents/:name/anchor",
   ),
   "catalog.agents.install": defineRoute<
     { params: WorkspacePathParams; body: AgentInstallBody },
