@@ -7,19 +7,18 @@ export default defineConfig({
     globals: false,
     pool: "threads",
     testTimeout: 30000,
-    // Match testTimeout so beforeEach hooks that boot a real server
-    // (commands.test.ts: `emploke start` + 15s waitForHealth budget)
-    // don't trip the 10s default on slow Windows runners. Observed
-    // hook timeouts at exactly 10000ms in CI under load.
+    // Match testTimeout + healthTimeoutMs so beforeEach hooks that
+    // boot a real server (commands.test.ts: `emploke start` + 60s
+    // waitForHealth budget) don't trip the 10s default on slow
+    // Windows runners. Observed hook timeouts at exactly 10000ms in
+    // CI under load.
     //
-    // Bumped 30s → 60s after observing rotating-flake hook timeouts at
-    // exactly 30000ms on the `windows-latest` runner. Cold-boot under
-    // Windows Defender real-time scanning of the WAL sidecar
-    // occasionally pushes the `emploke start` → `/api/health` chain
-    // past 30s; 60s gives that tail enough budget without bandaging
-    // a real regression. The root fix is in #130 (function-level CLI
-    // tests in lieu of spawn-based integration).
-    hookTimeout: 60000,
+    // Bumped 30s → 90s alongside `emploke start`'s healthTimeoutMs
+    // bump (30s → 60s). The hook timeout has to be > the server's
+    // own internal budget plus a small margin for spawn + the rest
+    // of beforeEach (mkdtemp + run() overhead) — 90s gives ~30s of
+    // headroom on top of the 60s wait-for-health.
+    hookTimeout: 90000,
     // The two server-booting integration files in this package
     // (`commands.test.ts` and `lifecycle.test.ts`) used to race for
     // the same 4 vCPU + disk I/O + AV scan budget on Windows runners
