@@ -358,9 +358,7 @@ async function readMcpServersFromWorkdir(
   const out: Record<string, MCPServerConfig> = {};
   for (const [name, body] of Object.entries(sourceMap)) {
     if (body === null || typeof body !== "object") {
-      throw new Error(
-        `Malformed ${COPILOT_MCP_CONFIG}: server "${name}" must be an object`,
-      );
+      throw new Error(`Malformed ${COPILOT_MCP_CONFIG}: server "${name}" must be an object`);
     }
     const merged = { ...(body as Record<string, unknown>) };
     if (!("tools" in merged)) {

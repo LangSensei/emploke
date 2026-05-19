@@ -41,7 +41,7 @@ import {
   launchCopilotHeadless,
 } from "./launch-headless.js";
 import { provisionCopilotWorkdir } from "./provision.js";
-import { readCopilotSessionState, readCopilotWorkspaceYaml } from "./state.js";
+import { readCopilotWorkspaceYaml } from "./state.js";
 import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
