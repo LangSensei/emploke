@@ -167,7 +167,7 @@ export async function launchCopilotHeadless(
   const createClient = deps.createClient ?? ((options) => new CopilotClient(options));
   const client = createClient({
     useLoggedInUser: true,
-    ...(opts.subprocessEnv ? { env: opts.subprocessEnv } : {}),
+    env: mergeEnv(process.env, opts.subprocessEnv),
   });
 
   try {
@@ -304,6 +304,35 @@ async function safeStop(client: CopilotClient): Promise<void> {
     // SDK's `forceStop` would also work but is more disruptive
     // (skips graceful cleanup); we prefer the soft path.
   }
+}
+
+/**
+ * Merge an override bag on top of a parent env, honouring `undefined`
+ * as "delete this key from the parent". Returns a fresh object so the
+ * SDK / spawn can take ownership without aliasing.
+ *
+ * Required because the SDK's `CopilotClient({ env })` REPLACES
+ * `process.env` for the spawned CLI subprocess rather than merging.
+ * Passing only emploke's own EMPLOKE_* additions would strip Windows
+ * system vars (`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATH`,
+ * `PATHEXT`, …) that downstream tools (`gh`, `git`, native build
+ * toolchains) need to function — `gh auth status` in particular
+ * cannot reach the Windows Credential Manager without USERPROFILE.
+ */
+function mergeEnv(
+  parent: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  if (!overrides) return { ...parent };
+  const out: NodeJS.ProcessEnv = { ...parent };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete out[key];
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 /**

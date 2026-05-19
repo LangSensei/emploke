@@ -37,7 +37,6 @@ import { buildCopilotLaunchCommand } from "./launch.js";
 import {
   type EventBuffer,
   type LaunchCopilotHeadlessDeps,
-  type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
 } from "./launch-headless.js";
 import { provisionCopilotWorkdir } from "./provision.js";
