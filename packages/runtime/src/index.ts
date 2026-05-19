@@ -13,15 +13,11 @@ export {
   isCopilotSessionId,
 } from "./copilot/ids.js";
 export {
-  type BuildCopilotHeadlessArgsOpts,
-  buildCopilotHeadlessArgs,
   COPILOT_MCP_CONFIG,
-  COPILOT_STDERR_LOG,
-  COPILOT_STDOUT_LOG,
+  type EventBuffer,
   type LaunchCopilotHeadlessDeps,
   type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
-  type SpawnFn,
 } from "./copilot/launch-headless.js";
 export { flattenSkillName } from "./copilot/provision.js";
 export { isPathCovered } from "./copilot/trust.js";

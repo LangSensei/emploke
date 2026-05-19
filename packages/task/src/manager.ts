@@ -415,9 +415,7 @@ export class TaskManager {
     //    on disk. The orphan recovery path will mark it failed at the
     //    next bootstrap if the server then restarts. In practice this
     //    write is local fs to a dir we just created, so it does not fail.
-    const startMetaPatch: Record<string, unknown> = {
-      pid: handle.pid,
-    };
+    const startMetaPatch: Record<string, unknown> = {};
     if (handle.runtimeSessionId !== undefined) {
       startMetaPatch.runtimeSessionId = handle.runtimeSessionId;
     }
@@ -860,21 +858,12 @@ export class TaskManager {
    * OOM, segfault, `kill -9`, power loss — can reach this code path
    * with a `running` task.
    *
-   * For each `running` task we probe whether the recorded PID is still
-   * alive (`process.kill(pid, 0)`):
-   *
-   *   - **Dead**: the subprocess is gone, the task is genuinely
-   *     orphaned, mark it `failure` with the canonical reason.
-   *   - **Alive**: a child somehow outlived the server crash (PID 1
-   *     adoption, OS quirk, brief race where we boot before the
-   *     OS has reaped). Leave the task at `running` and log a warn —
-   *     no exit watcher will see this subprocess finish, so the task
-   *     will likely sit at `running` until next reconciliation, but
-   *     incorrectly flipping it to `failure` while real work is still
-   *     being written into the workdir is worse than a stale row.
-   *   - **Unknown PID** (no `metadata.pid` recorded): pre-1.0 records
-   *     or third-party producers; treat as dead and mark `failure`,
-   *     matching pre-PID-probe behaviour.
+   * Lifecycle invariant: the underlying CLI subprocess is owned by
+   * the SDK (`@github/copilot-sdk`), which spawns it as a child of
+   * the emploke server process. When the server dies, the OS reaps
+   * the SDK CLI subprocess; there is no scenario where the CLI
+   * outlives the server. So every `running` task at boot is
+   * genuinely orphaned — no per-task liveness probe is needed.
    */
   async recoverOrphaned(): Promise<void> {
     // The DB row is the source of truth for "this task exists in
@@ -900,15 +889,6 @@ export class TaskManager {
       candidates.map(async (task) => {
         const id = task.id;
         const workdir = safeJoinUnderRoot(this.tasksDir, id);
-
-        const pid = readTaskRuntimeMetadata(task).pid;
-        if (typeof pid === "number" && isProcessAlive(pid)) {
-          this.logger.warn(
-            { taskId: id, pid },
-            "tasks: skipping live orphan (subprocess outlived server crash; will not be watched)",
-          );
-          return;
-        }
 
         try {
           const failed = task.fail(
@@ -1309,41 +1289,6 @@ function defaultRandomBytes(n: number): Buffer {
 function pickRuntimeSessionId(metadata: Readonly<Record<string, unknown>>): string | null {
   const v = metadata.runtimeSessionId;
   return typeof v === "string" && v.length > 0 ? v : null;
-}
-
-/**
- * Probe whether `pid` names a live process this user can signal.
- *
- * Uses `process.kill(pid, 0)` — the Node + POSIX + Windows-emulated idiom
- * for "exists + permitted". Signal `0` performs the existence check
- * without actually delivering anything. The semantics:
- *
- *   - process exists and we can signal it → returns true
- *   - process is gone (`ESRCH`) → returns false
- *   - process exists but we lack permission (`EPERM`) → returns true
- *     (we still know it's alive)
- *
- * Any other error is treated as "unknown / probably gone" so the caller
- * defaults to the safer mark-as-failure path.
- *
- * Note on PID reuse: between a server crash and the next bootstrap, the
- * OS may have recycled the PID we recorded. `isProcessAlive` cannot
- * detect this — it'll see the new occupant and return true. The
- * consequence (one task incorrectly stays at `running` instead of being
- * marked `failure`) is a strictly milder failure mode than the
- * pre-probe code's symmetric mistake (incorrectly flipping a live
- * subprocess to `failure`), so the trade is favourable.
- */
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EPERM") return true;
-    return false;
-  }
 }
 
 export type { TaskRuntimeMetadata } from "./task-meta.js";

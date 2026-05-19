@@ -801,7 +801,7 @@ export interface TaskRecord {
   status: TaskStatus;
   /**
    * Open-shape metadata. Includes runtime bookkeeping fields like
-   * `workdir`, `runtime`, `runtimeSessionId`, `pid`, `exitCode`,
+   * `workdir`, `runtime`, `runtimeSessionId`, `exitCode`,
    * `exitSignal` — the runtime owns the keys, the kernel doesn't inspect.
    */
   metadata: Record<string, unknown>;

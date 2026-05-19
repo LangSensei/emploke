@@ -32,8 +32,9 @@ export class InvalidMcpJson extends Error {
  * Failing the launch up front (and surfacing this error in the
  * dashboard) is much better UX than silently spawning into that prompt.
  *
- * The non-interactive `copilot -p --yolo` path used by `launchCopilotHeadless`
- * is unaffected because it has no folder-trust gate.
+ * The SDK headless path used by `launchCopilotHeadless` is unaffected
+ * because it has no folder-trust gate (the SDK's `approveAll` permission
+ * handler bypasses it).
  */
 export class TrustRegistrationFailed extends Error {
   constructor(

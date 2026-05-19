@@ -25,7 +25,6 @@ import { SqliteTaskRepository, TaskManager } from "../src/index.js";
  * (kill → exit fires after a microtask).
  */
 export interface TestSpawnHandle {
-  readonly pid: number;
   readonly runtimeSessionId: string;
   killed: boolean;
   killCount: number;
@@ -53,14 +52,12 @@ export class TestRuntime implements Runtime {
         resolveExit = res;
       });
       const rec: TestSpawnHandle = {
-        pid: 20000 + id,
         runtimeSessionId: `sid-${id.toString().padStart(8, "0")}`,
         killed: false,
         killCount: 0,
         resolveExit,
       };
       const handle: RuntimeHandle = {
-        pid: rec.pid,
         runtimeSessionId: rec.runtimeSessionId,
         sessionDir: Promise.resolve("/tmp/session"),
         exit,

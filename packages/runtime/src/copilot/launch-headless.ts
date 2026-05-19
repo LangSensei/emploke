@@ -1,168 +1,64 @@
-import type { ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { createWriteStream, existsSync, type WriteStream } from "node:fs";
-import { mkdir as nodeMkdir } from "node:fs/promises";
+/**
+ * SDK-based headless launch for the Copilot runtime.
+ *
+ * We instantiate ONE {@link CopilotClient} PER TASK. Each client spawns
+ * its own CLI subprocess via the SDK so per-task `workingDirectory`
+ * isolation is preserved (any tool that resolves paths against
+ * `process.cwd()` rather than the session's workingDirectory would
+ * otherwise leak across tasks under a shared client).
+ *
+ * Events arrive via `onEvent` (registered BEFORE `createSession`'s RPC
+ * fires, so even the early `session.start` event lands in our buffer).
+ * Every event is pushed into an in-memory `SessionEvent[]` and fanned
+ * out to subscribers. The {@link CopilotRuntime} keeps a
+ * `Map<sessionId, EventBuffer>` and serves `readActivity` /
+ * `streamActivity` from it directly — no `events.jsonl` polling.
+ *
+ * The returned {@link RuntimeHandle.exit} resolves when `session.idle`
+ * fires (model has nothing more to do) OR the underlying client/session
+ * errors out. `kill()` calls `session.abort()` (graceful — model
+ * finishes the current turn, then stops).
+ */
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
-import crossSpawn from "cross-spawn";
+import {
+  approveAll,
+  CopilotClient,
+  type CopilotSession,
+  type MCPServerConfig,
+  type SessionEvent,
+} from "@github/copilot-sdk";
 import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
 import type { RuntimeExit, RuntimeHandle } from "../types.js";
-import { generateCopilotSessionId } from "./ids.js";
 import { COPILOT_MCP_CONFIG, provisionCopilotWorkdir } from "./provision.js";
 
-/**
- * File names for side-channel stdout/stderr capture under the task
- * directory. Copilot's primary log surface is `events.jsonl` inside the
- * per-session state dir at `<copilotStateDir>/<runtimeSessionId>/`,
- * which the runtime owns end-to-end via `Runtime.readActivity`. These
- * files exist as a fallback for output that happens before the session
- * dir has anything useful (e.g. the CLI complaining about a missing
- * flag) and — crucially on Windows — to give the child process a real
- * file handle as its stdout. Without that, `'ignore'` resolves to the
- * NUL device, and any subsequent `process.stdout` flush from the child
- * aborts with `Failed to sync '<stdout>': Incorrect function.` because
- * Windows' NUL doesn't support `FlushFileBuffers`. Real files do.
- */
-export const COPILOT_STDOUT_LOG = "stdout.log";
-export const COPILOT_STDERR_LOG = "stderr.log";
-
-/**
- * Re-exported workspace `.mcp.json` filename. The single source of truth
- * lives in `provision.ts` (the actual writer); the launcher's existence
- * probe and `--additional-mcp-config` argv consume it from here. Kept as
- * a re-export so `@emploke/runtime` consumers see a stable symbol on the
- * launch-headless surface.
- */
 export { COPILOT_MCP_CONFIG };
 
 /**
- * Argv fragment appended to non-interactive `copilot -p` when the spawn
- * cwd contains a workspace `.mcp.json`. Two separate argv entries (NOT a
- * single combined string) — matches how the Copilot CLI parses long
- * options with values and keeps the call shape symmetric with every
- * other flag in {@link buildCopilotHeadlessArgs}.
- *
- * The leading `@` tells Copilot CLI "load from this file path"; the path
- * is relative because the child process's cwd is `taskDir`, which is
- * exactly where `provisionCopilotWorkdir` wrote the file. This avoids
- * any host-path resolution gymnastics.
- *
- * Why this exists at all: the upstream Copilot CLI silently SKIPS
- * workspace-level `.mcp.json` MCP servers in non-interactive (`-p`)
- * mode — they're filtered out before any start attempt and never appear
- * in the agent's tool surface, with no warning. Passing
- * `--additional-mcp-config` re-routes the same file through the loader
- * that `-p` honours, so workspace MCPs become available to task agents.
- *
- * Tracked: emploke #105 / upstream github/copilot-cli#3313.
+ * Per-session in-memory event buffer. The CopilotRuntime keeps a map of
+ * sessionId -> EventBuffer so `readActivity` and `streamActivity` have
+ * a sync source of truth without going to disk.
  */
-const ADDITIONAL_MCP_CONFIG_FLAG = "--additional-mcp-config";
-const ADDITIONAL_MCP_CONFIG_VALUE = `@./${COPILOT_MCP_CONFIG}`;
-
-/**
- * Default spawn implementation used when `LaunchCopilotHeadlessDeps.spawn`
- * is not injected (i.e. production code paths). Wraps `cross-spawn` so
- * Windows footguns (PATHEXT iteration, `.cmd`/`.bat` execution post
- * CVE-2024-27980, `cmd /S` quote-stripping) are handled transparently.
- *
- * Exported so a regression test can assert `defaultSpawnImpl ===
- * crossSpawn`. Without that pin, a future maintainer could swap the
- * fallback at line 250 from `crossSpawn` back to `node:child_process`'s
- * native `spawn` — every existing unit test would still pass (they
- * inject a fake at the same seam), but production would silently
- * break for any user with an npm-installed copilot on Windows. See
- * `launch-headless.test.ts` for the assertion that pins this.
- */
-export const defaultSpawnImpl: SpawnFn = crossSpawn as unknown as SpawnFn;
-
-/**
- * Merge a base env (typically `process.env`) with an override map,
- * deleting any key whose override value is `undefined`. Returns a fresh
- * object so callers can hand it straight to `child_process.spawn` without
- * mutating the caller's env.
- *
- * Why bother: Node's spawn semantics interpret `undefined` values in
- * `env` as "actually set the variable to the literal string 'undefined'"
- * on some platforms (the value goes through a `String()` conversion).
- * That's almost never what the caller wants when they pass
- * `EMPLOKE_HOME: process.env.EMPLOKE_HOME` and the upstream env
- * has no value set. Stripping `undefined` before spawn means downstream
- * `process.env.EMPLOKE_HOME` is genuinely `undefined` rather than
- * the string "undefined". The same convention is used by every
- * `process.env`-aware helper we've built so the runtime stays
- * predictable across platforms.
- */
-function mergeEnv(base: NodeJS.ProcessEnv, overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...base };
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === undefined) {
-      delete out[key];
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-/**
- * Default child_process.spawn signature, narrowed to what we actually call.
- * Carved out as a type alias so the test seam parameter can be typed
- * without leaking node's overload soup into the public surface.
- */
-export type SpawnFn = (
-  command: string,
-  args: readonly string[],
-  options: Parameters<typeof nodeSpawn>[2],
-) => ChildProcess;
-
-export interface LaunchCopilotHeadlessDeps {
+export interface EventBuffer {
+  /** All events captured so far, in arrival order. */
+  readonly events: SessionEvent[];
   /**
-   * Root under which Copilot maintains per-session state directories. We
-   * `mkdir` `<copilotStateDir>/<sessionId>/` before spawn so the returned
-   * `sessionDir` resolves to a path that already exists, avoiding a
-   * race against Copilot's first event write — useful for callers (and
-   * tests) that need a stable path post-launch even before the CLI
-   * has had a chance to write anything. The runtime then reads back
-   * from this dir via `readActivity` whenever the dashboard asks for
-   * the parsed timeline.
+   * Resolves true when the session has finished (idle + done). Set by
+   * the launcher's exit watcher. Allows `readActivity` callers to
+   * know whether they're looking at a still-streaming session vs a
+   * completed one (the terminal `session.idle` already implies done
+   * for `-p`-style one-shot tasks).
    */
-  readonly copilotStateDir: string;
+  finished: boolean;
   /**
-   * Absolute path resolved as `${sharedDir}` during provision-time
-   * placeholder substitution in MCP specs. Required so non-interactive
-   * task launch reaches the same per-machine shared dir as interactive
-   * provision; the copilot runtime threads the value from
-   * `CopilotRuntimeConfig.sharedDir`.
+   * Subscribers added by {@link CopilotRuntime.streamActivity}. Each
+   * is invoked once per event with the freshly-pushed event. Stored
+   * here so the launcher's event handler can fan out to live
+   * subscribers without the runtime having to wrap the SDK session.
    */
-  readonly sharedDir: string;
-  /** Path to the `copilot` executable. Defaults to bare `"copilot"` (PATH lookup via cross-spawn). */
-  readonly copilotBin?: string;
-  /** Test seam for id generation. */
-  readonly randomUUID?: () => string;
-  /** Test seam for spawn. */
-  readonly spawn?: SpawnFn;
-  /** Test seam for mkdir. */
-  readonly mkdir?: typeof nodeMkdir;
-  /**
-   * Maximum time to wait for the child's `'spawn'` (or `'error'`) event
-   * before giving up and reporting `RuntimeHeadlessLaunchFailed`. Defaults
-   * to 30000 ms.
-   *
-   * The cap exists purely as a deadlock guard: Node v15+ documents that
-   * `spawn` and `error` are guaranteed to fire one or the other, so in
-   * practice this never trips. We keep it because the failure mode if
-   * it ever did fire-neither (Node bug, OS-level wedge) would be a
-   * task that hangs `running` forever with no exit watcher attached.
-   *
-   * 30s leaves enough headroom for the worst real-world cases observed
-   * on Windows — Defender / EDR can hold a `CreateProcess` for several
-   * seconds while it scans a large unfamiliar `.exe` (Copilot ships as
-   * a tens-of-MB packaged Node binary) — without making true deadlocks
-   * pin the manager indefinitely.
-   *
-   * Tests inject a small value (e.g. 50 ms) to avoid actually waiting.
-   */
-  readonly spawnTimeoutMs?: number;
+  readonly subscribers: Set<(event: SessionEvent) => void>;
 }
 
 export interface LaunchCopilotHeadlessOpts {
@@ -178,107 +74,67 @@ export interface LaunchCopilotHeadlessOpts {
   readonly workspaceDir: string;
   /**
    * Optional bag merged into the spawned subprocess's environment on
-   * top of `process.env`. See `LaunchHeadlessOpts.subprocessEnv` for
-   * the rationale (TL;DR: lets emploke-controlled children inherit
-   * `EMPLOKE_WORKSPACE` etc. without the AI-agent caller having to
-   * `export` per-shell).
+   * top of `process.env`. The SDK forwards these to its CLI subprocess
+   * via the `env` option on {@link CopilotClient}.
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
 }
 
-/**
- * Inputs to {@link buildCopilotHeadlessArgs}.
- *
- * `mcpConfigExists` is computed by the caller (one `existsSync` against
- * `<taskDir>/.mcp.json`) so the helper itself stays pure and trivially
- * unit-testable.
- */
-export interface BuildCopilotHeadlessArgsOpts {
-  readonly prompt: string;
-  readonly runtimeSessionId: string;
-  readonly taskDir: string;
+export interface LaunchCopilotHeadlessDeps {
   /**
-   * Whether `<taskDir>/.mcp.json` is present at the moment of spawn. When
-   * true, the helper appends `--additional-mcp-config @./.mcp.json` so
-   * workspace MCP servers actually load under `copilot -p` (see
-   * {@link ADDITIONAL_MCP_CONFIG_FLAG} for the upstream-bug context).
+   * Where the CLI server writes per-session state on disk. Matches
+   * the SDK's default of `~/.copilot/session-state/`. emploke does
+   * NOT pass this through to the SDK client (`copilotHome` was
+   * intentionally dropped — using a non-default `copilotHome` would
+   * break inherited auth from `~/.copilot`). This dir is consulted
+   * only by {@link CopilotRuntime}'s disk-fallback `readActivity` on
+   * orphan-recovered sessions that have no in-memory event buffer.
    */
-  readonly mcpConfigExists: boolean;
+  readonly copilotStateDir: string;
+  /**
+   * Absolute path resolved as `${sharedDir}` during provision-time
+   * placeholder substitution in MCP specs.
+   */
+  readonly sharedDir: string;
+  /**
+   * Optional test seam: inject a fake CopilotClient factory. Production
+   * uses the SDK's real `CopilotClient` constructor.
+   */
+  readonly createClient?: (
+    options: ConstructorParameters<typeof CopilotClient>[0],
+  ) => CopilotClient;
+  /**
+   * Required: the CopilotRuntime registers the session's event buffer
+   * via this callback so `readActivity` / `streamActivity` can find it
+   * after launch returns. Unregistered by `CopilotRuntime.deleteState`.
+   */
+  readonly registerSession: (sessionId: string, buffer: EventBuffer) => void;
 }
 
 /**
- * Build the argv passed to `cross-spawn` for a non-interactive
- * (`copilot -p`) launch. Pure function — same inputs always produce the
- * same array — so it can be exercised by unit tests without spawning a
- * real child process or mocking `node:fs`.
- *
- * Flag rationale (kept here so the launcher body doesn't have to inline
- * a wall of comments around an array literal):
- *
- *   - `--allow-all`: required for non-interactive mode (per
- *     `copilot --help`). Unblocks tool / path / URL confirmation prompts.
- *   - `--no-ask-user`: disables the `ask_user` tool so the agent can't
- *     pause waiting for input we'll never deliver.
- *   - `--output-format json`: makes stdout a JSONL of events. We don't
- *     currently consume that stream — the canonical event log lives at
- *     `<sessionDir>/events.jsonl` and the dashboard reads it through
- *     the runtime's `readActivity` surface — but the flag stays on so
- *     a future progress-streaming UI can attach to stdout without
- *     changing the spawn arguments.
- *   - `-C <taskDir>`: redundant with `cwd` but belt-and-suspenders for
- *     tools that introspect argv.
- *   - `--additional-mcp-config @./.mcp.json` (conditional): workaround
- *     for the upstream `-p` mode silently dropping workspace
- *     `.mcp.json` servers. Appended only when the file actually exists
- *     in `taskDir` so we don't pass a flag with nothing to load. See
- *     emploke #105 / upstream github/copilot-cli#3313.
- */
-export function buildCopilotHeadlessArgs(opts: BuildCopilotHeadlessArgsOpts): string[] {
-  const args: string[] = [
-    "-p",
-    opts.prompt,
-    "--resume",
-    opts.runtimeSessionId,
-    "--allow-all",
-    "--no-ask-user",
-    "--output-format",
-    "json",
-    "-C",
-    opts.taskDir,
-  ];
-  if (opts.mcpConfigExists) {
-    args.push(ADDITIONAL_MCP_CONFIG_FLAG, ADDITIONAL_MCP_CONFIG_VALUE);
-  }
-  return args;
-}
-
-/**
- * Spawn `copilot -p <prompt> --resume=<uuid>` against `taskDir` and return
- * a live {@link RuntimeHandle}. The CLI runs unattended (`--allow-all`,
- * `--no-ask-user`) and emits structured events into its per-session state
- * directory, which the caller can mount under the task workdir.
+ * Spawn the SDK client, create a session pointed at `taskDir`, send the
+ * prompt, and return a live {@link RuntimeHandle}. The runtime's own
+ * cleanup is on `kill()` (graceful abort) or on the natural exit of the
+ * session (`session.idle`).
  *
  * Sequence:
- *   1. Provision the workdir (AGENTS.md, .mcp.json, .github/skills, …) the
- *      same way `provision()` does for an interactive session. Wraps the
- *      failure as `RuntimeProvisionFailed` so callers can distinguish
- *      provisioning trouble from spawn trouble.
- *   2. Mint a fresh Copilot session id and pre-create
- *      `<copilotStateDir>/<id>/` so the returned `sessionDir` resolves to
- *      a path that already exists (consumers can read it via
- *      `Runtime.readActivity` immediately, no race with Copilot's
- *      first event write).
- *   3. Spawn the CLI in non-interactive mode with stdout/stderr piped to
- *      `<taskDir>/stdout.log` and `<taskDir>/stderr.log` respectively.
- *      The canonical log lives in events.jsonl under the session dir;
- *      these files mostly catch CLI-level diagnostics and exist
- *      primarily to give the child a real file handle for stdout, which
- *      Windows requires for `process.stdout` flushing to succeed.
- *   4. Wait for the `'spawn'` event to confirm the OS started the
- *      process. Spawn failures (ENOENT on `copilot`, EPERM, …) reject the
- *      launchHeadless promise with `RuntimeHeadlessLaunchFailed`. Once spawn is
- *      confirmed, post-startup failures become normal task outcomes
- *      surfaced via `handle.exit`.
+ *   1. Provision the workdir (AGENTS.md, .mcp.json, .github/skills, …).
+ *   2. Start a per-task `CopilotClient`. The SDK spawns Copilot CLI
+ *      in server mode under the hood. The client process is owned
+ *      by the SDK; we just keep the handle so we can `stop()` it
+ *      from the exit watcher.
+ *   3. Wire the per-session event buffer + `session.idle` latch.
+ *   4. Read `<workdir>/.mcp.json` (if present) — polyfill for the
+ *      SDK's missing MCP discovery; the file is still the source
+ *      of truth on disk.
+ *   5. Create the session with `workingDirectory: taskDir`,
+ *      `enableConfigDiscovery: true` (skills/instructions auto-load),
+ *      the loaded `mcpServers`, and the buffering `onEvent` handler.
+ *   6. Register the buffer with the CopilotRuntime so the dashboard
+ *      can pull activity through `readActivity(runtimeSessionId)`.
+ *   7. Send the prompt via `session.send` (fire-and-forget — exit
+ *      watcher tracks `session.idle`).
+ *   8. Build the exit promise + cleanup hooks.
  */
 export async function launchCopilotHeadless(
   opts: LaunchCopilotHeadlessOpts,
@@ -295,214 +151,249 @@ export async function launchCopilotHeadless(
     throw new RuntimeProvisionFailed("copilot", opts.taskDir, cause as Error);
   }
 
-  const mkdirImpl = deps.mkdir ?? nodeMkdir;
-  // Bin path. Default `"copilot"`; cross-spawn at the spawn site
-  // handles PATH lookup, PATHEXT iteration (Windows), and the
-  // `.cmd` / `.bat` cmd.exe wrap (CVE-2024-27980 mitigation).
-  // Production users should `npm install -g @github/copilot`; the
-  // WinGet-installed Copilot has a separate stdout-corruption bug
-  // under non-console spawn that emploke does not work around.
-  const bin = deps.copilotBin ?? "copilot";
-
-  // Step 2: pre-allocate session id + dir.
-  let sessionId: string;
-  let sessionDir: string;
-  try {
-    sessionId = generateCopilotSessionId(deps.randomUUID);
-    sessionDir = path.join(deps.copilotStateDir, sessionId);
-    await mkdirImpl(sessionDir, { recursive: true });
-  } catch (cause) {
-    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
-  }
-
-  // Step 3: spawn.
-  // Build argv via the pure helper so the construction is exercised by
-  // unit tests without spawning a real child. The conditional
-  // `--additional-mcp-config` flag (see helper JSDoc) is gated on a
-  // single sync `existsSync` against `<taskDir>/.mcp.json`. The probe
-  // runs AFTER `provisionCopilotWorkdir` (Step 1) so we observe the
-  // file the provisioner just wrote when the agent declares MCPs;
-  // when the agent has no MCPs no file exists and the flag is
-  // omitted, matching upstream's "nothing to load" expectation.
-  const mcpConfigPath = path.join(opts.taskDir, COPILOT_MCP_CONFIG);
-  const mcpConfigExists = existsSync(mcpConfigPath);
-  const args = buildCopilotHeadlessArgs({
-    prompt: opts.prompt,
-    runtimeSessionId: sessionId,
-    taskDir: opts.taskDir,
-    mcpConfigExists,
+  // Step 2: start the SDK client.
+  //
+  // Auth model: emploke assumes the operator (the human running the
+  // emploke server) is already logged in via `copilot --login`. That
+  // login state lives in `~/.copilot/` (config.json + OS keychain
+  // tokens). We do NOT pass `copilotHome` so the SDK defaults to
+  // `~/.copilot` and inherits the operator's auth.
+  //
+  // `useLoggedInUser: true` is the SDK default, set explicitly so a
+  // future refactor adding per-session `gitHubToken` (BYOK) doesn't
+  // accidentally also switch this default — the SDK documented
+  // behavior is that providing `gitHubToken` implicitly flips this
+  // to false.
+  const createClient = deps.createClient ?? ((options) => new CopilotClient(options));
+  const client = createClient({
+    useLoggedInUser: true,
+    env: mergeEnv(process.env, opts.subprocessEnv),
   });
 
-  let child: ChildProcess;
   try {
-    // Spawn via `cross-spawn`, the npm de-facto standard for "spawn a
-    // child cross-platform without surprises" (100M+ weekly downloads,
-    // used by npm CLI / Jest / Mocha / ESLint). It transparently
-    // handles every Windows-spawn footgun that this codebase used to
-    // patch by hand:
-    //
-    //   - Bare-name PATHEXT iteration: spawn("copilot", ...) finds
-    //     `copilot.cmd` even though Node's CreateProcess won't.
-    //   - .cmd / .bat execution post CVE-2024-27980 (Node 18.20.0+ /
-    //     20.12.0+): cross-spawn wraps with cmd.exe internally using
-    //     the same `windowsVerbatimArguments` + escape pattern we
-    //     used to write by hand, plus the cmd /S quote-stripping
-    //     workaround that takes an extra outer pair of quotes so
-    //     cmd parses the inner sequence correctly.
-    //   - Shebang resolution for #!-line scripts (irrelevant for
-    //     copilot but keeps the contract simple).
-    //
-    // The test seam (`deps.spawn`) lets unit tests inject a fake
-    // SpawnFn — used by `launch-headless.test.ts` to capture and
-    // assert on spawn args without actually launching a child.
-    // Production goes through `defaultSpawnImpl` (cross-spawn); the
-    // seam never sees it. The default impl is exported above so
-    // a one-line regression test can assert it stays bound to
-    // cross-spawn — see the comment on `defaultSpawnImpl` for why.
-    const spawnImpl = deps.spawn ?? defaultSpawnImpl;
-    child = spawnImpl(bin, args, {
-      cwd: opts.taskDir,
-      // stdout/stderr both piped — we mirror to stdout.log/stderr.log.
-      // 'ignore' would map stdout to NUL on Windows, which doesn't
-      // support FlushFileBuffers; the child process then aborts with
-      // "Failed to sync '<stdout>': Incorrect function." before any
-      // real work happens. Piping gives it a real handle.
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
-      windowsHide: true,
-      // Inherit the server's env so PATH / HOME / Copilot's own auth
-      // tokens etc. flow through, then layer the per-task bag on top.
-      // We omit the field entirely when no override is supplied, so
-      // Node's default-inherit behaviour kicks in.
-      env: opts.subprocessEnv ? mergeEnv(process.env, opts.subprocessEnv) : undefined,
-    });
+    await client.start();
   } catch (cause) {
-    // Truly synchronous spawn failure. Rare on Node; usually async via 'error'.
     throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
   }
 
-  // Step 4: await `'spawn'` so a failed exec (ENOENT, EPERM) surfaces
-  // synchronously to the caller instead of via a never-resolving exit
-  // promise. Without this guard a missing `copilot` binary would silently
-  // park the task in `running` forever.
-  //
-  // The timeout is a deadlock guard, not a "spawn must finish quickly"
-  // policy — it caps the wait if neither `spawn` nor `error` ever fires
-  // (Node v15+ guarantees one will, but we don't want a Node bug to
-  // wedge a task forever). See `spawnTimeoutMs` deps doc for sizing
-  // rationale.
-  const spawnTimeoutMs = deps.spawnTimeoutMs ?? 30_000;
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      // Best-effort kill the maybe-running child so we don't leak a
-      // process behind the rejected promise. If it never spawned this
-      // is a no-op; if it did spawn but missed the event, the kill
-      // tears it down.
+  // Step 3: per-session event buffer + idle latch.
+  const buffer: EventBuffer = {
+    events: [],
+    finished: false,
+    subscribers: new Set(),
+  };
+
+  let idleResolve: ((info: RuntimeExit) => void) | undefined;
+  const idlePromise = new Promise<RuntimeExit>((resolve) => {
+    idleResolve = resolve;
+  });
+
+  const onEvent = (event: SessionEvent) => {
+    buffer.events.push(event);
+    for (const sub of buffer.subscribers) {
       try {
-        child.kill();
+        sub(event);
       } catch {
-        // Already gone or never started.
+        // A subscriber throwing must not break the event pipeline.
+        // The streamActivity contract on the runtime side already
+        // handles abort signals; surface anything else via its own
+        // error channel, not ours.
       }
-      reject(
-        new RuntimeHeadlessLaunchFailed(
-          "copilot",
-          opts.taskDir,
-          new Error(
-            `timed out after ${spawnTimeoutMs}ms waiting for child 'spawn' or 'error' event`,
-          ),
-        ),
-      );
-    }, spawnTimeoutMs);
-    timer.unref();
-    child.once("spawn", () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve();
-    });
-    child.once("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, err));
-    });
-  });
+    }
+    // `session.idle` signals the model has no more work — terminal
+    // event for one-shot dispatches.
+    if (event.type === "session.idle") {
+      buffer.finished = true;
+      idleResolve?.({ code: 0, signal: null });
+    }
+  };
 
-  // Pipe stdout/stderr to disk. Append-mode so a re-launch (future
-  // feature) wouldn't truncate prior context, but in MVP each task dir
-  // is fresh. Stdout *must* be a real file (not 'ignore'/NUL) for
-  // Windows: the child's `process.stdout` flush calls FlushFileBuffers,
-  // which fails on NUL with ERROR_INVALID_FUNCTION ("Incorrect
-  // function") and aborts the child before any real work happens.
-  const stdoutPath = path.join(opts.taskDir, COPILOT_STDOUT_LOG);
-  const stderrPath = path.join(opts.taskDir, COPILOT_STDERR_LOG);
-  let stdoutStream: WriteStream | null = null;
-  let stderrStream: WriteStream | null = null;
-  if (child.stdout !== null) {
-    stdoutStream = createWriteStream(stdoutPath, { flags: "a" });
-    // `pipe()` does NOT forward source-side errors to the destination,
-    // and on a `Writable` an unhandled `error` event throws in the
-    // process. Trigger surfaces: `ENOSPC`/`EROFS` on the log volume,
-    // permission flips, file system unmount mid-task. Swallow log-stream
-    // errors so a full disk degrades to "no captured output" rather than
-    // killing the manager process. The exit watcher still runs and the
-    // task still completes from the OS's point of view.
-    stdoutStream.on("error", () => {});
-    child.stdout.on("error", () => {});
-    child.stdout.pipe(stdoutStream);
-  }
-  if (child.stderr !== null) {
-    stderrStream = createWriteStream(stderrPath, { flags: "a" });
-    stderrStream.on("error", () => {});
-    child.stderr.on("error", () => {});
-    child.stderr.pipe(stderrStream);
+  // Step 4: load MCP servers from `<workdir>/.mcp.json` and pass them
+  // inline to createSession. The SDK's `enableConfigDiscovery: true`
+  // is documented to pick up `.mcp.json` from `workingDirectory`,
+  // but the bundled CLI's `_doInitializeMcp` only consumes
+  // `SessionConfig.mcpServers` (verified against
+  // @github/copilot-sdk@1.0.0-beta.4). This call polyfills the
+  // missing discovery; `.mcp.json` remains the source of truth on
+  // disk for debuggability and inspection.
+  let mcpServers: Record<string, MCPServerConfig> | undefined;
+  try {
+    mcpServers = await readMcpServersFromWorkdir(opts.taskDir);
+  } catch (cause) {
+    await safeStop(client);
+    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
   }
 
-  // Build the exit promise. Closes the log streams on exit so file
-  // descriptors don't linger.
-  //
-  // Note on the post-spawn `child.on("error", ...)`: the pre-spawn
-  // listener (Step 4 above) is removed once the spawn|error race
-  // settles, so without this the child process emitting a late `error`
-  // event (failed `kill`, IPC issue, …) would crash the manager. We
-  // route it into the exit promise so the watcher still settles
-  // deterministically.
-  const exit = new Promise<RuntimeExit>((resolve) => {
-    let settled = false;
-    const settle = (info: RuntimeExit) => {
-      if (settled) return;
-      settled = true;
-      stdoutStream?.end();
-      stderrStream?.end();
-      resolve(info);
-    };
-    child.once("exit", (code, signal) => settle({ code, signal }));
-    child.on("error", () => {
-      // A late child-side error means we'll never get a clean exit
-      // event. Synthesise one so the watcher unblocks; the actual exit
-      // (if it ever comes) is then a no-op via the `settled` guard.
-      settle({ code: null, signal: null });
+  // Step 5: create the session.
+  let session: CopilotSession;
+  try {
+    session = await client.createSession({
+      onPermissionRequest: approveAll,
+      workingDirectory: opts.taskDir,
+      // Auto-discovers skill / instruction directories from the
+      // workdir. (MCP files are NOT discovered; we pass them
+      // explicitly above — see step 4.)
+      enableConfigDiscovery: true,
+      ...(mcpServers ? { mcpServers } : {}),
+      // Register the event handler BEFORE the create RPC fires so
+      // the very early `session.start` event is delivered to us.
+      onEvent,
     });
-  });
+  } catch (cause) {
+    // Best-effort: shut the client down so we don't leak a copilot
+    // CLI subprocess behind the rejected launch.
+    await safeStop(client);
+    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
+  }
 
-  // After 'spawn' fires, child.pid is non-undefined. Defensive default
-  // keeps the type narrowing simple.
-  const pid = child.pid ?? -1;
+  // Step 6: register the buffer so readActivity can find it.
+  deps.registerSession(session.sessionId, buffer);
+
+  // Step 7: send the prompt. `send` returns once the message is
+  // queued; the SDK fires events asynchronously as the agent works.
+  // Failures here surface as the exit promise resolving with a
+  // non-zero code.
+  try {
+    await session.send({ prompt: opts.prompt });
+  } catch (cause) {
+    await safeDisconnect(session);
+    await safeStop(client);
+    throw new RuntimeHeadlessLaunchFailed("copilot", opts.taskDir, cause as Error);
+  }
+
+  // Step 8: build the exit promise. Resolves on session.idle (handled
+  // in onEvent above) OR if we detect the client dropping (rare —
+  // SDK CLI subprocess crash). Closes the SDK client and session
+  // when settling so resources don't leak.
+  const exit = idlePromise.finally(async () => {
+    await safeDisconnect(session);
+    await safeStop(client);
+  });
 
   return {
-    pid,
-    runtimeSessionId: sessionId,
-    sessionDir: Promise.resolve(sessionDir),
+    runtimeSessionId: session.sessionId,
+    sessionDir: Promise.resolve(path.join(deps.copilotStateDir, session.sessionId)),
     exit,
     kill: () => {
-      try {
-        child.kill();
-      } catch {
-        // Already dead, no-op. The exit promise will (or has) resolved.
-      }
+      // `session.abort()` is graceful: the model is told to stop,
+      // and `session.idle` fires shortly after. We don't await it
+      // — the exit watcher will see the idle event and clean up.
+      session.abort().catch(() => {
+        // Already aborted or session is in a state that can't be
+        // aborted. The exit watcher will still settle eventually
+        // when the underlying client errors out.
+      });
     },
   };
+}
+
+async function safeDisconnect(session: CopilotSession): Promise<void> {
+  try {
+    await session.disconnect();
+  } catch {
+    // Already disconnected. We've fired our exit event; nothing
+    // else to do.
+  }
+}
+
+async function safeStop(client: CopilotClient): Promise<void> {
+  try {
+    await client.stop();
+  } catch {
+    // Client was never fully started or has already stopped. The
+    // SDK's `forceStop` would also work but is more disruptive
+    // (skips graceful cleanup); we prefer the soft path.
+  }
+}
+
+/**
+ * Merge an override bag on top of a parent env, honouring `undefined`
+ * as "delete this key from the parent". Returns a fresh object so the
+ * SDK / spawn can take ownership without aliasing.
+ *
+ * Required because the SDK's `CopilotClient({ env })` REPLACES
+ * `process.env` for the spawned CLI subprocess rather than merging.
+ * Passing only emploke's own EMPLOKE_* additions would strip Windows
+ * system vars (`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATH`,
+ * `PATHEXT`, …) that downstream tools (`gh`, `git`, native build
+ * toolchains) need to function — `gh auth status` in particular
+ * cannot reach the Windows Credential Manager without USERPROFILE.
+ */
+function mergeEnv(
+  parent: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  if (!overrides) return { ...parent };
+  const out: NodeJS.ProcessEnv = { ...parent };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete out[key];
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Read `<workdir>/.mcp.json` written by {@link provisionCopilotWorkdir}
+ * and return its `mcpServers` map shaped for `SessionConfig.mcpServers`.
+ *
+ * Returns `undefined` if the file doesn't exist (agents without MCP
+ * dependencies skip the write in `writeMcpConfig`, see provision.ts).
+ *
+ * Injects `tools: ["*"]` on any server missing the field — the SDK's
+ * `MCPServerConfigBase.tools` is required (`"*"` = expose every tool
+ * the server advertises). An explicit empty array on disk is preserved
+ * as "no tools" so authors can narrow exposure when needed.
+ *
+ * Throws on malformed JSON or unexpected shape so the caller can wrap
+ * in `RuntimeHeadlessLaunchFailed`. ENOENT is not an error.
+ */
+async function readMcpServersFromWorkdir(
+  workdir: string,
+): Promise<Record<string, MCPServerConfig> | undefined> {
+  const file = path.join(workdir, COPILOT_MCP_CONFIG);
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    throw new Error(`Failed to parse ${COPILOT_MCP_CONFIG}: ${(cause as Error).message}`);
+  }
+
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    !("mcpServers" in parsed) ||
+    typeof (parsed as { mcpServers: unknown }).mcpServers !== "object" ||
+    (parsed as { mcpServers: unknown }).mcpServers === null
+  ) {
+    throw new Error(
+      `Malformed ${COPILOT_MCP_CONFIG}: expected { mcpServers: { ... } } at top level`,
+    );
+  }
+
+  const sourceMap = (parsed as { mcpServers: Record<string, unknown> }).mcpServers;
+  if (Object.keys(sourceMap).length === 0) return undefined;
+
+  const out: Record<string, MCPServerConfig> = {};
+  for (const [name, body] of Object.entries(sourceMap)) {
+    if (body === null || typeof body !== "object") {
+      throw new Error(`Malformed ${COPILOT_MCP_CONFIG}: server "${name}" must be an object`);
+    }
+    const merged = { ...(body as Record<string, unknown>) };
+    if (!("tools" in merged)) {
+      merged.tools = ["*"];
+    }
+    out[name] = merged as unknown as MCPServerConfig;
+  }
+  return out;
 }

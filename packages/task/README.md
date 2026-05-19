@@ -93,11 +93,11 @@ Field shape (POJO projection via `task.toJSON()`):
 }
 ```
 
-The entity knows nothing about how the task is *executed*. PIDs, session
+The entity knows nothing about how the task is *executed*. Session
 files, work directories, model identifiers — all of that lives in
 `metadata`. Use `readTaskRuntimeMetadata(task)` for a typed view of the
 runtime fields the manager folds in (`workdir`, `runtime`,
-`runtimeSessionId`, `pid`, `exitCode`, `exitSignal`).
+`runtimeSessionId`, `exitCode`, `exitSignal`).
 
 ## State machine
 
