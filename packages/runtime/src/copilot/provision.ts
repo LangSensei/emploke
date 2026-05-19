@@ -194,7 +194,7 @@ async function materializeAgent(
  */
 async function writeMcpConfig(
   workdir: string,
-  mcps: readonly { readonly name: string }[],
+  mcps: readonly { readonly fqn: string }[],
   catalog: CatalogManager,
   placeholders: PlaceholderContext,
 ): Promise<void> {
@@ -202,21 +202,18 @@ async function writeMcpConfig(
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
-    const raw = await catalog.getMcpContent(mcp.name);
+    const raw = await catalog.getMcpContent(mcp.fqn);
     let stripped: unknown;
     try {
-      stripped = stripMcpMeta(raw, `mcps:${mcp.name}`);
+      stripped = stripMcpMeta(raw, `mcps:${mcp.fqn}`);
     } catch (cause) {
-      throw new InvalidMcpJson(mcp.name, cause as Error);
+      throw new InvalidMcpJson(mcp.fqn, cause as Error);
     }
     try {
-      mcpServers[mcp.name] = substitutePlaceholdersDeep(stripped, placeholders, `mcps:${mcp.name}`);
+      mcpServers[mcp.fqn] = substitutePlaceholdersDeep(stripped, placeholders, `mcps:${mcp.fqn}`);
     } catch (cause) {
-      // UnknownPlaceholderError or similar — treat as a malformed spec.
-      // Wrapping in InvalidMcpJson keeps the route-side error mapping
-      // the same as other MCP parse failures.
       if (cause instanceof UnknownPlaceholderError) {
-        throw new InvalidMcpJson(mcp.name, cause);
+        throw new InvalidMcpJson(mcp.fqn, cause);
       }
       throw cause;
     }

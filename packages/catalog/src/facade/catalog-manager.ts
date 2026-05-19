@@ -350,8 +350,14 @@ export class CatalogManager {
     };
 
     const mcpSvc = new McpService(mcpRepo, mcpFetcher);
-    const skillSvc = new SkillService(skillRepo, skillFetcher);
-    const agentSvc = new AgentService(agentRepo, agentFetcher);
+    // Wire sibling repos into the skill / agent services so the install
+    // path can resolve frontmatter dep origins to local fqns and
+    // populate the v2 FK dep tables.
+    const skillSvc = new SkillService(skillRepo, skillFetcher, { mcps: mcpRepo });
+    const agentSvc = new AgentService(agentRepo, agentFetcher, {
+      skills: skillRepo,
+      mcps: mcpRepo,
+    });
 
     const resolveMcp: McpResolveAdapter = async (origin) => {
       try {
@@ -561,17 +567,38 @@ export class CatalogManager {
    * of the dep graph.
    */
   private async computeReverseDepIndex(rootOrigin: string): Promise<Set<string>> {
-    const [skills, agents] = await Promise.all([this.skill.list(), this.agent.list()]);
+    // v2: dep storage is fqn-keyed. Build origin-form reverse-dep
+    // index by translating each entity's dep fqns back through the
+    // local fqn → origin lookup tables.
+    const [skills, agents, mcps] = await Promise.all([
+      this.skill.list(),
+      this.agent.list(),
+      this.mcp.list(),
+    ]);
+    const skillOriginByFqn = new Map(skills.map((s) => [s.fqn, s.origin] as const));
+    const mcpOriginByFqn = new Map(mcps.map((m) => [m.fqn, m.origin] as const));
     const referenced = new Set<string>();
     for (const a of agents) {
       if (a.origin === rootOrigin) continue;
-      for (const o of a.dependencies.skills) referenced.add(o);
-      for (const o of a.dependencies.mcps) referenced.add(o);
+      for (const d of a.dependencies.skills) {
+        const o = skillOriginByFqn.get(d.fqn);
+        if (o !== undefined) referenced.add(o);
+      }
+      for (const d of a.dependencies.mcps) {
+        const o = mcpOriginByFqn.get(d.fqn);
+        if (o !== undefined) referenced.add(o);
+      }
     }
     for (const s of skills) {
       if (s.origin === rootOrigin) continue;
-      for (const o of s.dependencies.skills) referenced.add(o);
-      for (const o of s.dependencies.mcps) referenced.add(o);
+      for (const d of s.dependencies.skills) {
+        const o = skillOriginByFqn.get(d.fqn);
+        if (o !== undefined) referenced.add(o);
+      }
+      for (const d of s.dependencies.mcps) {
+        const o = mcpOriginByFqn.get(d.fqn);
+        if (o !== undefined) referenced.add(o);
+      }
     }
     return referenced;
   }
@@ -721,7 +748,7 @@ export class CatalogManager {
 
   async listSkillEntries(): Promise<SkillEntry[]> {
     const ctx = await this.loadCascadeContext();
-    return [...ctx.skillByOrigin.values()].map((s) => buildSkillEntry(s, ctx));
+    return [...ctx.skillByFqn.values()].map((s) => buildSkillEntry(s, ctx));
   }
 
   async listAgentEntries(): Promise<AgentEntry[]> {
@@ -731,11 +758,11 @@ export class CatalogManager {
 
   async listMcps(): Promise<McpMetadata[]> {
     const ctx = await this.loadCascadeContext();
-    return [...ctx.mcpByOrigin.values()].map((m) => projectMcpMetadata(m, ctx));
+    return [...ctx.mcpByFqn.values()].map((m) => projectMcpMetadata(m, ctx));
   }
   async listSkills(): Promise<SkillPojo[]> {
     const ctx = await this.loadCascadeContext();
-    return [...ctx.skillByOrigin.values()].map((s) => projectSkillPojo(s, ctx));
+    return [...ctx.skillByFqn.values()].map((s) => projectSkillPojo(s, ctx));
   }
   async listAgents(): Promise<AgentPojo[]> {
     const agents = await this.agent.list();
@@ -759,17 +786,17 @@ export class CatalogManager {
   async getSkillContent(fqn: string): Promise<string> {
     const s = await this.skill.get(fqn);
     if (s === null) throw new SkillNotFoundError(fqn);
-    return s.anchorContent;
+    return this.skill.getAnchor(fqn);
   }
 
   async getAgentContent(fqn: string): Promise<string> {
     const a = await this.agent.get(fqn);
     if (a === null) throw new AgentNotFoundError(fqn);
-    return a.anchorContent;
+    return this.agent.getAnchor(fqn);
   }
 
-  async getMcpContent(name: string): Promise<string> {
-    return this.mcp.getContent(name);
+  async getMcpContent(fqn: string): Promise<string> {
+    return this.mcp.getContent(fqn);
   }
 
   // ─── Async POJO read accessors ──
@@ -863,15 +890,18 @@ export class CatalogManager {
     const orderedSkills: Skill[] = [];
     const mcpFqns = new Set<string>();
 
-    const walk = (skillOrigins: readonly string[], mcpOrigins: readonly string[]): void => {
-      for (const o of mcpOrigins) {
-        const m = ctx.mcpByOrigin.get(o);
-        if (m !== undefined) mcpFqns.add(m.name);
+    const walk = (
+      skillDeps: ReadonlyArray<{ readonly fqn: string }>,
+      mcpDeps: ReadonlyArray<{ readonly fqn: string }>,
+    ): void => {
+      for (const d of mcpDeps) {
+        const m = ctx.mcpByFqn.get(d.fqn);
+        if (m !== undefined) mcpFqns.add(m.fqn);
       }
-      for (const o of skillOrigins) {
-        if (visited.has(o)) continue;
-        visited.add(o);
-        const skill = ctx.skillByOrigin.get(o);
+      for (const d of skillDeps) {
+        if (visited.has(d.fqn)) continue;
+        visited.add(d.fqn);
+        const skill = ctx.skillByFqn.get(d.fqn);
         if (skill === undefined) continue;
         walk(skill.dependencies.skills, skill.dependencies.mcps);
         orderedSkills.push(skill);
@@ -883,7 +913,7 @@ export class CatalogManager {
     return {
       agent: projectAgentPojo(agent),
       skills: orderedSkills.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
-      mcps: [...mcpFqns].map((name) => ({ name })),
+      mcps: [...mcpFqns].map((fqn) => ({ fqn })),
     };
   }
 
@@ -900,24 +930,24 @@ export class CatalogManager {
     const ordered: Skill[] = [];
     const mcpFqns = new Set<string>();
 
-    const walk = (origin: string): void => {
-      if (visited.has(origin)) return;
-      visited.add(origin);
-      const skill = ctx.skillByOrigin.get(origin);
+    const walk = (skillFqn: string): void => {
+      if (visited.has(skillFqn)) return;
+      visited.add(skillFqn);
+      const skill = ctx.skillByFqn.get(skillFqn);
       if (skill === undefined) return;
-      for (const o of skill.dependencies.mcps) {
-        const m = ctx.mcpByOrigin.get(o);
-        if (m !== undefined) mcpFqns.add(m.name);
+      for (const d of skill.dependencies.mcps) {
+        const m = ctx.mcpByFqn.get(d.fqn);
+        if (m !== undefined) mcpFqns.add(m.fqn);
       }
-      for (const o of skill.dependencies.skills) walk(o);
+      for (const d of skill.dependencies.skills) walk(d.fqn);
       ordered.push(skill);
     };
-    walk(root.origin);
+    walk(root.fqn);
 
     return {
       skill: projectSkillPojo(root, ctx),
       skills: ordered.map((s) => ({ skill: projectSkillPojo(s, ctx) })),
-      mcps: [...mcpFqns].map((name) => ({ name })),
+      mcps: [...mcpFqns].map((mcpFqn) => ({ fqn: mcpFqn })),
     };
   }
 
@@ -940,63 +970,84 @@ export class CatalogManager {
   }
 
   async deleteSkill(fqn: string): Promise<void> {
-    const dependents = await this.findSkillDependents(fqn);
-    if (dependents.length > 0) throw new HasDependentsError(fqn, dependents);
-    await this.skill.delete(fqn);
+    try {
+      await this.skill.delete(fqn);
+    } catch (err) {
+      if (isForeignKeyError(err)) {
+        const dependents = await this.findSkillDependents(fqn);
+        throw new HasDependentsError(fqn, dependents);
+      }
+      throw err;
+    }
   }
 
-  async deleteMcp(name: string): Promise<void> {
-    const dependents = await this.findMcpDependents(name);
-    if (dependents.length > 0) throw new HasDependentsError(name, dependents);
-    await this.mcp.delete(name);
+  async deleteMcp(fqn: string): Promise<void> {
+    try {
+      await this.mcp.delete(fqn);
+    } catch (err) {
+      if (isForeignKeyError(err)) {
+        const dependents = await this.findMcpDependents(fqn);
+        throw new HasDependentsError(fqn, dependents);
+      }
+      throw err;
+    }
   }
 
   /**
-   * Find every skill / agent that depends on the named target.
-   * Looks up dependents by the TARGET's origin, since dep refs are
-   * origin-only.
+   * Find every skill / agent that depends on the named target via the
+   * v2 indexed dep tables. Replaces the v1 JS-side `findDependentsByOrigin`
+   * full-scan path.
    */
   async findSkillDependents(
     targetFqn: string,
   ): Promise<{ kind: "skill" | "agent"; name: string }[]> {
-    const target = await this.skill.get(targetFqn);
-    if (target === null) return [];
-    return this.findDependentsByOrigin(target.origin, "skills");
+    const repo = this.getSkillRepo();
+    const [agents, skills] = await Promise.all([
+      repo.findDependentAgents(targetFqn),
+      repo.findDependentSkills(targetFqn),
+    ]);
+    return [
+      ...skills.map((name) => ({ kind: "skill" as const, name })),
+      ...agents.map((name) => ({ kind: "agent" as const, name })),
+    ];
   }
 
-  async findMcpDependents(
-    targetName: string,
-  ): Promise<{ kind: "skill" | "agent"; name: string }[]> {
-    const target = await this.mcp.get(targetName);
-    if (target === null) return [];
-    return this.findDependentsByOrigin(target.origin, "mcps");
+  async findMcpDependents(targetFqn: string): Promise<{ kind: "skill" | "agent"; name: string }[]> {
+    const repo = this.getMcpRepo();
+    const [agents, skills] = await Promise.all([
+      repo.findDependentAgents(targetFqn),
+      repo.findDependentSkills(targetFqn),
+    ]);
+    return [
+      ...skills.map((name) => ({ kind: "skill" as const, name })),
+      ...agents.map((name) => ({ kind: "agent" as const, name })),
+    ];
   }
 
-  /** Generic findDependents by target origin (legacy compat). */
-  async findDependents(targetName: string): Promise<{ kind: "skill" | "agent"; name: string }[]> {
-    // Try mcp first, then skill (caller passes either spec FQN or
-    // skill FQN; whichever resolves wins).
-    const mcp = await this.mcp.get(targetName);
-    if (mcp !== null) return this.findDependentsByOrigin(mcp.origin, "mcps");
-    const skill = await this.skill.get(targetName);
-    if (skill !== null) return this.findDependentsByOrigin(skill.origin, "skills");
+  /** Generic findDependents by fqn (legacy compat). */
+  async findDependents(targetFqn: string): Promise<{ kind: "skill" | "agent"; name: string }[]> {
+    const mcp = await this.mcp.get(targetFqn);
+    if (mcp !== null) return this.findMcpDependents(targetFqn);
+    const skill = await this.skill.get(targetFqn);
+    if (skill !== null) return this.findSkillDependents(targetFqn);
     return [];
   }
 
-  private async findDependentsByOrigin(
-    targetOrigin: string,
-    kindBucket: "skills" | "mcps",
-  ): Promise<{ kind: "skill" | "agent"; name: string }[]> {
-    const out: { kind: "skill" | "agent"; name: string }[] = [];
-    for (const s of await this.skill.list()) {
-      const refs = s.dependencies[kindBucket];
-      if (refs.includes(targetOrigin)) out.push({ kind: "skill", name: s.fqn });
-    }
-    for (const a of await this.agent.list()) {
-      const refs = a.dependencies[kindBucket];
-      if (refs.includes(targetOrigin)) out.push({ kind: "agent", name: a.fqn });
-    }
-    return out;
+  private getSkillRepo(): {
+    findDependentAgents(targetFqn: string): Promise<string[]>;
+    findDependentSkills(targetFqn: string): Promise<string[]>;
+  } {
+    // Internal access to the SqliteSkillRepository's reverse-dep
+    // methods through the service. We keep the reach narrow by typing
+    // to just the methods we need.
+    return (this.skill as unknown as { repo: SqliteSkillRepository }).repo;
+  }
+
+  private getMcpRepo(): {
+    findDependentAgents(targetFqn: string): Promise<string[]>;
+    findDependentSkills(targetFqn: string): Promise<string[]>;
+  } {
+    return (this.mcp as unknown as { repo: SqliteMcpRepository }).repo;
   }
 
   // ─── Internals: install dispatch ───────────────────────
@@ -1047,7 +1098,7 @@ function projectSkillPojo(s: Skill, ctx: CascadeContext): SkillPojo {
   return {
     ...(s.toJSON() as object),
     mutable: isOriginMutable(s.origin),
-    orphaned: !ctx.referencedSkillOrigins.has(s.origin),
+    orphaned: !ctx.referencedSkillFqns.has(s.fqn),
   } as unknown as SkillPojo;
 }
 
@@ -1062,8 +1113,15 @@ function projectMcpMetadata(m: Mcp, ctx: CascadeContext): McpMetadata {
   return {
     ...(m.toJSON() as object),
     mutable: isOriginMutable(m.origin),
-    orphaned: !ctx.referencedMcpOrigins.has(m.origin),
+    orphaned: !ctx.referencedMcpFqns.has(m.fqn),
   } as unknown as McpMetadata;
+}
+
+function isForeignKeyError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string" && code.includes("FOREIGNKEY")) return true;
+  return /FOREIGN\s*KEY/i.test(err.message);
 }
 
 /**
@@ -1078,20 +1136,18 @@ function projectMcpMetadata(m: Mcp, ctx: CascadeContext): McpMetadata {
  * single in-memory walk.
  */
 interface CascadeContext {
-  readonly skillByOrigin: ReadonlyMap<string, Skill>;
-  readonly mcpByOrigin: ReadonlyMap<string, Mcp>;
-  readonly mcpByName: ReadonlyMap<string, Mcp>;
+  readonly skillByFqn: ReadonlyMap<string, Skill>;
+  readonly mcpByFqn: ReadonlyMap<string, Mcp>;
   readonly skillCache: Map<string, ComputedStatus>;
-  /** Origins currently being computed — used to defensively short-circuit cycles. */
+  /** Fqns currently being computed — used to defensively short-circuit cycles. */
   readonly inFlight: Set<string>;
   /**
-   * Set of skill origins referenced by at least one installed agent or
-   * skill. Membership ↔ "has a reverse-dep" ↔ "not orphan". Built
-   * once at ctx-construction time from the agents+skills lists.
+   * Set of skill fqns referenced by at least one installed agent or
+   * skill via the v2 fqn-keyed dep tables. Membership ↔ "has a
+   * reverse-dep" ↔ "not orphan". Built once at ctx-construction time.
    */
-  readonly referencedSkillOrigins: ReadonlySet<string>;
-  /** Same as {@link referencedSkillOrigins}, but for mcp dep refs. */
-  readonly referencedMcpOrigins: ReadonlySet<string>;
+  readonly referencedSkillFqns: ReadonlySet<string>;
+  readonly referencedMcpFqns: ReadonlySet<string>;
 }
 
 interface ComputedStatus {
@@ -1100,69 +1156,45 @@ interface ComputedStatus {
 }
 
 function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): CascadeContext {
-  const referencedSkillOrigins = new Set<string>();
-  const referencedMcpOrigins = new Set<string>();
+  const referencedSkillFqns = new Set<string>();
+  const referencedMcpFqns = new Set<string>();
   for (const a of agents) {
-    for (const o of a.dependencies.skills) referencedSkillOrigins.add(o);
-    for (const o of a.dependencies.mcps) referencedMcpOrigins.add(o);
+    for (const d of a.dependencies.skills) referencedSkillFqns.add(d.fqn);
+    for (const d of a.dependencies.mcps) referencedMcpFqns.add(d.fqn);
   }
   for (const s of skills) {
-    // No self-reference filter: install/sync rejects cycles (the
-    // simplest cycle being a self-loop) at resolve time via
-    // CyclicDependencyError, so a self-referencing skill cannot
-    // exist in a well-formed catalog. The orphan badge stays
-    // correct because the cycle never makes it into the catalog
-    // in the first place.
-    for (const o of s.dependencies.skills) referencedSkillOrigins.add(o);
-    for (const o of s.dependencies.mcps) referencedMcpOrigins.add(o);
+    for (const d of s.dependencies.skills) referencedSkillFqns.add(d.fqn);
+    for (const d of s.dependencies.mcps) referencedMcpFqns.add(d.fqn);
   }
   return {
-    skillByOrigin: new Map(skills.map((s) => [s.origin, s] as const)),
-    mcpByOrigin: new Map(mcps.map((m) => [m.origin, m] as const)),
-    mcpByName: new Map(mcps.map((m) => [m.name, m] as const)),
+    skillByFqn: new Map(skills.map((s) => [s.fqn, s] as const)),
+    mcpByFqn: new Map(mcps.map((m) => [m.fqn, m] as const)),
     skillCache: new Map(),
     inFlight: new Set(),
-    referencedSkillOrigins,
-    referencedMcpOrigins,
+    referencedSkillFqns,
+    referencedMcpFqns,
   };
 }
 
 function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
-  const cached = ctx.skillCache.get(skill.origin);
+  const cached = ctx.skillCache.get(skill.fqn);
   if (cached !== undefined) return cached;
-  if (ctx.inFlight.has(skill.origin)) {
-    // Defensive only: install/sync now reject cyclic dep graphs at
-    // resolve time (see `walkSkill` + `CyclicDependencyError`), so
-    // a well-formed catalog should never bottom out here. Kept as
-    // a safe fallback for two reasons:
-    //   1. Bypassed install paths (direct repo writes, FS edits,
-    //      future tools) could leave a cycle on disk.
-    //   2. Without the short-circuit a cycle would infinite-recurse.
-    // The "ready" answer here only suppresses the cycle-internal
-    // cascade contribution; the outer call still factors its own
-    // self-causes correctly. The cached result (set below after
-    // the recursive call returns) is therefore self-consistent for
-    // any non-cyclic caller; cyclic callers see the same defensive
-    // ready value as the inner call would.
+  if (ctx.inFlight.has(skill.fqn)) {
     return { status: "ready" };
   }
-  ctx.inFlight.add(skill.origin);
+  ctx.inFlight.add(skill.fqn);
   const result = computeWithDeps(
     {
       prereqs: skill.prereqs,
       prereqsAck: skill.prereqsAck,
-      // Derived live from the dep graph: a skill with zero reverse-deps
-      // (excluding self-references) is orphan. No more stale-flag
-      // scenarios — the answer is always a fact about the current
-      // catalog state.
-      orphaned: !ctx.referencedSkillOrigins.has(skill.origin),
+      orphaned: !ctx.referencedSkillFqns.has(skill.fqn),
       disabledByUser: false,
     },
     skill.dependencies,
     ctx,
   );
-  ctx.inFlight.delete(skill.origin);
-  ctx.skillCache.set(skill.origin, result);
+  ctx.inFlight.delete(skill.fqn);
+  ctx.skillCache.set(skill.fqn, result);
   return result;
 }
 
@@ -1188,10 +1220,12 @@ interface SelfConditions {
 
 function computeWithDeps(
   self: SelfConditions,
-  deps: { skills: readonly string[]; mcps: readonly string[] },
+  deps: {
+    skills: ReadonlyArray<{ readonly fqn: string }>;
+    mcps: ReadonlyArray<{ readonly fqn: string }>;
+  },
   ctx: CascadeContext,
 ): ComputedStatus {
-  // Self causes — these don't depend on the dep graph.
   const reason: {
     needsPrereqsAck?: true;
     disabledByUser?: true;
@@ -1205,14 +1239,13 @@ function computeWithDeps(
   if (self.disabledByUser) reason.disabledByUser = true;
   if (self.orphaned) reason.orphaned = true;
 
-  // Cascade: walk direct deps, recurse for skills, leaf-check for mcps.
   const missing: MissingDep[] = [];
   const blocked: BlockedDep[] = [];
 
-  for (const skillOrigin of deps.skills) {
-    const child = ctx.skillByOrigin.get(skillOrigin);
+  for (const d of deps.skills) {
+    const child = ctx.skillByFqn.get(d.fqn);
     if (child === undefined) {
-      missing.push({ kind: "skill", name: skillOrigin });
+      missing.push({ kind: "skill", name: d.fqn });
       continue;
     }
     const childStatus = computeSkillStatus(child, ctx);
@@ -1220,17 +1253,11 @@ function computeWithDeps(
       blocked.push({ kind: "skill", fqn: child.fqn });
     }
   }
-  for (const mcpOrigin of deps.mcps) {
-    const child = ctx.mcpByOrigin.get(mcpOrigin);
+  for (const d of deps.mcps) {
+    const child = ctx.mcpByFqn.get(d.fqn);
     if (child === undefined) {
-      missing.push({ kind: "mcp", name: mcpOrigin });
+      missing.push({ kind: "mcp", name: d.fqn });
     }
-    // No mcp cascade-block: an mcp that THIS entry depends on is by
-    // definition not orphan (the dep itself is a reverse-dep). The
-    // old stored-flag model could yield a stale "orphan" mcp despite
-    // a live ref; the derived model can't, so the cascade case is
-    // unreachable. Mcps are leaves: missing-dep above is the only
-    // way they contribute to the parent's blockedReason.
   }
   if (missing.length > 0) reason.missingDeps = missing;
   if (blocked.length > 0) reason.blockedDeps = blocked;

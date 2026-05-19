@@ -1,6 +1,7 @@
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
 import { applyFrontmatterPatch } from "../frontmatter/patch.js";
+import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import {
   PlanStaleError,
@@ -11,19 +12,6 @@ import {
 import { Skill } from "./skill-entity.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
 
-/**
- * Application-layer service for skill operations.
- *
- * Single-entity scope: this service owns ONE skill at a time. It does
- * NOT walk transitive dependencies — that's the catalog facade's job.
- * The facade uses `resolve` to peek at a skill's declared dep origins,
- * then dispatches each origin into the appropriate service's `resolve`.
- */
-
-/**
- * Fetcher contract for the skill service. Two methods so resolve can
- * pull just the SKILL.md anchor while install pulls the whole tree.
- */
 export interface SkillFetcher {
   fetchAnchor(origin: string): Promise<string>;
   fetchTree(origin: string): AsyncIterable<EntryFile>;
@@ -40,10 +28,6 @@ export type SkillResolveEvent =
   | { type: "alreadyInstalled"; fqn: string }
   | { type: "failed"; origin: string; error: unknown };
 
-/**
- * The output of {@link SkillService.resolve}: a single-node plan
- * (the skill itself) plus its declared dep origins (skills + mcps).
- */
 export interface SkillResolvePlan {
   readonly node: SkillResolvedNode | null;
   readonly conflict: SkillResolveConflict | null;
@@ -53,17 +37,9 @@ export interface SkillResolvedNode {
   readonly fqn: string;
   readonly origin: string;
   readonly anchorContent: string;
-  /**
-   * Upstream-declared `version` — the staleness key. Emploke's
-   * authoring contract says a meaningful change MUST bump version;
-   * `install` rejects with {@link PlanStaleError} if the version
-   * differs at install time.
-   */
   readonly version: string;
   readonly depsRefs: {
-    /** Origin URIs of dep skills. The facade fans these out to resolve. */
     readonly skills: readonly string[];
-    /** Origin URIs of dep mcps. */
     readonly mcps: readonly string[];
   };
 }
@@ -81,9 +57,10 @@ export class SkillService {
   constructor(
     private readonly repo: SkillRepository,
     private readonly fetcher: SkillFetcher,
+    private readonly siblings: {
+      readonly mcps?: McpRepository;
+    } = {},
   ) {}
-
-  // ─── Resolve ────────────────────────────────────────────────
 
   async resolve(origin: string, opts: SkillResolveOptions = {}): Promise<SkillResolvePlan> {
     const onProgress = opts.onProgress ?? (() => {});
@@ -126,18 +103,16 @@ export class SkillService {
     const node: SkillResolvedNode = {
       fqn: entity.fqn,
       origin: entity.origin,
-      anchorContent: entity.anchorContent,
+      anchorContent: anchorBytes,
       version: entity.version,
       depsRefs: {
-        skills: [...entity.dependencies.skills],
-        mcps: [...entity.dependencies.mcps],
+        skills: [...entity.depsRefs.skills],
+        mcps: [...entity.depsRefs.mcps],
       },
     };
     onProgress({ type: "fetched", origin, fqn: node.fqn });
     return { node, conflict: null };
   }
-
-  // ─── Install ────────────────────────────────────────────────
 
   async install(planOrOrigin: SkillResolvedNode | string): Promise<Skill> {
     let node: SkillResolvedNode;
@@ -178,18 +153,6 @@ export class SkillService {
       throw new SkillOriginConflictError(entity.fqn, existing.origin, entity.origin);
     }
 
-    // Per-installation-flag carry-over rule:
-    //   prereqsAck:
-    //     - existing entry, prereqs text unchanged → preserve previous ack
-    //     - existing entry, prereqs text changed (added / modified / removed)
-    //       → recompute from scratch (ack iff new prereqs is empty)
-    //     - no existing entry → use the create()-time default
-    //       (ack iff entity has no prereqs)
-    //
-    // Orphan status was previously preserved here too. It's now
-    // derived from the catalog dep graph at projection time, so
-    // there's no flag to carry over — the new graph gives the
-    // current answer.
     if (existing !== null) {
       const prereqsAck =
         (existing.prereqs ?? "") === (entity.prereqs ?? "")
@@ -198,11 +161,10 @@ export class SkillService {
       entity = entity.withState({ prereqsAck });
     }
 
-    await this.repo.add(entity, files);
-    return entity;
+    const resolvedDeps = await this.resolveDepOrigins(entity.depsRefs);
+    await this.repo.add(entity, files, resolvedDeps);
+    return (await this.repo.findByFqn(entity.fqn)) ?? entity;
   }
-
-  // ─── Single-entity reads / mutations ─────────────────────
 
   async get(fqn: string): Promise<Skill | null> {
     return this.repo.findByFqn(fqn);
@@ -224,6 +186,10 @@ export class SkillService {
     return this.repo.streamFiles(fqn);
   }
 
+  async getAnchor(fqn: string): Promise<string> {
+    return this.repo.getAnchor(fqn);
+  }
+
   async updateAnchor(fqn: string, newSkillMd: string): Promise<Skill> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
@@ -235,23 +201,12 @@ export class SkillService {
     for await (const f of this.repo.streamFiles(fqn)) {
       files.set(f.relPath, f.content);
     }
-    files.set("SKILL.md", Buffer.from(updated.anchorContent, "utf8"));
-    await this.repo.add(updated, files);
-    return updated;
+    files.set("SKILL.md", Buffer.from(newSkillMd, "utf8"));
+    const resolvedDeps = await this.resolveDepOrigins(updated.depsRefs);
+    await this.repo.add(updated, files, resolvedDeps);
+    return (await this.repo.findByFqn(fqn)) ?? updated;
   }
 
-  /**
-   * Apply a partial patch to the SKILL.md frontmatter.
-   *
-   * The patch may contain `description`, `version`, `prereqs`, and
-   * `dependencies`. Identity-bearing keys (`name`, `scope`, `fqn`)
-   * are rejected upfront with a clear error: fqn is fixed at install
-   * time. To rename, install under a new origin and delete the old
-   * entry.
-   *
-   * Body bytes are preserved verbatim. Immutability + origin checks
-   * piggy-back on `updateAnchor` (no double-check needed).
-   */
   async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<Skill> {
     for (const k of Object.keys(patch)) {
       if (FORBIDDEN_METADATA_PATCH_KEYS.has(k)) {
@@ -267,7 +222,8 @@ export class SkillService {
     if (!isOriginMutable(existing.origin)) {
       throw new ImmutableOriginError(fqn, existing.origin);
     }
-    const newAnchor = applyFrontmatterPatch(existing.anchorContent, patch);
+    const currentAnchor = await this.repo.getAnchor(fqn);
+    const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
     return this.updateAnchor(fqn, newAnchor);
   }
 
@@ -277,10 +233,6 @@ export class SkillService {
     await this.repo.delete(fqn);
   }
 
-  /**
-   * Flip `prereqsAck` to `true`. No-op if the entry has no prereqs
-   * (it's already true). Throws if the skill doesn't exist.
-   */
   async acknowledgePrereqs(fqn: string): Promise<Skill> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
@@ -296,9 +248,27 @@ export class SkillService {
     await this.repo.setFlags(fqn, flags);
   }
 
-  /** Release the underlying repository's resources. Idempotent. */
   close(): void {
     this.repo.close?.();
+  }
+
+  private async resolveDepOrigins(refs: {
+    readonly skills: readonly string[];
+    readonly mcps: readonly string[];
+  }): Promise<{ skills: string[]; mcps: string[] }> {
+    const skillFqns: string[] = [];
+    const mcpFqns: string[] = [];
+    for (const origin of refs.skills) {
+      const sib = await this.repo.findByOrigin(origin);
+      if (sib !== null) skillFqns.push(sib.fqn);
+    }
+    if (this.siblings.mcps !== undefined) {
+      for (const origin of refs.mcps) {
+        const sib = await this.siblings.mcps.findByOrigin(origin);
+        if (sib !== null) mcpFqns.push(sib.fqn);
+      }
+    }
+    return { skills: skillFqns, mcps: mcpFqns };
   }
 }
 

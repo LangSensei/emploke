@@ -9,7 +9,7 @@ import {
   MCP_MIGRATIONS,
   SKILL_MIGRATIONS,
 } from "@emploke/catalog";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 
 /**
  * Build a `CatalogManager` backed by a SQLite database in a temp dir,
@@ -79,7 +79,7 @@ export async function makeTestCatalog(
   // `schema_meta` rows for `catalog_agent` / `catalog_skill` /
   // `catalog_mcp` are present before `CatalogManager.open` constructs
   // the repositories.
-  runPkgMigrationsSync(db, [
+  await runPkgMigrations(db, [
     { pkg: "catalog_agent", migrations: AGENT_MIGRATIONS },
     { pkg: "catalog_skill", migrations: SKILL_MIGRATIONS },
     { pkg: "catalog_mcp", migrations: MCP_MIGRATIONS },
@@ -128,9 +128,35 @@ export async function makeTestCatalog(
   }
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
-    db.prepare("UPDATE mcp SET content = ? WHERE name = ?").run(content, specName);
-    // CatalogManager has no in-memory snapshot, so the next direct read
-    // via getMcpContent picks up the corrupted bytes immediately.
+    // Catalog v2 enforces `CHECK (json_valid(spec))` on `mcps`, which
+    // would reject the deliberately-garbage bytes this fixture ships.
+    // Rebuild the table without the CHECK inside a transaction with
+    // `foreign_keys = OFF`, so the FK refs from sibling dep tables
+    // (`agent_mcp_dependencies`, `skill_mcp_dependencies`) don't fire
+    // during the swap.
+    const prevFk = (db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number })
+      .foreign_keys;
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.exec(`
+        BEGIN;
+        ALTER TABLE mcps RENAME TO _mcps_strict;
+        CREATE TABLE mcps (
+          fqn          TEXT PRIMARY KEY,
+          origin       TEXT NOT NULL,
+          spec         TEXT NOT NULL,
+          installed_at TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+        INSERT INTO mcps (fqn, origin, spec, installed_at, updated_at)
+          SELECT fqn, origin, spec, installed_at, updated_at FROM _mcps_strict;
+        DROP TABLE _mcps_strict;
+        COMMIT;
+      `);
+    } finally {
+      db.exec(`PRAGMA foreign_keys = ${prevFk === 1 ? "ON" : "OFF"}`);
+    }
+    db.prepare("UPDATE mcps SET spec = ? WHERE fqn = ?").run(content, specName);
   };
 
   return { catalog, db, corruptMcp };

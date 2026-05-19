@@ -429,73 +429,71 @@ interface OverviewTabProps {
  */
 function OverviewTab({ target, detail }: OverviewTabProps) {
   return (
-    <>
-      <dl className="detail-dialog__dl">
-        {detail.description && (
-          <>
-            <dt>Description</dt>
-            <dd>{detail.description}</dd>
-          </>
-        )}
+    <dl className="detail-dialog__dl">
+      {detail.description && (
+        <>
+          <dt>Description</dt>
+          <dd>{detail.description}</dd>
+        </>
+      )}
 
-        <dt>Origin</dt>
-        <dd>
-          <a
-            href={hrefForOrigin(detail.origin)}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="detail-dialog__origin"
-          >
-            {detail.origin}
-          </a>
-          <span className="detail-dialog__origin-scheme"> · {schemeOf(detail.origin)}</span>
-        </dd>
+      <dt>Origin</dt>
+      <dd>
+        <a
+          href={hrefForOrigin(detail.origin)}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="detail-dialog__origin"
+        >
+          {detail.origin}
+        </a>
+        <span className="detail-dialog__origin-scheme"> · {schemeOf(detail.origin)}</span>
+      </dd>
 
-        {detail.version && (
-          <>
-            <dt>Version</dt>
-            <dd>
-              <code>{detail.version}</code>
-            </dd>
-          </>
-        )}
+      {detail.version && (
+        <>
+          <dt>Version</dt>
+          <dd>
+            <code>{detail.version}</code>
+          </dd>
+        </>
+      )}
 
-        <dt>Status</dt>
-        <dd>
-          <StatusLine detail={detail} />
-        </dd>
+      <dt>Status</dt>
+      <dd>
+        <StatusLine detail={detail} />
+      </dd>
 
-        {target.kind !== "mcp" && (
-          <>
-            <dt>Skills</dt>
-            <dd>
-              {detail.deps.skills.length === 0 ? (
-                <span className="detail-dialog__empty">None</span>
-              ) : (
-                <DepList items={detail.deps.skills} />
-              )}
-            </dd>
-            <dt>MCPs</dt>
-            <dd>
-              {detail.deps.mcps.length === 0 ? (
-                <span className="detail-dialog__empty">None</span>
-              ) : (
-                <DepList items={detail.deps.mcps} />
-              )}
-            </dd>
-          </>
-        )}
+      {target.kind !== "mcp" && (
+        <>
+          <dt>Skills</dt>
+          <dd>
+            {detail.deps.skills.length === 0 ? (
+              <span className="detail-dialog__empty">None</span>
+            ) : (
+              <DepList items={detail.deps.skills} />
+            )}
+          </dd>
+          <dt>MCPs</dt>
+          <dd>
+            {detail.deps.mcps.length === 0 ? (
+              <span className="detail-dialog__empty">None</span>
+            ) : (
+              <DepList items={detail.deps.mcps} />
+            )}
+          </dd>
+        </>
+      )}
 
-        {detail.prereqs && (
-          <>
-            <dt>Prereqs</dt>
-            <dd>
-              <pre className="detail-dialog__prereqs">{detail.prereqs}</pre>
-            </dd>
-          </>
-        )}
-      </dl>
-    </>
+      {detail.prereqs && (
+        <>
+          <dt>Prereqs</dt>
+          <dd>
+            <pre className="detail-dialog__prereqs">{detail.prereqs}</pre>
+          </dd>
+        </>
+      )}
+    </dl>
   );
 }
 
@@ -589,8 +587,8 @@ function projectSkill(d: SkillDetail): LoadedDetail {
     prereqsAck: meta.prereqsAck,
     orphaned: meta.orphaned,
     deps: {
-      skills: [...(meta.dependencies?.skills ?? [])],
-      mcps: [...(meta.dependencies?.mcps ?? [])],
+      skills: (meta.dependencies?.skills ?? []).map((d) => d.fqn),
+      mcps: (meta.dependencies?.mcps ?? []).map((d) => d.fqn),
     },
     source: d.content,
     sourceLanguage: "markdown",
@@ -609,8 +607,8 @@ function projectAgent(d: AgentDetail): LoadedDetail {
     prereqsAck: meta.prereqsAck,
     disabledByUser: meta.disabledByUser,
     deps: {
-      skills: [...(meta.dependencies?.skills ?? [])],
-      mcps: [...(meta.dependencies?.mcps ?? [])],
+      skills: (meta.dependencies?.skills ?? []).map((d) => d.fqn),
+      mcps: (meta.dependencies?.mcps ?? []).map((d) => d.fqn),
     },
     source: d.content,
     sourceLanguage: "markdown",

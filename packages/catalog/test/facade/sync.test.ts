@@ -14,7 +14,7 @@ import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * Tests for the sync flow: identity check, version short-circuit, dep
@@ -138,16 +138,19 @@ let agentRepo: SqliteAgentRepository;
 let fakes: Fakes;
 let mgr: CatalogManager;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  bootstrapCatalogDbSync(db);
+  await bootstrapCatalogDb(db);
   mcpRepo = new SqliteMcpRepository({ db });
   skillRepo = new SqliteSkillRepository({ db });
   agentRepo = new SqliteAgentRepository({ db });
   fakes = makeFakes();
   const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchFile);
-  const skillSvc = new SkillService(skillRepo, fakes.skillFetcher);
-  const agentSvc = new AgentService(agentRepo, fakes.agentFetcher);
+  const skillSvc = new SkillService(skillRepo, fakes.skillFetcher, { mcps: mcpRepo });
+  const agentSvc = new AgentService(agentRepo, fakes.agentFetcher, {
+    skills: skillRepo,
+    mcps: mcpRepo,
+  });
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fakes.mcpResolveAdapter);
 });
 

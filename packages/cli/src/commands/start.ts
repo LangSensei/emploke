@@ -44,16 +44,22 @@ export interface StartOpts {
   /** Extra args to pass to `node` before the script (e.g. `["--import", "tsx"]`). */
   readonly nodeArgs?: readonly string[];
   /**
-   * Total budget for `/api/health` polling after spawn. Default 30000 ms.
+   * Total budget for `/api/health` polling after spawn. Default 60000 ms.
    *
    * Generous enough to absorb cold Node.js startup on Windows runners
-   * with antivirus in the path. Bumped from 15s to 30s after the
-   * global.db SQLite migration: opening a `node:sqlite` `DatabaseSync`
-   * + ensuring the schema_meta row + WAL pragma negotiation occasionally
-   * pushed cold-boot past the 15s budget on `windows-latest` runners
-   * (~1% of CI runs). Real-world boots on macOS/Linux complete in well
-   * under a second, so the extra budget only kicks in when something
-   * is genuinely slow.
+   * with antivirus in the path. Bumped 15s → 30s after the global.db
+   * SQLite migration (opening `DatabaseSync` + WAL pragma negotiation
+   * pushed cold-boot past 15s on ~1% of runs); then bumped 30s → 60s
+   * after the catalog v2 migration (CI started seeing 30000ms hook
+   * timeouts on the `windows-latest` runner — Defender's real-time
+   * scanning of the freshly-created SQLite WAL sidecar and the
+   * spawned node.exe occasionally compounds with the cold node
+   * startup to push the chain past 30s).
+   *
+   * Real-world boots on macOS/Linux complete in well under a second,
+   * and even Windows usually finishes in 1-3s; the extra budget only
+   * kicks in when Defender (or some other AV / fs filter driver) is
+   * genuinely chewing on the files.
    */
   readonly healthTimeoutMs?: number;
 }
@@ -66,7 +72,7 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   const home = paths.home;
   const port = opts.port ?? Number(env.PORT || 8787);
   const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
-  const healthTimeoutMs = opts.healthTimeoutMs ?? 30_000;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? 60_000;
 
   // Step 1 — idempotency check.
   const existing = await readRuntimeFile(home);

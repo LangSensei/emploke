@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CatalogManager, ResolvedSkill, Skill } from "@emploke/catalog";
+import type { CatalogManager, Skill } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import {
   runPkgMigrationsSync,

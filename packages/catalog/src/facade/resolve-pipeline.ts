@@ -137,23 +137,46 @@ export async function buildUpstreamClosure(
   const inStack = new Set<string>();
   const visited = new Set<string>();
 
+  // v2: building local-source closure entries requires translating
+  // fqn-form dep entries back to origins. Preload once for cheap
+  // O(1) lookup in the install-mode optimization branches.
+  let cachedMaps: {
+    skillOriginByFqn: Map<string, string>;
+    mcpOriginByFqn: Map<string, string>;
+  } | null = null;
+  async function getMaps(): Promise<{
+    skillOriginByFqn: Map<string, string>;
+    mcpOriginByFqn: Map<string, string>;
+  }> {
+    if (cachedMaps !== null) return cachedMaps;
+    const [skills, mcps] = await Promise.all([services.skill.list(), services.mcp.list()]);
+    cachedMaps = {
+      skillOriginByFqn: new Map(skills.map((s) => [s.fqn, s.origin] as const)),
+      mcpOriginByFqn: new Map(mcps.map((m) => [m.fqn, m.origin] as const)),
+    };
+    return cachedMaps;
+  }
+
   async function walkSkill(origin: string, isRoot: boolean): Promise<void> {
     if (inStack.has(origin)) {
       throw new CyclicDependencyError([...inStack, origin]);
     }
     if (visited.has(origin)) return;
 
-    // Install-mode optimization: if a dep is already installed
-    // locally, record its local snapshot and skip the upstream
-    // fetch. Root is always re-fetched (the user explicitly
-    // asked for "this URL").
     if (opts.mode === "install" && !isRoot) {
       const local = await services.skill.getByOrigin(origin);
       if (local !== null) {
+        const maps = await getMaps();
+        const anchorContent = await services.skill.getAnchor(local.fqn).catch(() => "");
         closure.set(origin, {
           kind: "skill",
           source: "local",
-          node: skillEntityToResolvedNode(local),
+          node: skillEntityToResolvedNode(
+            local,
+            anchorContent,
+            maps.skillOriginByFqn,
+            maps.mcpOriginByFqn,
+          ),
         });
         visited.add(origin);
         return;
@@ -173,11 +196,6 @@ export async function buildUpstreamClosure(
         return;
       }
       if (plan.node === null) return;
-      // Walk deps BEFORE recording self in the closure. The Map's
-      // insertion order doubles as the topological emit order: deps
-      // are pushed first, then this node, so the install loop
-      // installs deps before parents (otherwise the parent install
-      // would race against missing-dep checks).
       for (const mcpOrigin of plan.node.depsRefs.mcps) {
         await walkMcp(mcpOrigin);
       }
@@ -192,9 +210,6 @@ export async function buildUpstreamClosure(
   }
 
   async function walkAgent(origin: string): Promise<void> {
-    // Agents are always root entries; cycles can't form through
-    // agents (nothing dep-references them). visited dedupe is
-    // enough — no inStack needed for the agent itself.
     if (visited.has(origin)) return;
     const plan = await services.agent.resolve(origin);
     if (plan.conflict !== null) {
@@ -211,7 +226,6 @@ export async function buildUpstreamClosure(
       visited.add(origin);
       return;
     }
-    // Walk deps first (dep-first emit order — see walkSkill).
     for (const mcpOrigin of plan.node.depsRefs.mcps) {
       await walkMcp(mcpOrigin);
     }
@@ -224,7 +238,6 @@ export async function buildUpstreamClosure(
 
   async function walkMcp(origin: string): Promise<void> {
     if (visited.has(origin)) return;
-    // Install-mode optimization: same as walkSkill.
     if (opts.mode === "install") {
       const local = await services.mcp.getByOrigin(origin);
       if (local !== null) {
@@ -245,7 +258,6 @@ export async function buildUpstreamClosure(
     }
     closure.set(origin, { kind: "mcp", source: "upstream", node: result.node });
     visited.add(origin);
-    // mcps have no further deps — leaf.
   }
 
   if (root.kind === "skill") {
@@ -284,9 +296,6 @@ export async function buildLocalClosure(
 ): Promise<Closure> {
   const closure = new Map<string, ClosureNode>();
   const visited = new Set<string>();
-  // Pre-load all locally-installed entries once. Catalog scale
-  // is tiny (≤ ~100 entries per workspace), so three table scans
-  // are cheaper than per-origin SELECTs across N transitive deps.
   const [skills, agents, mcps] = await Promise.all([
     services.skill.list(),
     services.agent.list(),
@@ -295,41 +304,59 @@ export async function buildLocalClosure(
   const skillByOrigin = new Map(skills.map((s) => [s.origin, s] as const));
   const agentByOrigin = new Map(agents.map((a) => [a.origin, a] as const));
   const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m] as const));
+  // v2: deps are fqn-form on the entity. Build fqn → origin lookups
+  // so we can translate dep fqns back to origins (the closure is
+  // keyed by origin).
+  const skillOriginByFqn = new Map(skills.map((s) => [s.fqn, s.origin] as const));
+  const mcpOriginByFqn = new Map(mcps.map((m) => [m.fqn, m.origin] as const));
 
-  function visit(origin: string): void {
+  async function visit(origin: string): Promise<void> {
     if (visited.has(origin)) return;
     visited.add(origin);
 
     const skill = skillByOrigin.get(origin);
     if (skill !== undefined) {
+      const anchorContent = await services.skill.getAnchor(skill.fqn).catch(() => "");
       closure.set(origin, {
         kind: "skill",
         source: "local",
-        node: skillEntityToResolvedNode(skill),
+        node: skillEntityToResolvedNode(skill, anchorContent, skillOriginByFqn, mcpOriginByFqn),
       });
-      for (const o of skill.dependencies.mcps) visit(o);
-      for (const o of skill.dependencies.skills) visit(o);
+      for (const d of skill.dependencies.mcps) {
+        const o = mcpOriginByFqn.get(d.fqn);
+        if (o !== undefined) await visit(o);
+      }
+      for (const d of skill.dependencies.skills) {
+        const o = skillOriginByFqn.get(d.fqn);
+        if (o !== undefined) await visit(o);
+      }
       return;
     }
     const agent = agentByOrigin.get(origin);
     if (agent !== undefined) {
+      const anchorContent = await services.agent.getAnchor(agent.fqn).catch(() => "");
       closure.set(origin, {
         kind: "agent",
         source: "local",
-        node: agentEntityToResolvedNode(agent),
+        node: agentEntityToResolvedNode(agent, anchorContent, skillOriginByFqn, mcpOriginByFqn),
       });
-      for (const o of agent.dependencies.mcps) visit(o);
-      for (const o of agent.dependencies.skills) visit(o);
+      for (const d of agent.dependencies.mcps) {
+        const o = mcpOriginByFqn.get(d.fqn);
+        if (o !== undefined) await visit(o);
+      }
+      for (const d of agent.dependencies.skills) {
+        const o = skillOriginByFqn.get(d.fqn);
+        if (o !== undefined) await visit(o);
+      }
       return;
     }
     const mcp = mcpByOrigin.get(origin);
     if (mcp !== undefined) {
       closure.set(origin, { kind: "mcp", source: "local", node: mcpEntityToResolvedNode(mcp) });
-      // mcps are leaves.
     }
   }
 
-  for (const origin of seedOrigins) visit(origin);
+  for (const origin of seedOrigins) await visit(origin);
   return closure;
 }
 
@@ -523,36 +550,46 @@ function nodesAreUpToDate(a: ClosureNode, b: ClosureNode): boolean {
   return a.node.version === b.node.version;
 }
 
-function skillEntityToResolvedNode(s: Skill): SkillResolvedNode {
+function skillEntityToResolvedNode(
+  s: Skill,
+  anchorContent: string,
+  skillOriginByFqn: ReadonlyMap<string, string>,
+  mcpOriginByFqn: ReadonlyMap<string, string>,
+): SkillResolvedNode {
   return {
     fqn: s.fqn,
     origin: s.origin,
-    anchorContent: s.anchorContent,
+    anchorContent,
     version: s.version,
     depsRefs: {
-      skills: [...s.dependencies.skills],
-      mcps: [...s.dependencies.mcps],
+      skills: s.dependencies.skills.map((d) => skillOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
+      mcps: s.dependencies.mcps.map((d) => mcpOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
     },
   };
 }
 
-function agentEntityToResolvedNode(a: Agent): AgentResolvedNode {
+function agentEntityToResolvedNode(
+  a: Agent,
+  anchorContent: string,
+  skillOriginByFqn: ReadonlyMap<string, string>,
+  mcpOriginByFqn: ReadonlyMap<string, string>,
+): AgentResolvedNode {
   return {
     fqn: a.fqn,
     origin: a.origin,
-    anchorContent: a.anchorContent,
+    anchorContent,
     version: a.version,
     depsRefs: {
-      skills: [...a.dependencies.skills],
-      mcps: [...a.dependencies.mcps],
+      skills: a.dependencies.skills.map((d) => skillOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
+      mcps: a.dependencies.mcps.map((d) => mcpOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
     },
   };
 }
 
 function mcpEntityToResolvedNode(m: Mcp): McpResolvedNode {
   return {
-    fqn: m.name,
+    fqn: m.fqn,
     origin: m.origin,
-    content: m.content,
+    content: m.spec,
   };
 }

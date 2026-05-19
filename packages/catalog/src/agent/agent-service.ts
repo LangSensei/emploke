@@ -1,7 +1,9 @@
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
 import { applyFrontmatterPatch } from "../frontmatter/patch.js";
+import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
+import type { SkillRepository } from "../skill/skill-repository.js";
 import { Agent } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 import {
@@ -10,13 +12,6 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
-
-/**
- * Application-layer service for agent operations. Mirror of
- * {@link SkillService}; agents are root entities (never dep-referenced
- * by other entities), so this service still walks one level into
- * deps but doesn't recurse — facade does cross-entity coordination.
- */
 
 export interface AgentFetcher {
   fetchAnchor(origin: string): Promise<string>;
@@ -43,7 +38,6 @@ export interface AgentResolvedNode {
   readonly fqn: string;
   readonly origin: string;
   readonly anchorContent: string;
-  /** See {@link SkillResolvedNode.version} — same staleness contract. */
   readonly version: string;
   readonly depsRefs: {
     readonly skills: readonly string[];
@@ -60,10 +54,22 @@ export type AgentResolveConflict = {
     | { kind: "origin-conflict"; existingOrigin: string };
 };
 
+/**
+ * Application-layer service for agent operations. The constructor
+ * accepts sibling repos so the install path can resolve the
+ * frontmatter-declared dep origins to local fqns before writing dep
+ * rows. Sibling repos are optional in legacy callers; when omitted,
+ * dep refs that cannot be resolved are silently dropped (mirrors the
+ * v1 catalog's tolerant behaviour).
+ */
 export class AgentService {
   constructor(
     private readonly repo: AgentRepository,
     private readonly fetcher: AgentFetcher,
+    private readonly siblings: {
+      readonly skills?: SkillRepository;
+      readonly mcps?: McpRepository;
+    } = {},
   ) {}
 
   async resolve(origin: string, opts: AgentResolveOptions = {}): Promise<AgentResolvePlan> {
@@ -107,11 +113,11 @@ export class AgentService {
     const node: AgentResolvedNode = {
       fqn: entity.fqn,
       origin: entity.origin,
-      anchorContent: entity.anchorContent,
+      anchorContent: anchorBytes,
       version: entity.version,
       depsRefs: {
-        skills: [...entity.dependencies.skills],
-        mcps: [...entity.dependencies.mcps],
+        skills: [...entity.depsRefs.skills],
+        mcps: [...entity.depsRefs.mcps],
       },
     };
     onProgress({ type: "fetched", origin, fqn: node.fqn });
@@ -157,9 +163,6 @@ export class AgentService {
       throw new AgentOriginConflictError(entity.fqn, existing.origin, entity.origin);
     }
 
-    // Carry-over rules — see SkillService.install for prereqsAck;
-    // disabledByUser is purely user-controlled and ALWAYS preserved
-    // across syncs (system never flips it).
     if (existing !== null) {
       const prereqsAck =
         (existing.prereqs ?? "") === (entity.prereqs ?? "")
@@ -168,8 +171,9 @@ export class AgentService {
       entity = entity.withState({ prereqsAck, disabledByUser: existing.disabledByUser });
     }
 
-    await this.repo.add(entity, files);
-    return entity;
+    const resolvedDeps = await this.resolveDepOrigins(entity.depsRefs);
+    await this.repo.add(entity, files, resolvedDeps);
+    return (await this.repo.findByFqn(entity.fqn)) ?? entity;
   }
 
   async get(fqn: string): Promise<Agent | null> {
@@ -192,6 +196,10 @@ export class AgentService {
     return this.repo.streamFiles(fqn);
   }
 
+  async getAnchor(fqn: string): Promise<string> {
+    return this.repo.getAnchor(fqn);
+  }
+
   async updateAnchor(fqn: string, newAgentMd: string): Promise<Agent> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
@@ -203,12 +211,12 @@ export class AgentService {
     for await (const f of this.repo.streamFiles(fqn)) {
       files.set(f.relPath, f.content);
     }
-    files.set("AGENTS.md", Buffer.from(updated.anchorContent, "utf8"));
-    await this.repo.add(updated, files);
-    return updated;
+    files.set("AGENTS.md", Buffer.from(newAgentMd, "utf8"));
+    const resolvedDeps = await this.resolveDepOrigins(updated.depsRefs);
+    await this.repo.add(updated, files, resolvedDeps);
+    return (await this.repo.findByFqn(fqn)) ?? updated;
   }
 
-  /** See {@link SkillService.updateMetadata}. Same semantics for AGENTS.md. */
   async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<Agent> {
     for (const k of Object.keys(patch)) {
       if (FORBIDDEN_METADATA_PATCH_KEYS.has(k)) {
@@ -224,7 +232,8 @@ export class AgentService {
     if (!isOriginMutable(existing.origin)) {
       throw new ImmutableOriginError(fqn, existing.origin);
     }
-    const newAnchor = applyFrontmatterPatch(existing.anchorContent, patch);
+    const currentAnchor = await this.repo.getAnchor(fqn);
+    const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
     return this.updateAnchor(fqn, newAnchor);
   }
 
@@ -234,7 +243,6 @@ export class AgentService {
     await this.repo.delete(fqn);
   }
 
-  /** See {@link SkillService.acknowledgePrereqs}. */
   async acknowledgePrereqs(fqn: string): Promise<Agent> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
@@ -246,12 +254,10 @@ export class AgentService {
     return updated;
   }
 
-  /** Flip `disabled_by_user` to `true`. Idempotent. */
   async disableByUser(fqn: string): Promise<Agent> {
     return this.setUserDisabled(fqn, true);
   }
 
-  /** Flip `disabled_by_user` to `false`. Idempotent. */
   async enableByUser(fqn: string): Promise<Agent> {
     return this.setUserDisabled(fqn, false);
   }
@@ -274,9 +280,35 @@ export class AgentService {
     await this.repo.setFlags(fqn, flags);
   }
 
-  /** Release the underlying repository's resources. Idempotent. */
   close(): void {
     this.repo.close?.();
+  }
+
+  /**
+   * Resolve frontmatter dep origins to local sibling fqns. Origins
+   * that don't resolve to an installed sibling are silently skipped —
+   * matches v1 tolerant behaviour, lets the resolve pipeline surface
+   * MissingDep separately if the consumer cares.
+   */
+  private async resolveDepOrigins(refs: {
+    readonly skills: readonly string[];
+    readonly mcps: readonly string[];
+  }): Promise<{ skills: string[]; mcps: string[] }> {
+    const skillFqns: string[] = [];
+    const mcpFqns: string[] = [];
+    if (this.siblings.skills !== undefined) {
+      for (const origin of refs.skills) {
+        const sib = await this.siblings.skills.findByOrigin(origin);
+        if (sib !== null) skillFqns.push(sib.fqn);
+      }
+    }
+    if (this.siblings.mcps !== undefined) {
+      for (const origin of refs.mcps) {
+        const sib = await this.siblings.mcps.findByOrigin(origin);
+        if (sib !== null) mcpFqns.push(sib.fqn);
+      }
+    }
+    return { skills: skillFqns, mcps: mcpFqns };
   }
 }
 

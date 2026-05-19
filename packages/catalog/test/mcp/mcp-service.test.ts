@@ -10,7 +10,7 @@ import * as McpFormat from "../../src/mcp/mcp-format.js";
 import type { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * The McpService contract is repository-agnostic. Set up as a backend
@@ -27,7 +27,7 @@ const BACKENDS: Backend[] = [
     name: "SqliteMcpRepository (in-memory)",
     setup: async () => {
       const db = new DatabaseSync(":memory:");
-      bootstrapCatalogDbSync(db);
+      await bootstrapCatalogDb(db);
       const repo = new SqliteMcpRepository({ db });
       return {
         repo,
@@ -62,7 +62,7 @@ for (const backend of BACKENDS) {
       it("persists a new entity", async () => {
         const m = await svc.install("azure/mcp", "file:/abs/azure", '{"command":"node"}');
         expect(m).toBeInstanceOf(Mcp);
-        expect(m.name).toBe("azure/mcp");
+        expect(m.fqn).toBe("azure/mcp");
         expect(m.origin).toBe("file:/abs/azure");
         expect(await svc.has("azure/mcp")).toBe(true);
         expect(await svc.list()).toHaveLength(1);
@@ -129,7 +129,7 @@ for (const backend of BACKENDS) {
       it("does not corrupt storage on a failed install", async () => {
         await expect(svc.install("x/y", "file:/abs/x", "{not json")).rejects.toThrow();
         expect(await svc.has("x/y")).toBe(false);
-        expect(await repo.findByName("x/y")).toBeNull();
+        expect(await repo.findByFqn("x/y")).toBeNull();
       });
     });
 
@@ -153,7 +153,7 @@ for (const backend of BACKENDS) {
         await svc.install("x/y", "file:/abs/x", '{"v":1}');
         const updated = await svc.updateContent("x/y", '{"v":2,"updated":true}');
         expect(updated.origin).toBe("file:/abs/x");
-        const { meta, body } = McpFormat.parse(updated.content, "test");
+        const { meta, body } = McpFormat.parse(updated.spec, "test");
         expect(meta.name).toBe("x/y");
         expect(body.v).toBe(2);
         expect(body.updated).toBe(true);
@@ -165,7 +165,7 @@ for (const backend of BACKENDS) {
           "x/y",
           JSON.stringify({ v: 2, _meta: { name: "evil/name", origin: "file:/abs/hijack" } }),
         );
-        const { meta } = McpFormat.parse(updated.content, "test");
+        const { meta } = McpFormat.parse(updated.spec, "test");
         expect(meta.name).toBe("x/y");
         // Origin lives on the entity / SQLite row, never the file.
         expect(updated.origin).toBe("file:/abs/x");
@@ -196,7 +196,7 @@ for (const backend of BACKENDS) {
         await svc.install("x/y", "file:/abs/x", "{}");
         await svc.delete("x/y");
         expect(await svc.has("x/y")).toBe(false);
-        expect(await repo.findByName("x/y")).toBeNull();
+        expect(await repo.findByFqn("x/y")).toBeNull();
       });
 
       it("throws NotFound when deleting a missing entry", async () => {
@@ -209,7 +209,7 @@ for (const backend of BACKENDS) {
         await svc.install("x/y", "file:/abs/second", '{"v":2}');
         const m = await svc.get("x/y");
         expect(m!.origin).toBe("file:/abs/second");
-        expect(JSON.parse(m!.content).v).toBe(2);
+        expect(JSON.parse(m!.spec).v).toBe(2);
       });
     });
 
@@ -222,7 +222,7 @@ for (const backend of BACKENDS) {
         await svc.install("x/y", "file:/abs/x", "{}");
         const m = await svc.get("x/y");
         expect(m).toBeInstanceOf(Mcp);
-        expect(m!.name).toBe("x/y");
+        expect(m!.fqn).toBe("x/y");
       });
 
       it("list reflects install / delete in real time", async () => {

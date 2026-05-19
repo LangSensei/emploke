@@ -130,11 +130,13 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 53 entries (the current API surface)", () => {
+  it("listRoutes returns 55 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
     // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
-    expect(listRoutes()).toHaveLength(53);
+    // Bumped 53 → 55 for issue #122's `catalog.{agents,skills}.anchor`
+    // dedicated endpoints (split-out anchor fetch from entry GET).
+    expect(listRoutes()).toHaveLength(55);
   });
 });
 

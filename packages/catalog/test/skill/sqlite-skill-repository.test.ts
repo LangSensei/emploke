@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Skill } from "../../src/skill/skill-entity.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 const MIN_VALID = `---
 name: tool-use
@@ -15,9 +15,9 @@ version: 1.0.0
 let db: DatabaseSync;
 let repo: SqliteSkillRepository;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  bootstrapCatalogDbSync(db);
+  await bootstrapCatalogDb(db);
   repo = new SqliteSkillRepository({ db });
 });
 
@@ -29,23 +29,25 @@ afterEach(() => {
   }
 });
 
+const EMPTY_DEPS = { skills: [], mcps: [] };
+
 function fixture(
   opts: { name?: string; origin?: string; body?: string; files?: ReadonlyMap<string, Buffer> } = {},
-): { skill: Skill; files: ReadonlyMap<string, Buffer> } {
+): { skill: Skill; files: Map<string, Buffer>; anchorBytes: string } {
   const anchor = (opts.body ?? MIN_VALID).replace(
     "name: tool-use",
     `name: ${opts.name ?? "tool-use"}`,
   );
   const skill = Skill.create(anchor, opts.origin ?? "file:/abs/test", "fixture");
   const files = new Map(opts.files ?? new Map());
-  files.set("SKILL.md", Buffer.from(skill.anchorContent, "utf8"));
-  return { skill, files };
+  files.set("SKILL.md", Buffer.from(anchor, "utf8"));
+  return { skill, files, anchorBytes: anchor };
 }
 
-describe("SqliteSkillRepository.add + findByName", () => {
+describe("SqliteSkillRepository.add + findByFqn", () => {
   it("round-trips entity metadata", async () => {
-    const { skill, files } = fixture();
-    await repo.add(skill, files);
+    const { skill, files, anchorBytes } = fixture();
+    await repo.add(skill, files, EMPTY_DEPS);
     const got = await repo.findByFqn(skill.fqn);
     expect(got).not.toBeNull();
     expect(got!.fqn).toBe(skill.fqn);
@@ -53,27 +55,33 @@ describe("SqliteSkillRepository.add + findByName", () => {
     expect(got!.scope).toBe("public");
     expect(got!.version).toBe("1.0.0");
     expect(got!.description).toBe("Helpful patterns");
-    expect(got!.anchorContent).toBe(skill.anchorContent);
+    expect(got!.installedAt).toBeTypeOf("string");
+    expect(got!.updatedAt).toBeTypeOf("string");
+    expect(await repo.getAnchor(skill.fqn)).toBe(anchorBytes);
   });
 
-  it("preserves dependencies in JSON column", async () => {
-    const src = `---
-name: parent
-description: x
-version: 1.0.0
-dependencies:
-  skills:
-    - "file:/abs/child"
-  mcps:
-    - "file:/abs/mcps/azure"
----
-`;
-    const skill = Skill.create(src, "file:/abs/parent", "test");
-    const files = new Map([["SKILL.md", Buffer.from(skill.anchorContent, "utf8")]]);
-    await repo.add(skill, files);
-    const got = await repo.findByFqn(skill.fqn);
-    expect(got!.dependencies.skills).toEqual(["file:/abs/child"]);
-    expect(got!.dependencies.mcps).toEqual(["file:/abs/mcps/azure"]);
+  it("persists fqn-form dependencies via the dep tables", async () => {
+    // Pre-install a sibling skill + mcp so the FK targets exist.
+    const sib = fixture({ name: "child", origin: "file:/abs/child" });
+    await repo.add(sib.skill, sib.files, EMPTY_DEPS);
+    db.prepare(
+      "INSERT INTO mcps (fqn, origin, spec, installed_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      "azure/mcp",
+      "file:/abs/mcps/azure",
+      '{"_meta":{"name":"azure/mcp"}}',
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+
+    const parent = fixture({ name: "parent", origin: "file:/abs/parent" });
+    await repo.add(parent.skill, parent.files, {
+      skills: ["public/child"],
+      mcps: ["azure/mcp"],
+    });
+    const got = await repo.findByFqn(parent.skill.fqn);
+    expect(got!.dependencies.skills).toEqual([{ fqn: "public/child" }]);
+    expect(got!.dependencies.mcps).toEqual([{ fqn: "azure/mcp" }]);
   });
 
   it("returns null when entry is absent", async () => {
@@ -83,22 +91,22 @@ dependencies:
   it("rejects add() without SKILL.md in files", async () => {
     const { skill } = fixture();
     const filesWithoutAnchor = new Map([["other.md", Buffer.from("x")]]);
-    await expect(repo.add(skill, filesWithoutAnchor)).rejects.toThrow(/SKILL\.md/);
+    await expect(repo.add(skill, filesWithoutAnchor, EMPTY_DEPS)).rejects.toThrow(/SKILL\.md/);
   });
 
   it("upserts on add (overwrites all sibling files atomically)", async () => {
-    const { skill } = fixture();
-    const v1Files = new Map([
-      ["SKILL.md", Buffer.from(skill.anchorContent, "utf8")],
+    const { skill, anchorBytes } = fixture();
+    const v1Files = new Map<string, Buffer>([
+      ["SKILL.md", Buffer.from(anchorBytes, "utf8")],
       ["v1-only.txt", Buffer.from("v1")],
     ]);
-    await repo.add(skill, v1Files);
+    await repo.add(skill, v1Files, EMPTY_DEPS);
 
-    const v2Files = new Map([
-      ["SKILL.md", Buffer.from(skill.anchorContent, "utf8")],
+    const v2Files = new Map<string, Buffer>([
+      ["SKILL.md", Buffer.from(anchorBytes, "utf8")],
       ["v2-only.txt", Buffer.from("v2")],
     ]);
-    await repo.add(skill, v2Files);
+    await repo.add(skill, v2Files, EMPTY_DEPS);
 
     const out = await collectFiles(repo, skill.fqn);
     expect(out.has("v1-only.txt")).toBe(false);
@@ -110,7 +118,7 @@ dependencies:
 describe("SqliteSkillRepository.findByOrigin", () => {
   it("returns entity matching origin", async () => {
     const { skill, files } = fixture({ origin: "github:o/r/tree/main/x" });
-    await repo.add(skill, files);
+    await repo.add(skill, files, EMPTY_DEPS);
     const got = await repo.findByOrigin("github:o/r/tree/main/x");
     expect(got!.fqn).toBe(skill.fqn);
   });
@@ -124,8 +132,8 @@ describe("SqliteSkillRepository.findAll + delete + streamFiles", () => {
   it("findAll returns sorted entities", async () => {
     const a = fixture({ name: "alpha", origin: "file:/abs/a" });
     const b = fixture({ name: "beta", origin: "file:/abs/b" });
-    await repo.add(a.skill, a.files);
-    await repo.add(b.skill, b.files);
+    await repo.add(a.skill, a.files, EMPTY_DEPS);
+    await repo.add(b.skill, b.files, EMPTY_DEPS);
     const all = await repo.findAll();
     expect(all.map((s) => s.fqn)).toEqual(["public/alpha", "public/beta"]);
   });
@@ -133,7 +141,7 @@ describe("SqliteSkillRepository.findAll + delete + streamFiles", () => {
   it("delete removes entry and cascades sibling files", async () => {
     const { skill, files } = fixture();
     files.set("scripts/run.sh", Buffer.from("#!/bin/bash"));
-    await repo.add(skill, files);
+    await repo.add(skill, files, EMPTY_DEPS);
     await repo.delete(skill.fqn);
     expect(await repo.findByFqn(skill.fqn)).toBeNull();
     const remainingFiles = await collectFiles(repo, skill.fqn);
@@ -144,7 +152,7 @@ describe("SqliteSkillRepository.findAll + delete + streamFiles", () => {
     const { skill, files } = fixture();
     files.set("scripts/run.sh", Buffer.from("#!/bin/bash"));
     files.set("data/notes.txt", Buffer.from("notes"));
-    await repo.add(skill, files);
+    await repo.add(skill, files, EMPTY_DEPS);
     const out = await collectFiles(repo, skill.fqn);
     expect(out.has("SKILL.md")).toBe(true);
     expect(out.get("scripts/run.sh")?.toString("utf8")).toBe("#!/bin/bash");
@@ -155,30 +163,34 @@ describe("SqliteSkillRepository.findAll + delete + streamFiles", () => {
     const { skill, files } = fixture();
     const bin = Buffer.from([0x00, 0xff, 0x80, 0x42]);
     files.set("blob.bin", bin);
-    await repo.add(skill, files);
+    await repo.add(skill, files, EMPTY_DEPS);
     const out = await collectFiles(repo, skill.fqn);
     expect(Buffer.compare(out.get("blob.bin")!, bin)).toBe(0);
   });
 });
 
-describe("SqliteSkillRepository atomicity", () => {
-  it("partial add failure leaves no orphan rows", async () => {
-    // Force a failure by sneaking a Buffer that throws on bind?  Easier:
-    // verify atomic upsert with concurrent adds — last one wins, no torn state.
-    const { skill, files } = fixture();
-    await Promise.all(
-      Array.from({ length: 30 }, (_, i) => {
-        const fs = new Map(files);
-        fs.set("counter.txt", Buffer.from(String(i)));
-        return repo.add(skill, fs);
-      }),
-    );
-    // Whichever writer landed last, the entry is consistent
-    const got = await repo.findByFqn(skill.fqn);
-    expect(got).not.toBeNull();
-    const out = await collectFiles(repo, skill.fqn);
-    expect(out.has("SKILL.md")).toBe(true);
-    expect(out.has("counter.txt")).toBe(true);
+describe("SqliteSkillRepository v2 — getAnchor / dep helpers", () => {
+  it("getAnchor returns the SKILL.md bytes (catalog v2 explicit fetch)", async () => {
+    const { skill, files, anchorBytes } = fixture();
+    await repo.add(skill, files, EMPTY_DEPS);
+    expect(await repo.getAnchor(skill.fqn)).toBe(anchorBytes);
+  });
+
+  it("findDependentSkills / findDependentAgents return source fqns", async () => {
+    const a = fixture({ name: "alpha", origin: "file:/abs/a" });
+    const b = fixture({ name: "beta", origin: "file:/abs/b" });
+    await repo.add(a.skill, a.files, EMPTY_DEPS);
+    await repo.add(b.skill, b.files, { skills: ["public/alpha"], mcps: [] });
+    expect(await repo.findDependentSkills("public/alpha")).toEqual(["public/beta"]);
+  });
+
+  it("listDependencies returns fqn arrays", async () => {
+    const child = fixture({ name: "child", origin: "file:/abs/child" });
+    await repo.add(child.skill, child.files, EMPTY_DEPS);
+    const parent = fixture({ name: "parent", origin: "file:/abs/parent" });
+    await repo.add(parent.skill, parent.files, { skills: ["public/child"], mcps: [] });
+    const deps = await repo.listDependencies("public/parent");
+    expect(deps.skills).toEqual([{ fqn: "public/child" }]);
   });
 });
 

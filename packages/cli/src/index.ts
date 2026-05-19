@@ -584,9 +584,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(catalogSkill.command("show"))
     .argument("<name>", "Skill name (FQN)")
-    .description("Show one skill's content")
+    .description("Show one skill's entry (or just the anchor with --anchor)")
+    .option("--anchor", "Fetch only the SKILL.md anchor bytes via the dedicated endpoint")
     .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogSkillShow({ ...parseWorkspaceFlags(opts), name });
+      slot.result = await catalogSkillShow({
+        ...parseWorkspaceFlags(opts),
+        name,
+        anchor: opts.anchor === true,
+      });
     });
   withWorkspaceFlags(catalogSkill.command("install"))
     .argument("<origin>", "Skill origin")
@@ -665,9 +670,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(catalogAgent.command("show"))
     .argument("<name>", "Agent name (FQN)")
-    .description("Show one agent's content")
+    .description("Show one agent's entry (or just the anchor with --anchor)")
+    .option("--anchor", "Fetch only the AGENTS.md anchor bytes via the dedicated endpoint")
     .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogAgentShow({ ...parseWorkspaceFlags(opts), name });
+      slot.result = await catalogAgentShow({
+        ...parseWorkspaceFlags(opts),
+        name,
+        anchor: opts.anchor === true,
+      });
     });
   withWorkspaceFlags(catalogAgent.command("install"))
     .argument("<origin>", "Agent origin")
@@ -751,55 +761,53 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
       slot.result = await catalogMcpList(parseWorkspaceFlags(opts));
     });
   withWorkspaceFlags(catalogMcp.command("show"))
-    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .argument("<fqn>", "MCP FQN (<namespace>/<short>)")
     .description("Show one MCP's content")
-    .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogMcpShow({ ...parseWorkspaceFlags(opts), name });
+    .action(async (fqn: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogMcpShow({ ...parseWorkspaceFlags(opts), fqn });
     });
   withWorkspaceFlags(catalogMcp.command("install"))
     .argument("<origin>", "MCP origin")
-    .requiredOption("--name <fqn>", "MCP FQN (<namespace>/<short>)")
-    .description("Install an MCP")
+    .description("Install an MCP (fqn is derived from the JSON's `_meta.name`)")
     .action(async (origin: string, opts: Record<string, unknown>) => {
       slot.result = await catalogMcpInstall({
         ...parseWorkspaceFlags(opts),
         origin,
-        name: pickString(opts, "name") ?? "",
       });
     });
   withWorkspaceFlags(catalogMcp.command("update"))
-    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .argument("<fqn>", "MCP FQN (<namespace>/<short>)")
     .description("Replace MCP JSON content")
     .option("--content <text>", "Inline content")
     .option("--content-file <path>", "Read content from file")
-    .action(async (name: string, opts: Record<string, unknown>) => {
+    .action(async (fqn: string, opts: Record<string, unknown>) => {
       slot.result = await catalogMcpUpdate({
         ...parseWorkspaceFlags(opts),
-        name,
+        fqn,
         ...optionalString(opts, "content"),
         ...optionalString(opts, "contentFile"),
       });
     });
   withWorkspaceFlags(catalogMcp.command("rm"))
-    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .argument("<fqn>", "MCP FQN (<namespace>/<short>)")
     .description("Remove an MCP")
-    .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogMcpRm({ ...parseWorkspaceFlags(opts), name });
+    .action(async (fqn: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogMcpRm({ ...parseWorkspaceFlags(opts), fqn });
     });
   withWorkspaceFlags(catalogMcp.command("sync-resolve"))
-    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .argument("<fqn>", "MCP FQN (<namespace>/<short>)")
     .description("Preview a re-sync plan against the upstream origin")
-    .action(async (name: string, opts: Record<string, unknown>) => {
-      slot.result = await catalogMcpSyncResolve({ ...parseWorkspaceFlags(opts), name });
+    .action(async (fqn: string, opts: Record<string, unknown>) => {
+      slot.result = await catalogMcpSyncResolve({ ...parseWorkspaceFlags(opts), fqn });
     });
   withWorkspaceFlags(catalogMcp.command("sync"))
-    .argument("<name>", "MCP name (<namespace>/<short>)")
+    .argument("<fqn>", "MCP FQN (<namespace>/<short>)")
     .requiredOption("--plan-token <token>", "planToken from `mcp sync-resolve`")
     .description("Apply a previously-previewed sync plan")
-    .action(async (name: string, opts: Record<string, unknown>) => {
+    .action(async (fqn: string, opts: Record<string, unknown>) => {
       slot.result = await catalogMcpSync({
         ...parseWorkspaceFlags(opts),
-        name,
+        fqn,
         planToken: pickString(opts, "planToken") ?? "",
       });
     });
