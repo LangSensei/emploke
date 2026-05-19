@@ -312,7 +312,6 @@ export class CopilotRuntime implements Runtime {
       {
         copilotStateDir: this.copilotStateDir,
         sharedDir: this.sharedDir,
-        randomUUID: this.randomUUID,
         ...this.headlessDeps,
       },
     );

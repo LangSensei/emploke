@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -66,17 +66,46 @@ class FakeChild extends EventEmitter {
 }
 
 /**
- * Build a fake spawn that emits 'spawn' on the next microtask. Tests that
- * want to simulate spawn failure construct their own (see
+ * Build a fake spawn that:
+ *   1. emits 'spawn' on the next microtask, then
+ *   2. emits a `session.start` event line on stdout shortly after.
+ *
+ * The session.start emission is what the post-spawn discovery in
+ * `launchCopilotHeadless` blocks on — without it, the launch promise
+ * never resolves (or rejects at the sessionStart timeout). Tests that
+ * want to simulate a launch failure construct their own fake (see
  * "rejects with RuntimeHeadlessLaunchFailed").
+ *
+ * `emitSessionStart=false` skips the auto-emission for tests that want
+ * to exercise the missing/late session.start branch.
  */
-function makeFakeSpawn(): FakeSpawn {
+function makeFakeSpawn(opts: { emitSessionStart?: boolean } = {}): FakeSpawn {
   const child = new FakeChild();
   const captures: FakeSpawn["captures"] = null as FakeSpawn["captures"];
   const out: FakeSpawn = { spawn: null as unknown as SpawnFn, child, captures };
   out.spawn = ((command, args, options) => {
     out.captures = { command, args, options };
-    queueMicrotask(() => child.emit("spawn"));
+    queueMicrotask(() => {
+      child.emit("spawn");
+      if (opts.emitSessionStart !== false) {
+        // Emit one valid session.start frame so launchCopilotHeadless's
+        // session-id discovery resolves. Two microtask hops after spawn
+        // to model how the real CLI flushes its first event a few
+        // event-loop ticks after the OS reports the process is up.
+        queueMicrotask(() => {
+          child.stdout.emit(
+            "data",
+            Buffer.from(
+              `${JSON.stringify({
+                type: "session.start",
+                data: { sessionId: FIXED_UUID },
+              })}\n`,
+              "utf8",
+            ),
+          );
+        });
+      }
+    });
     return child as unknown as ReturnType<SpawnFn>;
   }) as SpawnFn;
   return out;
@@ -91,7 +120,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -99,7 +127,7 @@ describe("launchCopilotHeadless", () => {
     expect(md).toContain("demo");
   });
 
-  it("pre-creates the session-state dir so it exists before the first event write", async () => {
+  it("resolves sessionDir to <copilotStateDir>/<discovered-session-id>/", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await launchCopilotHeadless(
@@ -107,13 +135,14 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
     const sessionDir = await handle.sessionDir;
     expect(sessionDir).toBe(path.join(stateDir, FIXED_UUID));
-    expect((await stat(sessionDir)).isDirectory()).toBe(true);
+    // We no longer pre-create the dir — Copilot owns it. Asserting the
+    // path is enough; the runtime's readActivity treats a missing dir
+    // as "no events yet" rather than an error.
   });
 
   it("spawns copilot with the expected non-interactive args", async () => {
@@ -124,7 +153,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -133,8 +161,6 @@ describe("launchCopilotHeadless", () => {
     expect(fake.captures?.args).toEqual([
       "-p",
       "do thing",
-      "--resume",
-      FIXED_UUID,
       "--allow-all",
       "--no-ask-user",
       "--output-format",
@@ -175,7 +201,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -185,8 +210,6 @@ describe("launchCopilotHeadless", () => {
     expect(args).toEqual([
       "-p",
       "x",
-      "--resume",
-      FIXED_UUID,
       "--allow-all",
       "--no-ask-user",
       "--output-format",
@@ -209,7 +232,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -226,7 +248,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         copilotBin: "C:\\fake\\copilot.exe",
       },
@@ -267,7 +288,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         // Bare name. Production goes through cross-spawn which
         // does PATH lookup + PATHEXT + .cmd wrap on Windows; tests
@@ -302,7 +322,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
         copilotBin: "/opt/local/bin/copilot",
       },
@@ -318,7 +337,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -345,7 +363,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -375,7 +392,6 @@ describe("launchCopilotHeadless", () => {
         {
           copilotStateDir: stateDir,
           sharedDir: scratch,
-          randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
       );
@@ -410,7 +426,6 @@ describe("launchCopilotHeadless", () => {
         {
           copilotStateDir: stateDir,
           sharedDir: scratch,
-          randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
       );
@@ -423,7 +438,7 @@ describe("launchCopilotHeadless", () => {
     }
   });
 
-  it("returns a handle exposing pid and runtimeSessionId", async () => {
+  it("returns a handle exposing pid and discovered runtimeSessionId", async () => {
     const { agent, catalog } = await buildAgent();
     const fake = makeFakeSpawn();
     const handle = await launchCopilotHeadless(
@@ -431,7 +446,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -447,7 +461,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -463,7 +476,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -479,7 +491,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -495,7 +506,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -514,7 +524,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -534,7 +543,6 @@ describe("launchCopilotHeadless", () => {
         {
           copilotStateDir: stateDir,
           sharedDir: scratch,
-          randomUUID: () => FIXED_UUID,
           spawn,
         },
       ),
@@ -560,7 +568,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn,
         spawnTimeoutMs: 50,
       },
@@ -596,31 +603,80 @@ describe("launchCopilotHeadless", () => {
         {
           copilotStateDir: stateDir,
           sharedDir: scratch,
-          randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
         },
       ),
     ).rejects.toBeInstanceOf(RuntimeProvisionFailed);
   });
 
-  it("wraps mkdir failures on the session dir as RuntimeHeadlessLaunchFailed", async () => {
+  it("rejects with RuntimeHeadlessLaunchFailed when copilot exits before emitting session.start", async () => {
     const { agent, catalog } = await buildAgent();
-    const fake = makeFakeSpawn();
-    const failingMkdir = (async () => {
-      throw new Error("EACCES: mock");
-    }) as unknown as typeof mkdir;
+    const fake = makeFakeSpawn({ emitSessionStart: false });
+    // Simulate copilot starting then immediately exiting (e.g. a
+    // version-mismatch banner that bails before producing any event).
+    queueMicrotask(() => {
+      queueMicrotask(() => fake.child.emit("exit", 1, null));
+    });
     await expect(
       launchCopilotHeadless(
         { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
         {
           copilotStateDir: stateDir,
           sharedDir: scratch,
-          randomUUID: () => FIXED_UUID,
           spawn: fake.spawn,
-          mkdir: failingMkdir,
+          sessionStartTimeoutMs: 5000,
         },
       ),
     ).rejects.toBeInstanceOf(RuntimeHeadlessLaunchFailed);
+  });
+
+  it("rejects with RuntimeHeadlessLaunchFailed when session.start never arrives within sessionStartTimeoutMs", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn({ emitSessionStart: false });
+    // Tight timeout so the test stays snappy.
+    await expect(
+      launchCopilotHeadless(
+        { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+        {
+          copilotStateDir: stateDir,
+          sharedDir: scratch,
+          spawn: fake.spawn,
+          sessionStartTimeoutMs: 50,
+        },
+      ),
+    ).rejects.toBeInstanceOf(RuntimeHeadlessLaunchFailed);
+  });
+
+  it("skips unrelated stdout lines and only resolves on a real session.start frame", async () => {
+    const { agent, catalog } = await buildAgent();
+    const fake = makeFakeSpawn({ emitSessionStart: false });
+    // After launchCopilotHeadless has had time to attach its stdout
+    // listener (post-spawn-await + post-pipe-wiring), emit some noise
+    // and then the real session.start. setImmediate defers until the
+    // next event loop tick which is well after the listener is up.
+    setTimeout(() => {
+      fake.child.stdout.emit("data", Buffer.from("not json at all\n", "utf8"));
+      fake.child.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "tool.call" })}\n`, "utf8"),
+      );
+      fake.child.stdout.emit(
+        "data",
+        Buffer.from(
+          `${JSON.stringify({ type: "session.start", data: { sessionId: FIXED_UUID } })}\n`,
+          "utf8",
+        ),
+      );
+    }, 100);
+    const handle = await launchCopilotHeadless(
+      { taskDir, agent, catalog, prompt: "x", workspaceDir: scratch },
+      {
+        copilotStateDir: stateDir,
+        sharedDir: scratch,
+        spawn: fake.spawn,
+      },
+    );
+    expect(handle.runtimeSessionId).toBe(FIXED_UUID);
   });
 
   it("mirrors child stderr to <taskDir>/stderr.log", async () => {
@@ -631,7 +687,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -658,7 +713,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -689,7 +743,6 @@ describe("launchCopilotHeadless", () => {
       {
         copilotStateDir: stateDir,
         sharedDir: scratch,
-        randomUUID: () => FIXED_UUID,
         spawn: fake.spawn,
       },
     );
@@ -719,15 +772,12 @@ describe("buildCopilotHeadlessArgs", () => {
   it("returns the base argv when mcpConfigExists=false", () => {
     const args = buildCopilotHeadlessArgs({
       prompt: "p",
-      runtimeSessionId: "rid-123",
       taskDir: "/abs/task",
       mcpConfigExists: false,
     });
     expect(args).toEqual([
       "-p",
       "p",
-      "--resume",
-      "rid-123",
       "--allow-all",
       "--no-ask-user",
       "--output-format",
@@ -740,7 +790,6 @@ describe("buildCopilotHeadlessArgs", () => {
   it("appends the two-argv --additional-mcp-config pair when mcpConfigExists=true", () => {
     const args = buildCopilotHeadlessArgs({
       prompt: "p",
-      runtimeSessionId: "rid-123",
       taskDir: "/abs/task",
       mcpConfigExists: true,
     });
@@ -748,13 +797,12 @@ describe("buildCopilotHeadlessArgs", () => {
     // the contract is "stable prefix + optional flags after `-C`")
     // keep working.
     expect(args.slice(-2)).toEqual(["--additional-mcp-config", "@./.mcp.json"]);
-    expect(args.length).toBe(12);
+    expect(args.length).toBe(10);
   });
 
   it("does not mutate inputs and returns a fresh array each call", () => {
     const opts = {
       prompt: "p",
-      runtimeSessionId: "rid",
       taskDir: "/t",
       mcpConfigExists: true,
     } as const;
