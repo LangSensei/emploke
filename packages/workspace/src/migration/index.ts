@@ -9,6 +9,6 @@ export {
   SchemaMetaMismatchError,
   SchemaMetaNotBootstrappedError,
 } from "./errors.js";
-export { runPkgMigrations, runPkgMigrationsSync } from "./run-pkg-migrations.js";
+export { runPkgMigrations } from "./run-pkg-migrations.js";
 export { topoSort } from "./topo-sort.js";
 export type { Migration, MigrationRunResult } from "./types.js";

@@ -63,7 +63,6 @@ export {
   MigrationRegisterError,
   MigrationVersionAheadError,
   runPkgMigrations,
-  runPkgMigrationsSync,
   SchemaMetaMismatchError,
   SchemaMetaNotBootstrappedError,
   topoSort,

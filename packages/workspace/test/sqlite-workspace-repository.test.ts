@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegistryNotBootstrappedError,
-  runPkgMigrationsSync,
+  runPkgMigrations,
   SqliteWorkspaceRepository,
   WORKSPACE_MIGRATIONS,
   Workspace,
@@ -25,7 +25,7 @@ beforeEach(async () => {
   // Post-issue-#123: the SqliteWorkspaceRepository no longer
   // bootstraps tables. The migration coordinator must run first so
   // the `schema_meta(workspace)` row exists.
-  runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 });
 
 afterEach(async () => {
@@ -308,7 +308,7 @@ describe("SqliteWorkspaceRepository — close()", () => {
   it("releases the file handle so the file can be unlinked", async () => {
     const dbFile = path.join(scratch, "global.db");
     const fileDb = new DatabaseSync(dbFile);
-    runPkgMigrationsSync(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    await runPkgMigrations(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
     const repo = new SqliteWorkspaceRepository({ db: fileDb });
     // Take it through a real write so the journal sidecar (if any) is
     // exercised. With journal_mode=DELETE the sidecar is gone after
@@ -328,7 +328,7 @@ describe("SqliteWorkspaceRepository — close()", () => {
   it("closes via WorkspaceManager.close()", async () => {
     const dbFile = path.join(scratch, "global2.db");
     const fileDb = new DatabaseSync(dbFile);
-    runPkgMigrationsSync(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    await runPkgMigrations(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
     const m = new WorkspaceManager(new SqliteWorkspaceRepository({ db: fileDb }));
     await m.init({ id: UUID_A, name: "y", workspaceDir: path.join(scratch, "y") });
 

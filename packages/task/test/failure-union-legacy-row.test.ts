@@ -13,7 +13,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteTaskRepository, TASK_MIGRATIONS } from "../src/index.js";
 
@@ -40,9 +40,9 @@ function captureLogger(): {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
 });
 afterEach(() => {
   db.close();

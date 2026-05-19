@@ -5,7 +5,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteTaskRepository, TASK_MIGRATIONS, Task } from "../src/index.js";
 import type { TaskCancellation, TaskFailure } from "../src/types.js";
@@ -13,9 +13,9 @@ import type { TaskCancellation, TaskFailure } from "../src/types.js";
 let db: DatabaseSync;
 let repo: SqliteTaskRepository;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   repo = new SqliteTaskRepository({ db });
 });
 afterEach(() => {

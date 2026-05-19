@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteTaskRepository, TASK_MIGRATIONS } from "../../src/index.js";
 
@@ -54,7 +54,7 @@ describe("task v2→v3 migration applied via MigrationCoordinator", () => {
   // output exactly: five new nullable columns added, every existing
   // column + row preserved verbatim, schema_meta bumped to 3.
 
-  it("adds the five typed-failure / cancellation columns and preserves existing rows", () => {
+  it("adds the five typed-failure / cancellation columns and preserves existing rows", async () => {
     seedV2Schema(db);
     db.prepare(
       `INSERT INTO tasks (
@@ -76,7 +76,7 @@ describe("task v2→v3 migration applied via MigrationCoordinator", () => {
       '{"pid":1234}',
     );
 
-    runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
 
     // schema_meta bumped from 2 → 3 (and only 3 — not skipped).
     const ver = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
@@ -146,7 +146,7 @@ describe("task v2→v3 migration applied via MigrationCoordinator", () => {
       "{}",
     );
 
-    runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
 
     const repo = new SqliteTaskRepository({ db });
     const back = await repo.read("20260518-bbbbbbbb");

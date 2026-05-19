@@ -10,7 +10,7 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
@@ -37,10 +37,10 @@ let catalogDir: string;
  */
 let openDbs: DatabaseSync[] = [];
 
-function makeRepo(): SqliteSessionRepository {
+async function makeRepo(): Promise<SqliteSessionRepository> {
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
-  runPkgMigrationsSync(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
   return new SqliteSessionRepository({ db });
 }
 
@@ -50,8 +50,8 @@ function makeRepo(): SqliteSessionRepository {
  * can override `opts.repository` with their own repo instance (the
  * spread order means `opts` wins over the default).
  */
-function buildManager(opts: SessionManagerConfig): SessionManager {
-  return new SessionManager({ repository: makeRepo(), ...opts });
+async function buildManager(opts: SessionManagerConfig): Promise<SessionManager> {
+  return new SessionManager({ repository: await makeRepo(), ...opts });
 }
 
 beforeEach(async () => {
@@ -223,8 +223,8 @@ const recorder = () => {
 // ───── construction ──────────────────────────────────────────
 
 describe("SessionManager construction", () => {
-  it("constructs with catalog + runtimeRegistry + sessionsDir", () => {
-    const m = buildManager({
+  it("constructs with catalog + runtimeRegistry + sessionsDir", async () => {
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -239,8 +239,8 @@ describe("SessionManager construction", () => {
 describe("create()", () => {
   it("provisions, persists state, returns Session shape", async () => {
     const rt = new StubRuntime();
-    const repo = makeRepo();
-    const m = buildManager({
+    const repo = await makeRepo();
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -272,7 +272,7 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -282,7 +282,7 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError when catalog rejects", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -292,7 +292,7 @@ describe("create()", () => {
   });
 
   it("throws UnknownRuntimeError when runtime kind is not registered", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime("copilot")),
       sessionsDir,
@@ -307,7 +307,7 @@ describe("create()", () => {
     const claudeRt = new StubRuntime("claude");
     const reg = new RuntimeRegistry();
     reg.register(claudeRt);
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: reg,
       defaultRuntime: "claude",
@@ -321,7 +321,7 @@ describe("create()", () => {
   it("cleans up workdir on provisioner failure", async () => {
     const rt = new StubRuntime();
     rt.provisionError = new RuntimeProvisionFailed("copilot", "/x", new Error("boom"));
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -335,7 +335,7 @@ describe("create()", () => {
   it("supports null runtimeSessionId at create time (gemini-style)", async () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -350,7 +350,7 @@ describe("create()", () => {
 
 describe("list()", () => {
   it("returns empty when sessionsDir does not exist", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir: path.join(sessionsDir, "missing"),
@@ -362,7 +362,7 @@ describe("list()", () => {
   it("ignores stray workdirs that have no corresponding state row", async () => {
     const r = recorder();
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -382,7 +382,7 @@ describe("list()", () => {
   });
 
   it("filters by agent", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
@@ -400,7 +400,7 @@ describe("list()", () => {
   it("filters by createdSince and skips refresh on excluded sessions", async () => {
     const rt = new StubRuntime();
     let nowMs = Date.UTC(2026, 0, 1); // Jan 1 2026
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -423,7 +423,7 @@ describe("list()", () => {
 
   it("createdSince combined with agent narrows further", async () => {
     let nowMs = Date.UTC(2026, 0, 1);
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
@@ -450,7 +450,7 @@ describe("list()", () => {
       title: "did stuff",
       userTitled: false,
     };
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -464,7 +464,7 @@ describe("list()", () => {
 
   it("treats null refresh as no activity (lastActiveAt/preview stay null)", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -482,9 +482,9 @@ describe("list()", () => {
     // registry doesn't know "copilot". Both managers share the same
     // SQLite repository so the runtime-mismatch happens at the manager
     // layer, not at the storage layer.
-    const sharedRepo = makeRepo();
+    const sharedRepo = await makeRepo();
     const rtA = new StubRuntime();
-    const m1 = buildManager({
+    const m1 = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
       sessionsDir,
@@ -493,7 +493,7 @@ describe("list()", () => {
     });
     await m1.create({ agent: "demo" });
 
-    const m2 = buildManager({
+    const m2 = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime("gemini")),
       sessionsDir,
@@ -519,8 +519,8 @@ describe("list()", () => {
       title: null,
       userTitled: false,
     };
-    const repo = makeRepo();
-    const m = buildManager({
+    const repo = await makeRepo();
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -536,7 +536,7 @@ describe("list()", () => {
 
   it("sorts never-launched sessions first, then active by lastActiveAt desc (#43)", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -564,7 +564,7 @@ describe("list()", () => {
 
   it("activeSince filter drops sessions whose lastActiveAt is null or older than the cutoff", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -600,7 +600,7 @@ describe("list()", () => {
     // createdAt for such sessions, otherwise the dashboard hides every
     // brand-new session behind its default time filter.
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -621,7 +621,7 @@ describe("list()", () => {
 
 describe("get()", () => {
   it("returns the record by id", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -633,7 +633,7 @@ describe("get()", () => {
   });
 
   it("returns null for valid-but-unknown id", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -643,7 +643,7 @@ describe("get()", () => {
   });
 
   it("throws InvalidSessionIdError for malformed id", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -657,7 +657,7 @@ describe("get()", () => {
 
 describe("delete()", () => {
   it("removes the metadata; workdir is preserved by default", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -673,7 +673,7 @@ describe("delete()", () => {
   });
 
   it("removes the workdir when purge=true", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -685,7 +685,7 @@ describe("delete()", () => {
   });
 
   it("throws SessionNotFoundError for unknown id", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -695,7 +695,7 @@ describe("delete()", () => {
   });
 
   it("validates id format", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -706,7 +706,7 @@ describe("delete()", () => {
 
   it("with purge=true: calls runtime.deleteState before removing row + workdir", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -723,7 +723,7 @@ describe("delete()", () => {
   it("with purge=true: runtime failure leaves both row and workdir intact", async () => {
     const rt = new StubRuntime();
     rt.deleteStateError = new RuntimeStateDeletionFailed("copilot", "anyid", new Error("EBUSY"));
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -742,7 +742,7 @@ describe("delete()", () => {
 
   it("default (archive): does NOT call runtime.deleteState and preserves workdir", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -764,7 +764,7 @@ describe("delete()", () => {
 describe("buildInteractiveLaunch()", () => {
   it("returns launch command for a real session", async () => {
     const rt = new StubRuntime();
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -793,7 +793,7 @@ describe("buildInteractiveLaunch()", () => {
       title: null,
       userTitled: false,
     };
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -805,7 +805,7 @@ describe("buildInteractiveLaunch()", () => {
   });
 
   it("throws SessionNotFoundError for unknown", async () => {
-    const m = buildManager({
+    const m = await buildManager({
       catalog: stubCatalog(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -818,7 +818,7 @@ describe("buildInteractiveLaunch()", () => {
 
   it("persists lastLaunchMode after a successful launch", async () => {
     const rt = new StubRuntime();
-    const repo = makeRepo();
+    const repo = await makeRepo();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
@@ -843,7 +843,7 @@ describe("buildInteractiveLaunch()", () => {
     // path scopes its write to a single column, so both updates
     // survive.
     const rt = new StubRuntime();
-    const repo = makeRepo();
+    const repo = await makeRepo();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
@@ -882,7 +882,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-uuid-alpha",
       subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
-      repository: makeRepo(),
+      repository: await makeRepo(),
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -905,7 +905,7 @@ describe("buildInteractiveLaunch()", () => {
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      repository: makeRepo(),
+      repository: await makeRepo(),
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -929,7 +929,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-A",
       subprocessEnv: sharedBase,
-      repository: makeRepo(),
+      repository: await makeRepo(),
     });
     const mB = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -938,7 +938,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-B",
       subprocessEnv: sharedBase,
-      repository: makeRepo(),
+      repository: await makeRepo(),
     });
 
     const sA = await mA.create({ agent: "demo" });
@@ -978,7 +978,7 @@ describe("buildInteractiveLaunch()", () => {
         ROGUE_NULL: null as unknown as string,
         ROGUE_OBJ: { not: "a string" } as unknown as string,
       },
-      repository: makeRepo(),
+      repository: await makeRepo(),
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);

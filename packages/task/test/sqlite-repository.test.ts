@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CorruptedTaskError,
@@ -21,7 +21,7 @@ let repo: SqliteTaskRepository;
 beforeEach(async () => {
   scratchDir = await mkdtemp(path.join(tmpdir(), "emploke-sqlite-task-"));
   db = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   repo = new SqliteTaskRepository({ db });
 });
 afterEach(async () => {
@@ -262,8 +262,8 @@ describe("SqliteTaskRepository", () => {
   it("two separate :memory: connections are isolated", async () => {
     const dbA = new DatabaseSync(":memory:");
     const dbB = new DatabaseSync(":memory:");
-    runPkgMigrationsSync(dbA, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-    runPkgMigrationsSync(dbB, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    await runPkgMigrations(dbA, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    await runPkgMigrations(dbB, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
     const a = new SqliteTaskRepository({ db: dbA });
     const b = new SqliteTaskRepository({ db: dbB });
     const sample = makeTask();
@@ -305,7 +305,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
     `);
   }
 
-  it("migrates a short instructions row: brief = full instructions, details = full instructions", () => {
+  it("migrates a short instructions row: brief = full instructions, details = full instructions", async () => {
     const d = new DatabaseSync(":memory:");
     try {
       seedV1Schema(d);
@@ -325,7 +325,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
       // Coordinator walks the chain v1 → v2 → v3 (skipping v0→v1
       // because schema_meta.task is already at 1). Then the repo's
       // version-check passes and the entity factory rehydrates.
-      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       const r = new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -345,7 +345,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
     }
   });
 
-  it("migrates a long instructions row: brief truncated to 200, details preserved verbatim", () => {
+  it("migrates a long instructions row: brief truncated to 200, details preserved verbatim", async () => {
     const d = new DatabaseSync(":memory:");
     try {
       seedV1Schema(d);
@@ -363,7 +363,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
         "{}",
       );
 
-      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -376,7 +376,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
     }
   });
 
-  it("migrates an empty instructions row to brief='(untitled)' so the v2 entity invariant survives", () => {
+  it("migrates an empty instructions row to brief='(untitled)' so the v2 entity invariant survives", async () => {
     const d = new DatabaseSync(":memory:");
     try {
       seedV1Schema(d);
@@ -393,7 +393,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
         "{}",
       );
 
-      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -428,7 +428,7 @@ describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
         '{"pid":1234}',
       );
 
-      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+      await runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       const r = new SqliteTaskRepository({ db: d });
       const rows = await r.list();
       expect(rows).toHaveLength(1);

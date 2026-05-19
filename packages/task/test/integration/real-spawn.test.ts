@@ -27,7 +27,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DispatchOpts,
@@ -148,17 +148,17 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
   throw new Error(`awaitTerminal: task ${id} did not reach terminal status within ${timeoutMs}ms`);
 }
 
-const makeManager = (
+const makeManager = async (
   catalog: CatalogManager,
   runtime: Runtime,
-): { m: TaskManager; repo: SqliteTaskRepository } => {
+): Promise<{ m: TaskManager; repo: SqliteTaskRepository }> => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
   // In-memory DB so the test owns the lifecycle (no file to leak,
   // no Windows EBUSY on cleanup).
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
-  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   const repo = new SqliteTaskRepository({ db });
   const m = new TaskManager({
     catalog,
@@ -175,7 +175,7 @@ const makeManager = (
 describe("real-spawn smoke", () => {
   it("dispatch → real child exits 0 → status persists as 'success'", async () => {
     const runtime = new RealNodeRuntime({ "exit-zero": "process.exit(0)" });
-    const { m, repo } = makeManager(stubCatalog(["exit-zero"]), runtime);
+    const { m, repo } = await makeManager(stubCatalog(["exit-zero"]), runtime);
 
     const t = await m.dispatch(dispatchOf({ agent: "exit-zero" }));
     const final = await awaitTerminal(m, t.id);
@@ -188,7 +188,7 @@ describe("real-spawn smoke", () => {
 
   it("dispatch → real child exits non-zero → status persists as 'failure'", async () => {
     const runtime = new RealNodeRuntime({ "exit-one": "process.exit(1)" });
-    const { m, repo } = makeManager(stubCatalog(["exit-one"]), runtime);
+    const { m, repo } = await makeManager(stubCatalog(["exit-one"]), runtime);
 
     const t = await m.dispatch(dispatchOf({ agent: "exit-one" }));
     const final = await awaitTerminal(m, t.id);
