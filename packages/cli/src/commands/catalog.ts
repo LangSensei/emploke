@@ -684,22 +684,23 @@ export async function catalogMcpShow(opts: CatalogMcpShowOpts): Promise<CommandR
 
 export interface CatalogMcpInstallOpts extends CommonFlags {
   readonly origin: string;
-  readonly fqn: string;
 }
 
 export async function catalogMcpInstall(opts: CatalogMcpInstallOpts): Promise<CommandResult> {
   if (typeof opts.origin !== "string" || opts.origin.trim() === "") {
     return { exitCode: 2, stderr: "mcp origin is required\n" };
   }
-  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
-    return { exitCode: 2, stderr: "mcp fqn (<namespace>/<short>) is required\n" };
-  }
+  // Server contract is `{ origin }` only — the fqn is derived from
+  // the fetched JSON's `_meta.name` at install time, not from the
+  // request body (see `validateMcpInstallInput`). The defense-in-depth
+  // test at `cli/test/api-client.test.ts:249` pins this contract;
+  // sending an extra `name` field would violate it.
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
     const result = await client.call("catalog.mcps.install", {
       params: { id },
-      body: { origin: opts.origin, name: opts.fqn },
+      body: { origin: opts.origin },
     });
     return { exitCode: 0, stdout: formatJson(result) };
   } catch (err) {

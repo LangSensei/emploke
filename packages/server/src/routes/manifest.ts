@@ -608,7 +608,7 @@ export const ROUTES = {
   "catalog.mcps.install": defineRoute<
     {
       params: WorkspacePathParams;
-      body: { readonly origin: string; readonly name: string };
+      body: { readonly origin: string };
     },
     CatalogInstallResult
   >("POST", "/api/workspaces/:id/catalog/mcps"),

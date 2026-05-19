@@ -768,13 +768,11 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(catalogMcp.command("install"))
     .argument("<origin>", "MCP origin")
-    .requiredOption("--fqn <fqn>", "MCP FQN (<namespace>/<short>)")
-    .description("Install an MCP")
+    .description("Install an MCP (fqn is derived from the JSON's `_meta.name`)")
     .action(async (origin: string, opts: Record<string, unknown>) => {
       slot.result = await catalogMcpInstall({
         ...parseWorkspaceFlags(opts),
         origin,
-        fqn: pickString(opts, "fqn") ?? "",
       });
     });
   withWorkspaceFlags(catalogMcp.command("update"))
