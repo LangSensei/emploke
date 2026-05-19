@@ -663,18 +663,18 @@ export async function catalogMcpList(opts: CatalogMcpListOpts = {}): Promise<Com
 }
 
 export interface CatalogMcpShowOpts extends CommonFlags {
-  readonly name: string;
+  readonly fqn: string;
 }
 
 export async function catalogMcpShow(opts: CatalogMcpShowOpts): Promise<CommandResult> {
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn is required\n" };
   }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
     const mcp = await client.call("catalog.mcps.get", {
-      params: { id, name: opts.name },
+      params: { id, name: opts.fqn },
     });
     return { exitCode: 0, stdout: formatJson(mcp) };
   } catch (err) {
@@ -684,22 +684,22 @@ export async function catalogMcpShow(opts: CatalogMcpShowOpts): Promise<CommandR
 
 export interface CatalogMcpInstallOpts extends CommonFlags {
   readonly origin: string;
-  readonly name: string;
+  readonly fqn: string;
 }
 
 export async function catalogMcpInstall(opts: CatalogMcpInstallOpts): Promise<CommandResult> {
   if (typeof opts.origin !== "string" || opts.origin.trim() === "") {
     return { exitCode: 2, stderr: "mcp origin is required\n" };
   }
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name (FQN <namespace>/<short>) is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn (<namespace>/<short>) is required\n" };
   }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
     const result = await client.call("catalog.mcps.install", {
       params: { id },
-      body: { origin: opts.origin, name: opts.name },
+      body: { origin: opts.origin, name: opts.fqn },
     });
     return { exitCode: 0, stdout: formatJson(result) };
   } catch (err) {
@@ -708,14 +708,14 @@ export async function catalogMcpInstall(opts: CatalogMcpInstallOpts): Promise<Co
 }
 
 export interface CatalogMcpUpdateOpts extends CommonFlags {
-  readonly name: string;
+  readonly fqn: string;
   readonly content?: string;
   readonly contentFile?: string;
 }
 
 export async function catalogMcpUpdate(opts: CatalogMcpUpdateOpts): Promise<CommandResult> {
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn is required\n" };
   }
   const content = await readContentPayload(opts);
   if (typeof content !== "string") return { exitCode: 2, stderr: `${content.error}\n` };
@@ -723,51 +723,51 @@ export async function catalogMcpUpdate(opts: CatalogMcpUpdateOpts): Promise<Comm
   try {
     const id = await resolveWorkspace(opts);
     await client.call("catalog.mcps.updateContent", {
-      params: { id, name: opts.name },
+      params: { id, name: opts.fqn },
       body: { content },
     });
-    return { exitCode: 0, stdout: `mcp ${opts.name} updated\n` };
+    return { exitCode: 0, stdout: `mcp ${opts.fqn} updated\n` };
   } catch (err) {
     return formatError(err);
   }
 }
 
 export interface CatalogMcpRmOpts extends CommonFlags {
-  readonly name: string;
+  readonly fqn: string;
 }
 
 export async function catalogMcpRm(opts: CatalogMcpRmOpts): Promise<CommandResult> {
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn is required\n" };
   }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
     await client.call("catalog.mcps.delete", {
-      params: { id, name: opts.name },
+      params: { id, name: opts.fqn },
     });
-    return { exitCode: 0, stdout: `mcp ${opts.name} removed\n` };
+    return { exitCode: 0, stdout: `mcp ${opts.fqn} removed\n` };
   } catch (err) {
     return formatError(err);
   }
 }
 
 export interface CatalogMcpSyncResolveOpts extends CommonFlags {
-  readonly name: string;
+  readonly fqn: string;
 }
 
 /** Mirror of {@link catalogSkillSyncResolve} for MCPs. */
 export async function catalogMcpSyncResolve(
   opts: CatalogMcpSyncResolveOpts,
 ): Promise<CommandResult> {
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn is required\n" };
   }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
     const plan = await client.call("catalog.mcps.syncResolve", {
-      params: { id, name: opts.name },
+      params: { id, name: opts.fqn },
     });
     return { exitCode: 0, stdout: formatJson(plan) };
   } catch (err) {
@@ -776,14 +776,14 @@ export async function catalogMcpSyncResolve(
 }
 
 export interface CatalogMcpSyncOpts extends CommonFlags {
-  readonly name: string;
+  readonly fqn: string;
   readonly planToken: string;
 }
 
 /** Mirror of {@link catalogSkillSync} for MCPs. */
 export async function catalogMcpSync(opts: CatalogMcpSyncOpts): Promise<CommandResult> {
-  if (typeof opts.name !== "string" || opts.name.trim() === "") {
-    return { exitCode: 2, stderr: "mcp name is required\n" };
+  if (typeof opts.fqn !== "string" || opts.fqn.trim() === "") {
+    return { exitCode: 2, stderr: "mcp fqn is required\n" };
   }
   if (typeof opts.planToken !== "string" || opts.planToken.trim() === "") {
     return { exitCode: 2, stderr: "--plan-token is required (mint with `mcp sync-resolve`)\n" };
@@ -792,7 +792,7 @@ export async function catalogMcpSync(opts: CatalogMcpSyncOpts): Promise<CommandR
   try {
     const id = await resolveWorkspace(opts);
     const result = await client.call("catalog.mcps.sync", {
-      params: { id, name: opts.name },
+      params: { id, name: opts.fqn },
       body: { planToken: opts.planToken },
     });
     return { exitCode: 0, stdout: formatJson(result) };
