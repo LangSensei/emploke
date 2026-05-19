@@ -15,7 +15,8 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { SqliteTaskRepository, TaskManager } from "../src/index.js";
+import { runPkgMigrationsSync } from "@emploke/workspace";
+import { SqliteTaskRepository, TASK_MIGRATIONS, TaskManager } from "../src/index.js";
 
 /**
  * Records every kill + lets the test drive the exit timing. By
@@ -91,6 +92,7 @@ export async function setupCancelFixture(
 ): Promise<CancelFixture> {
   const tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
   const db = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   const rt = new TestRuntime();
   if (opts.autoExitOnKill) rt.autoExitOnKill = true;
   const reg = new RuntimeRegistry();

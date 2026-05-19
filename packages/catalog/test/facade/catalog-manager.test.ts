@@ -17,6 +17,7 @@ import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 /**
  * Shared fake fetcher: one in-memory map of (origin → file map) used
@@ -154,6 +155,7 @@ beforeEach(() => {
   // All three catalog repos share one in-memory connection — same as
   // production where they share the workspace's `workspace.db` handle.
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   mcpRepo = new SqliteMcpRepository({ db });
   skillRepo = new SqliteSkillRepository({ db });
   agentRepo = new SqliteAgentRepository({ db });

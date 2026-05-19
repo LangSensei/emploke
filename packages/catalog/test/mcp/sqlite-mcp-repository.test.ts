@@ -2,9 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { Mcp } from "../../src/mcp/mcp-entity.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 function newRepo(): { repo: SqliteMcpRepository; db: DatabaseSync } {
   const db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   return { repo: new SqliteMcpRepository({ db }), db };
 }
 
@@ -109,6 +111,7 @@ describe("SqliteMcpRepository persistence", () => {
     // a single in-memory connection across two repo instances.
     const db = new DatabaseSync(":memory:");
     try {
+      bootstrapCatalogDbSync(db);
       const repo1 = new SqliteMcpRepository({ db });
       await repo1.add(Mcp.create("x/y", "file:/abs/x", '{"v":1}'));
 

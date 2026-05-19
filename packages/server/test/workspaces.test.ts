@@ -4,7 +4,12 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
+import {
+  runPkgMigrationsSync,
+  SqliteWorkspaceRepository,
+  WORKSPACE_MIGRATIONS,
+  WorkspaceManager,
+} from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestId } from "../src/middleware/request-id.js";
@@ -19,6 +24,7 @@ const openCaches: WorkspaceContextCache[] = [];
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-ws-"));
   globalDb = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 });
 afterEach(async () => {
   for (const c of openCaches.splice(0)) c.closeAll();

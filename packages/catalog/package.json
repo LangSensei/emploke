@@ -29,6 +29,7 @@
   "dependencies": {
     "@emploke/catalog-fetcher": "workspace:*",
     "@emploke/logger": "workspace:*",
+    "@emploke/workspace": "workspace:*",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {

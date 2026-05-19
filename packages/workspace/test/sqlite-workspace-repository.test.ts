@@ -4,7 +4,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  RegistryNotBootstrappedError,
+  runPkgMigrationsSync,
   SqliteWorkspaceRepository,
+  WORKSPACE_MIGRATIONS,
   Workspace,
   WorkspaceCorruptedError,
   WorkspaceIdConflictError,
@@ -19,6 +22,10 @@ let db: DatabaseSync;
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-sqlite-ws-"));
   db = new DatabaseSync(":memory:");
+  // Post-issue-#123: the SqliteWorkspaceRepository no longer
+  // bootstraps tables. The migration coordinator must run first so
+  // the `schema_meta(workspace)` row exists.
+  runPkgMigrationsSync(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 });
 
 afterEach(async () => {
@@ -38,7 +45,10 @@ const sample = (id: string, name: string, workdir: string): Workspace =>
   Workspace.create({ id, name, workdir });
 
 describe("SqliteWorkspaceRepository — schema bootstrap", () => {
-  it("creates schema_meta + workspaces + global_state on first open", () => {
+  it("coordinator creates schema_meta + workspaces + global_state", () => {
+    // The migration coordinator runs in `beforeEach`. The
+    // repository's role is to *verify* the post-condition, not
+    // create it.
     new SqliteWorkspaceRepository({ db });
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -49,7 +59,7 @@ describe("SqliteWorkspaceRepository — schema bootstrap", () => {
     expect(tables).toContain("global_state");
   });
 
-  it("registers itself under pkg='workspace' in schema_meta", () => {
+  it("repository finds pkg='workspace' in schema_meta at the expected version", () => {
     new SqliteWorkspaceRepository({ db });
     const row = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("workspace") as
       | { version: number }
@@ -66,6 +76,21 @@ describe("SqliteWorkspaceRepository — schema bootstrap", () => {
     new SqliteWorkspaceRepository({ db });
     db.prepare("UPDATE schema_meta SET version = 99 WHERE pkg = ?").run("workspace");
     expect(() => new SqliteWorkspaceRepository({ db })).toThrow(/schemaVersion 99/);
+  });
+
+  it("throws RegistryNotBootstrappedError when constructed against a DB the coordinator never touched", () => {
+    // Regression guard for the post-#123 invariant: the repository
+    // must never silently bootstrap tables. A DB with no
+    // schema_meta entry is a server-wiring bug, not a recoverable
+    // condition.
+    const freshDb = new DatabaseSync(":memory:");
+    try {
+      expect(() => new SqliteWorkspaceRepository({ db: freshDb })).toThrow(
+        RegistryNotBootstrappedError,
+      );
+    } finally {
+      freshDb.close();
+    }
   });
 });
 
@@ -286,5 +311,46 @@ describe("WorkspaceManager backed by SqliteWorkspaceRepository", () => {
     }
     const back = await m.read(UUID_A);
     expect(back?.name).toBe("Project");
+  });
+});
+
+describe("SqliteWorkspaceRepository — close()", () => {
+  // Verifies the EBUSY-fix wiring: a file-backed DB that the repository
+  // owns must be unlinkable after `repository.close()`. Windows blocks
+  // unlink on files with open handles; this is the regression we are
+  // pinning. POSIX hosts succeed even without close, but the test is
+  // platform-agnostic — the close call is the contract being asserted.
+  it("releases the file handle so the file can be unlinked", async () => {
+    const dbFile = path.join(scratch, "global.db");
+    const fileDb = new DatabaseSync(dbFile);
+    runPkgMigrationsSync(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    const repo = new SqliteWorkspaceRepository({ db: fileDb });
+    // Take it through a real write so the journal sidecar (if any) is
+    // exercised. With journal_mode=DELETE the sidecar is gone after
+    // commit, but the test stays correct under future PRAGMA changes.
+    await repo.create(
+      Workspace.create({ id: UUID_A, name: "x", workdir: path.join(scratch, "x") }),
+    );
+
+    repo.close();
+    // Idempotent: double-close is a no-op, no throw.
+    repo.close();
+
+    const fsImport = await import("node:fs/promises");
+    await expect(fsImport.unlink(dbFile)).resolves.toBeUndefined();
+  });
+
+  it("closes via WorkspaceManager.close()", async () => {
+    const dbFile = path.join(scratch, "global2.db");
+    const fileDb = new DatabaseSync(dbFile);
+    runPkgMigrationsSync(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+    const m = new WorkspaceManager(new SqliteWorkspaceRepository({ db: fileDb }));
+    await m.init({ id: UUID_A, name: "y", workdir: path.join(scratch, "y") });
+
+    m.close();
+    m.close();
+
+    const fsImport = await import("node:fs/promises");
+    await expect(fsImport.unlink(dbFile)).resolves.toBeUndefined();
   });
 });

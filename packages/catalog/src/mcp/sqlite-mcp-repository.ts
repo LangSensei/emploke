@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { SchemaMetaMismatchError, SchemaMetaNotBootstrappedError } from "@emploke/workspace";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
@@ -122,29 +123,29 @@ export class SqliteMcpRepository implements McpRepository {
   // ─── schema management ──────────────────────────────────────
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_meta (
-        pkg     TEXT PRIMARY KEY NOT NULL,
-        version INTEGER NOT NULL CHECK (version > 0)
-      );
-      CREATE TABLE IF NOT EXISTS mcp (
-        name      TEXT PRIMARY KEY NOT NULL,
-        origin    TEXT NOT NULL,
-        content   TEXT NOT NULL
-      );
-    `);
-    const existing = this.db
-      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
-      .get("catalog_mcp") as { version: number } | undefined;
-    if (existing === undefined) {
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("catalog_mcp", MCP_PKG_SCHEMA_VERSION);
-      return;
+    // Post-issue-#123: the MigrationCoordinator owns DDL. This
+    // repository's job is to assert the post-condition — a
+    // `schema_meta` row for the `catalog_mcp` pkg at the expected
+    // version. A missing row means `runPkgMigrations` was not run
+    // before construction (always a wiring bug).
+    //
+    // Both branches surface as the framework's typed errors
+    // (`SchemaMetaNotBootstrappedError` / `SchemaMetaMismatchError`)
+    // so consumers can route uniformly across every per-pkg repo.
+    let existing: { version: number } | undefined;
+    try {
+      existing = this.db
+        .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+        .get("catalog_mcp") as { version: number } | undefined;
+    } catch {
+      // `schema_meta` itself missing → coordinator never ran.
+      throw new SchemaMetaNotBootstrappedError("catalog_mcp");
     }
-    if (existing.version === MCP_PKG_SCHEMA_VERSION) return;
-    throw new Error(
-      `catalog_mcp pkg schema mismatch: db has v${existing.version}, server supports v${MCP_PKG_SCHEMA_VERSION}.`,
-    );
+    if (existing === undefined) {
+      throw new SchemaMetaNotBootstrappedError("catalog_mcp");
+    }
+    if (existing.version !== MCP_PKG_SCHEMA_VERSION) {
+      throw new SchemaMetaMismatchError("catalog_mcp", existing.version, MCP_PKG_SCHEMA_VERSION);
+    }
   }
 }

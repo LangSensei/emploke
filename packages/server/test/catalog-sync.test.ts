@@ -4,7 +4,13 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager, ResolvedSkill, Skill } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { SqliteWorkspaceRepository, type Workspace, WorkspaceManager } from "@emploke/workspace";
+import {
+  runPkgMigrationsSync,
+  SqliteWorkspaceRepository,
+  WORKSPACE_MIGRATIONS,
+  type Workspace,
+  WorkspaceManager,
+} from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
@@ -25,6 +31,7 @@ let cache: WorkspaceContextCache;
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-sync-"));
   globalDb = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
   workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(

@@ -33,7 +33,8 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/logger": "workspace:*",
-    "@emploke/runtime": "workspace:*"
+    "@emploke/runtime": "workspace:*",
+    "@emploke/workspace": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

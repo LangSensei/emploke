@@ -10,10 +10,12 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
+  SESSION_MIGRATIONS,
   SessionManager,
   type SessionManagerConfig,
   SessionNotFoundError,
@@ -38,6 +40,7 @@ let openDbs: DatabaseSync[] = [];
 function makeRepo(): SqliteSessionRepository {
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
+  runPkgMigrationsSync(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
   return new SqliteSessionRepository({ db });
 }
 

@@ -111,6 +111,14 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "WorkspaceNotFoundError",
   "WorkspaceNotRegisteredError",
   "WorkspacePathConflictError",
+  // @emploke/workspace/migration (uniform across every per-pkg repo
+  // that runs through `MigrationCoordinator` — session, task,
+  // catalog_*). Surfaces only as a wiring fault (coordinator skipped
+  // or DB built by a different binary), so the body is safe to echo —
+  // it carries the pkg id, the on-disk version, and the expected
+  // version, no host paths.
+  "SchemaMetaMismatchError",
+  "SchemaMetaNotBootstrappedError",
 ]);
 
 /**

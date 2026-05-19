@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { SchemaMetaMismatchError, SchemaMetaNotBootstrappedError } from "@emploke/workspace";
 import { CorruptedTaskError, InvalidTaskIdError } from "../errors.js";
 import { TASK_ID_RE } from "../ids.js";
 import { Task } from "../task-entity.js";
@@ -247,102 +248,31 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   private ensureSchema(): void {
-    // Bootstrap the schema_meta table so we can read the current
-    // version unconditionally. The `tasks` table is created lazily
-    // depending on which version path we land on (fresh install vs
-    // upgrade) so we never have to retro-fit a v1 CREATE TABLE
-    // before the migration has run.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_meta (
-        pkg     TEXT PRIMARY KEY NOT NULL,
-        version INTEGER NOT NULL CHECK (version > 0)
-      );
-    `);
-    const existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as
-      | { version: number }
-      | undefined;
-
+    // Post-issue-#123: the MigrationCoordinator owns DDL. This
+    // repository's job is to assert the post-condition — a
+    // `schema_meta` row for the `task` pkg at HEAD. A missing row
+    // means the caller skipped `runPkgMigrations` (always a wiring
+    // bug); a mismatched version means the on-disk DB was written
+    // by a different build than what this code understands.
+    //
+    // Both branches surface as the framework's typed errors
+    // (`SchemaMetaNotBootstrappedError` / `SchemaMetaMismatchError`)
+    // so consumers can route uniformly across every per-pkg repo.
+    let existing: { version: number } | undefined;
+    try {
+      existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as
+        | { version: number }
+        | undefined;
+    } catch {
+      // `schema_meta` itself missing → coordinator never ran.
+      throw new SchemaMetaNotBootstrappedError("task");
+    }
     if (existing === undefined) {
-      // Fresh install (or never saw a tasks table): create the
-      // current schema directly. `IF NOT EXISTS` covers the edge
-      // case where another build path created the table without a
-      // schema_meta row (we don't ship that path, but defending
-      // against it keeps the call idempotent under retries).
-      this.createCurrentSchema();
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("task", TASK_PKG_SCHEMA_VERSION);
-      return;
+      throw new SchemaMetaNotBootstrappedError("task");
     }
-
-    if (existing.version === TASK_PKG_SCHEMA_VERSION) {
-      // Already at HEAD: assert the table exists (defensive — a
-      // partially-written install could have schema_meta but no
-      // tasks table) and return.
-      this.createCurrentSchema();
-      return;
+    if (existing.version !== TASK_PKG_SCHEMA_VERSION) {
+      throw new SchemaMetaMismatchError("task", existing.version, TASK_PKG_SCHEMA_VERSION);
     }
-
-    // Staged migration. Each migrator updates the on-disk schema
-    // in-place; we walk the chain from the persisted version up to
-    // HEAD without intermediate schema_meta writes (the version
-    // bump only commits once the entire chain succeeds, so a
-    // mid-chain crash leaves the DB at the previous known-good
-    // version and the next bootstrap retries from that point).
-    let effective = existing.version;
-    if (effective === 1) {
-      // pre-1.0 hard cut: migrate v1 (`instructions`) → v2
-      // (`brief` + `details`) in a single transaction. `brief` is
-      // back-filled from the first 200 chars of `instructions` to
-      // honour the new wire contract; the original text is
-      // preserved verbatim in `details` so no user data is lost.
-      migrateV1ToV2(this.db);
-      effective = 2;
-    }
-    if (effective === 2) {
-      // ADR-001: additive columns for the typed TaskFailure /
-      // TaskCancellation unions. All new columns are nullable so
-      // existing rows need no rewrite — see {@link parseRow} for
-      // the legacy `failure_error`-only fallback.
-      migrateV2ToV3(this.db);
-      effective = 3;
-    }
-    if (effective !== TASK_PKG_SCHEMA_VERSION) {
-      throw new Error(
-        `task pkg schema mismatch: db has v${existing.version}, server supports v${TASK_PKG_SCHEMA_VERSION}.`,
-      );
-    }
-    this.db
-      .prepare("UPDATE schema_meta SET version = ? WHERE pkg = ?")
-      .run(TASK_PKG_SCHEMA_VERSION, "task");
-  }
-
-  private createCurrentSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id                    TEXT PRIMARY KEY,
-        agent                 TEXT NOT NULL,
-        runtime               TEXT,
-        status                TEXT NOT NULL,
-        brief                 TEXT NOT NULL,
-        details               TEXT,
-        created_at            TEXT NOT NULL,
-        started_at            TEXT,
-        ended_at              TEXT,
-        result_output         TEXT,
-        failure_error         TEXT,
-        failure_kind          TEXT,
-        failure_exit_code     INTEGER,
-        failure_signal        TEXT,
-        cancellation_kind     TEXT,
-        cancellation_message  TEXT,
-        metadata              TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
-      CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
-      CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
-      CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
-    `);
   }
 }
 
@@ -527,106 +457,4 @@ function reassembleCancellation(
         `cancellation_kind ${JSON.stringify(row.cancellation_kind)} is outside the closed union`,
       );
   }
-}
-
-/**
- * Migrate `tasks` from v1 (single `instructions TEXT NOT NULL`
- * column) to v2 (`brief TEXT NOT NULL`, `details TEXT NULL`). SQLite
- * doesn't support `ALTER COLUMN`, so we use the canonical
- * "create new table → copy rows → drop old → rename" dance inside a
- * transaction.
- *
- * Back-fill rule: `brief` = first 200 chars of `instructions`,
- * `details` = full `instructions`. This is intentionally lossy on the
- * brief to honour the new wire contract (the route layer rejects
- * `brief.length > 200`); the full text is preserved verbatim in
- * `details` so no user content is lost.
- *
- * Empty-instructions edge case: a v1 row with `instructions = ""`
- * would translate to `brief = ""`, which v2 rejects via
- * `Task.fromStored`. We coerce empty briefs to a placeholder so the
- * row stays parseable; the operator can then re-run / archive at
- * leisure. Same defensive principle applied for very long values:
- * the substring is a hard slice, no semantic awareness.
- */
-function migrateV1ToV2(db: DatabaseSync): void {
-  // The transaction lets us rebuild the table atomically — a crash
-  // mid-migration leaves the original `tasks` intact rather than a
-  // half-renamed pair. Prepared statements would be overkill (the SQL
-  // is one-shot) but exec() of a multi-statement payload is the
-  // standard idiom.
-  db.exec(`
-    BEGIN;
-    CREATE TABLE tasks_v2 (
-      id              TEXT PRIMARY KEY,
-      agent           TEXT NOT NULL,
-      runtime         TEXT,
-      status          TEXT NOT NULL,
-      brief           TEXT NOT NULL,
-      details         TEXT,
-      created_at      TEXT NOT NULL,
-      started_at      TEXT,
-      ended_at        TEXT,
-      result_output   TEXT,
-      failure_error   TEXT,
-      metadata        TEXT NOT NULL DEFAULT '{}'
-    );
-    INSERT INTO tasks_v2 (
-      id, agent, runtime, status, brief, details, created_at,
-      started_at, ended_at, result_output, failure_error, metadata
-    )
-    SELECT
-      id,
-      agent,
-      runtime,
-      status,
-      CASE
-        WHEN length(instructions) = 0 THEN '(untitled)'
-        ELSE substr(instructions, 1, 200)
-      END AS brief,
-      instructions AS details,
-      created_at,
-      started_at,
-      ended_at,
-      result_output,
-      failure_error,
-      metadata
-    FROM tasks;
-    DROP TABLE tasks;
-    ALTER TABLE tasks_v2 RENAME TO tasks;
-    CREATE INDEX IF NOT EXISTS tasks_status_idx     ON tasks(status);
-    CREATE INDEX IF NOT EXISTS tasks_runtime_idx    ON tasks(runtime);
-    CREATE INDEX IF NOT EXISTS tasks_agent_idx      ON tasks(agent);
-    CREATE INDEX IF NOT EXISTS tasks_created_at_idx ON tasks(created_at);
-    COMMIT;
-  `);
-}
-
-/**
- * Migrate `tasks` from v2 → v3 for ADR-001's structured
- * `TaskFailure` / `TaskCancellation` discriminated unions.
- *
- * Purely additive: five new nullable columns. No existing data needs
- * to move; the legacy `failure_error` column is REUSED as the storage
- * column for `TaskFailure.message` (see {@link parseRow}), and the
- * read path synthesises `{ kind: 'internal', message: failure_error }`
- * for rows whose `failure_kind` is NULL — which is every v2 row.
- *
- * We deliberately do NOT use the rename-dance from v1→v2 here: that
- * dance was required because the `instructions` column had to be split
- * into two NOT-NULL columns. v2→v3 only adds nullable columns, so
- * `ALTER TABLE ADD COLUMN` is sufficient and avoids the per-row
- * rewrite cost of CREATE+INSERT+DROP+RENAME on workspaces with many
- * tasks.
- */
-function migrateV2ToV3(db: DatabaseSync): void {
-  db.exec(`
-    BEGIN;
-    ALTER TABLE tasks ADD COLUMN failure_kind         TEXT;
-    ALTER TABLE tasks ADD COLUMN failure_exit_code    INTEGER;
-    ALTER TABLE tasks ADD COLUMN failure_signal       TEXT;
-    ALTER TABLE tasks ADD COLUMN cancellation_kind    TEXT;
-    ALTER TABLE tasks ADD COLUMN cancellation_message TEXT;
-    COMMIT;
-  `);
 }

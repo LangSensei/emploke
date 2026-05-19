@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
@@ -20,6 +21,7 @@ import {
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
   TASK_FRAMING_PROMPT_COPILOT,
+  TASK_MIGRATIONS,
   TASK_TEMP_SUBDIR,
   Task,
   TaskManager,
@@ -34,6 +36,11 @@ const openDbs: DatabaseSync[] = [];
 function makeRepo(): SqliteTaskRepository {
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
+  // Sync bootstrap: TASK_MIGRATIONS contains DDL-only migrations
+  // with no async backfill/verify, so the sync coordinator path is
+  // safe and lets every existing synchronous test fixture build
+  // its repo without async plumbing.
+  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   return new SqliteTaskRepository({ db });
 }
 
@@ -789,6 +796,7 @@ describe("get / list", () => {
     const r = recorder();
     const db = new DatabaseSync(":memory:");
     openDbs.push(db);
+    runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
     const repo = new SqliteTaskRepository({ db, logger: r.logger });
     const { m } = makeManager({ runtime: new StubRuntime(), repository: repo });
     await m.dispatch(dispatchOf()); // good row through public API

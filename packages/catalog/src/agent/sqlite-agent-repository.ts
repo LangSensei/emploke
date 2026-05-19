@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { SchemaMetaMismatchError, SchemaMetaNotBootstrappedError } from "@emploke/workspace";
 import { Agent, type AgentDependencies } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 
@@ -197,45 +198,34 @@ export class SqliteAgentRepository implements AgentRepository {
   // ─── schema management ──────────────────────────────────────
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_meta (
-        pkg     TEXT PRIMARY KEY NOT NULL,
-        version INTEGER NOT NULL CHECK (version > 0)
-      );
-      CREATE TABLE IF NOT EXISTS agent (
-        fqn              TEXT PRIMARY KEY NOT NULL,
-        origin           TEXT NOT NULL,
-        scope            TEXT NOT NULL,
-        short_name       TEXT NOT NULL,
-        description      TEXT NOT NULL,
-        version          TEXT NOT NULL,
-        prereqs          TEXT,
-        deps_json        TEXT NOT NULL,
-        anchor_content   TEXT NOT NULL,
-        prereqs_ack      INTEGER NOT NULL DEFAULT 1,
-        disabled_by_user INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS agent_origin ON agent(origin);
-      CREATE TABLE IF NOT EXISTS agent_file (
-        agent_fqn  TEXT NOT NULL REFERENCES agent(fqn) ON DELETE CASCADE,
-        rel_path   TEXT NOT NULL,
-        content    BLOB NOT NULL,
-        PRIMARY KEY (agent_fqn, rel_path)
-      );
-    `);
-    const existing = this.db
-      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
-      .get("catalog_agent") as { version: number } | undefined;
-    if (existing === undefined) {
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("catalog_agent", AGENT_PKG_SCHEMA_VERSION);
-      return;
+    // Post-issue-#123: the MigrationCoordinator owns DDL. This
+    // repository's job is to assert the post-condition — a
+    // `schema_meta` row for the `catalog_agent` pkg at the expected
+    // version. A missing row means `runPkgMigrations` was not run
+    // before construction (always a wiring bug).
+    //
+    // Both branches surface as the framework's typed errors
+    // (`SchemaMetaNotBootstrappedError` / `SchemaMetaMismatchError`)
+    // so consumers can route uniformly across every per-pkg repo.
+    let existing: { version: number } | undefined;
+    try {
+      existing = this.db
+        .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
+        .get("catalog_agent") as { version: number } | undefined;
+    } catch {
+      // `schema_meta` itself missing → coordinator never ran.
+      throw new SchemaMetaNotBootstrappedError("catalog_agent");
     }
-    if (existing.version === AGENT_PKG_SCHEMA_VERSION) return;
-    throw new Error(
-      `catalog_agent pkg schema mismatch: db has v${existing.version}, server supports v${AGENT_PKG_SCHEMA_VERSION}.`,
-    );
+    if (existing === undefined) {
+      throw new SchemaMetaNotBootstrappedError("catalog_agent");
+    }
+    if (existing.version !== AGENT_PKG_SCHEMA_VERSION) {
+      throw new SchemaMetaMismatchError(
+        "catalog_agent",
+        existing.version,
+        AGENT_PKG_SCHEMA_VERSION,
+      );
+    }
   }
 }
 

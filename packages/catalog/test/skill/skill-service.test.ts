@@ -10,6 +10,7 @@ import {
 import { Skill } from "../../src/skill/skill-entity.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: SkillFetcher;
@@ -58,6 +59,7 @@ let svc: SkillService;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   repo = new SqliteSkillRepository({ db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);

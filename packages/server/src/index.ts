@@ -8,7 +8,12 @@ import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { SqliteWorkspaceRepository, WorkspaceManager } from "@emploke/workspace";
+import {
+  runPkgMigrations,
+  SqliteWorkspaceRepository,
+  WORKSPACE_MIGRATIONS,
+  WorkspaceManager,
+} from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -195,6 +200,24 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   await mkdir(paths.home, { recursive: true });
 
   const globalDb = new DatabaseSync(paths.globalDbFile);
+  // Run the MigrationCoordinator BEFORE constructing the workspace
+  // repository. Post-issue-#123 the repository's `ensureSchema()` is
+  // a version-check assertion — bootstrap of the `workspaces` /
+  // `global_state` tables now flows through the migration framework.
+  // The coordinator is idempotent: on a startup where every pkg is
+  // already at HEAD it does one indexed read against `schema_meta`
+  // and returns.
+  const globalMigrationResult = await runPkgMigrations(globalDb, [
+    { pkg: "workspace", migrations: WORKSPACE_MIGRATIONS },
+  ]);
+  logger.info(
+    {
+      applied: globalMigrationResult.applied.length,
+      alreadyAtTarget: globalMigrationResult.alreadyAtTarget,
+      file: paths.globalDbFile,
+    },
+    "global.db migrations complete",
+  );
   const workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb, logger }));
 
   const cache = new WorkspaceContextCache({
@@ -396,11 +419,30 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       logger.error({ err: errorToMeta(err) }, "error during tasks shutdown");
     }
     try {
-      // Close the workspace registry DB after task contexts have
-      // drained so any final repository operations during shutdown
-      // (none today, but defensive against future hooks) still see an
-      // open connection.
-      globalDb.close();
+      // Close every per-workspace `DatabaseSync` connection so the OS
+      // releases the lock on every `workspace.db` file. Required on
+      // Windows where `unlink` refuses to remove files with open
+      // handles (the CLI integration tests `rm -rf <EMPLOKE_HOME>`
+      // immediately after `stop`, and an unclosed `workspace.db`
+      // surfaces as `EBUSY: resource busy or locked`).
+      cache.closeAll();
+    } catch (err) {
+      logger.error({ err: errorToMeta(err) }, "error closing workspace contexts");
+    }
+    try {
+      // Close the workspace registry's underlying `DatabaseSync`
+      // (`global.db`). Routed through the manager so any future
+      // repository impl that owns additional resources (cache,
+      // listeners) can release them too.
+      //
+      // Order: per-workspace contexts FIRST, then the global
+      // registry. Repositories never reach back into the registry
+      // during close, but the symmetric ordering matches startup
+      // (registry opens, then contexts lazy-load) and leaves the
+      // registry handle live for the longest possible window in
+      // case a future hook needs to record a "shutdown reason" row
+      // on its way out.
+      workspaces.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
     }

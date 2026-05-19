@@ -31,6 +31,7 @@ export {
   SessionsError,
 } from "./errors.js";
 export { SessionManager } from "./manager.js";
+export { SESSION_MIGRATIONS } from "./migrations/index.js";
 export type {
   ListSessionStateOpts,
   SessionRepository,

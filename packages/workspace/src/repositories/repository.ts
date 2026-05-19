@@ -86,4 +86,23 @@ export interface WorkspaceRepository {
    * marker if they track recency.
    */
   setCurrent(id: string): Promise<void>;
+
+  /**
+   * Release any resources the repository acquired (e.g. a `DatabaseSync`
+   * file handle). Idempotent — calling `close()` on an already-closed
+   * repository is a no-op. After `close()`, every method (`list`,
+   * `read`, ...) is allowed to throw; implementations should not be
+   * expected to handle reuse.
+   *
+   * Required because Windows refuses to `unlink` files with open
+   * handles. The server's graceful-shutdown path calls this so that
+   * tests (and operators on Windows) can remove the `global.db` file
+   * cleanly after the server exits. POSIX hosts tolerate
+   * unlink-with-open-handles, but explicit close is still good
+   * hygiene.
+   *
+   * In-memory implementations (HTTP-backed, fixture maps) implement
+   * this as a no-op.
+   */
+  close(): void;
 }

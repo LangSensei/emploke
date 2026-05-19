@@ -84,7 +84,16 @@ describe("API commands (integration)", () => {
     try {
       await run(["stop"], env);
     } catch {}
-    await rm(home, { recursive: true, force: true });
+    // Windows EBUSY mitigation: the server's graceful-shutdown handler
+    // closes the per-workspace + global SQLite handles before exit, but
+    // (a) on Windows `process.kill(pid, "SIGTERM")` is mapped to
+    // TerminateProcess and the in-process SIGTERM handler is skipped
+    // entirely, and (b) even on POSIX there is a vanishingly small
+    // window between process exit and the OS reclaiming inherited file
+    // descriptors. The maxRetries/retryDelay loop in node's rm handles
+    // both transparently. Belt-and-suspenders to the root-cause close()
+    // wiring in `@emploke/server`'s `gracefulShutdown`.
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it("`emploke health` returns 0 + JSON ok", async () => {

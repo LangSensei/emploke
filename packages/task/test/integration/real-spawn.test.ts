@@ -27,10 +27,12 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DispatchOpts,
   SqliteTaskRepository,
+  TASK_MIGRATIONS,
   type Task,
   TaskManager,
 } from "../../src/index.js";
@@ -156,6 +158,7 @@ const makeManager = (
   // no Windows EBUSY on cleanup).
   const db = new DatabaseSync(":memory:");
   openDbs.push(db);
+  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   const repo = new SqliteTaskRepository({ db });
   const m = new TaskManager({
     catalog,
