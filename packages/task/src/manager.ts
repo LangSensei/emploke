@@ -1112,7 +1112,7 @@ export class TaskManager {
    * Apply the terminal event to a running task and persist. v4
    * (issue #119) dropped the convention of mirroring `exitCode` /
    * `exitSignal` into the open-shape `metadata` bag — those values
-   * now live exclusively inside `failure.exitCode` / `failure.signal`
+   * now live exclusively inside `failure.exit_code` / `failure.signal`
    * when relevant (`exited` / `signal` variants). Consumers that
    * previously read `metadata.exitCode` should branch on `failure.kind`
    * and read the typed field instead.
@@ -1220,7 +1220,7 @@ function decideTerminal(
     kind: "failed",
     failure: {
       kind: "exited",
-      exitCode: exitInfo.code as number,
+      exit_code: exitInfo.code as number,
       message: `exited with code ${exitInfo.code}`,
     },
   };

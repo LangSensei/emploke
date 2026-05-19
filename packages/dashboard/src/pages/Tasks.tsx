@@ -24,6 +24,7 @@ import {
   type TaskActivity,
   type TaskCancellation,
   type TaskFailure,
+  type TaskOrigin,
   type TaskRecord,
   type TaskStatus,
 } from "../api";
@@ -72,6 +73,19 @@ const STATUS_TONE: Record<TaskStatus, string> = {
 // through DOM string serialization).
 const ALL_AGENTS = "__all__";
 const ALL_RUNTIMES = "__all__";
+
+// Origin filter presets (issue #119). Default `standalone` matches the
+// dashboard's "what I dispatched" view; toggling to `all` reveals
+// workflow-launched tasks (origin='workflow'). Currently a binary
+// toggle since the live origin set is {standalone, workflow}, but the
+// shape stays a preset array so future origins (e.g. 'schedule') can
+// land here without reshaping the component.
+type OriginPreset = TaskOrigin | "all";
+const ORIGIN_PRESETS: { value: OriginPreset; label: string }[] = [
+  { value: "standalone", label: "Mine" },
+  { value: "workflow", label: "Workflow" },
+  { value: "all", label: "All" },
+];
 
 type TimePreset = "today" | "7d" | "30d" | "all";
 
@@ -182,6 +196,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
+  // Default to `standalone` per issue #119 acceptance: the operator's
+  // "what I dispatched" view should not be polluted by workflow-
+  // launched tasks. Toggle reveals the rest. Stored as `OriginPreset`
+  // (TaskOrigin | "all") and forwarded verbatim to listTasks(), which
+  // omits the query param when value is "all".
+  const [originFilter, setOriginFilter] = useState<OriginPreset>("standalone");
   const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
@@ -227,6 +247,10 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
+      // Always forward the origin filter (listTasks() omits the wire
+      // param for "all"). Default state is "standalone" so the first
+      // page load is already filtered.
+      opts.origin = originFilter;
       const next = await listTasks(opts);
       // Bail if (a) component unmounted, (b) workspace changed during
       // the fetch — listTasks() resolved against the old prefix but the
@@ -249,7 +273,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         setLoaded(true);
       }
     }
-  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter]);
+  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter, originFilter]);
 
   useEffect(() => {
     void refresh();
@@ -509,6 +533,22 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
                 className={`pills__btn${timeFilter === p.value ? " pills__btn--active" : ""}`}
                 onClick={() => setTimeFilter(p.value)}
                 aria-pressed={timeFilter === p.value}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Origin
+          </span>
+          <div className="pills">
+            {ORIGIN_PRESETS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`pills__btn${originFilter === p.value ? " pills__btn--active" : ""}`}
+                onClick={() => setOriginFilter(p.value)}
+                aria-pressed={originFilter === p.value}
               >
                 {p.label}
               </button>
@@ -1443,7 +1483,7 @@ function TaskDetailPanel({
   // fields directly).
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
   const failure = task?.failure;
-  const exitCode = failure?.kind === "exited" ? failure.exitCode : undefined;
+  const exitCode = failure?.kind === "exited" ? failure.exit_code : undefined;
   const exitSignal = failure?.kind === "signal" ? failure.signal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
   // The user-supplied `brief` is the canonical task title (post-#111
@@ -2387,7 +2427,7 @@ function FailureBlock({
   let body: string;
   switch (failure.kind) {
     case "exited":
-      body = `exited with code ${failure.exitCode}`;
+      body = `exited with code ${failure.exit_code}`;
       break;
     case "signal":
       body = `terminated by ${failure.signal}`;

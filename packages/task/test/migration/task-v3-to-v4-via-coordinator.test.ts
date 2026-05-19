@@ -21,7 +21,7 @@ import { TASK_MIGRATIONS } from "../../src/migrations/index.js";
  *     `cancellation_*`) dropped
  *   - new indexes (`idx_tasks_origin`, `idx_tasks_status_origin`,
  *     `idx_tasks_status`, `idx_tasks_runtime`, `idx_tasks_agent`,
- *     `idx_tasks_created_at`) present
+ *     `idx_tasks_created`) present
  *   - `schema_meta(pkg='task').version` bumped to 4
  */
 let db: DatabaseSync;
@@ -323,7 +323,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     expect(JSON.parse(exited.failure)).toEqual({
       kind: "exited",
       message: "boom",
-      exitCode: 137,
+      exit_code: 137,
       signal: null,
     });
     expect(exited.cancellation).toBeNull();
@@ -335,7 +335,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     expect(JSON.parse(signal.failure)).toEqual({
       kind: "signal",
       message: "received SIGTERM",
-      exitCode: null,
+      exit_code: null,
       signal: "SIGTERM",
     });
 
@@ -367,7 +367,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     expect(JSON.parse(legacy.failure)).toEqual({
       kind: "internal",
       message: "legacy v2 boom",
-      exitCode: null,
+      exit_code: null,
       signal: null,
     });
 
@@ -390,7 +390,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
       "idx_tasks_status_origin",
       "idx_tasks_runtime",
       "idx_tasks_agent",
-      "idx_tasks_created_at",
+      "idx_tasks_created",
     ]) {
       expect(indexes).toContain(expected);
     }
@@ -483,7 +483,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     expect(JSON.parse(row.failure)).toEqual({
       kind: "internal",
       message: "v2 boom",
-      exitCode: null,
+      exit_code: null,
       signal: null,
     });
   });

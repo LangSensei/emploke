@@ -762,7 +762,7 @@ export type TaskOrigin = "standalone" | "workflow";
  * browser bundle so this is duplicated, not imported; keep in lockstep
  * with the entity definition when it changes.
  *
- *   - exited   → subprocess exited non-zero (carries `exitCode`)
+ *   - exited   → subprocess exited non-zero (carries `exit_code`)
  *   - signal   → terminated by OS signal (carries `signal`)
  *   - shutdown → TaskManager.shutdown() killed it
  *   - orphan   → recoverOrphaned marked a row whose owner crashed
@@ -773,7 +773,7 @@ export type TaskOrigin = "standalone" | "workflow";
  * `metadata.exitSignal` mirrors.
  */
 export type TaskFailure =
-  | { kind: "exited"; exitCode: number; message: string }
+  | { kind: "exited"; exit_code: number; message: string }
   | { kind: "signal"; signal: string; message: string }
   | { kind: "shutdown"; message: string }
   | { kind: "orphan"; message: string }
@@ -809,7 +809,7 @@ export interface TaskRecord {
   /**
    * Open-shape metadata. Includes runtime bookkeeping fields like
    * `workdir`, `runtime`, `runtimeSessionId`. v4 (issue #119) stopped
-   * mirroring `exitCode` / `exitSignal` here — read from `failure.exitCode`
+   * mirroring `exitCode` / `exitSignal` here — read from `failure.exit_code`
    * / `failure.signal` instead.
    */
   metadata: Record<string, unknown>;

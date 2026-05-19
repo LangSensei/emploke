@@ -61,7 +61,7 @@ describe("TaskFailure union — round-trip through SqliteTaskRepository", () => 
     {
       id: "20260601-aaaaaaaa",
       label: "exited",
-      failure: { kind: "exited", exitCode: 17, message: "exited with code 17" },
+      failure: { kind: "exited", exit_code: 17, message: "exited with code 17" },
     },
     {
       id: "20260601-bbbbbbbb",

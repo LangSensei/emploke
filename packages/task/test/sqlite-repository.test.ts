@@ -129,7 +129,7 @@ describe("SqliteTaskRepository", () => {
     const failed = makeTask({
       status: "failed",
       endedAt: "2026-05-09T01:00:03.000Z",
-      failure: { kind: "exited", exitCode: 17, message: "exited with code 17" },
+      failure: { kind: "exited", exit_code: 17, message: "exited with code 17" },
     });
     await repo.save(failed);
     expect((await repo.read(ID))?.toJSON()).toEqual(failed.toJSON());

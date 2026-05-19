@@ -325,11 +325,11 @@ describe("Task.toJSON", () => {
 
   it("includes the typed failure payload on serialised failed tasks", () => {
     const failed = makeTask().fail(
-      { kind: "exited", exitCode: 17, message: "exited with code 17" },
+      { kind: "exited", exit_code: 17, message: "exited with code 17" },
       { now: fixedNow },
     );
     const wire = JSON.parse(JSON.stringify(failed));
-    expect(wire.failure).toEqual({ kind: "exited", exitCode: 17, message: "exited with code 17" });
+    expect(wire.failure).toEqual({ kind: "exited", exit_code: 17, message: "exited with code 17" });
     expect(wire.cancellation).toBeUndefined();
     expect(wire.success).toBeUndefined();
   });
@@ -431,7 +431,7 @@ describe("Task.fromStored — typed payload invariants", () => {
     ).toThrow(/task.cancellation.kind must be one of/);
   });
 
-  it("requires exitCode on failure.kind='exited'", () => {
+  it("requires exit_code on failure.kind='exited'", () => {
     expect(() =>
       Task.fromStored({
         id: FIXED_ID,
@@ -446,7 +446,7 @@ describe("Task.fromStored — typed payload invariants", () => {
         // biome-ignore lint/suspicious/noExplicitAny: testing a corrupted shape
         failure: { kind: "exited", message: "no" } as any,
       }),
-    ).toThrow(/exitCode must be a number/);
+    ).toThrow(/exit_code must be a number/);
   });
 
   it("requires signal on failure.kind='signal'", () => {

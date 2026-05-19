@@ -679,7 +679,7 @@ describe("exit watcher", () => {
     expect(after.failure?.kind).toBe("exited");
     expect(after.failure?.message).toMatch(/exited with code 17/);
     if (after.failure?.kind === "exited") {
-      expect(after.failure.exitCode).toBe(17);
+      expect(after.failure.exit_code).toBe(17);
     }
     expect(readTaskRuntimeMetadata(after).exitCode).toBeUndefined();
   });

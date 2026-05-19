@@ -97,7 +97,7 @@ export interface TaskSuccess {
  *                 surface as `{ kind: 'internal', message }`).
  */
 export type TaskFailure =
-  | { readonly kind: "exited"; readonly exitCode: number; readonly message: string }
+  | { readonly kind: "exited"; readonly exit_code: number; readonly message: string }
   | { readonly kind: "signal"; readonly signal: NodeJS.Signals; readonly message: string }
   | { readonly kind: "shutdown"; readonly message: string }
   | { readonly kind: "orphan"; readonly message: string }

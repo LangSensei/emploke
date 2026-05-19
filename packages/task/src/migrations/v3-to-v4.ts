@@ -98,7 +98,7 @@ export const v3To4: Migration = {
         json_object(
           'kind',      COALESCE(failure_kind, 'internal'),
           'message',   COALESCE(failure_error, ''),
-          'exitCode',  CASE WHEN failure_kind = 'exited' THEN failure_exit_code ELSE NULL END,
+          'exit_code', CASE WHEN failure_kind = 'exited' THEN failure_exit_code ELSE NULL END,
           'signal',    CASE WHEN failure_kind = 'signal' THEN failure_signal    ELSE NULL END
         )
       ELSE NULL END,
@@ -124,6 +124,6 @@ export const v3To4: Migration = {
     CREATE INDEX idx_tasks_status_origin ON tasks(status, origin);
     CREATE INDEX idx_tasks_runtime       ON tasks(runtime);
     CREATE INDEX idx_tasks_agent         ON tasks(agent);
-    CREATE INDEX idx_tasks_created_at    ON tasks(created_at DESC);
+    CREATE INDEX idx_tasks_created       ON tasks(created_at DESC);
   `,
 };

@@ -438,7 +438,7 @@ function assertTaskFailureShape(id: string, value: TaskFailure): void {
   if (value === null || typeof value !== "object") {
     throw new CorruptedTaskError(id, "task.failure must be an object");
   }
-  const v = value as { kind?: unknown; message?: unknown; exitCode?: unknown; signal?: unknown };
+  const v = value as { kind?: unknown; message?: unknown; exit_code?: unknown; signal?: unknown };
   if (typeof v.kind !== "string" || !FAILURE_KINDS.has(v.kind)) {
     throw new CorruptedTaskError(
       id,
@@ -448,8 +448,8 @@ function assertTaskFailureShape(id: string, value: TaskFailure): void {
   if (typeof v.message !== "string") {
     throw new CorruptedTaskError(id, "task.failure.message must be a string");
   }
-  if (v.kind === "exited" && typeof v.exitCode !== "number") {
-    throw new CorruptedTaskError(id, "task.failure.exitCode must be a number when kind='exited'");
+  if (v.kind === "exited" && typeof v.exit_code !== "number") {
+    throw new CorruptedTaskError(id, "task.failure.exit_code must be a number when kind='exited'");
   }
   if (v.kind === "signal" && typeof v.signal !== "string") {
     throw new CorruptedTaskError(id, "task.failure.signal must be a string when kind='signal'");
