@@ -15,15 +15,13 @@ describe("Agent.create", () => {
     const a = Agent.create(MIN_VALID, "file:/abs/agents/researcher", "test");
     expect(a.fqn).toBe("public/researcher");
     expect(a.scope).toBe("public");
+    expect(a.shortName).toBe("researcher");
     expect(a.origin).toBe("file:/abs/agents/researcher");
     expect(a.description).toBe("Helpful researcher");
     expect(a.version).toBe("1.0.0");
     expect(a.dependencies).toEqual({ skills: [], mcps: [] });
-  });
-
-  it("preserves anchor bytes verbatim", () => {
-    const a = Agent.create(MIN_VALID, "file:/abs/x", "test");
-    expect(a.anchorContent).toBe(MIN_VALID);
+    expect(a.depsRefs).toEqual({ skills: [], mcps: [] });
+    expect(a.installedAt).toBeTypeOf("string");
   });
 
   it("rejects empty origin", () => {
@@ -45,18 +43,22 @@ describe("Agent.create", () => {
 
 describe("Agent.fromStored", () => {
   it("trusts persisted state without re-parsing anchor", () => {
+    const now = "2026-05-19T00:00:00.000Z";
     const a = Agent.fromStored({
       fqn: "public/researcher",
       origin: "file:/abs/x",
-      scope: "public",
-      shortName: "researcher",
       description: "y",
       version: "2.0.0",
+      prereqs: undefined,
       dependencies: { skills: [], mcps: [] },
-      anchorContent: "garbage",
+      prereqsAck: true,
+      disabledByUser: false,
+      installedAt: now,
+      updatedAt: now,
     });
     expect(a.fqn).toBe("public/researcher");
-    expect(a.anchorContent).toBe("garbage");
+    expect(a.scope).toBe("public");
+    expect(a.installedAt).toBe(now);
   });
 
   it("validates name (defensive)", () => {
@@ -64,12 +66,14 @@ describe("Agent.fromStored", () => {
       Agent.fromStored({
         fqn: "no-slash",
         origin: "file:/abs/x",
-        scope: "public",
-        shortName: "x",
         description: "x",
         version: "1.0.0",
+        prereqs: undefined,
         dependencies: { skills: [], mcps: [] },
-        anchorContent: MIN_VALID,
+        prereqsAck: true,
+        disabledByUser: false,
+        installedAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
       }),
     ).toThrow(AgentNameInvalidError);
   });
@@ -86,7 +90,7 @@ describe("Agent.withAnchor", () => {
     expect(a2).not.toBe(a1);
     expect(a2.description).toBe("Updated");
     expect(a2.version).toBe("2.0.0");
-    expect(a2.name).toBe(a1.name);
+    expect(a2.fqn).toBe(a1.fqn);
     expect(a2.origin).toBe(a1.origin);
   });
 

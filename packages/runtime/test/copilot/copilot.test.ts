@@ -450,14 +450,13 @@ describe("CopilotRuntime", () => {
       await mkdir(dir, { recursive: true });
       // Build a > 4MB events.jsonl by repeating a fat user.message line.
       const fatPayload = "x".repeat(8000);
-      const fatLine =
-        JSON.stringify({
-          type: "user.message",
-          id: "u1",
-          parentId: null,
-          timestamp: "2026-05-12T03:54:11.016Z",
-          data: { content: fatPayload },
-        }) + "\n";
+      const fatLine = `${JSON.stringify({
+        type: "user.message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-05-12T03:54:11.016Z",
+        data: { content: fatPayload },
+      })}\n`;
       const targetBytes = 5 * 1024 * 1024;
       const repeats = Math.ceil(targetBytes / fatLine.length);
       const eventsPath = path.join(dir, "events.jsonl");

@@ -95,8 +95,20 @@ export const v1To2: Migration = {
     CREATE INDEX skills_origin     ON skills(origin);
     CREATE INDEX skills_updated_at ON skills(updated_at DESC);
 
-    -- 3. Rename the file table to plural. Schema unchanged.
-    ALTER TABLE skill_file RENAME TO skill_files;
+    -- 3. Rename the file table to plural AND rebuild it so its FK
+    --    references the new plural skills table. SQLite preserves the
+    --    original REFERENCES skill(fqn) text across ALTER ... RENAME,
+    --    which would dangle once we DROP the v1 skill table.
+    ALTER TABLE skill_file RENAME TO _skill_files_v1;
+    CREATE TABLE skill_files (
+      skill_fqn  TEXT NOT NULL REFERENCES skills(fqn) ON DELETE CASCADE,
+      rel_path   TEXT NOT NULL,
+      content    BLOB NOT NULL,
+      PRIMARY KEY (skill_fqn, rel_path)
+    );
+    INSERT INTO skill_files (skill_fqn, rel_path, content)
+      SELECT skill_fqn, rel_path, content FROM _skill_files_v1;
+    DROP TABLE _skill_files_v1;
 
     -- 4. Dep tables. Self-ref has the 1-node-cycle CHECK.
     CREATE TABLE skill_skill_dependencies (
@@ -141,7 +153,9 @@ interface DepShape {
  * v1 catalog would have stored them as data noise.
  */
 function backfillSkillDeps(db: DatabaseSync): void {
-  const rows = db.prepare("SELECT fqn, deps_json FROM _skill_deps_v1").all() as unknown as DepBlob[];
+  const rows = db
+    .prepare("SELECT fqn, deps_json FROM _skill_deps_v1")
+    .all() as unknown as DepBlob[];
   const skillFqnByOrigin = collectFqnsByOrigin(db, "skills");
   const mcpFqnByOrigin = collectFqnsByOrigin(db, "mcps");
   const insertSkillDep = db.prepare(

@@ -22,7 +22,7 @@ export function McpGrid({ mcps, onEdit, onRemove }: McpGridProps) {
     <EntryGrid
       kind="mcp"
       items={mcps.map((m) => ({
-        name: m.name,
+        name: m.fqn,
         description: "",
         version: "",
         status: m.orphaned ? ("blocked" as const) : ("ready" as const),

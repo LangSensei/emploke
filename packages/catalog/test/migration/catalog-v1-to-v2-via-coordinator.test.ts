@@ -102,8 +102,10 @@ function seedCatalogV1Schema(d: DatabaseSync): void {
 }
 
 const MCP_SPEC = '{"_meta":{"name":"acme/db"},"version":"1.0.0"}';
-const AGENT_BODY = "---\nname: writer\nscope: public\nversion: 1.0.0\ndescription: w\n---\n# writer\n";
-const SKILL_BODY = "---\nname: web-search\nscope: public\nversion: 1.0.0\ndescription: s\n---\n# skill\n";
+const AGENT_BODY =
+  "---\nname: writer\nscope: public\nversion: 1.0.0\ndescription: w\n---\n# writer\n";
+const SKILL_BODY =
+  "---\nname: web-search\nscope: public\nversion: 1.0.0\ndescription: s\n---\n# skill\n";
 const SKILL_DEP_BODY =
   "---\nname: tool-use\nscope: public\nversion: 1.0.0\ndescription: t\n---\n# tool\n";
 
@@ -173,9 +175,9 @@ describe("catalog v1 → v2 migration (issue #122) — schema shape", () => {
     expect(tables).not.toContain("_agent_deps_v1");
     expect(tables).not.toContain("_skill_deps_v1");
 
-    const agentCols = (
-      db.prepare("PRAGMA table_info(agents)").all() as { name: string }[]
-    ).map((r) => r.name);
+    const agentCols = (db.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map(
+      (r) => r.name,
+    );
     expect(agentCols.sort()).toEqual(
       [
         "fqn",
@@ -190,9 +192,9 @@ describe("catalog v1 → v2 migration (issue #122) — schema shape", () => {
       ].sort(),
     );
 
-    const skillCols = (
-      db.prepare("PRAGMA table_info(skills)").all() as { name: string }[]
-    ).map((r) => r.name);
+    const skillCols = (db.prepare("PRAGMA table_info(skills)").all() as { name: string }[]).map(
+      (r) => r.name,
+    );
     expect(skillCols.sort()).toEqual(
       [
         "fqn",
@@ -209,9 +211,7 @@ describe("catalog v1 → v2 migration (issue #122) — schema shape", () => {
     const mcpCols = (db.prepare("PRAGMA table_info(mcps)").all() as { name: string }[]).map(
       (r) => r.name,
     );
-    expect(mcpCols.sort()).toEqual(
-      ["fqn", "origin", "spec", "installed_at", "updated_at"].sort(),
-    );
+    expect(mcpCols.sort()).toEqual(["fqn", "origin", "spec", "installed_at", "updated_at"].sort());
 
     const versions = db
       .prepare("SELECT pkg, version FROM schema_meta WHERE pkg LIKE 'catalog_%' ORDER BY pkg")
@@ -396,9 +396,11 @@ describe("catalog v1 → v2 migration — dep backfill via origin → fqn resolu
 
     await runMigrations(db);
 
-    const count = (db.prepare(`SELECT COUNT(*) AS c FROM skill_skill_dependencies`).get() as {
-      c: number;
-    }).c;
+    const count = (
+      db.prepare(`SELECT COUNT(*) AS c FROM skill_skill_dependencies`).get() as {
+        c: number;
+      }
+    ).c;
     expect(count).toBe(0);
   });
 });
@@ -461,9 +463,7 @@ describe("catalog v1 → v2 migration — DB-level invariants", () => {
     );
     expect(() =>
       db
-        .prepare(
-          "INSERT INTO skill_skill_dependencies (source_fqn, target_fqn) VALUES (?, ?)",
-        )
+        .prepare("INSERT INTO skill_skill_dependencies (source_fqn, target_fqn) VALUES (?, ?)")
         .run("public/self", "public/self"),
     ).toThrow(/CHECK constraint failed/);
   });

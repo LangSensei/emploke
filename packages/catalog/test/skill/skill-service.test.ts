@@ -10,7 +10,7 @@ import {
 import { Skill } from "../../src/skill/skill-entity.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: SkillFetcher;
@@ -57,9 +57,9 @@ let repo: SqliteSkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  bootstrapCatalogDbSync(db);
+  await bootstrapCatalogDb(db);
   repo = new SqliteSkillRepository({ db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);
@@ -201,7 +201,7 @@ describe("SkillService.install", () => {
   it("body-only upstream change does NOT trigger PlanStaleError (author contract)", async () => {
     fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") });
     const plan = await svc.resolve("file:/abs/tool");
-    fetcher.set("file:/abs/tool", { "SKILL.md": ANCHOR("tool") + "\nNew body content.\n" });
+    fetcher.set("file:/abs/tool", { "SKILL.md": `${ANCHOR("tool")}\nNew body content.\n` });
     const s = await svc.install(plan.node!);
     expect(s.fqn).toBe("public/tool");
   });
@@ -327,8 +327,9 @@ with multiple lines
     });
     expect(updated.description).toBe("new description");
     expect(updated.version).toBe("1.1.0");
-    expect(updated.anchorContent).toContain("# Body kept verbatim");
-    expect(updated.anchorContent).toContain("with multiple lines");
+    const anchor = await svc.getAnchor("public/patchable");
+    expect(anchor).toContain("# Body kept verbatim");
+    expect(anchor).toContain("with multiple lines");
   });
 
   it("updateMetadata rejects patches that try to change identity (name/scope/fqn)", async () => {

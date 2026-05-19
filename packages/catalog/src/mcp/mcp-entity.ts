@@ -4,35 +4,25 @@ import { validateMcpName } from "./validate.js";
 /**
  * Rich domain entity representing a single installed MCP.
  *
- * Identity = (name, origin), both immutable.
+ * Identity = (fqn, origin), both immutable. Schema v2 (issue #122):
+ * the storage column was renamed `name` → `fqn` and `content` → `spec`
+ * for catalog-wide terminology consistency. The MCP spec's `_meta.name`
+ * wire field is unaffected — only the storage/API surface uses `fqn`.
  *
- *   - `name` is the MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`).
- *     We keep this term ("name") because it's the term the MCP spec uses;
- *     unlike skills/agents — where emploke adds a `scope:` segment so we
- *     introduce `fqn` to distinguish — MCP spec names ARE globally
- *     unique-by-convention and need no extra namespacing layer.
- *   - `origin` is the install-source URI.
- *
- * Construction goes through factories, never the constructor directly:
- *   - {@link Mcp.create} — for fresh installs from raw user bytes.
- *   - {@link Mcp.fromStored} — for reconstitution by the repository.
- *
- * Note: orphan-status (zero reverse-deps) is NOT a property of the
- * entity — it's a derived fact over the full catalog dep graph. The
- * facade computes it lazily at projection time via the cascade context.
- *
- * Invariants:
- *   - `name` matches MCP spec grammar (validated via `validateMcpName`)
- *   - `origin` is non-empty
- *   - `content` is JSON parseable as `{ _meta: { name }, ... }`
- *     where `_meta.name === this.name`. Origin is NOT carried in
- *     the file — it lives on the entity / SQLite row only.
+ *   - `fqn` is the MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`).
+ *     MCP spec names ARE globally unique-by-convention; emploke does not
+ *     add a separate `scope:` segment for them.
+ *   - `spec` carries the raw JSON spec bytes (renamed from `content`).
+ *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface here so
+ *     DTO projections can include them.
  */
 export class Mcp {
   private constructor(
-    private readonly _name: string,
+    private readonly _fqn: string,
     private readonly _origin: string,
-    private readonly _content: string,
+    private readonly _spec: string,
+    private readonly _installedAt: string,
+    private readonly _updatedAt: string,
   ) {}
 
   static create(name: string, origin: string, rawContent: string): Mcp {
@@ -42,46 +32,56 @@ export class Mcp {
     }
     const sourceLabel = `mcps:${name}`;
     const merged = McpFormat.writeMeta(rawContent, { name }, sourceLabel);
-    // Defensive: re-parse so we never construct an entity whose content
-    // can't be read back. Catches programmer errors in writeMeta upgrades.
     McpFormat.parse(merged, sourceLabel);
-    return new Mcp(name, origin, merged);
+    const now = new Date().toISOString();
+    return new Mcp(name, origin, merged, now, now);
   }
 
-  static fromStored(name: string, origin: string, content: string): Mcp {
-    validateMcpName(name);
-    return new Mcp(name, origin, content);
+  static fromStored(
+    fqn: string,
+    origin: string,
+    spec: string,
+    installedAt: string,
+    updatedAt: string,
+  ): Mcp {
+    validateMcpName(fqn);
+    return new Mcp(fqn, origin, spec, installedAt, updatedAt);
   }
 
-  get name(): string {
-    return this._name;
+  get fqn(): string {
+    return this._fqn;
   }
-
   get origin(): string {
     return this._origin;
   }
-
-  get content(): string {
-    return this._content;
+  get spec(): string {
+    return this._spec;
+  }
+  get installedAt(): string {
+    return this._installedAt;
+  }
+  get updatedAt(): string {
+    return this._updatedAt;
   }
 
   /** Plain JSON projection. */
   toJSON(): Record<string, unknown> {
     return {
-      name: this._name,
+      fqn: this._fqn,
       origin: this._origin,
+      installedAt: this._installedAt,
+      updatedAt: this._updatedAt,
     };
   }
 
   /**
-   * Return a new entity with replaced content. Identity (name, origin)
-   * is preserved — the entity's stable name is re-injected into the
-   * new content's `_meta`. Origin is never written to the file (it
-   * lives on the entity / SQLite row only). Callers cannot change
-   * identity via this method; they must delete + reinstall.
+   * Return a new entity with replaced spec bytes; identity preserved,
+   * `updatedAt` bumped. Callers cannot change identity via this method.
    */
   withContent(rawContent: string): Mcp {
-    const next = Mcp.create(this._name, this._origin, rawContent);
-    return new Mcp(next._name, next._origin, next._content);
+    const sourceLabel = `mcps:${this._fqn}`;
+    const merged = McpFormat.writeMeta(rawContent, { name: this._fqn }, sourceLabel);
+    McpFormat.parse(merged, sourceLabel);
+    return new Mcp(this._fqn, this._origin, merged, this._installedAt, new Date().toISOString());
   }
 }

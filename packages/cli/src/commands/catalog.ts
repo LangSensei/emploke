@@ -631,8 +631,8 @@ export async function catalogMcpList(opts: CatalogMcpListOpts = {}): Promise<Com
     return {
       exitCode: 0,
       stdout: formatTable(
-        ["name", "origin", "mutable"],
-        list.map((m) => [m.name, m.origin, String(m.mutable)]),
+        ["fqn", "origin", "mutable", "installedAt"],
+        list.map((m) => [m.fqn, m.origin, String(m.mutable), m.installedAt]),
       ),
     };
   } catch (err) {

@@ -17,7 +17,7 @@ import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * Shared fake fetcher: one in-memory map of (origin → file map) used
@@ -151,11 +151,11 @@ let agentRepo: SqliteAgentRepository;
 let fetchers: ReturnType<typeof makeFakeFetchers>;
 let mgr: CatalogManager;
 
-beforeEach(() => {
+beforeEach(async () => {
   // All three catalog repos share one in-memory connection — same as
   // production where they share the workspace's `workspace.db` handle.
   db = new DatabaseSync(":memory:");
-  bootstrapCatalogDbSync(db);
+  await bootstrapCatalogDb(db);
   mcpRepo = new SqliteMcpRepository({ db });
   skillRepo = new SqliteSkillRepository({ db });
   agentRepo = new SqliteAgentRepository({ db });
@@ -164,8 +164,11 @@ beforeEach(() => {
   // McpService is wired against a single-file fetcher that returns
   // the registered mcp.json content for each origin.
   const mcpSvc = new McpService(mcpRepo, fetchers.mcpFetchFile);
-  const skillSvc = new SkillService(skillRepo, fetchers.skillFetcher);
-  const agentSvc = new AgentService(agentRepo, fetchers.agentFetcher);
+  const skillSvc = new SkillService(skillRepo, fetchers.skillFetcher, { mcps: mcpRepo });
+  const agentSvc = new AgentService(agentRepo, fetchers.agentFetcher, {
+    skills: skillRepo,
+    mcps: mcpRepo,
+  });
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fetchers.mcpResolveAdapter);
 });
 

@@ -1,37 +1,34 @@
 import * as AgentFormat from "./agent-frontmatter.js";
-import { makeFqn, validateFqn } from "./validate.js";
+import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
  * Rich domain entity representing a single installed agent.
  *
- * Identity = (fqn, origin), both immutable. See {@link Skill} for the
- * fqn-vs-name rationale and the **`version` authoring contract** (sync
- * and staleness keys off `version` alone — body / frontmatter edits
- * without a bump are no-ops). Differences from skills:
- *   - anchor file is `AGENTS.md`, not `SKILL.md`
- *   - agents are "root" entities — never dep-referenced; only have
- *     outgoing deps (skills + mcps)
- *
- * Per-installation flags (NOT in frontmatter — local opt-ins):
- *   - `prereqsAck`: user has acknowledged the entry's `prereqs` text
- *     (or the entry has none).
- *   - `disabledByUser`: user explicitly disabled this agent. Skills
- *     and mcps don't have this flag — only agents are user-launchable
- *     units worth pausing.
+ * Identity = (fqn, origin), both immutable. Schema v2 (issue #122):
+ *   - `scope` / `shortName` are derived getters off `fqn.split('/')`.
+ *   - Anchor bytes (AGENTS.md) are no longer held on the entity; the
+ *     repository's `getAnchor(fqn)` is the canonical fetch path.
+ *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface on
+ *     the entity so DTO projections can include them.
+ *   - `dependencies` is the fqn-form view (populated by `fromStored`
+ *     from the dep-tables join); freshly-created entities have empty
+ *     `dependencies` because the install pipeline hasn't resolved
+ *     origins to fqns yet. The frontmatter-declared origins live on
+ *     {@link depsRefs} and drive that resolution.
  */
 export class Agent {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
-    private readonly _scope: string,
-    private readonly _shortName: string,
     private readonly _description: string,
     private readonly _version: string,
     private readonly _prereqs: string | undefined,
     private readonly _dependencies: AgentDependencies,
-    private readonly _anchorContent: string,
+    private readonly _depsRefs: AgentDepRefs,
     private readonly _prereqsAck: boolean,
     private readonly _disabledByUser: boolean,
+    private readonly _installedAt: string,
+    private readonly _updatedAt: string,
   ) {}
 
   static create(rawAgentMd: string, origin: string, sourceLabel: string): Agent {
@@ -41,47 +38,47 @@ export class Agent {
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
+    const now = new Date().toISOString();
     return new Agent(
       fqn,
       origin,
-      meta.scope,
-      meta.shortName,
       meta.description,
       meta.version,
       meta.prereqs,
-      normaliseDeps(meta.dependencies),
-      rawAgentMd,
+      { skills: [], mcps: [] },
+      normaliseDepRefs(meta.dependencies),
       prereqsAck,
       false,
+      now,
+      now,
     );
   }
 
   static fromStored(args: {
     fqn: string;
     origin: string;
-    scope: string;
-    shortName: string;
     description: string;
     version: string;
     prereqs: string | undefined;
     dependencies: AgentDependencies;
-    anchorContent: string;
     prereqsAck: boolean;
     disabledByUser: boolean;
+    installedAt: string;
+    updatedAt: string;
   }): Agent {
     validateFqn(args.fqn);
     return new Agent(
       args.fqn,
       args.origin,
-      args.scope,
-      args.shortName,
       args.description,
       args.version,
       args.prereqs,
       normaliseDeps(args.dependencies),
-      args.anchorContent,
+      { skills: [], mcps: [] },
       args.prereqsAck,
       args.disabledByUser,
+      args.installedAt,
+      args.updatedAt,
     );
   }
 
@@ -91,11 +88,13 @@ export class Agent {
   get origin(): string {
     return this._origin;
   }
+  /** Derived from `fqn` — first segment. */
   get scope(): string {
-    return this._scope;
+    return splitFqn(this._fqn).scope;
   }
+  /** Derived from `fqn` — second segment. */
   get shortName(): string {
-    return this._shortName;
+    return splitFqn(this._fqn).shortName;
   }
   get description(): string {
     return this._description;
@@ -106,11 +105,23 @@ export class Agent {
   get prereqs(): string | undefined {
     return this._prereqs;
   }
+  /**
+   * Local-catalog dependency view: each entry is an fqn of an installed
+   * sibling. Populated by `fromStored` (repository reads the dep tables);
+   * freshly created entities expose empty arrays until the install
+   * pipeline writes the dep rows.
+   */
   get dependencies(): AgentDependencies {
     return this._dependencies;
   }
-  get anchorContent(): string {
-    return this._anchorContent;
+  /**
+   * Origin URIs declared in the frontmatter `dependencies` block.
+   * Used by the install pipeline to look up sibling fqns. Empty for
+   * entities loaded via `fromStored` (origins aren't persisted past
+   * install — only the resolved fqns are).
+   */
+  get depsRefs(): AgentDepRefs {
+    return this._depsRefs;
   }
   get prereqsAck(): boolean {
     return this._prereqsAck;
@@ -118,17 +129,23 @@ export class Agent {
   get disabledByUser(): boolean {
     return this._disabledByUser;
   }
+  get installedAt(): string {
+    return this._installedAt;
+  }
+  get updatedAt(): string {
+    return this._updatedAt;
+  }
 
   toJSON(): Record<string, unknown> {
     return {
       fqn: this._fqn,
-      shortName: this._shortName,
-      scope: this._scope,
       origin: this._origin,
       description: this._description,
       version: this._version,
       prereqsAck: this._prereqsAck,
       disabledByUser: this._disabledByUser,
+      installedAt: this._installedAt,
+      updatedAt: this._updatedAt,
       ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
       ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
         ? {
@@ -143,6 +160,13 @@ export class Agent {
     };
   }
 
+  /**
+   * Refresh frontmatter fields from a new anchor bytes (identity
+   * unchanged); bumps `updatedAt`. The new anchor bytes themselves
+   * are written by the repository (single source of truth in
+   * `agent_files`); this method merely projects the updated metadata
+   * and dep refs back onto the entity.
+   */
   withAnchor(rawAgentMd: string, sourceLabel: string): Agent {
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
     const newFqn = makeFqn(meta.scope, meta.shortName);
@@ -155,15 +179,15 @@ export class Agent {
     return new Agent(
       this._fqn,
       this._origin,
-      meta.scope,
-      meta.shortName,
       meta.description,
       meta.version,
       meta.prereqs,
-      normaliseDeps(meta.dependencies),
-      rawAgentMd,
+      this._dependencies,
+      normaliseDepRefs(meta.dependencies),
       this._prereqsAck,
       this._disabledByUser,
+      this._installedAt,
+      new Date().toISOString(),
     );
   }
 
@@ -175,25 +199,50 @@ export class Agent {
     return new Agent(
       this._fqn,
       this._origin,
-      this._scope,
-      this._shortName,
       this._description,
       this._version,
       this._prereqs,
       this._dependencies,
-      this._anchorContent,
+      this._depsRefs,
       state.prereqsAck ?? this._prereqsAck,
       state.disabledByUser ?? this._disabledByUser,
+      this._installedAt,
+      this._updatedAt,
+    );
+  }
+
+  /** Return a new entity carrying the given resolved fqn dependencies. */
+  withDependencies(deps: AgentDependencies): Agent {
+    return new Agent(
+      this._fqn,
+      this._origin,
+      this._description,
+      this._version,
+      this._prereqs,
+      normaliseDeps(deps),
+      this._depsRefs,
+      this._prereqsAck,
+      this._disabledByUser,
+      this._installedAt,
+      this._updatedAt,
     );
   }
 }
 
-/** A dep reference is just an origin URI string. */
-export type AgentDependencyRef = string;
+/** A resolved fqn-form dep reference. */
+export interface AgentDependencyRef {
+  readonly fqn: string;
+}
 
 export interface AgentDependencies {
   readonly skills: readonly AgentDependencyRef[];
   readonly mcps: readonly AgentDependencyRef[];
+}
+
+/** Origin URIs as declared in the frontmatter (pre-resolution). */
+export interface AgentDepRefs {
+  readonly skills: readonly string[];
+  readonly mcps: readonly string[];
 }
 
 function normaliseDeps(
@@ -201,6 +250,15 @@ function normaliseDeps(
     | { skills?: readonly AgentDependencyRef[]; mcps?: readonly AgentDependencyRef[] }
     | undefined,
 ): AgentDependencies {
+  return {
+    skills: deps?.skills ?? [],
+    mcps: deps?.mcps ?? [],
+  };
+}
+
+function normaliseDepRefs(
+  deps: { skills?: readonly string[]; mcps?: readonly string[] } | undefined,
+): AgentDepRefs {
   return {
     skills: deps?.skills ?? [],
     mcps: deps?.mcps ?? [],

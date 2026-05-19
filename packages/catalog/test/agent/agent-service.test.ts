@@ -10,7 +10,7 @@ import {
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
 import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
-import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: AgentFetcher;
@@ -57,9 +57,9 @@ let repo: SqliteAgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = new DatabaseSync(":memory:");
-  bootstrapCatalogDbSync(db);
+  await bootstrapCatalogDb(db);
   repo = new SqliteAgentRepository({ db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
@@ -181,7 +181,7 @@ describe("AgentService.install", () => {
     fetcher.set("file:/abs/agent", { "AGENTS.md": ANCHOR("agent") });
     const plan = await svc.resolve("file:/abs/agent");
     fetcher.set("file:/abs/agent", {
-      "AGENTS.md": ANCHOR("agent") + "\nNew body content.\n",
+      "AGENTS.md": `${ANCHOR("agent")}\nNew body content.\n`,
     });
     const a = await svc.install(plan.node!);
     expect(a.fqn).toBe("public/agent");
@@ -286,8 +286,9 @@ with multiple lines
     });
     expect(updated.description).toBe("new description");
     expect(updated.version).toBe("1.1.0");
-    expect(updated.anchorContent).toContain("# Body kept verbatim");
-    expect(updated.anchorContent).toContain("with multiple lines");
+    const anchor = await svc.getAnchor("public/patchable");
+    expect(anchor).toContain("# Body kept verbatim");
+    expect(anchor).toContain("with multiple lines");
   });
 
   it("updateMetadata rejects patches that try to change identity (name/scope/fqn)", async () => {

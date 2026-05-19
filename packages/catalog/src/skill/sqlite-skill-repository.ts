@@ -1,51 +1,18 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { SchemaMetaMismatchError, SchemaMetaNotBootstrappedError } from "@emploke/workspace";
+import { SkillNotFoundError } from "./errors.js";
 import { Skill, type SkillDependencies } from "./skill-entity.js";
-import type { SkillFile, SkillRepository } from "./skill-repository.js";
+import type { SkillFile, SkillRepoAddDeps, SkillRepository } from "./skill-repository.js";
 
-const SKILL_PKG_SCHEMA_VERSION = 1;
+const SKILL_PKG_SCHEMA_VERSION = 2;
 
 /**
- * SQLite-backed `SkillRepository`.
- *
- * Schema (two tables, FK cascade on delete):
- *
- *   CREATE TABLE skill (
- *     fqn            TEXT PRIMARY KEY,    -- "<scope>/<shortName>"
- *     origin         TEXT NOT NULL,
- *     scope          TEXT NOT NULL,
- *     short_name     TEXT NOT NULL,
- *     description    TEXT NOT NULL,
- *     version        TEXT NOT NULL,
- *     prereqs        TEXT,
- *     deps_json      TEXT NOT NULL,       -- canonical JSON of SkillDependencies
- *     anchor_content TEXT NOT NULL,       -- SKILL.md bytes
- *     prereqs_ack    INTEGER NOT NULL DEFAULT 1
- *   );
- *   CREATE INDEX skill_origin ON skill(origin);
- *
- *   CREATE TABLE skill_file (
- *     skill_fqn  TEXT NOT NULL REFERENCES skill(fqn) ON DELETE CASCADE,
- *     rel_path   TEXT NOT NULL,
- *     content    BLOB NOT NULL,
- *     PRIMARY KEY (skill_fqn, rel_path)
- *   );
- *
- * Atomicity: `add` runs both tables' inserts inside a single SQLite
- * transaction.
- *
- * The constructor takes an already-opened `DatabaseSync`. The server
- * shares one connection across every per-workspace repository
- * (task / session / catalog / workflow); the file handle count per
- * workspace stays at one. PRAGMAs (journal_mode, synchronous,
- * foreign_keys, ...) are the caller's responsibility — the workspace
- * pkg sets them once on the shared connection.
- *
- * Schema versioning is per-pkg: this repo writes its own row to
- * `schema_meta` keyed by `pkg='catalog_skill'`, sibling to the rows
- * written by `SqliteAgentRepository` (`catalog_agent`) and
- * `SqliteMcpRepository` (`catalog_mcp`).
+ * SQLite-backed `SkillRepository` (catalog v2 — issue #122). See
+ * {@link SqliteAgentRepository} for the parallel notes. Differences:
+ *   - no `disabled_by_user` flag
+ *   - self-referential `skill_skill_dependencies` (1-node cycle
+ *     CHECK enforced at DDL)
  */
 export class SqliteSkillRepository implements SkillRepository {
   private readonly db: DatabaseSync;
@@ -57,34 +24,47 @@ export class SqliteSkillRepository implements SkillRepository {
     this.ensureSchema();
   }
 
-  /** No-op — the connection is owned by the caller. */
   close(): void {
     // intentionally empty
   }
 
-  async add(skill: Skill, files: ReadonlyMap<string, Buffer>): Promise<void> {
+  async add(
+    skill: Skill,
+    files: ReadonlyMap<string, Buffer>,
+    deps: SkillRepoAddDeps,
+  ): Promise<void> {
     if (!files.has("SKILL.md")) {
       throw new TypeError(
         `SkillRepository.add requires SKILL.md in the files map (got: ${[...files.keys()].join(", ")})`,
       );
     }
+    const now = new Date().toISOString();
     const upsertSkill = this.db.prepare(
-      `INSERT INTO skill (fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO skills (fqn, origin, description, version, prereqs, prereqs_ack, installed_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fqn) DO UPDATE SET
          origin = excluded.origin,
-         scope = excluded.scope,
-         short_name = excluded.short_name,
          description = excluded.description,
          version = excluded.version,
          prereqs = excluded.prereqs,
-         deps_json = excluded.deps_json,
-         anchor_content = excluded.anchor_content,
-         prereqs_ack = excluded.prereqs_ack`,
+         prereqs_ack = excluded.prereqs_ack,
+         updated_at = excluded.updated_at`,
     );
-    const deleteFiles = this.db.prepare("DELETE FROM skill_file WHERE skill_fqn = ?");
+    const deleteFiles = this.db.prepare("DELETE FROM skill_files WHERE skill_fqn = ?");
     const insertFile = this.db.prepare(
-      "INSERT INTO skill_file (skill_fqn, rel_path, content) VALUES (?, ?, ?)",
+      "INSERT INTO skill_files (skill_fqn, rel_path, content) VALUES (?, ?, ?)",
+    );
+    const deleteSkillDeps = this.db.prepare(
+      "DELETE FROM skill_skill_dependencies WHERE source_fqn = ?",
+    );
+    const deleteMcpDeps = this.db.prepare(
+      "DELETE FROM skill_mcp_dependencies WHERE source_fqn = ?",
+    );
+    const insertSkillDep = this.db.prepare(
+      "INSERT INTO skill_skill_dependencies (source_fqn, target_fqn) VALUES (?, ?)",
+    );
+    const insertMcpDep = this.db.prepare(
+      "INSERT INTO skill_mcp_dependencies (source_fqn, target_fqn) VALUES (?, ?)",
     );
 
     this.db.exec("BEGIN");
@@ -92,18 +72,31 @@ export class SqliteSkillRepository implements SkillRepository {
       upsertSkill.run(
         skill.fqn,
         skill.origin,
-        skill.scope,
-        skill.shortName,
         skill.description,
         skill.version,
         skill.prereqs ?? null,
-        JSON.stringify(skill.dependencies),
-        skill.anchorContent,
         skill.prereqsAck ? 1 : 0,
+        now,
+        now,
       );
       deleteFiles.run(skill.fqn);
       for (const [relPath, content] of files) {
         insertFile.run(skill.fqn, relPath, content);
+      }
+      deleteSkillDeps.run(skill.fqn);
+      deleteMcpDeps.run(skill.fqn);
+      const seenSkill = new Set<string>();
+      for (const targetFqn of deps.skills) {
+        if (targetFqn === skill.fqn) continue;
+        if (seenSkill.has(targetFqn)) continue;
+        seenSkill.add(targetFqn);
+        insertSkillDep.run(skill.fqn, targetFqn);
+      }
+      const seenMcp = new Set<string>();
+      for (const targetFqn of deps.mcps) {
+        if (seenMcp.has(targetFqn)) continue;
+        seenMcp.add(targetFqn);
+        insertMcpDep.run(skill.fqn, targetFqn);
       }
       this.db.exec("COMMIT");
     } catch (err) {
@@ -115,68 +108,62 @@ export class SqliteSkillRepository implements SkillRepository {
   async findByFqn(fqn: string): Promise<Skill | null> {
     const row = this.db
       .prepare(
-        "SELECT origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill WHERE fqn = ?",
+        "SELECT origin, description, version, prereqs, prereqs_ack, installed_at, updated_at FROM skills WHERE fqn = ?",
       )
       .get(fqn) as SkillRow | undefined;
     if (row === undefined) return null;
-    return rowToSkill(fqn, row);
+    const deps = await this.listDependencies(fqn);
+    return rowToSkill(fqn, row, deps);
   }
 
   async findByOrigin(origin: string): Promise<Skill | null> {
     const row = this.db
       .prepare(
-        "SELECT fqn, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill WHERE origin = ? LIMIT 1",
+        "SELECT fqn, description, version, prereqs, prereqs_ack, installed_at, updated_at FROM skills WHERE origin = ? LIMIT 1",
       )
       .get(origin) as (SkillRow & { fqn: string }) | undefined;
     if (row === undefined) return null;
+    const deps = await this.listDependencies(row.fqn);
     return Skill.fromStored({
       fqn: row.fqn,
       origin,
-      scope: row.scope,
-      shortName: row.short_name,
       description: row.description,
       version: row.version,
       prereqs: row.prereqs ?? undefined,
-      dependencies: parseDeps(row.deps_json),
-      anchorContent: row.anchor_content,
+      dependencies: deps,
       prereqsAck: row.prereqs_ack !== 0,
+      installedAt: row.installed_at,
+      updatedAt: row.updated_at,
     });
   }
 
   async findAll(): Promise<Skill[]> {
     const rows = this.db
       .prepare(
-        "SELECT fqn, origin, scope, short_name, description, version, prereqs, deps_json, anchor_content, prereqs_ack FROM skill ORDER BY fqn",
+        "SELECT fqn, origin, description, version, prereqs, prereqs_ack, installed_at, updated_at FROM skills ORDER BY fqn",
       )
-      .all() as unknown as (SkillRow & { fqn: string })[];
+      .all() as unknown as (SkillRow & { fqn: string; origin: string })[];
+    const depsByFqn = this.loadAllDeps();
     const out: Skill[] = [];
     for (const row of rows) {
       try {
+        const deps = depsByFqn.get(row.fqn) ?? { skills: [], mcps: [] };
         out.push(
           Skill.fromStored({
             fqn: row.fqn,
             origin: row.origin,
-            scope: row.scope,
-            shortName: row.short_name,
             description: row.description,
             version: row.version,
             prereqs: row.prereqs ?? undefined,
-            dependencies: parseDeps(row.deps_json),
-            anchorContent: row.anchor_content,
+            dependencies: deps,
             prereqsAck: row.prereqs_ack !== 0,
+            installedAt: row.installed_at,
+            updatedAt: row.updated_at,
           }),
         );
       } catch (cause) {
-        // Skip rows with FQNs that fail validation. Surface a structured
-        // warning so operators can spot a corrupted SQLite catalog
-        // without trawling every dashboard list — the row stays in the
-        // DB (deletion is a separate operation) and is hidden from
-        // listings until the user repairs it.
         this.logger.warn(
-          {
-            fqn: row.fqn ?? null,
-            cause: (cause as Error).message,
-          },
+          { fqn: row.fqn ?? null, cause: (cause as Error).message },
           "catalog/skill: skipping row that failed validation",
         );
       }
@@ -185,12 +172,12 @@ export class SqliteSkillRepository implements SkillRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    this.db.prepare("DELETE FROM skill WHERE fqn = ?").run(fqn);
+    this.db.prepare("DELETE FROM skills WHERE fqn = ?").run(fqn);
   }
 
   async *streamFiles(fqn: string): AsyncIterable<SkillFile> {
     const rows = this.db
-      .prepare("SELECT rel_path, content FROM skill_file WHERE skill_fqn = ?")
+      .prepare("SELECT rel_path, content FROM skill_files WHERE skill_fqn = ?")
       .all(fqn) as { rel_path: string; content: Uint8Array }[];
     for (const row of rows) {
       yield {
@@ -200,32 +187,93 @@ export class SqliteSkillRepository implements SkillRepository {
     }
   }
 
+  async getAnchor(fqn: string): Promise<string> {
+    const row = this.db
+      .prepare("SELECT content FROM skill_files WHERE skill_fqn = ? AND rel_path = 'SKILL.md'")
+      .get(fqn) as { content: Uint8Array } | undefined;
+    if (row === undefined) throw new SkillNotFoundError(fqn);
+    const buf = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content);
+    return buf.toString("utf8");
+  }
+
+  async listDependencies(fqn: string): Promise<SkillDependencies> {
+    const skillRows = this.db
+      .prepare(
+        "SELECT target_fqn FROM skill_skill_dependencies WHERE source_fqn = ? ORDER BY target_fqn",
+      )
+      .all(fqn) as unknown as { target_fqn: string }[];
+    const mcpRows = this.db
+      .prepare(
+        "SELECT target_fqn FROM skill_mcp_dependencies WHERE source_fqn = ? ORDER BY target_fqn",
+      )
+      .all(fqn) as unknown as { target_fqn: string }[];
+    return {
+      skills: skillRows.map((r) => ({ fqn: r.target_fqn })),
+      mcps: mcpRows.map((r) => ({ fqn: r.target_fqn })),
+    };
+  }
+
+  async findDependentAgents(targetFqn: string): Promise<string[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT source_fqn FROM agent_skill_dependencies WHERE target_fqn = ? ORDER BY source_fqn",
+      )
+      .all(targetFqn) as unknown as { source_fqn: string }[];
+    return rows.map((r) => r.source_fqn);
+  }
+
+  async findDependentSkills(targetFqn: string): Promise<string[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT source_fqn FROM skill_skill_dependencies WHERE target_fqn = ? ORDER BY source_fqn",
+      )
+      .all(targetFqn) as unknown as { source_fqn: string }[];
+    return rows.map((r) => r.source_fqn);
+  }
+
   async setFlags(fqn: string, flags: { prereqsAck?: boolean }): Promise<void> {
     if (flags.prereqsAck === undefined) return;
     this.db
-      .prepare("UPDATE skill SET prereqs_ack = ? WHERE fqn = ?")
-      .run(flags.prereqsAck ? 1 : 0, fqn);
+      .prepare("UPDATE skills SET prereqs_ack = ?, updated_at = ? WHERE fqn = ?")
+      .run(flags.prereqsAck ? 1 : 0, new Date().toISOString(), fqn);
   }
 
-  // ─── schema management ──────────────────────────────────────
+  private loadAllDeps(): Map<string, SkillDependencies> {
+    const out = new Map<string, SkillDependencies>();
+    const skillRows = this.db
+      .prepare(
+        "SELECT source_fqn, target_fqn FROM skill_skill_dependencies ORDER BY source_fqn, target_fqn",
+      )
+      .all() as unknown as { source_fqn: string; target_fqn: string }[];
+    const mcpRows = this.db
+      .prepare(
+        "SELECT source_fqn, target_fqn FROM skill_mcp_dependencies ORDER BY source_fqn, target_fqn",
+      )
+      .all() as unknown as { source_fqn: string; target_fqn: string }[];
+    for (const r of skillRows) {
+      const e = out.get(r.source_fqn) ?? { skills: [], mcps: [] };
+      out.set(r.source_fqn, {
+        skills: [...e.skills, { fqn: r.target_fqn }],
+        mcps: e.mcps,
+      });
+    }
+    for (const r of mcpRows) {
+      const e = out.get(r.source_fqn) ?? { skills: [], mcps: [] };
+      out.set(r.source_fqn, {
+        skills: e.skills,
+        mcps: [...e.mcps, { fqn: r.target_fqn }],
+      });
+    }
+    return out;
+  }
 
   private ensureSchema(): void {
-    // Post-issue-#123: the MigrationCoordinator owns DDL. This
-    // repository's job is to assert the post-condition — a
-    // `schema_meta` row for the `catalog_skill` pkg at the expected
-    // version. A missing row means `runPkgMigrations` was not run
-    // before construction (always a wiring bug).
-    //
-    // Both branches surface as the framework's typed errors
-    // (`SchemaMetaNotBootstrappedError` / `SchemaMetaMismatchError`)
-    // so consumers can route uniformly across every per-pkg repo.
     let existing: { version: number } | undefined;
     try {
       existing = this.db
         .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
         .get("catalog_skill") as { version: number } | undefined;
     } catch {
-      // `schema_meta` itself missing → coordinator never ran.
       throw new SchemaMetaNotBootstrappedError("catalog_skill");
     }
     if (existing === undefined) {
@@ -243,39 +291,24 @@ export class SqliteSkillRepository implements SkillRepository {
 
 interface SkillRow {
   origin: string;
-  scope: string;
-  short_name: string;
   description: string;
   version: string;
   prereqs: string | null;
-  deps_json: string;
-  anchor_content: string;
   prereqs_ack: number;
+  installed_at: string;
+  updated_at: string;
 }
 
-function rowToSkill(fqn: string, row: SkillRow): Skill {
+function rowToSkill(fqn: string, row: SkillRow, deps: SkillDependencies): Skill {
   return Skill.fromStored({
     fqn,
     origin: row.origin,
-    scope: row.scope,
-    shortName: row.short_name,
     description: row.description,
     version: row.version,
     prereqs: row.prereqs ?? undefined,
-    dependencies: parseDeps(row.deps_json),
-    anchorContent: row.anchor_content,
+    dependencies: deps,
     prereqsAck: row.prereqs_ack !== 0,
+    installedAt: row.installed_at,
+    updatedAt: row.updated_at,
   });
-}
-
-function parseDeps(json: string): SkillDependencies {
-  try {
-    const parsed = JSON.parse(json) as Partial<SkillDependencies>;
-    return {
-      skills: parsed.skills ?? [],
-      mcps: parsed.mcps ?? [],
-    };
-  } catch {
-    return { skills: [], mcps: [] };
-  }
 }

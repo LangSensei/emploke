@@ -4,129 +4,63 @@ import { McpNotFoundError, McpOriginConflictError } from "./errors.js";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
+export type McpFetcher = (origin: string) => Promise<string>;
+
 /**
  * Application-layer service for MCP operations.
  *
- * Owns:
- *   - origin-conflict invariant (compare existing.origin against new
- *     before delegating to the repo)
- *   - URI fetch dispatch (delegated to the injected fetcher)
- *
- * Does NOT own:
- *   - in-memory index — repository reads are the source of truth
- *     (SQLite-cheap; the FS impl pays a bit more but still bounded)
- *   - write serialization — the repository is the concurrency
- *     boundary (SQLite serializes writers internally; FS impls
- *     would need their own queue)
- *   - HTTP transport — lives in `@emploke/server`
- *   - dependency-graph maintenance — out of scope for MCP-only
- *   - business invariants on individual entities — those live on
- *     `Mcp` itself (name grammar, content well-formedness, identity
- *     immutability)
- *
- * The fetcher dependency is typed as a callback rather than the full
- * `FetcherRegistry` class so tests can inject a stub without pulling
- * in the registry's defaults.
- *
- * Concurrency note: there is a small TOCTOU window in `install`
- * between the existing-entry read and the `add` write. Within a
- * single Node process it's harmless because the gap is microseconds
- * and origin-conflict errors are advisory (caller can retry). For
- * cross-process safety the SQLite impl's atomic `INSERT ... ON
- * CONFLICT` semantics close the window.
+ * v2 (issue #122) renames internal terminology from `name` →
+ * `fqn` / `content` → `spec`. The public service surface keeps the
+ * `name` arg name on `install` (since that's the wire-side input —
+ * the frontmatter / dep-ref form is still origin URI), but uses
+ * `fqn` everywhere else.
  */
-
-/**
- * Fetch the raw text content of an MCP origin. MCP origins are
- * single-file by spec (the `<name>.json` manifest), so the fetcher
- * returns one string rather than a stream — symmetric with how the
- * `SkillFetcher.fetchAnchor` / `AgentFetcher.fetchAnchor` callbacks
- * surface a single anchor file.
- */
-export type McpFetcher = (origin: string) => Promise<string>;
-
 export class McpService {
   constructor(
     private readonly repo: McpRepository,
     private readonly fetch: McpFetcher,
   ) {}
 
-  /**
-   * Install an MCP from raw bytes the caller already has in hand.
-   *
-   * Steps:
-   *   1. construct the entity via `Mcp.create` — this validates name,
-   *      parses content, injects `_meta.name`
-   *   2. read any existing entry; if the origins disagree (modulo
-   *      normalisation), throw {@link McpOriginConflictError}
-   *   3. atomically persist via `repo.add`
-   *
-   * Re-install over an existing entry with the same name overwrites
-   * the row's content/origin atomically. There's no flag to preserve
-   * — orphan status is derived from the catalog dep graph at
-   * projection time, not stored on the row.
-   */
   async install(name: string, origin: string, rawContent: string): Promise<Mcp> {
     const entity = Mcp.create(name, origin, rawContent);
-    const existing = await this.repo.findByName(entity.name);
+    const existing = await this.repo.findByFqn(entity.fqn);
     if (existing && !sameOrigin(existing.origin, entity.origin)) {
-      throw new McpOriginConflictError(entity.name, existing.origin, entity.origin);
+      throw new McpOriginConflictError(entity.fqn, existing.origin, entity.origin);
     }
     await this.repo.add(entity);
-    return entity;
+    return (await this.repo.findByFqn(entity.fqn)) ?? entity;
   }
 
-  /**
-   * Install an MCP by URI: dispatch to the registered fetcher to
-   * read the file's text, then delegate to {@link install}.
-   */
   async installFromOrigin(name: string, origin: string): Promise<Mcp> {
     const content = await this.fetch(origin);
     return this.install(name, origin, content);
   }
 
-  /**
-   * Replace an existing MCP's content. The stored origin and name are
-   * preserved (the name is re-injected into the new content's `_meta`
-   * by `Mcp.withContent`; origin lives only on the SQLite row);
-   * callers can't change identity via update.
-   */
-  async updateContent(name: string, rawContent: string): Promise<Mcp> {
-    const existing = await this.repo.findByName(name);
-    if (!existing) throw new McpNotFoundError(name);
+  async updateContent(fqn: string, rawContent: string): Promise<Mcp> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (!existing) throw new McpNotFoundError(fqn);
     if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(name, existing.origin);
+      throw new ImmutableOriginError(fqn, existing.origin);
     }
     const updated = existing.withContent(rawContent);
     await this.repo.add(updated);
-    return updated;
+    return (await this.repo.findByFqn(fqn)) ?? updated;
   }
 
-  /**
-   * Read the raw stored content (including the `_meta` block) of an
-   * installed MCP.
-   */
-  async getContent(name: string): Promise<string> {
-    const entity = await this.repo.findByName(name);
-    if (!entity) throw new McpNotFoundError(name);
-    return entity.content;
+  async getContent(fqn: string): Promise<string> {
+    const entity = await this.repo.findByFqn(fqn);
+    if (!entity) throw new McpNotFoundError(fqn);
+    return entity.spec;
   }
 
-  /**
-   * Delete an MCP by name. No dependency-graph check happens here —
-   * that's the responsibility of the catalog facade (which knows
-   * about skills / agents). For MCP-only use, deletion is unconditional
-   * but throws {@link McpNotFoundError} if the entry doesn't exist.
-   */
-  async delete(name: string): Promise<void> {
-    const existing = await this.repo.findByName(name);
-    if (!existing) throw new McpNotFoundError(name);
-    await this.repo.delete(name);
+  async delete(fqn: string): Promise<void> {
+    const existing = await this.repo.findByFqn(fqn);
+    if (!existing) throw new McpNotFoundError(fqn);
+    await this.repo.delete(fqn);
   }
 
-  /** Look up an installed MCP entity by name, or `null` if absent. */
-  async get(name: string): Promise<Mcp | null> {
-    return this.repo.findByName(name);
+  async get(fqn: string): Promise<Mcp | null> {
+    return this.repo.findByFqn(fqn);
   }
 
   async getByOrigin(origin: string): Promise<Mcp | null> {
@@ -137,27 +71,19 @@ export class McpService {
     return this.repo.findAll();
   }
 
-  async has(name: string): Promise<boolean> {
-    return (await this.repo.findByName(name)) !== null;
+  async has(fqn: string): Promise<boolean> {
+    return (await this.repo.findByFqn(fqn)) !== null;
   }
 
-  /** Release the underlying repository's resources. Idempotent. */
   close(): void {
     this.repo.close?.();
   }
 }
 
-/**
- * Compare two origin URIs after normalisation. Used by install to
- * detect "is this the same upstream?" so trivial differences in URI
- * encoding don't trigger spurious origin-conflict errors.
- */
 function sameOrigin(a: string, b: string): boolean {
   try {
     return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
   } catch {
-    // If either origin is unparseable, fall back to string equality.
-    // The fetcher would reject the unparseable one at fetch time anyway.
     return a === b;
   }
 }

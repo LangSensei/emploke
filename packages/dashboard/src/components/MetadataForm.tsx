@@ -1,4 +1,3 @@
-import type { DependencyRef } from "@emploke/catalog";
 import { ChipsInput } from "./ChipsInput";
 
 export interface MetadataFormValues {
@@ -6,8 +5,15 @@ export interface MetadataFormValues {
   version: string;
   /** undefined = field absent (skill only) */
   prereqs: string;
-  skills: DependencyRef[];
-  mcps: DependencyRef[];
+  /**
+   * Catalog v2: dep refs surface to the dashboard as resolved fqns
+   * (`{ fqn: string }`). The form holds the fqn strings directly so
+   * the chip UI stays simple. Adding new deps still requires switching
+   * to source mode (origin URI authoring lives in the markdown
+   * frontmatter, not here).
+   */
+  skills: string[];
+  mcps: string[];
 }
 
 interface MetadataFormProps {
@@ -20,16 +26,6 @@ interface MetadataFormProps {
   missingSkills?: readonly string[];
   missingMcps?: readonly string[];
   disabled?: boolean;
-}
-
-/**
- * Render `DependencyRef` as a chip label. Post-rename, dep refs are
- * bare origin URI strings, so we just render them as-is. The full
- * URI is informative enough to identify the dep without round-tripping
- * to the catalog to recover its FQN.
- */
-function depRefLabel(ref: DependencyRef): string {
-  return ref;
 }
 
 export function MetadataForm({
@@ -45,22 +41,17 @@ export function MetadataForm({
   const update = <K extends keyof MetadataFormValues>(key: K, val: MetadataFormValues[K]) =>
     onChange({ ...values, [key]: val });
 
-  // Project DependencyRef[] → string[] for the chip display, then map
-  // user removals back onto the original DependencyRef[]. We allow
-  // remove-only (no add), since a freshly-typed chip would lack the
-  // required origin field and silently drop on save.
-  const skillLabels = values.skills.map(depRefLabel);
-  const mcpLabels = values.mcps.map(depRefLabel);
+  // Catalog v2: form values are fqn strings. We allow remove-only here
+  // — adding new deps still requires switching to source mode (the
+  // origin-URI authoring path lives in the markdown frontmatter).
+  const skillLabels = values.skills;
+  const mcpLabels = values.mcps;
   const onSkillsChange = (next: string[]) => {
-    const kept = next
-      .map((label) => values.skills.find((r) => depRefLabel(r) === label))
-      .filter((r): r is DependencyRef => r !== undefined);
+    const kept = next.filter((label) => values.skills.includes(label));
     update("skills", kept);
   };
   const onMcpsChange = (next: string[]) => {
-    const kept = next
-      .map((label) => values.mcps.find((r) => depRefLabel(r) === label))
-      .filter((r): r is DependencyRef => r !== undefined);
+    const kept = next.filter((label) => values.mcps.includes(label));
     update("mcps", kept);
   };
 

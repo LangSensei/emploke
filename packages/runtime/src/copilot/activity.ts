@@ -411,8 +411,7 @@ function parseAttachments(raw: unknown): Attachment[] {
     const data = pickString(obj, "data") ?? pickString(obj, "base64");
     const name = pickString(obj, "name") ?? pickString(obj, "filename");
     if (url === null && data === null) continue;
-    const kind: Attachment["kind"] =
-      mimeType !== null && mimeType.startsWith("image/") ? "image" : "file";
+    const kind: Attachment["kind"] = mimeType?.startsWith("image/") ? "image" : "file";
     out.push({
       kind,
       ...(mimeType !== null ? { mimeType } : {}),

@@ -62,7 +62,19 @@ export const v1To2: Migration = {
     CREATE INDEX agents_origin     ON agents(origin);
     CREATE INDEX agents_updated_at ON agents(updated_at DESC);
 
-    ALTER TABLE agent_file RENAME TO agent_files;
+    -- Rebuild agent_files so its FK targets the new agents table.
+    -- SQLite ALTER ... RENAME preserves the original REFERENCES
+    -- agent(fqn) text, which would dangle once we DROP agent.
+    ALTER TABLE agent_file RENAME TO _agent_files_v1;
+    CREATE TABLE agent_files (
+      agent_fqn  TEXT NOT NULL REFERENCES agents(fqn) ON DELETE CASCADE,
+      rel_path   TEXT NOT NULL,
+      content    BLOB NOT NULL,
+      PRIMARY KEY (agent_fqn, rel_path)
+    );
+    INSERT INTO agent_files (agent_fqn, rel_path, content)
+      SELECT agent_fqn, rel_path, content FROM _agent_files_v1;
+    DROP TABLE _agent_files_v1;
 
     CREATE TABLE agent_skill_dependencies (
       source_fqn TEXT NOT NULL REFERENCES agents(fqn) ON DELETE CASCADE,
@@ -96,7 +108,9 @@ interface DepShape {
 }
 
 function backfillAgentDeps(db: DatabaseSync): void {
-  const rows = db.prepare("SELECT fqn, deps_json FROM _agent_deps_v1").all() as unknown as DepBlob[];
+  const rows = db
+    .prepare("SELECT fqn, deps_json FROM _agent_deps_v1")
+    .all() as unknown as DepBlob[];
   const skillFqnByOrigin = collectFqnsByOrigin(db, "skills");
   const mcpFqnByOrigin = collectFqnsByOrigin(db, "mcps");
   const insertSkillDep = db.prepare(

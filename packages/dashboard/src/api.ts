@@ -468,8 +468,9 @@ export interface SkillMetadataPatch {
   version?: string;
   prereqs?: string | null;
   dependencies?: {
-    skills?: import("@emploke/catalog").DependencyRef[];
-    mcps?: import("@emploke/catalog").DependencyRef[];
+    /** Origin URI strings — wire frontmatter shape (catalog v2 out-of-scope). */
+    skills?: string[];
+    mcps?: string[];
   } | null;
 }
 
@@ -499,8 +500,8 @@ export interface AgentMetadataPatch {
   version?: string;
   prereqs?: string | null;
   dependencies?: {
-    skills?: import("@emploke/catalog").DependencyRef[];
-    mcps?: import("@emploke/catalog").DependencyRef[];
+    skills?: string[];
+    mcps?: string[];
   } | null;
 }
 

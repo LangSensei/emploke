@@ -18,12 +18,16 @@ export type EntryStatus = "ready" | "blocked";
 export type DependencyKind = "skill" | "mcp";
 
 /**
- * A dependency reference is the canonical bare origin URI string of
- * the dependency (e.g. `"file:/abs/skills/web-search"` or
- * `"github:owner/repo/tree/main/skills/foo"`). The catalog resolves
- * an origin to a concrete fqn at install time.
+ * A dependency reference in the wire DTO. v2 uses an object form with
+ * the resolved `fqn`. Origin URIs no longer surface here — the local
+ * catalog dep storage is keyed by fqn (the install pipeline resolves
+ * origin → fqn at install time and writes to the FK dep tables).
+ * Frontmatter wire shape is unchanged (still origin URIs); only the
+ * catalog DTO carries fqns.
  */
-export type DependencyRef = string;
+export interface DependencyRef {
+  readonly fqn: string;
+}
 
 export interface MissingDep {
   readonly kind: DependencyKind;
@@ -70,8 +74,6 @@ export interface BlockedReason {
  */
 export interface Skill {
   readonly fqn: string;
-  readonly shortName: string;
-  readonly scope: string;
   readonly origin: string;
   readonly description: string;
   readonly version: string;
@@ -95,6 +97,10 @@ export interface Skill {
    * every install/sync.
    */
   readonly orphaned: boolean;
+  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  readonly installedAt: string;
+  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  readonly updatedAt: string;
   readonly dependencies?: {
     readonly skills?: readonly DependencyRef[];
     readonly mcps?: readonly DependencyRef[];
@@ -103,8 +109,6 @@ export interface Skill {
 
 export interface Agent {
   readonly fqn: string;
-  readonly shortName: string;
-  readonly scope: string;
   readonly origin: string;
   readonly description: string;
   readonly version: string;
@@ -119,6 +123,10 @@ export interface Agent {
    * are user-launchable units worth pausing).
    */
   readonly disabledByUser: boolean;
+  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  readonly installedAt: string;
+  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  readonly updatedAt: string;
   readonly dependencies?: {
     readonly skills?: readonly DependencyRef[];
     readonly mcps?: readonly DependencyRef[];
@@ -126,12 +134,17 @@ export interface Agent {
 }
 
 export interface McpMetadata {
-  readonly name: string;
+  /** Renamed from `name` in catalog v2 (issue #122). */
+  readonly fqn: string;
   readonly origin: string;
   /** See {@link Skill.mutable}. */
   readonly mutable: boolean;
   /** See {@link Skill.orphaned}. MCPs can be orphaned just like skills. */
   readonly orphaned: boolean;
+  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  readonly installedAt: string;
+  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  readonly updatedAt: string;
 }
 
 export interface SkillEntry {
@@ -155,7 +168,8 @@ export interface ResolvedSkill {
 }
 
 export interface ResolvedMcp {
-  readonly name: string;
+  /** Renamed from `name` in catalog v2 (issue #122). */
+  readonly fqn: string;
 }
 
 /**
@@ -178,17 +192,20 @@ export interface SkillResolveResult {
 
 /**
  * Patch shape for {@link CatalogManager.updateSkillMetadata}.
- * Each field is optional; omitted fields preserve their current
- * value. Field-level validation happens inside the catalog (invalid
- * patches throw `FrontmatterError`).
+ *
+ * NOTE (issue #122): the wire shape for `dependencies` on the metadata
+ * patch intentionally remains origin URI strings — the frontmatter
+ * format itself is out of scope for v2, and the patch is applied
+ * verbatim into the YAML block by `applyFrontmatterPatch`. The DTO's
+ * `dependencies` field (read path) uses the new `{ fqn: string }` form.
  */
 export interface SkillMetadataPatch {
   readonly description?: string;
   readonly version?: string;
   readonly prereqs?: string;
   readonly dependencies?: {
-    readonly skills?: readonly DependencyRef[];
-    readonly mcps?: readonly DependencyRef[];
+    readonly skills?: readonly string[];
+    readonly mcps?: readonly string[];
   } | null;
 }
 
@@ -198,7 +215,7 @@ export interface AgentMetadataPatch {
   readonly version?: string;
   readonly prereqs?: string | null;
   readonly dependencies?: {
-    readonly skills?: readonly DependencyRef[];
-    readonly mcps?: readonly DependencyRef[];
+    readonly skills?: readonly string[];
+    readonly mcps?: readonly string[];
   } | null;
 }

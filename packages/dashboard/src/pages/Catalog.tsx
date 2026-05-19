@@ -180,9 +180,9 @@ export function CatalogPage({
         const orphans = mcps.filter((m) => m.orphaned);
         for (const m of orphans) {
           try {
-            await deleteMcp(m.name);
+            await deleteMcp(m.fqn);
           } catch (e) {
-            setError(`failed to remove ${m.name}: ${(e as Error).message}`);
+            setError(`failed to remove ${m.fqn}: ${(e as Error).message}`);
           }
         }
       }
@@ -330,7 +330,7 @@ export function CatalogPage({
               mcps={filteredMcps}
               onEdit={(name) => {
                 setError(null);
-                const m = mcps.find((x) => x.name === name);
+                const m = mcps.find((x) => x.fqn === name);
                 setEdit({ kind: "mcp", name, mutable: m?.mutable ?? true });
               }}
               onRemove={(name) => setConfirmRemove(name)}
@@ -366,7 +366,7 @@ export function CatalogPage({
               <EditDialog
                 target={edit}
                 availableSkills={skills.map((s) => s.skill.fqn)}
-                availableMcps={mcps.map((m) => m.name)}
+                availableMcps={mcps.map((m) => m.fqn)}
                 onClose={() => setEdit(null)}
                 onSaved={() => {
                   setEdit(null);
@@ -477,9 +477,9 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
   // `install` semantically becomes "sync from upstream" (catalog upserts
   // with fresh content). Re-label the primary action so the user knows
   // we're not re-creating; we're updating in place.
-  const rootIsWillSync =
-    manifest !== null &&
-    manifest.nodes.some((n) => n.fqn === manifest.rootFqn && n.status === "will-sync");
+  const rootIsWillSync = manifest?.nodes.some(
+    (n) => n.fqn === manifest.rootFqn && n.status === "will-sync",
+  );
 
   // Per-provider input metadata: label, placeholder, hint. Tweaked per
   // catalog kind (skill vs agent vs mcp) so the hint always matches the
@@ -805,8 +805,8 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
         description: meta.description ?? "",
         version: meta.version ?? "",
         prereqs: "skill" in detail ? (detail.skill.prereqs ?? "") : "",
-        skills: [...(meta.dependencies?.skills ?? [])],
-        mcps: [...(meta.dependencies?.mcps ?? [])],
+        skills: (meta.dependencies?.skills ?? []).map((d) => d.fqn),
+        mcps: (meta.dependencies?.mcps ?? []).map((d) => d.fqn),
       });
       if ("agent" in detail) {
         setAgentDisabledByUser(detail.agent.disabledByUser);
@@ -914,8 +914,8 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
             onChange={setForm}
             availableSkills={availableSkills.filter((n) => n !== target.name)}
             availableMcps={availableMcps}
-            // dep refs are now bare origin strings; surface ones whose
-            // origin isn't in the installed set as missing.
+            // form.skills/mcps are fqn strings (catalog v2); surface
+            // ones not in the installed set as missing.
             missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}
             missingMcps={form.mcps.filter((m) => !availableMcps.includes(m))}
             disabled={saving}
