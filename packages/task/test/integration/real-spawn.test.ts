@@ -97,7 +97,6 @@ class RealNodeRuntime implements Runtime {
     });
 
     return {
-      pid: child.pid as number,
       sessionDir: Promise.resolve(opts.workdir),
       exit,
       kill: () => child.kill(),

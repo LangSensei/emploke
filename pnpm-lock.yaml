@@ -194,6 +194,9 @@ importers:
       '@emploke/fs':
         specifier: workspace:*
         version: link:../fs
+      '@github/copilot-sdk':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4
       cross-spawn:
         specifier: ^7.0.6
         version: 7.0.6
@@ -782,6 +785,66 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@github/copilot-darwin-arm64@1.0.50':
+    resolution: {integrity: sha512-PSqw/QrJelPGa9jHooe9QaTzhLt2DquCj2shyVNgC7bfFKkCFPbY0vBXNAK6TD+REOKaj1vPsGrEt3dYODnzaw==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@github/copilot-darwin-x64@1.0.50':
+    resolution: {integrity: sha512-Z/8DEWmkPpPz0H5oT5m1MAnudFxHkykEmCNWPvQYXMBcUuJ2OdYIt9bWr57nGU+KjY2TcnkoN766rnBm2MwKWQ==}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@github/copilot-linux-arm64@1.0.50':
+    resolution: {integrity: sha512-Hp5Bhmur7N63ngiZTECr1oyLg4kz6GSM4LGinRdI7PcDu9qB/6GYZO41MtwP17PyzNgfP8Gs4Lej2vgVqO3/Dw==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+    hasBin: true
+
+  '@github/copilot-linux-x64@1.0.50':
+    resolution: {integrity: sha512-acjlW1g0sgAfnsBj/JQCdTODKCHRcadVJiJUT3xv7HKTYLVilIU1iwmQAzQ7r3QwmNCOI48FL7usbNiKouop8A==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+    hasBin: true
+
+  '@github/copilot-linuxmusl-arm64@1.0.50':
+    resolution: {integrity: sha512-GRhiIDVBPdit5QItfEvEn3d9mwT6cVFr2Ms5bvtKBLS4Hs7E419dZX66Z6zB2Wjh4u2l4MLjinxVzggcpEx/HQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+    hasBin: true
+
+  '@github/copilot-linuxmusl-x64@1.0.50':
+    resolution: {integrity: sha512-3G0+/4F6SYaj6AfttLqRzp3HO3/6RIdXEqzCirR0E5l4SMjD8mHmTAE8YKbjPl9XGf/wbhyDmSMcIcxj79Mf7w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+    hasBin: true
+
+  '@github/copilot-sdk@1.0.0-beta.4':
+    resolution: {integrity: sha512-DcVMN2FWODxamFS9nTls8AW3QsyMnj6JDVBNRVBXaTY9kEhGHCjt8lp7sJp95/vyl52hvEb4/68Oh6SdFU9O/Q==}
+    engines: {node: '>=20.0.0'}
+
+  '@github/copilot-win32-arm64@1.0.50':
+    resolution: {integrity: sha512-cLSnU+IQ7p0WIdxeaDeTR6rtiSLwHqN+3AkAaOKKBXBsYjmB3Ct6UHqlZf20GtZ5I/K1HH9ZDYRYVKlsA4olJQ==}
+    cpu: [arm64]
+    os: [win32]
+    hasBin: true
+
+  '@github/copilot-win32-x64@1.0.50':
+    resolution: {integrity: sha512-f5cA798nmOj/E7GXuzX2HnPenx8ddp/y87q6hpoU78nySTasWCTvWhckjuJ+fwzJQmp3fORBbL67pDdELvdajA==}
+    cpu: [x64]
+    os: [win32]
+    hasBin: true
+
+  '@github/copilot@1.0.50':
+    resolution: {integrity: sha512-HJFM+LYt5i6shAiTYHolCSQLV9ZzfX/06m7yWht4PiKBE+hO/zxXhqnJFMshqMkFm0Ab3ea0FZDx8CVjdXn5bQ==}
+    hasBin: true
 
   '@hono/node-server@1.19.14':
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
@@ -1597,6 +1660,10 @@ packages:
       jsdom:
         optional: true
 
+  vscode-jsonrpc@8.2.1:
+    resolution: {integrity: sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ==}
+    engines: {node: '>=14.0.0'}
+
   w3c-keyname@2.2.8:
     resolution: {integrity: sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==}
 
@@ -1612,6 +1679,9 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -1933,6 +2003,47 @@ snapshots:
 
   '@esbuild/win32-x64@0.27.7':
     optional: true
+
+  '@github/copilot-darwin-arm64@1.0.50':
+    optional: true
+
+  '@github/copilot-darwin-x64@1.0.50':
+    optional: true
+
+  '@github/copilot-linux-arm64@1.0.50':
+    optional: true
+
+  '@github/copilot-linux-x64@1.0.50':
+    optional: true
+
+  '@github/copilot-linuxmusl-arm64@1.0.50':
+    optional: true
+
+  '@github/copilot-linuxmusl-x64@1.0.50':
+    optional: true
+
+  '@github/copilot-sdk@1.0.0-beta.4':
+    dependencies:
+      '@github/copilot': 1.0.50
+      vscode-jsonrpc: 8.2.1
+      zod: 4.4.3
+
+  '@github/copilot-win32-arm64@1.0.50':
+    optional: true
+
+  '@github/copilot-win32-x64@1.0.50':
+    optional: true
+
+  '@github/copilot@1.0.50':
+    optionalDependencies:
+      '@github/copilot-darwin-arm64': 1.0.50
+      '@github/copilot-darwin-x64': 1.0.50
+      '@github/copilot-linux-arm64': 1.0.50
+      '@github/copilot-linux-x64': 1.0.50
+      '@github/copilot-linuxmusl-arm64': 1.0.50
+      '@github/copilot-linuxmusl-x64': 1.0.50
+      '@github/copilot-win32-arm64': 1.0.50
+      '@github/copilot-win32-x64': 1.0.50
 
   '@hono/node-server@1.19.14(hono@4.12.18)':
     dependencies:
@@ -2684,6 +2795,8 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
+  vscode-jsonrpc@8.2.1: {}
+
   w3c-keyname@2.2.8: {}
 
   which@2.0.2:
@@ -2696,3 +2809,5 @@ snapshots:
       stackback: 0.0.2
 
   wrappy@1.0.2: {}
+
+  zod@4.4.3: {}

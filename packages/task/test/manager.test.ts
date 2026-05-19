@@ -1,4 +1,3 @@
-import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -114,7 +113,6 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
 
 interface SpawnedHandle {
   readonly id: number;
-  readonly pid: number;
   readonly runtimeSessionId: string | undefined;
   resolveSessionDir: (dir: string) => void;
   rejectSessionDir: (err: Error) => void;
@@ -224,7 +222,6 @@ class StubRuntime implements Runtime {
     this.dispatchCalls.push(opts);
 
     const id = this.nextId++;
-    const pid = 10000 + id;
     const runtimeSessionId =
       this.nextRuntimeSessionId !== undefined
         ? this.nextRuntimeSessionId
@@ -258,7 +255,6 @@ class StubRuntime implements Runtime {
     });
 
     const handle: RuntimeHandle = {
-      pid,
       runtimeSessionId,
       sessionDir: sessionDirP,
       exit: exitP,
@@ -277,7 +273,6 @@ class StubRuntime implements Runtime {
 
     const rec: SpawnedHandle = {
       id,
-      pid,
       runtimeSessionId,
       resolveSessionDir,
       rejectSessionDir,
@@ -411,7 +406,6 @@ describe("dispatch — happy path", () => {
     const meta = readTaskRuntimeMetadata(t);
     expect(meta.workdir).toBe(path.join(tasksDir, t.id));
     expect(meta.runtime).toBe("copilot");
-    expect(meta.pid).toBe(rt.handles[0].pid);
     expect(meta.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
 
     // The task row in the repository matches the returned in-memory
@@ -1184,10 +1178,9 @@ describe("shutdown", () => {
 describe("recoverOrphaned", () => {
   it("marks running tasks as failure with reason 'orphaned (...)'", async () => {
     // Hand-craft an on-disk running task without going through dispatch.
-    // Use a PID we just spawned and reaped so `isProcessAlive` is
-    // guaranteed to return false (a hardcoded constant like 99999 might
-    // happen to be alive on a long-running dev machine).
-    const deadPid = await spawnAndReap();
+    // Under the SDK model the CLI subprocess is a child of the emploke
+    // server, so any `running` task at boot is genuinely orphaned —
+    // no per-process liveness probe is needed.
     const id = "20260508-deadbeef";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
@@ -1196,7 +1189,7 @@ describe("recoverOrphaned", () => {
       agent: "demo",
       brief: "do something",
       status: "running",
-      metadata: { pid: deadPid, runtime: "copilot" },
+      metadata: { runtime: "copilot" },
       createdAt: "2026-05-08T01:00:00.000Z",
       startedAt: "2026-05-08T01:00:01.000Z",
     });
@@ -1241,74 +1234,6 @@ describe("recoverOrphaned", () => {
     const { m } = makeManager();
     await expect(m.recoverOrphaned()).resolves.toBeUndefined();
   });
-
-  // Live-PID guard: a `running` task whose recorded PID is still alive
-  // (i.e. the subprocess somehow outlived the server crash) must NOT be
-  // flipped to failure — incorrectly marking a still-active task as
-  // failed is worse than leaving a stale `running` row, because the
-  // subprocess may still be writing real output into the workdir. We
-  // log a warn so operators see the live orphan exists.
-  it("does not flip a running task whose recorded PID is still alive", async () => {
-    const liveChild = nodeSpawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
-    const livePid = liveChild.pid as number;
-    expect(livePid).toBeGreaterThan(0);
-    try {
-      const id = "20260508-aaaaaaaa";
-      const workdir = path.join(tasksDir, id);
-      await mkdir(workdir, { recursive: true });
-      const orphan = Task.fromStored({
-        id,
-        agent: "demo",
-        brief: "do something",
-        status: "running",
-        metadata: { pid: livePid, runtime: "copilot" },
-        createdAt: "2026-05-08T01:00:00.000Z",
-        startedAt: "2026-05-08T01:00:01.000Z",
-      });
-
-      const r = recorder();
-      const { m, repo } = makeManager({ logger: r.logger });
-      await repo.save(orphan);
-      await m.recoverOrphaned();
-
-      const after = await m.get(id);
-      expect(after?.status).toBe("running");
-      expect(after?.failure).toBeUndefined();
-      expect(r.calls.some((c) => c.msg.includes("skipping live orphan"))).toBe(true);
-    } finally {
-      liveChild.kill();
-    }
-  });
-
-  // Pre-PID-probe records (no `metadata.pid`) get the conservative
-  // treatment: assume dead, mark failure. Same behaviour as before
-  // Y3, ensuring we don't introduce a "running forever" regression
-  // for tasks dispatched by older builds.
-  it("marks a running task with no recorded PID as failure", async () => {
-    const id = "20260508-bbbbbbbb";
-    const workdir = path.join(tasksDir, id);
-    await mkdir(workdir, { recursive: true });
-    const orphan = Task.fromStored({
-      id,
-      agent: "demo",
-      brief: "do something",
-      status: "running",
-      metadata: { runtime: "copilot" }, // no pid
-      createdAt: "2026-05-08T01:00:00.000Z",
-      startedAt: "2026-05-08T01:00:01.000Z",
-    });
-    const { m, repo } = makeManager();
-    await repo.save(orphan);
-
-    await m.recoverOrphaned();
-
-    const after = await m.get(id);
-    expect(after?.status).toBe("failure");
-    expect(after?.failure?.kind).toBe("orphan");
-    expect(after?.failure?.message).toMatch(/orphaned/);
-  });
 });
 
 // ───── small fs helpers ────────────────────────────────────
@@ -1350,23 +1275,6 @@ async function awaitTerminal(m: TaskManager, id: string): Promise<Task> {
   });
   if (last === null) throw new Error(`awaitTerminal: task ${id} not found`);
   return last;
-}
-
-/**
- * Spawn a tiny short-lived child, wait for it to exit, and return its
- * PID. The PID is then guaranteed to refer to a *dead* process for the
- * lifetime of the test (PID reuse on the same runner within the test
- * window is theoretically possible but vanishingly unlikely; if it
- * becomes a flake later, retry with a small loop until probe says dead).
- */
-async function spawnAndReap(): Promise<number> {
-  const child = nodeSpawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
-  const pid = child.pid as number;
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw new Error("spawnAndReap: child has no pid");
-  }
-  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  return pid;
 }
 
 // ═════ subprocess env injection ═════════════════════════════════

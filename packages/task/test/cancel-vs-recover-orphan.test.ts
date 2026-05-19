@@ -42,7 +42,8 @@ describe("TaskManager.cancel — vs recoverOrphaned", () => {
       agent: "demo",
       brief: "orphan",
       status: "running",
-      // No pid → recoverOrphaned treats as dead and marks failure.
+      // `running` task with no recorded process — recoverOrphaned
+      // marks it failed at the next bootstrap sweep.
       metadata: { runtime: "copilot" },
       createdAt: "2026-05-18T01:00:00.000Z",
       startedAt: "2026-05-18T01:00:01.000Z",

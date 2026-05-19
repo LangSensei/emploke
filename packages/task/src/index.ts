@@ -7,7 +7,7 @@
  * import { Task } from "@emploke/task";
  *
  * const t0 = Task.create({ agent: "writer", brief: "Draft the post", details: "Tone: warm" });
- * const t1 = t0.start({ metadata: { pid: 12345 } });
+ * const t1 = t0.start({ metadata: { runtimeSessionId: "abcd-1234" } });
  * const t2 = t1.complete("draft.md written");
  * // t2.status === "success", t2.result?.output === "draft.md written"
  * ```
@@ -15,8 +15,9 @@
  * Design:
  *  - `Task` is an immutable DDD entity; every state-transition method
  *    (`start` / `complete` / `fail` / `cancel`) returns a new instance.
- *  - Runtime details (pid, sessionFile, workDir, …) live in `metadata`,
- *    not as named fields, so the entity never has to change.
+ *  - Runtime details (sessionFile, workDir, runtimeSessionId, …) live
+ *    in `metadata`, not as named fields, so the entity never has to
+ *    change.
  *  - State methods throw {@link InvalidTransition} for illegal events.
  *  - There is no pause/resume — emploke runtimes can't truly pause a
  *    detached process. If a "soft pause" UX is needed later, model it

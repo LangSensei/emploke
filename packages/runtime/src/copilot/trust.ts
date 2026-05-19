@@ -21,10 +21,6 @@ import { TrustRegistrationFailed } from "./errors.js";
  *     files and observing that only the `config.json` entry suppressed
  *     the "Confirm folder trust" prompt in `-i` mode.
  *
- *   - Independent verification: a hand-added entry survives a Copilot
- *     `-p --yolo` round-trip without being rewritten or removed, so it
- *     is safe for emploke to keep its own entries here.
- *
  * Using `config.json` is therefore both correct and stable. The previous
  * implementation wrote to `settings.json`, which was a no-op for the
  * trust gate — hence issue #38's report that interactive sessions still
@@ -38,7 +34,7 @@ import { TrustRegistrationFailed } from "./errors.js";
  * every subsequent launch hits the "already covered" early return after
  * a single read. That keeps `trustedFolders` O(workspaces) (one entry
  * per workspace via ancestor coverage) and means workspaces that are
- * only used for non-interactive `-p --yolo` tasks never touch the file.
+ * only used for SDK-headless tasks never touch the file.
  *
  * # Why Copilot-only
  *
@@ -65,8 +61,9 @@ import { TrustRegistrationFailed } from "./errors.js";
  *
  * `configPath` is normally `~/.copilot/config.json` — see the module
  * jsdoc for why this file (and not `settings.json`) is the correct
- * authority for `trustedFolders`. The Copilot `-p --yolo` mode used by
- * `launchCopilotHeadless` has no folder-trust gate at all and therefore does
+ * authority for `trustedFolders`. The SDK-headless mode used by
+ * `launchCopilotHeadless` has no folder-trust gate (the SDK's
+ * `approveAll` permission handler bypasses it) and therefore does
  * NOT call this function.
  *
  * Coverage rules (see `isPathCovered`):

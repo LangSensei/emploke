@@ -306,9 +306,6 @@ export interface LaunchHeadlessOpts {
  * manager discovers the id later via {@link Runtime.readMetadata}.
  */
 export interface RuntimeHandle {
-  /** OS process id of the spawned CLI. */
-  readonly pid: number;
-
   /**
    * Id the runtime minted for the underlying CLI session/state.
    * Optional because only pre-allocating runtimes (Copilot) know it

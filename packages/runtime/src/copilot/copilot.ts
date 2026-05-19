@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { SessionEvent } from "@github/copilot-sdk";
 import {
   RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
@@ -34,6 +35,7 @@ import {
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./launch.js";
 import {
+  type EventBuffer,
   type LaunchCopilotHeadlessDeps,
   type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
@@ -86,44 +88,41 @@ export interface CopilotRuntimeConfig {
   readonly randomUUID?: () => string;
   /**
    * Optional injection of the headless-launch dependencies. Production callers
-   * leave this unset; tests pass a stub spawn / mkdir to avoid actually
-   * launching the CLI. `copilotStateDir` and `randomUUID` here, if
-   * provided, override the top-level options for headless launch only.
+   * leave this unset; tests pass a stub `createClient` / `registerSession`
+   * to avoid actually launching the CLI. Any keys provided here override
+   * the top-level options for headless launch only.
    */
   readonly headlessDeps?: Partial<LaunchCopilotHeadlessDeps>;
 }
 
 /**
- * The Copilot adapter. Pre-allocates a UUID at provision time and threads it
- * through `--resume=<id>` on every launch, so first launch creates the session
- * and subsequent launches resume it. This eliminates the cwd-join logic the
- * old implementation needed (where copilot minted ids and we had to scan all
- * sessions and match by cwd).
+ * The Copilot adapter. For interactive launches it pre-allocates a
+ * UUID at provision time and threads it through `--resume=<id>` so
+ * first launch creates the session and subsequent launches resume it.
+ * For headless launches the SDK mints the session id itself; the
+ * provision-time UUID is unused on that path.
  *
- * # Trust handling — per-mode (Copilot-specific, intentionally NOT abstracted)
+ * # Trust handling — interactive only (Copilot-specific, intentionally NOT abstracted)
  *
- * Trust resolution differs between Copilot's two execution modes; this is
- * a property of the Copilot CLI itself and is intentionally NOT lifted
- * into the cross-runtime `Runtime` interface. Each runtime adapter owns
- * its own preconditions and decides where in its lifecycle to enforce
- * them. There is no `registerWorkspace`-style hook on `Runtime`.
+ * Trust resolution is a property of the Copilot CLI itself and is
+ * intentionally NOT lifted into the cross-runtime `Runtime` interface.
+ * Each runtime adapter owns its own preconditions and decides where in
+ * its lifecycle to enforce them.
  *
  * Empirically verified against Copilot CLI 1.0.44:
  *
- *   | mode                | folder-trust gate?           | how to satisfy                |
- *   |---------------------|------------------------------|-------------------------------|
- *   | `-i` (interactive)  | yes — `cwd` (or an ancestor) | write `cwd` (or an ancestor)  |
- *   |  i.e. `buildInteractiveLaunch` |   must be in            |   to `~/.copilot/config.json` |
- *   |                     |   `config.json.trustedFolders` |  `trustedFolders`           |
- *   |                     |   else CLI shows blocking    |                               |
- *   |                     |   "Confirm folder trust"     |                               |
- *   |                     |   prompt                     |                               |
- *   |---------------------|------------------------------|-------------------------------|
- *   | `-p --yolo`         | none                         | nothing — `--yolo` (which     |
- *   |  i.e. `launchHeadless`|   (verified: even cross-   |   includes `--allow-all-paths`)|
- *   |                     |    drive absolute paths      |   bypasses the gate entirely  |
- *   |                     |    work with empty           |                               |
- *   |                     |    `trustedFolders`)         |                               |
+ *   | mode                          | folder-trust gate?           | how to satisfy                |
+ *   |-------------------------------|------------------------------|-------------------------------|
+ *   | `-i` (interactive)            | yes — `cwd` (or an ancestor) | write `cwd` (or an ancestor)  |
+ *   |  i.e. `buildInteractiveLaunch`|   must be in                 |   to `~/.copilot/config.json` |
+ *   |                               |   `config.json.trustedFolders` |  `trustedFolders`           |
+ *   |                               |   else CLI shows blocking    |                               |
+ *   |                               |   "Confirm folder trust"     |                               |
+ *   |                               |   prompt                     |                               |
+ *   |-------------------------------|------------------------------|-------------------------------|
+ *   | SDK headless                  | none — bypassed by the SDK's | nothing                       |
+ *   |  i.e. `launchHeadless`        |   `approveAll` permission    |                               |
+ *   |                               |   handler                    |                               |
  *
  * Two notes on the table:
  *
@@ -136,10 +135,9 @@ export interface CopilotRuntimeConfig {
  *   `config.json` entry suppresses the prompt.
  *
  * - `--add-dir` is NOT an alternative for `-i` mode (it's a file-access
- *   allowlist for `--allow-all-paths`-style flows; it does not pre-trust
- *   the folder for the interactive trust gate). So per-session
- *   `--add-dir` shims do not work as a transient. The only working knob
- *   for `-i` is the persistent `config.json` entry.
+ *   allowlist; it does not pre-trust the folder for the interactive
+ *   trust gate). The only working knob for `-i` is the persistent
+ *   `config.json` entry.
  *
  * Concretely, `buildInteractiveLaunch(session, workspaceDir)` ensures `workspaceDir`
  * is covered by `config.json.trustedFolders` immediately before returning
@@ -147,8 +145,8 @@ export interface CopilotRuntimeConfig {
  * launches an interactive session, not eagerly when the workspace is
  * registered. The write is idempotent and ancestor-aware: the first
  * launch in a workspace pays one read+write; every subsequent launch
- * passes `isPathCovered` and short-circuits without writing. `launchHeadless`
- * never touches the file because `-p --yolo` does not need trust.
+ * passes `isPathCovered` and short-circuits without writing.
+ * `launchHeadless` never touches the file.
  *
  * SECURITY: every method that would compose `runtimeSessionId` into a
  * filesystem path or a `--resume=<id>` argument runs it through
@@ -181,6 +179,20 @@ export class CopilotRuntime implements Runtime {
   private readonly sharedDir: string;
   private readonly randomUUID: () => string;
   private readonly headlessDeps: Partial<LaunchCopilotHeadlessDeps>;
+
+  /**
+   * Per-task in-memory event buffer. Populated by the SDK-based
+   * launcher (`launchCopilotHeadless`) and consumed by `readActivity` /
+   * `streamActivity`. Keyed by the SDK-minted session id.
+   *
+   * Memory lifetime: a buffer is created on `launchHeadless` and
+   * dropped on `deleteState`. Server restart wipes the map — the
+   * `recoverOrphaned` path in the task manager then falls back to
+   * reading `events.jsonl` off disk (which the SDK's CLI server
+   * also writes; the buffer is a faster in-process mirror, not the
+   * primary truth source).
+   */
+  private readonly sessionBuffers = new Map<string, EventBuffer>();
 
   constructor(config: CopilotRuntimeConfig = {}) {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
@@ -277,6 +289,11 @@ export class CopilotRuntime implements Runtime {
   async deleteState(runtimeSessionId: string): Promise<void> {
     const id = safeCopilotId(runtimeSessionId);
     if (id === null) return;
+    // Drop in-memory buffer FIRST so any in-flight readActivity returns
+    // null promptly. (Best-effort: the map is process-local and not
+    // shared across instances; recoverOrphaned-style multi-instance
+    // setups are out of scope here.)
+    this.sessionBuffers.delete(id);
     const dir = path.join(this.copilotStateDir, id);
     try {
       await rm(dir, { recursive: true, force: true });
@@ -287,18 +304,17 @@ export class CopilotRuntime implements Runtime {
 
   /**
    * Spawn copilot non-interactively against `opts.workdir` to consume
-   * `opts.prompt` unattended. Delegates to `launchCopilotHeadless` so the
-   * spawn machinery stays isolated and unit-testable. The returned
-   * {@link RuntimeHandle} carries the runtime session id (so callers
-   * can persist it for later inspection) and a pre-resolved
-   * `sessionDir` Promise pointing at the just-created
-   * `<copilotStateDir>/<id>/`.
+   * `opts.prompt` unattended. Delegates to {@link launchCopilotHeadless}
+   * (SDK-backed). The returned {@link RuntimeHandle} carries the
+   * SDK-minted session id (so callers can persist it for later
+   * inspection / readActivity / deleteState) and a `sessionDir` Promise
+   * pointing at `<copilotStateDir>/<sessionId>/` (where the SDK's CLI
+   * server writes its `events.jsonl` — kept for recoverOrphaned and
+   * external tooling, not used on the hot path).
    */
   async launchHeadless(opts: LaunchHeadlessOpts): Promise<RuntimeHandle> {
     return launchCopilotHeadless(
       {
-        // launchCopilotHeadless still uses the legacy `taskDir` field
-        // name internally (Copilot-specific impl detail). Map it.
         taskDir: opts.workdir,
         agent: opts.agent,
         catalog: opts.catalog,
@@ -312,7 +328,9 @@ export class CopilotRuntime implements Runtime {
       {
         copilotStateDir: this.copilotStateDir,
         sharedDir: this.sharedDir,
-        randomUUID: this.randomUUID,
+        registerSession: (sessionId, buffer) => {
+          this.sessionBuffers.set(sessionId, buffer);
+        },
         ...this.headlessDeps,
       },
     );
@@ -366,40 +384,55 @@ export class CopilotRuntime implements Runtime {
     }
     const id = safeCopilotId(opts.runtimeSessionId);
     if (id === null) return null;
-    const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
 
-    let raw: string;
+    // Hot path: SDK-backed session has an in-memory buffer populated
+    // by `launchCopilotHeadless`. Serialize the buffer back to JSONL
+    // and reuse the existing parser so the activity item shape
+    // remains identical to the disk-read path (no duplicate parser
+    // to maintain).
+    //
+    // Fall through to disk read when no buffer is present — this
+    // covers (a) sessions that finished + were dropped from the map
+    // (rare; we keep buffers until deleteState), and (b) recovered
+    // orphan tasks after a server restart wiped the map.
+    let raw: string | null = null;
     let truncated: TruncationInfo | undefined;
-    try {
-      const st = await stat(eventsPath);
-      if (st.size > COPILOT_RAW_READ_CAP_BYTES) {
-        // Tail-read: open + position to the last N bytes. We may slice
-        // the first partial line after the cut; the parser drops it
-        // silently (malformed JSON line) and the truncated marker
-        // tells the consumer items were dropped.
-        const fh = await open(eventsPath, "r");
-        try {
-          const buf = Buffer.alloc(COPILOT_RAW_READ_CAP_BYTES);
-          await fh.read(buf, 0, COPILOT_RAW_READ_CAP_BYTES, st.size - COPILOT_RAW_READ_CAP_BYTES);
-          raw = buf.toString("utf8");
-          // Drop the (probably partial) first line.
-          const firstNewline = raw.indexOf("\n");
-          if (firstNewline > 0) raw = raw.slice(firstNewline + 1);
-        } finally {
-          await fh.close();
+    const buffer = this.sessionBuffers.get(id);
+    if (buffer !== undefined) {
+      raw = serializeEventBuffer(buffer);
+    } else {
+      const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
+      try {
+        const st = await stat(eventsPath);
+        if (st.size > COPILOT_RAW_READ_CAP_BYTES) {
+          // Tail-read: open + position to the last N bytes. We may slice
+          // the first partial line after the cut; the parser drops it
+          // silently (malformed JSON line) and the truncated marker
+          // tells the consumer items were dropped.
+          const fh = await open(eventsPath, "r");
+          try {
+            const buf = Buffer.alloc(COPILOT_RAW_READ_CAP_BYTES);
+            await fh.read(buf, 0, COPILOT_RAW_READ_CAP_BYTES, st.size - COPILOT_RAW_READ_CAP_BYTES);
+            raw = buf.toString("utf8");
+            // Drop the (probably partial) first line.
+            const firstNewline = raw.indexOf("\n");
+            if (firstNewline > 0) raw = raw.slice(firstNewline + 1);
+          } finally {
+            await fh.close();
+          }
+          truncated = {
+            reason: "size_limit",
+            droppedBytes: st.size - COPILOT_RAW_READ_CAP_BYTES,
+            hint: `events.jsonl is ${st.size} bytes; read last ${COPILOT_RAW_READ_CAP_BYTES} bytes only. Use task summary endpoint for high-level view.`,
+          };
+        } else {
+          raw = await readFile(eventsPath, "utf8");
         }
-        truncated = {
-          reason: "size_limit",
-          droppedBytes: st.size - COPILOT_RAW_READ_CAP_BYTES,
-          hint: `events.jsonl is ${st.size} bytes; read last ${COPILOT_RAW_READ_CAP_BYTES} bytes only. Use task summary endpoint for high-level view.`,
-        };
-      } else {
-        raw = await readFile(eventsPath, "utf8");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") return null;
+        throw err;
       }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR") return null;
-      throw err;
     }
 
     const allItems = parseCopilotActivity(raw);
@@ -465,18 +498,89 @@ export class CopilotRuntime implements Runtime {
   }
 
   /**
-   * Live-tail variant. Tails `events.jsonl` and yields each new
-   * {@link ActivityItem} as it's parseable. Yields nothing on the
-   * historical content — call {@link readActivity} for that, then
-   * subscribe to this for the live tail (the dashboard pattern).
+   * Live-tail variant. Yields each new {@link ActivityItem} as the
+   * underlying SDK session emits it (or, for orphan-recovered sessions
+   * with no in-memory buffer, by tailing `events.jsonl` from disk).
+   * Yields nothing on the historical content — call {@link readActivity}
+   * for that, then subscribe to this for the live tail (the dashboard
+   * pattern).
    *
-   * Cleanup: stops on `opts.signal` abort or when the file disappears
-   * (workdir purged). Polls fs every {@link COPILOT_TAIL_POLL_MS};
-   * a future iteration could use `fs.watch` on supported platforms.
+   * Cleanup: stops on `opts.signal` abort or when the source ends
+   * (buffer's `finished=true` flag set; or the disk file disappears).
    */
   async *streamActivity(opts: StreamActivityOpts): AsyncIterable<ActivityItem> {
     const id = safeCopilotId(opts.runtimeSessionId);
     if (id === null) return;
+
+    // Hot path: if we have an in-memory buffer, subscribe to it
+    // directly. New SDK events fan out through the buffer's
+    // `subscribers` Set and we yield each event as ActivityItem(s).
+    const memBuffer = this.sessionBuffers.get(id);
+    if (memBuffer !== undefined) {
+      yield* this.streamFromBuffer(memBuffer, opts);
+      return;
+    }
+
+    // Fallback: orphan-recovered session — tail events.jsonl from disk.
+    yield* this.streamFromDisk(id, opts);
+  }
+
+  private async *streamFromBuffer(
+    buffer: EventBuffer,
+    opts: StreamActivityOpts,
+  ): AsyncIterable<ActivityItem> {
+    // Start seq matches readActivity's: if caller passed `after`, the
+    // next event we yield is seq `after + 1`. Otherwise, continue
+    // from after the current buffer length (we do NOT replay history).
+    const startSeq = typeof opts.after === "number" ? opts.after + 1 : buffer.events.length;
+    const parser = new CopilotActivityStreamParser(startSeq);
+
+    // Queue + notify pattern: pending events are pushed into `queue`
+    // by the SDK callback; the generator drains the queue on each
+    // wakeup. Avoids races between "subscriber attached" and
+    // "events arrived" — the subscriber runs synchronously on push,
+    // so any event after registration is captured.
+    const queue: SessionEvent[] = [];
+    let wake: (() => void) | undefined;
+    const subscriber = (event: SessionEvent) => {
+      queue.push(event);
+      wake?.();
+    };
+    buffer.subscribers.add(subscriber);
+    try {
+      while (true) {
+        if (opts.signal?.aborted) return;
+        // Drain anything currently queued.
+        while (queue.length > 0) {
+          if (opts.signal?.aborted) return;
+          const event = queue.shift() as SessionEvent;
+          const result = parser.parseLine(JSON.stringify(event));
+          for (const item of result.items) {
+            yield item;
+          }
+        }
+        // Buffer hit terminal state and there's nothing left to yield.
+        if (buffer.finished) return;
+        // Wait for either a new event or an abort signal.
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          // Abort listener — same-tick resolve so we exit promptly.
+          if (opts.signal) {
+            const onAbort = () => {
+              opts.signal?.removeEventListener("abort", onAbort);
+              resolve();
+            };
+            opts.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        });
+        wake = undefined;
+      }
+    } finally {
+      buffer.subscribers.delete(subscriber);
+    }
+  }
+
+  private async *streamFromDisk(id: string, opts: StreamActivityOpts): AsyncIterable<ActivityItem> {
     const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
 
     // Establish starting offset: end-of-file at subscription time
@@ -584,4 +688,15 @@ const COPILOT_TAIL_POLL_MS = 250;
 function safeCopilotId(id: string | null): string | null {
   if (id === null) return null;
   return isCopilotSessionId(id) ? id : null;
+}
+
+/**
+ * Serialize an {@link EventBuffer} back to the JSONL shape that
+ * {@link parseCopilotActivity} expects. Lets the buffer-backed and
+ * disk-backed `readActivity` paths share the exact same parser.
+ *
+ * One event per line, no trailing newline (parser tolerates either).
+ */
+function serializeEventBuffer(buffer: EventBuffer): string {
+  return buffer.events.map((event) => JSON.stringify(event)).join("\n");
 }
