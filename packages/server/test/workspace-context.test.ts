@@ -57,9 +57,9 @@ async function makeCache() {
 }
 
 describe("WorkspaceContextCache observability", () => {
-  it("emits an info line on first context build, with workspaceId + workdir", async () => {
+  it("emits an info line on first context build, with workspaceId + workspaceDir", async () => {
     const { cap, cache, manager } = await makeCache();
-    const ws = await manager.init({ name: "alpha", workdir: path.join(scratch, "alpha") });
+    const ws = await manager.init({ name: "alpha", workspaceDir: path.join(scratch, "alpha") });
 
     const ctx = await cache.get(ws.id);
     expect(ctx).not.toBeNull();
@@ -67,13 +67,13 @@ describe("WorkspaceContextCache observability", () => {
     const built = cap.entries.find((e) => e.msg === "workspace context built (first request)");
     expect(built).toBeDefined();
     expect(built?.workspaceId).toBe(ws.id);
-    expect(built?.workdir).toBe(ws.workdir);
+    expect(built?.workspaceDir).toBe(ws.workspaceDir);
     expect(typeof built?.dbPath).toBe("string");
   });
 
   it("does NOT re-emit the build line on a cache hit", async () => {
     const { cap, cache, manager } = await makeCache();
-    const ws = await manager.init({ name: "alpha", workdir: path.join(scratch, "alpha") });
+    const ws = await manager.init({ name: "alpha", workspaceDir: path.join(scratch, "alpha") });
 
     await cache.get(ws.id);
     cap.entries.length = 0;
@@ -85,7 +85,7 @@ describe("WorkspaceContextCache observability", () => {
 
   it("emits an info line on invalidate of a loaded entry", async () => {
     const { cap, cache, manager } = await makeCache();
-    const ws = await manager.init({ name: "alpha", workdir: path.join(scratch, "alpha") });
+    const ws = await manager.init({ name: "alpha", workspaceDir: path.join(scratch, "alpha") });
     await cache.get(ws.id);
     cap.entries.length = 0;
 
@@ -104,7 +104,7 @@ describe("WorkspaceContextCache observability", () => {
 
   it("emits an info line on successful reload", async () => {
     const { cap, cache, manager } = await makeCache();
-    const ws = await manager.init({ name: "alpha", workdir: path.join(scratch, "alpha") });
+    const ws = await manager.init({ name: "alpha", workspaceDir: path.join(scratch, "alpha") });
     await cache.get(ws.id);
     cap.entries.length = 0;
 
@@ -117,7 +117,7 @@ describe("WorkspaceContextCache observability", () => {
 
   it("emits a warn line on reload refusal (live tasks)", async () => {
     const { cap, cache, manager } = await makeCache();
-    const ws = await manager.init({ name: "alpha", workdir: path.join(scratch, "alpha") });
+    const ws = await manager.init({ name: "alpha", workspaceDir: path.join(scratch, "alpha") });
     const ctx = await cache.get(ws.id);
     if (ctx === null) throw new Error("expected workspace context");
 

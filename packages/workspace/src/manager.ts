@@ -10,10 +10,14 @@ import { Workspace, workspaceLayout } from "./workspace-entity.js";
 export interface WorkspaceInitOpts {
   /** Display name for the new workspace. Required. 1–64 trimmed chars, no control chars. */
   readonly name: string;
-  /** Absolute path the user picked for the workspace. emploke will mkdir this if it does not exist. */
-  readonly workdir: string;
-  /** Optional UX defaults baked into the workspace metadata. */
-  readonly defaults?: Workspace["defaults"];
+  /**
+   * Absolute path the user picked for the workspace. emploke will mkdir
+   * this if it does not exist. Stored as `workspaces.workspace_dir` —
+   * see the semantic convention in `workspace-entity.ts` for why this
+   * is `workspaceDir` and not the shorter `workdir` (the latter is
+   * reserved for derived per-entity working directories).
+   */
+  readonly workspaceDir: string;
   /**
    * Pin the workspace id (tests / migrations only). Production callers
    * always omit this to let the manager mint a fresh UUID.
@@ -27,19 +31,14 @@ export interface WorkspaceInitOpts {
 export interface WorkspaceUpdatePatch {
   /** New display name. Skipped when `undefined`. */
   readonly name?: string;
-  /**
-   * New defaults block. Pass `null` to clear; pass an object to overwrite
-   * the existing block in full. Skipped when `undefined`.
-   */
-  readonly defaults?: Workspace["defaults"] | null;
 }
 
 /** Options accepted by `WorkspaceManager.delete`. */
 export interface WorkspaceDeleteOpts {
   /**
    * When `true`, also remove every emploke-owned subdirectory under the
-   * workspace's `workdir` (`tasks/`, `sessions/`).
-   * The `workdir` itself is **never** removed —
+   * workspace's `workspaceDir` (`tasks/`, `sessions/`).
+   * The `workspaceDir` itself is **never** removed —
    * it is user-owned and may contain files emploke does not know about.
    *
    * Default `false`: only the workspace metadata is removed; agent
@@ -79,10 +78,10 @@ export class WorkspaceManager {
   }
 
   /**
-   * Register a new workspace. Creates the `workdir` (and standard
+   * Register a new workspace. Creates the `workspaceDir` (and standard
    * subdirs) on disk if they do not already exist, then persists the
    * workspace metadata + index entry. Throws when the workspace is
-   * already registered (use `update` for renames / defaults changes).
+   * already registered (use `update` for renames).
    *
    * The id-uniqueness + path-uniqueness checks are delegated to
    * {@link WorkspaceRepository.create}, which performs them inside the
@@ -99,16 +98,16 @@ export class WorkspaceManager {
     }
 
     const id = opts.id ?? randomUUID();
-    const resolvedWorkdir = path.resolve(opts.workdir);
+    const resolvedWorkspaceDir = path.resolve(opts.workspaceDir);
 
     // Create the workspace directory + standard subdirs. The user's
-    // pre-existing files inside `workdir` are preserved; we only touch
-    // the named subdirs. We do this BEFORE calling repository.create
-    // so the layout is in place by the time the metadata file is
-    // written; if create throws (id or path conflict), the empty
-    // subdirs we just created stick around but are harmless.
-    await mkdir(resolvedWorkdir, { recursive: true });
-    const layout = workspaceLayout(resolvedWorkdir);
+    // pre-existing files inside `workspaceDir` are preserved; we only
+    // touch the named subdirs. We do this BEFORE calling
+    // repository.create so the layout is in place by the time the
+    // metadata row is written; if create throws (id or path conflict),
+    // the empty subdirs we just created stick around but are harmless.
+    await mkdir(resolvedWorkspaceDir, { recursive: true });
+    const layout = workspaceLayout(resolvedWorkspaceDir);
     await Promise.all([
       mkdir(layout.sessions, { recursive: true }),
       mkdir(layout.tasks, { recursive: true }),
@@ -118,31 +117,29 @@ export class WorkspaceManager {
     const workspace = Workspace.create({
       id,
       name: opts.name,
-      workdir: resolvedWorkdir,
+      workspaceDir: resolvedWorkspaceDir,
       createdAt: now().toISOString(),
-      ...(opts.defaults ? { defaults: opts.defaults } : {}),
     });
     await this.repository.create(workspace);
     return workspace;
   }
 
   /**
-   * Update mutable fields (`name`, `defaults`) on a registered
-   * workspace. Throws `WorkspaceNotRegisteredError` when no workspace
-   * with the given id exists — including the rare race where a
-   * concurrent `delete(id)` lands between the manager's `read()` and
-   * `repository.save()` calls (the strict-update semantics in
-   * {@link WorkspaceRepository.save} surface that as a typed 404
-   * instead of silently resurrecting the deleted row).
-   * Cannot be used to change `id` or `workdir` — those are immutable
-   * for the lifetime of the workspace.
+   * Update mutable fields (`name`) on a registered workspace. Throws
+   * `WorkspaceNotRegisteredError` when no workspace with the given id
+   * exists — including the rare race where a concurrent `delete(id)`
+   * lands between the manager's `read()` and `repository.save()` calls
+   * (the strict-update semantics in {@link WorkspaceRepository.save}
+   * surface that as a typed 404 instead of silently resurrecting the
+   * deleted row).
+   * Cannot be used to change `id` or `workspaceDir` — those are
+   * immutable for the lifetime of the workspace.
    */
   async update(id: string, patch: WorkspaceUpdatePatch): Promise<Workspace> {
     const current = await this.repository.read(id);
     if (!current) throw new WorkspaceNotRegisteredError(id);
     const updated = current.withMetadata({
       ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.defaults !== undefined ? { defaults: patch.defaults } : {}),
     });
     await this.repository.save(updated);
     return updated;
@@ -152,20 +149,21 @@ export class WorkspaceManager {
    * Remove a registered workspace. Default behaviour removes only the
    * emploke metadata (the registry row in `global.db`). Pass
    * `{ purge: true }` to additionally rm every emploke-owned
-   * subdirectory under the workspace's `workdir`; the `workdir` itself
-   * is preserved either way (user-owned). Idempotent for unregistered ids.
+   * subdirectory under the workspace's `workspaceDir`; the
+   * `workspaceDir` itself is preserved either way (user-owned).
+   * Idempotent for unregistered ids.
    */
   async delete(id: string, opts: WorkspaceDeleteOpts = {}): Promise<void> {
     if (opts.purge) {
       // Read first, purge subdirs, THEN drop the registry entry.
       // Removing the entry first opens a race window where a concurrent
-      // `init({workdir: same})` could succeed (no path conflict in the
-      // index anymore) and start populating sessions/, tasks/ —
+      // `init({workspaceDir: same})` could succeed (no path conflict in
+      // the index anymore) and start populating sessions/, tasks/ —
       // which the in-flight purge would then nuke. Doing the purge
       // first keeps the path-conflict guard active throughout.
       const current = await this.repository.read(id);
       if (current) {
-        const layout = workspaceLayout(current.workdir);
+        const layout = workspaceLayout(current.workspaceDir);
         await Promise.all([
           rm(layout.sessions, { recursive: true, force: true }),
           rm(layout.tasks, { recursive: true, force: true }),

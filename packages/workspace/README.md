@@ -8,18 +8,18 @@ user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
 (see `Quick start` below). The `$EMPLOKE_HOME/global.db` SQLite registry
 maps opaque UUIDs to absolute workspace paths and stores each
-workspace's display name + defaults — there is no per-workspace
-metadata sidecar file.
+workspace's display name — there is no per-workspace metadata sidecar
+file.
 
 ## Concepts
 
 - **`Workspace`** — DDD entity (class, not interface). Constructed
   via `Workspace.create({...})` for fresh entities and
   `Workspace.fromStored({...})` when rehydrating from storage.
-  Carries `{ id, name, createdAt, workdir, defaults? }`. `workdir` is
+  Carries `{ id, name, createdAt, workspaceDir }`. `workspaceDir` is
   the only filesystem field; everything else is pure metadata. Use
   `withMetadata({...})` to derive a new instance preserving identity
-  (id / workdir / createdAt are immutable across edits).
+  (id / workspaceDir / createdAt are immutable across edits).
 - **The `id`** is an opaque UUID, the URL routing key in the HTTP API.
   Stable for the lifetime of the registry entry — dashboard URLs
   survive workspace renames.
@@ -27,11 +27,17 @@ metadata sidecar file.
   pencil icon. Has no routing significance.
 - **Standard subdirs** — `sessions/` and `tasks/`, plus the
   shared per-workspace `workspace.db`. Created at `init`; computed
-  from `workdir` by the `workspaceLayout` helper. Catalog content
+  from `workspaceDir` by the `workspaceLayout` helper. Catalog content
   (agents/skills/mcps) lives inside `workspace.db` as BLOB rows —
   there is no `<workspace>/catalog/` subdirectory. Subdirs are not
   stored on the entity so the repository contract has no on-disk
   path coupling.
+- **`workspaceDir` vs `workdir`** — `workspaceDir` is the workspace's
+  root directory (this package). `workdir` is reserved for derived
+  per-entity working directories used by downstream packages
+  (`task.workdir = <workspaceDir>/tasks/<id>`, etc.). Both used to
+  share the same name; the v1→v2 migration (issue #121) finally
+  resolved the ambiguity.
 
 ## Quick start
 
@@ -45,13 +51,13 @@ const workspaces = new WorkspaceManager(repo);
 
 const ws = await workspaces.init({
   name: "Acme prod",
-  workdir: "/Users/me/code/acme",
+  workspaceDir: "/Users/me/code/acme",
 });
 // → creates /Users/me/code/acme/{workspace.db,sessions,tasks}
-// → inserts {id, workdir, name, createdAt, defaults} into global.db.workspaces
+// → inserts {id, workspace_dir, name, created_at} into global.db.workspaces
 
-// `workdir` is always required at the manager layer — defaulting it
-// to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
+// `workspaceDir` is always required at the manager layer — defaulting
+// it to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
 // HTTP route (`POST /api/workspaces`), which owns the policy decision
 // of where to put auto-allocated workspaces. The manager stays a
 // pure persistence boundary.
@@ -63,7 +69,7 @@ await workspaces.delete(ws.id);                 // metadata-only
 await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/
 ```
 
-The `workdir` itself is **never** removed by `delete({ purge: true })`
+The `workspaceDir` itself is **never** removed by `delete({ purge: true })`
 — it's user-owned. Only emploke-owned subdirs are wiped.
 
 ## Manager API
@@ -123,12 +129,11 @@ the other SQLite-backed entity packages (`@emploke/task`,
 -- $EMPLOKE_HOME/global.db
 CREATE TABLE workspaces (
   id              TEXT PRIMARY KEY,
-  workdir         TEXT NOT NULL UNIQUE,
+  workspace_dir   TEXT NOT NULL UNIQUE,
   name            TEXT NOT NULL,
   created_at      TEXT NOT NULL,
   registered_at   TEXT NOT NULL,
-  last_opened_at  TEXT,
-  defaults_json   TEXT
+  last_opened_at  TEXT
 );
 CREATE TABLE global_state (
   key   TEXT PRIMARY KEY,
@@ -140,11 +145,11 @@ CREATE TABLE schema_meta (
   pkg     TEXT NOT NULL PRIMARY KEY,
   version INTEGER NOT NULL CHECK (version > 0)
 );
--- workspace pkg owns one row: ('workspace', 1)
+-- workspace pkg owns one row: ('workspace', 2)
 ```
 
-Per-workspace metadata (`name`, `createdAt`, `defaults`) lives in the
-same `workspaces` row as the registry id/workdir/timing — there is
+Per-workspace metadata (`name`, `createdAt`) lives in the same
+`workspaces` row as the registry id/workspaceDir/timing — there is
 no `<workspace>/workspace.json` sidecar. Schema version is tracked
 in the multi-row `schema_meta` table so each entity package can
 bump its own version independently.
@@ -156,9 +161,9 @@ WorkspaceError
 ├── WorkspaceNameInvalidError      400 — name failed validation
 ├── WorkspaceIdInvalidError        400 — id is not a valid UUID
 ├── WorkspaceNotRegisteredError    404 — id has no entry in the index
-├── WorkspaceNotFoundError         404 — workdir gone
+├── WorkspaceNotFoundError         404 — workspaceDir gone
 ├── WorkspaceIdConflictError       409 — init({id}) collision
-├── WorkspacePathConflictError     409 — workdir already registered
+├── WorkspacePathConflictError     409 — workspaceDir already registered
 ├── WorkspaceCorruptedError        500 — workspaces row is unreadable
 └── RegistryError / RegistryCorruptedError / RegistrySchemaMismatchError
 ```
@@ -172,10 +177,10 @@ than failing the whole list. `read(id)` still throws the typed error.
 ```ts
 import { workspaceLayout } from "@emploke/workspace";
 
-const layout = workspaceLayout("/abs/workdir");
+const layout = workspaceLayout("/abs/workspace-dir");
 // {
-//   sessions:  "/abs/workdir/sessions",
-//   tasks:     "/abs/workdir/tasks",
+//   sessions:  "/abs/workspace-dir/sessions",
+//   tasks:     "/abs/workspace-dir/tasks",
 // }
 ```
 

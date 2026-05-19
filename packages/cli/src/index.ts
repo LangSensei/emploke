@@ -267,16 +267,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Create a new workspace")
     .requiredOption("--name <name>", "Display name")
     .option(
-      "--workdir <path>",
+      "--workspace-dir <path>",
       "Absolute filesystem path (default: <EMPLOKE_HOME>/workspaces/<uuid>)",
     )
-    .option("--defaults <json>", "Inline JSON object for the defaults bag")
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await workspaceAdd({
         ...parseConnectFlags(opts),
         name: pickString(opts, "name") ?? "",
-        ...optionalString(opts, "workdir"),
-        ...optionalString(opts, "defaults"),
+        ...optionalString(opts, "workspaceDir"),
       });
     });
   withConnectFlags(workspaceCmd.command("current"))
@@ -304,15 +302,13 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withConnectFlags(workspaceCmd.command("update"))
     .argument("<id>", "Workspace id")
-    .description("Update name / defaults")
+    .description("Update name")
     .option("--name <name>", "New display name")
-    .option("--defaults <json>", "Inline JSON object (or 'null' to clear)")
     .action(async (id: string, opts: Record<string, unknown>) => {
       slot.result = await workspaceUpdate({
         ...parseConnectFlags(opts),
         id,
         ...optionalString(opts, "name"),
-        ...optionalString(opts, "defaults"),
       });
     });
   withConnectFlags(workspaceCmd.command("rm"))
@@ -354,7 +350,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(sessionCmd.command("new"))
     .description("Create a new session")
     .requiredOption("--agent <name>", "Agent to bake into the session")
-    .option("--runtime <kind>", "Runtime override (default: workspace default)")
+    .option("--runtime <kind>", "Runtime override (default: copilot)")
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await sessionNew({
         ...parseWorkspaceFlags(opts),
@@ -424,7 +420,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     )
     .option("--details <text>", "Optional long-form task body (multi-line allowed)")
     .option("--details-file <path>", "Read details from a file (mutually exclusive with --details)")
-    .option("--runtime <kind>", "Runtime override (default: workspace default)")
+    .option("--runtime <kind>", "Runtime override (default: copilot)")
     .action(async (opts: Record<string, unknown>) => {
       const detailsInline = pickString(opts, "details");
       const detailsFile = pickString(opts, "detailsFile");

@@ -41,8 +41,8 @@ const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
 const UUID_BAD = "not-a-uuid";
 
-const sample = (id: string, name: string, workdir: string): Workspace =>
-  Workspace.create({ id, name, workdir });
+const sample = (id: string, name: string, workspaceDir: string): Workspace =>
+  Workspace.create({ id, name, workspaceDir });
 
 describe("SqliteWorkspaceRepository — schema bootstrap", () => {
   it("coordinator creates schema_meta + workspaces + global_state", () => {
@@ -64,7 +64,7 @@ describe("SqliteWorkspaceRepository — schema bootstrap", () => {
     const row = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("workspace") as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(1);
+    expect(row?.version).toBe(2);
   });
 
   it("re-opening an already-initialised DB is a no-op", () => {
@@ -102,22 +102,7 @@ describe("SqliteWorkspaceRepository — create + read round-trip", () => {
     const back = await repo.read(UUID_A);
     expect(back?.id).toBe(UUID_A);
     expect(back?.name).toBe("Project A");
-    expect(back?.workdir).toBe(path.resolve(wsdir));
-  });
-
-  it("create persists defaults round-trip", async () => {
-    const repo = new SqliteWorkspaceRepository({ db });
-    const wsdir = path.join(scratch, "p");
-    await repo.create(
-      Workspace.create({
-        id: UUID_A,
-        name: "Project A",
-        workdir: wsdir,
-        defaults: { runtime: "copilot", agent: "writer" },
-      }),
-    );
-    const back = await repo.read(UUID_A);
-    expect(back?.defaults).toEqual({ runtime: "copilot", agent: "writer" });
+    expect(back?.workspaceDir).toBe(path.resolve(wsdir));
   });
 
   it("read returns null for unknown id", async () => {
@@ -138,7 +123,7 @@ describe("SqliteWorkspaceRepository — create + read round-trip", () => {
     ).rejects.toBeInstanceOf(WorkspaceIdConflictError);
   });
 
-  it("create throws WorkspacePathConflictError when the workdir is already registered", async () => {
+  it("create throws WorkspacePathConflictError when the workspaceDir is already registered", async () => {
     const repo = new SqliteWorkspaceRepository({ db });
     await repo.create(sample(UUID_A, "first", path.join(scratch, "shared")));
     await expect(
@@ -186,7 +171,7 @@ describe("SqliteWorkspaceRepository — save (strict update)", () => {
     ).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
   });
 
-  it("save throws WorkspacePathConflictError when another id owns the workdir", async () => {
+  it("save throws WorkspacePathConflictError when another id owns the workspaceDir", async () => {
     const repo = new SqliteWorkspaceRepository({ db });
     await repo.create(sample(UUID_A, "first", path.join(scratch, "a")));
     await repo.create(sample(UUID_B, "second", path.join(scratch, "b")));
@@ -301,7 +286,7 @@ describe("WorkspaceManager backed by SqliteWorkspaceRepository", () => {
     const repo = new SqliteWorkspaceRepository({ db });
     const m = new WorkspaceManager(repo);
     const wsdir = path.join(scratch, "p");
-    const ws = await m.init({ id: UUID_A, name: "Project", workdir: wsdir });
+    const ws = await m.init({ id: UUID_A, name: "Project", workspaceDir: wsdir });
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("Project");
     const fsImport = await import("node:fs/promises");
@@ -329,7 +314,7 @@ describe("SqliteWorkspaceRepository — close()", () => {
     // exercised. With journal_mode=DELETE the sidecar is gone after
     // commit, but the test stays correct under future PRAGMA changes.
     await repo.create(
-      Workspace.create({ id: UUID_A, name: "x", workdir: path.join(scratch, "x") }),
+      Workspace.create({ id: UUID_A, name: "x", workspaceDir: path.join(scratch, "x") }),
     );
 
     repo.close();
@@ -345,7 +330,7 @@ describe("SqliteWorkspaceRepository — close()", () => {
     const fileDb = new DatabaseSync(dbFile);
     runPkgMigrationsSync(fileDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
     const m = new WorkspaceManager(new SqliteWorkspaceRepository({ db: fileDb }));
-    await m.init({ id: UUID_A, name: "y", workdir: path.join(scratch, "y") });
+    await m.init({ id: UUID_A, name: "y", workspaceDir: path.join(scratch, "y") });
 
     m.close();
     m.close();

@@ -8,7 +8,11 @@ import type { Migration } from "../migration/types.js";
  *
  *   - `workspaces` — one row per registered workspace. Holds id,
  *     workdir, display name, timestamps, and a `defaults_json`
- *     blob for UX defaults (preferred runtime / agent).
+ *     blob for UX defaults (preferred runtime / agent). Both
+ *     `defaults_json` and the `workdir` column name are superseded
+ *     by the v1→v2 migration (issue #121); the v0→v1 DDL stays
+ *     verbatim so existing v1 databases keep migrating into v2
+ *     through the canonical chain.
  *   - `global_state` — opaque key/value bag used today only for the
  *     `current_workspace_id` pointer, with room for future
  *     process-wide settings without a schema bump.

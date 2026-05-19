@@ -51,7 +51,7 @@ afterEach(async () => {
 });
 
 async function ensureWorkspace(name: string): Promise<Workspace> {
-  return workspaces.init({ name, workdir: path.join(scratch, name) });
+  return workspaces.init({ name, workspaceDir: path.join(scratch, name) });
 }
 
 function mountApp() {

@@ -667,8 +667,9 @@ export const spawnSession = async (
  * A registered workspace, as returned by the `/api/workspaces` family of
  * endpoints. The shape mirrors the server's `Workspace` domain type — flat,
  * no `metadata` wrapper, no `schemaVersion` (that's a Repository-internal
- * concern). `workdir` is the only filesystem path field; everything else is
- * pure metadata that survives a backend swap (FS today, SQLite tomorrow).
+ * concern). `workspaceDir` is the only filesystem path field; everything
+ * else is pure metadata that survives a backend swap (FS today, SQLite
+ * tomorrow).
  */
 export interface WorkspaceListItem {
   /** Opaque UUID; the URL routing key. */
@@ -677,13 +678,8 @@ export interface WorkspaceListItem {
   name: string;
   /** ISO 8601 UTC timestamp at creation. */
   createdAt: string;
-  /** Absolute filesystem path the agents work under. */
-  workdir: string;
-  /** Optional UX defaults for sessions/tasks dispatched in this workspace. */
-  defaults?: {
-    runtime?: string;
-    agent?: string;
-  };
+  /** Absolute filesystem path the workspace lives under. */
+  workspaceDir: string;
 }
 
 export const listWorkspaces = (): Promise<WorkspaceListItem[]> =>
@@ -706,12 +702,11 @@ export const addWorkspace = async (opts: {
   name: string;
   /** Optional. When omitted, the server creates a fresh
    *  `<EMPLOKE_HOME>/workspaces/<uuid>/` directory. */
-  workdir?: string;
-  defaults?: WorkspaceListItem["defaults"];
+  workspaceDir?: string;
 }): Promise<CreatedWorkspace> => {
   const body: Record<string, unknown> = { name: opts.name };
-  if (opts.workdir !== undefined && opts.workdir !== "") body.workdir = opts.workdir;
-  if (opts.defaults !== undefined) body.defaults = opts.defaults;
+  if (opts.workspaceDir !== undefined && opts.workspaceDir !== "")
+    body.workspaceDir = opts.workspaceDir;
   return mutateJson<CreatedWorkspace>("/api/workspaces", jsonInit("POST", body));
 };
 
@@ -723,8 +718,8 @@ export const addWorkspace = async (opts: {
  * agent-produced sessions/, tasks/) stay on disk untouched.
  *
  * Pass `{ purge: true }` to also rm every emploke-owned subdirectory under
- * the workspace's workdir. The workdir itself is never removed — that's
- * user-owned and outside the manager's purview.
+ * the workspace's workspaceDir. The workspaceDir itself is never removed —
+ * that's user-owned and outside the manager's purview.
  */
 export const removeWorkspace = (id: string, opts?: { purge?: boolean }) => {
   const qs = opts?.purge ? "?purge=1" : "";
@@ -733,7 +728,7 @@ export const removeWorkspace = (id: string, opts?: { purge?: boolean }) => {
 
 export const updateWorkspaceMetadata = async (
   id: string,
-  patch: { name?: string; defaults?: WorkspaceListItem["defaults"] | null },
+  patch: { name?: string },
 ): Promise<WorkspaceListItem> =>
   mutateJson<WorkspaceListItem>(
     `/api/workspaces/${encodeURIComponent(id)}`,

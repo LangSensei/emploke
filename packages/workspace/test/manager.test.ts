@@ -38,14 +38,14 @@ const UUID_B = "22222222-2222-4222-8222-222222222222";
 const newSqliteManager = () => new WorkspaceManager(new SqliteWorkspaceRepository({ db }));
 
 describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
-  it("creates the workdir + standard subdirs and persists the workspace", async () => {
+  it("creates the workspaceDir + standard subdirs and persists the workspace", async () => {
     const m = newSqliteManager();
     const wsDir = path.join(scratch, "p");
-    const ws = await m.init({ id: UUID_A, name: "My Project", workdir: wsDir });
+    const ws = await m.init({ id: UUID_A, name: "My Project", workspaceDir: wsDir });
 
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("My Project");
-    expect(ws.workdir).toBe(path.resolve(wsDir));
+    expect(ws.workspaceDir).toBe(path.resolve(wsDir));
     // Standard subdirs were created. There is no `catalog/` —
     // catalog content lives inside `workspace.db` as BLOB rows.
     const fsImport = await import("node:fs/promises");
@@ -61,23 +61,23 @@ describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
 
   it("rejects an invalid display name", async () => {
     const m = newSqliteManager();
-    await expect(m.init({ name: "", workdir: path.join(scratch, "x") })).rejects.toThrow();
+    await expect(m.init({ name: "", workspaceDir: path.join(scratch, "x") })).rejects.toThrow();
   });
 
-  it("rejects when the same workdir is registered twice with different ids", async () => {
+  it("rejects when the same workspaceDir is registered twice with different ids", async () => {
     const m = newSqliteManager();
     const wsDir = path.join(scratch, "shared");
-    await m.init({ id: UUID_A, name: "A", workdir: wsDir });
-    await expect(m.init({ id: UUID_B, name: "B", workdir: wsDir })).rejects.toBeInstanceOf(
+    await m.init({ id: UUID_A, name: "A", workspaceDir: wsDir });
+    await expect(m.init({ id: UUID_B, name: "B", workspaceDir: wsDir })).rejects.toBeInstanceOf(
       WorkspacePathConflictError,
     );
   });
 
   it("rejects when the same id is initialized twice (sequential)", async () => {
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "First", workdir: path.join(scratch, "first") });
+    await m.init({ id: UUID_A, name: "First", workspaceDir: path.join(scratch, "first") });
     await expect(
-      m.init({ id: UUID_A, name: "Second", workdir: path.join(scratch, "second") }),
+      m.init({ id: UUID_A, name: "Second", workspaceDir: path.join(scratch, "second") }),
     ).rejects.toBeInstanceOf(WorkspaceIdConflictError);
   });
 
@@ -91,23 +91,23 @@ describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
     const dirA = path.join(scratch, "race-a");
     const dirB = path.join(scratch, "race-b");
     const results = await Promise.allSettled([
-      m.init({ id: UUID_A, name: "First", workdir: dirA }),
-      m.init({ id: UUID_A, name: "Second", workdir: dirB }),
+      m.init({ id: UUID_A, name: "First", workspaceDir: dirA }),
+      m.init({ id: UUID_A, name: "Second", workspaceDir: dirB }),
     ]);
     const fulfilled = results.filter((r) => r.status === "fulfilled");
     const rejected = results.filter((r) => r.status === "rejected");
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(WorkspaceIdConflictError);
-    // The winning workdir is whichever call reached the lock first.
+    // The winning workspaceDir is whichever call reached the lock first.
     const back = await m.read(UUID_A);
     expect(back).not.toBeNull();
-    expect([path.resolve(dirA), path.resolve(dirB)]).toContain(back!.workdir);
+    expect([path.resolve(dirA), path.resolve(dirB)]).toContain(back!.workspaceDir);
   });
 
   it("auto-mints an id when none is supplied", async () => {
     const m = newSqliteManager();
-    const ws = await m.init({ name: "Auto", workdir: path.join(scratch, "auto") });
+    const ws = await m.init({ name: "Auto", workspaceDir: path.join(scratch, "auto") });
     expect(ws.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 });
@@ -115,8 +115,8 @@ describe("WorkspaceManager (SqliteWorkspaceRepository) — init", () => {
 describe("WorkspaceManager — list / read", () => {
   it("list returns all registered workspaces", async () => {
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
-    await m.init({ id: UUID_B, name: "B", workdir: path.join(scratch, "b") });
+    await m.init({ id: UUID_A, name: "A", workspaceDir: path.join(scratch, "a") });
+    await m.init({ id: UUID_B, name: "B", workspaceDir: path.join(scratch, "b") });
     const all = await m.list();
     expect(all.map((w) => w.id).sort()).toEqual([UUID_A, UUID_B].sort());
   });
@@ -130,23 +130,11 @@ describe("WorkspaceManager — list / read", () => {
 describe("WorkspaceManager — update", () => {
   it("renames a workspace and preserves immutable fields", async () => {
     const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "Old", workdir: path.join(scratch, "x") });
+    const ws = await m.init({ id: UUID_A, name: "Old", workspaceDir: path.join(scratch, "x") });
     const updated = await m.update(UUID_A, { name: "New" });
     expect(updated.name).toBe("New");
-    expect(updated.workdir).toBe(ws.workdir);
+    expect(updated.workspaceDir).toBe(ws.workspaceDir);
     expect(updated.createdAt).toBe(ws.createdAt);
-  });
-
-  it("clears defaults when passed null", async () => {
-    const m = newSqliteManager();
-    await m.init({
-      id: UUID_A,
-      name: "X",
-      workdir: path.join(scratch, "x"),
-      defaults: { runtime: "copilot" },
-    });
-    const updated = await m.update(UUID_A, { defaults: null });
-    expect(updated.defaults).toBeUndefined();
   });
 
   it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
@@ -169,7 +157,7 @@ describe("WorkspaceManager — update", () => {
     // manager* between init and update; the update then takes the
     // rejected branch.
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "Pre-delete", workdir: path.join(scratch, "race") });
+    await m.init({ id: UUID_A, name: "Pre-delete", workspaceDir: path.join(scratch, "race") });
     await m.delete(UUID_A);
     await expect(m.update(UUID_A, { name: "Would resurrect" })).rejects.toBeInstanceOf(
       WorkspaceNotRegisteredError,
@@ -179,14 +167,14 @@ describe("WorkspaceManager — update", () => {
 });
 
 describe("WorkspaceManager — delete", () => {
-  it("default delete removes only metadata; workdir contents preserved", async () => {
+  it("default delete removes only metadata; workspaceDir contents preserved", async () => {
     const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
-    // Drop a user file inside the workdir (NOT in an emploke-owned subdir).
+    const ws = await m.init({ id: UUID_A, name: "X", workspaceDir: path.join(scratch, "x") });
+    // Drop a user file inside the workspaceDir (NOT in an emploke-owned subdir).
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user data", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "user-file.txt"), "user data", "utf8");
     await fs.writeFile(
-      path.join(ws.workdir, "sessions", "session-trace.txt"),
+      path.join(ws.workspaceDir, "sessions", "session-trace.txt"),
       "agent file",
       "utf8",
     );
@@ -194,32 +182,36 @@ describe("WorkspaceManager — delete", () => {
     await m.delete(UUID_A);
     expect(await m.read(UUID_A)).toBeNull();
     // user file preserved
-    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user data");
-    // sessions subdir preserved (not purged by default)
-    expect(await fs.readFile(path.join(ws.workdir, "sessions", "session-trace.txt"), "utf8")).toBe(
-      "agent file",
+    expect(await fs.readFile(path.join(ws.workspaceDir, "user-file.txt"), "utf8")).toBe(
+      "user data",
     );
+    // sessions subdir preserved (not purged by default)
+    expect(
+      await fs.readFile(path.join(ws.workspaceDir, "sessions", "session-trace.txt"), "utf8"),
+    ).toBe("agent file");
   });
 
-  it("purge=true also removes emploke-owned subdirs but preserves workdir + user files", async () => {
+  it("purge=true also removes emploke-owned subdirs but preserves workspaceDir + user files", async () => {
     const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const ws = await m.init({ id: UUID_A, name: "X", workspaceDir: path.join(scratch, "x") });
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path.join(ws.workdir, "user-file.txt"), "user data", "utf8");
-    await fs.writeFile(path.join(ws.workdir, "sessions", "trace.txt"), "agent", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "user-file.txt"), "user data", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "sessions", "trace.txt"), "agent", "utf8");
 
     await m.delete(UUID_A, { purge: true });
     expect(await m.read(UUID_A)).toBeNull();
     // every emploke-owned subdir gone — pin both so a future
     // accidental drop from the purge list (or a layout addition that
     // forgets a corresponding rm) gets caught.
-    await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
-    await expect(fs.stat(path.join(ws.workdir, "tasks"))).rejects.toThrow();
-    // workdir itself preserved
-    const st = await fs.stat(ws.workdir);
+    await expect(fs.stat(path.join(ws.workspaceDir, "sessions"))).rejects.toThrow();
+    await expect(fs.stat(path.join(ws.workspaceDir, "tasks"))).rejects.toThrow();
+    // workspaceDir itself preserved
+    const st = await fs.stat(ws.workspaceDir);
     expect(st.isDirectory()).toBe(true);
     // user file preserved
-    expect(await fs.readFile(path.join(ws.workdir, "user-file.txt"), "utf8")).toBe("user data");
+    expect(await fs.readFile(path.join(ws.workspaceDir, "user-file.txt"), "utf8")).toBe(
+      "user data",
+    );
   });
 
   it("delete is idempotent for unregistered ids", async () => {
@@ -230,26 +222,26 @@ describe("WorkspaceManager — delete", () => {
 
   it("delete(purge:true) purges sandbox dirs BEFORE removing the registry entry", async () => {
     // Regression: removing the index entry first opens a window where
-    // a concurrent init({workdir: same}) could succeed and start
+    // a concurrent init({workspaceDir: same}) could succeed and start
     // populating sandbox dirs that the in-flight purge would then
     // wipe. Purge-then-delete keeps the path-conflict guard active
     // throughout the sandbox cleanup.
     const m = newSqliteManager();
-    const ws = await m.init({ id: UUID_A, name: "X", workdir: path.join(scratch, "x") });
+    const ws = await m.init({ id: UUID_A, name: "X", workspaceDir: path.join(scratch, "x") });
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path.join(ws.workdir, "sessions", "marker.txt"), "x", "utf8");
+    await fs.writeFile(path.join(ws.workspaceDir, "sessions", "marker.txt"), "x", "utf8");
 
-    // Concurrent init({workdir: ws.workdir}) attempted while the purge is
+    // Concurrent init({workspaceDir: ws.workspaceDir}) attempted while the purge is
     // running must throw WorkspacePathConflictError — meaning the
     // registry entry is still present at the moment the conflict check
     // runs. We approximate this by attempting init right after delete
-    // returns and asserting the new entry sees the now-empty workdir
+    // returns and asserting the new entry sees the now-empty workspaceDir
     // (post-purge) without colliding.
     await m.delete(UUID_A, { purge: true });
     expect(await m.read(UUID_A)).toBeNull();
-    await expect(fs.stat(path.join(ws.workdir, "sessions"))).rejects.toThrow();
+    await expect(fs.stat(path.join(ws.workspaceDir, "sessions"))).rejects.toThrow();
     // Workdir itself preserved.
-    const st = await fs.stat(ws.workdir);
+    const st = await fs.stat(ws.workspaceDir);
     expect(st.isDirectory()).toBe(true);
   });
 });
@@ -262,7 +254,7 @@ describe("WorkspaceManager — current selection", () => {
 
   it("setCurrent + getCurrent round-trip", async () => {
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
+    await m.init({ id: UUID_A, name: "A", workspaceDir: path.join(scratch, "a") });
     await m.setCurrent(UUID_A);
     expect(await m.getCurrent()).toBe(UUID_A);
   });
@@ -274,7 +266,7 @@ describe("WorkspaceManager — current selection", () => {
 
   it("delete clears currentId when the deleted workspace was current", async () => {
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "A", workdir: path.join(scratch, "a") });
+    await m.init({ id: UUID_A, name: "A", workspaceDir: path.join(scratch, "a") });
     await m.setCurrent(UUID_A);
     await m.delete(UUID_A);
     expect(await m.getCurrent()).toBeNull();
@@ -291,8 +283,8 @@ describe("SqliteWorkspaceRepository — corruption / schema mismatch", () => {
 
   it("an out-of-band corrupted row is dropped from list (warns), still throws on read(id)", async () => {
     const m = newSqliteManager();
-    await m.init({ id: UUID_A, name: "Healthy", workdir: path.join(scratch, "h") });
-    await m.init({ id: UUID_B, name: "Bad", workdir: path.join(scratch, "b") });
+    await m.init({ id: UUID_A, name: "Healthy", workspaceDir: path.join(scratch, "h") });
+    await m.init({ id: UUID_B, name: "Bad", workspaceDir: path.join(scratch, "b") });
     // Forge a corrupt row by direct UPDATE — overwrite name with empty string.
     db.prepare("UPDATE workspaces SET name = '' WHERE id = ?").run(UUID_B);
 

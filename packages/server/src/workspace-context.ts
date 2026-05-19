@@ -263,7 +263,7 @@ export class WorkspaceContextCache {
     const workspace = await this.workspaces.read(id);
     if (!workspace) return null;
 
-    const layout = workspaceLayout(workspace.workdir);
+    const layout = workspaceLayout(workspace.workspaceDir);
 
     // Open the per-workspace SQLite database. One connection serves
     // every entity (catalog, session, task, future workflow). PRAGMAs
@@ -274,9 +274,9 @@ export class WorkspaceContextCache {
     // on the file lock instead of immediately surfacing SQLITE_BUSY —
     // useful when the dashboard's poll cadence overlaps with a
     // long-running install.
-    const dbPath = path.join(workspace.workdir, "workspace.db");
+    const dbPath = path.join(workspace.workspaceDir, "workspace.db");
     const { mkdir } = await import("node:fs/promises");
-    await mkdir(workspace.workdir, { recursive: true });
+    await mkdir(workspace.workspaceDir, { recursive: true });
     const db = new DatabaseSync(dbPath);
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
@@ -321,7 +321,7 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
-      workspaceDir: workspace.workdir,
+      workspaceDir: workspace.workspaceDir,
       workspaceId: id,
       subprocessEnv: this.subprocessEnvBase,
       repository: new SqliteSessionRepository({ db, logger: this.logger }),
@@ -332,7 +332,7 @@ export class WorkspaceContextCache {
       catalog,
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
-      workspaceDir: workspace.workdir,
+      workspaceDir: workspace.workspaceDir,
       workspaceId: id,
       subprocessEnv: this.subprocessEnvBase,
       repository: new SqliteTaskRepository({ db, logger: this.logger }),
@@ -348,7 +348,7 @@ export class WorkspaceContextCache {
     this.logger.info(
       {
         workspaceId: id,
-        workdir: workspace.workdir,
+        workspaceDir: workspace.workspaceDir,
         dbPath,
       },
       "workspace context built (first request)",

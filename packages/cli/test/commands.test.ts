@@ -133,7 +133,7 @@ describe("API commands (integration)", () => {
         "add",
         "--name",
         "Sandbox",
-        "--workdir",
+        "--workspace-dir",
         path.join(home, "ws-sandbox"),
         "--json",
       ],
@@ -200,7 +200,7 @@ describe("API commands (integration)", () => {
   });
 
   it("`workspace add` without --name fails with usage exit 2", async () => {
-    const res = await run(["workspace", "add", "--workdir", "/tmp/x"], env);
+    const res = await run(["workspace", "add", "--workspace-dir", "/tmp/x"], env);
     expect(res.exitCode).toBe(2);
     expect(res.stderr.toLowerCase()).toContain("required");
   });

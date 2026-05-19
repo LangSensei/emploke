@@ -65,7 +65,7 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  *
  * `defaultWorkspaceParent` is the directory under which auto-generated
  * workspace directories are created when the user creates a workspace
- * without specifying a `workdir`. Server bootstrap passes
+ * without specifying a `workspaceDir`. Server bootstrap passes
  * `<EMPLOKE_HOME>/workspaces`; the route mints a fresh UUID-named
  * directory under it per such request.
  */
@@ -90,19 +90,24 @@ export function workspacesRoutes(deps: {
         id: ws.id,
         name: ws.name,
         createdAt: ws.createdAt,
-        workdir: ws.workdir,
-        ...(ws.defaults ? { defaults: ws.defaults } : {}),
+        workspaceDir: ws.workspaceDir,
       })),
     );
   });
 
   // Add a workspace: init the directory + register it. The id is
-  // generated server-side. The display name is mandatory; `workdir` is
-  // optional — when omitted, the server generates a fresh
+  // generated server-side. The display name is mandatory; `workspaceDir`
+  // is optional — when omitted, the server generates a fresh
   // `<defaultWorkspaceParent>/<uuid>/` directory and uses that. The
   // generated dir name is intentionally a UUID (not the display name)
   // so renames stay free and two workspaces with the same display name
   // don't collide on disk.
+  //
+  // Wire-break note (issue #121): the pre-v2 field name `workdir` and
+  // the entire `defaults` block are gone. We don't 400 callers who
+  // still send them — extra fields are silently dropped — but they
+  // also don't bind to anything, so a client that relied on either
+  // will see its value disappear on round-trip.
   app.post("/", async (c) => {
     const parsed = await parseJsonBody<CreateBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -110,9 +115,9 @@ export function workspacesRoutes(deps: {
     if (typeof body.name !== "string") {
       return c.json({ error: "name is required (string)" }, 400);
     }
-    let workdir: string;
+    let workspaceDir: string;
     let preallocatedId: string | undefined;
-    if (body.workdir === undefined || body.workdir === null || body.workdir === "") {
+    if (body.workspaceDir === undefined || body.workspaceDir === null || body.workspaceDir === "") {
       // Auto-generate. Mint the workspace id here and reuse it as the
       // on-disk dir name so the registry id and the directory basename
       // stay coupled — `ls $EMPLOKE_HOME/workspaces/` reads as "list
@@ -120,17 +125,11 @@ export function workspacesRoutes(deps: {
       // on disk. We don't mkdir here — `WorkspaceManager.init` does
       // that idempotently.
       preallocatedId = randomUUID();
-      workdir = path.join(defaultWorkspaceParent, preallocatedId);
-    } else if (typeof body.workdir !== "string" || body.workdir.trim() === "") {
-      return c.json({ error: "workdir, when present, must be a non-empty string" }, 400);
+      workspaceDir = path.join(defaultWorkspaceParent, preallocatedId);
+    } else if (typeof body.workspaceDir !== "string" || body.workspaceDir.trim() === "") {
+      return c.json({ error: "workspaceDir, when present, must be a non-empty string" }, 400);
     } else {
-      workdir = path.resolve(body.workdir);
-    }
-    if (
-      body.defaults !== undefined &&
-      (body.defaults === null || typeof body.defaults !== "object" || Array.isArray(body.defaults))
-    ) {
-      return c.json({ error: "defaults, when present, must be an object" }, 400);
+      workspaceDir = path.resolve(body.workspaceDir);
     }
 
     const initOpts: {
@@ -139,27 +138,23 @@ export function workspacesRoutes(deps: {
       >[0][K];
     } = {
       name: body.name,
-      workdir,
+      workspaceDir,
     };
     if (preallocatedId !== undefined) initOpts.id = preallocatedId;
-    if (body.defaults && typeof body.defaults === "object") {
-      initOpts.defaults = body.defaults as Parameters<WorkspaceManager["init"]>[0]["defaults"];
-    }
 
     try {
       const ws = await manager.init(initOpts);
       logEvent(c, "workspace created", {
         workspaceId: ws.id,
         name: ws.name,
-        workdir: ws.workdir,
+        workspaceDir: ws.workspaceDir,
       });
       return c.json(
         {
           id: ws.id,
           name: ws.name,
           createdAt: ws.createdAt,
-          workdir: ws.workdir,
-          ...(ws.defaults ? { defaults: ws.defaults } : {}),
+          workspaceDir: ws.workspaceDir,
         },
         201,
       );
@@ -213,12 +208,15 @@ export function workspacesRoutes(deps: {
       id: ws.id,
       name: ws.name,
       createdAt: ws.createdAt,
-      workdir: ws.workdir,
-      ...(ws.defaults ? { defaults: ws.defaults } : {}),
+      workspaceDir: ws.workspaceDir,
     });
   });
 
-  // Update a workspace's mutable fields (name, defaults).
+  // Update a workspace's mutable fields (name).
+  //
+  // Wire-break note (issue #121): the `defaults` field on the patch is
+  // gone. The only mutable field today is `name`. If patch shape grows
+  // again in a future PR, add the new fields here.
   app.patch("/:id", async (c) => {
     const id = c.req.param("id");
     const parsed = await parseJsonBody<PatchBodyRaw>(c);
@@ -232,17 +230,8 @@ export function workspacesRoutes(deps: {
       }
       patch.name = body.name;
     }
-    if (body.defaults !== undefined) {
-      if (body.defaults === null) {
-        patch.defaults = null;
-      } else if (typeof body.defaults !== "object" || Array.isArray(body.defaults)) {
-        return c.json({ error: "defaults, when present, must be an object or null" }, 400);
-      } else {
-        patch.defaults = body.defaults as WorkspaceUpdatePatch["defaults"];
-      }
-    }
-    if (patch.name === undefined && patch.defaults === undefined) {
-      return c.json({ error: "patch must include at least one of: name, defaults" }, 400);
+    if (patch.name === undefined) {
+      return c.json({ error: "patch must include 'name'" }, 400);
     }
 
     try {
@@ -251,14 +240,12 @@ export function workspacesRoutes(deps: {
       logEvent(c, "workspace updated", {
         workspaceId: id,
         ...(patch.name !== undefined ? { newName: patch.name } : {}),
-        ...(patch.defaults !== undefined ? { defaultsChanged: true } : {}),
       });
       return c.json({
         id: updated.id,
         name: updated.name,
         createdAt: updated.createdAt,
-        workdir: updated.workdir,
-        ...(updated.defaults ? { defaults: updated.defaults } : {}),
+        workspaceDir: updated.workspaceDir,
       });
     } catch (err) {
       return wsErrorJson(c, err, 500);
@@ -268,7 +255,7 @@ export function workspacesRoutes(deps: {
   // Remove a workspace. Default behaviour removes only the metadata
   // (the row in `global.db`); user files preserved. Pass
   // `?purge=1` to also rm every emploke-owned subdirectory under the
-  // workspace's workdir (sessions/, tasks/, catalog/). The workdir
+  // workspace's workspaceDir (sessions/, tasks/). The workspaceDir
   // itself is never removed.
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");

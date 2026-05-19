@@ -30,8 +30,8 @@ export async function workspaceList(opts: WorkspaceListOpts = {}): Promise<Comma
       fmt === "json"
         ? formatJson(list)
         : formatTable(
-            ["id", "name", "workdir", "createdAt"],
-            list.map((w) => [w.id, w.name, w.workdir, w.createdAt]),
+            ["id", "name", "workspaceDir", "createdAt"],
+            list.map((w) => [w.id, w.name, w.workspaceDir, w.createdAt]),
           );
     return { exitCode: 0, stdout };
   } catch (err) {
@@ -43,33 +43,18 @@ export async function workspaceList(opts: WorkspaceListOpts = {}): Promise<Comma
 export interface WorkspaceAddOpts extends CommonFlags {
   readonly name: string;
   /** Absolute path; server mints `<EMPLOKE_HOME>/workspaces/<uuid>` when omitted. */
-  readonly workdir?: string;
-  /** Inline JSON for the optional defaults bag. */
-  readonly defaults?: string;
+  readonly workspaceDir?: string;
 }
 
 export async function workspaceAdd(opts: WorkspaceAddOpts): Promise<CommandResult> {
   if (typeof opts.name !== "string" || opts.name.trim() === "") {
     return { exitCode: 2, stderr: "missing required --name <name>\n" };
   }
-  let defaults: Record<string, unknown> | undefined;
-  if (opts.defaults !== undefined) {
-    try {
-      const parsed = JSON.parse(opts.defaults) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { exitCode: 2, stderr: "--defaults must be a JSON object\n" };
-      }
-      defaults = parsed as Record<string, unknown>;
-    } catch (err) {
-      return { exitCode: 2, stderr: `--defaults JSON parse error: ${(err as Error).message}\n` };
-    }
-  }
   const client = await makeClient(opts);
   try {
     const body = {
       name: opts.name,
-      ...(opts.workdir !== undefined ? { workdir: opts.workdir } : {}),
-      ...(defaults !== undefined ? { defaults } : {}),
+      ...(opts.workspaceDir !== undefined ? { workspaceDir: opts.workspaceDir } : {}),
     };
     const ws = await client.call("workspaces.create", { body });
     const fmt = pickFormat(opts, "table");
@@ -185,35 +170,18 @@ export async function workspaceShow(opts: WorkspaceShowOpts): Promise<CommandRes
 export interface WorkspaceUpdateOpts extends CommonFlags {
   readonly id: string;
   readonly name?: string;
-  /** Inline JSON for the defaults bag, or the literal `null` to clear. */
-  readonly defaults?: string;
 }
 
 export async function workspaceUpdate(opts: WorkspaceUpdateOpts): Promise<CommandResult> {
   if (typeof opts.id !== "string" || opts.id.trim() === "") {
     return { exitCode: 2, stderr: "workspace id is required\n" };
   }
-  // The route requires at least one of name / defaults — mirror the
-  // server's check up front so we don't waste a round trip.
-  if (opts.name === undefined && opts.defaults === undefined) {
-    return { exitCode: 2, stderr: "pass at least one of --name <s> or --defaults <json>\n" };
+  // The route requires at least the name patch — mirror the server's
+  // check up front so we don't waste a round trip.
+  if (opts.name === undefined) {
+    return { exitCode: 2, stderr: "pass --name <s>\n" };
   }
-  const body: { name?: string; defaults?: Record<string, unknown> | null } = {};
-  if (opts.name !== undefined) body.name = opts.name;
-  if (opts.defaults !== undefined) {
-    try {
-      const parsed = JSON.parse(opts.defaults) as unknown;
-      if (parsed === null) {
-        body.defaults = null;
-      } else if (typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { exitCode: 2, stderr: "--defaults must be a JSON object or null\n" };
-      } else {
-        body.defaults = parsed as Record<string, unknown>;
-      }
-    } catch (err) {
-      return { exitCode: 2, stderr: `--defaults JSON parse error: ${(err as Error).message}\n` };
-    }
-  }
+  const body: { name?: string } = { name: opts.name };
   const client = await makeClient(opts);
   try {
     const ws = await client.call("workspaces.update", { params: { id: opts.id }, body });
