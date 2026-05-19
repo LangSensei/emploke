@@ -1,11 +1,21 @@
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { CatalogManager } from "@emploke/catalog";
+import {
+  AGENT_MIGRATIONS,
+  CatalogManager,
+  MCP_MIGRATIONS,
+  SKILL_MIGRATIONS,
+} from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import { SessionManager, SqliteSessionRepository } from "@emploke/session";
-import { SqliteTaskRepository, TaskManager } from "@emploke/task";
-import { type Workspace, type WorkspaceManager, workspaceLayout } from "@emploke/workspace";
+import { SESSION_MIGRATIONS, SessionManager, SqliteSessionRepository } from "@emploke/session";
+import { SqliteTaskRepository, TASK_MIGRATIONS, TaskManager } from "@emploke/task";
+import {
+  runPkgMigrations,
+  type Workspace,
+  type WorkspaceManager,
+  workspaceLayout,
+} from "@emploke/workspace";
 
 /**
  * Thrown by `WorkspaceContextCache.reload` when the cached context for
@@ -273,10 +283,38 @@ export class WorkspaceContextCache {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA busy_timeout = 5000");
 
+    // Run the MigrationCoordinator BEFORE constructing any
+    // per-workspace repository. Post-issue-#123, repositories no
+    // longer create their own tables — the coordinator owns DDL and
+    // the repositories' `ensureSchema()` is a version-check
+    // assertion. On a workspace that's already at HEAD this is a
+    // single indexed read; on a fresh workspace it bootstraps every
+    // per-pkg schema in one transaction.
+    //
+    // Catalog spans three pkgs (agent / skill / mcp) which all live
+    // in the same `workspace.db`; we register all five pkgs here so
+    // the cross-pkg FK graph (today: agent_skill_dependencies in
+    // future business migrations) is established atomically.
+    const migrationResult = await runPkgMigrations(db, [
+      { pkg: "task", migrations: TASK_MIGRATIONS },
+      { pkg: "session", migrations: SESSION_MIGRATIONS },
+      { pkg: "catalog_agent", migrations: AGENT_MIGRATIONS },
+      { pkg: "catalog_skill", migrations: SKILL_MIGRATIONS },
+      { pkg: "catalog_mcp", migrations: MCP_MIGRATIONS },
+    ]);
+    this.logger.info(
+      {
+        workspaceId: id,
+        applied: migrationResult.applied.length,
+        alreadyAtTarget: migrationResult.alreadyAtTarget,
+        dbPath,
+      },
+      "workspace.db migrations complete",
+    );
+
     // Each manager gets the shared connection via DI. Repositories
-    // bootstrap their own tables on first construction (idempotent
-    // CREATE IF NOT EXISTS) and register themselves in the multi-row
-    // schema_meta table (one row per pkg).
+    // verify their schema_meta row matches the expected version on
+    // first construction; they no longer bootstrap tables.
     const catalog = await CatalogManager.open({ db, logger: this.logger });
 
     const sessions = new SessionManager({

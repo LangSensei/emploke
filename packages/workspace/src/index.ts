@@ -35,6 +35,7 @@ export {
 export {
   RegistryCorruptedError,
   RegistryError,
+  RegistryNotBootstrappedError,
   RegistrySchemaMismatchError,
   WorkspaceAlreadyExistsError,
   WorkspaceCorruptedError,
@@ -52,6 +53,22 @@ export {
   WorkspaceManager,
   type WorkspaceUpdatePatch,
 } from "./manager.js";
+export type { Migration, MigrationRunResult } from "./migration/index.js";
+export {
+  MigrationCoordinator,
+  MigrationCycleError,
+  MigrationDependencyMissingError,
+  MigrationError,
+  MigrationFailedError,
+  MigrationRegisterError,
+  MigrationVersionAheadError,
+  runPkgMigrations,
+  runPkgMigrationsSync,
+  SchemaMetaMismatchError,
+  SchemaMetaNotBootstrappedError,
+  topoSort,
+} from "./migration/index.js";
+export { WORKSPACE_MIGRATIONS } from "./migrations/index.js";
 export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
 export type { WorkspaceRepository } from "./repositories/repository.js";
 export { SqliteWorkspaceRepository } from "./repositories/sqlite-workspace-repository.js";

@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import {
+  AGENT_MIGRATIONS,
+  type AgentResolveResult,
+  CatalogManager,
+  MCP_MIGRATIONS,
+  SKILL_MIGRATIONS,
+} from "@emploke/catalog";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 
 /**
  * Build a `CatalogManager` backed by a SQLite database in a temp dir,
@@ -67,6 +74,16 @@ export async function makeTestCatalog(
   // In-memory DB so tests don't litter tmpdir with workspace.db files
   // and Windows EBUSY on cleanup is impossible.
   const db = new DatabaseSync(":memory:");
+  // Post-issue-#123: the catalog repositories no longer bootstrap
+  // tables. Run the migration coordinator first so the catalog's
+  // `schema_meta` rows for `catalog_agent` / `catalog_skill` /
+  // `catalog_mcp` are present before `CatalogManager.open` constructs
+  // the repositories.
+  runPkgMigrationsSync(db, [
+    { pkg: "catalog_agent", migrations: AGENT_MIGRATIONS },
+    { pkg: "catalog_skill", migrations: SKILL_MIGRATIONS },
+    { pkg: "catalog_mcp", migrations: MCP_MIGRATIONS },
+  ]);
   const catalog = await CatalogManager.open({ db });
 
   // Materialise each fixture as a tiny on-disk source dir so the

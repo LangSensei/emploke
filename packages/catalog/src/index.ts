@@ -43,6 +43,8 @@ export {
 export type { AgentFetcher } from "./agent/index.js";
 export * as agent from "./agent/index.js";
 export { Agent } from "./agent/index.js";
+// ─── Per-pkg migration arrays (consumed by server startup) ─
+export { AGENT_MIGRATIONS } from "./agent/migrations/index.js";
 // ─── Wire DTOs (HTTP-shaped projections) ────────────
 export type {
   Agent as AgentPojo,
@@ -100,6 +102,7 @@ export {
   stripMeta as stripMcpMeta,
   writeMeta as writeMcpMeta,
 } from "./mcp/mcp-format.js";
+export { MCP_MIGRATIONS } from "./mcp/migrations/index.js";
 export { splitMcpName, validateMcpName } from "./mcp/validate.js";
 // ─── Origin mutability ──────────────────────────────
 export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
@@ -114,6 +117,7 @@ export {
 export type { SkillFetcher } from "./skill/index.js";
 export * as skill from "./skill/index.js";
 export { Skill } from "./skill/index.js";
+export { SKILL_MIGRATIONS } from "./skill/migrations/index.js";
 
 // ─── FQN / scope / shortName helpers ────────────────
 export {

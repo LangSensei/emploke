@@ -36,6 +36,9 @@ importers:
       '@emploke/logger':
         specifier: workspace:*
         version: link:../logger
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -194,6 +197,9 @@ importers:
       '@emploke/fs':
         specifier: workspace:*
         version: link:../fs
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@github/copilot-sdk':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4
@@ -283,6 +289,9 @@ importers:
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -311,6 +320,9 @@ importers:
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

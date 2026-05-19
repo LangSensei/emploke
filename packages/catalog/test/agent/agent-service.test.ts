@@ -10,6 +10,7 @@ import {
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
 import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: AgentFetcher;
@@ -58,6 +59,7 @@ let svc: AgentService;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   repo = new SqliteAgentRepository({ db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);

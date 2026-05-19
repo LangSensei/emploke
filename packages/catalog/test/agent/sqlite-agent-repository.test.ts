@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
 import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 const MIN_VALID = `---
 name: researcher
@@ -16,6 +17,7 @@ let repo: SqliteAgentRepository;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   repo = new SqliteAgentRepository({ db });
 });
 

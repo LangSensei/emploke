@@ -1,13 +1,15 @@
 import { DatabaseSync } from "node:sqlite";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidSessionIdError } from "../src/errors.js";
-import { Session, SqliteSessionRepository } from "../src/index.js";
+import { SESSION_MIGRATIONS, Session, SqliteSessionRepository } from "../src/index.js";
 
 let db: DatabaseSync;
 let repo: SqliteSessionRepository;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
   repo = new SqliteSessionRepository({ db });
 });
 afterEach(() => {
@@ -172,6 +174,8 @@ describe("SqliteSessionRepository", () => {
   it("two separate :memory: connections are isolated", async () => {
     const dbA = new DatabaseSync(":memory:");
     const dbB = new DatabaseSync(":memory:");
+    runPkgMigrationsSync(dbA, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+    runPkgMigrationsSync(dbB, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
     const a = new SqliteSessionRepository({ db: dbA });
     const b = new SqliteSessionRepository({ db: dbB });
     const s = sample();

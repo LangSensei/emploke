@@ -13,8 +13,9 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SqliteTaskRepository } from "../src/index.js";
+import { SqliteTaskRepository, TASK_MIGRATIONS } from "../src/index.js";
 
 let db: DatabaseSync;
 
@@ -41,6 +42,7 @@ function captureLogger(): {
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
 });
 afterEach(() => {
   db.close();

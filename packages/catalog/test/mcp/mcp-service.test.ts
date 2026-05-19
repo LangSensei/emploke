@@ -10,6 +10,7 @@ import * as McpFormat from "../../src/mcp/mcp-format.js";
 import type { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 /**
  * The McpService contract is repository-agnostic. Set up as a backend
@@ -26,6 +27,7 @@ const BACKENDS: Backend[] = [
     name: "SqliteMcpRepository (in-memory)",
     setup: async () => {
       const db = new DatabaseSync(":memory:");
+      bootstrapCatalogDbSync(db);
       const repo = new SqliteMcpRepository({ db });
       return {
         repo,

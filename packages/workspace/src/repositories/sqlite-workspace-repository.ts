@@ -2,6 +2,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
 import {
+  RegistryNotBootstrappedError,
   RegistrySchemaMismatchError,
   WorkspaceCorruptedError,
   WorkspaceIdConflictError,
@@ -48,6 +49,7 @@ interface WorkspaceRow {
 export class SqliteWorkspaceRepository implements WorkspaceRepository {
   private readonly db: DatabaseSync;
   private readonly logger: Logger;
+  private closed = false;
 
   constructor(opts: { db: DatabaseSync; logger?: Logger }) {
     this.db = opts.db;
@@ -221,6 +223,29 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
+  /**
+   * Release the underlying SQLite handle. Idempotent. After `close()`
+   * every other method throws (the `DatabaseSync` itself rejects
+   * statement preparation on a closed handle).
+   *
+   * Windows blocks `unlink` on files with open handles, so the
+   * server's graceful-shutdown path needs an explicit close before
+   * any tear-down (`rm -rf <EMPLOKE_HOME>`) can succeed. POSIX is
+   * lenient but we close here regardless — leaking a handle past
+   * shutdown is a bug everywhere, just an invisible one outside
+   * Windows.
+   */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      this.db.close();
+    } catch {
+      // best-effort: a doubly-closed DatabaseSync throws; we already
+      // flagged `closed` so subsequent close() calls short-circuit.
+    }
+  }
+
   // ── internals ───────────────────────────────────────────────
 
   private runInTransaction(fn: () => void): void {
@@ -240,50 +265,32 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
   }
 
   private ensureSchema(): void {
-    // Bootstrap inside a single BEGIN IMMEDIATE so two concurrent
-    // openers (e.g. server + future migration tool) serialise on the
-    // file lock. Without it, both could SELECT existing === undefined
-    // and the second INSERT would fail with PRIMARY KEY conflict
-    // instead of recognising the table is already initialised.
-    this.db.exec("BEGIN IMMEDIATE");
+    // Coordinator owns DDL post-issue-#123. The repository's job is
+    // to assert the bootstrap post-condition: the DB has a
+    // `schema_meta` row for the `workspace` pkg at the version this
+    // build expects. A missing row means the caller skipped
+    // `runPkgMigrations` — always a wiring bug. A mismatched version
+    // means the on-disk DB was written by a different build (older
+    // or newer) than what this code understands; the operator must
+    // upgrade or downgrade.
+    let existing: { version: number } | undefined;
     try {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS schema_meta (
-          pkg     TEXT PRIMARY KEY NOT NULL,
-          version INTEGER NOT NULL CHECK (version > 0)
-        );
-        CREATE TABLE IF NOT EXISTS workspaces (
-          id              TEXT PRIMARY KEY NOT NULL,
-          workdir         TEXT NOT NULL UNIQUE,
-          name            TEXT NOT NULL,
-          created_at      TEXT NOT NULL,
-          registered_at   TEXT NOT NULL,
-          last_opened_at  TEXT,
-          defaults_json   TEXT NOT NULL DEFAULT '{}'
-        );
-        CREATE TABLE IF NOT EXISTS global_state (
-          key   TEXT PRIMARY KEY NOT NULL,
-          value TEXT NOT NULL
-        );
-      `);
-      const existing = this.db
+      existing = this.db
         .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
         .get("workspace") as { version: number } | undefined;
-      if (existing === undefined) {
-        this.db
-          .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-          .run("workspace", WORKSPACE_PKG_SCHEMA_VERSION);
-      } else if (existing.version !== WORKSPACE_PKG_SCHEMA_VERSION) {
-        throw new RegistrySchemaMismatchError(
-          "global.db (workspace pkg)",
-          existing.version,
-          WORKSPACE_PKG_SCHEMA_VERSION,
-        );
-      }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
+    } catch {
+      // `schema_meta` itself missing → coordinator never ran.
+      throw new RegistryNotBootstrappedError("global.db (workspace pkg)");
+    }
+    if (existing === undefined) {
+      throw new RegistryNotBootstrappedError("global.db (workspace pkg)");
+    }
+    if (existing.version !== WORKSPACE_PKG_SCHEMA_VERSION) {
+      throw new RegistrySchemaMismatchError(
+        "global.db (workspace pkg)",
+        existing.version,
+        WORKSPACE_PKG_SCHEMA_VERSION,
+      );
     }
   }
 }

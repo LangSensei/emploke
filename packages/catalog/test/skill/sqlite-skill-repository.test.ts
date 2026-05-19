@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Skill } from "../../src/skill/skill-entity.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 const MIN_VALID = `---
 name: tool-use
@@ -16,6 +17,7 @@ let repo: SqliteSkillRepository;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   repo = new SqliteSkillRepository({ db });
 });
 

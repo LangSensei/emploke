@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
+import { runPkgMigrationsSync } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CorruptedTaskError,
   InvalidTaskIdError,
   SqliteTaskRepository,
+  TASK_MIGRATIONS,
   Task,
   type TaskStatus,
 } from "../src/index.js";
@@ -19,6 +21,7 @@ let repo: SqliteTaskRepository;
 beforeEach(async () => {
   scratchDir = await mkdtemp(path.join(tmpdir(), "emploke-sqlite-task-"));
   db = new DatabaseSync(":memory:");
+  runPkgMigrationsSync(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
   repo = new SqliteTaskRepository({ db });
 });
 afterEach(async () => {
@@ -259,6 +262,8 @@ describe("SqliteTaskRepository", () => {
   it("two separate :memory: connections are isolated", async () => {
     const dbA = new DatabaseSync(":memory:");
     const dbB = new DatabaseSync(":memory:");
+    runPkgMigrationsSync(dbA, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+    runPkgMigrationsSync(dbB, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
     const a = new SqliteTaskRepository({ db: dbA });
     const b = new SqliteTaskRepository({ db: dbB });
     const sample = makeTask();
@@ -270,13 +275,13 @@ describe("SqliteTaskRepository", () => {
   });
 });
 
-describe("SqliteTaskRepository — v1 → v2 migration", () => {
+describe("SqliteTaskRepository — v1 → v2 migration via coordinator", () => {
   // Pre-1.0 hard cut: a v1 workspace.db with the old `instructions`
-  // column is migrated in place to v2 (`brief` + `details`). The
-  // brief is back-filled from the first 200 chars of `instructions`
-  // (best-effort heuristic — v1 had no length cap, v2 enforces 200);
-  // the full text is preserved verbatim in `details` so no user data
-  // is lost.
+  // column is migrated in place to v2 (`brief` + `details`). Post
+  // issue-#123 the migration coordinator owns DDL — the repository's
+  // ensureSchema is version-check-only — so these tests seed a v1
+  // shape on disk and then run the coordinator to drive the chain
+  // v1 → v2 → v3 against existing data.
   function seedV1Schema(d: DatabaseSync): void {
     d.exec(`
       CREATE TABLE schema_meta (
@@ -317,8 +322,10 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
         "{}",
       );
 
-      // Construction triggers ensureSchema → migrateV1ToV2 → migrateV2ToV3
-      // (staged migration walks v1 all the way to current HEAD).
+      // Coordinator walks the chain v1 → v2 → v3 (skipping v0→v1
+      // because schema_meta.task is already at 1). Then the repo's
+      // version-check passes and the entity factory rehydrates.
+      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       const r = new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -332,7 +339,6 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
       };
       expect(v.version).toBe(3);
 
-      // Read through the repo: full task entity is reconstructed.
       void r;
     } finally {
       d.close();
@@ -357,13 +363,13 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
         "{}",
       );
 
+      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
         .get("20260101-bbbbbbbb") as { brief: string; details: string };
       expect(back.brief.length).toBe(200);
       expect(back.brief).toBe("A".repeat(200));
-      // Full original text preserved in details — no data loss.
       expect(back.details).toBe(longText);
     } finally {
       d.close();
@@ -371,11 +377,6 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
   });
 
   it("migrates an empty instructions row to brief='(untitled)' so the v2 entity invariant survives", () => {
-    // v1 had no non-empty constraint on instructions (`TEXT NOT NULL`
-    // accepts empty strings). v2 rejects empty briefs at the entity
-    // boundary, so an empty migrated row would otherwise become
-    // unreadable. Coerce to a placeholder so the row stays parseable;
-    // the operator can rename / archive at leisure.
     const d = new DatabaseSync(":memory:");
     try {
       seedV1Schema(d);
@@ -392,6 +393,7 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
         "{}",
       );
 
+      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       new SqliteTaskRepository({ db: d });
       const back = d
         .prepare("SELECT brief, details FROM tasks WHERE id = ?")
@@ -426,10 +428,11 @@ describe("SqliteTaskRepository — v1 → v2 migration", () => {
         '{"pid":1234}',
       );
 
+      runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
       const r = new SqliteTaskRepository({ db: d });
       const rows = await r.list();
       expect(rows).toHaveLength(1);
-      const row = rows[0];
+      const row = rows[0] as (typeof rows)[number];
       expect(row.id).toBe("20260101-dddddddd");
       expect(row.agent).toBe("writer");
       expect(row.status).toBe("failure");

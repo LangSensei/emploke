@@ -14,6 +14,7 @@ import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
+import { bootstrapCatalogDbSync } from "../helpers/bootstrap.js";
 
 /**
  * Tests for the sync flow: identity check, version short-circuit, dep
@@ -139,6 +140,7 @@ let mgr: CatalogManager;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
+  bootstrapCatalogDbSync(db);
   mcpRepo = new SqliteMcpRepository({ db });
   skillRepo = new SqliteSkillRepository({ db });
   agentRepo = new SqliteAgentRepository({ db });

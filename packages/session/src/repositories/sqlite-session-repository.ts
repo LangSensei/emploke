@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { SchemaMetaMismatchError, SchemaMetaNotBootstrappedError } from "@emploke/workspace";
 import { InvalidSessionIdError } from "../errors.js";
 import { SESSION_ID_RE } from "../ids.js";
 import { Session } from "../session-entity.js";
@@ -159,34 +160,34 @@ export class SqliteSessionRepository implements SessionRepository {
   // ─── schema management ──────────────────────────────────────
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_meta (
-        pkg     TEXT PRIMARY KEY NOT NULL,
-        version INTEGER NOT NULL CHECK (version > 0)
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        id                  TEXT PRIMARY KEY,
-        runtime             TEXT NOT NULL,
-        created_at          TEXT NOT NULL,
-        runtime_session_id  TEXT,
-        last_launch_mode    TEXT
-      );
-      CREATE INDEX IF NOT EXISTS sessions_runtime_idx    ON sessions(runtime);
-      CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions(created_at);
-    `);
-    const existing = this.db
-      .prepare("SELECT version FROM schema_meta WHERE pkg = ?")
-      .get("session") as { version: number } | undefined;
-    if (existing === undefined) {
-      this.db
-        .prepare("INSERT INTO schema_meta (pkg, version) VALUES (?, ?)")
-        .run("session", SESSION_PKG_SCHEMA_VERSION);
-      return;
+    // Post-issue-#123: the MigrationCoordinator owns DDL. This
+    // repository's job is to assert the post-condition — a
+    // `schema_meta` row for the `session` pkg at the expected
+    // version. A missing row means the caller forgot to run
+    // `runPkgMigrations` (always a wiring bug); a mismatched
+    // version means the on-disk DB was written by a different
+    // build than what this code understands.
+    //
+    // Both branches surface as typed errors from
+    // `@emploke/workspace/migration` so consumers can route a single
+    // `instanceof SchemaMetaNotBootstrappedError` /
+    // `instanceof SchemaMetaMismatchError` handler uniformly across
+    // every per-pkg repository (session, task, catalog_*).
+    let existing: { version: number } | undefined;
+    try {
+      existing = this.db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("session") as
+        | { version: number }
+        | undefined;
+    } catch {
+      // `schema_meta` itself missing → coordinator never ran.
+      throw new SchemaMetaNotBootstrappedError("session");
     }
-    if (existing.version === SESSION_PKG_SCHEMA_VERSION) return;
-    throw new Error(
-      `session pkg schema mismatch: db has v${existing.version}, server supports v${SESSION_PKG_SCHEMA_VERSION}.`,
-    );
+    if (existing === undefined) {
+      throw new SchemaMetaNotBootstrappedError("session");
+    }
+    if (existing.version !== SESSION_PKG_SCHEMA_VERSION) {
+      throw new SchemaMetaMismatchError("session", existing.version, SESSION_PKG_SCHEMA_VERSION);
+    }
   }
 }
 

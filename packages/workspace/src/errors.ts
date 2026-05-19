@@ -149,3 +149,23 @@ export class WorkspaceNotRegisteredError extends RegistryError {
     this.name = "WorkspaceNotRegisteredError";
   }
 }
+
+/**
+ * `SqliteWorkspaceRepository` was constructed against a DB that has
+ * no `schema_meta` row for the `workspace` pkg. After the migration
+ * framework refactor (issue #123), repositories no longer bootstrap
+ * tables themselves — the {@link MigrationCoordinator} runs first and
+ * the repository asserts the post-condition. This error means the
+ * caller forgot to run the coordinator, which is always a wiring bug
+ * (the server's `index.ts` calls `runPkgMigrations` before
+ * constructing the repository).
+ */
+export class RegistryNotBootstrappedError extends RegistryError {
+  constructor(public readonly file: string) {
+    super(
+      `workspace registry at ${file} has no schema_meta entry for pkg 'workspace'. ` +
+        `MigrationCoordinator must run before SqliteWorkspaceRepository is constructed.`,
+    );
+    this.name = "RegistryNotBootstrappedError";
+  }
+}

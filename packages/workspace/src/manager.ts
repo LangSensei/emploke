@@ -184,4 +184,24 @@ export class WorkspaceManager {
   setCurrent(id: string): Promise<void> {
     return this.repository.setCurrent(id);
   }
+
+  /**
+   * Release every resource the underlying repository acquired (the
+   * `DatabaseSync` handle on `global.db` for the SQLite default).
+   * Idempotent.
+   *
+   * Required at server shutdown so the OS can release the lock on
+   * `global.db` — Windows refuses to `unlink` files with open handles,
+   * and the CLI integration tests `rm -rf` the entire `EMPLOKE_HOME`
+   * after stopping the server. POSIX tolerates open-handle unlinks
+   * but we close here regardless for hygiene + symmetry.
+   *
+   * After `close()`, every other method on this manager throws (the
+   * repository propagates "database is closed" errors from
+   * `DatabaseSync`). The manager is not designed to be reused
+   * post-close.
+   */
+  close(): void {
+    this.repository.close();
+  }
 }
