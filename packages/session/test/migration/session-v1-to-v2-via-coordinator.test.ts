@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SESSION_MIGRATIONS } from "../../src/migrations/index.js";
 
@@ -55,12 +55,12 @@ function seedV1Schema(d: DatabaseSync): void {
   `);
 }
 
-function runMigrations(d: DatabaseSync) {
-  return runPkgMigrationsSync(d, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+async function runMigrations(d: DatabaseSync) {
+  return runPkgMigrations(d, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
 }
 
 describe("session v1 → v2 migration (issue #120) — schema shape", () => {
-  it("adds agent column + sessions_agent_idx, preserves rows, bumps version", () => {
+  it("adds agent column + sessions_agent_idx, preserves rows, bumps version", async () => {
     seedV1Schema(db);
 
     db.prepare(
@@ -78,7 +78,7 @@ describe("session v1 → v2 migration (issue #120) — schema shape", () => {
        VALUES (?, ?, ?, ?, ?)`,
     ).run("20260518-bbbbbbbb", "copilot", "2026-05-18T01:00:00.000Z", null, null);
 
-    runMigrations(db);
+    await runMigrations(db);
 
     // Column shape: 6 columns; agent NOT NULL DEFAULT ''.
     const cols = db.prepare("PRAGMA table_info(sessions)").all() as {
@@ -120,17 +120,17 @@ describe("session v1 → v2 migration (issue #120) — schema shape", () => {
     expect(indexes).toContain("sessions_created_at_idx");
   });
 
-  it("idempotent: re-running against an already-v2 DB applies no migrations", () => {
+  it("idempotent: re-running against an already-v2 DB applies no migrations", async () => {
     seedV1Schema(db);
-    runMigrations(db);
-    const result = runMigrations(db);
+    await runMigrations(db);
+    const result = await runMigrations(db);
     expect(result.applied).toEqual([]);
     expect(result.alreadyAtTarget).toEqual(["session"]);
   });
 
-  it("after migration, WHERE agent = ? returns the indexed subset", () => {
+  it("after migration, WHERE agent = ? returns the indexed subset", async () => {
     seedV1Schema(db);
-    runMigrations(db);
+    await runMigrations(db);
 
     db.prepare(
       `INSERT INTO sessions (id, runtime, created_at, runtime_session_id, agent)
@@ -155,9 +155,9 @@ describe("session v1 → v2 migration (issue #120) — schema shape", () => {
     expect(detail).toContain("sessions_agent_idx");
   });
 
-  it("post-migration INSERT without agent fails (NOT NULL enforces explicit value)", () => {
+  it("post-migration INSERT without agent fails (NOT NULL enforces explicit value)", async () => {
     seedV1Schema(db);
-    runMigrations(db);
+    await runMigrations(db);
 
     // Default is the empty string, so this won't actually fail at SQL
     // level — the empty-string DEFAULT satisfies NOT NULL. The

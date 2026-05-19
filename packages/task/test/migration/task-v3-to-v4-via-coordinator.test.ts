@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TASK_MIGRATIONS } from "../../src/migrations/index.js";
 
@@ -71,12 +71,12 @@ function seedV3Schema(d: DatabaseSync): void {
   `);
 }
 
-function runMigrations(d: DatabaseSync) {
-  return runPkgMigrationsSync(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+async function runMigrations(d: DatabaseSync) {
+  return runPkgMigrations(d, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
 }
 
 describe("task v3 → v4 migration (issue #119) — schema shape", () => {
-  it("collapses flat columns into JSON, normalises status, adds origin, bumps version", () => {
+  it("collapses flat columns into JSON, normalises status, adds origin, bumps version", async () => {
     seedV3Schema(db);
 
     // One row per terminal status + one running row.
@@ -266,7 +266,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
       null,
     );
 
-    runMigrations(db);
+    await runMigrations(db);
 
     // schema_meta bumped 3 → 4.
     const ver = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {
@@ -396,17 +396,17 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     }
   });
 
-  it("idempotent: re-running against an already-v4 DB applies no migrations", () => {
+  it("idempotent: re-running against an already-v4 DB applies no migrations", async () => {
     seedV3Schema(db);
-    runMigrations(db);
-    const result = runMigrations(db);
+    await runMigrations(db);
+    const result = await runMigrations(db);
     expect(result.applied).toEqual([]);
     expect(result.alreadyAtTarget).toEqual(["task"]);
   });
 
-  it("CHECK constraint rejects invalid status values post-migration", () => {
+  it("CHECK constraint rejects invalid status values post-migration", async () => {
     seedV3Schema(db);
-    runMigrations(db);
+    await runMigrations(db);
     expect(() =>
       db
         .prepare(
@@ -425,7 +425,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
     ).toThrow(/CHECK constraint failed/);
   });
 
-  it("walks v2 → v3 → v4 in sequence on a fresh v2 DB", () => {
+  it("walks v2 → v3 → v4 in sequence on a fresh v2 DB", async () => {
     // Seed a v2 schema directly (the shape before v2→v3 added the
     // failure_*/cancellation_* columns).
     db.exec(`
@@ -467,7 +467,7 @@ describe("task v3 → v4 migration (issue #119) — schema shape", () => {
       "{}",
     );
 
-    const result = runMigrations(db);
+    const result = await runMigrations(db);
     expect(result.applied.map((m) => `${m.fromVersion}→${m.toVersion}`)).toEqual(["2→3", "3→4"]);
 
     const ver = db.prepare("SELECT version FROM schema_meta WHERE pkg = ?").get("task") as {

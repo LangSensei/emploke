@@ -11,7 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { type Runtime, RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrationsSync } from "@emploke/workspace";
+import { runPkgMigrations } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SESSION_MIGRATIONS, SessionManager, SqliteSessionRepository } from "../src/index.js";
 
@@ -24,7 +24,7 @@ beforeEach(async () => {
   sessionsDir = await mkdtemp(path.join(tmpdir(), "emploke-backfill-sessions-"));
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-backfill-scratch-"));
   db = new DatabaseSync(":memory:");
-  runPkgMigrationsSync(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+  await runPkgMigrations(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
   warnCalls = [];
 });
 afterEach(async () => {
