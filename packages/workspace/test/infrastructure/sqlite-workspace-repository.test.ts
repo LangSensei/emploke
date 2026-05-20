@@ -23,7 +23,6 @@ import {
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
-const UUID_BAD_FOR_ID = "not-a-uuid";
 
 let scratch: string;
 let db: DatabaseSync;
@@ -262,12 +261,4 @@ describe("SqliteWorkspaceRepository — close()", () => {
 
     await expect(unlink(dbFile)).resolves.toBeUndefined();
   });
-});
-
-describe("regressions covered elsewhere", () => {
-  // Kept here as a marker so future maintainers understand the
-  // coverage split — these legacy tests have moved into Workspace
-  // aggregate tests under `domain/workspace.test.ts`.
-  it.skip("displaces tests for raw row corruption (see domain/workspace.test.ts)", () => {});
-  void UUID_BAD_FOR_ID;
 });

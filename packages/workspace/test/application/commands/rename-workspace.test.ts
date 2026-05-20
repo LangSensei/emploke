@@ -110,11 +110,13 @@ describe("RenameWorkspaceCommandHandler", () => {
     expect((publishedEvents[0] as WorkspaceRenamed).renamedAt).toBe(NOW);
   });
 
-  it("is a no-op rename (no event, no save change) when new name equals old", async () => {
+  it("is a no-op rename (no event, no save, no write lock) when new name equals old", async () => {
     seed("Same");
     await run(new RenameWorkspaceCommand(UUID_A, "Same"));
-    // Aggregate didn't raise an event, but the handler still calls
-    // save() — that's harmless because the row is byte-identical.
+    // Aggregate short-circuited (no event raised); handler MUST skip
+    // repo.save to avoid an unnecessary BEGIN IMMEDIATE + UPDATE on
+    // a byte-identical row (PR #138 reviewer feedback).
+    expect(repo.saved).toHaveLength(0);
     expect(publishedEvents).toHaveLength(0);
   });
 

@@ -35,9 +35,18 @@ export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorks
     if (!ws) throw new WorkspaceNotRegisteredError(id.value);
 
     ws.rename(newName, this.clock.nowIso());
+
+    // Skip the write-lock + UPDATE round-trip for no-op renames
+    // (when newName equals the current name, the aggregate's `rename`
+    // short-circuits and raises no event). Reviewer note on PR #138:
+    // unconditional save acquires BEGIN IMMEDIATE for byte-identical
+    // rows, wasted work under contention on a real global.db.
+    const events = ws.pullDomainEvents();
+    if (events.length === 0) return;
+
     await this.repo.save(ws);
 
-    for (const evt of ws.pullDomainEvents()) {
+    for (const evt of events) {
       await publishWorkspaceEvent(this.mediator, evt);
     }
   }

@@ -55,10 +55,10 @@ export { RegisterWorkspaceCommand } from "./application/commands/register-worksp
 export { RenameWorkspaceCommand } from "./application/commands/rename-workspace/rename-workspace.command.js";
 export { SetCurrentWorkspaceCommand } from "./application/commands/set-current-workspace/set-current-workspace.command.js";
 export { UnregisterWorkspaceCommand } from "./application/commands/unregister-workspace/unregister-workspace.command.js";
-export { composeWorkspaceModule } from "./application/module.js";
 export type { WorkspaceSummaryView } from "./application/queries/views/workspace-summary-view.js";
 export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
 export { WorkspaceQueries } from "./application/queries/workspace-queries.js";
+export { composeWorkspaceModule } from "./application/workspace.di.js";
 
 export { WorkspaceId } from "./domain/value-objects/workspace-id.js";
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { RegisterWorkspaceCommand, RenameWorkspaceCommand } from "@emploke/workspace";
+import { RegisterWorkspaceCommand } from "@emploke/workspace";
 import { Hono } from "hono";
 import { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -443,6 +443,3 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     expect(evt?.workspaceId).toBe(id);
   });
 });
-
-// Reference the imports so biome doesn't complain
-void RenameWorkspaceCommand;

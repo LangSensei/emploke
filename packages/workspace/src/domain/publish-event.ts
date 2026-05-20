@@ -18,6 +18,15 @@ import type { WorkspaceDomainEvent } from "./events/domain-event.js";
  *
  * Any other error from `mediator.publish` (handler threw, etc.) is
  * re-thrown so the command rolls back as expected.
+ *
+ * BREADCRUMB for future mediatr-ts upgrades: the swallow matches on
+ * the exact message prefix `"No handler found for notification "`.
+ * mediatr-ts does NOT export a typed `NoHandlerError`, so message
+ * matching is the only practical guard. If a future mediatr-ts
+ * upgrade changes the prefix, this swallow goes silent → next
+ * `publish` in production fails the handler → `module.test.ts` will
+ * catch it on the next CI run. When bumping mediatr-ts, re-verify
+ * this prefix.
  */
 export async function publishWorkspaceEvent(
   mediator: Mediator,
