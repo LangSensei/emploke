@@ -3,7 +3,11 @@ import { composeCatalogModule } from "@emploke/catalog";
 import { composeRuntimeModule } from "@emploke/runtime";
 import { composeSessionModule } from "@emploke/session";
 import { composeTaskModule } from "@emploke/task";
-import { composeWorkspaceModule, TransactionBehavior } from "@emploke/workspace";
+import {
+  composeWorkspaceModule,
+  DomainEventDispatcher,
+  TransactionBehavior,
+} from "@emploke/workspace";
 import { EntityManager, type MikroORM } from "@mikro-orm/core";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
@@ -78,6 +82,18 @@ export function buildServerContainer(opts: { globalOrm: MikroORM }): Container {
   composeTaskModule(container);
   composeCatalogModule(container);
   composeRuntimeModule(container);
+
+  // Wire the workspace pkg's DomainEventDispatcher into MikroORM's
+  // beforeFlush hook AFTER composeWorkspaceModule has bound it.
+  // From this point any em.flush() (driven by TransactionBehavior's
+  // em.transactional, by a direct test call, or by any future code
+  // path) automatically drains pending aggregate domain events from
+  // the UoW identity map and publishes them through the mediator
+  // BEFORE the SQL writes hit SQLite. Matches eShop OrderingContext.
+  // SaveEntitiesAsync (dispatch -> SaveChanges) semantics, but
+  // leverages MikroORM's subscriber registry rather than rebuilding
+  // the orchestration in a Context method.
+  opts.globalOrm.em.getEventManager().registerSubscriber(container.get(DomainEventDispatcher));
 
   return container;
 }

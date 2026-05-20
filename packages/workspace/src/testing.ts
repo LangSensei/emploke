@@ -30,7 +30,6 @@
 
 import { defineConfig, type Options } from "@mikro-orm/better-sqlite";
 import type { EntityManager, MikroORM } from "@mikro-orm/core";
-import { Mediator } from "mediatr-ts";
 import { WorkspaceContext } from "./infrastructure/workspace-context.js";
 import { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
@@ -56,14 +55,14 @@ export { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
 /**
  * Build a {@link WorkspaceContext} for tests around a raw EntityManager.
- * Constructs a fresh mediatr-ts `Mediator` with no handlers registered,
- * so `saveEntities()`'s domain-event dispatch path swallows the
- * "no handler found" notification gracefully. Use this everywhere a
- * test previously did `new MikroWorkspaceRepository(em)` or
+ * Tests that need event-dispatch coverage must register
+ * `DomainEventDispatcher` onto the test ORM separately (mirror the
+ * bootstrap registration). Use this helper everywhere a test
+ * previously did `new MikroWorkspaceRepository(em)` or
  * `new MikroWorkspaceQueries(em)`.
  */
 export function makeTestWorkspaceContext(em: EntityManager): WorkspaceContext {
-  return new WorkspaceContext(em, new Mediator());
+  return new WorkspaceContext(em);
 }
 
 /**

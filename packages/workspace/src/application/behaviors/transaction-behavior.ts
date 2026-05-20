@@ -6,27 +6,20 @@ const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
 
 /**
  * Mediator pipeline behaviour that wraps every command in
- * em.transactional and routes the commit through
- * WorkspaceContext.saveEntities(). Owned by @emploke/workspace per
- * ADR-4 (per-bounded-context EM). Phase 3+ adds analogous behaviours
- * inside session/task/catalog pkgs each bound to their own context.
- *
- * Flow:
- *  1. em.transactional opens BEGIN
- *  2. command handler runs
- *  3. ctx.saveEntities dispatches events then flushes change-set
- *  4. transactional COMMITs on clean return; throw rolls back
+ * em.transactional. Owned by @emploke/workspace per ADR-4
+ * (per-bounded-context EM). Domain-event dispatch happens via
+ * DomainEventDispatcher (MikroORM beforeFlush subscriber registered
+ * in bootstrap), so this behaviour stays single-purpose:
+ * BEGIN / COMMIT / ROLLBACK only. em.transactional auto-flushes at
+ * the end of the callback, which triggers the subscriber's
+ * beforeFlush hook (events dispatched, then SQL writes).
  */
 @injectable()
 export class TransactionBehavior implements PipelineBehavior {
   constructor(@inject(WorkspaceContext) private readonly ctx: WorkspaceContext) {}
 
   async handle(_request: RequestData<unknown>, next: () => unknown): Promise<unknown> {
-    return this.ctx.em.transactional(async () => {
-      const result = await next();
-      await this.ctx.saveEntities();
-      return result;
-    });
+    return this.ctx.em.transactional(() => next());
   }
 }
 

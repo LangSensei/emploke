@@ -2,6 +2,7 @@ import type { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { WorkspaceRepository } from "../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../domain/clock.js";
+import { DomainEventDispatcher } from "../infrastructure/domain-event-dispatcher.js";
 import { MikroWorkspaceRepository } from "../infrastructure/repositories/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
 import { WorkspaceContext } from "../infrastructure/workspace-context.js";
@@ -56,15 +57,17 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
  *
  * The 3 lifecycle events (`WorkspaceRegistered`, `WorkspaceRenamed`,
  * `WorkspaceUnregistered`) are raised by the aggregate and dispatched
- * inside `WorkspaceContext.saveEntities()` before each flush, but no
- * subscribers are registered. `saveEntities` swallows the
- * "no handler found" mediatr-ts error so the publish path stays
- * green; Phase 3+ adds cross-context subscribers without re-wiring.
+ * by `DomainEventDispatcher` (MikroORM beforeFlush hook) before each
+ * SQL write, but no subscribers are registered. The dispatcher
+ * swallows the "no handler found" mediatr-ts error so the publish
+ * path stays green; Phase 3+ adds cross-context subscribers without
+ * re-wiring.
  */
 export function composeWorkspaceModule(container: Container): void {
   // Domain / application bindings
   container.bind(Clock).to(SystemClock).inSingletonScope();
   container.bind(WorkspaceContext).toSelf().inSingletonScope();
+  container.bind(DomainEventDispatcher).toSelf().inSingletonScope();
   container.bind(WorkspaceRepository).to(MikroWorkspaceRepository).inSingletonScope();
   container.bind(WorkspaceQueries).to(MikroWorkspaceQueries).inSingletonScope();
 

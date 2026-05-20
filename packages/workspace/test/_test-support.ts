@@ -4,6 +4,7 @@ import { Container, inject, injectable } from "inversify";
 import { Mediator, type PipelineBehavior, pipelineBehavior, type RequestData } from "mediatr-ts";
 import {
   composeWorkspaceModule,
+  DomainEventDispatcher,
   RegisterWorkspaceCommand,
   WorkspaceQueries,
 } from "../src/index.js";
@@ -12,10 +13,11 @@ import { openTestWorkspaceOrm } from "../src/testing.js";
 /**
  * Local mirror of `@emploke/server`'s `TransactionBehavior`. Lives in
  * the workspace pkg's test-support so the workspace pkg can be tested
- * end-to-end (mediator dispatch → em.transactional → em.flush →
- * WorkspaceContext.saveEntities → published events) without taking a runtime
- * dependency on `@emploke/server`. The production server uses the
- * server-pkg copy, which is byte-identical in behaviour.
+ * end-to-end (mediator dispatch -> em.transactional -> em.flush ->
+ * beforeFlush hook fires DomainEventDispatcher -> published events)
+ * without taking a runtime dependency on `@emploke/server`. The
+ * production server uses the server-pkg copy, which is byte-identical
+ * in behaviour.
  */
 @injectable()
 export class TestTransactionBehavior implements PipelineBehavior {
@@ -71,6 +73,10 @@ export async function setupWorkspaceTestSubsystem(): Promise<WorkspaceTestSubsys
   container.bind(EntityManager).toConstantValue(orm.em as EntityManager);
 
   composeWorkspaceModule(container);
+
+  // Mirror bootstrap: register dispatcher with the test ORM so any
+  // em.flush triggers event dispatch (beforeFlush hook).
+  orm.em.getEventManager().registerSubscriber(container.get(DomainEventDispatcher));
 
   const queries = container.get(WorkspaceQueries);
   return { orm, container, mediator, queries };

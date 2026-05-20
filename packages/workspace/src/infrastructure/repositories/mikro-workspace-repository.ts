@@ -61,12 +61,13 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
     try {
       // Eager save (via context) surfaces the SQL UNIQUE-constraint
       // violation here so we can translate it into the typed domain
-      // error. The outer TransactionBehavior's saveEntities call then
-      // sees a clean change-set and becomes a no-op. saveEntities
-      // dispatches the WorkspaceRegistered event AND flushes - both
-      // BEFORE this method returns so the handler observes a fully
-      // committed (within the surrounding transaction) write.
-      await this.ctx.saveEntities();
+      // error. The outer TransactionBehavior's transactional flush
+      // then sees a clean change-set and is a no-op. The em.flush
+      // triggers DomainEventDispatcher (beforeFlush) which dispatches
+      // the WorkspaceRegistered event - both BEFORE this method
+      // returns so the handler observes a fully committed (within the
+      // surrounding transaction) write.
+      await this.ctx.em.flush();
     } catch (err) {
       // Translate the SQL-level UNIQUE violation into the typed
       // domain error the wire layer maps to HTTP 409. MikroORM v6

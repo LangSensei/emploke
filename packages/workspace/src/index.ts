@@ -85,6 +85,7 @@ export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspa
 // ── MikroORM entity surface for the composition root ──────────
 
 export { Workspace } from "./domain/aggregates/workspace/workspace.js";
+export { DomainEventDispatcher } from "./infrastructure/domain-event-dispatcher.js";
 export { WorkspaceContext } from "./infrastructure/workspace-context.js";
 
 /**
