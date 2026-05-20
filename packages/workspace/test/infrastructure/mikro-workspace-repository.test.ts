@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WorkspaceNotRegisteredError } from "../../src/index.js";
 import {
   MikroWorkspaceQueries,
   MikroWorkspaceRepository,
@@ -124,38 +123,6 @@ describe("MikroWorkspaceRepository — delete", () => {
     const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
     await expect(repo.delete(WorkspaceId.of(UUID_A))).resolves.toBeUndefined();
   });
-
-  // Note: cascading clear of the current-workspace pointer when the
-  // pointed-to workspace gets unregistered is now a domain-event
-  // concern (ClearCurrentOnUnregisterDomainEventHandler subscribes to
-  // WorkspaceUnregistered). The repository.delete itself no longer
-  // touches global_state - see the integration tests covering the
-  // full UnregisterWorkspaceCommand flow.
-});
-
-describe("MikroWorkspaceRepository — current pointer", () => {
-  it("getCurrent returns null on a fresh repo", async () => {
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
-    expect(await repo.getCurrent()).toBeNull();
-  });
-
-  it("setCurrent persists the value across reads", async () => {
-    const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
-    em.persist(sample(UUID_A, "x", path.join(scratch, "a")));
-    await em.flush();
-
-    await repo.setCurrent(WorkspaceId.of(UUID_A));
-    const current = await repo.getCurrent();
-    expect(current?.id).toBe(UUID_A);
-  });
-
-  it("setCurrent throws WorkspaceNotRegisteredError for an unknown id", async () => {
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
-    await expect(repo.setCurrent(WorkspaceId.of(UUID_A))).rejects.toBeInstanceOf(
-      WorkspaceNotRegisteredError,
-    );
-  });
 });
 
 describe("MikroWorkspaceQueries", () => {
@@ -173,6 +140,8 @@ describe("MikroWorkspaceQueries", () => {
       workspaceDir: path.resolve(path.join(scratch, "p")),
     });
     expect(typeof view!.createdAt).toBe("string");
+    // register sets lastOpenedAt = now (registration is implicit first-open).
+    expect(typeof view!.lastOpenedAt).toBe("string");
   });
 
   it("getById returns null for an unknown id", async () => {
@@ -185,17 +154,22 @@ describe("MikroWorkspaceQueries", () => {
     expect(await q.getById("not-a-uuid")).toBeNull();
   });
 
-  it("list returns every registered workspace as a summary", async () => {
+  it("list returns workspaces ordered by lastOpenedAt DESC (most-recently-opened first)", async () => {
     const em = orm.em.fork();
+    // sample() uses Workspace.register with `now = new Date().toISOString()`;
+    // a tiny delay between persists guarantees distinct lastOpenedAt values.
     em.persist(sample(UUID_A, "A", path.join(scratch, "a")));
+    await em.flush();
+    await new Promise((r) => setTimeout(r, 5));
     em.persist(sample(UUID_B, "B", path.join(scratch, "b")));
     await em.flush();
 
     const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
     const list = await q.list();
-    expect(list.map((v) => v.id).sort()).toEqual([UUID_A, UUID_B].sort());
+    expect(list.map((v) => v.id)).toEqual([UUID_B, UUID_A]);
     expect(list[0]).toHaveProperty("name");
     expect(list[0]).toHaveProperty("workspaceDir");
+    expect(list[0]).toHaveProperty("lastOpenedAt");
   });
 
   it("list returns [] on an empty registry", async () => {
@@ -203,32 +177,32 @@ describe("MikroWorkspaceQueries", () => {
     expect(await q.list()).toEqual([]);
   });
 
-  it("getCurrentId returns null when nothing is selected", async () => {
+  it("getLastOpenedId returns null on an empty registry", async () => {
     const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(orm.em.fork()));
-    expect(await q.getCurrentId()).toBeNull();
+    expect(await q.getLastOpenedId()).toBeNull();
   });
 
-  it("getCurrentId returns the selected id after setCurrent", async () => {
+  it("getLastOpenedId returns the most-recently-opened workspace's id", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
-    em.persist(sample(UUID_A, "X", path.join(scratch, "a")));
+    em.persist(sample(UUID_A, "A", path.join(scratch, "a")));
     await em.flush();
-    await repo.setCurrent(WorkspaceId.of(UUID_A));
+    await new Promise((r) => setTimeout(r, 5));
+    em.persist(sample(UUID_B, "B", path.join(scratch, "b")));
+    await em.flush();
 
     const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
-    expect(await q.getCurrentId()).toBe(UUID_A);
+    expect(await q.getLastOpenedId()).toBe(UUID_B);
   });
 
-  it("getCurrent returns the full view of the selected workspace", async () => {
+  it("getLastOpened returns the full view of the most-recently-opened workspace", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "X", path.join(scratch, "a")));
     await em.flush();
-    await repo.setCurrent(WorkspaceId.of(UUID_A));
 
     const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
-    const view = await q.getCurrent();
+    const view = await q.getLastOpened();
     expect(view?.id).toBe(UUID_A);
     expect(view?.name).toBe("X");
+    expect(typeof view?.lastOpenedAt).toBe("string");
   });
 });

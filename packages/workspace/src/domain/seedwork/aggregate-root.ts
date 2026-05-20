@@ -1,64 +1,32 @@
-import type { WorkspaceDomainEvent } from "./domain-event.js";
-
 /**
- * Base class for every DDD aggregate root in `@emploke/workspace`.
+ * Marker interface: an aggregate root is the only kind of entity that
+ * has a Repository. Mirrors eShop's `IAggregateRoot { }`
+ * (Ordering.Domain/SeedWork/IAggregateRoot.cs)  empty by design,
+ * purely a type-level marker.
  *
- * Accumulates domain events raised by aggregate transitions into a
- * private buffer; `pullDomainEvents()` drains the buffer and returns
- * the events for downstream dispatch. The buffer is intentionally
- * NOT a MikroORM-decorated property — it lives on the in-memory
- * instance, not the persisted row.
+ * ## Why a marker, not behaviour
  *
- * ## Dispatch path (post-Phase-2 / ADR-3)
+ * "Aggregate root" is a *consistency-boundary* concept, not a
+ * behaviour concept. The behaviour (id, domain events, equality)
+ * lives on {@link Entity}, which every aggregate root extends.
+ * `AggregateRoot` adds nothing at runtime; its only job is to let the
+ * type system answer "may this type have a repository?" with a yes
+ * (e.g. `abstract class Repository<T extends Entity & AggregateRoot>`).
  *
- * The {@link import("../../infrastructure/workspace-context.js").WorkspaceContext} (saveEntities)
- * walks `args.uow.getChangeSets()` in the MikroORM `afterFlush` hook,
- * detects entities that extend `AggregateRoot`, calls
- * `pullDomainEvents()` on each, and dispatches every event via
- * `mediator.publish(...)`. Handlers no longer publish events
- * themselves — the unit-of-work owns the contract end-to-end.
+ * ## Convention
  *
- * ## Why an abstract class rather than an interface
+ *   - An aggregate root: `class Workspace extends Entity implements AggregateRoot {}`
+ *     and gets its own `WorkspaceRepository`.
+ *   - A child entity: `class WorkspaceMember extends Entity {}` (no
+ *     `implements AggregateRoot`)  accessed through the root, never
+ *     via its own repository, even when it has its own SQL table.
+ *   - A value object: extends `ValueObject` from seedwork; lives
+ *     alongside its aggregate root in `domain/aggregates/<root>/`.
  *
- * `WorkspaceContext.saveEntities` detects aggregates via `instanceof
- * AggregateRoot` (the only run-time discriminator that survives a
- * transpile cycle). A TypeScript-only `interface` would erase, leaving
- * the subscriber blind. A concrete base class also gives every
- * aggregate the same `addDomainEvent` / `pullDomainEvents` shape
- * without copy-paste.
- *
- * ## Promotion plan (per ADR-3 §scope)
- *
- * Phase 2 lives in `@emploke/workspace` because workspace is the only
- * MikroORM-aware package today. Phase 3+ moves session/task/catalog
- * onto MikroORM; once three or more packages need this base, it
- * promotes to a shared `@emploke/core` package. Until then importing
- * `AggregateRoot` from `@emploke/workspace` is acceptable cross-context
- * usage per naming-conventions §8.3.
+ * Cross-context import rules: this marker may cross context
+ * boundaries (it's a type, not behaviour). Aggregate-root *classes*
+ * (e.g. `Workspace`) generally must NOT  peer contexts hold views
+ * via {@link WorkspaceQueries}, not the aggregate.
  */
-export abstract class AggregateRoot {
-  private _domainEvents: WorkspaceDomainEvent[] = [];
-
-  /**
-   * Record an event raised by a transition. `protected` so external
-   * callers cannot inject events into the aggregate — only the
-   * aggregate's own methods can.
-   */
-  protected addDomainEvent(event: WorkspaceDomainEvent): void {
-    this._domainEvents.push(event);
-  }
-
-  /**
-   * Drain the buffered domain events. The `WorkspaceContext.saveEntities()` calls this BEFORE `em.flush()`
-   * so events fire while the surrounding transaction is still open.
-   * Second drains return `[]`.
-   *
-   * Returned as a `readonly` view so subscribers cannot mutate the
-   * aggregate's private buffer state via the returned array.
-   */
-  pullDomainEvents(): readonly WorkspaceDomainEvent[] {
-    const events = this._domainEvents;
-    this._domainEvents = [];
-    return events;
-  }
-}
+// biome-ignore lint/suspicious/noEmptyInterface: marker interface by design (mirrors eShop IAggregateRoot)
+export interface AggregateRoot {}

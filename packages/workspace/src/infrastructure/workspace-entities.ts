@@ -1,5 +1,4 @@
 import { Workspace } from "../domain/aggregates/workspace/workspace.js";
-import { GlobalState } from "../domain/global-state.js";
 
 /**
  * Entities owned by `@emploke/workspace`. Internal to the package —
@@ -11,9 +10,9 @@ import { GlobalState } from "../domain/global-state.js";
  * / CLI) call `composeWorkspaceModule` and never see the entity list.
  *
  *   - `Workspace` — the aggregate root for a registered workspace.
- *   - `GlobalState` — a singleton key/value bag holding the
- *     `current_workspace_id` pointer. Plain entity (no aggregate
- *     behaviour); accessed via the EntityManager so the per-context
- *     unit-of-work + transaction envelope cover it.
+ *     `last_opened_at` collapses what used to be a separate
+ *     `global_state.current_workspace_id` cross-row pointer onto a
+ *     per-aggregate fact: the workspace with the highest
+ *     `last_opened_at` is the registry's "current" one (MRU).
  */
-export const WORKSPACE_ENTITIES = [Workspace, GlobalState] as const;
+export const WORKSPACE_ENTITIES = [Workspace] as const;

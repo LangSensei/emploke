@@ -2,14 +2,13 @@ import "reflect-metadata";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RegisterWorkspaceCommand,
   WorkspaceIdInvalidError,
   WorkspaceNameInvalidError,
   WorkspacePathConflictError,
 } from "../../../src/index.js";
-import { WorkspaceRegistered } from "../../../src/testing.js";
 import {
   registerTestWorkspace,
   setupWorkspaceTestSubsystem,
@@ -22,21 +21,15 @@ const UUID_B = "22222222-2222-4222-8222-222222222222";
 
 let scratch: string;
 let sys: WorkspaceTestSubsystem;
-let publishedEvents: unknown[];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-ws-register-handler-"));
   sys = await setupWorkspaceTestSubsystem();
-  publishedEvents = [];
-  vi.spyOn(sys.mediator, "publish").mockImplementation(async (evt) => {
-    publishedEvents.push(evt);
-  });
 });
 
 afterEach(async () => {
   await teardownWorkspaceTestSubsystem(sys);
   await rm(scratch, { recursive: true, force: true });
-  vi.restoreAllMocks();
 });
 
 describe("RegisterWorkspaceCommandHandler (Phase 2 / MikroORM)", () => {
@@ -57,18 +50,8 @@ describe("RegisterWorkspaceCommandHandler (Phase 2 / MikroORM)", () => {
     expect((await stat(wsDir)).isDirectory()).toBe(true);
     expect((await stat(path.join(wsDir, "sessions"))).isDirectory()).toBe(true);
     expect((await stat(path.join(wsDir, "tasks"))).isDirectory()).toBe(true);
-    // no catalog/ subdir created — catalog content lives in workspace.db
+    // no catalog/ subdir created  catalog content lives in workspace.db
     await expect(stat(path.join(wsDir, "catalog"))).rejects.toThrow();
-  });
-
-  it("publishes WorkspaceRegistered after the unit-of-work flush", async () => {
-    const wsDir = path.join(scratch, "p");
-    await registerTestWorkspace(sys, { id: UUID_A, workspaceDir: wsDir, name: "Project" });
-
-    expect(publishedEvents).toHaveLength(1);
-    expect(publishedEvents[0]).toBeInstanceOf(WorkspaceRegistered);
-    const evt = publishedEvents[0] as WorkspaceRegistered;
-    expect(evt.id.value).toBe(UUID_A);
   });
 
   it("rejects an invalid display name", async () => {

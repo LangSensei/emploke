@@ -1,17 +1,15 @@
 import { Entity, PrimaryKey, Property } from "@mikro-orm/core";
 import { WorkspaceCorruptedError } from "../../exceptions/workspace-errors.js";
-import { AggregateRoot } from "../../seedwork/aggregate-root.js";
-import { WorkspaceRegistered } from "./events/workspace-registered.js";
-import { WorkspaceRenamed } from "./events/workspace-renamed.js";
-import { WorkspaceUnregistered } from "./events/workspace-unregistered.js";
-import { WorkspaceDir } from "./value-objects/workspace-dir.js";
-import { WorkspaceId } from "./value-objects/workspace-id.js";
-import { WorkspaceName } from "./value-objects/workspace-name.js";
+import type { AggregateRoot } from "../../seedwork/aggregate-root.js";
+import { Entity as DomainEntity } from "../../seedwork/entity.js";
+import { WorkspaceDir } from "./workspace-dir.js";
+import { WorkspaceId } from "./workspace-id.js";
+import { WorkspaceName } from "./workspace-name.js";
 
 /**
  * Aggregate root: a single registered workspace.
  *
- * ## Persistence shape (Phase 2 / ADR-3)
+ * ## Persistence shape
  *
  * The aggregate is decorated as a MikroORM `@Entity`. Fields are
  * **primitives** (not value objects) so the ORM can map them straight
@@ -19,15 +17,14 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
  * value-object factories used by the static constructors
  * (`WorkspaceId.of`, `WorkspaceName.of`, `WorkspaceDir.of`), which
  * throw typed errors the wire layer already knows how to map. Once a
- * row is inside the aggregate, the fields are trusted — public field
+ * row is inside the aggregate, the fields are trusted  public field
  * mutations are still gated by the named transition methods
- * (`rename`, `unregister`).
+ * (`rename`, `open`).
  *
  * ## Construction
  *
- *   - {@link Workspace.register} — for fresh workspaces. Raises
- *     {@link WorkspaceRegistered} into the AggregateRoot event buffer.
- *   - {@link Workspace.fromStored} — for in-memory rehydration
+ *   - {@link Workspace.register}  for fresh workspaces.
+ *   - {@link Workspace.fromStored}  for in-memory rehydration
  *     (tests, fixtures). MikroORM has its own hydration path that
  *     skips constructors entirely; `fromStored` is the equivalent for
  *     non-ORM callers and surfaces {@link WorkspaceCorruptedError}
@@ -41,12 +38,18 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
  *
  * ## Domain events
  *
- * Buffered on the base class (see `AggregateRoot`). The Phase-2
- * `WorkspaceContext.saveEntities` walks the unit-of-work identity map before
- * each flush and dispatches each event via `mediator.publish` — no
- * more per-handler publish loop.
+ * No events are raised today: this aggregate has no cross-context
+ * subscribers. The seedwork machinery (Entity events buffer +
+ * `DomainEventDispatcher` MikroORM subscriber, with events typed as
+ * mediatr-ts `NotificationData`) stays wired and latent. When a
+ * transition needs a subscriber, add the event class AND its
+ * notification handler in the same change, then call
+ * `this.addDomainEvent(...)` from the transition. The dispatcher
+ * does NOT swallow "no handler found" errors — a forgotten handler
+ * fails the flush loudly, enforcing "no event class without a
+ * handler" at runtime.
  *
- * ## Naming convention (locked alongside issue #121)
+ * ## Naming convention
  *
  * `workspaceDir` (entity field) / `workspace_dir` (SQL column) is the
  * workspace's root directory. The shorter `workdir` is reserved for
@@ -55,7 +58,7 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
  * `session.workdir = <workspaceDir>/sessions/<id>`).
  */
 @Entity({ tableName: "workspaces" })
-export class Workspace extends AggregateRoot {
+export class Workspace extends DomainEntity implements AggregateRoot {
   @PrimaryKey({ type: "uuid" })
   id!: string;
 
@@ -69,8 +72,22 @@ export class Workspace extends AggregateRoot {
   createdAt!: string;
 
   /**
+   * ISO-8601 timestamp when the user last explicitly opened this
+   * workspace. Set to `now` on registration (registration is implicit
+   * "first open") and updated by {@link Workspace.open}. Drives
+   * `WorkspaceQueries.getLastOpened`  the workspace with the highest
+   * `lastOpenedAt` is the "current" one from the user's perspective.
+   *
+   * Nullable to allow future bulk-imported / fixture rows that haven't
+   * been opened yet  but in normal flow (register  open  ...) it
+   * is always set.
+   */
+  @Property({ name: "last_opened_at", nullable: true, type: "string" })
+  lastOpenedAt: string | null = null;
+
+  /**
    * MikroORM-friendly constructor. Protected to discourage `new
-   * Workspace()` from outside the aggregate — use {@link register} or
+   * Workspace()` from outside the aggregate  use {@link register} or
    * {@link fromStored} instead. MikroORM's hydration path bypasses
    * the constructor entirely (it uses `Object.create`-style entity
    * instantiation), so the protected modifier is purely a guardrail
@@ -81,15 +98,14 @@ export class Workspace extends AggregateRoot {
   }
 
   /**
-   * Build a fresh `Workspace` and raise {@link WorkspaceRegistered}.
-   * Validation lives inside the value-object factories the caller
-   * passes in; this method itself only assembles + records the event.
+   * Build a fresh `Workspace`. Validation lives inside the
+   * value-object factories the caller passes in; this method itself
+   * only assembles fields.
    *
    * The returned entity is detached from any EntityManager. The
    * command handler calls `em.persist(ws)` to enroll it in the
    * unit-of-work; the subsequent `em.flush` (driven by
-   * `TransactionBehavior`) writes the INSERT and fires the
-   * `afterFlush` subscriber.
+   * `TransactionBehavior`) writes the INSERT.
    */
   static register(args: {
     id: WorkspaceId;
@@ -102,14 +118,7 @@ export class Workspace extends AggregateRoot {
     ws.name = args.name.value;
     ws.workspaceDir = args.workspaceDir.value;
     ws.createdAt = args.now;
-    ws.addDomainEvent(
-      new WorkspaceRegistered({
-        id: args.id,
-        name: args.name,
-        workspaceDir: args.workspaceDir,
-        registeredAt: args.now,
-      }),
-    );
+    ws.lastOpenedAt = args.now;
     return ws;
   }
 
@@ -117,22 +126,20 @@ export class Workspace extends AggregateRoot {
    * Reconstruct a `Workspace` from raw primitive fields (e.g. test
    * fixtures or migration backfills). Production reads go through
    * MikroORM's `em.findOne` / `em.find` hydration path, which skips
-   * this factory and skips constructor invocation entirely — but the
+   * this factory and skips constructor invocation entirely  but the
    * factory remains useful for test code that wants a tracked-but-
    * detached aggregate without standing up an EntityManager.
    *
    * Validation failures throw {@link WorkspaceCorruptedError} carrying
    * the on-disk `workspaceDir` for operator triage, rather than the
    * input-validation errors used by {@link Workspace.register}.
-   *
-   * Does NOT raise a `WorkspaceRegistered` event — rehydration is not
-   * a domain transition.
    */
   static fromStored(args: {
     id: string;
     name: string;
     workspaceDir: string;
     createdAt: string;
+    lastOpenedAt?: string | null;
   }): Workspace {
     if (typeof args.createdAt !== "string" || args.createdAt.length === 0) {
       throw new WorkspaceCorruptedError(args.workspaceDir, "missing or invalid 'createdAt'");
@@ -169,49 +176,29 @@ export class Workspace extends AggregateRoot {
     ws.name = args.name;
     ws.workspaceDir = args.workspaceDir;
     ws.createdAt = args.createdAt;
+    ws.lastOpenedAt = args.lastOpenedAt ?? null;
     return ws;
   }
 
-  // ── transitions ────────────────────────────────────────
+  //  transitions ─
 
   /**
-   * Rename the workspace. No-op (and no event raised) when the new
-   * name equals the current one — saves the event subscribers from
-   * having to filter idempotent renames themselves.
+   * Rename the workspace. No-op when the new name equals the current
+   * one  keeps the unit-of-work change-set empty and saves a
+   * pointless UPDATE.
    */
-  rename(newName: WorkspaceName, now: string): void {
+  rename(newName: WorkspaceName): void {
     if (this.name === newName.value) return;
-    const oldNameVO = WorkspaceName.of(this.name);
     this.name = newName.value;
-    this.addDomainEvent(
-      new WorkspaceRenamed({
-        id: WorkspaceId.of(this.id),
-        oldName: oldNameVO,
-        newName,
-        renamedAt: now,
-      }),
-    );
   }
 
   /**
-   * Mark the workspace as unregistered (raises
-   * {@link WorkspaceUnregistered}). The persistent row removal
-   * happens in the repository's `delete()` (which calls `em.remove`);
-   * the aggregate just records the transition for downstream
-   * subscribers.
-   *
-   * `purged` records the user's choice to also wipe emploke-owned
-   * subdirs (`sessions/`, `tasks/`) on disk. Carried on the event so
-   * downstream consumers (future audit log, cross-context cleanup
-   * subscribers) see the same purge flag the handler acted on.
+   * Mark the workspace as just-opened by updating `lastOpenedAt`. The
+   * workspace with the highest `lastOpenedAt` is what
+   * `WorkspaceQueries.getLastOpened` returns  opening makes this
+   * workspace the registry's "current" one.
    */
-  unregister(now: string, opts: { purged: boolean }): void {
-    this.addDomainEvent(
-      new WorkspaceUnregistered({
-        id: WorkspaceId.of(this.id),
-        purged: opts.purged,
-        unregisteredAt: now,
-      }),
-    );
+  open(now: string): void {
+    this.lastOpenedAt = now;
   }
 }

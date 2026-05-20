@@ -1,4 +1,5 @@
 import path from "node:path";
+import { ValueObject } from "../../seedwork/value-object.js";
 
 /**
  * Value object: absolute filesystem path the workspace lives under.
@@ -8,8 +9,10 @@ import path from "node:path";
  * Input is always `path.resolve`d so equality is meaningful regardless
  * of whether the caller passed an absolute or relative path.
  */
-export class WorkspaceDir {
-  private constructor(public readonly value: string) {}
+export class WorkspaceDir extends ValueObject {
+  private constructor(public readonly value: string) {
+    super();
+  }
 
   /** Resolve to absolute + wrap. Throws when the input is empty / non-string. */
   static of(value: string): WorkspaceDir {
@@ -21,11 +24,11 @@ export class WorkspaceDir {
     return new WorkspaceDir(path.resolve(value));
   }
 
-  equals(other: WorkspaceDir): boolean {
-    return this.value === other.value;
+  protected override equalityComponents(): readonly unknown[] {
+    return [this.value];
   }
 
-  toString(): string {
+  override toString(): string {
     return this.value;
   }
 }

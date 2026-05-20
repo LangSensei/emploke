@@ -1,35 +1,29 @@
+import { silentLogger } from "@emploke/logger";
 import { defineConfig } from "@mikro-orm/better-sqlite";
 import { type EntityManager, MikroORM } from "@mikro-orm/core";
-import { silentLogger } from "@emploke/logger";
 import type { Container } from "inversify";
-import { Mediator, notificationHandler } from "mediatr-ts";
-import { WorkspaceUnregistered } from "../domain/aggregates/workspace/events/workspace-unregistered.js";
+import { Mediator } from "mediatr-ts";
 import { WorkspaceRepository } from "../domain/aggregates/workspace/workspace-repository.js";
 import { DomainEventDispatcher } from "../infrastructure/domain-event-dispatcher.js";
 import { MikroWorkspaceRepository } from "../infrastructure/repositories/mikro-workspace-repository.js";
 import { WorkspaceContext } from "../infrastructure/workspace-context.js";
 import { WORKSPACE_ENTITIES } from "../infrastructure/workspace-entities.js";
 import { LOGGER } from "./behaviors/logging-behavior.js";
+import { OpenWorkspaceCommand } from "./commands/open-workspace.command.js";
+import { OpenWorkspaceCommandHandler } from "./commands/open-workspace.command-handler.js";
 import { RegisterWorkspaceCommand } from "./commands/register-workspace.command.js";
 import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace.command-handler.js";
 import { RenameWorkspaceCommand } from "./commands/rename-workspace.command.js";
 import { RenameWorkspaceCommandHandler } from "./commands/rename-workspace.command-handler.js";
-import { SetCurrentWorkspaceCommand } from "./commands/set-current-workspace.command.js";
-import { SetCurrentWorkspaceCommandHandler } from "./commands/set-current-workspace.command-handler.js";
 import { UnregisterWorkspaceCommand } from "./commands/unregister-workspace.command.js";
 import { UnregisterWorkspaceCommandHandler } from "./commands/unregister-workspace.command-handler.js";
-import { ClearCurrentOnUnregisterDomainEventHandler } from "./domain-event-handlers/clear-current-on-unregister.domain-event-handler.js";
 import { MikroWorkspaceQueries } from "./queries/mikro-workspace-queries.js";
 import { WorkspaceQueries } from "./queries/workspace-queries.js";
 import { CommandValidator } from "./validations/command-validator.js";
-import { RegisterWorkspaceCommandValidator } from "./validations/register-workspace.validator.js";
-import { RenameWorkspaceCommandValidator } from "./validations/rename-workspace.validator.js";
-import { SetCurrentWorkspaceCommandValidator } from "./validations/set-current-workspace.validator.js";
-import { UnregisterWorkspaceCommandValidator } from "./validations/unregister-workspace.validator.js";
-
-// Register notification handlers with mediatr-ts module-level mappings
-// at module load via decorator side-effect.
-notificationHandler(WorkspaceUnregistered)(ClearCurrentOnUnregisterDomainEventHandler);
+import { OpenWorkspaceCommandValidator } from "./validations/open-workspace.command-validator.js";
+import { RegisterWorkspaceCommandValidator } from "./validations/register-workspace.command-validator.js";
+import { RenameWorkspaceCommandValidator } from "./validations/rename-workspace.command-validator.js";
+import { UnregisterWorkspaceCommandValidator } from "./validations/unregister-workspace.command-validator.js";
 
 /**
  * Concrete validators registered against the abstract `CommandValidator`
@@ -42,7 +36,7 @@ notificationHandler(WorkspaceUnregistered)(ClearCurrentOnUnregisterDomainEventHa
 const COMMAND_VALIDATORS = [
   RegisterWorkspaceCommandValidator,
   RenameWorkspaceCommandValidator,
-  SetCurrentWorkspaceCommandValidator,
+  OpenWorkspaceCommandValidator,
   UnregisterWorkspaceCommandValidator,
 ] as const;
 
@@ -101,11 +95,9 @@ export interface WorkspaceModuleHandle {
  *
  * Callers (`@emploke/server`, future `@emploke/cli` direct
  * embeds) only pass configuration — they don't touch MikroORM /
- * EntityManager / WORKSPACE_ENTITIES directly. This matches the
- * "bounded context owns its persistence" design called out in
- * ADR-4 (one EM per context); when Phase 3+ adds analogous compose
- * functions for session / task / catalog, each context will spin
- * up its own ORM the same way.
+ * EntityManager / WORKSPACE_ENTITIES directly. Each bounded context
+ * owns its own EM; analogous compose functions for session / task /
+ * catalog will spin up their own ORM the same way.
  *
  * ## Pre-compose prerequisites
  *   - `Mediator` MUST be bound on the container before this call
@@ -119,9 +111,6 @@ export interface WorkspaceModuleHandle {
  *     ORM's event manager).
  *   - Per-command validators bound to the abstract `CommandValidator`
  *     identifier so `ValidationBehavior` can multi-inject and dispatch.
- *   - `ClearCurrentOnUnregisterDomainEventHandler` (notification handler that
- *     clears the current-workspace pointer when the pointed-to
- *     workspace is unregistered).
  *   - The four command handlers via `mediator.registerHandler`.
  *
  * Pipeline behaviours (`ValidationBehavior` outermost,
@@ -183,18 +172,13 @@ export async function composeWorkspaceModule(
     container.bind(CommandValidator).to(ValidatorClass).inSingletonScope();
   }
 
-  // Notification handler binding (the mediator resolves it on publish)
-  if (!container.isBound(ClearCurrentOnUnregisterDomainEventHandler)) {
-    container.bind(ClearCurrentOnUnregisterDomainEventHandler).toSelf().inSingletonScope();
-  }
-
   // ── 4. Register the dispatcher on MikroORM's event manager ─
   // Any em.flush() (driven by TransactionBehavior's em.transactional,
   // by a direct test call, or by any future code path) automatically
   // drains pending aggregate domain events from the UoW identity map
   // and publishes them through the mediator BEFORE the SQL writes
-  // hit SQLite. Matches eShop OrderingContext.SaveEntitiesAsync
-  // semantics, but leverages MikroORM's subscriber registry rather
+  // hit SQLite. Mirrors eShop OrderingContext.SaveEntitiesAsync
+  // semantics, leveraging MikroORM's subscriber registry rather
   // than rebuilding the orchestration in a Context method.
   orm.em.getEventManager().registerSubscriber(container.get(DomainEventDispatcher));
 
@@ -210,11 +194,7 @@ export async function composeWorkspaceModule(
     UnregisterWorkspaceCommand,
     UnregisterWorkspaceCommandHandler,
   );
-  registerCommandIdempotent(
-    mediator,
-    SetCurrentWorkspaceCommand,
-    SetCurrentWorkspaceCommandHandler,
-  );
+  registerCommandIdempotent(mediator, OpenWorkspaceCommand, OpenWorkspaceCommandHandler);
 
   // ── 6. Lifecycle handle ─────────────────────────────────
   return {

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MigrationCoordinator } from "../../src/migration/coordinator.js";
+import { MigrationCoordinator } from "../../src/legacy/migration/coordinator.js";
 
 let db: DatabaseSync;
 

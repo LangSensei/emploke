@@ -1,6 +1,6 @@
 import { injectable } from "inversify";
 import { z } from "zod";
-import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/workspace-id.js";
 import { UnregisterWorkspaceCommand } from "../commands/unregister-workspace.command.js";
 import { CommandValidationError, CommandValidator } from "./command-validator.js";
 

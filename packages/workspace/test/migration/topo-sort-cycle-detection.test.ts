@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   MigrationCycleError,
   MigrationDependencyMissingError,
-} from "../../src/migration/errors.js";
-import { topoSort } from "../../src/migration/topo-sort.js";
-import type { Migration } from "../../src/migration/types.js";
+} from "../../src/legacy/migration/errors.js";
+import { topoSort } from "../../src/legacy/migration/topo-sort.js";
+import type { Migration } from "../../src/legacy/migration/types.js";
 
 function m(pkg: string, fromVersion: number, dependsOn?: readonly string[]): Migration {
   return {

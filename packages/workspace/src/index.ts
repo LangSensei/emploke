@@ -5,19 +5,18 @@
  * emploke's per-workspace state (per-workspace SQLite DB at
  * `<workspaceDir>/workspace.db`, plus agent workdirs under `sessions/`
  * and `tasks/`). Catalog content (agents/skills/mcps) lives inside
- * `workspace.db` as BLOB rows, NOT as files on disk — the workspace
+ * `workspace.db` as BLOB rows, not as files on disk — the workspace
  * folder has no `catalog/` subdirectory. Each workspace is identified
  * by an opaque UUID `id` (the URL routing key) and lives at an
  * absolute filesystem `workspaceDir`. Its user-facing display name
  * and other metadata live in the global registry row (`global.db`),
- * NOT in the workspace folder.
+ * not in the workspace folder.
  *
- * ## Phase 2 / ADR-3 surface (MikroORM)
+ * ## Public surface
  *
- * Persistence pivoted to MikroORM in Phase 2 (#139). Downstream
- * packages and the server's wire layer interact through:
+ * Downstream packages and the server's wire layer interact through:
  *
- *   - **Commands** (`Register/Rename/Unregister/SetCurrentWorkspaceCommand`)
+ *   - **Commands** (`Register/Rename/Unregister/OpenWorkspaceCommand`)
  *     dispatched via `mediator.send(...)`. Each command's handler
  *     runs inside `TransactionBehavior`'s `em.transactional` wrapper,
  *     so the persistence + event dispatch are atomic.
@@ -28,37 +27,23 @@
  *   - **Composition** (`composeWorkspaceModule(container)`) called
  *     once by the server / CLI bootstrap. Requires `Mediator` AND
  *     `EntityManager` to be bound first.
- *   - **`WorkspaceEntities`** — the entity list to pass to
- *     `MikroORM.init({ entities: ... })`. Lets the composition root
- *     stay agnostic of the package's internal entity layout.
- *   - **`WorkspaceContext`** — re-exported so the composition
- *     root can pull it out of the container and pass into
- *     `MikroORM.init({ subscribers: ... })`.
  *
  * Everything else (the `Workspace` aggregate, `WorkspaceRepository`,
  * concrete handlers, `MikroWorkspaceRepository`, value objects beyond
- * the URL-routing `WorkspaceId`) is package-private. Tests that need
- * the aggregate or infrastructure directly import from
- * `@emploke/workspace/testing`.
+ * `WorkspaceId`) is package-private. Tests that need the aggregate or
+ * infrastructure directly import from `@emploke/workspace/testing`.
  *
- * ## Why the legacy migration framework is still exported here
+ * ## Legacy migration framework
  *
- * The cross-package migration framework (`MigrationCoordinator`,
- * `runPkgMigrations`, etc.) is consumed by session/task/catalog and
- * the per-workspace `workspace.db` bootstrap. Phase 2 scope is the
- * workspace pkg's own DB (`global.db`) only — moving the migration
- * framework requires Phase 3+'s session/task/catalog refactors to
- * land first. Until then the framework continues to ship from
- * `@emploke/workspace` as a back-compat surface. Once Phase 5 lands
- * the cross-context refactor it may move to a dedicated
- * `@emploke/migration` pkg.
- *
- * The `workspaceLayout` helper is a pure utility consumed by the
- * server pkg and downstream callers; exporting it is a workspace-pilot
- * pragmatic deviation from naming-conventions §5's strict list.
+ * The `MigrationCoordinator` + `runPkgMigrations` re-exports below
+ * come from `./legacy/migration/` and exist solely so session / task
+ * / catalog can keep evolving their per-workspace SQLite schemas.
+ * They will go away once those packages also pivot off the
+ * hand-rolled framework. New code in this pkg must not depend on
+ * them.
  */
 
-// ── DDD + CQRS public surface (locked by issue #137 §5) ────────
+// ── DDD + CQRS public surface ─────────────────────────────────
 
 // Side-effect imports register pipeline behaviours on mediatr-ts's
 // module-level pipelineBehaviors singleton at module load. mediatr-ts
@@ -79,9 +64,9 @@ import "./application/behaviors/logging-behavior.js";
 export { LOGGER, LoggingBehavior } from "./application/behaviors/logging-behavior.js";
 export { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
 export { ValidationBehavior } from "./application/behaviors/validation-behavior.js";
+export { OpenWorkspaceCommand } from "./application/commands/open-workspace.command.js";
 export { RegisterWorkspaceCommand } from "./application/commands/register-workspace.command.js";
 export { RenameWorkspaceCommand } from "./application/commands/rename-workspace.command.js";
-export { SetCurrentWorkspaceCommand } from "./application/commands/set-current-workspace.command.js";
 export { UnregisterWorkspaceCommand } from "./application/commands/unregister-workspace.command.js";
 export type { WorkspaceSummaryView } from "./application/queries/views/workspace-summary-view.js";
 export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
@@ -93,16 +78,13 @@ export type {
 } from "./application/workspace.di.js";
 export { composeWorkspaceModule } from "./application/workspace.di.js";
 
-export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspace-id.js";
+export { WorkspaceId } from "./domain/aggregates/workspace/workspace-id.js";
 
 // ── Internal infrastructure ─────────────────────────────────
 //
-// The following are package-internal but historically exported. After
-// the P1-5 / encapsulation refactor, callers no longer need them at
-// the public surface — the workspace pkg now owns its MikroORM
-// instance entirely (see `composeWorkspaceModule(container, opts)`).
-// They remain accessible via `@emploke/workspace/testing` for tests
-// that drive the EM directly.
+// Internal types historically exported here are now reachable only
+// via `@emploke/workspace/testing` for tests that drive the EM
+// directly.
 
 // ── Typed errors callers may want to catch ────────────────────
 
@@ -121,21 +103,12 @@ export {
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "./domain/exceptions/workspace-errors.js";
-
-// ── Legacy migration framework (kept for session/task/catalog) ─
+export { type WorkspaceLayout, workspaceLayout } from "./domain/workspace-layout.js";
+// ── Legacy migration framework — see src/legacy/README.md ─────
 //
-// Phase 2 / ADR-3 moves the WORKSPACE pkg's own storage onto
-// MikroORM (see `Workspace` entity + `mikro-orm.config.ts`). The
-// custom MigrationCoordinator is still shipped here because
-// session/task/catalog and the per-workspace `workspace.db`
-// bootstrap depend on it. Phase 3+ refactors those packages onto
-// MikroORM, at which point this surface deletes.
-//
-// `WORKSPACE_MIGRATIONS` has been deleted — the workspace pkg's
-// own schema now lives in `packages/workspace/migrations/`
-// (MikroORM-managed). The `Migration` type and the coordinator
-// are still useful for downstream packages.
-export type { Migration, MigrationRunResult } from "./migration/index.js";
+// Still re-exported because session / task / catalog haven't pivoted
+// off it yet. New code in this pkg must not depend on these.
+export type { Migration, MigrationRunResult } from "./legacy/migration/index.js";
 export {
   MigrationCoordinator,
   MigrationCycleError,
@@ -148,5 +121,4 @@ export {
   SchemaMetaMismatchError,
   SchemaMetaNotBootstrappedError,
   topoSort,
-} from "./migration/index.js";
-export { type WorkspaceLayout, workspaceLayout } from "./workspace-layout.js";
+} from "./legacy/migration/index.js";

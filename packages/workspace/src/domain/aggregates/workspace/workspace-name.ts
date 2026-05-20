@@ -1,4 +1,5 @@
-import { WorkspaceNameInvalidError } from "../../../exceptions/workspace-errors.js";
+import { WorkspaceNameInvalidError } from "../../exceptions/workspace-errors.js";
+import { ValueObject } from "../../seedwork/value-object.js";
 
 /** Maximum allowed length of the display name (UTF-16 code units). */
 const MAX_DISPLAY_NAME_LENGTH = 64;
@@ -23,8 +24,10 @@ const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
  * anti-DoS bounds, then delegate to `WorkspaceName.assertValid` for
  * the business rule.
  */
-export class WorkspaceName {
-  private constructor(public readonly value: string) {}
+export class WorkspaceName extends ValueObject {
+  private constructor(public readonly value: string) {
+    super();
+  }
 
   /** Validate + wrap. Throws `WorkspaceNameInvalidError` on bad input. */
   static of(value: string): WorkspaceName {
@@ -66,11 +69,11 @@ export class WorkspaceName {
     }
   }
 
-  equals(other: WorkspaceName): boolean {
-    return this.value === other.value;
+  protected override equalityComponents(): readonly unknown[] {
+    return [this.value];
   }
 
-  toString(): string {
+  override toString(): string {
     return this.value;
   }
 }

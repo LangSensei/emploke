@@ -16,11 +16,18 @@ import { openTestWorkspaceOrm } from "../src/testing.js";
  * After the encapsulation refactor (P1-5 follow-up), the workspace
  * pkg owns the MikroORM instance internally — the helper opens an
  * in-memory ORM, hands it to `composeWorkspaceModule({ orm })` and
- * lets the composer wire the dispatcher / context / handlers. Tests
- * that want to spy on `mediator.publish` for cross-context event
- * assertions can `vi.spyOn(mediator, "publish")` after this helper
- * returns — the subscriber is already wired so the publish call
- * happens inside `em.flush`, after the SQL write lands.
+ * lets the composer wire the dispatcher / context / handlers.
+ *
+ * The `DomainEventDispatcher` MikroORM subscriber is registered as
+ * part of `composeWorkspaceModule`. The aggregate currently raises
+ * no events, but the subscriber is wired and ready: the moment a
+ * transition starts calling `addDomainEvent`, the subscriber drains
+ * the buffer on `beforeFlush` and publishes through the mediator.
+ * Tests that want to assert event dispatch can
+ * `vi.spyOn(mediator, "publish")` and dispatch a command — the
+ * publish call happens inside `em.flush`, before the SQL write
+ * commits. (No event types raise events today, so any such spy
+ * currently sees zero calls.)
  *
  * NB: The local `TestTransactionBehavior` mirror is gone. The
  * workspace pkg's own `TransactionBehavior` (registered via the

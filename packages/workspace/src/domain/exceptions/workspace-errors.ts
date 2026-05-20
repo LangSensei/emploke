@@ -128,7 +128,7 @@ export class WorkspacePathConflictError extends RegistryError {
   }
 }
 
-/** Tried to look up / remove / set-current a workspace not in the registry. */
+/** Tried to look up / remove / open a workspace not in the registry. */
 export class WorkspaceNotRegisteredError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`no workspace with id "${workspaceId}" is registered`);
@@ -145,7 +145,7 @@ export class RegistryNotBootstrappedError extends RegistryError {
   constructor(public readonly file: string) {
     super(
       `workspace registry at ${file} has no schema_meta entry for pkg 'workspace'. ` +
-        `MigrationCoordinator must run before SqliteWorkspaceRepository is constructed.`,
+        `MigrationCoordinator must run before MikroWorkspaceRepository is constructed.`,
     );
     this.name = "RegistryNotBootstrappedError";
   }

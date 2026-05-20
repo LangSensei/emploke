@@ -41,7 +41,9 @@ export abstract class CommandValidator<TCommand = any> {
    * equality against `request.constructor` in `ValidationBehavior`.
    */
   // biome-ignore lint/suspicious/noExplicitAny: command ctors take heterogeneous shapes
-  abstract readonly command: new (...args: any[]) => TCommand;
+  abstract readonly command: new (
+    ...args: any[]
+  ) => TCommand;
 
   abstract validate(command: TCommand): Promise<void>;
 }

@@ -11,4 +11,6 @@ export interface WorkspaceView {
   readonly workspaceDir: string;
   readonly name: string;
   readonly createdAt: string;
+  /** ISO-8601 timestamp; `null` when the workspace has never been opened. */
+  readonly lastOpenedAt: string | null;
 }

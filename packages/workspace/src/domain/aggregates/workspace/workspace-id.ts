@@ -1,4 +1,5 @@
-import { WorkspaceIdInvalidError } from "../../../exceptions/workspace-errors.js";
+import { WorkspaceIdInvalidError } from "../../exceptions/workspace-errors.js";
+import { ValueObject } from "../../seedwork/value-object.js";
 
 /**
  * RFC-4122 UUID format. We accept any version (1, 3, 4, 5, 7) — we
@@ -10,13 +11,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
  * Value object: opaque UUID identifying a workspace. URL routing key.
  *
- * Per naming-conventions §2 + §6 — private constructor + `static of`
- * factory that validates; structural `equals`; single `value` getter
+ * Private constructor + `static of` factory that validates;
+ * structural equality via {@link ValueObject}; single `value` getter
  * exposing the underlying primitive. Validation rule lives here as
  * the single source of truth.
  */
-export class WorkspaceId {
-  private constructor(public readonly value: string) {}
+export class WorkspaceId extends ValueObject {
+  private constructor(public readonly value: string) {
+    super();
+  }
 
   /** Validate + wrap. Throws `WorkspaceIdInvalidError` on non-UUID input. */
   static of(value: string): WorkspaceId {
@@ -36,11 +39,11 @@ export class WorkspaceId {
     return typeof id === "string" && UUID_RE.test(id);
   }
 
-  equals(other: WorkspaceId): boolean {
-    return this.value === other.value;
+  protected override equalityComponents(): readonly unknown[] {
+    return [this.value];
   }
 
-  toString(): string {
+  override toString(): string {
     return this.value;
   }
 }

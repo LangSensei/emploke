@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceCorruptedError } from "../../src/domain/exceptions/workspace-errors.js";
-import {
-  Workspace,
-  WorkspaceDir,
-  WorkspaceId,
-  WorkspaceName,
-  WorkspaceRegistered,
-  WorkspaceRenamed,
-  WorkspaceUnregistered,
-} from "../../src/testing.js";
+import { Workspace, WorkspaceDir, WorkspaceId, WorkspaceName } from "../../src/testing.js";
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const NOW_1 = "2026-05-20T10:00:00.000Z";
@@ -19,7 +11,7 @@ function newId(): WorkspaceId {
 }
 
 describe("Workspace.register (Phase 2 / MikroORM entity)", () => {
-  it("creates a fresh workspace and raises WorkspaceRegistered", () => {
+  it("creates a fresh workspace with primitive fields populated", () => {
     const ws = Workspace.register({
       id: newId(),
       name: WorkspaceName.of("Project"),
@@ -31,25 +23,8 @@ describe("Workspace.register (Phase 2 / MikroORM entity)", () => {
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("Project");
     expect(ws.createdAt).toBe(NOW_1);
-
-    const events = ws.pullDomainEvents();
-    expect(events).toHaveLength(1);
-    expect(events[0]).toBeInstanceOf(WorkspaceRegistered);
-    const evt = events[0] as WorkspaceRegistered;
-    expect(evt.id.value).toBe(UUID_A);
-    expect(evt.name.value).toBe("Project");
-    expect(evt.registeredAt).toBe(NOW_1);
-    expect(evt.occurredAt).toBe(NOW_1);
-  });
-
-  it("pullDomainEvents drains the buffer (second call returns empty)", () => {
-    const ws = Workspace.register({
-      id: newId(),
-      name: WorkspaceName.of("X"),
-      workspaceDir: WorkspaceDir.of("/tmp/x"),
-      now: NOW_1,
-    });
-    expect(ws.pullDomainEvents()).toHaveLength(1);
+    // register acts as implicit "first open"
+    expect(ws.lastOpenedAt).toBe(NOW_1);
     expect(ws.pullDomainEvents()).toHaveLength(0);
   });
 });
@@ -64,7 +39,19 @@ describe("Workspace.fromStored", () => {
     });
     expect(ws.id).toBe(UUID_A);
     expect(ws.name).toBe("Stored");
+    expect(ws.lastOpenedAt).toBeNull();
     expect(ws.pullDomainEvents()).toHaveLength(0);
+  });
+
+  it("preserves lastOpenedAt when supplied", () => {
+    const ws = Workspace.fromStored({
+      id: UUID_A,
+      name: "Stored",
+      workspaceDir: "/tmp/x",
+      createdAt: NOW_1,
+      lastOpenedAt: NOW_2,
+    });
+    expect(ws.lastOpenedAt).toBe(NOW_2);
   });
 
   it("throws WorkspaceCorruptedError on invalid id", () => {
@@ -103,63 +90,41 @@ describe("Workspace.fromStored", () => {
 
 describe("Workspace.rename", () => {
   function fresh(): Workspace {
-    const ws = Workspace.register({
+    return Workspace.register({
       id: newId(),
       name: WorkspaceName.of("Old"),
       workspaceDir: WorkspaceDir.of("/tmp/x"),
       now: NOW_1,
     });
-    ws.pullDomainEvents(); // drain register event
-    return ws;
   }
 
-  it("changes the name and raises WorkspaceRenamed", () => {
+  it("changes the name", () => {
     const ws = fresh();
-    ws.rename(WorkspaceName.of("New"), NOW_2);
+    ws.rename(WorkspaceName.of("New"));
     expect(ws.name).toBe("New");
-    const events = ws.pullDomainEvents();
-    expect(events).toHaveLength(1);
-    expect(events[0]).toBeInstanceOf(WorkspaceRenamed);
-    const evt = events[0] as WorkspaceRenamed;
-    expect(evt.oldName.value).toBe("Old");
-    expect(evt.newName.value).toBe("New");
-    expect(evt.renamedAt).toBe(NOW_2);
   });
 
   it("is a no-op when the new name equals the current name", () => {
     const ws = fresh();
-    ws.rename(WorkspaceName.of("Old"), NOW_2);
+    ws.rename(WorkspaceName.of("Old"));
     expect(ws.name).toBe("Old");
-    expect(ws.pullDomainEvents()).toHaveLength(0);
   });
 });
 
-describe("Workspace.unregister", () => {
+describe("Workspace.open", () => {
   function fresh(): Workspace {
-    const ws = Workspace.register({
+    return Workspace.register({
       id: newId(),
       name: WorkspaceName.of("X"),
       workspaceDir: WorkspaceDir.of("/tmp/x"),
       now: NOW_1,
     });
-    ws.pullDomainEvents();
-    return ws;
   }
 
-  it("raises WorkspaceUnregistered with purged=false by default", () => {
+  it("updates lastOpenedAt on open", () => {
     const ws = fresh();
-    ws.unregister(NOW_2, { purged: false });
-    const events = ws.pullDomainEvents();
-    expect(events).toHaveLength(1);
-    expect(events[0]).toBeInstanceOf(WorkspaceUnregistered);
-    expect((events[0] as WorkspaceUnregistered).purged).toBe(false);
-    expect((events[0] as WorkspaceUnregistered).unregisteredAt).toBe(NOW_2);
-  });
-
-  it("carries purged=true into the event", () => {
-    const ws = fresh();
-    ws.unregister(NOW_2, { purged: true });
-    const evt = ws.pullDomainEvents()[0] as WorkspaceUnregistered;
-    expect(evt.purged).toBe(true);
+    expect(ws.lastOpenedAt).toBe(NOW_1);
+    ws.open(NOW_2);
+    expect(ws.lastOpenedAt).toBe(NOW_2);
   });
 });

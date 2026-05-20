@@ -2,16 +2,14 @@
  * Test-only entry point.
  *
  * Tests need direct access to a few things that the public API
- * (`@emploke/workspace`) hides per naming-conventions §5:
+ * (`@emploke/workspace`) hides:
  *
  *   - `MikroWorkspaceRepository` / `MikroWorkspaceQueries` so
  *     infrastructure tests can construct them against an in-memory
  *     `MikroORM` instance without going through the mediator.
  *   - `openTestWorkspaceOrm()` — opens a MikroORM `:memory:`
- *     instance, builds the schema from `WORKSPACE_ENTITIES`, and
- *     returns it. Replaces the Phase-1 `bootstrapWorkspaceRegistryDb`
- *     helper which ran the (now deleted) custom migration framework
- *     against a `DatabaseSync`.
+ *     instance, builds the schema from the pkg's entity list, and
+ *     returns it.
  *   - `Workspace` aggregate + value objects so DDD-layer tests can
  *     construct + drain events on the aggregate directly.
  *
@@ -33,31 +31,26 @@ import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { WorkspaceContext } from "./infrastructure/workspace-context.js";
 import { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
+export { OpenWorkspaceCommandHandler } from "./application/commands/open-workspace.command-handler.js";
 export { RegisterWorkspaceCommandHandler } from "./application/commands/register-workspace.command-handler.js";
 export { RenameWorkspaceCommandHandler } from "./application/commands/rename-workspace.command-handler.js";
-export { SetCurrentWorkspaceCommandHandler } from "./application/commands/set-current-workspace.command-handler.js";
 export { UnregisterWorkspaceCommandHandler } from "./application/commands/unregister-workspace.command-handler.js";
 export { MikroWorkspaceQueries } from "./application/queries/mikro-workspace-queries.js";
-export { WorkspaceRegistered } from "./domain/aggregates/workspace/events/workspace-registered.js";
-export { WorkspaceRenamed } from "./domain/aggregates/workspace/events/workspace-renamed.js";
-export { WorkspaceUnregistered } from "./domain/aggregates/workspace/events/workspace-unregistered.js";
-export { WorkspaceDir } from "./domain/aggregates/workspace/value-objects/workspace-dir.js";
-export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspace-id.js";
-export { WorkspaceName } from "./domain/aggregates/workspace/value-objects/workspace-name.js";
 export { Workspace } from "./domain/aggregates/workspace/workspace.js";
+export { WorkspaceDir } from "./domain/aggregates/workspace/workspace-dir.js";
+export { WorkspaceId } from "./domain/aggregates/workspace/workspace-id.js";
+export { WorkspaceName } from "./domain/aggregates/workspace/workspace-name.js";
 export { WorkspaceRepository } from "./domain/aggregates/workspace/workspace-repository.js";
-export { AggregateRoot } from "./domain/seedwork/aggregate-root.js";
-export { GLOBAL_STATE_KEYS, GlobalState } from "./domain/global-state.js";
+export type { AggregateRoot } from "./domain/seedwork/aggregate-root.js";
+export { Entity } from "./domain/seedwork/entity.js";
 export { MikroWorkspaceRepository } from "./infrastructure/repositories/mikro-workspace-repository.js";
 export { WorkspaceContext } from "./infrastructure/workspace-context.js";
 
 /**
  * Build a {@link WorkspaceContext} for tests around a raw EntityManager.
  * Tests that need event-dispatch coverage must register
- * `DomainEventDispatcher` onto the test ORM separately (mirror the
- * bootstrap registration). Use this helper everywhere a test
- * previously did `new MikroWorkspaceRepository(em)` or
- * `new MikroWorkspaceQueries(em)`.
+ * `DomainEventDispatcher` onto the test ORM separately (mirror
+ * `composeWorkspaceModule`'s `registerSubscriber` step).
  */
 export function makeTestWorkspaceContext(em: EntityManager): WorkspaceContext {
   return new WorkspaceContext(em);
@@ -65,9 +58,8 @@ export function makeTestWorkspaceContext(em: EntityManager): WorkspaceContext {
 
 /**
  * Open an in-memory MikroORM instance suitable for tests. Builds the
- * full schema from `WORKSPACE_ENTITIES` (which includes both
- * `Workspace` and `GlobalState` post-P1-5), so tests no longer need
- * to hand-create the `global_state` table.
+ * full schema from the pkg's entity list, so tests don't hand-create
+ * any tables.
  *
  * `allowGlobalContext: true` lets tests work with the root EM without
  * the explicit `RequestContext.create` boilerplate; production code

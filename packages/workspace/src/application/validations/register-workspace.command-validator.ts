@@ -1,8 +1,8 @@
 import path from "node:path";
 import { inject, injectable } from "inversify";
 import { z } from "zod";
-import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
-import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/workspace-id.js";
+import { WorkspaceName } from "../../domain/aggregates/workspace/workspace-name.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import {
   WorkspaceIdConflictError,

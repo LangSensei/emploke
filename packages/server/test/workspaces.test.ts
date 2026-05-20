@@ -235,7 +235,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
       body: JSON.stringify({ id }),
     });
     expect(res.status).toBe(200);
-    expect(await queries.getCurrentId()).toBe(id);
+    expect(await queries.getLastOpenedId()).toBe(id);
   });
 
   it("DELETE /:id default removes only metadata; user files preserved", async () => {

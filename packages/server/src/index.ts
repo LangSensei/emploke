@@ -272,7 +272,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => workspaceQueries.getCurrentId(),
+      currentWorkspace: () => workspaceQueries.getLastOpenedId(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));

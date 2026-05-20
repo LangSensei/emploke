@@ -32,9 +32,7 @@ const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
  */
 @injectable()
 export class ValidationBehavior implements PipelineBehavior {
-  constructor(
-    @multiInject(CommandValidator) private readonly validators: CommandValidator[],
-  ) {}
+  constructor(@multiInject(CommandValidator) private readonly validators: CommandValidator[]) {}
 
   async handle(request: RequestData<unknown>, next: () => unknown): Promise<unknown> {
     const ctor = (request as { constructor: unknown }).constructor;

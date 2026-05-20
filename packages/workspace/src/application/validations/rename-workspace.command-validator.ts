@@ -1,7 +1,7 @@
 import { injectable } from "inversify";
 import { z } from "zod";
-import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
-import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/workspace-id.js";
+import { WorkspaceName } from "../../domain/aggregates/workspace/workspace-name.js";
 import { RenameWorkspaceCommand } from "../commands/rename-workspace.command.js";
 import { CommandValidationError, CommandValidator } from "./command-validator.js";
 

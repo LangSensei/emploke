@@ -1,16 +1,15 @@
 import { rm } from "node:fs/promises";
 import { inject, injectable } from "inversify";
 import type { RequestHandler } from "mediatr-ts";
-import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/workspace-id.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
-import { workspaceLayout } from "../../workspace-layout.js";
+import { workspaceLayout } from "../../domain/workspace-layout.js";
 import type { UnregisterWorkspaceCommand } from "./unregister-workspace.command.js";
 
 /**
  * Handle {@link UnregisterWorkspaceCommand}: optionally purge
- * emploke-owned subdirs on disk, then drop the registry row.
- * `WorkspaceUnregistered` is published by `WorkspaceContext.saveEntities`
- * after the surrounding `em.flush` writes the DELETE.
+ * emploke-owned subdirs on disk, then drop the registry row. The
+ * surrounding `TransactionBehavior`'s `em.flush` writes the DELETE.
  *
  * For `purge=true` we read the workspace BEFORE deleting, purge subdirs,
  * THEN drop the registry entry. Removing the entry first opens a race
@@ -20,8 +19,7 @@ import type { UnregisterWorkspaceCommand } from "./unregister-workspace.command.
  * Doing the purge first keeps the path-conflict guard active throughout.
  *
  * Idempotent for unregistered ids — `repo.delete()` short-circuits
- * when the row is missing and the aggregate's `unregister` event is
- * never raised.
+ * when the row is missing.
  */
 @injectable()
 export class UnregisterWorkspaceCommandHandler
@@ -34,7 +32,7 @@ export class UnregisterWorkspaceCommandHandler
 
     const existing = await this.repo.findById(id);
     if (!existing) {
-      // Idempotent: delete on a missing row is a no-op, no event.
+      // Idempotent: delete on a missing row is a no-op.
       // We still call repo.delete to keep the contract symmetric for
       // any future "soft delete" implementations.
       await this.repo.delete(id);
@@ -49,12 +47,6 @@ export class UnregisterWorkspaceCommandHandler
       ]);
     }
 
-    existing.unregister(new Date().toISOString(), { purged: cmd.purge });
     await this.repo.delete(id);
-    // `em.remove(existing)` happened inside repo.delete(); the
-    // surrounding TransactionBehavior's flush writes the DELETE
-    // AND fires WorkspaceContext.saveEntities which publishes
-    // the WorkspaceUnregistered event we just raised on the
-    // aggregate.
   }
 }

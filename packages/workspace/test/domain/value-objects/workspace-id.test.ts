@@ -36,7 +36,14 @@ describe("WorkspaceId value object", () => {
     });
 
     it("isValid rejects non-uuid strings and non-strings", () => {
-      for (const bad of ["", "not-a-uuid", "550e8400e29b41d4a716446655440000", undefined, null, 123]) {
+      for (const bad of [
+        "",
+        "not-a-uuid",
+        "550e8400e29b41d4a716446655440000",
+        undefined,
+        null,
+        123,
+      ]) {
         expect(WorkspaceId.isValid(bad)).toBe(false);
       }
     });

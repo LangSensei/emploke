@@ -1,7 +1,6 @@
 import { inject, injectable } from "inversify";
-import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
-import { GLOBAL_STATE_KEYS, GlobalState } from "../../domain/global-state.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/workspace-id.js";
 import { WorkspaceContext } from "../../infrastructure/workspace-context.js";
 
 import type { WorkspaceSummaryView } from "./views/workspace-summary-view.js";
@@ -12,22 +11,16 @@ import { WorkspaceQueries } from "./workspace-queries.js";
  * Read-side projection over the same `<EMPLOKE_HOME>/global.db` the
  * repository writes to.
  *
- * Phase 2 / ADR-3: backed by MikroORM's {@link EntityManager}.
- * QueryBuilder is the default for list/get because it keeps the
- * read-side projection a pure SELECT (no entity hydration / event
- * accumulation overhead — neither would be wrong, just wasted work
- * since the read view is a flat record). The current-workspace pointer
- * lookup goes through the {@link GlobalState} entity (Phase 2 polish
- * P1-5).
+ * Backed by MikroORM's QueryBuilder against the `Workspace` table. The
+ * "current workspace" concept is collapsed onto `last_opened_at`:
+ * `getLastOpened` / `getLastOpenedId` return the row with the
+ * greatest `last_opened_at` (NULLs sorted last, ties broken by
+ * `created_at` to keep results deterministic in tests).
  *
  * The injected `EntityManager` is the abstract `@mikro-orm/core`
  * surface; QueryBuilder lives on the SQL-specific `SqlEntityManager`
  * (from `@mikro-orm/knex`). The cast on `ctx.sqlEm` is sound because
  * workspace pkg only ever runs against a SQL driver.
- *
- * Returns plain `WorkspaceView` / `WorkspaceSummaryView` records (no
- * aggregate construction) so cross-context consumers don't accidentally
- * hold a `Workspace` aggregate (forbidden by naming-conventions §8.2).
  */
 @injectable()
 export class MikroWorkspaceQueries extends WorkspaceQueries {
@@ -39,34 +32,46 @@ export class MikroWorkspaceQueries extends WorkspaceQueries {
     if (!WorkspaceId.isValid(id)) return null;
     const row = (await this.ctx.sqlEm
       .createQueryBuilder(Workspace, "w")
-      .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt"])
+      .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt", "w.lastOpenedAt"])
       .where({ id })
       .execute("get")) as WorkspaceRowProjection | null;
     return row ? rowToView(row) : null;
   }
 
   override async list(): Promise<WorkspaceSummaryView[]> {
+    // SQLite default-sorts NULL last in DESC order, so a plain
+    // `ORDER BY last_opened_at DESC` already puts never-opened rows
+    // at the tail. `created_at DESC` is the deterministic tiebreak
+    // (relevant when two rows share the same `lastOpenedAt`, e.g.
+    // never-opened fixtures registered in quick succession).
     const rows = (await this.ctx.sqlEm
       .createQueryBuilder(Workspace, "w")
-      .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt"])
+      .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt", "w.lastOpenedAt"])
+      .orderBy({ "w.last_opened_at": "DESC", "w.created_at": "DESC" })
       .execute("all")) as WorkspaceRowProjection[];
     return rows.map(rowToView);
   }
 
-  override async getCurrent(): Promise<WorkspaceView | null> {
-    const id = await this.getCurrentId();
-    if (!id) return null;
-    // Selected workspace may have been deleted; `getById` returns
-    // null in that case (cleanup of the stale pointer happens in
-    // ClearCurrentOnUnregisterDomainEventHandler reacting to WorkspaceUnregistered).
-    return this.getById(id);
+  override async getLastOpened(): Promise<WorkspaceView | null> {
+    const row = (await this.ctx.sqlEm
+      .createQueryBuilder(Workspace, "w")
+      .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt", "w.lastOpenedAt"])
+      .where({ lastOpenedAt: { $ne: null } })
+      .orderBy({ "w.last_opened_at": "DESC", "w.created_at": "DESC" })
+      .limit(1)
+      .execute("get")) as WorkspaceRowProjection | null;
+    return row ? rowToView(row) : null;
   }
 
-  override async getCurrentId(): Promise<string | null> {
-    const pointer = await this.ctx.em.findOne(GlobalState, {
-      key: GLOBAL_STATE_KEYS.CURRENT_WORKSPACE_ID,
-    });
-    return pointer?.value ?? null;
+  override async getLastOpenedId(): Promise<string | null> {
+    const row = (await this.ctx.sqlEm
+      .createQueryBuilder(Workspace, "w")
+      .select(["w.id"])
+      .where({ lastOpenedAt: { $ne: null } })
+      .orderBy({ "w.last_opened_at": "DESC", "w.created_at": "DESC" })
+      .limit(1)
+      .execute("get")) as { id: string } | null;
+    return row?.id ?? null;
   }
 }
 
@@ -76,6 +81,7 @@ interface WorkspaceRowProjection {
   workspaceDir: string;
   name: string;
   createdAt: string;
+  lastOpenedAt: string | null;
 }
 
 function rowToView(row: WorkspaceRowProjection): WorkspaceView {
@@ -84,5 +90,6 @@ function rowToView(row: WorkspaceRowProjection): WorkspaceView {
     workspaceDir: row.workspaceDir,
     name: row.name,
     createdAt: row.createdAt,
+    lastOpenedAt: row.lastOpenedAt ?? null,
   };
 }
