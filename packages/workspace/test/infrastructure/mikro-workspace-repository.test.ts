@@ -70,33 +70,45 @@ describe("MikroWorkspaceRepository — add", () => {
     const em = orm.em.fork();
     const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     const wsDir = path.join(scratch, "p");
-    await repo.add(sample(UUID_A, "Project A", wsDir));
+    const persisted = await repo.add(sample(UUID_A, "Project A", wsDir));
+    await em.flush();
 
+    expect(persisted.id).toBe(UUID_A);
     const back = await repo.findById(WorkspaceId.of(UUID_A));
     expect(back?.id).toBe(UUID_A);
     expect(back?.name).toBe("Project A");
     expect(back?.workspaceDir).toBe(path.resolve(wsDir));
   });
 
-  it("translates a PRIMARY KEY collision into WorkspaceIdConflictError", async () => {
+  it("PRIMARY KEY collision surfaces from the SQL layer at flush time", async () => {
+    // Phase 2: repository.add no longer translates UNIQUE violations;
+    // ValidationBehavior pre-checks id/path uniqueness (via repo.findById /
+    // findByPath) so 99.999% of conflicts never reach the SQL layer.
+    // A residual TOCTOU race produces a raw MikroORM exception which the
+    // wire layer maps to 500.
     const em = orm.em.fork();
     const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     await repo.add(sample(UUID_A, "first", path.join(scratch, "a")));
-    // Same id, distinct path -> PRIMARY KEY collision on `id`.
-    await expect(
-      repo.add(sample(UUID_A, "second", path.join(scratch, "b"))),
-    ).rejects.toBeInstanceOf(WorkspaceIdConflictError);
+    await em.flush();
+    await repo.add(sample(UUID_A, "second", path.join(scratch, "b")));
+    await expect(em.flush()).rejects.toThrow();
   });
+});
 
-  it("translates a UNIQUE(workspace_dir) collision into WorkspacePathConflictError", async () => {
+describe("MikroWorkspaceRepository — findByPath", () => {
+  it("returns the aggregate when a workspace occupies the path", async () => {
     const em = orm.em.fork();
     const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
-    const shared = path.join(scratch, "shared");
-    await repo.add(sample(UUID_A, "first", shared));
-    // Distinct id, same workspaceDir -> UNIQUE collision on `workspace_dir`.
-    await expect(repo.add(sample(UUID_B, "second", shared))).rejects.toBeInstanceOf(
-      WorkspacePathConflictError,
-    );
+    const wsDir = path.join(scratch, "shared");
+    await repo.add(sample(UUID_A, "first", wsDir));
+    await em.flush();
+    const back = await repo.findByPath(path.resolve(wsDir));
+    expect(back?.id).toBe(UUID_A);
+  });
+
+  it("returns null when no workspace is at the path", async () => {
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
+    expect(await repo.findByPath(path.join(scratch, "nope"))).toBeNull();
   });
 });
 
@@ -117,18 +129,12 @@ describe("MikroWorkspaceRepository — delete", () => {
     await expect(repo.delete(WorkspaceId.of(UUID_A))).resolves.toBeUndefined();
   });
 
-  it("clears the current-workspace pointer if it was the deleted id", async () => {
-    const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
-    em.persist(sample(UUID_A, "x", path.join(scratch, "a")));
-    await em.flush();
-    await repo.setCurrent(WorkspaceId.of(UUID_A));
-    expect(await repo.getCurrent()).toBe(UUID_A);
-
-    await repo.delete(WorkspaceId.of(UUID_A));
-    await em.flush();
-    expect(await repo.getCurrent()).toBeNull();
-  });
+  // Note: cascading clear of the current-workspace pointer when the
+  // pointed-to workspace gets unregistered is now a domain-event
+  // concern (ClearCurrentOnUnregisterHandler subscribes to
+  // WorkspaceUnregistered). The repository.delete itself no longer
+  // touches global_state - see the integration tests covering the
+  // full UnregisterWorkspaceCommand flow.
 });
 
 describe("MikroWorkspaceRepository — current pointer", () => {
@@ -144,7 +150,8 @@ describe("MikroWorkspaceRepository — current pointer", () => {
     await em.flush();
 
     await repo.setCurrent(WorkspaceId.of(UUID_A));
-    expect(await repo.getCurrent()).toBe(UUID_A);
+    const current = await repo.getCurrent();
+    expect(current?.id).toBe(UUID_A);
   });
 
   it("setCurrent throws WorkspaceNotRegisteredError for an unknown id", async () => {

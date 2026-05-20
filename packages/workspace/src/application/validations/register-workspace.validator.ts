@@ -5,6 +5,8 @@ import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/wor
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import {
   WorkspaceIdConflictError,
+  WorkspaceIdInvalidError,
+  WorkspaceNameInvalidError,
   WorkspacePathConflictError,
 } from "../../domain/exceptions/workspace-errors.js";
 import type { RegisterWorkspaceCommand } from "../commands/register-workspace.command.js";
@@ -24,13 +26,12 @@ const RegisterWorkspaceSchema = z.object({
 });
 
 /**
- * Pre-check shape AND uniqueness for {@link RegisterWorkspaceCommand}.
- * Runs outside the transactional scope (ValidationBehavior is the
- * outermost pipeline behaviour) so failures throw without ever
- * opening BEGIN. With this pre-check in place, the SQL UNIQUE
- * constraint becomes a TOCTOU safety net - the repository no longer
- * translates the violation, accepting a 500 in the extremely
- * unlikely race window (single-user emploke).
+ * Pre-check shape AND uniqueness for RegisterWorkspaceCommand. Runs
+ * outside the transactional scope. Failed shape checks throw the
+ * typed Phase-1 domain errors (WorkspaceNameInvalidError /
+ * WorkspaceIdInvalidError) so the wire layer's 4xx mapping is
+ * preserved. Conflict pre-checks throw the typed conflict errors
+ * the wire layer maps to 409.
  */
 @injectable()
 export class RegisterWorkspaceCommandValidator
@@ -41,6 +42,14 @@ export class RegisterWorkspaceCommandValidator
   async validate(cmd: RegisterWorkspaceCommand): Promise<void> {
     const result = RegisterWorkspaceSchema.safeParse(cmd);
     if (!result.success) {
+      // Map specific Zod issues to typed domain errors that the wire
+      // layer already knows how to map.
+      for (const issue of result.error.issues) {
+        const field = issue.path[0];
+        if (field === "id") throw new WorkspaceIdInvalidError(cmd.id);
+        if (field === "name")
+          throw new WorkspaceNameInvalidError(cmd.name, "must be non-empty and at most 255 chars");
+      }
       throw new CommandValidationError("RegisterWorkspaceCommand", result.error.issues);
     }
 
