@@ -1,40 +1,51 @@
 import "reflect-metadata";
-import { DatabaseSync } from "node:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildServerContainer } from "../src/bootstrap.js";
-import { bootstrapWorkspaceRegistryDb } from "./_test-support.js";
+import {
+  type ServerTestSubsystem,
+  setupTestSubsystem,
+  teardownTestSubsystem,
+} from "./_test-support.js";
 
-let globalDb: DatabaseSync;
+let scratch: string;
+let sys: ServerTestSubsystem;
 
 beforeEach(async () => {
-  globalDb = new DatabaseSync(":memory:");
-  await bootstrapWorkspaceRegistryDb(globalDb);
+  scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-bootstrap-"));
+  sys = await setupTestSubsystem({ scratch });
 });
 
-afterEach(() => {
-  try {
-    globalDb.close();
-  } catch {
-    // already closed
-  }
+afterEach(async () => {
+  await teardownTestSubsystem(sys);
+  await rm(scratch, { recursive: true, force: true });
 });
 
-describe("inversify bootstrap (Phase 1 of #135)", () => {
+describe("inversify bootstrap (Phase 2 of #135 / ADR-3)", () => {
   it("constructs a container with the mediator wired", () => {
-    const container = buildServerContainer({ workspaceDb: globalDb });
-    const mediator = container.get(Mediator);
+    const mediator = sys.container.get(Mediator);
     expect(mediator).toBeInstanceOf(Mediator);
   });
 
-  it("calls every package's composeXxxModule without throwing", () => {
-    expect(() => buildServerContainer({ workspaceDb: globalDb })).not.toThrow();
+  it("re-running buildServerContainer with a fresh ORM is safe (no global-state collisions)", async () => {
+    const sys2 = await setupTestSubsystem({ scratch });
+    try {
+      expect(() => buildServerContainer({ globalOrm: sys2.orm })).not.toThrow();
+    } finally {
+      await teardownTestSubsystem(sys2);
+    }
   });
 
-  it("returns a fresh container per call (no hidden process-wide singleton)", () => {
-    const a = buildServerContainer({ workspaceDb: globalDb });
-    const b = buildServerContainer({ workspaceDb: globalDb });
-    expect(a).not.toBe(b);
-    expect(a.get(Mediator)).not.toBe(b.get(Mediator));
+  it("returns a fresh container per call (no hidden process-wide singleton)", async () => {
+    const sys2 = await setupTestSubsystem({ scratch });
+    try {
+      expect(sys.container).not.toBe(sys2.container);
+      expect(sys.container.get(Mediator)).not.toBe(sys2.container.get(Mediator));
+    } finally {
+      await teardownTestSubsystem(sys2);
+    }
   });
 });

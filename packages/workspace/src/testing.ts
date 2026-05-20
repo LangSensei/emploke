@@ -4,46 +4,39 @@
  * Tests need direct access to a few things that the public API
  * (`@emploke/workspace`) hides per naming-conventions §5:
  *
- *   - `SqliteWorkspaceRepository` / `SqliteWorkspaceQueries` so domain
- *     test cases can populate / drain rows without going through the
- *     mediator. The production path resolves these via DI and tests
- *     that do the same may import this entry to construct directly.
- *   - `bootstrapWorkspaceRegistryDb(db)` — runs the migration
- *     coordinator with `WORKSPACE_MIGRATIONS`. Post-issue-#123 the
- *     repository asserts the `schema_meta` row exists, so tests must
- *     bootstrap first.
+ *   - `MikroWorkspaceRepository` / `MikroWorkspaceQueries` so
+ *     infrastructure tests can construct them against an in-memory
+ *     `MikroORM` instance without going through the mediator.
+ *   - `openTestWorkspaceOrm()` — opens a MikroORM `:memory:`
+ *     instance, builds the schema from `WORKSPACE_ENTITIES`, and
+ *     returns it. Replaces the Phase-1 `bootstrapWorkspaceRegistryDb`
+ *     helper which ran the (now deleted) custom migration framework
+ *     against a `DatabaseSync`.
  *   - `Workspace` aggregate + value objects so DDD-layer tests can
  *     construct + drain events on the aggregate directly.
  *
  * Example:
  *
  * ```ts
- * import { DatabaseSync } from "node:sqlite";
- * import {
- *   bootstrapWorkspaceRegistryDb,
- *   SqliteWorkspaceRepository,
- * } from "@emploke/workspace/testing";
+ * import { openTestWorkspaceOrm, MikroWorkspaceRepository } from "@emploke/workspace/testing";
  *
- * const db = new DatabaseSync(":memory:");
- * await bootstrapWorkspaceRegistryDb(db);
- * const repo = new SqliteWorkspaceRepository(db);
+ * const orm = await openTestWorkspaceOrm();
+ * const em = orm.em.fork();
+ * const repo = new MikroWorkspaceRepository(em);
  * // ... run test ...
- * db.close();
+ * await orm.close(true);  // true = drop schema, release :memory: storage
  * ```
- *
- * For in-memory DBs `db.close()` is nearly a no-op (the connection
- * releases on GC anyway), but file-backed fixtures should close
- * explicitly so the journal sidecar releases on Windows.
  */
 
-import type { DatabaseSync } from "node:sqlite";
-import { WORKSPACE_MIGRATIONS } from "./infrastructure/migrations/index.js";
-import { runPkgMigrations } from "./migration/index.js";
+import { defineConfig, type Options } from "@mikro-orm/better-sqlite";
+import type { MikroORM } from "@mikro-orm/core";
+import { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
 export { RegisterWorkspaceCommandHandler } from "./application/commands/register-workspace/register-workspace.command-handler.js";
 export { RenameWorkspaceCommandHandler } from "./application/commands/rename-workspace/rename-workspace.command-handler.js";
 export { SetCurrentWorkspaceCommandHandler } from "./application/commands/set-current-workspace/set-current-workspace.command-handler.js";
 export { UnregisterWorkspaceCommandHandler } from "./application/commands/unregister-workspace/unregister-workspace.command-handler.js";
+export { AggregateRoot } from "./domain/aggregate-root.js";
 export { Clock } from "./domain/clock.js";
 export { WorkspaceRegistered } from "./domain/events/workspace-registered.js";
 export { WorkspaceRenamed } from "./domain/events/workspace-renamed.js";
@@ -53,16 +46,48 @@ export { WorkspaceId } from "./domain/value-objects/workspace-id.js";
 export { WorkspaceName } from "./domain/value-objects/workspace-name.js";
 export { Workspace } from "./domain/workspace.js";
 export { WorkspaceRepository } from "./domain/workspace-repository.js";
-export { SqliteWorkspaceQueries } from "./infrastructure/sqlite-workspace-queries.js";
-export { SqliteWorkspaceRepository } from "./infrastructure/sqlite-workspace-repository.js";
+export { DomainEventSubscriber } from "./infrastructure/domain-event-subscriber.js";
+export { MikroWorkspaceQueries } from "./infrastructure/mikro-workspace-queries.js";
+export { MikroWorkspaceRepository } from "./infrastructure/mikro-workspace-repository.js";
 export { SystemClock } from "./infrastructure/system-clock.js";
+export { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
 /**
- * Run the migration coordinator against a fresh
- * `<EMPLOKE_HOME>/global.db` (or `:memory:` test DB) so the
- * repository's constructor sees the `schema_meta` row it now requires.
- * Idempotent.
+ * Open an in-memory MikroORM instance suitable for tests. Builds the
+ * schema from `WORKSPACE_ENTITIES` and creates the auxiliary
+ * `global_state` key/value table that the workspace pkg uses outside
+ * the aggregate (see `MikroWorkspaceRepository.setCurrent/getCurrent`).
+ *
+ * `allowGlobalContext: true` lets tests work with the root EM without
+ * the explicit `RequestContext.create` boilerplate; production code
+ * goes through `em.transactional` which forks the EM automatically.
+ *
+ * Hand-creates the `global_state` table via raw SQL because it isn't
+ * a MikroORM entity in Phase 2 (it has no aggregate behaviour and is
+ * on track to move out of workspace pkg per P1-5).
  */
-export async function bootstrapWorkspaceRegistryDb(db: DatabaseSync): Promise<void> {
-  await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+export async function openTestWorkspaceOrm(overrides?: Partial<Options>): Promise<MikroORM> {
+  const { MikroORM: MikroORMCtor } = await import("@mikro-orm/better-sqlite");
+  // `defineConfig` returns the sqlite-typed Options shape, so the
+  // spread of `overrides` is type-compatible. Keep `overrides` last
+  // so call sites can pin extras (subscribers, logger, etc.) without
+  // losing the defaults above.
+  const config = defineConfig({
+    entities: [...WORKSPACE_ENTITIES],
+    dbName: ":memory:",
+    allowGlobalContext: true,
+    ...(overrides ?? {}),
+  });
+  const orm = await MikroORMCtor.init(config);
+  await orm.schema.createSchema();
+  // `global_state` lives outside the aggregate (see
+  // `MikroWorkspaceRepository`); create it by hand so the repo's
+  // raw-SQL setCurrent/getCurrent paths work.
+  await orm.em.getConnection().execute(
+    `CREATE TABLE IF NOT EXISTS global_state (
+      key   TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL
+    )`,
+  );
+  return orm;
 }

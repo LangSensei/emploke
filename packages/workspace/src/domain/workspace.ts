@@ -1,5 +1,6 @@
+import { Entity, PrimaryKey, Property } from "@mikro-orm/core";
+import { AggregateRoot } from "./aggregate-root.js";
 import { WorkspaceCorruptedError } from "./errors.js";
-import type { WorkspaceDomainEvent } from "./events/domain-event.js";
 import { WorkspaceRegistered } from "./events/workspace-registered.js";
 import { WorkspaceRenamed } from "./events/workspace-renamed.js";
 import { WorkspaceUnregistered } from "./events/workspace-unregistered.js";
@@ -10,25 +11,40 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
 /**
  * Aggregate root: a single registered workspace.
  *
- * Identity = `id` (immutable UUID, the URL routing key).
+ * ## Persistence shape (Phase 2 / ADR-3)
  *
- * Mutation flows through methods that enforce invariants and raise
- * domain events into `_domainEvents`; the command handler drains the
- * buffer with {@link Workspace.pullDomainEvents} after `repo.save` and
- * dispatches each via the mediator (the eShop "Option A" pattern, see
- * naming-conventions §7).
+ * The aggregate is decorated as a MikroORM `@Entity`. Fields are
+ * **primitives** (not value objects) so the ORM can map them straight
+ * to SQLite columns without a custom type. Validation lives in the
+ * value-object factories used by the static constructors
+ * (`WorkspaceId.of`, `WorkspaceName.of`, `WorkspaceDir.of`), which
+ * throw typed errors the wire layer already knows how to map. Once a
+ * row is inside the aggregate, the fields are trusted — public field
+ * mutations are still gated by the named transition methods
+ * (`rename`, `unregister`).
  *
- * ## Construction (per naming-conventions §6)
+ * ## Construction
  *
- * - {@link Workspace.register} — for fresh workspaces. Raises
- *   {@link WorkspaceRegistered}. Validation (id is UUID, name is
- *   non-empty + within length / charset rules) happens inside the
- *   value-object factories `WorkspaceId.of` / `WorkspaceName.of`.
- * - {@link Workspace.fromStored} — for rehydration from storage.
- *   Same shape checks, but surfaces {@link WorkspaceCorruptedError}
- *   carrying the on-disk `workspaceDir` for operator triage.
- *   Rehydration does NOT raise events — those belong to genuine
- *   state transitions, not to load-from-disk.
+ *   - {@link Workspace.register} — for fresh workspaces. Raises
+ *     {@link WorkspaceRegistered} into the AggregateRoot event buffer.
+ *   - {@link Workspace.fromStored} — for in-memory rehydration
+ *     (tests, fixtures). MikroORM has its own hydration path that
+ *     skips constructors entirely; `fromStored` is the equivalent for
+ *     non-ORM callers and surfaces {@link WorkspaceCorruptedError}
+ *     when the input fails validation.
+ *
+ * The constructor itself is `protected`. MikroORM v7 instantiates
+ * entities via the runtime `Reflect`/property-init path, so a
+ * `private` constructor would break hydration; `protected` keeps
+ * direct `new Workspace()` calls out of caller code while staying
+ * inside what the ORM accepts.
+ *
+ * ## Domain events
+ *
+ * Buffered on the base class (see `AggregateRoot`). The Phase-2
+ * `DomainEventSubscriber` walks the unit-of-work change-set after
+ * each flush and dispatches each event via `mediator.publish` — no
+ * more per-handler publish loop.
  *
  * ## Naming convention (locked alongside issue #121)
  *
@@ -38,20 +54,42 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
  * (`task.workdir = <workspaceDir>/tasks/<id>`,
  * `session.workdir = <workspaceDir>/sessions/<id>`).
  */
-export class Workspace {
-  private _domainEvents: WorkspaceDomainEvent[] = [];
+@Entity({ tableName: "workspaces" })
+export class Workspace extends AggregateRoot {
+  @PrimaryKey({ type: "uuid" })
+  id!: string;
 
-  private constructor(
-    private readonly _id: WorkspaceId,
-    private _name: WorkspaceName,
-    private readonly _workspaceDir: WorkspaceDir,
-    private readonly _createdAt: string,
-  ) {}
+  @Property({ name: "workspace_dir", unique: true })
+  workspaceDir!: string;
+
+  @Property()
+  name!: string;
+
+  @Property({ name: "created_at" })
+  createdAt!: string;
+
+  /**
+   * MikroORM-friendly constructor. Protected to discourage `new
+   * Workspace()` from outside the aggregate — use {@link register} or
+   * {@link fromStored} instead. MikroORM's hydration path bypasses
+   * the constructor entirely (it uses `Object.create`-style entity
+   * instantiation), so the protected modifier is purely a guardrail
+   * for human callers.
+   */
+  protected constructor() {
+    super();
+  }
 
   /**
    * Build a fresh `Workspace` and raise {@link WorkspaceRegistered}.
    * Validation lives inside the value-object factories the caller
    * passes in; this method itself only assembles + records the event.
+   *
+   * The returned entity is detached from any EntityManager. The
+   * command handler calls `em.persist(ws)` to enroll it in the
+   * unit-of-work; the subsequent `em.flush` (driven by
+   * `TransactionBehavior`) writes the INSERT and fires the
+   * `afterFlush` subscriber.
    */
   static register(args: {
     id: WorkspaceId;
@@ -59,7 +97,11 @@ export class Workspace {
     workspaceDir: WorkspaceDir;
     now: string;
   }): Workspace {
-    const ws = new Workspace(args.id, args.name, args.workspaceDir, args.now);
+    const ws = new Workspace();
+    ws.id = args.id.value;
+    ws.name = args.name.value;
+    ws.workspaceDir = args.workspaceDir.value;
+    ws.createdAt = args.now;
     ws.addDomainEvent(
       new WorkspaceRegistered({
         id: args.id,
@@ -72,7 +114,13 @@ export class Workspace {
   }
 
   /**
-   * Reconstruct a `Workspace` from storage (e.g. a SQLite row).
+   * Reconstruct a `Workspace` from raw primitive fields (e.g. test
+   * fixtures or migration backfills). Production reads go through
+   * MikroORM's `em.findOne` / `em.find` hydration path, which skips
+   * this factory and skips constructor invocation entirely — but the
+   * factory remains useful for test code that wants a tracked-but-
+   * detached aggregate without standing up an EntityManager.
+   *
    * Validation failures throw {@link WorkspaceCorruptedError} carrying
    * the on-disk `workspaceDir` for operator triage, rather than the
    * input-validation errors used by {@link Workspace.register}.
@@ -89,11 +137,8 @@ export class Workspace {
     if (typeof args.createdAt !== "string" || args.createdAt.length === 0) {
       throw new WorkspaceCorruptedError(args.workspaceDir, "missing or invalid 'createdAt'");
     }
-    let id: WorkspaceId;
-    let name: WorkspaceName;
-    let workspaceDir: WorkspaceDir;
     try {
-      id = WorkspaceId.of(args.id);
+      WorkspaceId.of(args.id);
     } catch (err) {
       throw new WorkspaceCorruptedError(
         args.workspaceDir,
@@ -102,7 +147,7 @@ export class Workspace {
       );
     }
     try {
-      name = WorkspaceName.of(args.name);
+      WorkspaceName.of(args.name);
     } catch (err) {
       throw new WorkspaceCorruptedError(
         args.workspaceDir,
@@ -111,7 +156,7 @@ export class Workspace {
       );
     }
     try {
-      workspaceDir = WorkspaceDir.of(args.workspaceDir);
+      WorkspaceDir.of(args.workspaceDir);
     } catch (err) {
       throw new WorkspaceCorruptedError(
         args.workspaceDir,
@@ -119,25 +164,12 @@ export class Workspace {
         { cause: err },
       );
     }
-    return new Workspace(id, name, workspaceDir, args.createdAt);
-  }
-
-  // ── identity & metadata getters ─────────────────────────
-
-  get id(): WorkspaceId {
-    return this._id;
-  }
-
-  get name(): WorkspaceName {
-    return this._name;
-  }
-
-  get workspaceDir(): WorkspaceDir {
-    return this._workspaceDir;
-  }
-
-  get createdAt(): string {
-    return this._createdAt;
+    const ws = new Workspace();
+    ws.id = args.id;
+    ws.name = args.name;
+    ws.workspaceDir = args.workspaceDir;
+    ws.createdAt = args.createdAt;
+    return ws;
   }
 
   // ── transitions ────────────────────────────────────────
@@ -148,17 +180,25 @@ export class Workspace {
    * having to filter idempotent renames themselves.
    */
   rename(newName: WorkspaceName, now: string): void {
-    if (this._name.equals(newName)) return;
-    const oldName = this._name;
-    this._name = newName;
-    this.addDomainEvent(new WorkspaceRenamed({ id: this._id, oldName, newName, renamedAt: now }));
+    if (this.name === newName.value) return;
+    const oldNameVO = WorkspaceName.of(this.name);
+    this.name = newName.value;
+    this.addDomainEvent(
+      new WorkspaceRenamed({
+        id: WorkspaceId.of(this.id),
+        oldName: oldNameVO,
+        newName,
+        renamedAt: now,
+      }),
+    );
   }
 
   /**
    * Mark the workspace as unregistered (raises
-   * {@link WorkspaceUnregistered}). The persistent row removal happens
-   * in the command handler / repository — the aggregate just records
-   * the transition for any future subscribers (Phase 1 has none).
+   * {@link WorkspaceUnregistered}). The persistent row removal
+   * happens in the repository's `delete()` (which calls `em.remove`);
+   * the aggregate just records the transition for downstream
+   * subscribers.
    *
    * `purged` records the user's choice to also wipe emploke-owned
    * subdirs (`sessions/`, `tasks/`) on disk. Carried on the event so
@@ -168,30 +208,10 @@ export class Workspace {
   unregister(now: string, opts: { purged: boolean }): void {
     this.addDomainEvent(
       new WorkspaceUnregistered({
-        id: this._id,
+        id: WorkspaceId.of(this.id),
         purged: opts.purged,
         unregisteredAt: now,
       }),
     );
-  }
-
-  /**
-   * Drain the buffered domain events. Command handlers call this AFTER
-   * `repository.save(...)` so an event is only dispatched once the
-   * write has succeeded. Resets the buffer on read — second drains
-   * return `[]`.
-   */
-  pullDomainEvents(): readonly WorkspaceDomainEvent[] {
-    const events = this._domainEvents;
-    this._domainEvents = [];
-    return events;
-  }
-
-  /**
-   * Record an event raised by a transition. Protected (not exported)
-   * — outside callers cannot inject events into the aggregate.
-   */
-  protected addDomainEvent(evt: WorkspaceDomainEvent): void {
-    this._domainEvents.push(evt);
   }
 }

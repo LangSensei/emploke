@@ -1,29 +1,42 @@
 import { inject, injectable } from "inversify";
-import { Mediator, type RequestHandler } from "mediatr-ts";
+import type { RequestHandler } from "mediatr-ts";
 import { Clock } from "../../../domain/clock.js";
 import { WorkspaceNotRegisteredError } from "../../../domain/errors.js";
-import { publishWorkspaceEvent } from "../../../domain/publish-event.js";
 import { WorkspaceId } from "../../../domain/value-objects/workspace-id.js";
 import { WorkspaceName } from "../../../domain/value-objects/workspace-name.js";
 import { WorkspaceRepository } from "../../../domain/workspace-repository.js";
 import type { RenameWorkspaceCommand } from "./rename-workspace.command.js";
 
 /**
- * Handle {@link RenameWorkspaceCommand}: rename the workspace, persist,
- * publish the `WorkspaceRenamed` event.
+ * Handle {@link RenameWorkspaceCommand}: fetch the workspace
+ * aggregate, call `ws.rename(...)`, and rely on the surrounding
+ * `TransactionBehavior`'s `em.flush` to write the UPDATE plus
+ * dispatch the `WorkspaceRenamed` event.
+ *
+ * ## What the handler stopped doing (Phase 2 / ADR-3)
+ *
+ *   - **`repo.save(ws)`** — gone. `findById` returns a tracked
+ *     entity; the rename mutates it in-place; `em.flush` writes the
+ *     UPDATE automatically.
+ *   - **Manual `pullDomainEvents` + publish loop** — gone.
+ *     `DomainEventSubscriber.afterFlush` dispatches the event after
+ *     the SQL write lands.
+ *   - **Explicit no-op short-circuit** — collapsed. The aggregate's
+ *     `rename` is still no-op when the new name equals the current
+ *     one, but the handler doesn't need a separate `if (events.length
+ *     === 0) return` guard because the UoW's change-set is empty when
+ *     no field changed: the flush is a free no-op, the subscriber
+ *     sees no event to publish, no UPDATE hits SQLite. (Cf. the
+ *     pre-Phase-2 handler that needed to skip `repo.save` to avoid an
+ *     unnecessary `BEGIN IMMEDIATE`.)
  *
  * Throws `WorkspaceNotRegisteredError` when no workspace with the
- * given id exists — including the rare race where a concurrent
- * unregister lands between this handler's `findById()` and `save()`
- * calls (the strict-update semantics in
- * {@link WorkspaceRepository.save} surface that as a typed 404 instead
- * of silently resurrecting the deleted row).
+ * given id exists.
  */
 @injectable()
 export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorkspaceCommand, void> {
   constructor(
     @inject(WorkspaceRepository) private readonly repo: WorkspaceRepository,
-    @inject(Mediator) private readonly mediator: Mediator,
     @inject(Clock) private readonly clock: Clock,
   ) {}
 
@@ -35,19 +48,9 @@ export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorks
     if (!ws) throw new WorkspaceNotRegisteredError(id.value);
 
     ws.rename(newName, this.clock.nowIso());
-
-    // Skip the write-lock + UPDATE round-trip for no-op renames
-    // (when newName equals the current name, the aggregate's `rename`
-    // short-circuits and raises no event). Reviewer note on PR #138:
-    // unconditional save acquires BEGIN IMMEDIATE for byte-identical
-    // rows, wasted work under contention on a real global.db.
-    const events = ws.pullDomainEvents();
-    if (events.length === 0) return;
-
-    await this.repo.save(ws);
-
-    for (const evt of events) {
-      await publishWorkspaceEvent(this.mediator, evt);
-    }
+    // No explicit save — `ws` is tracked; em.flush() in
+    // TransactionBehavior writes UPDATE. No publish loop — the
+    // DomainEventSubscriber dispatches WorkspaceRenamed if one was
+    // raised.
   }
 }

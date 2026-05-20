@@ -2,8 +2,9 @@ import type { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { Clock } from "../domain/clock.js";
 import { WorkspaceRepository } from "../domain/workspace-repository.js";
-import { SqliteWorkspaceQueries } from "../infrastructure/sqlite-workspace-queries.js";
-import { SqliteWorkspaceRepository } from "../infrastructure/sqlite-workspace-repository.js";
+import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
+import { MikroWorkspaceQueries } from "../infrastructure/mikro-workspace-queries.js";
+import { MikroWorkspaceRepository } from "../infrastructure/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
 import { RegisterWorkspaceCommand } from "./commands/register-workspace/register-workspace.command.js";
 import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace/register-workspace.command-handler.js";
@@ -23,22 +24,27 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
  * ## Prerequisites (bound by the composition root BEFORE this is called)
  *
  *   - `Mediator` — the mediatr-ts dispatcher (`@inject(Mediator)`).
- *   - `WorkspaceDb` — the `DatabaseSync` handle for the workspace
- *     pkg's storage (= `<EMPLOKE_HOME>/global.db` in production).
- *     See `infrastructure/workspace-db.ts`. The composition root
- *     binds this as a constant after running
- *     `runPkgMigrations(globalDb, [{ pkg: 'workspace', migrations: WORKSPACE_MIGRATIONS }])`,
- *     so `SqliteWorkspaceRepository`'s schema-version assertion
- *     passes the first time it's resolved.
+ *   - `EntityManager` — the global-scope MikroORM EM. The composition
+ *     root opens `MikroORM.init({ entities: [Workspace], dbName:
+ *     globalDbFile, … })` and binds `orm.em` as a constant. The
+ *     repository / queries / register handler all inject this token.
+ *     Post-Phase-2 / ADR-3: this REPLACES the previous `WorkspaceDb`
+ *     `DatabaseSync` symbol.
  *
  * ## What this function binds
  *
- *   - `Clock` → `SystemClock` (singleton; cheap factory but no
- *     per-call state, so a shared instance is fine).
- *   - `WorkspaceRepository` → `SqliteWorkspaceRepository` (singleton;
- *     wraps the singleton `WorkspaceDb` so the same connection is
- *     reused across handlers).
- *   - `WorkspaceQueries` → `SqliteWorkspaceQueries` (singleton).
+ *   - `Clock` → `SystemClock` (singleton; no per-call state, so a
+ *     shared instance is fine).
+ *   - `WorkspaceRepository` → `MikroWorkspaceRepository` (singleton;
+ *     wraps the singleton `EntityManager` so the same UoW is reused
+ *     across handlers).
+ *   - `WorkspaceQueries` → `MikroWorkspaceQueries` (singleton).
+ *   - `DomainEventSubscriber` → self (singleton). The composition
+ *     root is expected to PULL this binding out of the container and
+ *     pass it into `MikroORM.init({ subscribers: [...] })` so events
+ *     fire on every flush; binding it here keeps the dependency arrow
+ *     pointing the right way (`@inject(Mediator)` requires the
+ *     mediator to already be bound).
  *   - Every command handler `toSelf()` so the mediator's
  *     `InversifyResolver.resolve(HandlerClass)` succeeds.
  *
@@ -46,21 +52,21 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
  * mediator (per ADR #135 decision 6 — avoids the `@requestHandler`
  * decorator's "must import every handler at startup" footgun).
  *
- * ## Phase 1 caveat: no notification handlers yet
+ * ## Phase 2 caveat: still no notification handlers
  *
  * The 3 lifecycle events (`WorkspaceRegistered`, `WorkspaceRenamed`,
  * `WorkspaceUnregistered`) are raised by the aggregate and dispatched
- * via `mediator.publish(...)`, but no subscriber is registered.
- * That's intentional: workspace is the root context with no
- * upstream-context reactions. The dispatch path is exercised end-to-end
- * (test pulls + publishes against a real mediator) so Phase 3+ can add
- * cross-context subscribers without re-litigating the wiring.
+ * via `DomainEventSubscriber.afterFlush` (NEW in Phase 2), but no
+ * subscriber is registered. The subscriber swallows the
+ * "no handler found" mediatr-ts error so the publish path stays
+ * green; Phase 3+ adds cross-context subscribers without re-wiring.
  */
 export function composeWorkspaceModule(container: Container): void {
   // Domain / application bindings
   container.bind(Clock).to(SystemClock).inSingletonScope();
-  container.bind(WorkspaceRepository).to(SqliteWorkspaceRepository).inSingletonScope();
-  container.bind(WorkspaceQueries).to(SqliteWorkspaceQueries).inSingletonScope();
+  container.bind(WorkspaceRepository).to(MikroWorkspaceRepository).inSingletonScope();
+  container.bind(WorkspaceQueries).to(MikroWorkspaceQueries).inSingletonScope();
+  container.bind(DomainEventSubscriber).toSelf().inSingletonScope();
 
   // Handler bindings are intentionally NOT made `toSelf()` here.
   // The mediator's resolver (`InversifyResolver`) auto-binds each

@@ -1,18 +1,21 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { RegisterWorkspaceCommand, WorkspaceQueries } from "@emploke/workspace";
-import { Mediator } from "mediatr-ts";
+import { RegisterWorkspaceCommand, type WorkspaceQueries } from "@emploke/workspace";
+import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildServerContainer } from "../src/bootstrap.js";
 import {
-  PerWorkspaceContainerCache,
+  type PerWorkspaceContainerCache,
   WorkspaceHasLiveTasksError,
 } from "../src/per-workspace-container.js";
-import { bootstrapWorkspaceRegistryDb } from "./_test-support.js";
+import {
+  type ServerTestSubsystem,
+  setupTestSubsystem,
+  teardownTestSubsystem,
+} from "./_test-support.js";
 
 /**
  * Tests for the per-workspace container cache lifecycle log lines added
@@ -21,27 +24,19 @@ import { bootstrapWorkspaceRegistryDb } from "./_test-support.js";
  * its build / invalidate / reload events need to land in the log just
  * like state-mutating routes do.
  *
- * Post-Phase-1: `WorkspaceContextCache` was renamed to
- * `PerWorkspaceContainerCache` (P1-4 in polish-backlog). The log
- * messages were updated accordingly ("per-workspace container ..."
- * instead of "workspace context ...").
+ * Phase 2 / ADR-3: the global registry now goes through MikroORM
+ * (`setupTestSubsystem` opens the ORM internally).
  */
 
 let scratch: string;
-let globalDb: DatabaseSync;
-const openCaches: PerWorkspaceContainerCache[] = [];
+const openSubsystems: ServerTestSubsystem[] = [];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-wsctx-"));
-  globalDb = new DatabaseSync(":memory:");
-  await bootstrapWorkspaceRegistryDb(globalDb);
 });
 afterEach(async () => {
-  for (const c of openCaches.splice(0)) c.closeAll();
-  try {
-    globalDb.close();
-  } catch {
-    // already closed
+  for (const sys of openSubsystems.splice(0)) {
+    await teardownTestSubsystem(sys);
   }
   await rm(scratch, { recursive: true, force: true });
 });
@@ -55,21 +50,9 @@ interface CacheHarness {
 
 async function makeCache(): Promise<CacheHarness> {
   const cap = captureLogger();
-  const container = buildServerContainer({ workspaceDb: globalDb });
-  const mediator = container.get(Mediator);
-  const queries = container.get(WorkspaceQueries);
-  const runtimeRegistry = new RuntimeRegistry();
-  runtimeRegistry.register(
-    new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
-  );
-  const cache = new PerWorkspaceContainerCache({
-    rootContainer: container,
-    runtimeRegistry,
-    queries,
-    logger: cap.logger,
-  });
-  openCaches.push(cache);
-  return { cap, cache, mediator, queries };
+  const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
+  openSubsystems.push(sys);
+  return { cap, cache: sys.cache, mediator: sys.mediator, queries: sys.queries };
 }
 
 async function registerWs(

@@ -18,7 +18,7 @@ function newId(): WorkspaceId {
   return WorkspaceId.of(UUID_A);
 }
 
-describe("Workspace.register", () => {
+describe("Workspace.register (Phase 2 / MikroORM entity)", () => {
   it("creates a fresh workspace and raises WorkspaceRegistered", () => {
     const ws = Workspace.register({
       id: newId(),
@@ -26,8 +26,10 @@ describe("Workspace.register", () => {
       workspaceDir: WorkspaceDir.of("/tmp/x"),
       now: NOW_1,
     });
-    expect(ws.id.value).toBe(UUID_A);
-    expect(ws.name.value).toBe("Project");
+    // Phase 2: aggregate fields are primitives (MikroORM column
+    // mapping). Value objects live at the constructor boundary only.
+    expect(ws.id).toBe(UUID_A);
+    expect(ws.name).toBe("Project");
     expect(ws.createdAt).toBe(NOW_1);
 
     const events = ws.pullDomainEvents();
@@ -60,8 +62,8 @@ describe("Workspace.fromStored", () => {
       workspaceDir: "/tmp/x",
       createdAt: NOW_1,
     });
-    expect(ws.id.value).toBe(UUID_A);
-    expect(ws.name.value).toBe("Stored");
+    expect(ws.id).toBe(UUID_A);
+    expect(ws.name).toBe("Stored");
     expect(ws.pullDomainEvents()).toHaveLength(0);
   });
 
@@ -114,7 +116,7 @@ describe("Workspace.rename", () => {
   it("changes the name and raises WorkspaceRenamed", () => {
     const ws = fresh();
     ws.rename(WorkspaceName.of("New"), NOW_2);
-    expect(ws.name.value).toBe("New");
+    expect(ws.name).toBe("New");
     const events = ws.pullDomainEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toBeInstanceOf(WorkspaceRenamed);
@@ -127,7 +129,7 @@ describe("Workspace.rename", () => {
   it("is a no-op when the new name equals the current name", () => {
     const ws = fresh();
     ws.rename(WorkspaceName.of("Old"), NOW_2);
-    expect(ws.name.value).toBe("Old");
+    expect(ws.name).toBe("Old");
     expect(ws.pullDomainEvents()).toHaveLength(0);
   });
 });
