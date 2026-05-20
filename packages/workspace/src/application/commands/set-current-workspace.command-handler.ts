@@ -1,7 +1,7 @@
 import { inject, injectable } from "inversify";
 import type { RequestHandler } from "mediatr-ts";
-import { WorkspaceId } from "../../../domain/value-objects/workspace-id.js";
-import { WorkspaceRepository } from "../../../domain/workspace-repository.js";
+import { WorkspaceId } from "../../domain/value-objects/workspace-id.js";
+import { WorkspaceRepository } from "../../domain/workspace-repository.js";
 import type { SetCurrentWorkspaceCommand } from "./set-current-workspace.command.js";
 
 /**

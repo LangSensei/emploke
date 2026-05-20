@@ -3,11 +3,14 @@ import { composeCatalogModule } from "@emploke/catalog";
 import { composeRuntimeModule } from "@emploke/runtime";
 import { composeSessionModule } from "@emploke/session";
 import { composeTaskModule } from "@emploke/task";
-import { composeWorkspaceModule, DomainEventSubscriber } from "@emploke/workspace";
+import {
+  composeWorkspaceModule,
+  DomainEventSubscriber,
+  TransactionBehavior,
+} from "@emploke/workspace";
 import { EntityManager, type MikroORM } from "@mikro-orm/core";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
-import { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
 import { InversifyResolver } from "./inversify-resolver.js";
 
 /**
@@ -37,24 +40,33 @@ import { InversifyResolver } from "./inversify-resolver.js";
  *     `orm.schema.updateSchema` before this is called).
  *
  * ## Pipeline behaviour registration
+
  *
- * `TransactionBehavior` is imported above (transitively pulling in
- * the `@pipelineBehavior()` decorator that registers it on the
- * mediatr-ts module-level singleton). The `new Mediator({ resolver })`
+ * `TransactionBehavior` is re-exported from `@emploke/workspace` (it
+ * owns the workspace context's EM, per ADR-4 issue #141). Importing
+ * it via the workspace pkg's index triggers the side-effect import
+ * of `application/behaviors/transaction-behavior.js`, which runs the
+ * `@pipelineBehavior()` decorator and registers the class on the
+ * mediatr-ts module-level singleton. The `new Mediator({ resolver })`
  * call below walks `typeMappings.pipelineBehaviors` in its constructor
  * and calls `resolver.add(TransactionBehavior)` — which our
  * `InversifyResolver` translates to a `container.bind(...).toSelf()`
  * binding. From that point on every `mediator.send(...)` is wrapped
  * in `em.transactional`.
  *
+ * Phase 3+ adds analogous TransactionBehaviour classes inside the
+ * session / task / catalog pkgs (each bound to its own per-context
+ * EM token under ADR-4). They'll get re-exported through their pkg
+ * indexes the same way.
+ *
  * Future shared bindings (`Logger`, a global outbox handle, etc.)
  * slot in here too — every compose call sees them.
  */
 export function buildServerContainer(opts: { globalOrm: MikroORM }): Container {
   // Touch the class so esbuild / Vitest cannot tree-shake the
-  // decorator side-effect. `TransactionBehavior`'s `@pipelineBehavior()`
-  // decorator must run before `new Mediator(...)` below, otherwise the
-  // mediator's resolver-prefetch loop misses it.
+  // workspace pkg's side-effect import of transaction-behavior.ts.
+  // The `@pipelineBehavior()` decorator must run before `new Mediator(...)`
+  // below, otherwise the mediator's resolver-prefetch loop misses it.
   void TransactionBehavior;
 
   const container = new Container();

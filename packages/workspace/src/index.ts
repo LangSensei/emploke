@@ -62,10 +62,19 @@
 
 // ── DDD + CQRS public surface (locked by issue #137 §5) ────────
 
-export { RegisterWorkspaceCommand } from "./application/commands/register-workspace/register-workspace.command.js";
-export { RenameWorkspaceCommand } from "./application/commands/rename-workspace/rename-workspace.command.js";
-export { SetCurrentWorkspaceCommand } from "./application/commands/set-current-workspace/set-current-workspace.command.js";
-export { UnregisterWorkspaceCommand } from "./application/commands/unregister-workspace/unregister-workspace.command.js";
+// Side-effect import: registers TransactionBehavior on mediatr-ts's
+// module-level pipelineBehaviors singleton at module load. The server
+// composition root imports `composeWorkspaceModule` from this index,
+// which transitively loads transaction-behavior.ts BEFORE the server
+// constructs `new Mediator(...)` — so the mediator's resolver-prefetch
+// loop finds the behaviour and auto-binds it.
+import "./application/behaviors/transaction-behavior.js";
+
+export { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
+export { RegisterWorkspaceCommand } from "./application/commands/register-workspace.command.js";
+export { RenameWorkspaceCommand } from "./application/commands/rename-workspace.command.js";
+export { SetCurrentWorkspaceCommand } from "./application/commands/set-current-workspace.command.js";
+export { UnregisterWorkspaceCommand } from "./application/commands/unregister-workspace.command.js";
 export type { WorkspaceSummaryView } from "./application/queries/views/workspace-summary-view.js";
 export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
 export { WorkspaceQueries } from "./application/queries/workspace-queries.js";

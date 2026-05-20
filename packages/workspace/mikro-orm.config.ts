@@ -20,8 +20,13 @@ export default defineConfig({
   dbName: process.env.EMPLOKE_GLOBAL_DB_PATH || "./global.db",
   extensions: [Migrator],
   migrations: {
-    path: "./migrations",
-    pathTs: "./migrations",
+    // Migrations live with the rest of the persistence-adapter code
+    // (driver, repositories, queries, subscribers) under
+    // `src/infrastructure/`. `pathTs` is where the MikroORM CLI
+    // writes new migration files (`migration:create`); `path` is
+    // where the runtime reads compiled migrations from.
+    path: "./dist/infrastructure/migrations",
+    pathTs: "./src/infrastructure/migrations",
     // Keep the column-rename detection conservative — the diffing
     // engine guesses; we prefer explicit `migration:create --blank`
     // edits when a rename is intentional.

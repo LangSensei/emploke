@@ -21,7 +21,6 @@
   },
   "files": [
     "dist",
-    "migrations",
     "mikro-orm.config.ts",
     "README.md",
     "LICENSE"

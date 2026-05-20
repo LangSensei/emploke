@@ -3,17 +3,17 @@ import { Mediator } from "mediatr-ts";
 import { Clock } from "../domain/clock.js";
 import { WorkspaceRepository } from "../domain/workspace-repository.js";
 import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
-import { MikroWorkspaceQueries } from "./queries/mikro-workspace-queries.js";
 import { MikroWorkspaceRepository } from "../infrastructure/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
-import { RegisterWorkspaceCommand } from "./commands/register-workspace/register-workspace.command.js";
-import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace/register-workspace.command-handler.js";
-import { RenameWorkspaceCommand } from "./commands/rename-workspace/rename-workspace.command.js";
-import { RenameWorkspaceCommandHandler } from "./commands/rename-workspace/rename-workspace.command-handler.js";
-import { SetCurrentWorkspaceCommand } from "./commands/set-current-workspace/set-current-workspace.command.js";
-import { SetCurrentWorkspaceCommandHandler } from "./commands/set-current-workspace/set-current-workspace.command-handler.js";
-import { UnregisterWorkspaceCommand } from "./commands/unregister-workspace/unregister-workspace.command.js";
-import { UnregisterWorkspaceCommandHandler } from "./commands/unregister-workspace/unregister-workspace.command-handler.js";
+import { RegisterWorkspaceCommand } from "./commands/register-workspace.command.js";
+import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace.command-handler.js";
+import { RenameWorkspaceCommand } from "./commands/rename-workspace.command.js";
+import { RenameWorkspaceCommandHandler } from "./commands/rename-workspace.command-handler.js";
+import { SetCurrentWorkspaceCommand } from "./commands/set-current-workspace.command.js";
+import { SetCurrentWorkspaceCommandHandler } from "./commands/set-current-workspace.command-handler.js";
+import { UnregisterWorkspaceCommand } from "./commands/unregister-workspace.command.js";
+import { UnregisterWorkspaceCommandHandler } from "./commands/unregister-workspace.command-handler.js";
+import { MikroWorkspaceQueries } from "./queries/mikro-workspace-queries.js";
 import { WorkspaceQueries } from "./queries/workspace-queries.js";
 
 /**

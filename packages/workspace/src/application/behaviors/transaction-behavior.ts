@@ -55,14 +55,22 @@ const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
  * bootstrap imports this file once, which is enough to enroll the
  * behaviour on the mediatr-ts module-level singleton.
  *
- * ## Why this lives in `@emploke/server` (not `@emploke/workspace`)
+ * ## Why this lives in `@emploke/workspace` (per ADR-4)
+
  *
- * `TransactionBehavior` is a CROSS-cutting concern that wraps every
- * pipeline regardless of which context's command is running. Phase 3+
- * adds per-workspace command pipelines (session / task) — they'll
- * use the SAME `TransactionBehavior`, just against the per-workspace
- * EM. Keeping the behaviour in the server pkg keeps the workspace
- * pkg's dependency graph free of mediator-pipeline imports.
+ * `TransactionBehavior` wraps the workspace context's `EntityManager`.
+ * Under ADR-4 (per-bounded-context EM, issue #141), each bounded
+ * context owns its OWN MikroORM instance and its OWN TransactionBehavior
+ * wrapping it. Phase 3+ adds analogous behaviours in `@emploke/session`,
+ * `@emploke/task`, `@emploke/catalog` — each bound to that context's
+ * EM token (`SESSION_EM`, `TASK_EM`, ...).
+ *
+ * The server pkg is purely a composition root: it imports
+ * `composeWorkspaceModule` (which transitively loads THIS file),
+ * triggering the module-level `pipelineBehaviorDecorator` call below
+ * to enroll the behaviour on mediatr-ts's singleton registry. Server
+ * does not own this code — that would force every context's behaviour
+ * to live in a non-context pkg, violating DDD context autonomy.
  */
 @injectable()
 export class TransactionBehavior implements PipelineBehavior {

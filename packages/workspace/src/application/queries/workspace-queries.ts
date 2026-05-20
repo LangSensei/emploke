@@ -28,7 +28,7 @@ export abstract class WorkspaceQueries {
    * longer registered.
    *
    * Reads `global_state.current_workspace_id` — see
-   * {@link import("../commands/set-current-workspace/set-current-workspace.command.js").SetCurrentWorkspaceCommand}
+   * {@link import("../commands/set-current-workspace.command.js").SetCurrentWorkspaceCommand}
    * for the P1-5 note on why this lives in the workspace pkg in
    * Phase 1.
    */
