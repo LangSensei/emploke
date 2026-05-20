@@ -80,11 +80,11 @@ export type { WorkspaceView } from "./application/queries/views/workspace-view.j
 export { WorkspaceQueries } from "./application/queries/workspace-queries.js";
 export { composeWorkspaceModule } from "./application/workspace.di.js";
 
-export { WorkspaceId } from "./domain/value-objects/workspace-id.js";
+export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspace-id.js";
 
 // ── MikroORM entity surface for the composition root ──────────
 
-export { Workspace } from "./domain/workspace.js";
+export { Workspace } from "./domain/aggregates/workspace/workspace.js";
 export { DomainEventSubscriber } from "./infrastructure/domain-event-subscriber.js";
 
 /**
@@ -111,7 +111,7 @@ export {
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-} from "./domain/errors.js";
+} from "./domain/exceptions/workspace-errors.js";
 
 // ── Cross-package utilities (back-compat, see jsdoc above) ────
 

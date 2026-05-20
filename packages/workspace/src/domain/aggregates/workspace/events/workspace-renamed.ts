@@ -1,6 +1,6 @@
+import { WorkspaceDomainEvent } from "../../../seedwork/domain-event.js";
 import type { WorkspaceId } from "../value-objects/workspace-id.js";
 import type { WorkspaceName } from "../value-objects/workspace-name.js";
-import { WorkspaceDomainEvent } from "./domain-event.js";
 
 /**
  * Raised by `Workspace.rename(...)` — the workspace's display name

@@ -1,12 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import { inject, injectable } from "inversify";
 import type { RequestHandler } from "mediatr-ts";
+import { WorkspaceDir } from "../../domain/aggregates/workspace/value-objects/workspace-dir.js";
+import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
+import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
+import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../../domain/clock.js";
-import { WorkspaceDir } from "../../domain/value-objects/workspace-dir.js";
-import { WorkspaceId } from "../../domain/value-objects/workspace-id.js";
-import { WorkspaceName } from "../../domain/value-objects/workspace-name.js";
-import { Workspace } from "../../domain/workspace.js";
-import { WorkspaceRepository } from "../../domain/workspace-repository.js";
 import { workspaceLayout } from "../../workspace-layout.js";
 import type { RegisterWorkspaceCommand } from "./register-workspace.command.js";
 

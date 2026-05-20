@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceIdInvalidError } from "../../../src/domain/errors.js";
+import { WorkspaceIdInvalidError } from "../../../src/domain/exceptions/workspace-errors.js";
 import { WorkspaceId } from "../../../src/testing.js";
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";

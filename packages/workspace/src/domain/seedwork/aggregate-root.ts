@@ -1,4 +1,4 @@
-import type { WorkspaceDomainEvent } from "./events/domain-event.js";
+import type { WorkspaceDomainEvent } from "./domain-event.js";
 
 /**
  * Base class for every DDD aggregate root in `@emploke/workspace`.

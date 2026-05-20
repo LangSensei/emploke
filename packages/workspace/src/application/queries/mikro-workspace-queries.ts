@@ -1,7 +1,7 @@
 import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
 import { EntityManager } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
-import { Workspace } from "../../domain/workspace.js";
+import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
 import { isValidWorkspaceId } from "../../names.js";
 import type { WorkspaceSummaryView } from "./views/workspace-summary-view.js";
 import type { WorkspaceView } from "./views/workspace-view.js";

@@ -1,9 +1,9 @@
 import type { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
+import { WorkspaceRepository } from "../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../domain/clock.js";
-import { WorkspaceRepository } from "../domain/workspace-repository.js";
 import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
-import { MikroWorkspaceRepository } from "../infrastructure/mikro-workspace-repository.js";
+import { MikroWorkspaceRepository } from "../infrastructure/repositories/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
 import { RegisterWorkspaceCommand } from "./commands/register-workspace.command.js";
 import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace.command-handler.js";

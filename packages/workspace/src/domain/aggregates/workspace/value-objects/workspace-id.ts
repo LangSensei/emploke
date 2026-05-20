@@ -1,5 +1,5 @@
-import { isValidWorkspaceId } from "../../names.js";
-import { WorkspaceIdInvalidError } from "../errors.js";
+import { isValidWorkspaceId } from "../../../../names.js";
+import { WorkspaceIdInvalidError } from "../../../exceptions/workspace-errors.js";
 
 /**
  * Value object: opaque UUID identifying a workspace. URL routing key.

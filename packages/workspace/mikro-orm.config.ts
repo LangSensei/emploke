@@ -1,6 +1,6 @@
 import { defineConfig } from "@mikro-orm/better-sqlite";
 import { Migrator } from "@mikro-orm/migrations";
-import { Workspace } from "./src/domain/workspace.js";
+import { Workspace } from "./src/domain/aggregates/workspace/workspace.js";
 
 /**
  * MikroORM CLI / runtime config for the `workspace` pkg's global

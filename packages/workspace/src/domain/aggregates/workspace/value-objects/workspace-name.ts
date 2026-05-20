@@ -1,4 +1,4 @@
-import { assertValidDisplayName } from "../../names.js";
+import { assertValidDisplayName } from "../../../../names.js";
 
 /**
  * Value object: workspace display name. Free-form unicode, 1-64

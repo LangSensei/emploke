@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceNameInvalidError } from "../../../src/domain/errors.js";
+import { WorkspaceNameInvalidError } from "../../../src/domain/exceptions/workspace-errors.js";
 import { WorkspaceName } from "../../../src/testing.js";
 
 describe("WorkspaceName value object", () => {

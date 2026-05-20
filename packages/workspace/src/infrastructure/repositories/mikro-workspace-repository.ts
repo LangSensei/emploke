@@ -1,14 +1,14 @@
 import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
 import { EntityManager, UniqueConstraintViolationException } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
+import type { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
+import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import {
   WorkspaceIdConflictError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-} from "../domain/errors.js";
-import type { WorkspaceId } from "../domain/value-objects/workspace-id.js";
-import { Workspace } from "../domain/workspace.js";
-import { WorkspaceRepository } from "../domain/workspace-repository.js";
+} from "../../domain/exceptions/workspace-errors.js";
 
 /** Key in `global_state` holding the current-workspace pointer. */
 const CURRENT_WORKSPACE_KEY = "current_workspace_id";

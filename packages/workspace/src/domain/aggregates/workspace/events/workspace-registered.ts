@@ -1,7 +1,7 @@
+import { WorkspaceDomainEvent } from "../../../seedwork/domain-event.js";
 import type { WorkspaceDir } from "../value-objects/workspace-dir.js";
 import type { WorkspaceId } from "../value-objects/workspace-id.js";
 import type { WorkspaceName } from "../value-objects/workspace-name.js";
-import { WorkspaceDomainEvent } from "./domain-event.js";
 
 /**
  * Raised by `Workspace.register(...)` — a fresh workspace was minted.

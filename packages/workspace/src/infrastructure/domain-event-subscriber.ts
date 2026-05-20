@@ -1,7 +1,7 @@
 import type { EventSubscriber, FlushEventArgs } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
 import { Mediator } from "mediatr-ts";
-import { AggregateRoot } from "../domain/aggregate-root.js";
+import { AggregateRoot } from "../domain/seedwork/aggregate-root.js";
 
 /**
  * MikroORM `EventSubscriber` that dispatches accumulated aggregate

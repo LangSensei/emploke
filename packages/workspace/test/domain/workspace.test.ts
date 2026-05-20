@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceCorruptedError } from "../../src/domain/errors.js";
+import { WorkspaceCorruptedError } from "../../src/domain/exceptions/workspace-errors.js";
 import {
   Workspace,
   WorkspaceDir,

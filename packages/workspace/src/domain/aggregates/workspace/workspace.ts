@@ -1,6 +1,6 @@
 import { Entity, PrimaryKey, Property } from "@mikro-orm/core";
-import { AggregateRoot } from "./aggregate-root.js";
-import { WorkspaceCorruptedError } from "./errors.js";
+import { WorkspaceCorruptedError } from "../../exceptions/workspace-errors.js";
+import { AggregateRoot } from "../../seedwork/aggregate-root.js";
 import { WorkspaceRegistered } from "./events/workspace-registered.js";
 import { WorkspaceRenamed } from "./events/workspace-renamed.js";
 import { WorkspaceUnregistered } from "./events/workspace-unregistered.js";

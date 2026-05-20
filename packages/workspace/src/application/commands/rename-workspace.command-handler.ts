@@ -1,10 +1,10 @@
 import { inject, injectable } from "inversify";
 import type { RequestHandler } from "mediatr-ts";
+import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
+import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../../domain/clock.js";
-import { WorkspaceNotRegisteredError } from "../../domain/errors.js";
-import { WorkspaceId } from "../../domain/value-objects/workspace-id.js";
-import { WorkspaceName } from "../../domain/value-objects/workspace-name.js";
-import { WorkspaceRepository } from "../../domain/workspace-repository.js";
+import { WorkspaceNotRegisteredError } from "../../domain/exceptions/workspace-errors.js";
 import type { RenameWorkspaceCommand } from "./rename-workspace.command.js";
 
 /**

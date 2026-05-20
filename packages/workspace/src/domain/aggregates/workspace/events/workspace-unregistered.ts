@@ -1,5 +1,5 @@
+import { WorkspaceDomainEvent } from "../../../seedwork/domain-event.js";
 import type { WorkspaceId } from "../value-objects/workspace-id.js";
-import { WorkspaceDomainEvent } from "./domain-event.js";
 
 /**
  * Raised by `Workspace.unregister(...)` — the workspace was removed

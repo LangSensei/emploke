@@ -1,4 +1,4 @@
-import { Workspace } from "../domain/workspace.js";
+import { Workspace } from "../domain/aggregates/workspace/workspace.js";
 
 /**
  * Entities owned by `@emploke/workspace`. The composition root passes
