@@ -7,10 +7,8 @@ import { RegisterWorkspaceCommand } from "@emploke/workspace";
 import { Hono } from "hono";
 import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildServerContainer } from "../src/bootstrap.js";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
-import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
 import {
   type ServerTestSubsystem,
