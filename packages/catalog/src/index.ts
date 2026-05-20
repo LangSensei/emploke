@@ -45,6 +45,15 @@ export * as agent from "./agent/index.js";
 export { Agent } from "./agent/index.js";
 // ─── Per-pkg migration arrays (consumed by server startup) ─
 export { AGENT_MIGRATIONS } from "./agent/migrations/index.js";
+// ─── Domain seedwork (catalog phase-2 foundation) ───
+export type { AggregateRoot } from "./domain/seedwork/aggregate-root.js";
+export { Entity } from "./domain/seedwork/entity.js";
+export { ValueObject } from "./domain/seedwork/value-object.js";
+// ─── Domain value objects (catalog phase-2 foundation) ─
+export { AgentFqn } from "./domain/value-objects/agent-fqn.js";
+export { McpName } from "./domain/value-objects/mcp-name.js";
+export { Origin } from "./domain/value-objects/origin.js";
+export { SkillFqn } from "./domain/value-objects/skill-fqn.js";
 // ─── Wire DTOs (HTTP-shaped projections) ────────────
 export type {
   Agent as AgentPojo,
