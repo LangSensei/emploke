@@ -1,55 +1,39 @@
 import "reflect-metadata";
-import { EntityManager, type MikroORM } from "@mikro-orm/core";
-import { Container, inject, injectable } from "inversify";
-import { Mediator, type PipelineBehavior, pipelineBehavior, type RequestData } from "mediatr-ts";
+import type { MikroORM } from "@mikro-orm/core";
+import { Container } from "inversify";
+import { Mediator } from "mediatr-ts";
 import {
   composeWorkspaceModule,
-  DomainEventDispatcher,
   RegisterWorkspaceCommand,
   WorkspaceQueries,
 } from "../src/index.js";
 import { openTestWorkspaceOrm } from "../src/testing.js";
 
 /**
- * Local mirror of `@emploke/server`'s `TransactionBehavior`. Lives in
- * the workspace pkg's test-support so the workspace pkg can be tested
- * end-to-end (mediator dispatch -> em.transactional -> em.flush ->
- * beforeFlush hook fires DomainEventDispatcher -> published events)
- * without taking a runtime dependency on `@emploke/server`. The
- * production server uses the server-pkg copy, which is byte-identical
- * in behaviour.
- */
-@injectable()
-export class TestTransactionBehavior implements PipelineBehavior {
-  constructor(@inject(EntityManager) private readonly em: EntityManager) {}
-
-  async handle(_req: RequestData<unknown>, next: () => unknown): Promise<unknown> {
-    return this.em.transactional(async () => next());
-  }
-}
-// Register the behaviour at module load (mediatr-ts's
-// `typeMappings.pipelineBehaviors` is a module-level singleton, so
-// the registration is process-wide and only fires once thanks to ESM
-// caching).
-(pipelineBehavior() as ClassDecorator)(TestTransactionBehavior);
-
-/**
  * Shared per-test scaffolding for the Phase 2 / MikroORM-backed
- * workspace pkg. Creates a fresh `:memory:` MikroORM, an inversify
- * container with `Mediator` + `EntityManager` + the workspace
- * compose-call wired, with `WorkspaceContext.saveEntities` handling event dispatch in
- * the ORM so domain events flow through the mediator.
+ * workspace pkg.
  *
- * Tests that want to spy on `mediator.publish` for cross-context
- * event assertions can `vi.spyOn(mediator, "publish")` after this
- * helper returns — the subscriber is already wired so the publish
- * call happens inside `em.flush`, after the SQL write lands.
+ * After the encapsulation refactor (P1-5 follow-up), the workspace
+ * pkg owns the MikroORM instance internally — the helper opens an
+ * in-memory ORM, hands it to `composeWorkspaceModule({ orm })` and
+ * lets the composer wire the dispatcher / context / handlers. Tests
+ * that want to spy on `mediator.publish` for cross-context event
+ * assertions can `vi.spyOn(mediator, "publish")` after this helper
+ * returns — the subscriber is already wired so the publish call
+ * happens inside `em.flush`, after the SQL write lands.
+ *
+ * NB: The local `TestTransactionBehavior` mirror is gone. The
+ * workspace pkg's own `TransactionBehavior` (registered via the
+ * side-effect import in `index.ts`) wraps every dispatch in
+ * `em.transactional` — exactly what production server does. There
+ * is no longer a workspace-pkg-vs-server mismatch to paper over.
  */
 export interface WorkspaceTestSubsystem {
   orm: MikroORM;
   container: Container;
   mediator: Mediator;
   queries: WorkspaceQueries;
+  close(): Promise<void>;
 }
 
 class TestInversifyResolver {
@@ -70,16 +54,19 @@ export async function setupWorkspaceTestSubsystem(): Promise<WorkspaceTestSubsys
   // biome-ignore lint/suspicious/noExplicitAny: resolver shape matches mediatr-ts contract
   const mediator = new Mediator({ resolver: resolver as any });
   container.bind(Mediator).toConstantValue(mediator);
-  container.bind(EntityManager).toConstantValue(orm.em as EntityManager);
 
-  composeWorkspaceModule(container);
-
-  // Mirror bootstrap: register dispatcher with the test ORM so any
-  // em.flush triggers event dispatch (beforeFlush hook).
-  orm.em.getEventManager().registerSubscriber(container.get(DomainEventDispatcher));
+  const handle = await composeWorkspaceModule(container, { orm });
 
   const queries = container.get(WorkspaceQueries);
-  return { orm, container, mediator, queries };
+  return {
+    orm,
+    container,
+    mediator,
+    queries,
+    async close() {
+      await handle.close();
+    },
+  };
 }
 
 /**
@@ -88,6 +75,9 @@ export async function setupWorkspaceTestSubsystem(): Promise<WorkspaceTestSubsys
  * leakage across test files.
  */
 export async function teardownWorkspaceTestSubsystem(sys: WorkspaceTestSubsystem): Promise<void> {
+  // composeWorkspaceModule({ orm }) does NOT own the ORM, so close()
+  // is a no-op — we close the orm we created here.
+  await sys.close();
   await sys.orm.close(true);
 }
 

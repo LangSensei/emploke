@@ -7,11 +7,9 @@ import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { WORKSPACE_ENTITIES, WorkspaceQueries } from "@emploke/workspace";
+import { WorkspaceQueries } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { defineConfig } from "@mikro-orm/better-sqlite";
-import { MikroORM } from "@mikro-orm/core";
 import { Hono, type MiddlewareHandler } from "hono";
 import { Mediator } from "mediatr-ts";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
@@ -183,11 +181,14 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }),
   );
 
-  // Open the workspace registry (`global.db`) via MikroORM. Phase 2 /
-  // ADR-3 (#139) replaces the previous `DatabaseSync` + custom
-  // migration framework with a MikroORM-managed entity layout. On
-  // first launch the schema is created from `WORKSPACE_ENTITIES`;
-  // on subsequent launches `orm.schema.updateSchema()` is a no-op for
+  // Open the workspace registry (`global.db`) via the workspace pkg's
+  // composer. Phase 2 / ADR-3 (#139) replaced the previous
+  // `DatabaseSync` + custom migration framework with a MikroORM-managed
+  // entity layout; the encapsulation refactor (P1-5 follow-up) moved
+  // the MikroORM init into the workspace pkg itself, so the server
+  // only passes the DB file path. On first launch the workspace
+  // composer creates the schema from its own entity list; on
+  // subsequent launches `orm.schema.updateSchema()` is a no-op for
   // matching schemas. (Production hardening: switch to
   // `orm.migrator.up()` once a release branch has cut a migrations
   // baseline beyond `Migration00000000000000_initial`.)
@@ -196,41 +197,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // landing page prompts the user to create one explicitly.
   await mkdir(paths.home, { recursive: true });
 
-  const globalOrm = await MikroORM.init(
-    defineConfig({
-      entities: [...WORKSPACE_ENTITIES],
-      dbName: paths.globalDbFile,
-      // The repository's setCurrent/getCurrent paths use raw SQL
-      // against `global_state`, which lives outside the aggregate. The
-      // table is created by the initial migration; for fresh DBs the
-      // updateSchema below picks it up via the SchemaGenerator's
-      // run-after-discovery hook. If running in CI with a stale DB,
-      // operators should `rm -f` global.db before booting.
-      allowGlobalContext: true,
-    }),
-  );
-  await globalOrm.schema.updateSchema();
-  // `global_state` is not a MikroORM entity in Phase 2, so
-  // `updateSchema` does not create it. Hand-create it here (idempotent
-  // via IF NOT EXISTS) so the first setCurrent call succeeds on a
-  // fresh DB.
-  await globalOrm.em.getConnection().execute(
-    `CREATE TABLE IF NOT EXISTS global_state (
-      key   TEXT PRIMARY KEY NOT NULL,
-      value TEXT NOT NULL
-    )`,
-  );
-  logger.info({ file: paths.globalDbFile }, "global.db opened via MikroORM (Phase 2 / ADR-3)");
+  const composition = await buildServerContainer({
+    workspace: { dbFile: paths.globalDbFile },
+  });
+  const rootContainer = composition.container;
+  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
-  // Phase 2 of issue #135 / ADR-3 (#139): build the inversify root
-  // container with the MikroORM-backed workspace pkg bindings. The
-  // container binds `EntityManager` (the orm-root EM),
-  // `WorkspaceRepository` → `MikroWorkspaceRepository`,
-  // `WorkspaceQueries` → `MikroWorkspaceQueries`, `Clock`,
-  // the four workspace command handlers, and
-  // the `TransactionBehavior` pipeline behaviour (which wraps every
-  // mediator dispatch in `em.transactional`).
-  const rootContainer = buildServerContainer({ globalOrm });
   const mediator = rootContainer.get(Mediator);
   const workspaceQueries = rootContainer.get(WorkspaceQueries);
 
@@ -444,12 +416,13 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }
     try {
       // Close the workspace registry's underlying MikroORM instance
-      // (`global.db`). Per-workspace contexts have already been
-      // closed by `cache.closeAll()` above, so closing the global
-      // ORM here is safe. `orm.close()` flushes any pending changes
-      // and releases the SQLite handle, which Windows needs before
-      // the CLI integration test can `rm -rf <EMPLOKE_HOME>`.
-      await globalOrm.close(true);
+      // (`global.db`) via the composition handle. Per-workspace
+      // contexts have already been closed by `cache.closeAll()` above,
+      // so closing the global ORM here is safe. The handle's close()
+      // flushes any pending changes and releases the SQLite handle,
+      // which Windows needs before the CLI integration test can
+      // `rm -rf <EMPLOKE_HOME>`.
+      await composition.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
     }

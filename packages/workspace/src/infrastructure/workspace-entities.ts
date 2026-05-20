@@ -1,16 +1,19 @@
 import { Workspace } from "../domain/aggregates/workspace/workspace.js";
+import { GlobalState } from "../domain/global-state.js";
 
 /**
- * Entities owned by `@emploke/workspace`. The composition root passes
- * this array to `MikroORM.init({ entities: WORKSPACE_ENTITIES, ... })`
- * so we don't leak the internal entity list across the package
- * boundary (and so a future Phase that adds an entity here doesn't
- * require updating every composition root in lock-step).
+ * Entities owned by `@emploke/workspace`. Internal to the package —
+ * `composeWorkspaceModule` (real) and `openTestWorkspaceOrm` (test
+ * helper) both pass this array to `MikroORM.init({ entities, ... })`
+ * so the two ORM setups can't drift apart.
  *
- * Today: just `Workspace` (the only aggregate root in this package).
- * Phase 3+ may add `GlobalState` once the key/value bag earns enough
- * behaviour to merit its own entity, but for now `global_state` is
- * a raw-SQL table accessed via `em.execute(...)` from
- * `MikroWorkspaceRepository.setCurrent/getCurrent`.
+ * NOT part of the package's public surface: composition roots (server
+ * / CLI) call `composeWorkspaceModule` and never see the entity list.
+ *
+ *   - `Workspace` — the aggregate root for a registered workspace.
+ *   - `GlobalState` — a singleton key/value bag holding the
+ *     `current_workspace_id` pointer. Plain entity (no aggregate
+ *     behaviour); accessed via the EntityManager so the per-context
+ *     unit-of-work + transaction envelope cover it.
  */
-export const WORKSPACE_ENTITIES = [Workspace] as const;
+export const WORKSPACE_ENTITIES = [Workspace, GlobalState] as const;

@@ -1,7 +1,9 @@
 import { inject, injectable } from "inversify";
+import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
+import { GLOBAL_STATE_KEYS, GlobalState } from "../../domain/global-state.js";
 import { WorkspaceContext } from "../../infrastructure/workspace-context.js";
-import { isValidWorkspaceId } from "../../names.js";
+
 import type { WorkspaceSummaryView } from "./views/workspace-summary-view.js";
 import type { WorkspaceView } from "./views/workspace-view.js";
 import { WorkspaceQueries } from "./workspace-queries.js";
@@ -14,15 +16,14 @@ import { WorkspaceQueries } from "./workspace-queries.js";
  * QueryBuilder is the default for list/get because it keeps the
  * read-side projection a pure SELECT (no entity hydration / event
  * accumulation overhead — neither would be wrong, just wasted work
- * since the read view is a flat record). The single raw-SQL escape
- * hatch is `getCurrent` / `getCurrentId`, which joins the
- * `global_state` table that is not yet a MikroORM entity (see
- * `MikroWorkspaceRepository` for the rationale).
+ * since the read view is a flat record). The current-workspace pointer
+ * lookup goes through the {@link GlobalState} entity (Phase 2 polish
+ * P1-5).
  *
  * The injected `EntityManager` is the abstract `@mikro-orm/core`
- * surface; QueryBuilder + raw SQL live on the SQL-specific
- * `SqlEntityManager` (from `@mikro-orm/knex`). The cast is sound
- * because workspace pkg only ever runs against a SQL driver.
+ * surface; QueryBuilder lives on the SQL-specific `SqlEntityManager`
+ * (from `@mikro-orm/knex`). The cast on `ctx.sqlEm` is sound because
+ * workspace pkg only ever runs against a SQL driver.
  *
  * Returns plain `WorkspaceView` / `WorkspaceSummaryView` records (no
  * aggregate construction) so cross-context consumers don't accidentally
@@ -35,7 +36,7 @@ export class MikroWorkspaceQueries extends WorkspaceQueries {
   }
 
   override async getById(id: string): Promise<WorkspaceView | null> {
-    if (!isValidWorkspaceId(id)) return null;
+    if (!WorkspaceId.isValid(id)) return null;
     const row = (await this.ctx.sqlEm
       .createQueryBuilder(Workspace, "w")
       .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt"])
@@ -56,16 +57,16 @@ export class MikroWorkspaceQueries extends WorkspaceQueries {
     const id = await this.getCurrentId();
     if (!id) return null;
     // Selected workspace may have been deleted; `getById` returns
-    // null in that case (the cleanup keystroke for the stale pointer
-    // happens in `MikroWorkspaceRepository.delete()`).
+    // null in that case (cleanup of the stale pointer happens in
+    // ClearCurrentOnUnregisterDomainEventHandler reacting to WorkspaceUnregistered).
     return this.getById(id);
   }
 
   override async getCurrentId(): Promise<string | null> {
-    const rows = (await this.ctx.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
-      "current_workspace_id",
-    ])) as Array<{ value: string }>;
-    return rows[0]?.value ?? null;
+    const pointer = await this.ctx.em.findOne(GlobalState, {
+      key: GLOBAL_STATE_KEYS.CURRENT_WORKSPACE_ID,
+    });
+    return pointer?.value ?? null;
   }
 }
 

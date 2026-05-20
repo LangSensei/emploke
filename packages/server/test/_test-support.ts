@@ -48,7 +48,8 @@ export async function setupTestSubsystem(opts: {
   logger?: Logger;
 }): Promise<ServerTestSubsystem> {
   const orm = await openTestWorkspaceOrm();
-  const container = buildServerContainer({ globalOrm: orm });
+  const composition = await buildServerContainer({ workspace: { orm } });
+  const container = composition.container;
   const mediator = container.get(Mediator);
   const queries = container.get(WorkspaceQueries);
   // `buildServerContainer` already registers the

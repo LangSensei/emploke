@@ -5,10 +5,10 @@ import { composeSessionModule } from "@emploke/session";
 import { composeTaskModule } from "@emploke/task";
 import {
   composeWorkspaceModule,
-  DomainEventDispatcher,
   TransactionBehavior,
+  type WorkspaceModuleHandle,
+  type WorkspaceModuleOptions,
 } from "@emploke/workspace";
-import { EntityManager, type MikroORM } from "@mikro-orm/core";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { InversifyResolver } from "./inversify-resolver.js";
@@ -17,28 +17,25 @@ import { InversifyResolver } from "./inversify-resolver.js";
  * Build the root inversify container for the server process and wire
  * the mediatr-ts dispatcher into it.
  *
- * Phase 2 of issue #135 / ADR-3 (#139) pivoted the workspace pkg to
- * MikroORM. The composition root opens a `MikroORM` instance against
- * `global.db` and passes it here so we can bind the canonical
- * {@link EntityManager} token, install the cross-cutting
- * {@link TransactionBehavior} on the mediator's pipeline.
+ * After the P1-5 / encapsulation refactor, the **workspace package
+ * owns its MikroORM instance**: callers pass a {@link WorkspaceModuleOptions}
+ * (typically `{ dbFile }` for production, `{ orm }` for tests) and
+ * the composer internally opens the ORM, registers the
+ * `DomainEventDispatcher` on its event manager, and binds a
+ * `WorkspaceContext` (the EM wrapper) into the container. The server
+ * never imports `EntityManager` / `WORKSPACE_ENTITIES` /
+ * `DomainEventDispatcher` directly anymore.
  *
  * Other `compose…Module` calls (`session` / `task` / `catalog` /
- * `runtime`) remain empty stubs — Phase 3-7 lands their MikroORM
- * pivots.
+ * `runtime`) remain empty stubs — Phase 3-7 lands their analogous
+ * MikroORM pivots, each with its own per-context EM (ADR-4).
  *
  * ## Pre-compose prerequisites
- *
- * The composition root binds shared services **before** calling any
- * `compose…Module`:
- *   - `Mediator` — the dispatcher itself.
- *   - `EntityManager` — the global-scope `MikroORM` EM for
- *     `global.db`, already migrated to the version the workspace
- *     pkg expects (the bootstrap runs `orm.migrator.up()` or
- *     `orm.schema.updateSchema` before this is called).
+ *   - The composition root binds `Mediator` before any
+ *     `compose…Module` call (so handlers + behaviours that
+ *     `@inject(Mediator)` resolve cleanly).
  *
  * ## Pipeline behaviour registration
-
  *
  * `TransactionBehavior` is re-exported from `@emploke/workspace` (it
  * owns the workspace context's EM, per ADR-4 issue #141). Importing
@@ -56,11 +53,20 @@ import { InversifyResolver } from "./inversify-resolver.js";
  * session / task / catalog pkgs (each bound to its own per-context
  * EM token under ADR-4). They'll get re-exported through their pkg
  * indexes the same way.
- *
- * Future shared bindings (`Logger`, a global outbox handle, etc.)
- * slot in here too — every compose call sees them.
  */
-export function buildServerContainer(opts: { globalOrm: MikroORM }): Container {
+export interface ServerComposition {
+  readonly container: Container;
+  /**
+   * Closes anything composeXxxModule opened internally (today: just
+   * the workspace pkg's MikroORM instance for `global.db`). Idempotent
+   * within reason — call once during graceful shutdown.
+   */
+  close(): Promise<void>;
+}
+
+export async function buildServerContainer(opts: {
+  workspace: WorkspaceModuleOptions;
+}): Promise<ServerComposition> {
   // Touch the class so esbuild / Vitest cannot tree-shake the
   // workspace pkg's side-effect import of transaction-behavior.ts.
   // The `@pipelineBehavior()` decorator must run before `new Mediator(...)`
@@ -71,29 +77,24 @@ export function buildServerContainer(opts: { globalOrm: MikroORM }): Container {
   const resolver = new InversifyResolver(container);
   const mediator = new Mediator({ resolver });
   container.bind(Mediator).toConstantValue(mediator);
-  container.bind(EntityManager).toConstantValue(opts.globalOrm.em as EntityManager);
 
   // Per-module bindings + manual mediator registration. Order
   // doesn't matter today because mediator dispatch is late-bound; if
   // a future binding ever needs a sibling-context service at compose
   // time, revisit.
-  composeWorkspaceModule(container);
+  const workspaceHandle: WorkspaceModuleHandle = await composeWorkspaceModule(
+    container,
+    opts.workspace,
+  );
   composeSessionModule(container);
   composeTaskModule(container);
   composeCatalogModule(container);
   composeRuntimeModule(container);
 
-  // Wire the workspace pkg's DomainEventDispatcher into MikroORM's
-  // beforeFlush hook AFTER composeWorkspaceModule has bound it.
-  // From this point any em.flush() (driven by TransactionBehavior's
-  // em.transactional, by a direct test call, or by any future code
-  // path) automatically drains pending aggregate domain events from
-  // the UoW identity map and publishes them through the mediator
-  // BEFORE the SQL writes hit SQLite. Matches eShop OrderingContext.
-  // SaveEntitiesAsync (dispatch -> SaveChanges) semantics, but
-  // leverages MikroORM's subscriber registry rather than rebuilding
-  // the orchestration in a Context method.
-  opts.globalOrm.em.getEventManager().registerSubscriber(container.get(DomainEventDispatcher));
-
-  return container;
+  return {
+    container,
+    async close() {
+      await workspaceHandle.close();
+    },
+  };
 }

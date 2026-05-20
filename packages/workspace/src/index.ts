@@ -53,23 +53,30 @@
  * the cross-context refactor it may move to a dedicated
  * `@emploke/migration` pkg.
  *
- * The `workspaceLayout` helper, the `SESSIONS_SUBDIR` / `TASKS_SUBDIR`
- * constants, and the name validators (`isValidWorkspaceId` /
- * `assertValidDisplayName`) are pure utilities consumed by the server
- * pkg and downstream callers; exporting them is a workspace-pilot
+ * The `workspaceLayout` helper is a pure utility consumed by the
+ * server pkg and downstream callers; exporting it is a workspace-pilot
  * pragmatic deviation from naming-conventions §5's strict list.
  */
 
 // ── DDD + CQRS public surface (locked by issue #137 §5) ────────
 
 // Side-effect imports register pipeline behaviours on mediatr-ts's
-// module-level pipelineBehaviors singleton at module load. Order
-// matters: first registered = outermost in pipeline. ValidationBehavior
-// MUST come before TransactionBehavior so validation runs without
-// opening a DB transaction.
-import "./application/behaviors/validation-behavior.js";
+// module-level pipelineBehaviors singleton at module load. mediatr-ts
+// orders the chain LAST-pushed = outermost (`OrderedMappings.add`
+// assigns each new entry an incrementing order; `getAll()` sorts
+// descending). So we register innermost-first, outermost-last:
+//
+//   Transaction (innermost)  → opens em.transactional
+//   Validation               → runs Zod / business pre-checks
+//   Logging      (outermost) → debug-level entry/exit, warn on throw
+//
+// workspace.di.test.ts asserts the resulting execution order so a
+// future import auto-sort can't silently break it.
 import "./application/behaviors/transaction-behavior.js";
+import "./application/behaviors/validation-behavior.js";
+import "./application/behaviors/logging-behavior.js";
 
+export { LOGGER, LoggingBehavior } from "./application/behaviors/logging-behavior.js";
 export { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
 export { ValidationBehavior } from "./application/behaviors/validation-behavior.js";
 export { RegisterWorkspaceCommand } from "./application/commands/register-workspace.command.js";
@@ -80,24 +87,22 @@ export type { WorkspaceSummaryView } from "./application/queries/views/workspace
 export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
 export { WorkspaceQueries } from "./application/queries/workspace-queries.js";
 export { CommandValidationError } from "./application/validations/command-validator.js";
-export { CommandValidatorRegistry } from "./application/validations/command-validator-registry.js";
+export type {
+  WorkspaceModuleHandle,
+  WorkspaceModuleOptions,
+} from "./application/workspace.di.js";
 export { composeWorkspaceModule } from "./application/workspace.di.js";
 
 export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspace-id.js";
 
-// ── MikroORM entity surface for the composition root ──────────
-
-export { Workspace } from "./domain/aggregates/workspace/workspace.js";
-export { DomainEventDispatcher } from "./infrastructure/domain-event-dispatcher.js";
-export { WorkspaceContext } from "./infrastructure/workspace-context.js";
-
-/**
- * Entities owned by `@emploke/workspace`. Pass into
- * `MikroORM.init({ entities: WorkspaceEntities, ... })` so the
- * composition root stays agnostic of the package's internal entity
- * layout.
- */
-export { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
+// ── Internal infrastructure ─────────────────────────────────
+//
+// The following are package-internal but historically exported. After
+// the P1-5 / encapsulation refactor, callers no longer need them at
+// the public surface — the workspace pkg now owns its MikroORM
+// instance entirely (see `composeWorkspaceModule(container, opts)`).
+// They remain accessible via `@emploke/workspace/testing` for tests
+// that drive the EM directly.
 
 // ── Typed errors callers may want to catch ────────────────────
 
@@ -117,14 +122,6 @@ export {
   WorkspacePathConflictError,
 } from "./domain/exceptions/workspace-errors.js";
 
-// ── Cross-package utilities (back-compat, see jsdoc above) ────
-
-export {
-  CURRENT_SCHEMA_VERSION,
-  MAX_DISPLAY_NAME_LENGTH,
-  SESSIONS_SUBDIR,
-  TASKS_SUBDIR,
-} from "./constants.js";
 // ── Legacy migration framework (kept for session/task/catalog) ─
 //
 // Phase 2 / ADR-3 moves the WORKSPACE pkg's own storage onto
@@ -152,5 +149,4 @@ export {
   SchemaMetaNotBootstrappedError,
   topoSort,
 } from "./migration/index.js";
-export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
 export { type WorkspaceLayout, workspaceLayout } from "./workspace-layout.js";

@@ -13,6 +13,10 @@ const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
  * BEGIN / COMMIT / ROLLBACK only. em.transactional auto-flushes at
  * the end of the callback, which triggers the subscriber's
  * beforeFlush hook (events dispatched, then SQL writes).
+ *
+ * Order: must register AFTER ValidationBehavior so mediatr-ts puts
+ * it inner in the pipeline. See workspace.di.test.ts for the
+ * order-asserting unit test.
  */
 @injectable()
 export class TransactionBehavior implements PipelineBehavior {

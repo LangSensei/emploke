@@ -6,7 +6,6 @@ import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/wor
 import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
-import { Clock } from "../../domain/clock.js";
 import { workspaceLayout } from "../../workspace-layout.js";
 import type { RegisterWorkspaceCommand } from "./register-workspace.command.js";
 
@@ -29,10 +28,7 @@ import type { RegisterWorkspaceCommand } from "./register-workspace.command.js";
 export class RegisterWorkspaceCommandHandler
   implements RequestHandler<RegisterWorkspaceCommand, { id: string }>
 {
-  constructor(
-    @inject(WorkspaceRepository) private readonly repo: WorkspaceRepository,
-    @inject(Clock) private readonly clock: Clock,
-  ) {}
+  constructor(@inject(WorkspaceRepository) private readonly repo: WorkspaceRepository) {}
 
   async handle(cmd: RegisterWorkspaceCommand): Promise<{ id: string }> {
     const id = WorkspaceId.of(cmd.id);
@@ -47,7 +43,7 @@ export class RegisterWorkspaceCommandHandler
     ]);
 
     const ws = await this.repo.add(
-      Workspace.register({ id, name, workspaceDir, now: this.clock.nowIso() }),
+      Workspace.register({ id, name, workspaceDir, now: new Date().toISOString() }),
     );
     return { id: ws.id };
   }

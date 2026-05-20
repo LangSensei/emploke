@@ -3,7 +3,6 @@ import { inject, injectable } from "inversify";
 import type { RequestHandler } from "mediatr-ts";
 import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
-import { Clock } from "../../domain/clock.js";
 import { workspaceLayout } from "../../workspace-layout.js";
 import type { UnregisterWorkspaceCommand } from "./unregister-workspace.command.js";
 
@@ -28,10 +27,7 @@ import type { UnregisterWorkspaceCommand } from "./unregister-workspace.command.
 export class UnregisterWorkspaceCommandHandler
   implements RequestHandler<UnregisterWorkspaceCommand, void>
 {
-  constructor(
-    @inject(WorkspaceRepository) private readonly repo: WorkspaceRepository,
-    @inject(Clock) private readonly clock: Clock,
-  ) {}
+  constructor(@inject(WorkspaceRepository) private readonly repo: WorkspaceRepository) {}
 
   async handle(cmd: UnregisterWorkspaceCommand): Promise<void> {
     const id = WorkspaceId.of(cmd.id);
@@ -53,7 +49,7 @@ export class UnregisterWorkspaceCommandHandler
       ]);
     }
 
-    existing.unregister(this.clock.nowIso(), { purged: cmd.purge });
+    existing.unregister(new Date().toISOString(), { purged: cmd.purge });
     await this.repo.delete(id);
     // `em.remove(existing)` happened inside repo.delete(); the
     // surrounding TransactionBehavior's flush writes the DELETE

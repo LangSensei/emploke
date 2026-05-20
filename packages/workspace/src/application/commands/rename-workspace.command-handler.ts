@@ -3,7 +3,6 @@ import type { RequestHandler } from "mediatr-ts";
 import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
 import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
-import { Clock } from "../../domain/clock.js";
 import { WorkspaceNotRegisteredError } from "../../domain/exceptions/workspace-errors.js";
 import type { RenameWorkspaceCommand } from "./rename-workspace.command.js";
 
@@ -35,10 +34,7 @@ import type { RenameWorkspaceCommand } from "./rename-workspace.command.js";
  */
 @injectable()
 export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorkspaceCommand, void> {
-  constructor(
-    @inject(WorkspaceRepository) private readonly repo: WorkspaceRepository,
-    @inject(Clock) private readonly clock: Clock,
-  ) {}
+  constructor(@inject(WorkspaceRepository) private readonly repo: WorkspaceRepository) {}
 
   async handle(cmd: RenameWorkspaceCommand): Promise<void> {
     const id = WorkspaceId.of(cmd.id);
@@ -47,7 +43,7 @@ export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorks
     const ws = await this.repo.findById(id);
     if (!ws) throw new WorkspaceNotRegisteredError(id.value);
 
-    ws.rename(newName, this.clock.nowIso());
+    ws.rename(newName, new Date().toISOString());
     // No explicit save — `ws` is tracked; em.flush() in
     // TransactionBehavior writes UPDATE. No publish loop — the
     // WorkspaceContext.saveEntities dispatches WorkspaceRenamed if one was

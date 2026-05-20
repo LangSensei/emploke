@@ -33,7 +33,7 @@ describe("inversify bootstrap (Phase 2 of #135 / ADR-3)", () => {
   it("re-running buildServerContainer with a fresh ORM is safe (no global-state collisions)", async () => {
     const sys2 = await setupTestSubsystem({ scratch });
     try {
-      expect(() => buildServerContainer({ globalOrm: sys2.orm })).not.toThrow();
+      await expect(buildServerContainer({ workspace: { orm: sys2.orm } })).resolves.toBeDefined();
     } finally {
       await teardownTestSubsystem(sys2);
     }

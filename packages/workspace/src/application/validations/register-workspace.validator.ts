@@ -2,23 +2,25 @@ import path from "node:path";
 import { inject, injectable } from "inversify";
 import { z } from "zod";
 import { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
+import { WorkspaceName } from "../../domain/aggregates/workspace/value-objects/workspace-name.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import {
   WorkspaceIdConflictError,
-  WorkspaceIdInvalidError,
-  WorkspaceNameInvalidError,
   WorkspacePathConflictError,
 } from "../../domain/exceptions/workspace-errors.js";
-import type { RegisterWorkspaceCommand } from "../commands/register-workspace.command.js";
-import { CommandValidationError, type CommandValidator } from "./command-validator.js";
+import { RegisterWorkspaceCommand } from "../commands/register-workspace.command.js";
+import { CommandValidationError, CommandValidator } from "./command-validator.js";
 
+/**
+ * Shape-only schema. Field-level business rules (UUID format, display
+ * name 1-64 chars w/o control chars) live as the single source of
+ * truth on the value objects (`WorkspaceId.assertValid`,
+ * `WorkspaceName.assertValid`) and are invoked below. The Zod schema
+ * just guards types, presence, and an anti-DoS upper bound.
+ */
 const RegisterWorkspaceSchema = z.object({
-  id: z.string().uuid("workspace id must be a UUID"),
-  name: z
-    .string()
-    .trim()
-    .min(1, "workspace name cannot be empty")
-    .max(255, "workspace name cannot exceed 255 chars"),
+  id: z.string(),
+  name: z.string().max(1000, "workspace name payload too large"),
   workspaceDir: z
     .string()
     .min(1, "workspaceDir cannot be empty")
@@ -27,33 +29,29 @@ const RegisterWorkspaceSchema = z.object({
 
 /**
  * Pre-check shape AND uniqueness for RegisterWorkspaceCommand. Runs
- * outside the transactional scope. Failed shape checks throw the
- * typed Phase-1 domain errors (WorkspaceNameInvalidError /
- * WorkspaceIdInvalidError) so the wire layer's 4xx mapping is
- * preserved. Conflict pre-checks throw the typed conflict errors
- * the wire layer maps to 409.
+ * outside the transactional scope. Field rules delegate to the
+ * value objects so there is exactly one definition of "valid id" /
+ * "valid display name" in the package.
  */
 @injectable()
-export class RegisterWorkspaceCommandValidator
-  implements CommandValidator<RegisterWorkspaceCommand>
-{
-  constructor(@inject(WorkspaceRepository) private readonly repo: WorkspaceRepository) {}
+export class RegisterWorkspaceCommandValidator extends CommandValidator<RegisterWorkspaceCommand> {
+  readonly command = RegisterWorkspaceCommand;
+
+  constructor(@inject(WorkspaceRepository) private readonly repo: WorkspaceRepository) {
+    super();
+  }
 
   async validate(cmd: RegisterWorkspaceCommand): Promise<void> {
     const result = RegisterWorkspaceSchema.safeParse(cmd);
     if (!result.success) {
-      // Map specific Zod issues to typed domain errors that the wire
-      // layer already knows how to map.
-      for (const issue of result.error.issues) {
-        const field = issue.path[0];
-        if (field === "id") throw new WorkspaceIdInvalidError(cmd.id);
-        if (field === "name")
-          throw new WorkspaceNameInvalidError(cmd.name, "must be non-empty and at most 255 chars");
-      }
       throw new CommandValidationError("RegisterWorkspaceCommand", result.error.issues);
     }
 
-    // Business pre-check: id + path uniqueness
+    // Field-level invariants — delegate to value objects.
+    WorkspaceId.assertValid(cmd.id);
+    WorkspaceName.assertValid(cmd.name);
+
+    // Cross-aggregate pre-checks (uniqueness).
     const existingById = await this.repo.findById(WorkspaceId.of(cmd.id));
     if (existingById) {
       throw new WorkspaceIdConflictError(cmd.id);

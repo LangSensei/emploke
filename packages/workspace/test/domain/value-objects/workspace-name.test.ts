@@ -28,4 +28,20 @@ describe("WorkspaceName value object", () => {
     expect(WorkspaceName.of("Project").equals(WorkspaceName.of("Project"))).toBe(true);
     expect(WorkspaceName.of("Project").equals(WorkspaceName.of("Other"))).toBe(false);
   });
+
+  describe("static validators", () => {
+    it("assertValid throws for non-strings", () => {
+      for (const bad of [undefined, null, 123, {}, []]) {
+        expect(() => WorkspaceName.assertValid(bad)).toThrow(WorkspaceNameInvalidError);
+      }
+    });
+
+    it("isValid mirrors assertValid", () => {
+      expect(WorkspaceName.isValid("OK")).toBe(true);
+      expect(WorkspaceName.isValid("")).toBe(false);
+      expect(WorkspaceName.isValid(undefined)).toBe(false);
+      expect(WorkspaceName.isValid("nope\nbad")).toBe(false);
+      expect(WorkspaceName.isValid("a".repeat(65))).toBe(false);
+    });
+  });
 });

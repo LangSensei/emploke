@@ -51,7 +51,7 @@ export abstract class WorkspaceRepository {
    * UnregisterWorkspaceCommandHandler.
    *
    * The aggregate raises WorkspaceUnregistered; a notification handler
-   * (ClearCurrentOnUnregisterHandler) cascades cleanup of
+   * (ClearCurrentOnUnregisterDomainEventHandler) cascades cleanup of
    * global_state.current_workspace_id if it pointed to this id.
    */
   abstract delete(id: WorkspaceId): Promise<void>;

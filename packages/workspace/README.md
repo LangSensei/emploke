@@ -24,12 +24,11 @@ packages/workspace/src/
 ├── domain/                    ← pure, zero infrastructure deps
 │   ├── workspace.ts                   ← Aggregate root (private ctor, factories, events)
 │   ├── workspace-repository.ts        ← abstract class (DI token)
-│   ├── clock.ts                       ← abstract Clock (test-injectable nowIso)
 │   ├── errors.ts                      ← Typed domain exceptions
 │   ├── publish-event.ts               ← internal mediator.publish wrapper
 │   ├── value-objects/
-│   │   ├── workspace-id.ts            ← WorkspaceId.of(uuid).equals(...)
-│   │   ├── workspace-name.ts          ← WorkspaceName validation
+│   │   ├── workspace-id.ts            ← WorkspaceId.of(uuid).equals(...) + isValid/assertValid statics
+│   │   ├── workspace-name.ts          ← WorkspaceName + isValid/assertValid statics
 │   │   └── workspace-dir.ts           ← WorkspaceDir resolve-on-build
 │   └── events/
 │       ├── domain-event.ts            ← base WorkspaceDomainEvent
@@ -52,7 +51,6 @@ packages/workspace/src/
 │
 ├── infrastructure/            ← adapters
 │   ├── workspace-db.ts                ← const WorkspaceDb (Symbol-keyed DI token)
-│   ├── system-clock.ts                ← @injectable concrete Clock impl
 │   ├── sqlite-workspace-repository.ts ← @injectable extends WorkspaceRepository
 │   ├── sqlite-workspace-queries.ts    ← @injectable extends WorkspaceQueries
 │   ├── internal/
@@ -63,8 +61,6 @@ packages/workspace/src/
 │       └── v1-to-v2.ts                ← drop defaults_json, rename workdir → workspace_dir
 │
 ├── workspace-layout.ts        ← pure helper (used by downstream pkgs)
-├── constants.ts
-├── names.ts                   ← UUID + display-name validators
 ├── migration/                 ← shared migration framework (used by every pkg)
 ├── index.ts                   ← public API barrel
 └── testing.ts                 ← test-only re-exports

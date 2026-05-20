@@ -3,9 +3,8 @@ import type { WorkspaceId } from "../../domain/aggregates/workspace/value-object
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
 import { WorkspaceRepository } from "../../domain/aggregates/workspace/workspace-repository.js";
 import { WorkspaceNotRegisteredError } from "../../domain/exceptions/workspace-errors.js";
+import { GLOBAL_STATE_KEYS, GlobalState } from "../../domain/global-state.js";
 import { WorkspaceContext } from "../workspace-context.js";
-
-const CURRENT_WORKSPACE_KEY = "current_workspace_id";
 
 /**
  * MikroORM-backed WorkspaceRepository.
@@ -21,8 +20,12 @@ const CURRENT_WORKSPACE_KEY = "current_workspace_id";
  * Cross-row cleanup on aggregate delete (e.g. clearing
  * global_state.current_workspace_id when the pointed-to workspace
  * goes away) is a domain-event concern, handled by
- * ClearCurrentOnUnregisterHandler. Repository.delete stays pure
+ * ClearCurrentOnUnregisterDomainEventHandler. Repository.delete stays pure
  * single-aggregate.
+ *
+ * The current-workspace pointer (`getCurrent` / `setCurrent`) is read
+ * + written through the {@link GlobalState} entity rather than raw
+ * SQL — same UoW + transaction envelope as the aggregate.
  */
 @injectable()
 export class MikroWorkspaceRepository extends WorkspaceRepository {
@@ -50,12 +53,11 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
   }
 
   override async getCurrent(): Promise<Workspace | null> {
-    const rows = (await this.ctx.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
-      CURRENT_WORKSPACE_KEY,
-    ])) as Array<{ value: string }>;
-    const currentId = rows[0]?.value;
-    if (!currentId) return null;
-    return this.ctx.em.findOne(Workspace, { id: currentId });
+    const pointer = await this.ctx.em.findOne(GlobalState, {
+      key: GLOBAL_STATE_KEYS.CURRENT_WORKSPACE_ID,
+    });
+    if (!pointer) return null;
+    return this.ctx.em.findOne(Workspace, { id: pointer.value });
   }
 
   override async setCurrent(id: WorkspaceId): Promise<void> {
@@ -63,11 +65,14 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
     if (!exists) {
       throw new WorkspaceNotRegisteredError(id.value);
     }
-    // ON CONFLICT upsert against the global_state key/value bag.
-    await this.ctx.sqlEm.execute(
-      `INSERT INTO global_state (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [CURRENT_WORKSPACE_KEY, id.value],
+    // upsert against the GlobalState entity. MikroORM's `em.upsert`
+    // emits the driver-specific INSERT ... ON CONFLICT under the hood
+    // (better-sqlite uses SQLite's `ON CONFLICT(key) DO UPDATE`), so
+    // a second setCurrent call overwrites the previous pointer
+    // without raising a UNIQUE violation.
+    await this.ctx.em.upsert(
+      GlobalState,
+      GlobalState.of(GLOBAL_STATE_KEYS.CURRENT_WORKSPACE_ID, id.value),
     );
   }
 }

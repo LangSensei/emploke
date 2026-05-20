@@ -1,5 +1,4 @@
 import path from "node:path";
-import { SESSIONS_SUBDIR, TASKS_SUBDIR } from "./constants.js";
 
 /**
  * Conventional sub-path layout under a workspace's `workspaceDir`.
@@ -21,7 +20,7 @@ export interface WorkspaceLayout {
 export function workspaceLayout(workspaceDir: string): WorkspaceLayout {
   const root = path.resolve(workspaceDir);
   return {
-    sessions: path.join(root, SESSIONS_SUBDIR),
-    tasks: path.join(root, TASKS_SUBDIR),
+    sessions: path.join(root, "sessions"),
+    tasks: path.join(root, "tasks"),
   };
 }

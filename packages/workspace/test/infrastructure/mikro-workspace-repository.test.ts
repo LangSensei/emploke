@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  WorkspaceIdConflictError,
-  WorkspaceNotRegisteredError,
-  WorkspacePathConflictError,
-} from "../../src/index.js";
+import { WorkspaceNotRegisteredError } from "../../src/index.js";
 import {
   MikroWorkspaceQueries,
   MikroWorkspaceRepository,
@@ -131,7 +127,7 @@ describe("MikroWorkspaceRepository — delete", () => {
 
   // Note: cascading clear of the current-workspace pointer when the
   // pointed-to workspace gets unregistered is now a domain-event
-  // concern (ClearCurrentOnUnregisterHandler subscribes to
+  // concern (ClearCurrentOnUnregisterDomainEventHandler subscribes to
   // WorkspaceUnregistered). The repository.delete itself no longer
   // touches global_state - see the integration tests covering the
   // full UnregisterWorkspaceCommand flow.
