@@ -104,6 +104,8 @@ export {
 } from "./mcp/mcp-format.js";
 export { MCP_MIGRATIONS } from "./mcp/migrations/index.js";
 export { splitMcpName, validateMcpName } from "./mcp/validate.js";
+// ─── Composition root hook (issue #135 Phase 0) ─────
+export { composeCatalogModule } from "./module.js";
 // ─── Origin mutability ──────────────────────────────
 export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
 export {

@@ -33,7 +33,8 @@
   "dependencies": {
     "@emploke/fs": "workspace:*",
     "@emploke/logger": "workspace:*",
-    "@emploke/paths": "workspace:*"
+    "@emploke/paths": "workspace:*",
+    "inversify": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

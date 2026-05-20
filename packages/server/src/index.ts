@@ -18,6 +18,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
+import { buildServerContainer } from "./bootstrap.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
@@ -165,6 +166,17 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const serveStaticFiles = opts.serveStatic ?? false;
 
   assertBindIsSafe(hostname);
+
+  // Phase 0 of issue #135: build the inversify root container at
+  // startup so the wiring is exercised end-to-end. No production code
+  // path resolves through this container yet; existing managers are
+  // still constructed by hand below. Phase 1+ will start migrating
+  // bindings into the composeXxxModule stubs and resolving them from
+  // here. We `void` the result to make the "intentionally unused"
+  // intent explicit to readers and to satisfy biome's noUnusedVars.
+  // TODO(#135 Phase 1): capture the container and thread it through
+  // to managers / route registration as bindings start to land.
+  void buildServerContainer();
 
   // Logger: rotated JSON files under <home>/logs (default) plus stdout
   // for the operator. Level + format honour env so dev can stay pretty

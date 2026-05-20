@@ -34,7 +34,8 @@
     "@emploke/catalog": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
-    "@emploke/workspace": "workspace:*"
+    "@emploke/workspace": "workspace:*",
+    "inversify": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

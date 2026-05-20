@@ -57,6 +57,7 @@ export {
 } from "./ids.js";
 export { TaskManager } from "./manager.js";
 export { TASK_MIGRATIONS } from "./migrations/index.js";
+export { composeTaskModule } from "./module.js";
 export { safeJoinUnderRoot } from "./paths.js";
 export type { TaskRepository } from "./repositories/repository.js";
 export { SqliteTaskRepository } from "./repositories/sqlite-task-repository.js";
