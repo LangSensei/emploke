@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WorkspaceNotRegisteredError } from "../../src/index.js";
+import {
+  WorkspaceIdConflictError,
+  WorkspaceNotRegisteredError,
+  WorkspacePathConflictError,
+} from "../../src/index.js";
 import {
   MikroWorkspaceQueries,
   MikroWorkspaceRepository,
@@ -57,6 +61,41 @@ describe("MikroWorkspaceRepository — persist + findById round-trip", () => {
   it("findById returns null for unknown id", async () => {
     const repo = new MikroWorkspaceRepository(orm.em.fork());
     expect(await repo.findById(WorkspaceId.of(UUID_A))).toBeNull();
+  });
+});
+
+describe("MikroWorkspaceRepository — add", () => {
+  it("happy path: persists the aggregate and findById sees it", async () => {
+    const em = orm.em.fork();
+    const repo = new MikroWorkspaceRepository(em);
+    const wsDir = path.join(scratch, "p");
+    await repo.add(sample(UUID_A, "Project A", wsDir));
+
+    const back = await repo.findById(WorkspaceId.of(UUID_A));
+    expect(back?.id).toBe(UUID_A);
+    expect(back?.name).toBe("Project A");
+    expect(back?.workspaceDir).toBe(path.resolve(wsDir));
+  });
+
+  it("translates a PRIMARY KEY collision into WorkspaceIdConflictError", async () => {
+    const em = orm.em.fork();
+    const repo = new MikroWorkspaceRepository(em);
+    await repo.add(sample(UUID_A, "first", path.join(scratch, "a")));
+    // Same id, distinct path -> PRIMARY KEY collision on `id`.
+    await expect(
+      repo.add(sample(UUID_A, "second", path.join(scratch, "b"))),
+    ).rejects.toBeInstanceOf(WorkspaceIdConflictError);
+  });
+
+  it("translates a UNIQUE(workspace_dir) collision into WorkspacePathConflictError", async () => {
+    const em = orm.em.fork();
+    const repo = new MikroWorkspaceRepository(em);
+    const shared = path.join(scratch, "shared");
+    await repo.add(sample(UUID_A, "first", shared));
+    // Distinct id, same workspaceDir -> UNIQUE collision on `workspace_dir`.
+    await expect(repo.add(sample(UUID_B, "second", shared))).rejects.toBeInstanceOf(
+      WorkspacePathConflictError,
+    );
   });
 });
 

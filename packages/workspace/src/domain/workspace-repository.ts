@@ -9,6 +9,9 @@ import type { Workspace } from "./workspace.js";
  * Per the ADR-3 unit-of-work pivot, the repository's surface shrinks
  * to the operations that aren't covered by `EntityManager` directly:
  *
+ *   - {@link add} — write-side seam for newly-constructed aggregates.
+ *     The implementation owns the eager flush + UNIQUE-constraint
+ *     translation so handlers stay free of `@mikro-orm/core` imports.
  *   - {@link findById} — typed lookup that returns a tracked
  *     aggregate (or `null`). Tracked = subsequent mutations on the
  *     returned instance get picked up by the next `em.flush`.
@@ -27,8 +30,9 @@ import type { Workspace } from "./workspace.js";
  *   - `save()` — gone. `em.flush()` (driven by `TransactionBehavior`)
  *     writes UPDATEs for every tracked entity at the end of every
  *     command pipeline.
- *   - `create()` — gone. Handlers call `em.persist(ws)` directly on
- *     the EntityManager; the flush handles INSERT.
+ *   - `create()` — gone. The Phase-2 replacement is {@link add}, which
+ *     wraps `em.persist` + eager flush + typed-error translation in a
+ *     single domain-shaped seam so handlers never import MikroORM.
  *   - `list()` — gone. Cross-context list reads are served by
  *     `WorkspaceQueries.list()` (CQRS read side).
  *   - `close()` — gone. The repository no longer owns a `DatabaseSync`
@@ -42,6 +46,28 @@ import type { Workspace } from "./workspace.js";
  * an in-memory subclass or use the MikroORM `:memory:` driver).
  */
 export abstract class WorkspaceRepository {
+  /**
+   * Enroll a newly-constructed {@link Workspace} aggregate with the
+   * unit-of-work so the next SQL write inserts the registry row.
+   *
+   * Implementations MUST flush eagerly inside this method and translate
+   * any SQL UNIQUE-constraint violation into the typed domain errors
+   * {@link WorkspaceIdConflictError} / {@link WorkspacePathConflictError}
+   * so the wire layer's existing HTTP 409 mapping is preserved.
+   *
+   * Why the eager flush: the outer `em.flush` driven by
+   * `TransactionBehavior` happens AFTER the handler returns; by that
+   * point the handler has lost its chance to catch the SQL exception
+   * and translate it into a typed domain error. Flushing here surfaces
+   * the violation in a place the handler can still translate — and
+   * makes the outer flush a clean no-op on the (now-empty) change-set.
+   *
+   * Pre-ADR seam: this is the Phase-2 write-side replacement for the
+   * deleted `create(ws)` method (which only knew INSERT and had to
+   * fight the now-removed `BEGIN IMMEDIATE` lifecycle by hand).
+   */
+  abstract add(ws: Workspace): Promise<void>;
+
   /**
    * Look up a single workspace by id. Returns `null` when no workspace
    * with that id is registered (404-on-the-wire); throws for storage

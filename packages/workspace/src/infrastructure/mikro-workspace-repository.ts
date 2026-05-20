@@ -1,7 +1,11 @@
 import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
-import { EntityManager } from "@mikro-orm/core";
+import { EntityManager, UniqueConstraintViolationException } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
-import { WorkspaceNotRegisteredError } from "../domain/errors.js";
+import {
+  WorkspaceIdConflictError,
+  WorkspaceNotRegisteredError,
+  WorkspacePathConflictError,
+} from "../domain/errors.js";
 import type { WorkspaceId } from "../domain/value-objects/workspace-id.js";
 import { Workspace } from "../domain/workspace.js";
 import { WorkspaceRepository } from "../domain/workspace-repository.js";
@@ -54,6 +58,38 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
 
   private get sqlEm(): SqlEntityManager {
     return this.em as unknown as SqlEntityManager;
+  }
+
+  override async add(ws: Workspace): Promise<void> {
+    this.em.persist(ws);
+    try {
+      // Eager flush so the SQL UNIQUE-constraint violation surfaces
+      // here (where we can translate it into the typed domain error)
+      // instead of from `TransactionBehavior`'s outer flush — which
+      // runs after the handler returns and can't reshape the error.
+      // On a successful insert the outer flush becomes a no-op
+      // because the change-set is empty.
+      await this.em.flush();
+    } catch (err) {
+      // Translate the SQL-level UNIQUE violation into the typed
+      // domain error the wire layer maps to HTTP 409. MikroORM v6
+      // surfaces the constraint name in `err.message`; we sniff for
+      // the column name we own (`workspace_dir`) to distinguish
+      // path-conflict from id-conflict. PRIMARY KEY (`id`) violations
+      // don't reliably carry the column name across SQLite drivers,
+      // so the fallback is `WorkspaceIdConflictError`. The existing
+      // id is the only id we have in hand — Phase 2's UNIQUE-driven
+      // check does not return the colliding row, hence the
+      // `<unknown>` sentinel on `WorkspacePathConflictError.existingId`.
+      if (err instanceof UniqueConstraintViolationException) {
+        const msg = err.message.toLowerCase();
+        if (msg.includes("workspace_dir")) {
+          throw new WorkspacePathConflictError(ws.workspaceDir, "<unknown>");
+        }
+        throw new WorkspaceIdConflictError(ws.id);
+      }
+      throw err;
+    }
   }
 
   override async findById(id: WorkspaceId): Promise<Workspace | null> {
