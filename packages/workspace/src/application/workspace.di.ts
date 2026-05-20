@@ -3,7 +3,7 @@ import { Mediator } from "mediatr-ts";
 import { Clock } from "../domain/clock.js";
 import { WorkspaceRepository } from "../domain/workspace-repository.js";
 import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
-import { MikroWorkspaceQueries } from "../infrastructure/mikro-workspace-queries.js";
+import { MikroWorkspaceQueries } from "./queries/mikro-workspace-queries.js";
 import { MikroWorkspaceRepository } from "../infrastructure/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
 import { RegisterWorkspaceCommand } from "./commands/register-workspace/register-workspace.command.js";

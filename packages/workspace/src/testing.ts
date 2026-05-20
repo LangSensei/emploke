@@ -47,7 +47,7 @@ export { WorkspaceName } from "./domain/value-objects/workspace-name.js";
 export { Workspace } from "./domain/workspace.js";
 export { WorkspaceRepository } from "./domain/workspace-repository.js";
 export { DomainEventSubscriber } from "./infrastructure/domain-event-subscriber.js";
-export { MikroWorkspaceQueries } from "./infrastructure/mikro-workspace-queries.js";
+export { MikroWorkspaceQueries } from "./application/queries/mikro-workspace-queries.js";
 export { MikroWorkspaceRepository } from "./infrastructure/mikro-workspace-repository.js";
 export { SystemClock } from "./infrastructure/system-clock.js";
 export { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
