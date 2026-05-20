@@ -10,9 +10,8 @@ import { Workspace } from "../domain/aggregates/workspace/workspace.js";
  * / CLI) call `composeWorkspaceModule` and never see the entity list.
  *
  *   - `Workspace` — the aggregate root for a registered workspace.
- *     `last_opened_at` collapses what used to be a separate
- *     `global_state.current_workspace_id` cross-row pointer onto a
- *     per-aggregate fact: the workspace with the highest
- *     `last_opened_at` is the registry's "current" one (MRU).
+ *     The `last_opened_at` column carries a per-aggregate MRU fact:
+ *     the workspace with the highest `last_opened_at` is the
+ *     registry's "current" one.
  */
 export const WORKSPACE_ENTITIES = [Workspace] as const;
