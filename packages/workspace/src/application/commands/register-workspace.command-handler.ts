@@ -11,34 +11,18 @@ import { workspaceLayout } from "../../workspace-layout.js";
 import type { RegisterWorkspaceCommand } from "./register-workspace.command.js";
 
 /**
- * Handle {@link RegisterWorkspaceCommand}: create the workspace
- * directory + standard subdirs on disk, then hand a fresh
- * {@link Workspace} aggregate to {@link WorkspaceRepository.add}
- * so the next SQL write inserts the registry row.
+ * Handle RegisterWorkspaceCommand: create the workspace directory +
+ * standard subdirs on disk, then hand a fresh Workspace aggregate to
+ * WorkspaceRepository.add.
  *
- * Phase 2 / ADR-3: the handler shed three pieces of plumbing the
- * pre-ADR version owned:
+ * Shape + uniqueness pre-checks happen in RegisterWorkspaceCommandValidator
+ * (outermost pipeline behaviour, runs before TransactionBehavior opens
+ * BEGIN). By the time this handler runs, cmd is shape-valid AND no
+ * id/path collision exists in the DB.
  *
- *   - **`repo.create(ws)`** — gone. The Phase-2 replacement is
- *     `repo.add(ws)`, which wraps `em.persist` + eager flush + typed
- *     conflict translation in a domain-shaped seam. The handler stays
- *     free of `@mikro-orm/core` imports (Pattern B per
- *     `.ceo/design/polish-backlog.md` P1-6) and the
- *     `WorkspaceRepository` contract is now complete: every
- *     handler-visible write path goes through the repository.
- *   - **`pullDomainEvents` + `publishWorkspaceEvent` loop** — gone.
- *     `WorkspaceContext.saveEntities` walks the change-set and
- *     dispatches every accumulated event automatically.
- *   - **Manual id / path conflict pre-checks** — collapsed. The
- *     primary key + UNIQUE constraint on `workspace_dir` enforce
- *     uniqueness inside the same transaction MikroORM uses to
- *     insert; `repo.add` translates the resulting SQL exception into
- *     the typed `WorkspaceIdConflictError` / `WorkspacePathConflictError`
- *     the wire layer already maps to HTTP 409.
- *
- * The disk-side `mkdir` calls stay in the handler because they're
+ * The disk-side mkdir calls stay in the handler because they are
  * cross-context concerns (filesystem != database). They run BEFORE
- * `repo.add` so that if the user supplied an unwritable path the
+ * repo.add so that if the user supplied an unwritable path the
  * registry stays clean.
  */
 @injectable()
@@ -55,11 +39,6 @@ export class RegisterWorkspaceCommandHandler
     const name = WorkspaceName.of(cmd.name);
     const workspaceDir = WorkspaceDir.of(cmd.workspaceDir);
 
-    // Create the workspace directory + standard subdirs. The user's
-    // pre-existing files inside `workspaceDir` are preserved; we only
-    // touch the named subdirs. We do this BEFORE handing the aggregate
-    // to the repository so the layout is in place by the time the
-    // flush commits the registry row.
     await mkdir(workspaceDir.value, { recursive: true });
     const layout = workspaceLayout(workspaceDir.value);
     await Promise.all([
@@ -67,18 +46,9 @@ export class RegisterWorkspaceCommandHandler
       mkdir(layout.tasks, { recursive: true }),
     ]);
 
-    const ws = Workspace.register({
-      id,
-      name,
-      workspaceDir,
-      now: this.clock.nowIso(),
-    });
-    // `repo.add` owns the eager `em.persist` + `em.flush` + typed
-    // conflict translation. The `TransactionBehavior` outer flush
-    // becomes a no-op on the now-empty change-set, and
-    // `WorkspaceContext.saveEntities` still picks up the
-    // `WorkspaceRegistered` event from the inner flush.
-    await this.repo.add(ws);
+    const ws = await this.repo.add(
+      Workspace.register({ id, name, workspaceDir, now: this.clock.nowIso() }),
+    );
     return { id: ws.id };
   }
 }

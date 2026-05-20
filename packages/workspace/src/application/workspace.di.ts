@@ -1,5 +1,6 @@
 import type { Container } from "inversify";
-import { Mediator } from "mediatr-ts";
+import { Mediator, notificationHandler } from "mediatr-ts";
+import { WorkspaceUnregistered } from "../domain/aggregates/workspace/events/workspace-unregistered.js";
 import { WorkspaceRepository } from "../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../domain/clock.js";
 import { DomainEventDispatcher } from "../infrastructure/domain-event-dispatcher.js";
@@ -14,54 +15,39 @@ import { SetCurrentWorkspaceCommand } from "./commands/set-current-workspace.com
 import { SetCurrentWorkspaceCommandHandler } from "./commands/set-current-workspace.command-handler.js";
 import { UnregisterWorkspaceCommand } from "./commands/unregister-workspace.command.js";
 import { UnregisterWorkspaceCommandHandler } from "./commands/unregister-workspace.command-handler.js";
+import { ClearCurrentOnUnregisterHandler } from "./domain-event-handlers/clear-current-on-unregister.handler.js";
 import { MikroWorkspaceQueries } from "./queries/mikro-workspace-queries.js";
 import { WorkspaceQueries } from "./queries/workspace-queries.js";
+import { CommandValidatorRegistry } from "./validations/command-validator-registry.js";
+import { RegisterWorkspaceCommandValidator } from "./validations/register-workspace.validator.js";
+import { RenameWorkspaceCommandValidator } from "./validations/rename-workspace.validator.js";
+import { SetCurrentWorkspaceCommandValidator } from "./validations/set-current-workspace.validator.js";
+import { UnregisterWorkspaceCommandValidator } from "./validations/unregister-workspace.validator.js";
+
+// Register notification handlers with mediatr-ts module-level mappings
+// at module load via decorator side-effect.
+notificationHandler(WorkspaceUnregistered)(ClearCurrentOnUnregisterHandler);
 
 /**
- * Register the `@emploke/workspace` package's bindings into the
- * inversify container, then wire its command handlers into the
- * mediator.
+ * Register the @emploke/workspace package's bindings into the
+ * inversify container, then wire its command + notification handlers
+ * into the mediator.
  *
- * ## Prerequisites (bound by the composition root BEFORE this is called)
- *
- *   - `Mediator` — the mediatr-ts dispatcher (`@inject(Mediator)`).
- *   - `EntityManager` — the global-scope MikroORM EM. The composition
- *     root opens `MikroORM.init({ entities: [Workspace], dbName:
- *     globalDbFile, … })` and binds `orm.em` as a constant. The
- *     repository / queries / register handler all inject this token.
- *     Post-Phase-2 / ADR-3: this REPLACES the previous `WorkspaceDb`
- *     `DatabaseSync` symbol.
+ * ## Prerequisites
+ *   - Mediator and EntityManager must be bound before this is called.
  *
  * ## What this function binds
+ *   - WorkspaceContext, WorkspaceRepository, WorkspaceQueries,
+ *     DomainEventDispatcher, Clock (singletons)
+ *   - CommandValidatorRegistry (singleton; populated with one validator
+ *     per command class)
+ *   - ClearCurrentOnUnregisterHandler (notification handler that
+ *     reacts to WorkspaceUnregistered; runs inside the surrounding
+ *     em.transactional via DomainEventDispatcher's beforeFlush hook)
  *
- *   - `Clock` → `SystemClock` (singleton; no per-call state, so a
- *     shared instance is fine).
- *   - `WorkspaceRepository` → `MikroWorkspaceRepository` (singleton;
- *     wraps the singleton `EntityManager` so the same UoW is reused
- *     across handlers).
- *   - `WorkspaceQueries` → `MikroWorkspaceQueries` (singleton).
- *   - `WorkspaceContext` → self (singleton); owns the saveEntities pipeline. The composition
- *     root is expected to PULL this binding out of the container and
- *     pass it into `MikroORM.init({ subscribers: [...] })` so events
- *     fire on every flush; binding it here keeps the dependency arrow
- *     pointing the right way (`@inject(Mediator)` requires the
- *     mediator to already be bound).
- *   - Every command handler `toSelf()` so the mediator's
- *     `InversifyResolver.resolve(HandlerClass)` succeeds.
- *
- * Then it manually registers each command-handler pair on the
- * mediator (per ADR #135 decision 6 — avoids the `@requestHandler`
- * decorator's "must import every handler at startup" footgun).
- *
- * ## Phase 2 caveat: still no notification handlers
- *
- * The 3 lifecycle events (`WorkspaceRegistered`, `WorkspaceRenamed`,
- * `WorkspaceUnregistered`) are raised by the aggregate and dispatched
- * by `DomainEventDispatcher` (MikroORM beforeFlush hook) before each
- * SQL write, but no subscribers are registered. The dispatcher
- * swallows the "no handler found" mediatr-ts error so the publish
- * path stays green; Phase 3+ adds cross-context subscribers without
- * re-wiring.
+ * Pipeline behaviours (ValidationBehavior + TransactionBehavior) are
+ * registered at module load via decorator side-effects from index.ts
+ * which imports them in the right order so Validation runs outer.
  */
 export function composeWorkspaceModule(container: Container): void {
   // Domain / application bindings
@@ -71,31 +57,29 @@ export function composeWorkspaceModule(container: Container): void {
   container.bind(WorkspaceRepository).to(MikroWorkspaceRepository).inSingletonScope();
   container.bind(WorkspaceQueries).to(MikroWorkspaceQueries).inSingletonScope();
 
-  // Handler bindings are intentionally NOT made `toSelf()` here.
-  // The mediator's resolver (`InversifyResolver`) auto-binds each
-  // handler class on `add()`, which mediatr-ts calls both at Mediator
-  // construction (populating the resolver from `typeMappings`) and at
-  // each `registerHandler(...)` call below. Explicit `toSelf` would
-  // collide with that auto-bind and produce "Ambiguous bindings"
-  // errors on the next test that builds a fresh container (since
-  // `typeMappings` is a module-level singleton — see comment block
-  // on `registerCommandIdempotent`).
+  // Per-command validators
+  container.bind(RegisterWorkspaceCommandValidator).toSelf().inSingletonScope();
+  container.bind(RenameWorkspaceCommandValidator).toSelf().inSingletonScope();
+  container.bind(SetCurrentWorkspaceCommandValidator).toSelf().inSingletonScope();
+  container.bind(UnregisterWorkspaceCommandValidator).toSelf().inSingletonScope();
 
-  // Manual mediator registration (ADR #135 decision 6). The mediator
-  // is already bound by the composition root, so `container.get` here
-  // never throws.
-  //
-  // mediatr-ts stores handler mappings on a **module-level singleton**
-  // (`typeMappings.requestHandlers`), not per-Mediator-instance. In
-  // production this is fine because compose-modules run exactly once
-  // per process. In tests that build multiple containers, however,
-  // the second `composeWorkspaceModule` call would throw "defined
-  // twice". The lib has no `unregister` API, so we make the
-  // registration **idempotent**: if a request type is already mapped,
-  // skip — the mapped handler is byte-identical to the one we'd
-  // register anyway (the same class). Production runs hit the
-  // happy-path on the first invocation; test runs hit the skip-path
-  // on every subsequent file.
+  // Validator registry - populated with each command's validator
+  const registry = new CommandValidatorRegistry();
+  registry.register(RegisterWorkspaceCommand, container.get(RegisterWorkspaceCommandValidator));
+  registry.register(RenameWorkspaceCommand, container.get(RenameWorkspaceCommandValidator));
+  registry.register(SetCurrentWorkspaceCommand, container.get(SetCurrentWorkspaceCommandValidator));
+  registry.register(UnregisterWorkspaceCommand, container.get(UnregisterWorkspaceCommandValidator));
+  container.bind(CommandValidatorRegistry).toConstantValue(registry);
+
+  // Notification handler binding (the mediator resolves it on publish)
+  if (!container.isBound(ClearCurrentOnUnregisterHandler)) {
+    container.bind(ClearCurrentOnUnregisterHandler).toSelf().inSingletonScope();
+  }
+
+  // Manual command-handler registration. mediatr-ts stores mappings
+  // on a module-level singleton, so re-running composeWorkspaceModule
+  // (test contexts) would throw "defined twice" without the
+  // idempotent guard below.
   const mediator = container.get(Mediator);
   registerCommandIdempotent(mediator, RegisterWorkspaceCommand, RegisterWorkspaceCommandHandler);
   registerCommandIdempotent(mediator, RenameWorkspaceCommand, RenameWorkspaceCommandHandler);
@@ -113,7 +97,7 @@ export function composeWorkspaceModule(container: Container): void {
 
 function registerCommandIdempotent(
   mediator: Mediator,
-  // biome-ignore lint/suspicious/noExplicitAny: mediatr-ts requires the wide AnyHandlerClass shape — see the AnyHandlerClass alias above.
+  // biome-ignore lint/suspicious/noExplicitAny: mediatr-ts requires wide shape
   command: any,
   // biome-ignore lint/suspicious/noExplicitAny: see above
   handler: any,
@@ -121,9 +105,6 @@ function registerCommandIdempotent(
   try {
     mediator.registerHandler(command, handler);
   } catch (err) {
-    // Already-registered errors are safe to swallow — see the comment
-    // block in `composeWorkspaceModule` for why. Anything else (e.g. a
-    // typo in the handler class) re-throws.
     const message = err instanceof Error ? err.message : String(err);
     if (!message.includes("defined twice")) throw err;
   }

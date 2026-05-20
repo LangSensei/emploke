@@ -38,11 +38,12 @@
     "@emploke/fs": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",
-    "@mikro-orm/core": "^6.6.0",
     "@mikro-orm/better-sqlite": "^6.6.0",
+    "@mikro-orm/core": "^6.6.0",
     "inversify": "^7.0.0",
     "mediatr-ts": "^2.2.0",
-    "reflect-metadata": "^0.2.0"
+    "reflect-metadata": "^0.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@mikro-orm/migrations": "^6.6.0",
