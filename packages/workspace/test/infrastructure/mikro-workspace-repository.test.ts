@@ -12,6 +12,7 @@ import {
 import {
   MikroWorkspaceQueries,
   MikroWorkspaceRepository,
+  makeTestWorkspaceContext,
   openTestWorkspaceOrm,
   Workspace,
   WorkspaceDir,
@@ -47,7 +48,7 @@ function sample(id: string, name: string, workspaceDir: string): Workspace {
 describe("MikroWorkspaceRepository — persist + findById round-trip", () => {
   it("em.persist + em.flush + findById returns the same workspace", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     const wsDir = path.join(scratch, "p");
     em.persist(sample(UUID_A, "Project A", wsDir));
     await em.flush();
@@ -59,7 +60,7 @@ describe("MikroWorkspaceRepository — persist + findById round-trip", () => {
   });
 
   it("findById returns null for unknown id", async () => {
-    const repo = new MikroWorkspaceRepository(orm.em.fork());
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
     expect(await repo.findById(WorkspaceId.of(UUID_A))).toBeNull();
   });
 });
@@ -67,7 +68,7 @@ describe("MikroWorkspaceRepository — persist + findById round-trip", () => {
 describe("MikroWorkspaceRepository — add", () => {
   it("happy path: persists the aggregate and findById sees it", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     const wsDir = path.join(scratch, "p");
     await repo.add(sample(UUID_A, "Project A", wsDir));
 
@@ -79,7 +80,7 @@ describe("MikroWorkspaceRepository — add", () => {
 
   it("translates a PRIMARY KEY collision into WorkspaceIdConflictError", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     await repo.add(sample(UUID_A, "first", path.join(scratch, "a")));
     // Same id, distinct path -> PRIMARY KEY collision on `id`.
     await expect(
@@ -89,7 +90,7 @@ describe("MikroWorkspaceRepository — add", () => {
 
   it("translates a UNIQUE(workspace_dir) collision into WorkspacePathConflictError", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     const shared = path.join(scratch, "shared");
     await repo.add(sample(UUID_A, "first", shared));
     // Distinct id, same workspaceDir -> UNIQUE collision on `workspace_dir`.
@@ -102,7 +103,7 @@ describe("MikroWorkspaceRepository — add", () => {
 describe("MikroWorkspaceRepository — delete", () => {
   it("removes the registry row via em.remove + flush", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "x", path.join(scratch, "p")));
     await em.flush();
 
@@ -112,13 +113,13 @@ describe("MikroWorkspaceRepository — delete", () => {
   });
 
   it("delete on a missing id is a no-op", async () => {
-    const repo = new MikroWorkspaceRepository(orm.em.fork());
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
     await expect(repo.delete(WorkspaceId.of(UUID_A))).resolves.toBeUndefined();
   });
 
   it("clears the current-workspace pointer if it was the deleted id", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "x", path.join(scratch, "a")));
     await em.flush();
     await repo.setCurrent(WorkspaceId.of(UUID_A));
@@ -132,13 +133,13 @@ describe("MikroWorkspaceRepository — delete", () => {
 
 describe("MikroWorkspaceRepository — current pointer", () => {
   it("getCurrent returns null on a fresh repo", async () => {
-    const repo = new MikroWorkspaceRepository(orm.em.fork());
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
     expect(await repo.getCurrent()).toBeNull();
   });
 
   it("setCurrent persists the value across reads", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "x", path.join(scratch, "a")));
     await em.flush();
 
@@ -147,7 +148,7 @@ describe("MikroWorkspaceRepository — current pointer", () => {
   });
 
   it("setCurrent throws WorkspaceNotRegisteredError for an unknown id", async () => {
-    const repo = new MikroWorkspaceRepository(orm.em.fork());
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(orm.em.fork()));
     await expect(repo.setCurrent(WorkspaceId.of(UUID_A))).rejects.toBeInstanceOf(
       WorkspaceNotRegisteredError,
     );
@@ -160,7 +161,7 @@ describe("MikroWorkspaceQueries", () => {
     em.persist(sample(UUID_A, "Project", path.join(scratch, "p")));
     await em.flush();
 
-    const q = new MikroWorkspaceQueries(em);
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
     const view = await q.getById(UUID_A);
     expect(view).not.toBeNull();
     expect(view).toMatchObject({
@@ -172,12 +173,12 @@ describe("MikroWorkspaceQueries", () => {
   });
 
   it("getById returns null for an unknown id", async () => {
-    const q = new MikroWorkspaceQueries(orm.em.fork());
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(orm.em.fork()));
     expect(await q.getById(UUID_A)).toBeNull();
   });
 
   it("getById returns null for a malformed id (no throw)", async () => {
-    const q = new MikroWorkspaceQueries(orm.em.fork());
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(orm.em.fork()));
     expect(await q.getById("not-a-uuid")).toBeNull();
   });
 
@@ -187,7 +188,7 @@ describe("MikroWorkspaceQueries", () => {
     em.persist(sample(UUID_B, "B", path.join(scratch, "b")));
     await em.flush();
 
-    const q = new MikroWorkspaceQueries(em);
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
     const list = await q.list();
     expect(list.map((v) => v.id).sort()).toEqual([UUID_A, UUID_B].sort());
     expect(list[0]).toHaveProperty("name");
@@ -195,34 +196,34 @@ describe("MikroWorkspaceQueries", () => {
   });
 
   it("list returns [] on an empty registry", async () => {
-    const q = new MikroWorkspaceQueries(orm.em.fork());
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(orm.em.fork()));
     expect(await q.list()).toEqual([]);
   });
 
   it("getCurrentId returns null when nothing is selected", async () => {
-    const q = new MikroWorkspaceQueries(orm.em.fork());
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(orm.em.fork()));
     expect(await q.getCurrentId()).toBeNull();
   });
 
   it("getCurrentId returns the selected id after setCurrent", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "X", path.join(scratch, "a")));
     await em.flush();
     await repo.setCurrent(WorkspaceId.of(UUID_A));
 
-    const q = new MikroWorkspaceQueries(em);
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
     expect(await q.getCurrentId()).toBe(UUID_A);
   });
 
   it("getCurrent returns the full view of the selected workspace", async () => {
     const em = orm.em.fork();
-    const repo = new MikroWorkspaceRepository(em);
+    const repo = new MikroWorkspaceRepository(makeTestWorkspaceContext(em));
     em.persist(sample(UUID_A, "X", path.join(scratch, "a")));
     await em.flush();
     await repo.setCurrent(WorkspaceId.of(UUID_A));
 
-    const q = new MikroWorkspaceQueries(em);
+    const q = new MikroWorkspaceQueries(makeTestWorkspaceContext(em));
     const view = await q.getCurrent();
     expect(view?.id).toBe(UUID_A);
     expect(view?.name).toBe("X");

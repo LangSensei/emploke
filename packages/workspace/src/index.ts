@@ -31,7 +31,7 @@
  *   - **`WorkspaceEntities`** — the entity list to pass to
  *     `MikroORM.init({ entities: ... })`. Lets the composition root
  *     stay agnostic of the package's internal entity layout.
- *   - **`DomainEventSubscriber`** — re-exported so the composition
+ *   - **`WorkspaceContext`** — re-exported so the composition
  *     root can pull it out of the container and pass into
  *     `MikroORM.init({ subscribers: ... })`.
  *
@@ -85,7 +85,6 @@ export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspa
 // ── MikroORM entity surface for the composition root ──────────
 
 export { Workspace } from "./domain/aggregates/workspace/workspace.js";
-export { DomainEventSubscriber } from "./infrastructure/domain-event-subscriber.js";
 export { WorkspaceContext } from "./infrastructure/workspace-context.js";
 
 /**

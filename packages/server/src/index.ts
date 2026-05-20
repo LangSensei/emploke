@@ -227,7 +227,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // container binds `EntityManager` (the orm-root EM),
   // `WorkspaceRepository` → `MikroWorkspaceRepository`,
   // `WorkspaceQueries` → `MikroWorkspaceQueries`, `Clock`,
-  // `DomainEventSubscriber`, the four workspace command handlers, and
+  // the four workspace command handlers, and
   // the `TransactionBehavior` pipeline behaviour (which wraps every
   // mediator dispatch in `em.transactional`).
   const rootContainer = buildServerContainer({ globalOrm });

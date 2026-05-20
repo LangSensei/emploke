@@ -2,7 +2,6 @@ import type { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { WorkspaceRepository } from "../domain/aggregates/workspace/workspace-repository.js";
 import { Clock } from "../domain/clock.js";
-import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
 import { MikroWorkspaceRepository } from "../infrastructure/repositories/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
 import { WorkspaceContext } from "../infrastructure/workspace-context.js";
@@ -40,7 +39,7 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
  *     wraps the singleton `EntityManager` so the same UoW is reused
  *     across handlers).
  *   - `WorkspaceQueries` → `MikroWorkspaceQueries` (singleton).
- *   - `DomainEventSubscriber` → self (singleton). The composition
+ *   - `WorkspaceContext` → self (singleton); owns the saveEntities pipeline. The composition
  *     root is expected to PULL this binding out of the container and
  *     pass it into `MikroORM.init({ subscribers: [...] })` so events
  *     fire on every flush; binding it here keeps the dependency arrow
@@ -57,8 +56,8 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
  *
  * The 3 lifecycle events (`WorkspaceRegistered`, `WorkspaceRenamed`,
  * `WorkspaceUnregistered`) are raised by the aggregate and dispatched
- * via `DomainEventSubscriber.afterFlush` (NEW in Phase 2), but no
- * subscriber is registered. The subscriber swallows the
+ * inside `WorkspaceContext.saveEntities()` before each flush, but no
+ * subscribers are registered. `saveEntities` swallows the
  * "no handler found" mediatr-ts error so the publish path stays
  * green; Phase 3+ adds cross-context subscribers without re-wiring.
  */
@@ -68,7 +67,6 @@ export function composeWorkspaceModule(container: Container): void {
   container.bind(WorkspaceContext).toSelf().inSingletonScope();
   container.bind(WorkspaceRepository).to(MikroWorkspaceRepository).inSingletonScope();
   container.bind(WorkspaceQueries).to(MikroWorkspaceQueries).inSingletonScope();
-  container.bind(DomainEventSubscriber).toSelf().inSingletonScope();
 
   // Handler bindings are intentionally NOT made `toSelf()` here.
   // The mediator's resolver (`InversifyResolver`) auto-binds each

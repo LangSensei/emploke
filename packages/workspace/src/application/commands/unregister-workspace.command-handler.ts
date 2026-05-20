@@ -10,7 +10,7 @@ import type { UnregisterWorkspaceCommand } from "./unregister-workspace.command.
 /**
  * Handle {@link UnregisterWorkspaceCommand}: optionally purge
  * emploke-owned subdirs on disk, then drop the registry row.
- * `WorkspaceUnregistered` is published by `DomainEventSubscriber`
+ * `WorkspaceUnregistered` is published by `WorkspaceContext.saveEntities`
  * after the surrounding `em.flush` writes the DELETE.
  *
  * For `purge=true` we read the workspace BEFORE deleting, purge subdirs,
@@ -57,7 +57,7 @@ export class UnregisterWorkspaceCommandHandler
     await this.repo.delete(id);
     // `em.remove(existing)` happened inside repo.delete(); the
     // surrounding TransactionBehavior's flush writes the DELETE
-    // AND fires DomainEventSubscriber.afterFlush which publishes
+    // AND fires WorkspaceContext.saveEntities which publishes
     // the WorkspaceUnregistered event we just raised on the
     // aggregate.
   }

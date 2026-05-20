@@ -13,7 +13,7 @@ import { openTestWorkspaceOrm } from "../src/testing.js";
  * Local mirror of `@emploke/server`'s `TransactionBehavior`. Lives in
  * the workspace pkg's test-support so the workspace pkg can be tested
  * end-to-end (mediator dispatch → em.transactional → em.flush →
- * DomainEventSubscriber → published events) without taking a runtime
+ * WorkspaceContext.saveEntities → published events) without taking a runtime
  * dependency on `@emploke/server`. The production server uses the
  * server-pkg copy, which is byte-identical in behaviour.
  */
@@ -35,7 +35,7 @@ export class TestTransactionBehavior implements PipelineBehavior {
  * Shared per-test scaffolding for the Phase 2 / MikroORM-backed
  * workspace pkg. Creates a fresh `:memory:` MikroORM, an inversify
  * container with `Mediator` + `EntityManager` + the workspace
- * compose-call wired, and registers the `DomainEventSubscriber` with
+ * compose-call wired, with `WorkspaceContext.saveEntities` handling event dispatch in
  * the ORM so domain events flow through the mediator.
  *
  * Tests that want to spy on `mediator.publish` for cross-context
@@ -62,8 +62,6 @@ class TestInversifyResolver {
 }
 
 export async function setupWorkspaceTestSubsystem(): Promise<WorkspaceTestSubsystem> {
-  const { DomainEventSubscriber } = await import("../src/index.js");
-
   const orm = await openTestWorkspaceOrm();
   const container = new Container();
   const resolver = new TestInversifyResolver(container);
@@ -73,11 +71,6 @@ export async function setupWorkspaceTestSubsystem(): Promise<WorkspaceTestSubsys
   container.bind(EntityManager).toConstantValue(orm.em as EntityManager);
 
   composeWorkspaceModule(container);
-
-  // Wire the DomainEventSubscriber into the ORM so flush triggers
-  // event dispatch — mirrors what the server's bootstrap does in
-  // production.
-  orm.em.getEventManager().registerSubscriber(container.get(DomainEventSubscriber));
 
   const queries = container.get(WorkspaceQueries);
   return { orm, container, mediator, queries };

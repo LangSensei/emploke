@@ -11,7 +11,7 @@ import type { WorkspaceDomainEvent } from "./domain-event.js";
  *
  * ## Dispatch path (post-Phase-2 / ADR-3)
  *
- * The {@link import("../infrastructure/domain-event-subscriber.js").DomainEventSubscriber}
+ * The {@link import("../../infrastructure/workspace-context.js").WorkspaceContext} (saveEntities)
  * walks `args.uow.getChangeSets()` in the MikroORM `afterFlush` hook,
  * detects entities that extend `AggregateRoot`, calls
  * `pullDomainEvents()` on each, and dispatches every event via
@@ -20,7 +20,7 @@ import type { WorkspaceDomainEvent } from "./domain-event.js";
  *
  * ## Why an abstract class rather than an interface
  *
- * MikroORM's subscriber detects aggregates via `instanceof
+ * `WorkspaceContext.saveEntities` detects aggregates via `instanceof
  * AggregateRoot` (the only run-time discriminator that survives a
  * transpile cycle). A TypeScript-only `interface` would erase, leaving
  * the subscriber blind. A concrete base class also gives every
@@ -49,9 +49,9 @@ export abstract class AggregateRoot {
   }
 
   /**
-   * Drain the buffered domain events. The MikroORM
-   * `DomainEventSubscriber` calls this from `afterFlush` once the
-   * change-set has been written to SQLite. Second drains return `[]`.
+   * Drain the buffered domain events. The `WorkspaceContext.saveEntities()` calls this BEFORE `em.flush()`
+   * so events fire while the surrounding transaction is still open.
+   * Second drains return `[]`.
    *
    * Returned as a `readonly` view so subscribers cannot mutate the
    * aggregate's private buffer state via the returned array.

@@ -42,7 +42,7 @@ import { WorkspaceName } from "./value-objects/workspace-name.js";
  * ## Domain events
  *
  * Buffered on the base class (see `AggregateRoot`). The Phase-2
- * `DomainEventSubscriber` walks the unit-of-work change-set after
+ * `WorkspaceContext.saveEntities` walks the unit-of-work identity map before
  * each flush and dispatches each event via `mediator.publish` — no
  * more per-handler publish loop.
  *

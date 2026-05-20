@@ -19,7 +19,7 @@ import type { RenameWorkspaceCommand } from "./rename-workspace.command.js";
  *     entity; the rename mutates it in-place; `em.flush` writes the
  *     UPDATE automatically.
  *   - **Manual `pullDomainEvents` + publish loop** — gone.
- *     `DomainEventSubscriber.afterFlush` dispatches the event after
+ *     `WorkspaceContext.saveEntities` dispatches the event after
  *     the SQL write lands.
  *   - **Explicit no-op short-circuit** — collapsed. The aggregate's
  *     `rename` is still no-op when the new name equals the current
@@ -50,7 +50,7 @@ export class RenameWorkspaceCommandHandler implements RequestHandler<RenameWorks
     ws.rename(newName, this.clock.nowIso());
     // No explicit save — `ws` is tracked; em.flush() in
     // TransactionBehavior writes UPDATE. No publish loop — the
-    // DomainEventSubscriber dispatches WorkspaceRenamed if one was
+    // WorkspaceContext.saveEntities dispatches WorkspaceRenamed if one was
     // raised.
   }
 }

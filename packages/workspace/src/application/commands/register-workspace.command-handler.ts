@@ -27,7 +27,7 @@ import type { RegisterWorkspaceCommand } from "./register-workspace.command.js";
  *     `WorkspaceRepository` contract is now complete: every
  *     handler-visible write path goes through the repository.
  *   - **`pullDomainEvents` + `publishWorkspaceEvent` loop** — gone.
- *     `DomainEventSubscriber.afterFlush` walks the change-set and
+ *     `WorkspaceContext.saveEntities` walks the change-set and
  *     dispatches every accumulated event automatically.
  *   - **Manual id / path conflict pre-checks** — collapsed. The
  *     primary key + UNIQUE constraint on `workspace_dir` enforce
@@ -76,7 +76,7 @@ export class RegisterWorkspaceCommandHandler
     // `repo.add` owns the eager `em.persist` + `em.flush` + typed
     // conflict translation. The `TransactionBehavior` outer flush
     // becomes a no-op on the now-empty change-set, and
-    // `DomainEventSubscriber.afterFlush` still picks up the
+    // `WorkspaceContext.saveEntities` still picks up the
     // `WorkspaceRegistered` event from the inner flush.
     await this.repo.add(ws);
     return { id: ws.id };

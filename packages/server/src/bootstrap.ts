@@ -3,11 +3,7 @@ import { composeCatalogModule } from "@emploke/catalog";
 import { composeRuntimeModule } from "@emploke/runtime";
 import { composeSessionModule } from "@emploke/session";
 import { composeTaskModule } from "@emploke/task";
-import {
-  composeWorkspaceModule,
-  DomainEventSubscriber,
-  TransactionBehavior,
-} from "@emploke/workspace";
+import { composeWorkspaceModule, TransactionBehavior } from "@emploke/workspace";
 import { EntityManager, type MikroORM } from "@mikro-orm/core";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
@@ -20,9 +16,7 @@ import { InversifyResolver } from "./inversify-resolver.js";
  * Phase 2 of issue #135 / ADR-3 (#139) pivoted the workspace pkg to
  * MikroORM. The composition root opens a `MikroORM` instance against
  * `global.db` and passes it here so we can bind the canonical
- * {@link EntityManager} token, register the
- * {@link DomainEventSubscriber} with the ORM (so it fires on every
- * flush), and install the cross-cutting
+ * {@link EntityManager} token, install the cross-cutting
  * {@link TransactionBehavior} on the mediator's pipeline.
  *
  * Other `compose…Module` calls (`session` / `task` / `catalog` /
@@ -84,13 +78,6 @@ export function buildServerContainer(opts: { globalOrm: MikroORM }): Container {
   composeTaskModule(container);
   composeCatalogModule(container);
   composeRuntimeModule(container);
-
-  // Register the workspace pkg's `DomainEventSubscriber` with the ORM
-  // AFTER `composeWorkspaceModule` has bound it (so `container.get`
-  // here succeeds). The subscriber instance is now durable: every
-  // future `em.flush` (on the root EM and any fork) fires its
-  // `afterFlush` hook.
-  opts.globalOrm.em.getEventManager().registerSubscriber(container.get(DomainEventSubscriber));
 
   return container;
 }

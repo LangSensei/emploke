@@ -2,7 +2,7 @@ import "reflect-metadata";
 import path from "node:path";
 import type { Logger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { DomainEventSubscriber, WorkspaceQueries } from "@emploke/workspace";
+import { WorkspaceQueries } from "@emploke/workspace";
 import {
   openTestWorkspaceOrm,
   Workspace,
@@ -26,7 +26,7 @@ import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
  * Call `setupTestSubsystem({ scratch })`; the helper builds:
  *   - the root inversify container (binds Mediator, EntityManager,
  *     workspace pkg's repositories / handlers / queries, registers
- *     the DomainEventSubscriber with the ORM, installs
+ *     the workspace pkg bindings, installs
  *     TransactionBehavior)
  *   - a `CopilotRuntime`-only `RuntimeRegistry`
  *   - the per-workspace container cache
@@ -52,11 +52,9 @@ export async function setupTestSubsystem(opts: {
   const mediator = container.get(Mediator);
   const queries = container.get(WorkspaceQueries);
   // `buildServerContainer` already registers the
-  // `DomainEventSubscriber`, but our tests build many subsystems in
+  // `WorkspaceContext.saveEntities` already wires event dispatch, but our tests build many subsystems in
   // the same process — re-register so the per-test ORM instance has
   // its own subscriber wired. Idempotent.
-  void DomainEventSubscriber;
-
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),

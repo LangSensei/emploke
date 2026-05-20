@@ -1,52 +1,61 @@
 import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
 import { EntityManager } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
+import { Mediator } from "mediatr-ts";
+import { AggregateRoot } from "../domain/seedwork/aggregate-root.js";
 
 /**
- * Workspace bounded-context persistence handle (eShop's `OrderingContext` analog).
- *
- * Centralises the {@link EntityManager} cast to {@link SqlEntityManager}
- * that every workspace persistence adapter (repository, queries,
- * transaction behaviour) used to redo by hand, and gives the
- * composition root a single typed seam to bind per workspace bounded
- * context. ADR-4 (#141) extends this pattern: each Phase 3+ context
- * (session / task / catalog) declares its own `<Name>Context` class
- * around its own EM instance.
- *
- * The cast from {@link EntityManager} to {@link SqlEntityManager} is
- * sound because the workspace pkg only ever runs against a SQL driver
- * (`@mikro-orm/better-sqlite`). The base {@link EntityManager} is what
- * `orm.em` exposes at the composition root and is the DI binding
- * target; the SQL-specific surface gives access to raw SQL
- * (`execute(...)`) and QueryBuilder (`createQueryBuilder(...)`) that
- * the read side and the auxiliary `global_state` key/value table need.
- *
- * ## Why a class, not just a re-export of `EntityManager`
- *
- * Phase 2 callers care about *workspace-context-owned* persistence,
- * not "MikroORM EM in general". Naming this class for the bounded
- * context (a) makes the DDD intent explicit at every injection site
- * and (b) gives us a stable extension point for future
- * UnitOfWork-style helpers (e.g. a `SaveEntitiesAsync` analog) without
- * having to subclass MikroORM internals.
+ * Workspace bounded-context persistence handle - eShop OrderingContext analog.
+ * Owns the EntityManager + SqlEntityManager cast + UoW save-pipeline
+ * (dispatch domain events then flush, mirroring SaveEntitiesAsync).
+ * Phase 3+ contexts copy this shape with their own EM.
  */
 @injectable()
 export class WorkspaceContext {
-  constructor(@inject(EntityManager) private readonly _em: EntityManager) {}
+  constructor(
+    @inject(EntityManager) private readonly _em: EntityManager,
+    @inject(Mediator) private readonly _mediator: Mediator,
+  ) {}
 
-  /** The MikroORM-core EntityManager. UoW: persist / remove / flush / transactional. */
   get em(): EntityManager {
     return this._em;
   }
 
-  /**
-   * SQL-driver surface (`@mikro-orm/better-sqlite`). Use this for
-   * `execute(...)` raw SQL and `createQueryBuilder(...)` read-side
-   * projections. Mutations should still go through {@link em} so the
-   * change-set + domain events run through the
-   * `DomainEventSubscriber.afterFlush` hook.
-   */
   get sqlEm(): SqlEntityManager {
     return this._em as unknown as SqlEntityManager;
+  }
+
+  /**
+   * UoW commit pipeline. eShop OrderingContext.SaveEntitiesAsync analog.
+   * 1) Dispatch buffered domain events through the mediator.
+   * 2) Flush change-set to SQLite.
+   * Events fire BEFORE writes - aggregate mutations from handlers are
+   * included in the upcoming flush. Runs inside the surrounding
+   * em.transactional opened by TransactionBehavior, so any throw rolls
+   * back both the writes AND the dispatched events.
+   */
+  async saveEntities(): Promise<void> {
+    await this.dispatchDomainEvents();
+    await this._em.flush();
+  }
+
+  private async dispatchDomainEvents(): Promise<void> {
+    const eventsToPublish = [];
+    for (const entity of this._em.getUnitOfWork().getIdentityMap()) {
+      if (entity instanceof AggregateRoot) {
+        eventsToPublish.push(...entity.pullDomainEvents());
+      }
+    }
+
+    for (const evt of eventsToPublish) {
+      try {
+        await this._mediator.publish(evt);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("No handler found for notification ")) {
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 }
