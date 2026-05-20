@@ -8,7 +8,7 @@
  * value types: status enum, result / failure shapes, and `TaskManager`
  * configuration. They're deliberately plain interfaces — they're
  * either exhaustive enums (`TaskStatus`), value-only payloads
- * (`TaskResult`, `TaskFailure`), or constructor-options bags
+ * (`TaskSuccess`, `TaskFailure`, `TaskCancellation`), or constructor-options bags
  * (`TaskManagerConfig`) where DDD adds no leverage.
  *
  * Why metadata instead of named fields on Task:

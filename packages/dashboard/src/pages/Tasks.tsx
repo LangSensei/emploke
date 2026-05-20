@@ -1477,14 +1477,7 @@ function TaskDetailPanel({
     );
   }
 
-  // Read the runtime exit fields from the typed `failure` payload
-  // (v4 / issue #119 stopped mirroring exitCode / exitSignal into
-  // metadata; consumers branch on `failure.kind` and read the typed
-  // fields directly).
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
-  const failure = task?.failure;
-  const exitCode = failure?.kind === "exited" ? failure.exit_code : undefined;
-  const exitSignal = failure?.kind === "signal" ? failure.signal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
   // The user-supplied `brief` is the canonical task title (post-#111
   // refactor). Lead the panel with it; fall back to the task id only
@@ -1558,9 +1551,7 @@ function TaskDetailPanel({
           </div>
         )}
         {task?.details && <TaskDetails text={task.details} />}
-        {task?.failure && (
-          <FailureBlock failure={task.failure} exitCode={exitCode} exitSignal={exitSignal} />
-        )}
+        {task?.failure && <FailureBlock failure={task.failure} />}
         {task?.cancellation && (
           <CancellationBlock cancellation={task.cancellation} endedAt={task.endedAt} />
         )}
@@ -2408,19 +2399,12 @@ function ResultSection({ text }: { text: string }) {
  *   - orphan   → "server crashed before this task finished"
  *   - internal → "internal error  <message>"
  *
- * `exitCode` / `exitSignal` come from `Task.metadata` (the runtime
- * stores them there for every terminal kind) and are appended as
- * inline detail when present, matching the pre-ADR-001 rendering.
+ * The exit code / signal for `exited` / `signal` failures are rendered
+ * inline by the switch (`exited with code N` / `terminated by SIG…`);
+ * no separate props are needed (post-v4 / issue #119 — the typed
+ * `failure` payload carries everything).
  */
-function FailureBlock({
-  failure,
-  exitCode,
-  exitSignal,
-}: {
-  failure: TaskFailure;
-  exitCode: number | null | undefined;
-  exitSignal: string | undefined;
-}) {
+function FailureBlock({ failure }: { failure: TaskFailure }) {
   const isOperational = failure.kind === "shutdown";
   const alertClass = isOperational ? "alert alert--info" : "alert alert--error";
   const label = isOperational ? "Stopped" : "Failure";
@@ -2445,10 +2429,6 @@ function FailureBlock({
   return (
     <div className={alertClass} style={{ margin: 0 }}>
       <strong>{label}:</strong> {body}
-      {failure.kind !== "exited" && exitCode !== undefined && exitCode !== null && (
-        <> (exit {exitCode})</>
-      )}
-      {failure.kind !== "signal" && exitSignal && <> [signal {exitSignal}]</>}
     </div>
   );
 }
