@@ -8,20 +8,17 @@ import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import {
-  runPkgMigrations,
-  SqliteWorkspaceRepository,
-  WORKSPACE_MIGRATIONS,
-  WorkspaceManager,
-} from "@emploke/workspace";
+import { runPkgMigrations, WORKSPACE_MIGRATIONS, WorkspaceQueries } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
+import { Mediator } from "mediatr-ts";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
 import { buildServerContainer } from "./bootstrap.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
+import { PerWorkspaceContainerCache } from "./per-workspace-container.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
@@ -30,7 +27,6 @@ import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { buildSubprocessEnvBase } from "./subprocess-env.js";
-import { WorkspaceContextCache } from "./workspace-context.js";
 
 // Re-export the route manifest so downstream packages (@emploke/cli,
 // future @emploke/mcp) can build typed clients against the same source
@@ -167,17 +163,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 
   assertBindIsSafe(hostname);
 
-  // Phase 0 of issue #135: build the inversify root container at
-  // startup so the wiring is exercised end-to-end. No production code
-  // path resolves through this container yet; existing managers are
-  // still constructed by hand below. Phase 1+ will start migrating
-  // bindings into the composeXxxModule stubs and resolving them from
-  // here. We `void` the result to make the "intentionally unused"
-  // intent explicit to readers and to satisfy biome's noUnusedVars.
-  // TODO(#135 Phase 1): capture the container and thread it through
-  // to managers / route registration as bindings start to land.
-  void buildServerContainer();
-
   // Logger: rotated JSON files under <home>/logs (default) plus stdout
   // for the operator. Level + format honour env so dev can stay pretty
   // and prod can pin JSON-only without code changes.
@@ -192,33 +177,21 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     new CopilotRuntime({
       // Resolve `${sharedDir}` placeholders in MCP specs against
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
-      // directory without baking host paths into JSON. The literal subdir
-      // name lives in `@emploke/paths` (`SHARED_SUBDIR`).
+      // directory without baking host paths into JSON.
       sharedDir: paths.sharedDir,
     }),
   );
 
-  // Open the workspace registry. The `global.db` SQLite file lives at
-  // `<EMPLOKE_HOME>/global.db` and holds every workspace's full record
-  // (id, workdir, name, createdAt, defaults) plus cross-workspace
-  // state (currently just the current-workspace pointer). The
-  // connection's lifetime is bound to the server process — the
-  // repository never closes it.
+  // Open the workspace registry (`global.db`) and run its migrations.
+  // The repository's `ensureSchema()` is a version-check assertion
+  // post-issue-#123; bootstrap of the `workspaces` / `global_state`
+  // tables flows through the migration framework.
   //
   // We do NOT auto-create a default workspace — the dashboard's
-  // landing page prompts the user to create one explicitly (workdir +
-  // display name). On first launch the registry is simply empty and
-  // the landing page reflects that.
+  // landing page prompts the user to create one explicitly.
   await mkdir(paths.home, { recursive: true });
 
   const globalDb = new DatabaseSync(paths.globalDbFile);
-  // Run the MigrationCoordinator BEFORE constructing the workspace
-  // repository. Post-issue-#123 the repository's `ensureSchema()` is
-  // a version-check assertion — bootstrap of the `workspaces` /
-  // `global_state` tables now flows through the migration framework.
-  // The coordinator is idempotent: on a startup where every pkg is
-  // already at HEAD it does one indexed read against `schema_meta`
-  // and returns.
   const globalMigrationResult = await runPkgMigrations(globalDb, [
     { pkg: "workspace", migrations: WORKSPACE_MIGRATIONS },
   ]);
@@ -230,11 +203,22 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     },
     "global.db migrations complete",
   );
-  const workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb, logger }));
 
-  const cache = new WorkspaceContextCache({
+  // Phase 1 of issue #135: build the inversify root container AFTER
+  // the workspace pkg's migrations have run so the
+  // `SqliteWorkspaceRepository` constructor's `schema_meta`
+  // assertion passes on the first resolve. The container binds
+  // `WorkspaceRepository`, `WorkspaceQueries`, `Clock`, and the four
+  // workspace command handlers; the other `compose…Module` stubs
+  // remain empty for Phases 3-7.
+  const rootContainer = buildServerContainer({ workspaceDb: globalDb });
+  const mediator = rootContainer.get(Mediator);
+  const workspaceQueries = rootContainer.get(WorkspaceQueries);
+
+  const cache = new PerWorkspaceContainerCache({
+    rootContainer,
     runtimeRegistry,
-    workspaces,
+    queries: workspaceQueries,
     logger,
     // Static env bag merged into every task subprocess. Per-run
     // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
@@ -251,10 +235,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     // state directory — same path the runtime exposes to MCP specs as
     // `${sharedDir}`. The service-internal `<EMPLOKE_HOME>` itself
     // (which holds `global.db`, `runtime.json`, `logs/`) is
-    // deliberately NOT exposed to subprocesses — agents have no
-    // business touching it. There is no `apiKey` to thread through
-    // because emploke ships no auth layer (server is loopback-only;
-    // remote access is delegated to SSH / reverse proxy / mesh VPN).
+    // deliberately NOT exposed to subprocesses.
     subprocessEnvBase: buildSubprocessEnvBase({
       hostname,
       port,
@@ -300,14 +281,15 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => workspaces.getCurrent(),
+      currentWorkspace: () => workspaceQueries.getCurrentId(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
   app.route(
     "/api/workspaces",
     workspacesRoutes({
-      manager: workspaces,
+      mediator,
+      queries: workspaceQueries,
       cache,
       defaultWorkspaceParent: paths.sharedWorkspacesDir,
     }),
@@ -368,7 +350,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       listen: `http://${displayHost}:${port}`,
       home: paths.home,
       globalDb: paths.globalDbFile,
-      workspaces: (await workspaces.list()).length,
+      workspaces: (await workspaceQueries.list()).length,
       runtimes: runtimeRegistry.kinds(),
       static: serveStaticFiles ? staticDir : null,
       logsDir: paths.logsDir,
@@ -443,18 +425,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }
     try {
       // Close the workspace registry's underlying `DatabaseSync`
-      // (`global.db`). Routed through the manager so any future
-      // repository impl that owns additional resources (cache,
-      // listeners) can release them too.
-      //
-      // Order: per-workspace contexts FIRST, then the global
-      // registry. Repositories never reach back into the registry
-      // during close, but the symmetric ordering matches startup
-      // (registry opens, then contexts lazy-load) and leaves the
-      // registry handle live for the longest possible window in
-      // case a future hook needs to record a "shutdown reason" row
-      // on its way out.
-      workspaces.close();
+      // (`global.db`). The repository now binds the handle via DI, so
+      // the cleanest place to close is at the bootstrap-owned handle
+      // itself (this is also where it was opened). Per-workspace
+      // contexts have already been closed by `cache.closeAll()`
+      // above, so closing the global db at this point is safe.
+      globalDb.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
     }
@@ -481,12 +457,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
  *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
  */
 function workspaceContextMiddleware(
-  cache: WorkspaceContextCache,
+  cache: PerWorkspaceContainerCache,
 ): MiddlewareHandler<{ Variables: WorkspaceVars }> {
   return async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    let ctx: Awaited<ReturnType<WorkspaceContextCache["get"]>>;
+    let ctx: Awaited<ReturnType<PerWorkspaceContainerCache["get"]>>;
     try {
       ctx = await cache.get(id);
     } catch (err) {

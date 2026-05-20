@@ -45,7 +45,6 @@ import type {
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
 import type { SessionView } from "@emploke/session";
 import type { Task, TaskOrigin, TaskStatus } from "@emploke/task";
-import type { WorkspaceUpdatePatch } from "@emploke/workspace";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
 import type { ServerConfig } from "./config.js";
 import type { HealthResponse } from "./health.js";
@@ -114,13 +113,12 @@ export type RouteRes<R> = R extends RouteSpec<RouteRequest, infer Res> ? Res : n
 
 /**
  * Wire shape of a workspace as returned by the workspaces routes. Subset
- * of `@emploke/workspace.Workspace` — only the fields the dashboard /
- * CLI need; internal book-keeping fields stay private to the manager.
+ * of the `@emploke/workspace` aggregate — only the fields the dashboard /
+ * CLI need; internal book-keeping fields stay private to the package.
  *
  * `workspaceDir` (was `workdir` pre-v2) is the workspace's root
  * directory; `workdir` is reserved for derived per-entity working
- * directories (see `WorkspaceUpdatePatch` / `Session.workdir` /
- * `Task.workdir`).
+ * directories (`Session.workdir` / `Task.workdir`).
  */
 export interface WorkspaceSummary {
   readonly id: string;
@@ -142,8 +140,11 @@ export interface WorkspaceCurrentPutBody {
   readonly id: string;
 }
 
-/** PATCH /api/workspaces/:id body. Mirrors `@emploke/workspace.WorkspaceUpdatePatch`. */
-export type WorkspacePatchBody = WorkspaceUpdatePatch;
+/** PATCH /api/workspaces/:id body. The only mutable field today is `name`. */
+export interface WorkspacePatchBody {
+  /** New display name. Skipped when `undefined`. */
+  readonly name?: string;
+}
 
 /** GET /api/workspaces/current response. `null` when no workspace is selected. */
 export interface WorkspaceCurrentRes {

@@ -1,4 +1,4 @@
-import type { Migration } from "../migration/types.js";
+import type { Migration } from "../../migration/types.js";
 
 /**
  * Migrate `workspaces` from v1 → v2 for issue #121:

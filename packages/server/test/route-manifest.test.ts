@@ -25,9 +25,11 @@ import { silentLogger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import type { WorkspaceManager } from "@emploke/workspace";
+import type { WorkspaceQueries } from "@emploke/workspace";
 import { Hono } from "hono";
+import type { Mediator } from "mediatr-ts";
 import { describe, expect, it } from "vitest";
+import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import { configRoutes } from "../src/routes/config.js";
 import { healthRoutes } from "../src/routes/health.js";
@@ -36,7 +38,6 @@ import { runtimesRoutes } from "../src/routes/runtimes.js";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 import { tasksRoutes } from "../src/routes/tasks.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
-import type { WorkspaceContextCache } from "../src/workspace-context.js";
 
 /**
  * Mirror of `runServer`'s mount tree, parameterised over deps so the
@@ -73,8 +74,9 @@ function buildAppForTest(): Hono {
   app.route(
     "/api/workspaces",
     workspacesRoutes({
-      manager: stubWorkspaceManager(),
-      cache: stubWorkspaceContextCache(),
+      mediator: stubMediator(),
+      queries: stubWorkspaceQueries(),
+      cache: stubPerWorkspaceContainerCache(),
       defaultWorkspaceParent: "/tmp/workspaces",
     }),
   );
@@ -166,18 +168,26 @@ function normalizePath(path: string): string {
 // All stubs throw on use so accidentally invoking a handler in a future
 // test surfaces fast.
 
-function stubWorkspaceManager(): WorkspaceManager {
-  return new Proxy({} as WorkspaceManager, {
+function stubMediator(): Mediator {
+  return new Proxy({} as Mediator, {
     get() {
-      throw new Error("stubWorkspaceManager: not callable");
+      throw new Error("stubMediator: not callable");
     },
   });
 }
 
-function stubWorkspaceContextCache(): WorkspaceContextCache {
-  return new Proxy({} as WorkspaceContextCache, {
+function stubWorkspaceQueries(): WorkspaceQueries {
+  return new Proxy({} as WorkspaceQueries, {
     get() {
-      throw new Error("stubWorkspaceContextCache: not callable");
+      throw new Error("stubWorkspaceQueries: not callable");
+    },
+  });
+}
+
+function stubPerWorkspaceContainerCache(): PerWorkspaceContainerCache {
+  return new Proxy({} as PerWorkspaceContainerCache, {
+    get() {
+      throw new Error("stubPerWorkspaceContainerCache: not callable");
     },
   });
 }

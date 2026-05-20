@@ -11,16 +11,20 @@ import type { Class, Resolver } from "mediatr-ts";
  * forward `resolve` to `container.get` and `add` to
  * `container.bind(type).toSelf()`.
  *
- * Phase 0: no handlers are registered yet, so neither method is
- * exercised at runtime; the bridge exists so that `new Mediator({
- * resolver })` has a non-default resolver wired from day one and
- * `mediator.registerHandler(...)` calls in subsequent phases land on
- * the inversify container without further plumbing.
+ * **`add` is idempotent**. `composeXxxModule` typically pre-binds
+ * handler classes `toSelf()` and *also* calls
+ * `mediator.registerHandler(Cmd, HandlerClass)` — and mediatr-ts's
+ * `registerHandler` internally calls `resolver.add(HandlerClass)` to
+ * make sure the handler is resolvable. Without the idempotent guard,
+ * the same class ends up bound twice and inversify v7 throws
+ * "Ambiguous bindings found" the next time the mediator tries to
+ * dispatch. `isBound` + skip is the cheapest fix; it also makes
+ * compose-modules safe to call repeatedly (which tests do).
  *
  * NOTE: byte-identical to `@emploke/cli`'s `InversifyResolver`. The
- * duplication is intentional through Phase 0 to keep the two
+ * duplication is intentional through Phase 1 to keep the two
  * composition roots in lock-step. If both bridges still match after
- * Phase 1+ binding work lands, extract to a tiny shared internal
+ * Phase 2+ binding work lands, extract to a tiny shared internal
  * module.
  */
 export class InversifyResolver implements Resolver {
@@ -31,6 +35,7 @@ export class InversifyResolver implements Resolver {
   }
 
   add<T>(type: Class<T>): void {
+    if (this.container.isBound(type)) return;
     this.container.bind(type).toSelf();
   }
 }

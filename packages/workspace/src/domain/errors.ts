@@ -10,7 +10,7 @@ export class WorkspaceError extends Error {
   }
 }
 
-/** `WorkspaceManager.open()` could not find the workspace's row in `global.db`. */
+/** Lookup against the registry could not find the workspace. */
 export class WorkspaceNotFoundError extends WorkspaceError {
   constructor(public readonly dir: string) {
     super(`workspace not found at ${dir}`);
@@ -45,7 +45,7 @@ function schemaDirectionHint(fromVersion: number, toVersion: number): string {
   return "";
 }
 
-/** `WorkspaceManager.init()` refused to overwrite an existing workspace. */
+/** `RegisterWorkspaceCommand` refused to overwrite an existing workspace. */
 export class WorkspaceAlreadyExistsError extends WorkspaceError {
   constructor(public readonly dir: string) {
     super(`workspace already initialised at ${dir}`);
@@ -53,7 +53,7 @@ export class WorkspaceAlreadyExistsError extends WorkspaceError {
   }
 }
 
-/** Display name (metadata.name) is empty, too long, or contains control chars. */
+/** Display name is empty, too long, or contains control chars. */
 export class WorkspaceNameInvalidError extends WorkspaceError {
   constructor(
     public readonly displayName: string,
@@ -86,10 +86,7 @@ export class RegistryCorruptedError extends RegistryError {
 
 /**
  * The workspace pkg's row in `global.db.schema_meta` declares a
- * version this build doesn't understand. Distinct from
- * `RegistryCorruptedError` so callers can catch the specific
- * "operator must upgrade or migrate" case separately from generic
- * corruption.
+ * version this build doesn't understand.
  */
 export class RegistrySchemaMismatchError extends RegistryError {
   constructor(
@@ -104,12 +101,7 @@ export class RegistrySchemaMismatchError extends RegistryError {
   }
 }
 
-/**
- * Tried to add a workspace whose id collides with an existing entry. With
- * UUID generation this is statistically impossible  but the registry
- * still guards against it because callers may supply explicit ids in
- * tests or future migrations.
- */
+/** A workspace with the same id is already registered. */
 export class WorkspaceIdConflictError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`a workspace with id "${workspaceId}" is already registered`);
@@ -117,13 +109,7 @@ export class WorkspaceIdConflictError extends RegistryError {
   }
 }
 
-/**
- * An explicit `id` was supplied to `WorkspaceRegistry.add` (or appeared in
- * the on-disk registry) that does not match the UUID format we accept.
- * Distinct from `WorkspaceIdConflictError` because the failure mode and
- * remediation are different: conflict means "pick another id"; invalid
- * means "the id you supplied is malformed".
- */
+/** An explicit id that doesn't match the UUID format we accept. */
 export class WorkspaceIdInvalidError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`workspace id "${workspaceId}" is not a valid UUID`);
@@ -131,7 +117,7 @@ export class WorkspaceIdInvalidError extends RegistryError {
   }
 }
 
-/** Tried to add a workspace whose path conflicts with an existing entry. */
+/** A workspace whose path conflicts with an existing entry. */
 export class WorkspacePathConflictError extends RegistryError {
   constructor(
     public readonly path: string,
@@ -151,14 +137,9 @@ export class WorkspaceNotRegisteredError extends RegistryError {
 }
 
 /**
- * `SqliteWorkspaceRepository` was constructed against a DB that has
- * no `schema_meta` row for the `workspace` pkg. After the migration
- * framework refactor (issue #123), repositories no longer bootstrap
- * tables themselves — the {@link MigrationCoordinator} runs first and
- * the repository asserts the post-condition. This error means the
- * caller forgot to run the coordinator, which is always a wiring bug
- * (the server's `index.ts` calls `runPkgMigrations` before
- * constructing the repository).
+ * The repository was constructed against a DB that has no `schema_meta`
+ * row for the `workspace` pkg. Always a wiring bug — the
+ * MigrationCoordinator must run before the repository is constructed.
  */
 export class RegistryNotBootstrappedError extends RegistryError {
   constructor(public readonly file: string) {

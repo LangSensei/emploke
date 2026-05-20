@@ -1,31 +1,22 @@
-import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
-import { type Logger, silentLogger } from "@emploke/logger";
+import { silentLogger } from "@emploke/logger";
+import { inject, injectable } from "inversify";
 import {
   RegistryNotBootstrappedError,
   RegistrySchemaMismatchError,
   WorkspaceIdConflictError,
-  WorkspaceIdInvalidError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-} from "../errors.js";
-import { isValidWorkspaceId } from "../names.js";
-import { Workspace } from "../workspace-entity.js";
-import type { WorkspaceRepository } from "./repository.js";
+} from "../domain/errors.js";
+import type { WorkspaceId } from "../domain/value-objects/workspace-id.js";
+import type { Workspace } from "../domain/workspace.js";
+import { WorkspaceRepository } from "../domain/workspace-repository.js";
+import { rowToWorkspace, type WorkspaceRow } from "./internal/row-mappers.js";
+import { WorkspaceDb } from "./workspace-db.js";
 
 const WORKSPACE_PKG_SCHEMA_VERSION = 2;
 
 /** Key in `global_state` holding the current-workspace pointer. */
 const CURRENT_WORKSPACE_KEY = "current_workspace_id";
-
-interface WorkspaceRow {
-  id: string;
-  workspace_dir: string;
-  name: string;
-  created_at: string;
-  registered_at: string;
-  last_opened_at: string | null;
-}
 
 /**
  * SQLite-backed `WorkspaceRepository`. Every workspace's complete
@@ -43,15 +34,21 @@ interface WorkspaceRow {
  * cost `list()` an N+1 file-read fan-out for every dashboard refresh.
  * Consolidating into a single SQLite row makes `list()` one indexed
  * scan and removes the JSON sidecar entirely.
+ *
+ * **Phase 1 NOTE on logging**: the previous incarnation took an
+ * optional `logger` parameter and warned on corrupted-row skips. The
+ * DI-style constructor drops that parameter for now (cf. #137 §6's
+ * example takes only the DB). The corruption is still surfaced —
+ * `findById(corruptId)` throws `WorkspaceCorruptedError` and `list()`
+ * silently skips. When a `Logger` binding lands as part of the
+ * cross-pkg observability slice, re-inject + restore the warn.
  */
-export class SqliteWorkspaceRepository implements WorkspaceRepository {
-  private readonly db: DatabaseSync;
-  private readonly logger: Logger;
+@injectable()
+export class SqliteWorkspaceRepository extends WorkspaceRepository {
   private closed = false;
 
-  constructor(opts: { db: DatabaseSync; logger?: Logger }) {
-    this.db = opts.db;
-    this.logger = opts.logger ?? silentLogger;
+  constructor(@inject(WorkspaceDb) private readonly db: WorkspaceDb) {
+    super();
     // SQLite pragmas. We deliberately use the default rollback journal
     // (DELETE) rather than WAL: the workspace registry has a very low
     // write rate, so WAL's concurrent-reader benefit is unused while
@@ -70,10 +67,10 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec("PRAGMA busy_timeout = 5000");
-    this.ensureSchema();
+    this.assertSchema();
   }
 
-  async list(): Promise<Workspace[]> {
+  override async list(): Promise<Workspace[]> {
     const rows = this.db
       .prepare(
         `SELECT id, workspace_dir, name, created_at, registered_at, last_opened_at
@@ -85,7 +82,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
       try {
         out.push(rowToWorkspace(row));
       } catch (err) {
-        this.logger.warn(
+        silentLogger.warn(
           {
             workspaceId: row.id,
             workspaceDir: row.workspace_dir,
@@ -98,38 +95,34 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     return out;
   }
 
-  async read(id: string): Promise<Workspace | null> {
-    if (!isValidWorkspaceId(id)) return null;
+  override async findById(id: WorkspaceId): Promise<Workspace | null> {
     const row = this.db
       .prepare(
         `SELECT id, workspace_dir, name, created_at, registered_at, last_opened_at
          FROM workspaces WHERE id = ?`,
       )
-      .get(id) as WorkspaceRow | undefined;
+      .get(id.value) as WorkspaceRow | undefined;
     if (row === undefined) return null;
     return rowToWorkspace(row);
   }
 
-  async save(workspace: Workspace): Promise<void> {
-    if (!isValidWorkspaceId(workspace.id)) {
-      throw new WorkspaceIdInvalidError(workspace.id);
-    }
-    const resolvedWorkspaceDir = path.resolve(workspace.workspaceDir);
+  override async save(workspace: Workspace): Promise<void> {
+    const resolvedDir = workspace.workspaceDir.value;
 
     this.runInTransaction(() => {
-      // Path-conflict check stays for defence in depth — although
-      // `WorkspaceManager.update` only flows through `withMetadata`
-      // (which preserves workspaceDir), the public repository
-      // contract accepts an arbitrary `Workspace`, so a buggy caller
-      // could still pass a colliding workspaceDir.
+      // Path-conflict check stays for defence in depth — although the
+      // current `RenameWorkspaceCommandHandler` only mutates name (so
+      // workspaceDir is preserved), the public repository contract
+      // accepts an arbitrary `Workspace`, so a buggy caller could
+      // still pass a colliding workspaceDir.
       const conflict = this.db
         .prepare("SELECT id FROM workspaces WHERE workspace_dir = ? AND id != ?")
-        .get(resolvedWorkspaceDir, workspace.id) as { id: string } | undefined;
+        .get(resolvedDir, workspace.id.value) as { id: string } | undefined;
       if (conflict) {
-        throw new WorkspacePathConflictError(resolvedWorkspaceDir, conflict.id);
+        throw new WorkspacePathConflictError(resolvedDir, conflict.id);
       }
       // Strict UPDATE — no upsert. If a concurrent `delete(id)` landed
-      // between the manager's read() and save() calls, the row no
+      // between the handler's `findById()` and `save()` calls, the row no
       // longer exists; surface that as a typed 404 instead of silently
       // resurrecting the workspace with the in-flight rename's name and
       // reset registry-side timing fields. `created_at` /
@@ -141,29 +134,28 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
               SET workspace_dir = ?, name = ?
               WHERE id = ?`,
         )
-        .run(resolvedWorkspaceDir, workspace.name, workspace.id);
+        .run(resolvedDir, workspace.name.value, workspace.id.value);
       if (result.changes === 0) {
-        throw new WorkspaceNotRegisteredError(workspace.id);
+        throw new WorkspaceNotRegisteredError(workspace.id.value);
       }
     });
   }
 
-  async create(workspace: Workspace): Promise<void> {
-    if (!isValidWorkspaceId(workspace.id)) {
-      throw new WorkspaceIdInvalidError(workspace.id);
-    }
-    const resolvedWorkspaceDir = path.resolve(workspace.workspaceDir);
+  override async create(workspace: Workspace): Promise<void> {
+    const resolvedDir = workspace.workspaceDir.value;
 
     this.runInTransaction(() => {
-      const idConflict = this.db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(workspace.id);
+      const idConflict = this.db
+        .prepare("SELECT 1 FROM workspaces WHERE id = ?")
+        .get(workspace.id.value);
       if (idConflict !== undefined) {
-        throw new WorkspaceIdConflictError(workspace.id);
+        throw new WorkspaceIdConflictError(workspace.id.value);
       }
       const pathConflict = this.db
         .prepare("SELECT id FROM workspaces WHERE workspace_dir = ?")
-        .get(resolvedWorkspaceDir) as { id: string } | undefined;
+        .get(resolvedDir) as { id: string } | undefined;
       if (pathConflict) {
-        throw new WorkspacePathConflictError(resolvedWorkspaceDir, pathConflict.id);
+        throw new WorkspacePathConflictError(resolvedDir, pathConflict.id);
       }
       this.db
         .prepare(
@@ -171,50 +163,46 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
            VALUES (?, ?, ?, ?, ?, NULL)`,
         )
         .run(
-          workspace.id,
-          resolvedWorkspaceDir,
-          workspace.name,
+          workspace.id.value,
+          resolvedDir,
+          workspace.name.value,
           workspace.createdAt,
           new Date().toISOString(),
         );
     });
   }
 
-  async delete(id: string): Promise<void> {
-    if (!isValidWorkspaceId(id)) return;
+  override async delete(id: WorkspaceId): Promise<void> {
     this.runInTransaction(() => {
-      this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
+      this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(id.value);
       this.db
         .prepare("DELETE FROM global_state WHERE key = ? AND value = ?")
-        .run(CURRENT_WORKSPACE_KEY, id);
+        .run(CURRENT_WORKSPACE_KEY, id.value);
     });
   }
 
-  async getCurrent(): Promise<string | null> {
+  override async getCurrent(): Promise<string | null> {
     const row = this.db
       .prepare("SELECT value FROM global_state WHERE key = ?")
       .get(CURRENT_WORKSPACE_KEY) as { value: string } | undefined;
     return row?.value ?? null;
   }
 
-  async setCurrent(id: string): Promise<void> {
-    if (!isValidWorkspaceId(id)) {
-      throw new WorkspaceNotRegisteredError(id);
-    }
+  override async setCurrent(id: WorkspaceId): Promise<void> {
     this.runInTransaction(() => {
-      const exists = this.db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(id);
+      const exists = this.db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(id.value);
       if (exists === undefined) {
-        throw new WorkspaceNotRegisteredError(id);
+        throw new WorkspaceNotRegisteredError(id.value);
       }
       this.db
         .prepare("UPDATE workspaces SET last_opened_at = ? WHERE id = ?")
-        .run(new Date().toISOString(), id);
+        .run(new Date().toISOString(), id.value);
       this.db
         .prepare(
           `INSERT INTO global_state (key, value) VALUES (?, ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         )
-        .run(CURRENT_WORKSPACE_KEY, id);
+        .run(CURRENT_WORKSPACE_KEY, id.value);
     });
   }
 
@@ -230,7 +218,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
    * shutdown is a bug everywhere, just an invisible one outside
    * Windows.
    */
-  close(): void {
+  override close(): void {
     if (this.closed) return;
     this.closed = true;
     try {
@@ -259,7 +247,7 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
     }
   }
 
-  private ensureSchema(): void {
+  private assertSchema(): void {
     // Coordinator owns DDL post-issue-#123. The repository's job is
     // to assert the bootstrap post-condition: the DB has a
     // `schema_meta` row for the `workspace` pkg at the version this
@@ -288,13 +276,4 @@ export class SqliteWorkspaceRepository implements WorkspaceRepository {
       );
     }
   }
-}
-
-function rowToWorkspace(row: WorkspaceRow): Workspace {
-  return Workspace.fromStored({
-    id: row.id,
-    workspaceDir: row.workspace_dir,
-    name: row.name,
-    createdAt: row.created_at,
-  });
 }

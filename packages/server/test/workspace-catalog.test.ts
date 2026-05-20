@@ -3,34 +3,26 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
-import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import {
-  runPkgMigrations,
-  SqliteWorkspaceRepository,
-  WORKSPACE_MIGRATIONS,
-  type Workspace,
-  WorkspaceManager,
-} from "@emploke/workspace";
+import { RegisterWorkspaceCommand } from "@emploke/workspace";
 import { Hono } from "hono";
+import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
-import { WorkspaceContextCache } from "../src/workspace-context.js";
+import { bootstrapWorkspaceRegistryDb, setupTestSubsystem } from "./_test-support.js";
 
 let scratch: string;
 let globalDb: DatabaseSync;
-let workspaces: WorkspaceManager;
-let cache: WorkspaceContextCache;
+let mediator: Mediator;
+let cache: PerWorkspaceContainerCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
   globalDb = new DatabaseSync(":memory:");
-  await runPkgMigrations(globalDb, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
-  workspaces = new WorkspaceManager(new SqliteWorkspaceRepository({ db: globalDb }));
-  const runtimeRegistry = new RuntimeRegistry();
-  runtimeRegistry.register(
-    new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
-  );
-  cache = new WorkspaceContextCache({ runtimeRegistry, workspaces });
+  await bootstrapWorkspaceRegistryDb(globalDb);
+  const sys = setupTestSubsystem({ globalDb, scratch });
+  mediator = sys.mediator;
+  cache = sys.cache;
 });
 afterEach(async () => {
   cache.closeAll();
@@ -42,8 +34,11 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function ensureWorkspace(name: string): Promise<Workspace> {
-  return workspaces.init({ name, workspaceDir: path.join(scratch, name) });
+async function ensureWorkspace(name: string): Promise<{ id: string; workspaceDir: string }> {
+  const id = (await import("node:crypto")).randomUUID();
+  const workspaceDir = path.join(scratch, name);
+  const result = await mediator.send(new RegisterWorkspaceCommand(id, workspaceDir, name));
+  return { id: result.id, workspaceDir: path.resolve(workspaceDir) };
 }
 
 function mountApp() {
@@ -101,10 +96,6 @@ describe("workspace-scoped catalog routes", () => {
     if (!ctxA || !ctxB) throw new Error("ctx must exist");
 
     expect(ctxA.catalog).not.toBe(ctxB.catalog);
-    // Catalog content lives in each workspace's `workspace.db`, not
-    // as files on disk — there is no `<workspace>/catalog/` subdir.
-    // Distinct CatalogManager instances are sufficient evidence of
-    // isolation since each is bound to a different per-workspace db.
     expect(ctxA.workspace.workspaceDir).toBe(a.workspaceDir);
     expect(ctxB.workspace.workspaceDir).toBe(b.workspaceDir);
   });

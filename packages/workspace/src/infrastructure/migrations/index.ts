@@ -1,4 +1,4 @@
-import type { Migration } from "../migration/types.js";
+import type { Migration } from "../../migration/types.js";
 import { v0To1 } from "./v0-to-v1.js";
 import { v1To2 } from "./v1-to-v2.js";
 
