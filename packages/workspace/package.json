@@ -34,7 +34,9 @@
     "@emploke/fs": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",
-    "inversify": "^7.0.0"
+    "inversify": "^7.0.0",
+    "mediatr-ts": "^2.2.0",
+    "reflect-metadata": "^0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

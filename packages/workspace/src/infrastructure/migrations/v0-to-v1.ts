@@ -1,4 +1,4 @@
-import type { Migration } from "../migration/types.js";
+import type { Migration } from "../../migration/types.js";
 
 /**
  * Initial schema for the `workspace` pkg's slice of

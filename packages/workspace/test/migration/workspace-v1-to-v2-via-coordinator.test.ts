@@ -1,9 +1,9 @@
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WorkspaceId } from "../../src/domain/value-objects/workspace-id.js";
+import { WORKSPACE_MIGRATIONS } from "../../src/infrastructure/migrations/index.js";
 import { runPkgMigrations } from "../../src/migration/index.js";
-import { WORKSPACE_MIGRATIONS } from "../../src/migrations/index.js";
-import { SqliteWorkspaceRepository } from "../../src/repositories/sqlite-workspace-repository.js";
 
 let db: DatabaseSync;
 
@@ -190,11 +190,14 @@ describe("workspace v1→v2 migration applied via MigrationCoordinator", () => {
 
     await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
 
-    const repo = new SqliteWorkspaceRepository({ db });
-    const back = await repo.read(UUID_A);
+    const { SqliteWorkspaceRepository } = await import(
+      "../../src/infrastructure/sqlite-workspace-repository.js"
+    );
+    const repo = new SqliteWorkspaceRepository(db);
+    const back = await repo.findById(WorkspaceId.of(UUID_A));
     expect(back).not.toBeNull();
-    expect(back?.workspaceDir).toBe(path.resolve("/home/user/projects/alpha"));
-    expect(back?.name).toBe("Alpha");
+    expect(back?.workspaceDir.value).toBe(path.resolve("/home/user/projects/alpha"));
+    expect(back?.name.value).toBe("Alpha");
     // Defaults are gone from the entity entirely — the getter no
     // longer exists. Cast to any so the test compiles even after the
     // typed property is removed; we're explicitly asserting the

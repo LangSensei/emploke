@@ -1,9 +1,10 @@
 import "reflect-metadata";
+import type { DatabaseSync } from "node:sqlite";
 import { composeCatalogModule } from "@emploke/catalog";
 import { composeRuntimeModule } from "@emploke/runtime";
 import { composeSessionModule } from "@emploke/session";
 import { composeTaskModule } from "@emploke/task";
-import { composeWorkspaceModule } from "@emploke/workspace";
+import { composeWorkspaceModule, WorkspaceDb } from "@emploke/workspace";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { InversifyResolver } from "./inversify-resolver.js";
@@ -12,36 +13,35 @@ import { InversifyResolver } from "./inversify-resolver.js";
  * Build the root inversify container for the server process and wire
  * the mediatr-ts dispatcher into it.
  *
- * This is the composition root for the architecture-v2 refactor
- * tracked by issue #135. Phase 0 only constructs the container and
- * lets every package register its bindings via `compose…Module`; the
- * bodies of those module functions are empty for now, and no existing
- * code path resolves through the container. The smoke test
- * (`test/inversify-bootstrap.test.ts`) proves the wiring is sound so
- * Phase 1+ can start filling in handlers without re-litigating any of
- * the bootstrap design.
+ * Phase 1 of issue #135 (workspace pilot) brings real bindings into
+ * the workspace module: `WorkspaceRepository` → `SqliteWorkspaceRepository`,
+ * `WorkspaceQueries` → `SqliteWorkspaceQueries`, plus the 4 command
+ * handlers + manual mediator registration. The other `compose…Module`
+ * calls remain empty stubs (session / task / catalog / runtime
+ * refactors land in Phases 3-7).
  *
- * Order: register the mediator on the container BEFORE calling any
- * `compose…Module`. Future module functions are expected to bind
- * handlers and resolve them off the mediator; having `Mediator`
- * available from the first compose call avoids ordering pitfalls.
+ * ## Pre-compose prerequisites
+ *
+ * The composition root binds shared services **before** calling any
+ * `compose…Module`:
+ *   - `Mediator` — the dispatcher itself.
+ *   - `WorkspaceDb` — the `DatabaseSync` for `global.db`, already
+ *     coordinator-migrated to the version the workspace pkg expects.
+ *
+ * Future shared bindings (`Logger`, a global outbox handle, etc.) slot
+ * in here too — every compose call sees them.
  */
-export function buildServerContainer(): Container {
+export function buildServerContainer(opts: { workspaceDb: DatabaseSync }): Container {
   const container = new Container();
   const resolver = new InversifyResolver(container);
   const mediator = new Mediator({ resolver });
   container.bind(Mediator).toConstantValue(mediator);
+  container.bind(WorkspaceDb).toConstantValue(opts.workspaceDb);
 
-  // Phase 0: every compose function is an empty body. They are still
-  // invoked so the bootstrap exercises the wiring end-to-end and any
-  // future addition lands in this exact order.
-  //
-  // Call order is documented in `.ceo/design/architecture-v2-e2e.md`:
-  // root container is built first, then each context's bindings are
-  // registered. The order itself does NOT matter today (all stubs),
-  // and Phase 1+ binding registration is dep-direction-agnostic
-  // because mediator dispatch is late-bound. If a future binding ever
-  // needs a sibling-context service at compose time (rare), revisit.
+  // Per-module bindings + manual mediator registration. Order
+  // doesn't matter today because mediator dispatch is late-bound; if
+  // a future binding ever needs a sibling-context service at compose
+  // time, revisit.
   composeWorkspaceModule(container);
   composeSessionModule(container);
   composeTaskModule(container);

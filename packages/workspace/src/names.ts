@@ -1,5 +1,5 @@
 import { MAX_DISPLAY_NAME_LENGTH } from "./constants.js";
-import { WorkspaceNameInvalidError } from "./errors.js";
+import { WorkspaceNameInvalidError } from "./domain/errors.js";
 
 /**
  * A workspace's `metadata.name` is a free-form display name. The only hard

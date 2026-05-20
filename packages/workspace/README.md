@@ -3,125 +3,156 @@
 Per-project root abstraction. A *workspace* is a directory that holds
 emploke's per-project state (sessions, tasks, catalog) inside a single
 `workspace.db` SQLite file plus agent workdirs under `sessions/` and
-`tasks/`. The directory is normally
-user-chosen but can also be auto-allocated under
-`$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify one
-(see `Quick start` below). The `$EMPLOKE_HOME/global.db` SQLite registry
+`tasks/`. The directory is normally user-chosen but can also be
+auto-allocated under `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller
+doesn't specify one. The `$EMPLOKE_HOME/global.db` SQLite registry
 maps opaque UUIDs to absolute workspace paths and stores each
 workspace's display name — there is no per-workspace metadata sidecar
 file.
 
-## Concepts
+> **Phase 1 of #135 (architecture-v2):** this package is the **canonical
+> reference** for the project-wide DDD + CQRS conventions locked in
+> `.ceo/design/naming-conventions.md` (issue #137). Every subsequent
+> phase (runtime, session, task, catalog, workflow) copies the layout
+> below; deviating from it is a discussion to have in #137, not in this
+> README.
 
-- **`Workspace`** — DDD entity (class, not interface). Constructed
-  via `Workspace.create({...})` for fresh entities and
-  `Workspace.fromStored({...})` when rehydrating from storage.
-  Carries `{ id, name, createdAt, workspaceDir }`. `workspaceDir` is
-  the only filesystem field; everything else is pure metadata. Use
-  `withMetadata({...})` to derive a new instance preserving identity
-  (id / workspaceDir / createdAt are immutable across edits).
-- **The `id`** is an opaque UUID, the URL routing key in the HTTP API.
-  Stable for the lifetime of the registry entry — dashboard URLs
-  survive workspace renames.
-- **The `name`** is free-form display text, edited via the sidebar's
-  pencil icon. Has no routing significance.
-- **Standard subdirs** — `sessions/` and `tasks/`, plus the
-  shared per-workspace `workspace.db`. Created at `init`; computed
-  from `workspaceDir` by the `workspaceLayout` helper. Catalog content
-  (agents/skills/mcps) lives inside `workspace.db` as BLOB rows —
-  there is no `<workspace>/catalog/` subdirectory. Subdirs are not
-  stored on the entity so the repository contract has no on-disk
-  path coupling.
-- **`workspaceDir` vs `workdir`** — `workspaceDir` is the workspace's
-  root directory (this package). `workdir` is reserved for derived
-  per-entity working directories used by downstream packages
-  (`task.workdir = <workspaceDir>/tasks/<id>`, etc.). Both used to
-  share the same name; the v1→v2 migration (issue #121) finally
-  resolved the ambiguity.
+## Layout
 
-## Quick start
-
-```ts
-import { DatabaseSync } from "node:sqlite";
-import { WorkspaceManager, SqliteWorkspaceRepository } from "@emploke/workspace";
-
-const db = new DatabaseSync("/Users/me/.emploke/global.db");
-const repo = new SqliteWorkspaceRepository({ db });
-const workspaces = new WorkspaceManager(repo);
-
-const ws = await workspaces.init({
-  name: "Acme prod",
-  workspaceDir: "/Users/me/code/acme",
-});
-// → creates /Users/me/code/acme/{workspace.db,sessions,tasks}
-// → inserts {id, workspace_dir, name, created_at} into global.db.workspaces
-
-// `workspaceDir` is always required at the manager layer — defaulting
-// it to `$EMPLOKE_HOME/workspaces/<uuid>/` is the responsibility of the
-// HTTP route (`POST /api/workspaces`), which owns the policy decision
-// of where to put auto-allocated workspaces. The manager stays a
-// pure persistence boundary.
-
-const all = await workspaces.list();
-const back = await workspaces.read(ws.id);
-await workspaces.update(ws.id, { name: "Acme prod (renamed)" });
-await workspaces.delete(ws.id);                 // metadata-only
-await workspaces.delete(ws.id, { purge: true }); // also rm sessions/, tasks/
+```
+packages/workspace/src/
+├── domain/                    ← pure, zero infrastructure deps
+│   ├── workspace.ts                   ← Aggregate root (private ctor, factories, events)
+│   ├── workspace-repository.ts        ← abstract class (DI token)
+│   ├── clock.ts                       ← abstract Clock (test-injectable nowIso)
+│   ├── errors.ts                      ← Typed domain exceptions
+│   ├── publish-event.ts               ← internal mediator.publish wrapper
+│   ├── value-objects/
+│   │   ├── workspace-id.ts            ← WorkspaceId.of(uuid).equals(...)
+│   │   ├── workspace-name.ts          ← WorkspaceName validation
+│   │   └── workspace-dir.ts           ← WorkspaceDir resolve-on-build
+│   └── events/
+│       ├── domain-event.ts            ← base WorkspaceDomainEvent
+│       ├── workspace-registered.ts
+│       ├── workspace-renamed.ts
+│       └── workspace-unregistered.ts
+│
+├── application/               ← use cases + orchestration
+│   ├── module.ts                      ← composeWorkspaceModule(container)
+│   ├── commands/
+│   │   ├── register-workspace/
+│   │   ├── rename-workspace/
+│   │   ├── unregister-workspace/
+│   │   └── set-current-workspace/
+│   └── queries/
+│       ├── workspace-queries.ts       ← abstract class (DI token)
+│       └── views/
+│           ├── workspace-view.ts      ← interface (no DI)
+│           └── workspace-summary-view.ts
+│
+├── infrastructure/            ← adapters
+│   ├── workspace-db.ts                ← const WorkspaceDb (Symbol-keyed DI token)
+│   ├── system-clock.ts                ← @injectable concrete Clock impl
+│   ├── sqlite-workspace-repository.ts ← @injectable extends WorkspaceRepository
+│   ├── sqlite-workspace-queries.ts    ← @injectable extends WorkspaceQueries
+│   ├── internal/
+│   │   └── row-mappers.ts             ← rowToWorkspace (pkg-private)
+│   └── migrations/
+│       ├── index.ts                   ← WORKSPACE_MIGRATIONS chain
+│       ├── v0-to-v1.ts                ← initial schema
+│       └── v1-to-v2.ts                ← drop defaults_json, rename workdir → workspace_dir
+│
+├── workspace-layout.ts        ← pure helper (used by downstream pkgs)
+├── constants.ts
+├── names.ts                   ← UUID + display-name validators
+├── migration/                 ← shared migration framework (used by every pkg)
+├── index.ts                   ← public API barrel
+└── testing.ts                 ← test-only re-exports
 ```
 
-The `workspaceDir` itself is **never** removed by `delete({ purge: true })`
-— it's user-owned. Only emploke-owned subdirs are wiped.
+## Public API
 
-## Manager API
+The barrel (`@emploke/workspace`) exports:
+
+- **Commands** (dispatch via `mediator.send(...)`):
+  - `RegisterWorkspaceCommand(id, workspaceDir, name) → { id }`
+  - `RenameWorkspaceCommand(id, newName) → void`
+  - `UnregisterWorkspaceCommand(id, purge=false) → void`
+  - `SetCurrentWorkspaceCommand(id) → void` *(see polish-backlog P1-5)*
+- **Queries** (inject via `@inject(WorkspaceQueries)`):
+  - `WorkspaceQueries.getById(id) → WorkspaceView | null`
+  - `WorkspaceQueries.list() → WorkspaceSummaryView[]`
+  - `WorkspaceQueries.getCurrent() → WorkspaceView | null`
+  - `WorkspaceQueries.getCurrentId() → string | null`
+- **Composition**: `composeWorkspaceModule(container)`
+- **DI tokens**: `WorkspaceDb` (Symbol; bound to `<EMPLOKE_HOME>/global.db`)
+- **Cross-context value objects**: `WorkspaceId`
+- **Typed errors**: `WorkspaceNotRegisteredError`, `WorkspaceIdConflictError`,
+  `WorkspacePathConflictError`, `WorkspaceNameInvalidError`, etc.
+- **Migration framework**: `runPkgMigrations`, `WORKSPACE_MIGRATIONS`,
+  `MigrationCoordinator`, related errors
+
+The `Workspace` aggregate, `WorkspaceRepository` interface, concrete
+repository / handlers, and value objects beyond `WorkspaceId` are
+**package-private**. Tests that need the SQLite implementation directly
+import from `@emploke/workspace/testing`.
+
+## Wiring
+
+The composition root (`@emploke/server`, `@emploke/cli`) is responsible
+for two bindings before calling `composeWorkspaceModule`:
 
 ```ts
-class WorkspaceManager {
-  constructor(repo: WorkspaceRepository);
+import { Container } from "inversify";
+import { Mediator } from "mediatr-ts";
+import { composeWorkspaceModule, WorkspaceDb } from "@emploke/workspace";
 
-  list(): Promise<Workspace[]>;
-  read(id: string): Promise<Workspace | null>;
-  init(opts: WorkspaceInitOpts): Promise<Workspace>;       // throws on id/path conflict
-  update(id, patch: WorkspaceUpdatePatch): Promise<Workspace>;
-  delete(id, opts?: { purge?: boolean }): Promise<void>;   // idempotent
-  getCurrent(): Promise<string | null>;
-  setCurrent(id: string): Promise<void>;                   // most-recently-selected
-}
+const container = new Container();
+const resolver = new InversifyResolver(container);
+const mediator = new Mediator({ resolver });
+container.bind(Mediator).toConstantValue(mediator);
+container.bind(WorkspaceDb).toConstantValue(globalDb);
+
+composeWorkspaceModule(container);
 ```
 
-`init` mints a fresh UUID by default; pass `id` explicitly only in
-tests / migrations. The id-uniqueness check happens **inside the
-registry lock** via `repository.create()`, so two concurrent
-`init({id: same})` calls produce one success + one
-`WorkspaceIdConflictError` rather than silently overwriting each
-other.
-
-## Repository
+Then:
 
 ```ts
-interface WorkspaceRepository {
-  list(): Promise<Workspace[]>;
-  read(id: string): Promise<Workspace | null>;
-  save(workspace: Workspace): Promise<void>;     // upsert
-  create(workspace: Workspace): Promise<void>;   // atomic create-or-fail
-  delete(id: string): Promise<void>;
-  getCurrent(): Promise<string | null>;
-  setCurrent(id: string): Promise<void>;
-}
+import { RegisterWorkspaceCommand, WorkspaceQueries } from "@emploke/workspace";
+
+const result = await mediator.send(
+  new RegisterWorkspaceCommand(id, "/abs/path", "Acme prod"),
+);
+// result.id === id
+
+const queries = container.get(WorkspaceQueries);
+const view = await queries.getById(result.id);
 ```
 
-Production runs `SqliteWorkspaceRepository` against
-`$EMPLOKE_HOME/global.db`. Tests use the same class against a
-`":memory:"` `DatabaseSync` (re-exported via `@emploke/workspace/testing`)
-— there is no separate in-memory implementation, matching the pattern
-the other SQLite-backed entity packages (`@emploke/task`,
-`@emploke/session`, `@emploke/catalog`) use.
+## Aggregate semantics
 
-> Why SQLite for the registry?
-> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
-> for the project-wide decision rule. The registry has multi-write
-> concurrency requirements (concurrent `workspace add` calls) that
-> SQLite's atomic INSERT + UNIQUE constraints solve more cleanly than
-> the previous JSON-file + advisory-lock dance.
+`Workspace` is an aggregate root with a **private constructor** plus
+two factories:
+
+- `Workspace.register({ id, name, workspaceDir, now })` — fresh
+  workspace, raises a `WorkspaceRegistered` event.
+- `Workspace.fromStored({ id, name, workspaceDir, createdAt })` —
+  rehydrate from storage. Validation failures throw
+  `WorkspaceCorruptedError` carrying the on-disk path.
+
+State transitions are methods on the aggregate that raise events
+internally; the command handler drains them with `pullDomainEvents()`
+after `repo.save(...)` and publishes via `mediator.publish(...)`. Phase
+1 has **zero notification handlers** (workspace is the root context);
+the publish path is exercised end-to-end so subsequent phases can
+add subscribers without re-litigating the wiring.
+
+```ts
+ws.rename(WorkspaceName.of("New name"), clock.nowIso());
+ws.unregister(clock.nowIso(), { purged: true });
+const events = ws.pullDomainEvents();  // drains; second call returns []
+```
 
 ## On-disk wire format
 
@@ -150,27 +181,25 @@ CREATE TABLE schema_meta (
 
 Per-workspace metadata (`name`, `createdAt`) lives in the same
 `workspaces` row as the registry id/workspaceDir/timing — there is
-no `<workspace>/workspace.json` sidecar. Schema version is tracked
-in the multi-row `schema_meta` table so each entity package can
-bump its own version independently.
+no `<workspace>/workspace.json` sidecar.
 
 ## Errors
 
-```ts
+```
 WorkspaceError
 ├── WorkspaceNameInvalidError      400 — name failed validation
 ├── WorkspaceIdInvalidError        400 — id is not a valid UUID
 ├── WorkspaceNotRegisteredError    404 — id has no entry in the index
 ├── WorkspaceNotFoundError         404 — workspaceDir gone
-├── WorkspaceIdConflictError       409 — init({id}) collision
+├── WorkspaceIdConflictError       409 — register({id}) collision
 ├── WorkspacePathConflictError     409 — workspaceDir already registered
 ├── WorkspaceCorruptedError        500 — workspaces row is unreadable
 └── RegistryError / RegistryCorruptedError / RegistrySchemaMismatchError
 ```
 
-`list()` is resilient to per-entry corruption: if one workspace's
-metadata is unreadable it's silently dropped from the result rather
-than failing the whole list. `read(id)` still throws the typed error.
+`WorkspaceQueries.list()` is resilient to per-row corruption: a single
+unreadable workspace is silently dropped rather than failing the whole
+list. `getById(id)` still throws the typed error.
 
 ## Layout helper
 
@@ -178,14 +207,11 @@ than failing the whole list. `read(id)` still throws the typed error.
 import { workspaceLayout } from "@emploke/workspace";
 
 const layout = workspaceLayout("/abs/workspace-dir");
-// {
-//   sessions:  "/abs/workspace-dir/sessions",
-//   tasks:     "/abs/workspace-dir/tasks",
-// }
+// { sessions: "/abs/workspace-dir/sessions", tasks: "/abs/workspace-dir/tasks" }
 ```
 
 Pure function; no fs side effects. Used by downstream managers
-(SessionManager / TaskManager / CatalogManager) to compute the
+(`SessionManager` / `TaskManager` / `CatalogManager`) to compute the
 directories agents and runtimes use.
 
 ## Testing
@@ -194,10 +220,13 @@ directories agents and runtimes use.
 pnpm --filter @emploke/workspace test
 ```
 
-34 tests cover init / list / read / update / delete (with + without
-purge), concurrency (init id-conflict races), and repository
-corruption (per-entry list isolation).
+106 tests cover:
 
-## License
-
-MIT
+- **domain/** — value objects, aggregate (register / rename / unregister),
+  domain events
+- **application/** — command handler tests with mock `WorkspaceRepository`
+  + mock `Mediator`, plus an end-to-end module-composition test
+- **infrastructure/** — `SqliteWorkspaceRepository` and
+  `SqliteWorkspaceQueries` integration against `:memory:` SQLite
+- **migration/** — coordinator integration (cross-pkg topo sort,
+  rollback on failure, v1-to-v2 migration verification)
