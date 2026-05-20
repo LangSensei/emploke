@@ -1,7 +1,6 @@
-import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
-import { EntityManager } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
+import { WorkspaceContext } from "../../infrastructure/workspace-context.js";
 import { isValidWorkspaceId } from "../../names.js";
 import type { WorkspaceSummaryView } from "./views/workspace-summary-view.js";
 import type { WorkspaceView } from "./views/workspace-view.js";
@@ -31,17 +30,13 @@ import { WorkspaceQueries } from "./workspace-queries.js";
  */
 @injectable()
 export class MikroWorkspaceQueries extends WorkspaceQueries {
-  constructor(@inject(EntityManager) private readonly em: EntityManager) {
+  constructor(@inject(WorkspaceContext) private readonly ctx: WorkspaceContext) {
     super();
-  }
-
-  private get sqlEm(): SqlEntityManager {
-    return this.em as unknown as SqlEntityManager;
   }
 
   override async getById(id: string): Promise<WorkspaceView | null> {
     if (!isValidWorkspaceId(id)) return null;
-    const row = (await this.sqlEm
+    const row = (await this.ctx.sqlEm
       .createQueryBuilder(Workspace, "w")
       .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt"])
       .where({ id })
@@ -50,7 +45,7 @@ export class MikroWorkspaceQueries extends WorkspaceQueries {
   }
 
   override async list(): Promise<WorkspaceSummaryView[]> {
-    const rows = (await this.sqlEm
+    const rows = (await this.ctx.sqlEm
       .createQueryBuilder(Workspace, "w")
       .select(["w.id", "w.workspaceDir", "w.name", "w.createdAt"])
       .execute("all")) as WorkspaceRowProjection[];
@@ -67,7 +62,7 @@ export class MikroWorkspaceQueries extends WorkspaceQueries {
   }
 
   override async getCurrentId(): Promise<string | null> {
-    const rows = (await this.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
+    const rows = (await this.ctx.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
       "current_workspace_id",
     ])) as Array<{ value: string }>;
     return rows[0]?.value ?? null;

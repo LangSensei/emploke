@@ -5,6 +5,7 @@ import { Clock } from "../domain/clock.js";
 import { DomainEventSubscriber } from "../infrastructure/domain-event-subscriber.js";
 import { MikroWorkspaceRepository } from "../infrastructure/repositories/mikro-workspace-repository.js";
 import { SystemClock } from "../infrastructure/system-clock.js";
+import { WorkspaceContext } from "../infrastructure/workspace-context.js";
 import { RegisterWorkspaceCommand } from "./commands/register-workspace.command.js";
 import { RegisterWorkspaceCommandHandler } from "./commands/register-workspace.command-handler.js";
 import { RenameWorkspaceCommand } from "./commands/rename-workspace.command.js";
@@ -64,6 +65,7 @@ import { WorkspaceQueries } from "./queries/workspace-queries.js";
 export function composeWorkspaceModule(container: Container): void {
   // Domain / application bindings
   container.bind(Clock).to(SystemClock).inSingletonScope();
+  container.bind(WorkspaceContext).toSelf().inSingletonScope();
   container.bind(WorkspaceRepository).to(MikroWorkspaceRepository).inSingletonScope();
   container.bind(WorkspaceQueries).to(MikroWorkspaceQueries).inSingletonScope();
   container.bind(DomainEventSubscriber).toSelf().inSingletonScope();

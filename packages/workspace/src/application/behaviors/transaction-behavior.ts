@@ -1,6 +1,6 @@
-import { EntityManager } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
 import { type PipelineBehavior, pipelineBehavior, type RequestData } from "mediatr-ts";
+import { WorkspaceContext } from "../../infrastructure/workspace-context.js";
 
 // mediatr-ts ships the pipelineBehavior decorator typed as
 // `() => (target: Function) => void`, which TypeScript 5.x with
@@ -74,7 +74,7 @@ const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
  */
 @injectable()
 export class TransactionBehavior implements PipelineBehavior {
-  constructor(@inject(EntityManager) private readonly em: EntityManager) {}
+  constructor(@inject(WorkspaceContext) private readonly ctx: WorkspaceContext) {}
 
   async handle(_request: RequestData<unknown>, next: () => unknown): Promise<unknown> {
     // `em.transactional` (a) forks the EM so the inner handler sees
@@ -86,7 +86,7 @@ export class TransactionBehavior implements PipelineBehavior {
     // are routed through the forked context for the duration of
     // this call thanks to MikroORM's AsyncLocalStorage-based
     // `RequestContext`.
-    return this.em.transactional(async () => {
+    return this.ctx.em.transactional(async () => {
       return await next();
     });
   }

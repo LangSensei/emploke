@@ -1,5 +1,4 @@
-import type { SqlEntityManager } from "@mikro-orm/better-sqlite";
-import { EntityManager, UniqueConstraintViolationException } from "@mikro-orm/core";
+import { UniqueConstraintViolationException } from "@mikro-orm/core";
 import { inject, injectable } from "inversify";
 import type { WorkspaceId } from "../../domain/aggregates/workspace/value-objects/workspace-id.js";
 import { Workspace } from "../../domain/aggregates/workspace/workspace.js";
@@ -9,6 +8,7 @@ import {
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "../../domain/exceptions/workspace-errors.js";
+import { WorkspaceContext } from "../workspace-context.js";
 
 /** Key in `global_state` holding the current-workspace pointer. */
 const CURRENT_WORKSPACE_KEY = "current_workspace_id";
@@ -52,16 +52,12 @@ const CURRENT_WORKSPACE_KEY = "current_workspace_id";
  */
 @injectable()
 export class MikroWorkspaceRepository extends WorkspaceRepository {
-  constructor(@inject(EntityManager) private readonly em: EntityManager) {
+  constructor(@inject(WorkspaceContext) private readonly ctx: WorkspaceContext) {
     super();
   }
 
-  private get sqlEm(): SqlEntityManager {
-    return this.em as unknown as SqlEntityManager;
-  }
-
   override async add(ws: Workspace): Promise<void> {
-    this.em.persist(ws);
+    this.ctx.em.persist(ws);
     try {
       // Eager flush so the SQL UNIQUE-constraint violation surfaces
       // here (where we can translate it into the typed domain error)
@@ -69,7 +65,7 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
       // runs after the handler returns and can't reshape the error.
       // On a successful insert the outer flush becomes a no-op
       // because the change-set is empty.
-      await this.em.flush();
+      await this.ctx.em.flush();
     } catch (err) {
       // Translate the SQL-level UNIQUE violation into the typed
       // domain error the wire layer maps to HTTP 409. MikroORM v6
@@ -102,31 +98,31 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
   }
 
   override async findById(id: WorkspaceId): Promise<Workspace | null> {
-    return this.em.findOne(Workspace, { id: id.value });
+    return this.ctx.em.findOne(Workspace, { id: id.value });
   }
 
   override async delete(id: WorkspaceId): Promise<void> {
-    const ws = await this.em.findOne(Workspace, { id: id.value });
+    const ws = await this.ctx.em.findOne(Workspace, { id: id.value });
     if (!ws) return; // idempotent — deleting a missing row is a no-op
-    this.em.remove(ws);
+    this.ctx.em.remove(ws);
     // Also clear the current-workspace pointer if it was this id.
     // Same em.transactional batch as the remove, so the DELETE on
     // global_state is atomic with the DELETE on workspaces.
-    await this.sqlEm.execute("DELETE FROM global_state WHERE key = ? AND value = ?", [
+    await this.ctx.sqlEm.execute("DELETE FROM global_state WHERE key = ? AND value = ?", [
       CURRENT_WORKSPACE_KEY,
       id.value,
     ]);
   }
 
   override async getCurrent(): Promise<string | null> {
-    const rows = (await this.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
+    const rows = (await this.ctx.sqlEm.execute("SELECT value FROM global_state WHERE key = ?", [
       CURRENT_WORKSPACE_KEY,
     ])) as Array<{ value: string }>;
     return rows[0]?.value ?? null;
   }
 
   override async setCurrent(id: WorkspaceId): Promise<void> {
-    const exists = await this.em.findOne(Workspace, { id: id.value });
+    const exists = await this.ctx.em.findOne(Workspace, { id: id.value });
     if (!exists) {
       throw new WorkspaceNotRegisteredError(id.value);
     }
@@ -142,7 +138,7 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
     // stay minimal. If recency UX ever lands, Phase 3+ adds it back
     // as a proper `@Property` and the bump moves into the
     // `Workspace` aggregate.
-    await this.sqlEm.execute(
+    await this.ctx.sqlEm.execute(
       `INSERT INTO global_state (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [CURRENT_WORKSPACE_KEY, id.value],

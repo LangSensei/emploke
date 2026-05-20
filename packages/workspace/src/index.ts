@@ -86,6 +86,7 @@ export { WorkspaceId } from "./domain/aggregates/workspace/value-objects/workspa
 
 export { Workspace } from "./domain/aggregates/workspace/workspace.js";
 export { DomainEventSubscriber } from "./infrastructure/domain-event-subscriber.js";
+export { WorkspaceContext } from "./infrastructure/workspace-context.js";
 
 /**
  * Entities owned by `@emploke/workspace`. Pass into
