@@ -82,8 +82,17 @@ export class MikroWorkspaceRepository extends WorkspaceRepository {
       // check does not return the colliding row, hence the
       // `<unknown>` sentinel on `WorkspacePathConflictError.existingId`.
       if (err instanceof UniqueConstraintViolationException) {
+        // SQLite UNIQUE violations report a qualified column name in
+        // the form `<table>.<column>` (e.g. `workspaces.workspace_dir`
+        // or `workspaces.id`). MikroORM wraps the original SQL
+        // statement into the exception message too, and that INSERT
+        // statement lists every column - including `workspace_dir` -
+        // so a loose `includes("workspace_dir")` match would also
+        // catch PK collisions and mis-route them as path conflicts.
+        // Match the dot-qualified constraint name instead, which only
+        // appears in the violation suffix.
         const msg = err.message.toLowerCase();
-        if (msg.includes("workspace_dir")) {
+        if (msg.includes("workspaces.workspace_dir")) {
           throw new WorkspacePathConflictError(ws.workspaceDir, "<unknown>");
         }
         throw new WorkspaceIdConflictError(ws.id);
