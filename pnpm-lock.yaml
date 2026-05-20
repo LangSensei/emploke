@@ -92,45 +92,18 @@ importers:
 
   packages/cli:
     dependencies:
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
       '@emploke/fs':
         specifier: workspace:*
         version: link:../fs
       '@emploke/paths':
         specifier: workspace:*
         version: link:../paths
-      '@emploke/runtime':
-        specifier: workspace:*
-        version: link:../runtime
       '@emploke/server':
         specifier: workspace:*
         version: link:../server
-      '@emploke/session':
-        specifier: workspace:*
-        version: link:../session
-      '@emploke/task':
-        specifier: workspace:*
-        version: link:../task
-      '@emploke/workspace':
-        specifier: workspace:*
-        version: link:../workspace
-      '@mikro-orm/core':
-        specifier: ^6.6.0
-        version: 6.6.14
       commander:
         specifier: ^12.1.0
         version: 12.1.0
-      inversify:
-        specifier: ^7.0.0
-        version: 7.11.0(reflect-metadata@0.2.2)
-      mediatr-ts:
-        specifier: ^2.2.0
-        version: 2.2.0
-      reflect-metadata:
-        specifier: ^0.2.0
-        version: 0.2.2
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
