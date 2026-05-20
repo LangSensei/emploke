@@ -174,6 +174,8 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // bindings into the composeXxxModule stubs and resolving them from
   // here. We `void` the result to make the "intentionally unused"
   // intent explicit to readers and to satisfy biome's noUnusedVars.
+  // TODO(#135 Phase 1): capture the container and thread it through
+  // to managers / route registration as bindings start to land.
   void buildServerContainer();
 
   // Logger: rotated JSON files under <home>/logs (default) plus stdout

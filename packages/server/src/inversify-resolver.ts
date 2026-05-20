@@ -16,6 +16,12 @@ import type { Class, Resolver } from "mediatr-ts";
  * resolver })` has a non-default resolver wired from day one and
  * `mediator.registerHandler(...)` calls in subsequent phases land on
  * the inversify container without further plumbing.
+ *
+ * NOTE: byte-identical to `@emploke/cli`'s `InversifyResolver`. The
+ * duplication is intentional through Phase 0 to keep the two
+ * composition roots in lock-step. If both bridges still match after
+ * Phase 1+ binding work lands, extract to a tiny shared internal
+ * module.
  */
 export class InversifyResolver implements Resolver {
   constructor(private readonly container: Container) {}

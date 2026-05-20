@@ -106,6 +106,8 @@ export async function run(argv: string[] = process.argv): Promise<number> {
   // are still wired by hand. Phase 1+ will start moving handler
   // resolution into composeXxxModule stubs. `void` is the explicit
   // "intentionally unused" marker for readers and biome.
+  // TODO(#135 Phase 1): capture the container and pass it to each
+  // commander action so handlers can resolve from it.
   void buildCliContainer();
 
   const slot: { result: CommandResult | null } = { result: null };

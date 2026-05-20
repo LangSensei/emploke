@@ -29,6 +29,8 @@ export function buildCliContainer(): Container {
   const mediator = new Mediator({ resolver });
   container.bind(Mediator).toConstantValue(mediator);
 
+  // Same compose-call order as `@emploke/server`'s bootstrap — see the
+  // comment block there for the rationale.
   composeWorkspaceModule(container);
   composeSessionModule(container);
   composeTaskModule(container);

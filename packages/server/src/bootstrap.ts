@@ -35,6 +35,13 @@ export function buildServerContainer(): Container {
   // Phase 0: every compose function is an empty body. They are still
   // invoked so the bootstrap exercises the wiring end-to-end and any
   // future addition lands in this exact order.
+  //
+  // Call order is documented in `.ceo/design/architecture-v2-e2e.md`:
+  // root container is built first, then each context's bindings are
+  // registered. The order itself does NOT matter today (all stubs),
+  // and Phase 1+ binding registration is dep-direction-agnostic
+  // because mediator dispatch is late-bound. If a future binding ever
+  // needs a sibling-context service at compose time (rare), revisit.
   composeWorkspaceModule(container);
   composeSessionModule(container);
   composeTaskModule(container);
