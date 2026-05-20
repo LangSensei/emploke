@@ -12,6 +12,14 @@ export type SessionLaunchMode = "local" | "remote";
 export interface SessionCreateArgs {
   /** Runtime kind (e.g. `"copilot"`, `"gemini"`). */
   readonly runtime: string;
+  /**
+   * Agent FQN (`<scope>/<name>`) this session was provisioned with.
+   * v2 (issue #120) promoted this from a derived-on-read AGENTS.md
+   * frontmatter parse to a first-class persisted column. Frozen for
+   * the lifetime of the row — manual edits to AGENTS.md after
+   * provision do not propagate (mirrors `task.agent` semantics).
+   */
+  readonly agent: string;
   /** ISO 8601 UTC timestamp at session creation. */
   readonly createdAt: string;
   /**
@@ -30,6 +38,7 @@ export interface SessionCreateArgs {
  */
 export interface SessionFromStoredArgs {
   readonly id: string;
+  readonly agent: string;
   readonly runtime: string;
   readonly createdAt: string;
   readonly runtimeSessionId: string | null;
@@ -72,6 +81,7 @@ export interface SessionFromStoredArgs {
 export class Session {
   private constructor(
     private readonly _runtime: string,
+    private readonly _agent: string,
     private readonly _createdAt: string,
     private readonly _runtimeSessionId: string | null,
     private readonly _lastLaunchMode: SessionLaunchMode | undefined,
@@ -84,7 +94,13 @@ export class Session {
    * `fromStored`).
    */
   static create(args: SessionCreateArgs): Session {
-    return new Session(args.runtime, args.createdAt, args.runtimeSessionId, args.lastLaunchMode);
+    return new Session(
+      args.runtime,
+      args.agent,
+      args.createdAt,
+      args.runtimeSessionId,
+      args.lastLaunchMode,
+    );
   }
 
   /**
@@ -97,6 +113,15 @@ export class Session {
   static fromStored(args: SessionFromStoredArgs): Session {
     if (typeof args.runtime !== "string" || args.runtime.length === 0) {
       throw new SessionCorruptedError(args.id, "missing or invalid 'runtime'");
+    }
+    if (typeof args.agent !== "string" || args.agent.length === 0) {
+      // v2 (issue #120): agent is persisted as a first-class column.
+      // The migration backfills from `<workdir>/AGENTS.md` and falls
+      // back to `''` when the file is missing/unreadable; such rows
+      // surface as a SessionCorruptedError so the manager's read /
+      // list paths log-and-skip rather than rendering a session with
+      // an empty agent identity in the dashboard.
+      throw new SessionCorruptedError(args.id, "missing or invalid 'agent'");
     }
     if (typeof args.createdAt !== "string" || args.createdAt.length === 0) {
       throw new SessionCorruptedError(args.id, "missing or invalid 'created_at'");
@@ -114,11 +139,20 @@ export class Session {
         "'last_launch_mode' must be 'local', 'remote', or null",
       );
     }
-    return new Session(args.runtime, args.createdAt, args.runtimeSessionId, args.lastLaunchMode);
+    return new Session(
+      args.runtime,
+      args.agent,
+      args.createdAt,
+      args.runtimeSessionId,
+      args.lastLaunchMode,
+    );
   }
 
   get runtime(): string {
     return this._runtime;
+  }
+  get agent(): string {
+    return this._agent;
   }
   get createdAt(): string {
     return this._createdAt;
@@ -132,10 +166,16 @@ export class Session {
 
   /**
    * Record the runtime's session id once minted (used by lazy-mint
-   * refresh paths). Identity (runtime / createdAt) is preserved.
+   * refresh paths). Identity (runtime / agent / createdAt) is preserved.
    */
   withRuntimeSessionId(runtimeSessionId: string | null): Session {
-    return new Session(this._runtime, this._createdAt, runtimeSessionId, this._lastLaunchMode);
+    return new Session(
+      this._runtime,
+      this._agent,
+      this._createdAt,
+      runtimeSessionId,
+      this._lastLaunchMode,
+    );
   }
 
   /**
@@ -144,21 +184,19 @@ export class Session {
    * is preserved.
    */
   withLastLaunchMode(mode: SessionLaunchMode): Session {
-    return new Session(this._runtime, this._createdAt, this._runtimeSessionId, mode);
+    return new Session(this._runtime, this._agent, this._createdAt, this._runtimeSessionId, mode);
   }
 
   /**
    * POJO projection. Used by tests that compare session contents; the
    * manager itself never serialises a `Session` directly (the
    * wire-level entity is `SessionView`, which the manager builds by
-   * combining `Session` with workdir + agent + lastActiveAt + preview).
-   *
-   * Optional `lastLaunchMode` is omitted when unset to preserve a
-   * shape that round-trips through `JSON.parse(JSON.stringify(...))`.
+   * combining `Session` with workdir + lastActiveAt + preview).
    */
   toJSON(): Record<string, unknown> {
     return {
       runtime: this._runtime,
+      agent: this._agent,
       createdAt: this._createdAt,
       runtimeSessionId: this._runtimeSessionId,
       ...(this._lastLaunchMode !== undefined ? { lastLaunchMode: this._lastLaunchMode } : {}),

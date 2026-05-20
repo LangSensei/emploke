@@ -180,10 +180,10 @@ describe("real-spawn smoke", () => {
     const t = await m.dispatch(dispatchOf({ agent: "exit-zero" }));
     const final = await awaitTerminal(m, t.id);
 
-    expect(final.status).toBe("success");
+    expect(final.status).toBe("succeeded");
 
     const persisted = await repo.read(t.id);
-    expect(persisted?.status).toBe("success");
+    expect(persisted?.status).toBe("succeeded");
   });
 
   it("dispatch → real child exits non-zero → status persists as 'failure'", async () => {
@@ -193,9 +193,9 @@ describe("real-spawn smoke", () => {
     const t = await m.dispatch(dispatchOf({ agent: "exit-one" }));
     const final = await awaitTerminal(m, t.id);
 
-    expect(final.status).toBe("failure");
+    expect(final.status).toBe("failed");
 
     const persisted = await repo.read(t.id);
-    expect(persisted?.status).toBe("failure");
+    expect(persisted?.status).toBe("failed");
   });
 });

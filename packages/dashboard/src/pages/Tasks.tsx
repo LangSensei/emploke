@@ -24,6 +24,7 @@ import {
   type TaskActivity,
   type TaskCancellation,
   type TaskFailure,
+  type TaskOrigin,
   type TaskRecord,
   type TaskStatus,
 } from "../api";
@@ -54,18 +55,16 @@ const DEFAULT_POLL_INTERVAL_MS = 4000;
 // reserved-for-future scaffolding; the dashboard now renders the
 // matching UI affordances.
 const STATUS_LABEL: Record<TaskStatus, string> = {
-  not_started: "Not started",
   running: "Running",
-  success: "Success",
-  failure: "Failure",
+  succeeded: "Succeeded",
+  failed: "Failed",
   cancelled: "Cancelled",
 };
 
 const STATUS_TONE: Record<TaskStatus, string> = {
-  not_started: "muted",
   running: "info",
-  success: "ok",
-  failure: "warn",
+  succeeded: "ok",
+  failed: "warn",
   cancelled: "muted",
 };
 
@@ -74,6 +73,19 @@ const STATUS_TONE: Record<TaskStatus, string> = {
 // through DOM string serialization).
 const ALL_AGENTS = "__all__";
 const ALL_RUNTIMES = "__all__";
+
+// Origin filter presets (issue #119). Default `standalone` matches the
+// dashboard's "what I dispatched" view; toggling to `all` reveals
+// workflow-launched tasks (origin='workflow'). Currently a binary
+// toggle since the live origin set is {standalone, workflow}, but the
+// shape stays a preset array so future origins (e.g. 'schedule') can
+// land here without reshaping the component.
+type OriginPreset = TaskOrigin | "all";
+const ORIGIN_PRESETS: { value: OriginPreset; label: string }[] = [
+  { value: "standalone", label: "Mine" },
+  { value: "workflow", label: "Workflow" },
+  { value: "all", label: "All" },
+];
 
 type TimePreset = "today" | "7d" | "30d" | "all";
 
@@ -184,6 +196,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
+  // Default to `standalone` per issue #119 acceptance: the operator's
+  // "what I dispatched" view should not be polluted by workflow-
+  // launched tasks. Toggle reveals the rest. Stored as `OriginPreset`
+  // (TaskOrigin | "all") and forwarded verbatim to listTasks(), which
+  // omits the query param when value is "all".
+  const [originFilter, setOriginFilter] = useState<OriginPreset>("standalone");
   const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
@@ -229,6 +247,10 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
+      // Always forward the origin filter (listTasks() omits the wire
+      // param for "all"). Default state is "standalone" so the first
+      // page load is already filtered.
+      opts.origin = originFilter;
       const next = await listTasks(opts);
       // Bail if (a) component unmounted, (b) workspace changed during
       // the fetch — listTasks() resolved against the old prefix but the
@@ -251,7 +273,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         setLoaded(true);
       }
     }
-  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter]);
+  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter, originFilter]);
 
   useEffect(() => {
     void refresh();
@@ -285,10 +307,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   // server is unreachable, so a sleeping laptop or restarted server no
   // longer floods the network panel with red ECONNREFUSED rows.
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const anyRunning = useMemo(
-    () => tasks.some((t) => t.status === "running" || t.status === "not_started"),
-    [tasks],
-  );
+  const anyRunning = useMemo(() => tasks.some((t) => t.status === "running"), [tasks]);
   usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
   const onDispatched = async (
@@ -514,6 +533,22 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
                 className={`pills__btn${timeFilter === p.value ? " pills__btn--active" : ""}`}
                 onClick={() => setTimeFilter(p.value)}
                 aria-pressed={timeFilter === p.value}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Origin
+          </span>
+          <div className="pills">
+            {ORIGIN_PRESETS.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                className={`pills__btn${originFilter === p.value ? " pills__btn--active" : ""}`}
+                onClick={() => setOriginFilter(p.value)}
+                aria-pressed={originFilter === p.value}
               >
                 {p.label}
               </button>
@@ -771,7 +806,7 @@ interface TaskListItemProps {
  */
 function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
-  const isRunning = task.status === "running" || task.status === "not_started";
+  const isRunning = task.status === "running";
   // Per-row Cancel debounce: rapid double-clicks would otherwise fan
   // out into N HTTP round-trips + N toast notifications. Disabling the
   // button while the request is in flight keeps the affordance honest
@@ -898,19 +933,11 @@ function StatusBadge({
 /**
  * Smart relative-time line for a task row. Shows the most informative
  * timestamp for each lifecycle stage:
- *   - not_started: "queued 2m ago"
  *   - running: "running for 1m 23s"  (live elapsed)
  *   - terminal: "ran 5m 12s · ended 2h ago"
  * Tooltip carries the absolute timestamp for forensic precision.
  */
 function TaskRelativeTime({ task }: { task: TaskRecord }) {
-  if (task.status === "not_started") {
-    return (
-      <span className="muted" title={formatAbsolute(task.createdAt)}>
-        queued {formatRelative(task.createdAt)}
-      </span>
-    );
-  }
   if (task.status === "running" && task.startedAt) {
     return (
       <span className="muted" title={formatAbsolute(task.startedAt)}>
@@ -1019,7 +1046,7 @@ function DispatchModal({
               source, surface the sibling-task semantics explicitly so
               the user understands this dispatches a NEW task — the
               source keeps running unaffected. */}
-          {prefill && (prefill.status === "running" || prefill.status === "not_started") && (
+          {prefill && prefill.status === "running" && (
             <div className="alert alert--info" style={{ marginBottom: 10 }}>
               Source task is still running. This will dispatch a new task; the source will keep
               running.
@@ -1353,7 +1380,7 @@ function TaskDetailPanel({
   // without a manual refresh click. Cadence comes from the parent (which
   // sources it from /api/config) so list view and detail view stay in
   // sync. Backoff matches the list-view loop above.
-  const detailPollEnabled = !!task && (task.status === "running" || task.status === "not_started");
+  const detailPollEnabled = !!task && task.status === "running";
   usePollWithBackoff(refreshDetail, pollIntervalMs, detailPollEnabled);
 
   // Live tail via SSE while the task is running. The poll above keeps
@@ -1429,10 +1456,10 @@ function TaskDetailPanel({
   // Computed up here so `useState` for the expand toggle stays at the
   // top of the hook order.
   const headlineResult =
-    task?.status === "success"
+    task?.status === "succeeded"
       ? (activity?.result ??
-        (typeof task?.result?.output === "string" && task.result.output.length > 0
-          ? task.result.output
+        (typeof task?.success?.output === "string" && task.success.output.length > 0
+          ? task.success.output
           : null))
       : null;
 
@@ -1450,25 +1477,13 @@ function TaskDetailPanel({
     );
   }
 
-  // Pull the runtime exit fields out of metadata where the kernel keeps
-  // them. Post-ADR-001 the typed `failure` itself carries `kind`
-  // (discriminator: `exited` | `signal` | `shutdown` | `orphan` |
-  // `internal`) plus `message` (human-readable); the `exited` /
-  // `signal` variants also carry the structured `exitCode` / `signal`
-  // fields inline, but we still read the metadata mirrors here so the
-  // header chip works for pre-typed-union (legacy) rows too.
   const metadata = (task?.metadata ?? {}) as Record<string, unknown>;
-  const exitCode =
-    typeof metadata.exitCode === "number" || metadata.exitCode === null
-      ? (metadata.exitCode as number | null)
-      : undefined;
-  const exitSignal = typeof metadata.exitSignal === "string" ? metadata.exitSignal : undefined;
   const runtime = typeof metadata.runtime === "string" ? metadata.runtime : undefined;
   // The user-supplied `brief` is the canonical task title (post-#111
   // refactor). Lead the panel with it; fall back to the task id only
   // while the task object hasn't loaded yet.
   const title = task?.brief ?? null;
-  const isRunning = task && (task.status === "running" || task.status === "not_started");
+  const isRunning = task && task.status === "running";
 
   return (
     <aside className="tasks-pane__detail">
@@ -1536,9 +1551,7 @@ function TaskDetailPanel({
           </div>
         )}
         {task?.details && <TaskDetails text={task.details} />}
-        {task?.failure && (
-          <FailureBlock failure={task.failure} exitCode={exitCode} exitSignal={exitSignal} />
-        )}
+        {task?.failure && <FailureBlock failure={task.failure} />}
         {task?.cancellation && (
           <CancellationBlock cancellation={task.cancellation} endedAt={task.endedAt} />
         )}
@@ -1672,9 +1685,11 @@ function TaskDetailPanel({
               {
                 brief: task.brief,
                 ...(task.details !== undefined ? { details: task.details } : {}),
+                origin: task.origin,
                 metadata: task.metadata,
-                result: task.result,
+                success: task.success,
                 failure: task.failure,
+                cancellation: task.cancellation,
               },
               null,
               2,
@@ -2384,26 +2399,19 @@ function ResultSection({ text }: { text: string }) {
  *   - orphan   → "server crashed before this task finished"
  *   - internal → "internal error  <message>"
  *
- * `exitCode` / `exitSignal` come from `Task.metadata` (the runtime
- * stores them there for every terminal kind) and are appended as
- * inline detail when present, matching the pre-ADR-001 rendering.
+ * The exit code / signal for `exited` / `signal` failures are rendered
+ * inline by the switch (`exited with code N` / `terminated by SIG…`);
+ * no separate props are needed (post-v4 / issue #119 — the typed
+ * `failure` payload carries everything).
  */
-function FailureBlock({
-  failure,
-  exitCode,
-  exitSignal,
-}: {
-  failure: TaskFailure;
-  exitCode: number | null | undefined;
-  exitSignal: string | undefined;
-}) {
+function FailureBlock({ failure }: { failure: TaskFailure }) {
   const isOperational = failure.kind === "shutdown";
   const alertClass = isOperational ? "alert alert--info" : "alert alert--error";
   const label = isOperational ? "Stopped" : "Failure";
   let body: string;
   switch (failure.kind) {
     case "exited":
-      body = `exited with code ${failure.exitCode}`;
+      body = `exited with code ${failure.exit_code}`;
       break;
     case "signal":
       body = `terminated by ${failure.signal}`;
@@ -2421,10 +2429,6 @@ function FailureBlock({
   return (
     <div className={alertClass} style={{ margin: 0 }}>
       <strong>{label}:</strong> {body}
-      {failure.kind !== "exited" && exitCode !== undefined && exitCode !== null && (
-        <> (exit {exitCode})</>
-      )}
-      {failure.kind !== "signal" && exitSignal && <> [signal {exitSignal}]</>}
     </div>
   );
 }
@@ -2449,8 +2453,11 @@ function CancellationBlock({
     case "user":
       body = endedAt ? `Cancelled by user (at ${formatAbsolute(endedAt)})` : "Cancelled by user";
       break;
-    case "orphan":
-      body = "Cancelled (recovered from inconsistent state)";
+    case "cascade":
+      body = "Cancelled (cascade — recovered from inconsistent state)";
+      break;
+    default:
+      body = "Cancelled";
       break;
   }
   return (

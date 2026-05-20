@@ -327,6 +327,11 @@ export class WorkspaceContextCache {
       repository: new SqliteSessionRepository({ db, logger: this.logger }),
       logger: this.logger,
     });
+    // v2 (issue #120) one-shot backfill: populate the `agent` column
+    // for any rows the v1→v2 SQL migration left at `''`. Awaited
+    // before the context is cached so the first `list()` already sees
+    // the populated values — no race with concurrent route handlers.
+    await sessions.backfillAgentColumn();
 
     const tasks = new TaskManager({
       catalog,

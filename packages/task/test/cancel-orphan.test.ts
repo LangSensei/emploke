@@ -41,6 +41,7 @@ describe("TaskManager.cancel — orphan path", () => {
       id,
       agent: "demo",
       brief: "orphan to cancel",
+      origin: "standalone",
       status: "running",
       metadata: { pid: 99999, runtime: "copilot" },
       createdAt: "2026-05-18T01:00:00.000Z",
@@ -52,14 +53,13 @@ describe("TaskManager.cancel — orphan path", () => {
 
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.cancellation).toEqual({
-      kind: "orphan",
+      kind: "cascade",
       message: "cancelled (recovered from inconsistent state)",
     });
-    // Per ADR §3.4, the synthesised decision sets exitCode=null and
-    // exitSignal=null in metadata — same shape as a real subprocess
-    // kill where the exit info hasn't materialised.
-    expect(cancelled.metadata.exitCode).toBeNull();
-    expect(cancelled.metadata.exitSignal).toBeNull();
+    // v4 (issue #119) stopped mirroring exitCode/exitSignal into metadata;
+    // the orphan-cancel synthesises a cancellation payload only.
+    expect(cancelled.metadata.exitCode).toBeUndefined();
+    expect(cancelled.metadata.exitSignal).toBeUndefined();
 
     // Operator-visible warning.
     const warns = warnCalls.calls.filter((c) =>

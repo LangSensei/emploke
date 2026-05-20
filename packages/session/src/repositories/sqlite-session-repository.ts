@@ -10,14 +10,16 @@ import type { ListSessionStateOpts, SessionRepository } from "./repository.js";
  * Current schema version for the session pkg's slice of the shared
  * per-workspace `workspace.db`. Stored in `schema_meta(pkg='session')`.
  *
- * Bump when an existing column is removed, renamed, or its semantics
- * change in a way an older server cannot ignore. Purely additive
- * changes (new column with sensible default) do not require a bump.
+ * v2 (issue #120): adds first-class `agent TEXT NOT NULL` column +
+ * `sessions_agent_idx`. The migration backfills existing rows from
+ * `<sessionsDir>/<id>/AGENTS.md` (handled in `SessionManager.backfillAgentColumn`,
+ * not pure SQL — the coordinator does not know `sessionsDir`).
  */
-const SESSION_PKG_SCHEMA_VERSION = 1;
+const SESSION_PKG_SCHEMA_VERSION = 2;
 
 interface SessionRow {
   id: string;
+  agent: string;
   runtime: string;
   created_at: string;
   runtime_session_id: string | null;
@@ -73,7 +75,7 @@ export class SqliteSessionRepository implements SessionRepository {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     const row = this.db
       .prepare(
-        "SELECT id, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions WHERE id = ?",
+        "SELECT id, agent, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions WHERE id = ?",
       )
       .get(id) as SessionRow | undefined;
     if (row === undefined) return null;
@@ -84,9 +86,10 @@ export class SqliteSessionRepository implements SessionRepository {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     this.db
       .prepare(
-        `INSERT INTO sessions (id, runtime, created_at, runtime_session_id, last_launch_mode)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO sessions (id, agent, runtime, created_at, runtime_session_id, last_launch_mode)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
+           agent = excluded.agent,
            runtime = excluded.runtime,
            created_at = excluded.created_at,
            runtime_session_id = excluded.runtime_session_id,
@@ -94,11 +97,32 @@ export class SqliteSessionRepository implements SessionRepository {
       )
       .run(
         id,
+        state.agent,
         state.runtime,
         state.createdAt,
         state.runtimeSessionId,
         state.lastLaunchMode ?? null,
       );
+  }
+
+  /**
+   * v2 backfill helper: set the `agent` column for an existing row
+   * without touching other fields. Called by
+   * `SessionManager.backfillAgentColumn` for rows that came in as `''`
+   * (v1 → v2 migration default) once the manager has resolved the
+   * canonical FQN from `<sessionsDir>/<id>/AGENTS.md`. No-op on
+   * missing rows.
+   */
+  async setAgent(id: string, agent: string): Promise<void> {
+    if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
+    this.db.prepare("UPDATE sessions SET agent = ? WHERE id = ?").run(agent, id);
+  }
+
+  async findEmptyAgentIds(): Promise<readonly string[]> {
+    const rows = this.db.prepare("SELECT id FROM sessions WHERE agent = ''").all() as unknown as {
+      id: string;
+    }[];
+    return rows.map((r) => r.id);
   }
 
   async patchLastLaunchMode(id: string, mode: "local" | "remote"): Promise<void> {
@@ -128,23 +152,25 @@ export class SqliteSessionRepository implements SessionRepository {
   }
 
   async list(opts: ListSessionStateOpts = {}): Promise<{ id: string; state: Session }[]> {
-    let sql = "SELECT id, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions";
+    const where: string[] = [];
     const params: string[] = [];
     if (opts.createdSince !== undefined) {
-      sql += " WHERE created_at >= ?";
+      where.push("created_at >= ?");
       params.push(opts.createdSince);
     }
+    if (opts.agent !== undefined) {
+      where.push("agent = ?");
+      params.push(opts.agent);
+    }
+    let sql =
+      "SELECT id, agent, runtime, created_at, runtime_session_id, last_launch_mode FROM sessions";
+    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     const rows = this.db.prepare(sql).all(...params) as unknown as SessionRow[];
     const out: { id: string; state: Session }[] = [];
     for (const row of rows) {
       try {
         out.push({ id: row.id, state: parseRow(row.id, row) });
       } catch (err) {
-        // Corrupted row — drop from list. Matches the old
-        // FsSessionRepository.list behaviour (silently skip a single
-        // corrupted entry rather than fail the whole call). We warn
-        // via the injected logger so operators can see the bad row
-        // without `list` itself failing.
         this.logger.warn(
           {
             sessionId: row.id ?? null,
@@ -201,6 +227,7 @@ export class SqliteSessionRepository implements SessionRepository {
 function parseRow(id: string, row: SessionRow): Session {
   return Session.fromStored({
     id,
+    agent: row.agent,
     runtime: row.runtime,
     createdAt: row.created_at,
     runtimeSessionId: row.runtime_session_id,

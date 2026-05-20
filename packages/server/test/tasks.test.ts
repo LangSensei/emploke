@@ -92,12 +92,12 @@ describe("tasksRoutes", () => {
     expect(m.list).not.toHaveBeenCalled();
   });
 
-  it("GET /?status=running,success forwards the status set", async () => {
+  it("GET /?status=running,succeeded forwards the status set", async () => {
     const list = vi.fn(async () => [sampleTask]);
     const m = stubManager({ list });
-    const res = await tasksRoutes(() => m).request("/?status=running,success");
+    const res = await tasksRoutes(() => m).request("/?status=running,succeeded");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ statuses: ["running", "success"] });
+    expect(list).toHaveBeenCalledWith({ statuses: ["running", "succeeded"] });
   });
 
   it("GET /?status=bogus returns 400 (unknown status)", async () => {

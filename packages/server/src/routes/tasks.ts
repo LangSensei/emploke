@@ -11,6 +11,7 @@ import {
   TaskIdAllocationFailedError,
   type TaskManager,
   TaskNotFoundError,
+  type TaskOrigin,
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
@@ -109,20 +110,15 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   //   ?agent=<name>             — exact match on Task.agent
   //   ?runtime=<kind>           — exact match on metadata.runtime
   //   ?createdSince=<iso8601>   — drop tasks older than the cutoff
-  //   ?status=running,success   — include only listed statuses (CSV)
-  // Pushing filters to the server keeps the wire payload + dashboard
-  // re-render bounded for workspaces with hundreds of tasks. Filters
-  // not present in the query are passed through unset.
+  //   ?status=running,succeeded — include only listed statuses (CSV)
+  //   ?origin=standalone        — include only listed origins (CSV)
   app.get("/", async (c) => {
     const agent = c.req.query("agent");
     const runtime = c.req.query("runtime");
     const createdSince = c.req.query("createdSince");
     const status = c.req.query("status");
+    const origin = c.req.query("origin");
 
-    // Same canonicalisation discipline sessions.ts uses: parse leniently
-    // (`Date.parse` accepts loose forms), then forward the canonical
-    // ISO 8601 string so the manager's lexicographic compare stays
-    // correct.
     let createdSinceIso: string | undefined;
     if (createdSince !== undefined) {
       const t = Date.parse(createdSince);
@@ -134,13 +130,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
 
     let statuses: TaskStatus[] | undefined;
     if (status !== undefined) {
-      const valid = new Set<TaskStatus>([
-        "not_started",
-        "running",
-        "success",
-        "failure",
-        "cancelled",
-      ]);
+      const valid = new Set<TaskStatus>(["running", "succeeded", "failed", "cancelled"]);
       const parts = status
         .split(",")
         .map((s) => s.trim())
@@ -149,7 +139,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
       if (bad !== undefined) {
         return c.json(
           {
-            error: `unknown status: ${JSON.stringify(bad)} (expected not_started, running, success, failure, cancelled)`,
+            error: `unknown status: ${JSON.stringify(bad)} (expected running, succeeded, failed, cancelled)`,
           },
           400,
         );
@@ -157,13 +147,31 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
       statuses = parts as TaskStatus[];
     }
 
-    // Build the opts shape mutably; ListTaskOpts itself is `readonly`
-    // by convention so the manager can safely capture it.
+    let origins: TaskOrigin[] | undefined;
+    if (origin !== undefined) {
+      const validOrigins = new Set<TaskOrigin>(["standalone", "workflow"]);
+      const parts = origin
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const bad = parts.find((s) => !validOrigins.has(s as TaskOrigin));
+      if (bad !== undefined) {
+        return c.json(
+          {
+            error: `unknown origin: ${JSON.stringify(bad)} (expected standalone, workflow)`,
+          },
+          400,
+        );
+      }
+      origins = parts as TaskOrigin[];
+    }
+
     const opts: { -readonly [K in keyof ListTaskOpts]: ListTaskOpts[K] } = {};
     if (agent !== undefined) opts.agent = agent;
     if (runtime !== undefined) opts.runtime = runtime;
     if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
     if (statuses !== undefined) opts.statuses = statuses;
+    if (origins !== undefined) opts.origin = origins;
 
     try {
       const list = await getManager(c).list(opts);

@@ -1,7 +1,7 @@
 /**
- * R-10 / §3.12 #11 — round-trip every TaskFailure / TaskCancellation
- * variant through SQLite to pin that the columnar storage shape
- * preserves the discriminant + per-variant extras.
+ * v4 (issue #119) round-trip: every TaskFailure / TaskCancellation
+ * variant must survive save → read through the new JSON-column storage
+ * shape with its discriminator + per-variant extras intact.
  */
 
 import { DatabaseSync } from "node:sqlite";
@@ -31,7 +31,8 @@ function buildFailure(id: string, failure: TaskFailure): Task {
     id,
     agent: "writer",
     brief: "do the thing",
-    status: "failure",
+    origin: "standalone",
+    status: "failed",
     metadata: {},
     createdAt: CREATED_AT,
     startedAt: STARTED_AT,
@@ -45,6 +46,7 @@ function buildCancellation(id: string, cancellation: TaskCancellation): Task {
     id,
     agent: "writer",
     brief: "do the thing",
+    origin: "standalone",
     status: "cancelled",
     metadata: {},
     createdAt: CREATED_AT,
@@ -59,7 +61,7 @@ describe("TaskFailure union — round-trip through SqliteTaskRepository", () => 
     {
       id: "20260601-aaaaaaaa",
       label: "exited",
-      failure: { kind: "exited", exitCode: 17, message: "exited with code 17" },
+      failure: { kind: "exited", exit_code: 17, message: "exited with code 17" },
     },
     {
       id: "20260601-bbbbbbbb",
@@ -88,7 +90,7 @@ describe("TaskFailure union — round-trip through SqliteTaskRepository", () => 
       const t = buildFailure(c.id, c.failure);
       await repo.save(t);
       const back = await repo.read(c.id);
-      expect(back?.status).toBe("failure");
+      expect(back?.status).toBe("failed");
       expect(back?.failure).toEqual(c.failure);
     });
   }
@@ -103,9 +105,9 @@ describe("TaskCancellation union — round-trip through SqliteTaskRepository", (
     },
     {
       id: "20260601-22222222",
-      label: "orphan",
+      label: "cascade",
       cancellation: {
-        kind: "orphan",
+        kind: "cascade",
         message: "cancelled (recovered from inconsistent state)",
       },
     },

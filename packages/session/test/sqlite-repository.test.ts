@@ -25,6 +25,7 @@ const ID = "20260509-aabbccdd";
 function sample(
   overrides: {
     runtime?: string;
+    agent?: string;
     createdAt?: string;
     runtimeSessionId?: string | null;
     lastLaunchMode?: "local" | "remote";
@@ -32,6 +33,7 @@ function sample(
 ): Session {
   return Session.create({
     runtime: overrides.runtime ?? "copilot",
+    agent: overrides.agent ?? "public/sample",
     createdAt: overrides.createdAt ?? "2026-05-09T01:00:00.000Z",
     runtimeSessionId: overrides.runtimeSessionId !== undefined ? overrides.runtimeSessionId : "abc",
     ...(overrides.lastLaunchMode !== undefined ? { lastLaunchMode: overrides.lastLaunchMode } : {}),

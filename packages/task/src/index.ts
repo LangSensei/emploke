@@ -73,7 +73,8 @@ export type {
   TaskCancellation,
   TaskFailure,
   TaskManagerConfig,
-  TaskResult,
+  TaskOrigin,
   TaskStatus,
+  TaskSuccess,
   TerminalStatus,
 } from "./types.js";

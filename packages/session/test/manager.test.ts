@@ -266,6 +266,7 @@ describe("create()", () => {
     const persisted = await repo.read(s.id);
     expect(persisted?.toJSON()).toEqual({
       runtime: "copilot",
+      agent: "public/demo",
       createdAt: "2026-05-08T01:05:00.000Z",
       runtimeSessionId: "12345678-1234-1234-1234-1234567890ab",
     });
