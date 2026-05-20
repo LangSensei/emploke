@@ -7,7 +7,7 @@ import { composeWorkspaceModule, DomainEventSubscriber } from "@emploke/workspac
 import { EntityManager, type MikroORM } from "@mikro-orm/core";
 import { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
-import { TransactionBehavior } from "./infrastructure/transaction-behavior.js";
+import { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
 import { InversifyResolver } from "./inversify-resolver.js";
 
 /**
