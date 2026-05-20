@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
+import { buildCliContainer } from "./bootstrap.js";
 import {
   catalogAgentAckPrereqs,
   catalogAgentDisable,
@@ -99,6 +100,14 @@ const EX_USAGE = 2;
  * assert on exit codes without aborting the test runner.
  */
 export async function run(argv: string[] = process.argv): Promise<number> {
+  // Phase 0 of issue #135: build the per-invocation inversify
+  // container so the wiring is exercised end-to-end. No production
+  // command resolves through this container yet; commander actions
+  // are still wired by hand. Phase 1+ will start moving handler
+  // resolution into composeXxxModule stubs. `void` is the explicit
+  // "intentionally unused" marker for readers and biome.
+  void buildCliContainer();
+
   const slot: { result: CommandResult | null } = { result: null };
   const program = buildProgram(slot, argv);
 

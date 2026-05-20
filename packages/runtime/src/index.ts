@@ -30,6 +30,7 @@ export {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "./errors.js";
+export { composeRuntimeModule } from "./module.js";
 export {
   PLACEHOLDER_NAMES,
   type PlaceholderContext,

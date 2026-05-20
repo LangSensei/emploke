@@ -68,6 +68,7 @@ export {
   topoSort,
 } from "./migration/index.js";
 export { WORKSPACE_MIGRATIONS } from "./migrations/index.js";
+export { composeWorkspaceModule } from "./module.js";
 export { assertValidDisplayName, isValidDisplayName, isValidWorkspaceId } from "./names.js";
 export type { WorkspaceRepository } from "./repositories/repository.js";
 export { SqliteWorkspaceRepository } from "./repositories/sqlite-workspace-repository.js";

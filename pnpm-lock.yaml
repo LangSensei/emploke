@@ -39,6 +39,9 @@ importers:
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -77,18 +80,42 @@ importers:
 
   packages/cli:
     dependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@emploke/fs':
         specifier: workspace:*
         version: link:../fs
       '@emploke/paths':
         specifier: workspace:*
         version: link:../paths
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@emploke/server':
         specifier: workspace:*
         version: link:../server
+      '@emploke/session':
+        specifier: workspace:*
+        version: link:../session
+      '@emploke/task':
+        specifier: workspace:*
+        version: link:../task
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
+      mediatr-ts:
+        specifier: ^2.2.0
+        version: 2.2.0
+      reflect-metadata:
+        specifier: ^0.2.0
+        version: 0.2.2
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -206,6 +233,9 @@ importers:
       cross-spawn:
         specifier: ^7.0.6
         version: 7.0.6
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -261,6 +291,15 @@ importers:
       hono:
         specifier: ^4.7.11
         version: 4.12.18
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
+      mediatr-ts:
+        specifier: ^2.2.0
+        version: 2.2.0
+      reflect-metadata:
+        specifier: ^0.2.0
+        version: 0.2.2
     devDependencies:
       '@types/node':
         specifier: ^22.19.17
@@ -292,6 +331,9 @@ importers:
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
@@ -323,6 +365,9 @@ importers:
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -361,6 +406,9 @@ importers:
       '@emploke/paths':
         specifier: workspace:*
         version: link:../paths
+      inversify:
+        specifier: ^7.0.0
+        version: 7.11.0(reflect-metadata@0.2.2)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -864,6 +912,28 @@ packages:
     peerDependencies:
       hono: ^4
 
+  '@inversifyjs/common@1.5.2':
+    resolution: {integrity: sha512-WlzR9xGadABS9gtgZQ+luoZ8V6qm4Ii6RQfcfC9Ho2SOlE6ZuemFo7PKJvKI0ikm8cmKbU8hw5UK6E4qovH21w==}
+
+  '@inversifyjs/container@1.15.0':
+    resolution: {integrity: sha512-U2xYsPrJTz5za2TExi5lg8qOWf8TEVBpN+pQM7B8BVA2rajtbRE9A66SLRHk8c1eGXmg+0K4Hdki6tWAsSQBUA==}
+    peerDependencies:
+      reflect-metadata: ~0.2.2
+
+  '@inversifyjs/core@9.2.0':
+    resolution: {integrity: sha512-Nm7BR6KmpgshIHpVQWuEDehqRVb6GBm8LFEuhc2s4kSZWrArZ15RmXQzROLk4m+hkj4kMXgvMm5Qbopot/D6Sg==}
+
+  '@inversifyjs/plugin@0.2.0':
+    resolution: {integrity: sha512-R/JAdkTSD819pV1zi0HP54mWHyX+H2m8SxldXRgPQarS3ySV4KPyRdosWcfB8Se0JJZWZLHYiUNiS6JvMWSPjw==}
+
+  '@inversifyjs/prototype-utils@0.1.3':
+    resolution: {integrity: sha512-EzRamZzNgE9Sn3QtZ8NncNa2lpPMZfspqbK6BWFguWnOpK8ymp2TUuH46ruFHZhrHKnknPd7fG22ZV7iF517TQ==}
+
+  '@inversifyjs/reflect-metadata-utils@1.4.1':
+    resolution: {integrity: sha512-Cp77C4d2wLaHXiUB7iH6Cxb7i1lD/YDuTIHLTDzKINqGSz0DCSoL/Dg2wVkW/6Qx03r/yQMLJ+32Agl32N2X8g==}
+    peerDependencies:
+      reflect-metadata: ~0.2.2
+
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
@@ -1292,6 +1362,9 @@ packages:
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
+  inversify@7.11.0:
+    resolution: {integrity: sha512-yZDprSSr8TyVeMGI/AOV4ws6gwjX22hj9Z8/oHAVpJORY6WRFTcUzhnZtibBUHEw2U8ArvHcR+i863DplQ3Cwg==}
+
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
@@ -1379,6 +1452,9 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  mediatr-ts@2.2.0:
+    resolution: {integrity: sha512-dFYITOQxg5fSge2uZT2Lwu6tVk2pyI44WXqNBywqv6u+YIDYKO6G+gCwyuQpzFDQ8eFxpJS6YwwTZ5fzFQxeZA==}
 
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
@@ -1479,6 +1555,9 @@ packages:
   real-require@0.2.0:
     resolution: {integrity: sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==}
     engines: {node: '>= 12.13.0'}
+
+  reflect-metadata@0.2.2:
+    resolution: {integrity: sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q==}
 
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
@@ -2061,6 +2140,34 @@ snapshots:
     dependencies:
       hono: 4.12.18
 
+  '@inversifyjs/common@1.5.2': {}
+
+  '@inversifyjs/container@1.15.0(reflect-metadata@0.2.2)':
+    dependencies:
+      '@inversifyjs/common': 1.5.2
+      '@inversifyjs/core': 9.2.0(reflect-metadata@0.2.2)
+      '@inversifyjs/plugin': 0.2.0
+      '@inversifyjs/reflect-metadata-utils': 1.4.1(reflect-metadata@0.2.2)
+      reflect-metadata: 0.2.2
+
+  '@inversifyjs/core@9.2.0(reflect-metadata@0.2.2)':
+    dependencies:
+      '@inversifyjs/common': 1.5.2
+      '@inversifyjs/prototype-utils': 0.1.3
+      '@inversifyjs/reflect-metadata-utils': 1.4.1(reflect-metadata@0.2.2)
+    transitivePeerDependencies:
+      - reflect-metadata
+
+  '@inversifyjs/plugin@0.2.0': {}
+
+  '@inversifyjs/prototype-utils@0.1.3':
+    dependencies:
+      '@inversifyjs/common': 1.5.2
+
+  '@inversifyjs/reflect-metadata-utils@1.4.1(reflect-metadata@0.2.2)':
+    dependencies:
+      reflect-metadata: 0.2.2
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@lezer/common@1.5.2': {}
@@ -2473,6 +2580,14 @@ snapshots:
 
   ieee754@1.2.1: {}
 
+  inversify@7.11.0(reflect-metadata@0.2.2):
+    dependencies:
+      '@inversifyjs/common': 1.5.2
+      '@inversifyjs/container': 1.15.0(reflect-metadata@0.2.2)
+      '@inversifyjs/core': 9.2.0(reflect-metadata@0.2.2)
+    transitivePeerDependencies:
+      - reflect-metadata
+
   isexe@2.0.0: {}
 
   joycon@3.1.1: {}
@@ -2533,6 +2648,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  mediatr-ts@2.2.0: {}
 
   minimist@1.2.8: {}
 
@@ -2643,6 +2760,8 @@ snapshots:
       string_decoder: 1.3.0
 
   real-require@0.2.0: {}
+
+  reflect-metadata@0.2.2: {}
 
   resolve-pkg-maps@1.0.0: {}
 

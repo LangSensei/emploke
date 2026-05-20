@@ -32,7 +32,10 @@
     "@emploke/terminal": "workspace:*",
     "@emploke/workspace": "workspace:*",
     "@hono/node-server": "^1.14.1",
-    "hono": "^4.7.11"
+    "hono": "^4.7.11",
+    "inversify": "^7.0.0",
+    "mediatr-ts": "^2.2.0",
+    "reflect-metadata": "^0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
