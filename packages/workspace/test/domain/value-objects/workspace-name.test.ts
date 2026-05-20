@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceNameInvalidError } from "../../../src/domain/errors.js";
+import { WorkspaceNameInvalidError } from "../../../src/domain/exceptions/workspace-errors.js";
 import { WorkspaceName } from "../../../src/testing.js";
 
 describe("WorkspaceName value object", () => {
@@ -27,5 +27,21 @@ describe("WorkspaceName value object", () => {
   it("structural equality compares by value", () => {
     expect(WorkspaceName.of("Project").equals(WorkspaceName.of("Project"))).toBe(true);
     expect(WorkspaceName.of("Project").equals(WorkspaceName.of("Other"))).toBe(false);
+  });
+
+  describe("static validators", () => {
+    it("assertValid throws for non-strings", () => {
+      for (const bad of [undefined, null, 123, {}, []]) {
+        expect(() => WorkspaceName.assertValid(bad)).toThrow(WorkspaceNameInvalidError);
+      }
+    });
+
+    it("isValid mirrors assertValid", () => {
+      expect(WorkspaceName.isValid("OK")).toBe(true);
+      expect(WorkspaceName.isValid("")).toBe(false);
+      expect(WorkspaceName.isValid(undefined)).toBe(false);
+      expect(WorkspaceName.isValid("nope\nbad")).toBe(false);
+      expect(WorkspaceName.isValid("a".repeat(65))).toBe(false);
+    });
   });
 });

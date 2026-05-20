@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { RegisterWorkspaceCommand } from "@emploke/workspace";
 import { Hono } from "hono";
@@ -9,28 +8,25 @@ import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
-import { bootstrapWorkspaceRegistryDb, setupTestSubsystem } from "./_test-support.js";
+import {
+  type ServerTestSubsystem,
+  setupTestSubsystem,
+  teardownTestSubsystem,
+} from "./_test-support.js";
 
 let scratch: string;
-let globalDb: DatabaseSync;
+let sys: ServerTestSubsystem;
 let mediator: Mediator;
 let cache: PerWorkspaceContainerCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
-  globalDb = new DatabaseSync(":memory:");
-  await bootstrapWorkspaceRegistryDb(globalDb);
-  const sys = setupTestSubsystem({ globalDb, scratch });
+  sys = await setupTestSubsystem({ scratch });
   mediator = sys.mediator;
   cache = sys.cache;
 });
 afterEach(async () => {
-  cache.closeAll();
-  try {
-    globalDb.close();
-  } catch {
-    // already closed
-  }
+  await teardownTestSubsystem(sys);
   await rm(scratch, { recursive: true, force: true });
 });
 

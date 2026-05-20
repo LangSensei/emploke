@@ -1,14 +1,13 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { runPkgMigrations, WORKSPACE_MIGRATIONS, WorkspaceQueries } from "@emploke/workspace";
+import { WorkspaceQueries } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -182,36 +181,28 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }),
   );
 
-  // Open the workspace registry (`global.db`) and run its migrations.
-  // The repository's `ensureSchema()` is a version-check assertion
-  // post-issue-#123; bootstrap of the `workspaces` / `global_state`
-  // tables flows through the migration framework.
+  // Open the workspace registry (`global.db`) via the workspace pkg's
+  // composer. Phase 2 / ADR-3 (#139) replaced the previous
+  // `DatabaseSync` + custom migration framework with a MikroORM-managed
+  // entity layout; the encapsulation refactor (P1-5 follow-up) moved
+  // the MikroORM init into the workspace pkg itself, so the server
+  // only passes the DB file path. On first launch the workspace
+  // composer creates the schema from its own entity list; on
+  // subsequent launches `orm.schema.updateSchema()` is a no-op for
+  // matching schemas. (Production hardening: switch to
+  // `orm.migrator.up()` once a release branch has cut a migrations
+  // baseline beyond `Migration00000000000000_initial`.)
   //
   // We do NOT auto-create a default workspace — the dashboard's
   // landing page prompts the user to create one explicitly.
   await mkdir(paths.home, { recursive: true });
 
-  const globalDb = new DatabaseSync(paths.globalDbFile);
-  const globalMigrationResult = await runPkgMigrations(globalDb, [
-    { pkg: "workspace", migrations: WORKSPACE_MIGRATIONS },
-  ]);
-  logger.info(
-    {
-      applied: globalMigrationResult.applied.length,
-      alreadyAtTarget: globalMigrationResult.alreadyAtTarget,
-      file: paths.globalDbFile,
-    },
-    "global.db migrations complete",
-  );
+  const composition = await buildServerContainer({
+    workspace: { dbFile: paths.globalDbFile },
+  });
+  const rootContainer = composition.container;
+  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
-  // Phase 1 of issue #135: build the inversify root container AFTER
-  // the workspace pkg's migrations have run so the
-  // `SqliteWorkspaceRepository` constructor's `schema_meta`
-  // assertion passes on the first resolve. The container binds
-  // `WorkspaceRepository`, `WorkspaceQueries`, `Clock`, and the four
-  // workspace command handlers; the other `compose…Module` stubs
-  // remain empty for Phases 3-7.
-  const rootContainer = buildServerContainer({ workspaceDb: globalDb });
   const mediator = rootContainer.get(Mediator);
   const workspaceQueries = rootContainer.get(WorkspaceQueries);
 
@@ -281,7 +272,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => workspaceQueries.getCurrentId(),
+      currentWorkspace: () => workspaceQueries.getLastOpenedId(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
@@ -424,13 +415,14 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       logger.error({ err: errorToMeta(err) }, "error closing workspace contexts");
     }
     try {
-      // Close the workspace registry's underlying `DatabaseSync`
-      // (`global.db`). The repository now binds the handle via DI, so
-      // the cleanest place to close is at the bootstrap-owned handle
-      // itself (this is also where it was opened). Per-workspace
-      // contexts have already been closed by `cache.closeAll()`
-      // above, so closing the global db at this point is safe.
-      globalDb.close();
+      // Close the workspace registry's underlying MikroORM instance
+      // (`global.db`) via the composition handle. Per-workspace
+      // contexts have already been closed by `cache.closeAll()` above,
+      // so closing the global ORM here is safe. The handle's close()
+      // flushes any pending changes and releases the SQLite handle,
+      // which Windows needs before the CLI integration test can
+      // `rm -rf <EMPLOKE_HOME>`.
+      await composition.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
     }

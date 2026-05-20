@@ -1,42 +1,37 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import { RegisterWorkspaceCommand } from "@emploke/workspace";
 import { Hono } from "hono";
-import { Mediator } from "mediatr-ts";
+import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildServerContainer } from "../src/bootstrap.js";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
-import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
-import { bootstrapWorkspaceRegistryDb, setupTestSubsystem } from "./_test-support.js";
+import {
+  type ServerTestSubsystem,
+  setupTestSubsystem,
+  teardownTestSubsystem,
+} from "./_test-support.js";
 
 let scratch: string;
-let globalDb: DatabaseSync;
-const openCaches: PerWorkspaceContainerCache[] = [];
+const openSubsystems: ServerTestSubsystem[] = [];
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-ws-"));
-  globalDb = new DatabaseSync(":memory:");
-  await bootstrapWorkspaceRegistryDb(globalDb);
 });
 afterEach(async () => {
-  for (const c of openCaches.splice(0)) c.closeAll();
-  try {
-    globalDb.close();
-  } catch {
-    // already closed
+  for (const sys of openSubsystems.splice(0)) {
+    await teardownTestSubsystem(sys);
   }
   await rm(scratch, { recursive: true, force: true });
 });
 
 async function makeApp() {
-  const sys = setupTestSubsystem({ globalDb, scratch });
-  openCaches.push(sys.cache);
+  const sys = await setupTestSubsystem({ scratch });
+  openSubsystems.push(sys);
   return {
     app: workspacesRoutes({
       mediator: sys.mediator,
@@ -240,7 +235,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
       body: JSON.stringify({ id }),
     });
     expect(res.status).toBe(200);
-    expect(await queries.getCurrentId()).toBe(id);
+    expect(await queries.getLastOpenedId()).toBe(id);
   });
 
   it("DELETE /:id default removes only metadata; user files preserved", async () => {
@@ -386,29 +381,29 @@ describe("workspacesRoutes — POST /:id/reload", () => {
 describe("workspacesRoutes — observability (issue #58)", () => {
   async function makeWiredApp() {
     const cap = captureLogger();
-    const container = buildServerContainer({ workspaceDb: globalDb });
-    const mediator = container.get(Mediator);
-    const { WorkspaceQueries } = await import("@emploke/workspace");
-    const queries = container.get(WorkspaceQueries);
-    const runtimeRegistry = new RuntimeRegistry();
-    runtimeRegistry.register(
-      new CopilotRuntime({ copilotConfigPath: path.join(scratch, "copilot-config.json") }),
-    );
-    const cache = new PerWorkspaceContainerCache({
-      rootContainer: container,
-      runtimeRegistry,
-      queries,
-      logger: cap.logger,
-    });
-    openCaches.push(cache);
-    const defaultWorkspaceParent = path.join(scratch, "default-workspaces");
+    const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
+    openSubsystems.push(sys);
 
     const root = new Hono();
     root.use("*", requestId());
     root.use("*", requestLogger(cap.logger));
-    root.route("/", workspacesRoutes({ mediator, queries, cache, defaultWorkspaceParent }));
+    root.route(
+      "/",
+      workspacesRoutes({
+        mediator: sys.mediator,
+        queries: sys.queries,
+        cache: sys.cache,
+        defaultWorkspaceParent: sys.defaultWorkspaceParent,
+      }),
+    );
 
-    return { root, cap, mediator, queries, cache };
+    return {
+      root,
+      cap,
+      mediator: sys.mediator,
+      queries: sys.queries,
+      cache: sys.cache,
+    };
   }
 
   it("POST / emits a 'workspace created' info line carrying the new id", async () => {

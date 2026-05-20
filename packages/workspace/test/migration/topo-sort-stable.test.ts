@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { topoSort } from "../../src/migration/topo-sort.js";
-import type { Migration } from "../../src/migration/types.js";
+import { topoSort } from "../../src/legacy/migration/topo-sort.js";
+import type { Migration } from "../../src/legacy/migration/types.js";
 
 function m(pkg: string, fromVersion: number, dependsOn?: readonly string[]): Migration {
   return {

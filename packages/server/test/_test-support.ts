@@ -1,16 +1,16 @@
 import "reflect-metadata";
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import type { Logger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import { WorkspaceQueries } from "@emploke/workspace";
 import {
-  bootstrapWorkspaceRegistryDb,
+  openTestWorkspaceOrm,
   Workspace,
   WorkspaceDir,
   WorkspaceId,
   WorkspaceName,
 } from "@emploke/workspace/testing";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { Container } from "inversify";
 import { Mediator } from "mediatr-ts";
 import { buildServerContainer } from "../src/bootstrap.js";
@@ -18,19 +18,23 @@ import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
  * Shared scaffolding for server-side tests that build a workspace
- * subsystem against an in-memory `global.db`. Centralised so the
- * suite isn't littered with copies of the same 15 lines of container
- * + cache plumbing.
+ * subsystem against an in-memory MikroORM-managed `global.db`. Phase
+ * 2 / ADR-3 (#139) replaces the previous `DatabaseSync` +
+ * `bootstrapWorkspaceRegistryDb` helper with a MikroORM `:memory:`
+ * instance opened via `openTestWorkspaceOrm()`.
  *
- * Call `setupTestSubsystem({ globalDb, scratch })` after creating the
- * DB and bootstrapping its schema; the helper builds:
- *   - the root inversify container (binds Mediator, WorkspaceDb,
- *     workspace pkg's repositories / handlers / queries)
+ * Call `setupTestSubsystem({ scratch })`; the helper builds:
+ *   - the root inversify container (binds Mediator, EntityManager,
+ *     workspace pkg's repositories / handlers / queries, registers
+ *     the workspace pkg bindings, installs
+ *     TransactionBehavior)
  *   - a `CopilotRuntime`-only `RuntimeRegistry`
  *   - the per-workspace container cache
  * and returns everything the tests need.
  */
 export interface ServerTestSubsystem {
+  readonly orm: MikroORM;
+  readonly em: EntityManager;
   readonly container: Container;
   readonly mediator: Mediator;
   readonly queries: WorkspaceQueries;
@@ -39,14 +43,19 @@ export interface ServerTestSubsystem {
   readonly defaultWorkspaceParent: string;
 }
 
-export function setupTestSubsystem(opts: {
-  globalDb: DatabaseSync;
+export async function setupTestSubsystem(opts: {
   scratch: string;
   logger?: Logger;
-}): ServerTestSubsystem {
-  const container = buildServerContainer({ workspaceDb: opts.globalDb });
+}): Promise<ServerTestSubsystem> {
+  const orm = await openTestWorkspaceOrm();
+  const composition = await buildServerContainer({ workspace: { orm } });
+  const container = composition.container;
   const mediator = container.get(Mediator);
   const queries = container.get(WorkspaceQueries);
+  // `buildServerContainer` already registers the
+  // `WorkspaceContext.saveEntities` already wires event dispatch, but our tests build many subsystems in
+  // the same process — re-register so the per-test ORM instance has
+  // its own subscriber wired. Idempotent.
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),
@@ -58,7 +67,35 @@ export function setupTestSubsystem(opts: {
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
   const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
-  return { container, mediator, queries, runtimeRegistry, cache, defaultWorkspaceParent };
+  return {
+    orm,
+    em: orm.em as EntityManager,
+    container,
+    mediator,
+    queries,
+    runtimeRegistry,
+    cache,
+    defaultWorkspaceParent,
+  };
+}
+
+/**
+ * Tear down the subsystem. Closes the per-workspace cache (releases
+ * SQLite handles on workspace.db files) AND the global ORM. Tests
+ * MUST call this in afterEach so Windows can `rm -rf` the scratch
+ * directory.
+ */
+export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<void> {
+  try {
+    sys.cache.closeAll();
+  } catch {
+    // best-effort
+  }
+  try {
+    await sys.orm.close(true);
+  } catch {
+    // best-effort
+  }
 }
 
 /**
@@ -79,7 +116,9 @@ export async function registerTestWorkspace(
 }
 
 /**
- * Re-exports for tests that only need the global-db bootstrap helper.
- * Saves a separate `@emploke/workspace/testing` import line.
+ * Re-exports for tests that need direct access to the aggregate /
+ * value objects. The legacy `bootstrapWorkspaceRegistryDb` helper is
+ * gone — tests that previously imported it now use
+ * {@link setupTestSubsystem} (which opens MikroORM internally).
  */
-export { bootstrapWorkspaceRegistryDb, Workspace, WorkspaceDir, WorkspaceId, WorkspaceName };
+export { Workspace, WorkspaceDir, WorkspaceId, WorkspaceName };

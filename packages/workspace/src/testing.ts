@@ -2,67 +2,82 @@
  * Test-only entry point.
  *
  * Tests need direct access to a few things that the public API
- * (`@emploke/workspace`) hides per naming-conventions §5:
+ * (`@emploke/workspace`) hides:
  *
- *   - `SqliteWorkspaceRepository` / `SqliteWorkspaceQueries` so domain
- *     test cases can populate / drain rows without going through the
- *     mediator. The production path resolves these via DI and tests
- *     that do the same may import this entry to construct directly.
- *   - `bootstrapWorkspaceRegistryDb(db)` — runs the migration
- *     coordinator with `WORKSPACE_MIGRATIONS`. Post-issue-#123 the
- *     repository asserts the `schema_meta` row exists, so tests must
- *     bootstrap first.
+ *   - `MikroWorkspaceRepository` / `MikroWorkspaceQueries` so
+ *     infrastructure tests can construct them against an in-memory
+ *     `MikroORM` instance without going through the mediator.
+ *   - `openTestWorkspaceOrm()` — opens a MikroORM `:memory:`
+ *     instance, builds the schema from the pkg's entity list, and
+ *     returns it.
  *   - `Workspace` aggregate + value objects so DDD-layer tests can
  *     construct + drain events on the aggregate directly.
  *
  * Example:
  *
  * ```ts
- * import { DatabaseSync } from "node:sqlite";
- * import {
- *   bootstrapWorkspaceRegistryDb,
- *   SqliteWorkspaceRepository,
- * } from "@emploke/workspace/testing";
+ * import { openTestWorkspaceOrm, MikroWorkspaceRepository } from "@emploke/workspace/testing";
  *
- * const db = new DatabaseSync(":memory:");
- * await bootstrapWorkspaceRegistryDb(db);
- * const repo = new SqliteWorkspaceRepository(db);
+ * const orm = await openTestWorkspaceOrm();
+ * const em = orm.em.fork();
+ * const repo = new MikroWorkspaceRepository(em);
  * // ... run test ...
- * db.close();
+ * await orm.close(true);  // true = drop schema, release :memory: storage
  * ```
- *
- * For in-memory DBs `db.close()` is nearly a no-op (the connection
- * releases on GC anyway), but file-backed fixtures should close
- * explicitly so the journal sidecar releases on Windows.
  */
 
-import type { DatabaseSync } from "node:sqlite";
-import { WORKSPACE_MIGRATIONS } from "./infrastructure/migrations/index.js";
-import { runPkgMigrations } from "./migration/index.js";
+import { defineConfig, type Options } from "@mikro-orm/better-sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
+import { WorkspaceContext } from "./infrastructure/workspace-context.js";
+import { WORKSPACE_ENTITIES } from "./infrastructure/workspace-entities.js";
 
-export { RegisterWorkspaceCommandHandler } from "./application/commands/register-workspace/register-workspace.command-handler.js";
-export { RenameWorkspaceCommandHandler } from "./application/commands/rename-workspace/rename-workspace.command-handler.js";
-export { SetCurrentWorkspaceCommandHandler } from "./application/commands/set-current-workspace/set-current-workspace.command-handler.js";
-export { UnregisterWorkspaceCommandHandler } from "./application/commands/unregister-workspace/unregister-workspace.command-handler.js";
-export { Clock } from "./domain/clock.js";
-export { WorkspaceRegistered } from "./domain/events/workspace-registered.js";
-export { WorkspaceRenamed } from "./domain/events/workspace-renamed.js";
-export { WorkspaceUnregistered } from "./domain/events/workspace-unregistered.js";
-export { WorkspaceDir } from "./domain/value-objects/workspace-dir.js";
-export { WorkspaceId } from "./domain/value-objects/workspace-id.js";
-export { WorkspaceName } from "./domain/value-objects/workspace-name.js";
-export { Workspace } from "./domain/workspace.js";
-export { WorkspaceRepository } from "./domain/workspace-repository.js";
-export { SqliteWorkspaceQueries } from "./infrastructure/sqlite-workspace-queries.js";
-export { SqliteWorkspaceRepository } from "./infrastructure/sqlite-workspace-repository.js";
-export { SystemClock } from "./infrastructure/system-clock.js";
+export { OpenWorkspaceCommandHandler } from "./application/commands/open-workspace.command-handler.js";
+export { RegisterWorkspaceCommandHandler } from "./application/commands/register-workspace.command-handler.js";
+export { RenameWorkspaceCommandHandler } from "./application/commands/rename-workspace.command-handler.js";
+export { UnregisterWorkspaceCommandHandler } from "./application/commands/unregister-workspace.command-handler.js";
+export { MikroWorkspaceQueries } from "./application/queries/mikro-workspace-queries.js";
+export { Workspace } from "./domain/aggregates/workspace/workspace.js";
+export { WorkspaceDir } from "./domain/aggregates/workspace/workspace-dir.js";
+export { WorkspaceId } from "./domain/aggregates/workspace/workspace-id.js";
+export { WorkspaceName } from "./domain/aggregates/workspace/workspace-name.js";
+export { WorkspaceRepository } from "./domain/aggregates/workspace/workspace-repository.js";
+export type { AggregateRoot } from "./domain/seedwork/aggregate-root.js";
+export { Entity } from "./domain/seedwork/entity.js";
+export { MikroWorkspaceRepository } from "./infrastructure/repositories/mikro-workspace-repository.js";
+export { WorkspaceContext } from "./infrastructure/workspace-context.js";
 
 /**
- * Run the migration coordinator against a fresh
- * `<EMPLOKE_HOME>/global.db` (or `:memory:` test DB) so the
- * repository's constructor sees the `schema_meta` row it now requires.
- * Idempotent.
+ * Build a {@link WorkspaceContext} for tests around a raw EntityManager.
+ * Tests that need event-dispatch coverage must register
+ * `DomainEventDispatcher` onto the test ORM separately (mirror
+ * `composeWorkspaceModule`'s `registerSubscriber` step).
  */
-export async function bootstrapWorkspaceRegistryDb(db: DatabaseSync): Promise<void> {
-  await runPkgMigrations(db, [{ pkg: "workspace", migrations: WORKSPACE_MIGRATIONS }]);
+export function makeTestWorkspaceContext(em: EntityManager): WorkspaceContext {
+  return new WorkspaceContext(em);
+}
+
+/**
+ * Open an in-memory MikroORM instance suitable for tests. Builds the
+ * full schema from the pkg's entity list, so tests don't hand-create
+ * any tables.
+ *
+ * `allowGlobalContext: true` lets tests work with the root EM without
+ * the explicit `RequestContext.create` boilerplate; production code
+ * goes through `em.transactional` which forks the EM automatically.
+ */
+export async function openTestWorkspaceOrm(overrides?: Partial<Options>): Promise<MikroORM> {
+  const { MikroORM: MikroORMCtor } = await import("@mikro-orm/better-sqlite");
+  // `defineConfig` returns the sqlite-typed Options shape, so the
+  // spread of `overrides` is type-compatible. Keep `overrides` last
+  // so call sites can pin extras (subscribers, logger, etc.) without
+  // losing the defaults above.
+  const config = defineConfig({
+    entities: [...WORKSPACE_ENTITIES],
+    dbName: ":memory:",
+    allowGlobalContext: true,
+    ...(overrides ?? {}),
+  });
+  const orm = await MikroORMCtor.init(config);
+  await orm.schema.createSchema();
+  return orm;
 }

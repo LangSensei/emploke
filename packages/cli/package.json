@@ -27,18 +27,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/catalog": "workspace:*",
     "@emploke/fs": "workspace:*",
     "@emploke/paths": "workspace:*",
-    "@emploke/runtime": "workspace:*",
     "@emploke/server": "workspace:*",
-    "@emploke/session": "workspace:*",
-    "@emploke/task": "workspace:*",
-    "@emploke/workspace": "workspace:*",
-    "commander": "^12.1.0",
-    "inversify": "^7.0.0",
-    "mediatr-ts": "^2.2.0",
-    "reflect-metadata": "^0.2.0"
+    "commander": "^12.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

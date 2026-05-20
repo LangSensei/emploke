@@ -21,6 +21,7 @@
   },
   "files": [
     "dist",
+    "mikro-orm.config.ts",
     "README.md",
     "LICENSE"
   ],
@@ -28,17 +29,24 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "orm:migration:create": "mikro-orm migration:create",
+    "orm:migration:up": "mikro-orm migration:up",
+    "orm:schema:fresh": "mikro-orm schema:fresh --run"
   },
   "dependencies": {
     "@emploke/fs": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",
+    "@mikro-orm/better-sqlite": "^6.6.0",
+    "@mikro-orm/core": "^6.6.0",
     "inversify": "^7.0.0",
     "mediatr-ts": "^2.2.0",
-    "reflect-metadata": "^0.2.0"
+    "reflect-metadata": "^0.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@mikro-orm/migrations": "^6.6.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"

@@ -155,15 +155,15 @@ describe("API commands (integration)", () => {
     expect(showRes.exitCode, showRes.stderr).toBe(0);
     expect(JSON.parse(showRes.stdout).id).toBe(created.id);
 
-    // `workspace current` is dashboard-only state (the dashboard
-    // writes via PUT /api/workspaces/current); the CLI reader is
-    // kept for inspection / debug. With nothing having written
-    // it, the response is `{ id: null }` — that's the documented
-    // shape.
+    // `workspace current` returns the most-recently-opened workspace
+    // (MRU). `workspace add` implicitly opens what it registers, so
+    // after a single add the current id equals `created.id`. The
+    // dashboard can later promote a different workspace by issuing
+    // `PUT /api/workspaces/current`.
     const curRes = await run(["workspace", "current", "--json"], env);
     expect(curRes.exitCode, curRes.stderr).toBe(0);
     const cur = JSON.parse(curRes.stdout) as { id: string | null };
-    expect(cur.id).toBeNull();
+    expect(cur.id).toBe(created.id);
 
     // Rm
     const rmRes = await run(["workspace", "rm", created.id], env);

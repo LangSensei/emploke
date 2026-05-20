@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MigrationCoordinator } from "../../src/migration/coordinator.js";
-import { MigrationVersionAheadError } from "../../src/migration/errors.js";
-import type { Migration } from "../../src/migration/types.js";
+import { MigrationCoordinator } from "../../src/legacy/migration/coordinator.js";
+import { MigrationVersionAheadError } from "../../src/legacy/migration/errors.js";
+import type { Migration } from "../../src/legacy/migration/types.js";
 
 let db: DatabaseSync;
 

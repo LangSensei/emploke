@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
+  OpenWorkspaceCommand,
   RegisterWorkspaceCommand,
   RegistryError,
   RenameWorkspaceCommand,
-  SetCurrentWorkspaceCommand,
   UnregisterWorkspaceCommand,
   WorkspaceCorruptedError,
   WorkspaceError,
@@ -70,7 +70,7 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  *
  * Post-Phase-1 of issue #135, this layer is a thin transport adapter:
  * write endpoints dispatch `mediator.send(new XxxCommand(...))` and
- * read endpoints call `queries.list()` / `.getById()` / `.getCurrent()`.
+ * read endpoints call `queries.list()` / `.getById()` / `.getLastOpened()`.
  * The wire shape (request body, response body, status codes) is
  * IDENTICAL to the pre-refactor implementation that wrapped
  * `WorkspaceManager` — `WorkspaceManager` is gone but every existing
@@ -163,14 +163,14 @@ export function workspacesRoutes(deps: {
   // Read the currently-selected workspace id.
   app.get("/current", async (c) => {
     try {
-      const id = await queries.getCurrentId();
+      const id = await queries.getLastOpenedId();
       return c.json({ id });
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
   });
 
-  // Set the currently-selected workspace by id.
+  // Set the currently-selected workspace by id (i.e. mark as just-opened).
   app.put("/current", async (c) => {
     const parsed = await parseJsonBody<PutCurrentBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -178,7 +178,7 @@ export function workspacesRoutes(deps: {
       return c.json({ error: "id is required (string)" }, 400);
     }
     try {
-      await mediator.send(new SetCurrentWorkspaceCommand(parsed.body.id));
+      await mediator.send(new OpenWorkspaceCommand(parsed.body.id));
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
