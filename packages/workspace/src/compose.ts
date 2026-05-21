@@ -10,44 +10,39 @@ import { WorkspaceService } from "./workspace-service.js";
 type Db = BetterSQLite3Database<typeof schema>;
 
 /**
- * Either supply `dbFile` (the composer opens better-sqlite3 + runs
- * pending migrations) or `db` (the caller passes a pre-built Drizzle
- * instance — typical for tests sharing an in-memory connection).
+ * Open a better-sqlite3 connection in WAL mode, run pending migrations,
+ * and wire up `WorkspaceService`. Tests pass `dbFile: ":memory:"`;
+ * production passes the absolute path to `global.db`.
  */
-export type WorkspaceModuleOptions = ({ readonly dbFile: string } | { readonly db: Db }) & {
+export interface WorkspaceModuleOptions {
+  readonly dbFile: string;
   readonly logger?: Logger;
-};
+}
 
 export interface WorkspaceModule {
   readonly service: WorkspaceService;
-  /** Closes the underlying connection when the composer opened it. */
+  /** Closes the underlying connection. */
   close(): Promise<void>;
 }
 
 export async function composeWorkspaceModule(
   options: WorkspaceModuleOptions,
 ): Promise<WorkspaceModule> {
-  let sqlite: BetterSqliteDatabase | null = null;
-  let db: Db;
-  if ("db" in options) {
-    db = options.db;
-  } else {
-    sqlite = new Database(options.dbFile);
-    sqlite.pragma("journal_mode = WAL");
-    sqlite.pragma("synchronous = NORMAL");
-    sqlite.pragma("foreign_keys = ON");
-    sqlite.pragma("busy_timeout = 5000");
-    db = drizzle(sqlite, { schema });
-    runPendingMigrations(sqlite);
-  }
+  const sqlite: BetterSqliteDatabase = new Database(options.dbFile);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("synchronous = NORMAL");
+  sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
+  const db: Db = drizzle(sqlite, { schema });
+  runPendingMigrations(sqlite);
 
-  const repo = new WorkspaceRepository({ db: db });
+  const repo = new WorkspaceRepository({ db });
   const service = new WorkspaceService(repo, db, options.logger);
 
   return {
     service,
     async close() {
-      sqlite?.close();
+      sqlite.close();
     },
   };
 }

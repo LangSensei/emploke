@@ -1,51 +1,46 @@
 import path from "node:path";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceService } from "@emploke/workspace";
-import { openTestWorkspaceDb } from "@emploke/workspace/testing";
-import type { Database as BetterSqliteDatabase } from "better-sqlite3";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import { buildServerContainer } from "../src/bootstrap.js";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
- * Shared scaffolding for server-side tests.
- *
- * Post de-DDD + @emploke/core extraction: workspaces are mutated
- * through the workspace service exposed on the core composition.
- * The per-workspace runtime cache opens its own DB connections internally.
+ * Shared scaffolding for server-side tests. Builds a `buildServerContainer`
+ * around an in-memory workspace registry; the per-workspace runtime cache
+ * opens its own per-workspace DB connections internally.
  */
 export interface ServerTestSubsystem {
-  readonly db: BetterSQLite3Database<Record<string, never>>;
-  readonly sqlite: BetterSqliteDatabase;
   readonly service: WorkspaceService;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly cache: PerWorkspaceContainerCache;
   readonly defaultWorkspaceParent: string;
+  /** Close the workspace registry's sqlite connection. */
+  close(): Promise<void>;
 }
 
 export async function setupTestSubsystem(opts: {
   scratch: string;
   logger?: Logger;
 }): Promise<ServerTestSubsystem> {
-  const handle = openTestWorkspaceDb();
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),
   );
   const composition = await buildServerContainer({
-    workspace: { db: handle.db },
+    workspace: { dbFile: ":memory:" },
     runtimeRegistry,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
   const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
   return {
-    db: handle.db as unknown as BetterSQLite3Database<Record<string, never>>,
-    sqlite: handle.sqlite,
     service: composition.workspaceService,
     runtimeRegistry,
     cache: composition.runtimes as PerWorkspaceContainerCache,
     defaultWorkspaceParent,
+    async close() {
+      await composition.close();
+    },
   };
 }
 
@@ -56,7 +51,7 @@ export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<v
     // best-effort
   }
   try {
-    sys.sqlite.close();
+    await sys.close();
   } catch {
     // best-effort
   }

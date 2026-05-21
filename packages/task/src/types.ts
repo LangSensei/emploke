@@ -160,11 +160,8 @@ type Db = BetterSQLite3Database<typeof schema>;
 export interface TaskManagerConfig {
   readonly catalog: CatalogService;
   readonly runtimeRegistry: RuntimeRegistry;
-  readonly tasksDir: string;
   readonly workspaceDir: string;
-  readonly workspaceId?: string;
-  readonly subprocessEnv?: NodeJS.ProcessEnv;
-  readonly defaultRuntime?: string;
+  readonly workspaceId: string;
   /**
    * Drizzle (better-sqlite3) database handle backing the `tasks` table.
    */
@@ -191,7 +188,7 @@ export interface DispatchOpts {
    * Multi-line allowed; `undefined`/empty produces a brief-only TASK.md.
    */
   readonly details?: string;
-  /** Override the configured `defaultRuntime`. */
+  /** Runtime kind. Defaults to `"copilot"`. */
   readonly runtime?: string;
   /**
    * Who launched this task. Defaults to `'standalone'` in the manager

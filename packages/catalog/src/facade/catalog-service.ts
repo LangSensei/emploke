@@ -8,7 +8,7 @@ import type { AgentEntity } from "../agent/agent-entity.js";
 import { AgentRepository } from "../agent/agent-repository.js";
 import { AgentService } from "../agent/agent-service.js";
 import { AgentNotFoundError } from "../agent/errors.js";
-import { defaultFetcherRegistry, type FetcherRegistry } from "../fetcher/index.js";
+import { defaultFetcherRegistry } from "../fetcher/index.js";
 import { McpNotFoundError } from "../mcp/errors.js";
 import type { McpEntity } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
@@ -71,15 +71,14 @@ interface CachedPlan {
  */
 export interface CatalogOptions {
   readonly db: BetterSQLite3Database<typeof schema>;
-  readonly fetchers?: FetcherRegistry;
   readonly logger?: Logger;
 }
 
 /**
  * Internal handle binding the per-entity services + repos + adapter
  * used by {@link CatalogService}. Constructed once by
- * {@link buildCatalogRuntime}; tests can build it manually to inject
- * fake fetchers.
+ * {@link buildCatalogRuntime}; tests can build it manually with
+ * fake per-entity services for cross-entity facade tests.
  */
 export interface CatalogRuntime {
   readonly mcp: McpService;
@@ -93,7 +92,7 @@ export interface CatalogRuntime {
 }
 
 export function buildCatalogRuntime(opts: CatalogOptions): CatalogRuntime {
-  const fetchers = opts.fetchers ?? defaultFetcherRegistry();
+  const fetchers = defaultFetcherRegistry();
   const logger = opts.logger ?? silentLogger;
 
   const mcpRepo = new McpRepository({ db: opts.db, logger });

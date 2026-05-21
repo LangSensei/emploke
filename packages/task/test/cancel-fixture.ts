@@ -8,7 +8,7 @@
  * `.test.ts` so vitest won't run it as a suite.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
@@ -90,7 +90,9 @@ export async function setupCancelFixture(
     logger?: { warn: (m: object | string, s?: string) => void };
   } = {},
 ): Promise<CancelFixture> {
-  const tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
+  const workspaceDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
+  const tasksDir = path.join(workspaceDir, "tasks");
+  await mkdir(tasksDir, { recursive: true });
   const orm = openTestTaskDb();
   const rt = new TestRuntime();
   if (opts.autoExitOnKill) rt.autoExitOnKill = true;
@@ -100,8 +102,8 @@ export async function setupCancelFixture(
   const m = new TaskService({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
-    tasksDir,
-    workspaceDir: tasksDir,
+    workspaceDir,
+    workspaceId: "cancel-fx-ws",
     db: orm.db,
     now: () => new Date("2026-05-18T01:00:00.000Z"),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),

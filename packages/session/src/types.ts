@@ -28,36 +28,22 @@ export interface Session {
 
 /**
  * Configuration for SessionService. After the de-DDD simplification,
- * persistence is supplied directly as an `EntityManager` (one EM per
- * workspace, owned by the @emploke/core orchestrator). The manager
- * builds a `SessionRepository` internally.
+ * persistence is supplied directly as a Drizzle handle (one per
+ * workspace, owned by the @emploke/core orchestrator).
  */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: CatalogService;
   /** Registry of runtime adapters; must contain at least the default runtime. */
   readonly runtimeRegistry: RuntimeRegistry;
-  /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */
-  readonly defaultRuntime?: string;
-  /**
-   * Absolute directory under which per-session workdirs are created.
-   * In production this is `<workspace>/sessions/` (from `workspaceLayout`).
-   */
-  readonly sessionsDir: string;
   /** Absolute path of the workspace this manager belongs to. */
   readonly workspaceDir: string;
   /**
    * Workspace UUID this manager belongs to. Surfaced as
    * `EMPLOKE_WORKSPACE` in the env bag of every interactive session
-   * launch. Optional for tests that don't need workspace identity.
+   * launch.
    */
-  readonly workspaceId?: string;
-  /**
-   * Static env overrides merged into every session-launch env bag.
-   * Production wires this from the server with `EMPLOKE_SERVER` and
-   * `EMPLOKE_SHARED_DIR`.
-   */
-  readonly subprocessEnv?: NodeJS.ProcessEnv;
+  readonly workspaceId: string;
   /**
    * Drizzle-wrapped better-sqlite3 connection backing the `sessions`
    * table.
@@ -75,7 +61,7 @@ export interface SessionManagerConfig {
 export interface CreateSessionOpts {
   /** Catalog agent name. */
   readonly agent: string;
-  /** Runtime kind. Defaults to `SessionManagerConfig.defaultRuntime`. */
+  /** Runtime kind. Defaults to `"copilot"`. */
   readonly runtime?: string;
 }
 

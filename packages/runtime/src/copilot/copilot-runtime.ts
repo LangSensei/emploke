@@ -34,7 +34,7 @@ import {
   parseCopilotActivity,
 } from "./activity.js";
 import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
-import { buildCopilotLaunchCommand } from "./launch.js";
+import { buildCopilotLaunchCommand } from "./interactive-launch.js";
 import {
   type EventBuffer,
   type LaunchCopilotHeadlessDeps,
@@ -82,6 +82,23 @@ export interface CopilotRuntimeConfig {
    * (e.g. one playwright login the user wants every project to reuse).
    */
   readonly sharedDir?: string;
+  /**
+   * Environment variables layered into every spawned subprocess and
+   * into every returned `LaunchCommand.env`. The runtime owns this
+   * because runtime is the entity that actually spawns / hands off
+   * the agent process. Session and Task contribute only their own
+   * work-context env (EMPLOKE_WORK_*, EMPLOKE_WORKSPACE*) on top.
+   *
+   * Server bootstrap populates this with `EMPLOKE_SERVER` and
+   * `EMPLOKE_SHARED_DIR` (see `@emploke/server`'s
+   * `buildSubprocessEnvBase`); other deployments may pass an empty
+   * object or omit it entirely.
+   *
+   * Values may be `undefined` to scrub a key from the inherited
+   * parent env (e.g. `EMPLOKE_HOME: undefined` keeps the server's
+   * own state dir from leaking into agent subprocesses).
+   */
+  readonly subprocessEnvBase?: NodeJS.ProcessEnv;
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -177,6 +194,7 @@ export class CopilotRuntime implements Runtime {
   private readonly copilotStateDir: string;
   private readonly copilotConfigPath: string;
   private readonly sharedDir: string;
+  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
   private readonly randomUUID: () => string;
   private readonly headlessDeps: Partial<LaunchCopilotHeadlessDeps>;
 
@@ -198,6 +216,7 @@ export class CopilotRuntime implements Runtime {
     this.copilotStateDir = config.copilotStateDir ?? DEFAULT_COPILOT_STATE_DIR;
     this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
     this.sharedDir = config.sharedDir ?? DEFAULT_SHARED_DIR;
+    this.subprocessEnvBase = config.subprocessEnvBase ?? {};
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
     this.headlessDeps = config.headlessDeps ?? {};
   }
@@ -262,7 +281,11 @@ export class CopilotRuntime implements Runtime {
     // can't smuggle shell metacharacters into the displayed
     // `--resume=<id>` string.
     const id = safeCopilotId(runtimeSessionId);
-    return buildCopilotLaunchCommand(workdir, id, opts);
+    const cmd = buildCopilotLaunchCommand(workdir, id, opts);
+    // Runtime owns the cross-cutting env base (`EMPLOKE_SERVER`,
+    // `EMPLOKE_SHARED_DIR`, ...). Session / Task layer their own
+    // work-context env on top of what we return here.
+    return { ...cmd, env: { ...this.subprocessEnvBase } as Record<string, string> };
   }
 
   async readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null> {
@@ -313,6 +336,9 @@ export class CopilotRuntime implements Runtime {
    * external tooling, not used on the hot path).
    */
   async launchHeadless(opts: LaunchHeadlessOpts): Promise<RuntimeHandle> {
+    // Merge the runtime-owned env base with the caller's per-launch
+    // additions. Caller env wins on key collision.
+    const mergedEnv: NodeJS.ProcessEnv = { ...this.subprocessEnvBase, ...opts.subprocessEnv };
     return launchCopilotHeadless(
       {
         taskDir: opts.workdir,
@@ -320,10 +346,7 @@ export class CopilotRuntime implements Runtime {
         catalog: opts.catalog,
         prompt: opts.prompt,
         workspaceDir: opts.workspaceDir,
-        // Conditional spread so callers without an env override don't
-        // poke an `undefined` into the field (forbidden under
-        // tsconfig's `exactOptionalPropertyTypes`).
-        ...(opts.subprocessEnv ? { subprocessEnv: opts.subprocessEnv } : {}),
+        subprocessEnv: mergedEnv,
       },
       {
         copilotStateDir: this.copilotStateDir,

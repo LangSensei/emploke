@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCopilotLaunchCommand } from "../../src/copilot/launch.js";
+import { buildCopilotLaunchCommand } from "../../src/copilot/interactive-launch.js";
 
 describe("buildCopilotLaunchCommand", () => {
   it("with no runtimeSessionId returns `copilot --yolo`", () => {

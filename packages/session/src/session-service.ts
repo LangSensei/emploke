@@ -9,13 +9,12 @@ const silentLogger = pino({ level: "silent" });
 
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 
-import { readAgentName } from "./agent-file.js";
 import {
   AgentNotFoundError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-import { safeJoinUnderRoot } from "./paths.js";
+import { safeJoinUnderRoot, sessionsRoot } from "./paths.js";
 import type { SessionRow } from "./schema.js";
 import { SessionRepository } from "./session-repository.js";
 import type {
@@ -34,7 +33,7 @@ const MAX_CREATE_RETRIES = 5;
 /**
  * Per-session workdir manager.
  *
- * Persistence is backed by MikroORM via `SessionRepository` against the
+ * Persistence is backed by Drizzle via `SessionRepository` against the
  * per-workspace `workspace.db`. Live activity (`lastActiveAt`,
  * `preview`) is recomputed per call from the runtime registry; workdir
  * paths are resolved from the workspace layout.
@@ -47,11 +46,9 @@ const MAX_CREATE_RETRIES = 5;
 export class SessionService {
   private readonly catalog: CatalogService;
   private readonly runtimeRegistry: RuntimeRegistry;
-  private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
   private readonly workspaceDir: string;
-  private readonly workspaceId: string | undefined;
-  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
+  private readonly workspaceId: string;
   private readonly repo: SessionRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -60,11 +57,9 @@ export class SessionService {
   constructor(config: SessionManagerConfig) {
     this.catalog = config.catalog;
     this.runtimeRegistry = config.runtimeRegistry;
-    this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
-    this.sessionsDir = path.resolve(config.sessionsDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
+    this.sessionsDir = sessionsRoot(this.workspaceDir);
     this.workspaceId = config.workspaceId;
-    this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
     this.repo = new SessionRepository({ db: config.db });
     this.now = config.now ?? (() => new Date());
@@ -86,7 +81,7 @@ export class SessionService {
       throw new AgentNotFoundError(agentName, err as Error);
     }
 
-    const runtimeKind = opts.runtime ?? this.defaultRuntime;
+    const runtimeKind = opts.runtime ?? DEFAULT_RUNTIME;
     const runtime = this.runtimeRegistry.get(runtimeKind);
 
     await mkdir(this.sessionsDir, { recursive: true });
@@ -115,10 +110,11 @@ export class SessionService {
         workspaceDir: this.workspaceDir,
       });
       const createdAt = this.now().toISOString();
-      // The provisioner has just written AGENTS.md with the canonical
-      // scope/name pair (potentially differing from `agentName` if the
-      // user passed an alias); read it back so the persisted row matches.
-      const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
+      // Catalog is the source of truth for the canonical agent FQN —
+      // `resolveResult.agent.fqn` already carries the `<scope>/<name>`
+      // form (e.g. `"public/demo"` when the user passed the alias
+      // `"demo"`). No need to re-read AGENTS.md off disk.
+      const canonicalAgent = resolveResult.agent.fqn;
       await this.repo.insert({
         id: id as string,
         agent: canonicalAgent,
@@ -275,10 +271,13 @@ export class SessionService {
 
   /**
    * Build the env bag layered onto the LaunchCommand returned by the
-   * runtime. Order (later wins on key collision):
-   *   1. `subprocessEnvBase` (server-supplied: EMPLOKE_SERVER / EMPLOKE_SHARED_DIR)
-   *   2. Runtime-contributed env (presently empty for Copilot)
-   *   3. Per-session: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_*
+   * runtime. The runtime owns cross-cutting env (`EMPLOKE_SERVER`,
+   * `EMPLOKE_SHARED_DIR`, ...) via `CopilotRuntimeConfig.subprocessEnvBase`
+   * and provides it on `launch.env`; we layer session-context env on top.
+   *
+   * Order (later wins on key collision):
+   *   1. Runtime-supplied env (from `launch.env`)
+   *   2. Per-session: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_*
    */
   private assembleLaunchEnv(
     sessionId: string,
@@ -286,15 +285,12 @@ export class SessionService {
     runtimeEnv: Readonly<Record<string, string>> | undefined,
   ): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(this.subprocessEnvBase)) {
-      if (typeof v === "string") out[k] = v;
-    }
     if (runtimeEnv !== undefined) {
       for (const [k, v] of Object.entries(runtimeEnv)) {
         out[k] = v;
       }
     }
-    if (this.workspaceId !== undefined) out.EMPLOKE_WORKSPACE = this.workspaceId;
+    out.EMPLOKE_WORKSPACE = this.workspaceId;
     out.EMPLOKE_WORKSPACE_DIR = this.workspaceDir;
     out.EMPLOKE_WORK_KIND = "session";
     out.EMPLOKE_WORK_ID = sessionId;
@@ -416,6 +412,5 @@ function defaultRandomBytes(n: number): Buffer {
 }
 
 // Re-export public sub-utilities for callers that want them.
-export { readAgentName } from "./agent-file.js";
 export { safeJoinUnderRoot } from "./paths.js";
 export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./validate.js";

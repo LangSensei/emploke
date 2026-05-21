@@ -1,13 +1,9 @@
-import { count } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { composeWorkspaceModule } from "../src/index.js";
-import { workspaces } from "../src/schema.js";
-import { openTestWorkspaceDb } from "../src/testing.js";
 
 describe("composeWorkspaceModule", () => {
-  it("returns a service + queries pair backed by the given db", async () => {
-    const handle = openTestWorkspaceDb();
-    const mod = await composeWorkspaceModule({ db: handle.db });
+  it("opens a fresh in-memory DB and serves an empty registry", async () => {
+    const mod = await composeWorkspaceModule({ dbFile: ":memory:" });
     try {
       expect(await mod.service.list()).toEqual([]);
       await mod.service.register({
@@ -19,17 +15,13 @@ describe("composeWorkspaceModule", () => {
       expect(view?.name).toBe("Compose");
     } finally {
       await mod.close();
-      handle.close();
     }
   });
 
-  it("compose({ db }) close is a no-op (caller owns connection lifecycle)", async () => {
-    const handle = openTestWorkspaceDb();
-    const mod = await composeWorkspaceModule({ db: handle.db });
+  it("close releases the underlying sqlite connection", async () => {
+    const mod = await composeWorkspaceModule({ dbFile: ":memory:" });
     await mod.close();
-    // Connection still usable after module close because the module didn't own it.
-    const row = handle.db.select({ value: count() }).from(workspaces).get();
-    expect(row?.value).toBe(0);
-    handle.close();
+    // After close, the service must not be usable (sqlite handle is closed).
+    await expect(mod.service.list()).rejects.toThrow();
   });
 });

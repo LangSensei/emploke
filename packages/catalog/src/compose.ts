@@ -4,18 +4,14 @@ import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import { buildCatalogRuntime, CatalogService } from "./facade/catalog-service.js";
-import type { FetcherRegistry } from "./fetcher/index.js";
 import * as schema from "./schema.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
-export type CatalogModuleOptions = (
-  | { readonly db: Db; readonly dbFile?: never }
-  | { readonly dbFile: string; readonly db?: never }
-) & {
-  readonly fetchers?: FetcherRegistry;
+export interface CatalogModuleOptions {
+  readonly dbFile: string;
   readonly logger?: Logger;
-};
+}
 
 export interface CatalogModule {
   readonly service: CatalogService;
@@ -23,29 +19,23 @@ export interface CatalogModule {
 }
 
 export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<CatalogModule> {
-  let sqlite: BetterSqliteDatabase | null = null;
-  let db: Db;
-  if ("db" in opts && opts.db !== undefined) {
-    db = opts.db;
-  } else {
-    sqlite = new Database(opts.dbFile as string);
-    sqlite.pragma("journal_mode = WAL");
-    sqlite.pragma("synchronous = NORMAL");
-    sqlite.pragma("foreign_keys = ON");
-    sqlite.pragma("busy_timeout = 5000");
-    db = drizzle(sqlite, { schema });
-    runPendingMigrations(sqlite);
-  }
+  const sqlite: BetterSqliteDatabase = new Database(opts.dbFile);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("synchronous = NORMAL");
+  sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
+  const db: Db = drizzle(sqlite, { schema });
+  runPendingMigrations(sqlite);
+
   const rt = buildCatalogRuntime({
     db,
-    ...(opts.fetchers !== undefined ? { fetchers: opts.fetchers } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
   const service = new CatalogService(rt);
   return {
     service,
     async close() {
-      sqlite?.close();
+      sqlite.close();
     },
   };
 }

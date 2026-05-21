@@ -177,6 +177,16 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
       // directory without baking host paths into JSON.
       sharedDir: sharedDir(home),
+      // Runtime owns the cross-cutting env (`EMPLOKE_SERVER`,
+      // `EMPLOKE_SHARED_DIR`, `EMPLOKE_HOME` scrub) that every spawned
+      // agent process inherits. Session / Task add their own work-context
+      // env (`EMPLOKE_WORK_*`, `EMPLOKE_WORKSPACE*`) on top via the
+      // runtime's launchHeadless / buildInteractiveLaunch.
+      subprocessEnvBase: buildSubprocessEnvBase({
+        hostname,
+        port,
+        sharedDir: sharedDir(home),
+      }),
     }),
   );
 
@@ -199,11 +209,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const composition = await buildServerContainer({
     workspace: { dbFile: globalDbPath(home) },
     runtimeRegistry,
-    subprocessEnvBase: buildSubprocessEnvBase({
-      hostname,
-      port,
-      sharedDir: sharedDir(home),
-    }),
     logger,
   });
   logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");

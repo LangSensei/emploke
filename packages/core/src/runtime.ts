@@ -12,7 +12,6 @@ import {
   type Workspace,
   type WorkspaceModuleOptions,
   type WorkspaceService,
-  workspaceLayout,
 } from "@emploke/workspace";
 
 /**
@@ -59,7 +58,6 @@ export interface EmplokeCore {
 export interface EmplokeCoreOptions {
   readonly workspace: WorkspaceModuleOptions;
   readonly runtimeRegistry: RuntimeRegistry;
-  readonly subprocessEnvBase?: NodeJS.ProcessEnv;
   readonly logger?: Logger;
 }
 
@@ -69,7 +67,6 @@ export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<Empl
     workspaceService: workspaceModule.service,
     runtimeRegistry: opts.runtimeRegistry,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-    ...(opts.subprocessEnvBase !== undefined ? { subprocessEnvBase: opts.subprocessEnvBase } : {}),
   });
   return {
     workspaceService: workspaceModule.service,
@@ -89,7 +86,6 @@ export class WorkspaceRuntimeCache {
   private readonly workspaceService: WorkspaceService;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly logger: Logger;
-  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
   private readonly entries = new Map<string, WorkspaceRuntime>();
   private readonly inflight = new Map<string, Promise<WorkspaceRuntime | null>>();
 
@@ -97,12 +93,10 @@ export class WorkspaceRuntimeCache {
     workspaceService: WorkspaceService;
     runtimeRegistry: RuntimeRegistry;
     logger?: Logger;
-    subprocessEnvBase?: NodeJS.ProcessEnv;
   }) {
     this.workspaceService = deps.workspaceService;
     this.runtimeRegistry = deps.runtimeRegistry;
     this.logger = deps.logger ?? silentLogger;
-    this.subprocessEnvBase = deps.subprocessEnvBase ?? {};
   }
 
   async get(id: string): Promise<WorkspaceRuntime | null> {
@@ -174,7 +168,6 @@ export class WorkspaceRuntimeCache {
     const workspace = await this.workspaceService.getById(id);
     if (!workspace) return null;
 
-    const layout = workspaceLayout(workspace.workspaceDir);
     const dbFile = path.join(workspace.workspaceDir, "workspace.db");
     const { mkdir } = await import("node:fs/promises");
     await mkdir(workspace.workspaceDir, { recursive: true });
@@ -187,20 +180,16 @@ export class WorkspaceRuntimeCache {
       dbFile,
       catalog: catalogModule.service,
       runtimeRegistry: this.runtimeRegistry,
-      sessionsDir: layout.sessions,
       workspaceDir: workspace.workspaceDir,
       workspaceId: id,
-      subprocessEnv: this.subprocessEnvBase,
       logger: this.logger,
     });
     const taskModule = await composeTaskModule({
       dbFile,
       catalog: catalogModule.service,
       runtimeRegistry: this.runtimeRegistry,
-      tasksDir: layout.tasks,
       workspaceDir: workspace.workspaceDir,
       workspaceId: id,
-      subprocessEnv: this.subprocessEnvBase,
       logger: this.logger,
     });
 

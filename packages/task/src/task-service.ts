@@ -24,7 +24,7 @@ import {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-import { safeJoinUnderRoot } from "./paths.js";
+import { safeJoinUnderRoot, tasksRoot } from "./paths.js";
 import { TaskEntity } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
 import { TaskRepository } from "./task-repository.js";
@@ -121,11 +121,9 @@ interface LiveTask {
 export class TaskService {
   private readonly catalog: CatalogService;
   private readonly runtimeRegistry: RuntimeRegistry;
-  private readonly defaultRuntime: string;
   private readonly tasksDir: string;
   private readonly workspaceDir: string;
-  private readonly workspaceId: string | undefined;
-  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
+  private readonly workspaceId: string;
   private readonly repository: TaskRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
@@ -169,11 +167,9 @@ export class TaskService {
   constructor(config: TaskManagerConfig) {
     this.catalog = config.catalog;
     this.runtimeRegistry = config.runtimeRegistry;
-    this.defaultRuntime = config.defaultRuntime ?? DEFAULT_RUNTIME;
-    this.tasksDir = path.resolve(config.tasksDir);
     this.workspaceDir = path.resolve(config.workspaceDir);
+    this.tasksDir = tasksRoot(this.workspaceDir);
     this.workspaceId = config.workspaceId;
-    this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
     this.repository = new TaskRepository({ db: config.db, logger: this.logger });
     this.now = config.now ?? (() => new Date());
@@ -226,7 +222,7 @@ export class TaskService {
     // 2. Pick the runtime + verify it supports tasks. We do this before
     //    reserving the workdir so a misconfiguration doesn't litter empty
     //    dirs on disk.
-    const runtimeKind = opts.runtime ?? this.defaultRuntime;
+    const runtimeKind = opts.runtime ?? DEFAULT_RUNTIME;
     const runtime = this.runtimeRegistry.get(runtimeKind);
     if (typeof runtime.launchHeadless !== "function") {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
@@ -361,23 +357,12 @@ export class TaskService {
         // second one arrives, switch on `runtime.kind` here.
         prompt: TASK_FRAMING_PROMPT_COPILOT,
         workspaceDir: this.workspaceDir,
-        // Self-describing context bag the subprocess (and any
-        // grandchildren it spawns through `emploke ...` calls)
-        // inherits via process.env. Merged with the static base
-        // (server URL, API key, shared dir) supplied at construction
-        // time. See LaunchHeadlessOpts.subprocessEnv for the rationale.
-        //
-        // CONCURRENCY: this object literal is freshly allocated on
-        // every dispatch — never cache it on `this`. The base is
-        // frozen (see `buildSubprocessEnvBase`) so the spread is the
-        // only mutable layer. Two concurrent dispatches each build
-        // their own object with their own `id`, then hand them to
-        // `runtime.launchHeadless` which hands them to `spawn`,
-        // which copies into the OS at process-create time — the
-        // env stops being shared the instant the child is up.
+        // Per-task work-context env. The runtime layers its own
+        // cross-cutting env (`EMPLOKE_SERVER`, `EMPLOKE_SHARED_DIR`,
+        // ...) underneath via its `subprocessEnvBase` config — we
+        // only emit the work identification fields here.
         subprocessEnv: {
-          ...this.subprocessEnvBase,
-          ...(this.workspaceId !== undefined ? { EMPLOKE_WORKSPACE: this.workspaceId } : {}),
+          EMPLOKE_WORKSPACE: this.workspaceId,
           EMPLOKE_WORKSPACE_DIR: this.workspaceDir,
           EMPLOKE_WORK_KIND: "task",
           EMPLOKE_WORK_ID: id,
@@ -816,7 +801,7 @@ export class TaskService {
       // runtime doesn't implement the optional hook, or when the
       // metadata doesn't carry the keys it needs.
       const runtimeName = existing.metadata.runtime;
-      const runtimeKey = typeof runtimeName === "string" ? runtimeName : this.defaultRuntime;
+      const runtimeKey = typeof runtimeName === "string" ? runtimeName : DEFAULT_RUNTIME;
       let runtime: Runtime;
       try {
         runtime = this.runtimeRegistry.get(runtimeKey);

@@ -10,19 +10,14 @@ import { TaskService } from "./task-service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
-export type TaskModuleOptions = (
-  | { readonly db: Db; readonly dbFile?: never }
-  | { readonly dbFile: string; readonly db?: never }
-) & {
+export interface TaskModuleOptions {
+  readonly dbFile: string;
   readonly catalog: CatalogService;
   readonly runtimeRegistry: RuntimeRegistry;
-  readonly tasksDir: string;
   readonly workspaceDir: string;
-  readonly workspaceId?: string;
-  readonly subprocessEnv?: NodeJS.ProcessEnv;
-  readonly defaultRuntime?: string;
+  readonly workspaceId: string;
   readonly logger?: Logger;
-};
+}
 
 export interface TaskModule {
   readonly service: TaskService;
@@ -30,28 +25,19 @@ export interface TaskModule {
 }
 
 export async function composeTaskModule(opts: TaskModuleOptions): Promise<TaskModule> {
-  let sqlite: BetterSqliteDatabase | null = null;
-  let db: Db;
-  if ("db" in opts && opts.db !== undefined) {
-    db = opts.db;
-  } else {
-    sqlite = new Database(opts.dbFile as string);
-    sqlite.pragma("journal_mode = WAL");
-    sqlite.pragma("synchronous = NORMAL");
-    sqlite.pragma("foreign_keys = ON");
-    sqlite.pragma("busy_timeout = 5000");
-    db = drizzle(sqlite, { schema });
-    runPendingMigrations(sqlite);
-  }
+  const sqlite: BetterSqliteDatabase = new Database(opts.dbFile);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("synchronous = NORMAL");
+  sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("busy_timeout = 5000");
+  const db: Db = drizzle(sqlite, { schema });
+  runPendingMigrations(sqlite);
 
   const service = new TaskService({
     catalog: opts.catalog,
     runtimeRegistry: opts.runtimeRegistry,
-    tasksDir: opts.tasksDir,
     workspaceDir: opts.workspaceDir,
-    ...(opts.workspaceId !== undefined ? { workspaceId: opts.workspaceId } : {}),
-    ...(opts.subprocessEnv !== undefined ? { subprocessEnv: opts.subprocessEnv } : {}),
-    ...(opts.defaultRuntime !== undefined ? { defaultRuntime: opts.defaultRuntime } : {}),
+    workspaceId: opts.workspaceId,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     db,
   });
@@ -60,7 +46,7 @@ export async function composeTaskModule(opts: TaskModuleOptions): Promise<TaskMo
     service,
     async close() {
       service.close();
-      sqlite?.close();
+      sqlite.close();
     },
   };
 }
