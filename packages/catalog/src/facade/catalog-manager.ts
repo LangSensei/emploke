@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { EntityManager } from "@mikro-orm/core";
 import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { Agent } from "../agent/agent-entity.js";
 import { type AgentResolvedNode, AgentService } from "../agent/agent-service.js";
 import { AgentNotFoundError } from "../agent/errors.js";
-import { SqliteAgentRepository } from "../agent/sqlite-agent-repository.js";
+import { MikroAgentRepository } from "../agent/mikro-agent-repository.js";
 import type {
   AgentEntry,
   AgentMetadataPatch,
@@ -27,12 +27,12 @@ import { McpNotFoundError } from "../mcp/errors.js";
 import { Mcp } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
 import { type McpFetcher, McpService } from "../mcp/mcp-service.js";
-import { SqliteMcpRepository } from "../mcp/sqlite-mcp-repository.js";
+import { MikroMcpRepository } from "../mcp/mikro-mcp-repository.js";
 import { isOriginMutable } from "../origin-mutability.js";
 import { SkillNotFoundError } from "../skill/errors.js";
 import type { Skill } from "../skill/skill-entity.js";
 import { type SkillFetcher, type SkillResolvedNode, SkillService } from "../skill/skill-service.js";
-import { SqliteSkillRepository } from "../skill/sqlite-skill-repository.js";
+import { MikroSkillRepository } from "../skill/mikro-skill-repository.js";
 import { HasDependentsError } from "./errors.js";
 import {
   buildLocalClosure,
@@ -246,21 +246,12 @@ export interface CatalogSyncResult extends CatalogInstallResult {
 
 export interface CatalogOptions {
   /**
-   * An already-opened SQLite connection to the per-workspace
-   * `workspace.db`. The catalog facade is one of multiple repositories
-   * sharing this connection (alongside task / session / workflow); the
-   * caller (workspace pkg in production, tests) owns the connection
-   * lifecycle. The catalog never calls `db.close()`.
+   * MikroORM EntityManager backing the per-workspace `workspace.db`.
+   * Catalog forks per-call internally. The caller owns the ORM's
+   * lifecycle; the facade never closes anything.
    */
-  readonly db: DatabaseSync;
+  readonly em: EntityManager;
   readonly fetchers?: FetcherRegistry;
-  /**
-   * Optional logger. Threaded into each per-entity repository so
-   * structured warnings (skipped corrupt rows, future scan issues)
-   * land in the same log stream as the rest of the server. Defaults
-   * to {@link silentLogger} when omitted — the right choice for
-   * unit tests and short-lived CLIs.
-   */
   readonly logger?: Logger;
 }
 
@@ -324,9 +315,9 @@ export class CatalogManager {
     const fetchers = opts.fetchers ?? defaultFetcherRegistry();
     const logger = opts.logger ?? silentLogger;
 
-    const mcpRepo = new SqliteMcpRepository({ db: opts.db, logger });
-    const skillRepo = new SqliteSkillRepository({ db: opts.db, logger });
-    const agentRepo = new SqliteAgentRepository({ db: opts.db, logger });
+    const mcpRepo = new MikroMcpRepository({ em: opts.em, logger });
+    const skillRepo = new MikroSkillRepository({ em: opts.em, logger });
+    const agentRepo = new MikroAgentRepository({ em: opts.em, logger });
 
     const mcpFetcher: McpFetcher = (origin) =>
       fetchers.dispatchFile(origin, "").then((b) => b.toString("utf8"));
@@ -1040,14 +1031,14 @@ export class CatalogManager {
     // Internal access to the SqliteSkillRepository's reverse-dep
     // methods through the service. We keep the reach narrow by typing
     // to just the methods we need.
-    return (this.skill as unknown as { repo: SqliteSkillRepository }).repo;
+    return (this.skill as unknown as { repo: MikroSkillRepository }).repo;
   }
 
   private getMcpRepo(): {
     findDependentAgents(targetFqn: string): Promise<string[]>;
     findDependentSkills(targetFqn: string): Promise<string[]>;
   } {
-    return (this.mcp as unknown as { repo: SqliteMcpRepository }).repo;
+    return (this.mcp as unknown as { repo: MikroMcpRepository }).repo;
   }
 
   // ─── Internals: install dispatch ───────────────────────

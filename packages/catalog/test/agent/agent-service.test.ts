@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
@@ -9,8 +9,8 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
-import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
-import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
+import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
+import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: AgentFetcher;
@@ -52,22 +52,22 @@ ${deps}
 # Body
 `;
 
-let db: DatabaseSync;
-let repo: SqliteAgentRepository;
+let orm: MikroORM;
+let repo: MikroAgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  repo = new SqliteAgentRepository({ db });
+  orm = await bootstrapCatalogOrm();
+  
+  repo = new MikroAgentRepository({ em: orm.em as EntityManager });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    await orm.close(true);
   } catch {
     // already closed
   }

@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -9,8 +9,8 @@ import {
 } from "../../src/skill/errors.js";
 import { Skill } from "../../src/skill/skill-entity.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
+import { MikroSkillRepository } from "../../src/skill/mikro-skill-repository.js";
+import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: SkillFetcher;
@@ -52,22 +52,22 @@ ${deps}
 # Body
 `;
 
-let db: DatabaseSync;
-let repo: SqliteSkillRepository;
+let orm: MikroORM;
+let repo: MikroSkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  repo = new SqliteSkillRepository({ db });
+  orm = await bootstrapCatalogOrm();
+  
+  repo = new MikroSkillRepository({ em: orm.em as EntityManager });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    await orm.close(true);
   } catch {
     // already closed
   }

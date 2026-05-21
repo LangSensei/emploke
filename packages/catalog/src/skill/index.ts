@@ -19,7 +19,7 @@ export {
   type SkillResolvePlan,
   SkillService,
 } from "./skill-service.js";
-export { SqliteSkillRepository } from "./sqlite-skill-repository.js";
+export { MikroSkillRepository } from "./mikro-skill-repository.js";
 export {
   DEFAULT_SCOPE,
   makeFqn,

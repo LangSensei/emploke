@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
@@ -29,12 +33,12 @@
   "dependencies": {
     "@emploke/catalog-fetcher": "workspace:*",
     "@emploke/logger": "workspace:*",
-    "@emploke/workspace": "workspace:*",
-    "inversify": "^7.0.0",
-    "js-yaml": "^4.1.0",
-    "mediatr-ts": "^2.2.0"
+    "@mikro-orm/better-sqlite": "^6.6.0",
+    "@mikro-orm/core": "^6.6.0",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@mikro-orm/migrations": "^6.6.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",

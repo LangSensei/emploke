@@ -1,7 +1,7 @@
-import { DatabaseSync } from "node:sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
+import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
 import {
   type CatalogConflict,
   CatalogManager,
@@ -10,11 +10,11 @@ import {
 } from "../../src/facade/catalog-manager.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
+import { MikroSkillRepository } from "../../src/skill/mikro-skill-repository.js";
+import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
 
 /**
  * Tests for the sync flow: identity check, version short-circuit, dep
@@ -131,19 +131,19 @@ ${extra}
 
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
-let db: DatabaseSync;
-let mcpRepo: SqliteMcpRepository;
-let skillRepo: SqliteSkillRepository;
-let agentRepo: SqliteAgentRepository;
+let orm: MikroORM;
+let mcpRepo: MikroMcpRepository;
+let skillRepo: MikroSkillRepository;
+let agentRepo: MikroAgentRepository;
 let fakes: Fakes;
 let mgr: CatalogManager;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  mcpRepo = new SqliteMcpRepository({ db });
-  skillRepo = new SqliteSkillRepository({ db });
-  agentRepo = new SqliteAgentRepository({ db });
+  orm = await bootstrapCatalogOrm();
+  
+  mcpRepo = new MikroMcpRepository({ em: orm.em as EntityManager });
+  skillRepo = new MikroSkillRepository({ em: orm.em as EntityManager });
+  agentRepo = new MikroAgentRepository({ em: orm.em as EntityManager });
   fakes = makeFakes();
   const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchFile);
   const skillSvc = new SkillService(skillRepo, fakes.skillFetcher, { mcps: mcpRepo });
@@ -154,9 +154,9 @@ beforeEach(async () => {
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fakes.mcpResolveAdapter);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    await orm.close(true);
   } catch {
     // already closed
   }

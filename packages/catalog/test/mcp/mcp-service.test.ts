@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   McpNameInvalidError,
@@ -9,8 +9,8 @@ import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import type { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
-import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
+import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
+import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
 
 /**
  * The McpService contract is repository-agnostic. Set up as a backend
@@ -24,15 +24,15 @@ type Backend = {
 
 const BACKENDS: Backend[] = [
   {
-    name: "SqliteMcpRepository (in-memory)",
+    name: "MikroMcpRepository (in-memory)",
     setup: async () => {
-      const db = new DatabaseSync(":memory:");
-      await bootstrapCatalogDb(db);
-      const repo = new SqliteMcpRepository({ db });
+      const orm = await bootstrapCatalogOrm();
+      
+      const repo = new MikroMcpRepository({ em: orm.em as EntityManager });
       return {
         repo,
         teardown: async () => {
-          db.close();
+          await orm.close(true);
         },
       };
     },

@@ -1,4 +1,7 @@
-import type { NotificationData } from "mediatr-ts";
+/** Marker type for catalog domain events. Was mediatr-ts DomainEvent;
+ * since the catalog event bus was never wired (PR-1 only), this is a
+ * local placeholder so the buffer code still compiles. */
+export type DomainEvent = object;
 
 /**
  * Base class for every domain entity in `@emploke/catalog`.
@@ -32,7 +35,7 @@ import type { NotificationData } from "mediatr-ts";
  * subscriber (analogous to workspace's `DomainEventDispatcher`) will
  * drain them via `pullDomainEvents` at flush time and publish
  * through the mediator. Events are typed as mediatr-ts's
- * {@link NotificationData} — the dispatch contract — rather than a
+ * {@link DomainEvent} — the dispatch contract — rather than a
  * per-pkg marker base, mirroring eShop's `IDomainEvent : INotification`
  * empty-marker approach.
  *
@@ -57,18 +60,18 @@ import type { NotificationData } from "mediatr-ts";
 export abstract class Entity {
   abstract id: string;
 
-  private _domainEvents: NotificationData[] = [];
+  private _domainEvents: DomainEvent[] = [];
 
   /**
    * Append an event to the buffer. Called from inside aggregate
    * transition methods right after the state mutation succeeds.
    */
-  protected addDomainEvent(event: NotificationData): void {
+  protected addDomainEvent(event: DomainEvent): void {
     this._domainEvents.push(event);
   }
 
   /** Drop a single buffered event. Mirror of eShop's `RemoveDomainEvent`. */
-  protected removeDomainEvent(event: NotificationData): void {
+  protected removeDomainEvent(event: DomainEvent): void {
     const idx = this._domainEvents.indexOf(event);
     if (idx >= 0) this._domainEvents.splice(idx, 1);
   }
@@ -83,7 +86,7 @@ export abstract class Entity {
    * Called by an ORM dispatcher subscriber at flush time so re-flushes
    * of the same aggregate don't re-publish the same events.
    */
-  pullDomainEvents(): NotificationData[] {
+  pullDomainEvents(): DomainEvent[] {
     const out = this._domainEvents;
     this._domainEvents = [];
     return out;

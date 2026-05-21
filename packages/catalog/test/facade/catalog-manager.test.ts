@@ -1,8 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
+import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
 import {
   type CatalogConflict,
   CatalogManager,
@@ -13,11 +13,11 @@ import { HasDependentsError } from "../../src/facade/errors.js";
 import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { SqliteMcpRepository } from "../../src/mcp/sqlite-mcp-repository.js";
+import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
-import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
+import { MikroSkillRepository } from "../../src/skill/mikro-skill-repository.js";
+import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
 
 /**
  * Shared fake fetcher: one in-memory map of (origin → file map) used
@@ -144,21 +144,21 @@ const MCP_BODY = `{
   "args": ["server.js"]
 }`;
 
-let db: DatabaseSync;
-let mcpRepo: SqliteMcpRepository;
-let skillRepo: SqliteSkillRepository;
-let agentRepo: SqliteAgentRepository;
+let orm: MikroORM;
+let mcpRepo: MikroMcpRepository;
+let skillRepo: MikroSkillRepository;
+let agentRepo: MikroAgentRepository;
 let fetchers: ReturnType<typeof makeFakeFetchers>;
 let mgr: CatalogManager;
 
 beforeEach(async () => {
   // All three catalog repos share one in-memory connection — same as
   // production where they share the workspace's `workspace.db` handle.
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  mcpRepo = new SqliteMcpRepository({ db });
-  skillRepo = new SqliteSkillRepository({ db });
-  agentRepo = new SqliteAgentRepository({ db });
+  orm = await bootstrapCatalogOrm();
+  
+  mcpRepo = new MikroMcpRepository({ em: orm.em as EntityManager });
+  skillRepo = new MikroSkillRepository({ em: orm.em as EntityManager });
+  agentRepo = new MikroAgentRepository({ em: orm.em as EntityManager });
   fetchers = makeFakeFetchers();
 
   // McpService is wired against a single-file fetcher that returns
@@ -172,9 +172,9 @@ beforeEach(async () => {
   mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fetchers.mcpResolveAdapter);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    await orm.close(true);
   } catch {
     // already closed
   }
