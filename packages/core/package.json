@@ -31,9 +31,8 @@
     "@emploke/runtime": "workspace:*",
     "@emploke/session": "workspace:*",
     "@emploke/task": "workspace:*",
+    "@emploke/terminal": "workspace:*",
     "@emploke/workspace": "workspace:*",
-    "@mikro-orm/better-sqlite": "^6.6.0",
-    "@mikro-orm/core": "^6.6.0",
     "pino": "^9.5.0"
   },
   "devDependencies": {

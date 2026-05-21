@@ -10,13 +10,13 @@ describe("buildCopilotLaunchCommand", () => {
     expect(c.display).toBe(`cd "/tmp/work-1" && copilot --yolo`);
   });
 
-  it("with runtimeSessionId uses --resume=<id> form plus --yolo", () => {
+  it("with runtimeSessionId uses --session-id=<id> form plus --yolo", () => {
     const sid = "12345678-1234-1234-1234-1234567890ab";
     const c = buildCopilotLaunchCommand("/tmp/work-1", sid);
     expect(c.cmd).toBe("copilot");
-    expect(c.args).toEqual([`--resume=${sid}`, "--yolo"]);
+    expect(c.args).toEqual([`--session-id=${sid}`, "--yolo"]);
     expect(c.cwd).toBe("/tmp/work-1");
-    expect(c.display).toBe(`cd "/tmp/work-1" && copilot --resume=${sid} --yolo`);
+    expect(c.display).toBe(`cd "/tmp/work-1" && copilot --session-id=${sid} --yolo`);
   });
 
   it("never passes the bare `-i` flag (which actually requires a prompt arg)", () => {
@@ -26,11 +26,11 @@ describe("buildCopilotLaunchCommand", () => {
     ).not.toContain("-i");
   });
 
-  it("uses the equals form for --resume (not the space-separated form)", () => {
+  it("uses the equals form for --session-id (not the space-separated form)", () => {
     const sid = "11111111-2222-3333-4444-555555555555";
     const args = buildCopilotLaunchCommand("/x", sid).args;
-    expect(args).toEqual([`--resume=${sid}`, "--yolo"]);
-    expect(args).not.toContain("--resume");
+    expect(args).toEqual([`--session-id=${sid}`, "--yolo"]);
+    expect(args).not.toContain("--session-id");
   });
 
   it("always appends --yolo to skip per-action confirmation prompts", () => {

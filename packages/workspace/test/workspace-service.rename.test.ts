@@ -25,25 +25,25 @@ async function seed(name = "Old"): Promise<void> {
 describe("WorkspaceService.rename", () => {
   it("renames the workspace", async () => {
     await seed("Old");
-    await sys.service.rename({ id: UUID_A, newName: "New" });
+    await sys.service.rename(UUID_A, { newName: "New" });
     expect((await sys.service.getById(UUID_A))?.name).toBe("New");
   });
 
   it("is a no-op rename when new name equals old", async () => {
     await seed("Same");
-    await sys.service.rename({ id: UUID_A, newName: "Same" });
+    await sys.service.rename(UUID_A, { newName: "Same" });
     expect((await sys.service.getById(UUID_A))?.name).toBe("Same");
   });
 
   it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
-    await expect(sys.service.rename({ id: UUID_A, newName: "X" })).rejects.toBeInstanceOf(
+    await expect(sys.service.rename(UUID_A, { newName: "X" })).rejects.toBeInstanceOf(
       WorkspaceNotRegisteredError,
     );
   });
 
   it("validates the new name (rejects empty)", async () => {
     await seed();
-    await expect(sys.service.rename({ id: UUID_A, newName: "" })).rejects.toBeInstanceOf(
+    await expect(sys.service.rename(UUID_A, { newName: "" })).rejects.toBeInstanceOf(
       WorkspaceNameInvalidError,
     );
   });

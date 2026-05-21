@@ -2,10 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
-import type { CatalogService } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
-import type { SessionService } from "@emploke/session";
-import type { TaskService } from "@emploke/task";
 import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -71,9 +68,7 @@ export {
  * Both managers point at the same workspace; routes pull whichever they need.
  */
 type WorkspaceVars = {
-  sessions: SessionService;
-  tasks: TaskService;
-  catalog: CatalogService;
+  runtime: import("@emploke/core").WorkspaceRuntime;
 };
 
 /**
@@ -209,6 +204,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const composition = await buildServerContainer({
     workspace: { dbFile: globalDbPath(home) },
     runtimeRegistry,
+    defaultWorkspaceParent: workspacesParentDir(home),
     logger,
   });
   logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
@@ -258,33 +254,25 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
-  app.route(
-    "/api/workspaces",
-    workspacesRoutes({
-      service: workspaceService,
-      cache,
-      defaultWorkspaceParent: workspacesParentDir(home),
-    }),
-  );
+  app.route("/api/workspaces", workspacesRoutes(composition));
 
-  // Workspace-scoped sessions and catalog. The middleware resolves :id
-  // context and stashes both `SessionService` and `catalog` on c.var; each
-  // route family reads back the one it needs via the resolver. 404 if id
-  // unknown; 5xx if the workspace row is corrupted or workspace.db cannot be opened.
+  // Workspace-scoped sessions / tasks / catalog. Middleware resolves the
+  // `:id` workspace once and stashes the whole `WorkspaceRuntime` on
+  // c.var; each route family reads the bits it needs. 404 if id is not
+  // registered; 5xx if workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
   sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
     "/:id/sessions",
-    sessionsRoutes((c) => c.get("sessions")),
+    sessionsRoutes((c) => c.get("runtime")),
   );
   app.route("/api/workspaces", sessionsApp);
 
-  // Workspace-scoped tasks. Same middleware shape as sessions.
   const tasksApp = new Hono<{ Variables: WorkspaceVars }>();
   tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
   tasksApp.route(
     "/:id/tasks",
-    tasksRoutes((c) => c.get("tasks")),
+    tasksRoutes((c) => c.get("runtime").tasks),
   );
   app.route("/api/workspaces", tasksApp);
 
@@ -292,7 +280,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes((c: import("hono").Context) => c.get("catalog") as CatalogService),
+    catalogRoutes((c) => c.get("runtime").catalog),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -435,22 +423,20 @@ function workspaceContextMiddleware(
   return async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    let ctx: Awaited<ReturnType<PerWorkspaceContainerCache["get"]>>;
+    let runtime: Awaited<ReturnType<PerWorkspaceContainerCache["get"]>>;
     try {
-      ctx = await cache.get(id);
+      runtime = await cache.get(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message, code: (err as Error)?.name }, 500);
     }
-    if (!ctx) {
+    if (!runtime) {
       return c.json(
         { error: `workspace "${id}" is not registered`, code: "WorkspaceNotRegisteredError" },
         404,
       );
     }
-    c.set("sessions", ctx.sessions);
-    c.set("tasks", ctx.tasks);
-    c.set("catalog", ctx.catalog);
+    c.set("runtime", runtime);
     await next();
   };
 }

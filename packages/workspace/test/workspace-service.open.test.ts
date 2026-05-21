@@ -32,14 +32,12 @@ describe("WorkspaceService.open", () => {
     expect(await sys.service.getLastOpenedId()).toBe(UUID_B);
 
     await new Promise((r) => setTimeout(r, 5));
-    await sys.service.open({ id: UUID_A });
+    await sys.service.open(UUID_A);
     expect(await sys.service.getLastOpenedId()).toBe(UUID_A);
   });
 
   it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
-    await expect(sys.service.open({ id: UUID_A })).rejects.toBeInstanceOf(
-      WorkspaceNotRegisteredError,
-    );
+    await expect(sys.service.open(UUID_A)).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
     expect(await sys.service.getLastOpenedId()).toBeNull();
   });
 });

@@ -95,9 +95,9 @@ export interface Runtime {
    * conversation and the CLI's notion of a session:
    *
    *  - **Pre-allocating runtimes** (e.g. Copilot, which accepts
-   *    `--resume=<arbitrary-uuid>` and creates the session if missing)
+   *    `--session-id=<arbitrary-uuid>` and creates the session if missing)
    *    return a freshly-minted id here. Subsequent {@link buildInteractiveLaunch}
-   *    calls always pass `--resume=<that-id>`.
+   *    calls always pass `--session-id=<that-id>`.
    *  - **Discovery-only runtimes** (e.g. Gemini, where the id is minted
    *    by the CLI at first launch and must be scraped from logs / fs /
    *    stdout afterwards) return `null`. The id will be filled in later
@@ -124,7 +124,7 @@ export interface Runtime {
    * `runtimeSessionId` is `null` when no resume is desired (fresh launch
    * for a discovery-only runtime, or a session that's never been
    * provisioned with a pre-allocated id). Otherwise the runtime SHOULD
-   * include `--resume=<id>` (or its CLI's equivalent).
+   * include `--session-id=<id>` (or its CLI's equivalent).
    *
    * `workdir` is the directory the CLI should be launched in (becomes
    * the returned {@link LaunchCommand.cwd}). Distinct from
@@ -347,7 +347,7 @@ export interface RuntimeHandle {
    * Persisted by callers (TaskService / SessionService) so observability
    * methods (`readActivity`, `readMetadata`, etc.) can reference it
    * later, plus drive the underlying CLI directly
-   * (e.g. `copilot --resume=<id>`).
+   * (e.g. `copilot --session-id=<id>`).
    */
   readonly runtimeSessionId?: string;
 

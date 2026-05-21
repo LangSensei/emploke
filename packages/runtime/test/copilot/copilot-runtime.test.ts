@@ -116,14 +116,14 @@ describe("CopilotRuntime", () => {
       expect(c.args).toEqual(["--yolo"]);
     });
 
-    it("returns `copilot --resume=<id> --yolo` when runtimeSessionId is set", async () => {
+    it("returns `copilot --session-id=<id> --yolo` when runtimeSessionId is set", async () => {
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
       const c = await rt.buildInteractiveLaunch(FIXED_UUID, workdir, ws);
-      expect(c.args).toEqual([`--resume=${FIXED_UUID}`, "--yolo"]);
+      expect(c.args).toEqual([`--session-id=${FIXED_UUID}`, "--yolo"]);
     });
 
     it("trusts the workspace dir in the configured config.json as a launch preflight", async () => {
@@ -234,7 +234,7 @@ describe("CopilotRuntime", () => {
     // Defense-in-depth: a tampered session.json could carry a runtimeSessionId
     // that escapes the copilot state dir. Each runtime method must treat such
     // ids as if they were null rather than naively concatenating into a path
-    // or shelling out a `--resume=<garbage>` form.
+    // or shelling out a `--session-id=<garbage>` form.
 
     const MALICIOUS_IDS = [
       "../../etc/passwd",
@@ -271,7 +271,7 @@ describe("CopilotRuntime", () => {
       expect(await exists(path.join(sentinelDir, "marker"))).toBe(true);
     });
 
-    it("buildInteractiveLaunch produces a fresh launch (no --resume) for malformed ids", async () => {
+    it("buildInteractiveLaunch produces a fresh launch (no --session-id) for malformed ids", async () => {
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
@@ -281,7 +281,7 @@ describe("CopilotRuntime", () => {
         const c = await rt.buildInteractiveLaunch(id, workdir, ws);
         expect(c.args).toEqual(["--yolo"]);
         expect(c.display).not.toContain(id);
-        expect(c.display).not.toContain("--resume");
+        expect(c.display).not.toContain("--session-id");
       }
     });
   });

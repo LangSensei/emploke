@@ -202,7 +202,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
     setError(null);
     try {
       // Resume vs fresh is decided by the runtime now: if a runtimeSessionId
-      // is persisted, buildInteractiveLaunch will produce a `--resume=<id>` form; if not,
+      // is persisted, buildInteractiveLaunch will produce a `--session-id=<id>` form; if not,
       // it produces a bare launch. Either way the dashboard just asks to spawn.
       // `opts.remote` selects between the two spawn buttons in the row;
       // server validates against the runtime's capabilities and 400s if

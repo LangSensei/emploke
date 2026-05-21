@@ -846,7 +846,7 @@ describe("buildInteractiveLaunch()", () => {
   //
   // SessionService layers a self-describing env bag onto the
   // LaunchCommand returned by the runtime so the shell that ends up
-  // running `copilot --resume <id>` (and any nested `emploke ...`
+  // running `copilot --session-id <id>` (and any nested `emploke ...`
   // calls the user makes inside it) inherits the workspace identity.
   // See SessionManagerConfig.subprocessEnv for the rationale; same
   // contract as TaskService.

@@ -37,7 +37,7 @@ interface Runtime {
    * supplied `catalog` (via skillEntries / agentEntries / getMcpContent),
    * not via on-disk catalog paths.
    *
-   * Pre-allocating runtimes (CLI accepts `--resume=<uuid>`) return a
+   * Pre-allocating runtimes (CLI accepts `--session-id=<uuid>`) return a
    * freshly minted id; discovery-only runtimes return `null` and rely
    * on the caller (or a future per-runtime discovery hook) to learn
    * the id later.
@@ -51,7 +51,7 @@ interface Runtime {
 
   /**
    * Build the exact `cmd args cwd` the user runs to drop into a CLI
-   * session. `runtimeSessionId === null` ⇒ no `--resume` flag.
+   * session. `runtimeSessionId === null` ⇒ no `--session-id` flag.
    * `workspaceDir` is the workspace root; runtimes whose interactive
    * mode requires a per-launch precondition keyed off the workspace
    * root use it to perform that precondition here, lazily.
@@ -133,7 +133,7 @@ const rt = new CopilotRuntime();
 Key design points:
 
 - **Pre-allocates a UUID at provision time** and threads it through
-  `--resume=<id>` on every launch. First launch creates the session;
+  `--session-id=<id>` on every launch. First launch creates the session;
   subsequent launches resume it. Eliminates the "scan all sessions
   and match by cwd" dance the old impl needed.
 - **Per-launch trust preflight, not workspace-bootstrap.**
@@ -152,11 +152,11 @@ Key design points:
   though `config.json`'s leading comment misleadingly says "User
   settings belong in settings.json".
 - **Defends against malformed `runtimeSessionId`.** Every method that
-  would compose the id into a filesystem path or `--resume=<id>`
+  would compose the id into a filesystem path or `--session-id=<id>`
   argument runs it through `isCopilotSessionId` first. Tampered
   persisted state with `"../../etc"` degrades gracefully — `readMetadata`
   returns null, `deleteState` is a no-op, `buildInteractiveLaunch` produces a
-  fresh launch (no `--resume`).
+  fresh launch (no `--session-id`).
 - **Activity reads share an internal helper.** `readMetadata` and the
   legacy session-state reader both go through `readCopilotWorkspaceYaml`
   so workspace.yaml parsing has one source of truth. `readActivity`
@@ -178,7 +178,7 @@ Source content is streamed from the catalog, never copied via fs paths:
 │   ├── SKILL.md
 │   └── ...                       #   sibling files preserved
 ├── .github/hooks/                # ← skill / agent `hooks/copilot/*` merged here
-└── .git/                         # ← git init -q (for --resume cwd-stability)
+└── .git/                         # ← git init -q (for --session-id cwd-stability)
 ```
 
 Scoped skill names like `langsensei/weather` are flattened to

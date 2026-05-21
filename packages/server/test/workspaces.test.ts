@@ -31,11 +31,7 @@ async function makeApp() {
   const sys = await setupTestSubsystem({ scratch });
   openSubsystems.push(sys);
   return {
-    app: workspacesRoutes({
-      service: sys.service,
-      cache: sys.cache,
-      defaultWorkspaceParent: sys.defaultWorkspaceParent,
-    }),
+    app: workspacesRoutes(sys.core),
     service: sys.service,
     cache: sys.cache,
     defaultWorkspaceParent: sys.defaultWorkspaceParent,
@@ -385,14 +381,7 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     const root = new Hono();
     root.use("*", requestId());
     root.use("*", requestLogger(cap.logger));
-    root.route(
-      "/",
-      workspacesRoutes({
-        service: sys.service,
-        cache: sys.cache,
-        defaultWorkspaceParent: sys.defaultWorkspaceParent,
-      }),
-    );
+    root.route("/", workspacesRoutes(sys.core));
 
     return {
       root,

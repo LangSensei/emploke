@@ -19,10 +19,7 @@ import {
   assertValidWorkspaceName,
   InputValidationError,
   normalizeWorkspaceDir,
-  OpenWorkspaceInput,
   RegisterWorkspaceInput,
-  RenameWorkspaceInput,
-  UnregisterWorkspaceInput,
 } from "./validate.js";
 import type { WorkspaceRepository } from "./workspace-repository.js";
 
@@ -128,60 +125,47 @@ export class WorkspaceService {
     }
   }
 
-  async open(input: { id: string }): Promise<void> {
-    this.logger.debug({ command: "open", input }, "handling command");
+  async open(id: string): Promise<void> {
+    this.logger.debug({ command: "open", id }, "handling command");
     try {
-      const parsed = OpenWorkspaceInput.safeParse(input);
-      if (!parsed.success) {
-        throw new InputValidationError("open", parsed.error.issues);
-      }
-      assertValidWorkspaceId(input.id);
-
-      const ws = await this.repo.findById(input.id);
-      if (!ws) throw new WorkspaceNotRegisteredError(input.id);
-      await this.repo.update(input.id, { lastOpenedAt: new Date().toISOString() });
-      this.logger.debug({ command: "open", id: input.id }, "command handled");
+      assertValidWorkspaceId(id);
+      const ws = await this.repo.findById(id);
+      if (!ws) throw new WorkspaceNotRegisteredError(id);
+      await this.repo.update(id, { lastOpenedAt: new Date().toISOString() });
+      this.logger.debug({ command: "open", id }, "command handled");
     } catch (err) {
       this.logger.warn({ command: "open", err }, "command failed");
       throw err;
     }
   }
 
-  async rename(input: { id: string; newName: string }): Promise<void> {
-    this.logger.debug({ command: "rename", input }, "handling command");
+  async rename(id: string, opts: { readonly newName: string }): Promise<void> {
+    this.logger.debug({ command: "rename", id, opts }, "handling command");
     try {
-      const parsed = RenameWorkspaceInput.safeParse(input);
-      if (!parsed.success) {
-        throw new InputValidationError("rename", parsed.error.issues);
-      }
-      assertValidWorkspaceId(input.id);
-      assertValidWorkspaceName(input.newName);
+      assertValidWorkspaceId(id);
+      assertValidWorkspaceName(opts.newName);
 
-      const ws = await this.repo.findById(input.id);
-      if (!ws) throw new WorkspaceNotRegisteredError(input.id);
-      if (ws.name === input.newName) return;
-      await this.repo.update(input.id, { name: input.newName });
-      this.logger.debug({ command: "rename", id: input.id }, "command handled");
+      const ws = await this.repo.findById(id);
+      if (!ws) throw new WorkspaceNotRegisteredError(id);
+      if (ws.name === opts.newName) return;
+      await this.repo.update(id, { name: opts.newName });
+      this.logger.debug({ command: "rename", id }, "command handled");
     } catch (err) {
       this.logger.warn({ command: "rename", err }, "command failed");
       throw err;
     }
   }
 
-  async unregister(input: { id: string; purge?: boolean }): Promise<void> {
-    const normalized = { id: input.id, purge: input.purge ?? false };
-    this.logger.debug({ command: "unregister", input: normalized }, "handling command");
+  async unregister(id: string, opts: { readonly purge?: boolean } = {}): Promise<void> {
+    const purge = opts.purge ?? false;
+    this.logger.debug({ command: "unregister", id, purge }, "handling command");
     try {
-      const parsed = UnregisterWorkspaceInput.safeParse(normalized);
-      if (!parsed.success) {
-        throw new InputValidationError("unregister", parsed.error.issues);
-      }
-      assertValidWorkspaceId(normalized.id);
+      assertValidWorkspaceId(id);
 
-      const existing = await this.repo.findById(normalized.id);
+      const existing = await this.repo.findById(id);
       if (!existing) return; // idempotent
 
-      if (normalized.purge) {
+      if (purge) {
         const layout = workspaceLayout(existing.workspaceDir);
         await Promise.all([
           rm(layout.sessions, { recursive: true, force: true }),
@@ -189,8 +173,8 @@ export class WorkspaceService {
         ]);
       }
 
-      await this.repo.delete(normalized.id);
-      this.logger.debug({ command: "unregister", id: normalized.id }, "command handled");
+      await this.repo.delete(id);
+      this.logger.debug({ command: "unregister", id }, "command handled");
     } catch (err) {
       this.logger.warn({ command: "unregister", err }, "command failed");
       throw err;

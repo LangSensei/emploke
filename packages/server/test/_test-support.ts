@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { EmplokeCore } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceService } from "@emploke/workspace";
 import type { Logger } from "pino";
@@ -6,11 +7,11 @@ import { buildServerContainer } from "../src/bootstrap.js";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
- * Shared scaffolding for server-side tests. Builds a `buildServerContainer`
- * around an in-memory workspace registry; the per-workspace runtime cache
- * opens its own per-workspace DB connections internally.
+ * Shared scaffolding for server-side tests. Builds the full `EmplokeCore`
+ * composition root around an in-memory workspace registry.
  */
 export interface ServerTestSubsystem {
+  readonly core: EmplokeCore;
   readonly service: WorkspaceService;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly cache: PerWorkspaceContainerCache;
@@ -20,20 +21,22 @@ export interface ServerTestSubsystem {
 }
 
 export async function setupTestSubsystem(opts: {
-  scratch: string;
-  logger?: Logger;
+  readonly scratch: string;
+  readonly logger?: Logger;
 }): Promise<ServerTestSubsystem> {
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),
   );
+  const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
   const composition = await buildServerContainer({
     workspace: { dbFile: ":memory:" },
     runtimeRegistry,
+    defaultWorkspaceParent,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
-  const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
   return {
+    core: composition,
     service: composition.workspaceService,
     runtimeRegistry,
     cache: composition.runtimes as PerWorkspaceContainerCache,
@@ -59,7 +62,7 @@ export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<v
 
 export async function registerTestWorkspace(
   sys: ServerTestSubsystem,
-  args: { id: string; workspaceDir: string; name: string },
+  args: { readonly id: string; readonly workspaceDir: string; readonly name: string },
 ): Promise<string> {
   const result = await sys.service.register({
     id: args.id,

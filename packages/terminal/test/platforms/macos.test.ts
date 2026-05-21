@@ -31,7 +31,7 @@ describe("spawnTerminalWith > macOS", () => {
     const { deps, calls } = makeDeps({ platform: "darwin" });
     await spawnTerminalWith(sampleResume, deps);
     const script = calls[0]?.args[1] as string;
-    expect(script).toContain("exec 'copilot' '--resume=12345678-1234-1234-1234-1234567890ab'");
+    expect(script).toContain("exec 'copilot' '--session-id=12345678-1234-1234-1234-1234567890ab'");
   });
 
   it("throws TerminalSpawnFailedError when osascript fails", async () => {

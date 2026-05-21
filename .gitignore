@@ -14,3 +14,7 @@ packages/server/dist/
 # Local commit-message scratch files
 .commit-msg*.txt
 
+
+scripts/inspect-db.cjs
+scripts/migrate-local-dbs.cjs
+

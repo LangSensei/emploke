@@ -74,20 +74,6 @@ export const RegisterWorkspaceInput = z.object({
     .refine((p) => path.isAbsolute(p), "workspaceDir must be an absolute path"),
 });
 
-export const RenameWorkspaceInput = z.object({
-  id: z.string(),
-  newName: z.string().max(1000, "newName payload too large"),
-});
-
-export const OpenWorkspaceInput = z.object({
-  id: z.string(),
-});
-
-export const UnregisterWorkspaceInput = z.object({
-  id: z.string(),
-  purge: z.boolean(),
-});
-
 export class InputValidationError extends Error {
   constructor(scope: string, issues: readonly { path: readonly PropertyKey[]; message: string }[]) {
     super(

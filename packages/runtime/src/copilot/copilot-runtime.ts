@@ -114,7 +114,7 @@ export interface CopilotRuntimeConfig {
 
 /**
  * The Copilot adapter. For interactive launches it pre-allocates a
- * UUID at provision time and threads it through `--resume=<id>` so
+ * UUID at provision time and threads it through `--session-id=<id>` so
  * first launch creates the session and subsequent launches resume it.
  * For headless launches the SDK mints the session id itself; the
  * provision-time UUID is unused on that path.
@@ -166,12 +166,12 @@ export interface CopilotRuntimeConfig {
  * `launchHeadless` never touches the file.
  *
  * SECURITY: every method that would compose `runtimeSessionId` into a
- * filesystem path or a `--resume=<id>` argument runs it through
+ * filesystem path or a `--session-id=<id>` argument runs it through
  * `isCopilotSessionId` first. A tampered `session.json` with a malicious id
  * (e.g. `"../../etc"` for path-traversal, or one with shell metacharacters
  * for the display string) is treated as if the id were null — refresh
  * returns "no activity", deleteState is a no-op, and buildInteractiveLaunch produces a
- * fresh launch (no --resume). That degrades gracefully for the user and
+ * fresh launch (no --session-id). That degrades gracefully for the user and
  * keeps the surface immune to malformed persisted state.
  */
 export class CopilotRuntime implements Runtime {
@@ -260,7 +260,7 @@ export class CopilotRuntime implements Runtime {
    *
    * Pure (no I/O) on the runtimeSessionId branch: a tampered or absent
    * id falls through to `buildCopilotLaunchCommand` with a `null` id,
-   * producing a fresh-launch form (no `--resume`). The trust write
+   * producing a fresh-launch form (no `--session-id`). The trust write
    * still runs; that is not a security concern because workspaceDir is
    * controlled by the caller (server, not user input).
    */
@@ -279,7 +279,7 @@ export class CopilotRuntime implements Runtime {
     await ensureDirTrusted(workspaceDir, this.copilotConfigPath);
     // Pass the id through the validator so a tampered persisted record
     // can't smuggle shell metacharacters into the displayed
-    // `--resume=<id>` string.
+    // `--session-id=<id>` string.
     const id = safeCopilotId(runtimeSessionId);
     const cmd = buildCopilotLaunchCommand(workdir, id, opts);
     // Runtime owns the cross-cutting env base (`EMPLOKE_SERVER`,

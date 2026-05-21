@@ -1,8 +1,8 @@
 import type { BuildInteractiveLaunchOpts, LaunchCommand } from "../types.js";
 
 /**
- * Build the launch command for a workdir. Uses `--resume=<id>` to seed the
- * session with a pre-allocated UUID — copilot's `--resume` flag creates a
+ * Build the launch command for a workdir. Uses `--session-id=<id>` to seed the
+ * session with a pre-allocated UUID — copilot's `--session-id` flag creates a
  * new session at that id when no session exists, and resumes the existing
  * one otherwise. So a single command form works for both first launch and
  * subsequent launches.
@@ -28,7 +28,7 @@ export function buildCopilotLaunchCommand(
   opts: BuildInteractiveLaunchOpts = {},
 ): LaunchCommand {
   const args: string[] = [];
-  if (runtimeSessionId !== null) args.push(`--resume=${runtimeSessionId}`);
+  if (runtimeSessionId !== null) args.push(`--session-id=${runtimeSessionId}`);
   if (opts.remote === true) args.push("--remote");
   args.push("--yolo");
   return {

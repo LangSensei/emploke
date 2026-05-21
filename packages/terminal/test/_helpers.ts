@@ -10,9 +10,9 @@ export const sample: LaunchCommand = {
 
 export const sampleResume: LaunchCommand = {
   cmd: "copilot",
-  args: ["--resume=12345678-1234-1234-1234-1234567890ab"],
+  args: ["--session-id=12345678-1234-1234-1234-1234567890ab"],
   cwd: "/tmp/wd",
-  display: 'cd "/tmp/wd" && copilot --resume=12345678-1234-1234-1234-1234567890ab',
+  display: 'cd "/tmp/wd" && copilot --session-id=12345678-1234-1234-1234-1234567890ab',
 };
 
 export interface SpawnCall {

@@ -137,15 +137,12 @@ importers:
       '@emploke/task':
         specifier: workspace:*
         version: link:../task
+      '@emploke/terminal':
+        specifier: workspace:*
+        version: link:../terminal
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace
-      '@mikro-orm/better-sqlite':
-        specifier: ^6.6.0
-        version: 6.6.14(@mikro-orm/core@6.6.14)
-      '@mikro-orm/core':
-        specifier: ^6.6.0
-        version: 6.6.14
       pino:
         specifier: ^9.5.0
         version: 9.14.0
@@ -1123,12 +1120,6 @@ packages:
 
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
-
-  '@mikro-orm/better-sqlite@6.6.14':
-    resolution: {integrity: sha512-xe1mS9HWQfo8ODzuQbBANW/kLkuBMJ3aiOzPZo/hzQnoViFCzKwYRF93jXo+il5HRvme5ZXNR23RivtGDZ7tYw==}
-    engines: {node: '>= 18.12.0'}
-    peerDependencies:
-      '@mikro-orm/core': ^6.0.0
 
   '@mikro-orm/cli@6.6.14':
     resolution: {integrity: sha512-pYo6BBWJEaA9rOBJAyu6IK81v8wed8ScJ9Z3/suyHVAdul6h/Y37qU/FGQqnA8qM7801pMkCWr/36ybgAaYjeQ==}
@@ -2412,10 +2403,6 @@ packages:
   sprintf-js@1.0.3:
     resolution: {integrity: sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g==}
 
-  sqlstring-sqlite@0.1.1:
-    resolution: {integrity: sha512-9CAYUJ0lEUPYJrswqiqdINNSfq3jqWo/bFJ7tufdoNeSK0Fy+d1kFTxjqO9PIqza0Kri+ZtYMfPVf1aZaFOvrQ==}
-    engines: {node: '>= 0.6'}
-
   sqlstring@2.3.3:
     resolution: {integrity: sha512-qC9iz2FlN7DQl3+wjwn3802RTyjCx7sDvfQEXchwa6CWOx07/WVfh91gBmQ9fahw8snwGEWU3xGzOt4tFyHLxg==}
     engines: {node: '>= 0.6'}
@@ -3212,25 +3199,6 @@ snapshots:
       '@lezer/lr': 1.4.10
 
   '@marijn/find-cluster-break@1.0.2': {}
-
-  '@mikro-orm/better-sqlite@6.6.14(@mikro-orm/core@6.6.14)':
-    dependencies:
-      '@mikro-orm/core': 6.6.14
-      '@mikro-orm/knex': 6.6.14(@mikro-orm/core@6.6.14)(better-sqlite3@12.10.0)
-      better-sqlite3: 12.10.0
-      fs-extra: 11.3.3
-      sqlstring-sqlite: 0.1.1
-    transitivePeerDependencies:
-      - libsql
-      - mariadb
-      - mysql
-      - mysql2
-      - pg
-      - pg-native
-      - pg-query-stream
-      - sqlite3
-      - supports-color
-      - tedious
 
   '@mikro-orm/cli@6.6.14(better-sqlite3@12.10.0)':
     dependencies:
@@ -4382,8 +4350,6 @@ snapshots:
   split2@4.2.0: {}
 
   sprintf-js@1.0.3: {}
-
-  sqlstring-sqlite@0.1.1: {}
 
   sqlstring@2.3.3: {}
 

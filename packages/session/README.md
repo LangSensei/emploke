@@ -93,13 +93,13 @@ records[0].preview        // runtime-derived display title (Copilot: workspace.y
 records[0].runtimeSessionId  // the opaque id the runtime owns
 ```
 
-Resume is the same call as launch — `buildInteractiveLaunch` produces `cd && copilot -i --resume <id>`
+Resume is the same call as launch — `buildInteractiveLaunch` produces `cd && copilot -i --session-id <id>`
 once a `runtimeSessionId` exists, or `cd && copilot -i` (fresh session) when it doesn't:
 
 ```ts
 const cmd = await sessions.buildInteractiveLaunch(records[0].id);
 console.log(cmd.display);
-// → cd "/.../20260508-9dfbdf05" && copilot -i --resume <sid>
+// → cd "/.../20260508-9dfbdf05" && copilot -i --session-id <sid>
 ```
 
 `buildInteractiveLaunch(id, { remote: true })` produces a remote-friendly variant when
@@ -114,10 +114,10 @@ the runtime supports it (otherwise throws `RuntimeDoesNotSupportRemoteError`).
 ## Caveats
 
 - **One Copilot session per emploke workdir**. Provision pre-allocates
-  a `runtimeSessionId` and threads it through `--resume=<id>` on every
+  a `runtimeSessionId` and threads it through `--session-id=<id>` on every
   launch — first launch creates the Copilot session, subsequent
   launches resume the same one. (Pre-emploke installs that ran
-  `copilot -i` directly in a workdir without `--resume` could end up
+  `copilot -i` directly in a workdir without `--session-id` could end up
   with multiple Copilot sessions per cwd; this is no longer possible
   for sessions emploke provisioned itself.)
 - **Path matching**: case-insensitive on Windows, case-sensitive elsewhere

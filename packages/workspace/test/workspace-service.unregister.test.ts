@@ -36,7 +36,7 @@ describe("WorkspaceService.unregister", () => {
     await writeFile(path.join(wsDir, "user-file.txt"), "user data", "utf8");
     await writeFile(path.join(wsDir, "sessions", "trace.txt"), "agent file", "utf8");
 
-    await sys.service.unregister({ id: UUID_A, purge: false });
+    await sys.service.unregister(UUID_A, { purge: false });
 
     expect(await sys.service.getById(UUID_A)).toBeNull();
     expect((await stat(path.join(wsDir, "user-file.txt"))).isFile()).toBe(true);
@@ -48,7 +48,7 @@ describe("WorkspaceService.unregister", () => {
     await seedOnDisk(wsDir);
     await writeFile(path.join(wsDir, "user-file.txt"), "user data", "utf8");
 
-    await sys.service.unregister({ id: UUID_A, purge: true });
+    await sys.service.unregister(UUID_A, { purge: true });
 
     await expect(stat(path.join(wsDir, "sessions"))).rejects.toThrow();
     await expect(stat(path.join(wsDir, "tasks"))).rejects.toThrow();
@@ -57,14 +57,14 @@ describe("WorkspaceService.unregister", () => {
   });
 
   it("idempotent for unregistered ids (no throw)", async () => {
-    await expect(sys.service.unregister({ id: UUID_A, purge: false })).resolves.toBeUndefined();
-    await expect(sys.service.unregister({ id: UUID_A, purge: true })).resolves.toBeUndefined();
+    await expect(sys.service.unregister(UUID_A, { purge: false })).resolves.toBeUndefined();
+    await expect(sys.service.unregister(UUID_A, { purge: true })).resolves.toBeUndefined();
   });
 
   it("purge defaults to false", async () => {
     const wsDir = path.join(scratch, "p");
     await seedOnDisk(wsDir);
-    await sys.service.unregister({ id: UUID_A });
+    await sys.service.unregister(UUID_A);
     expect((await stat(path.join(wsDir, "sessions"))).isDirectory()).toBe(true);
   });
 });

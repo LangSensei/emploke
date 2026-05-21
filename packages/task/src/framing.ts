@@ -11,7 +11,7 @@
  * Why: on Windows, `cmd.exe` treats LF inside a `/c` payload as a
  * statement separator. Any user-supplied LF in the spawn argv would
  * truncate the copilot CLI's argument list, dropping
- * `--output-format json`, `--resume`, `--allow-all` etc., causing
+ * `--output-format json`, `--session-id`, `--allow-all` etc., causing
  * silent task degradation (Bug A in #109). Moving user bytes out of
  * argv eliminates that class of bug entirely — the framing prompt
  * is a fixed single-line ASCII string we author ourselves, so there

@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import path from "node:path";
+import { type EmplokeCore, WorkspaceHasLiveTasksError } from "@emploke/core";
 import {
   RegistryError,
   WorkspaceCorruptedError,
@@ -10,14 +9,9 @@ import {
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  type WorkspaceService,
 } from "@emploke/workspace";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import {
-  type PerWorkspaceContainerCache,
-  WorkspaceHasLiveTasksError,
-} from "../per-workspace-container.js";
 import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
 import type {
   WorkspaceCreateBody,
@@ -25,35 +19,15 @@ import type {
   WorkspacePatchBody,
 } from "./manifest.js";
 
-/**
- * Build a JSON error response for a typed workspace error. Picks a
- * status via `workspaceErrorStatus`, falling back to `fallback`.
- *
- * Server-side errors (status >= 500) are logged to stderr at the boundary
- * so operators get the full diagnostic before the body is sanitised for
- * the client. Same contract as the runtime error path in sessions.ts /
- * tasks.ts (#24) — every 5xx that escapes a route handler must be
- * observable in logs.
- *
- * The `as any` cast bridges Hono's literal-union of HTTP status codes
- * with our `number` return — every value `workspaceErrorStatus`
- * returns (and every fallback) is in {400,404,409,500}.
- */
 function wsErrorJson(c: Context, err: unknown, fallback: number) {
   const status = workspaceErrorStatus(err) ?? fallback;
   if (status >= 500) {
     logFault(c, err, "workspaces: 5xx fault");
   }
-  // biome-ignore lint/suspicious/noExplicitAny: see helper docstring above
+  // biome-ignore lint/suspicious/noExplicitAny: Hono status type is a union literal.
   return c.json(errorBody(err), status as any);
 }
 
-/**
- * Defensive parse aliases — the manifest types are the strict wire
- * contract, but we still validate every field at runtime because the
- * JSON we get on the wire is `unknown` regardless of TypeScript's
- * declared shape.
- */
 type CreateBodyRaw = { [K in keyof WorkspaceCreateBody]?: unknown };
 type PutCurrentBodyRaw = { [K in keyof WorkspaceCurrentPutBody]?: unknown };
 type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
@@ -63,46 +37,26 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  * tasks, catalog) live under `/api/workspaces/:id/...` and are mounted
  * separately so the workspace id is part of the resource URL.
  *
- * Post de-DDD (this branch), this layer is a thin transport adapter:
- * write endpoints call `service.register/open/rename/unregister(...)` and
- * read endpoints call `queries.list()` / `.getById()` / `.getLastOpened()`.
- * The wire shape (request body, response body, status codes) is
- * IDENTICAL to the pre-refactor implementation that wrapped
- * `WorkspaceManager`.
- *
- * `defaultWorkspaceParent` is the directory under which auto-generated
- * workspace directories are created when the user creates a workspace
- * without specifying a `workspaceDir`. Server bootstrap passes
- * `<EMPLOKE_HOME>/workspaces`; the route mints a fresh UUID-named
- * directory under it per such request.
+ * This is a thin transport adapter — every endpoint is parse body →
+ * dispatch to `@emploke/core` → format response. The orchestration
+ * (UUID minting, default workspaceDir, cache invalidation) lives in
+ * core so CLI / MCP / SDK consumers get it for free.
  */
-export function workspacesRoutes(deps: {
-  service: WorkspaceService;
-  cache: PerWorkspaceContainerCache;
-  defaultWorkspaceParent: string;
-}): Hono {
+export function workspacesRoutes(core: EmplokeCore): Hono {
   const app = new Hono();
-  const { service, cache, defaultWorkspaceParent } = deps;
-  const queries = service;
+  const { workspaceService: service } = core;
 
   // List all registered workspaces.
   app.get("/", async (c) => {
     try {
-      const list = await queries.list();
-      return c.json(list);
+      return c.json(await service.list());
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
   });
 
-  // Add a workspace: init the directory + register it. The id is
-  // generated server-side. The display name is mandatory; `workspaceDir`
-  // is optional — when omitted, the server generates a fresh
-  // `<defaultWorkspaceParent>/<uuid>/` directory and uses that.
-  //
-  // Wire-break note (issue #121): the pre-v2 field name `workdir` and
-  // the entire `defaults` block are gone. We don't 400 callers who
-  // still send them — extra fields are silently dropped.
+  // Create a workspace. `name` required. `workspaceDir` optional — when
+  // omitted, core mints `<defaultWorkspaceParent>/<uuid>/`.
   app.post("/", async (c) => {
     const parsed = await parseJsonBody<CreateBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -110,41 +64,18 @@ export function workspacesRoutes(deps: {
     if (typeof body.name !== "string") {
       return c.json({ error: "name is required (string)" }, 400);
     }
-    let workspaceDir: string;
-    let preallocatedId: string;
-    if (body.workspaceDir === undefined || body.workspaceDir === null || body.workspaceDir === "") {
-      // Auto-generate. Mint the workspace id here and reuse it as the
-      // on-disk dir name so the registry id and the directory basename
-      // stay coupled — `ls $EMPLOKE_HOME/workspaces/` reads as "list
-      // workspace ids" and the dashboard URL `<wsId>` matches the path
-      // on disk.
-      preallocatedId = randomUUID();
-      workspaceDir = path.join(defaultWorkspaceParent, preallocatedId);
-    } else if (typeof body.workspaceDir !== "string" || body.workspaceDir.trim() === "") {
+    if (
+      body.workspaceDir !== undefined &&
+      body.workspaceDir !== null &&
+      (typeof body.workspaceDir !== "string" || body.workspaceDir.trim() === "")
+    ) {
       return c.json({ error: "workspaceDir, when present, must be a non-empty string" }, 400);
-    } else {
-      preallocatedId = randomUUID();
-      workspaceDir = path.resolve(body.workspaceDir);
     }
-
     try {
-      const result = await service.register({
-        id: preallocatedId,
-        workspaceDir,
+      const view = await core.registerWorkspace({
         name: body.name,
+        ...(typeof body.workspaceDir === "string" ? { workspaceDir: body.workspaceDir } : {}),
       });
-      // Re-query so the response carries the canonical view (incl.
-      // server-generated `createdAt`). One extra round-trip against
-      // SQLite is cheaper than threading the view back through the
-      // command return value.
-      const view = await queries.getById(result.id);
-      if (!view) {
-        // Should be impossible — we just created it. If the row
-        // vanished between create and read, surface a typed 5xx so
-        // the operator can investigate (likely concurrent unregister
-        // during the same tick).
-        return c.json({ error: "workspace registered but not readable back" }, 500);
-      }
       logEvent(c, "workspace created", {
         workspaceId: view.id,
         name: view.name,
@@ -159,14 +90,13 @@ export function workspacesRoutes(deps: {
   // Read the currently-selected workspace id.
   app.get("/current", async (c) => {
     try {
-      const id = await queries.getLastOpenedId();
-      return c.json({ id });
+      return c.json({ id: await service.getLastOpenedId() });
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
   });
 
-  // Set the currently-selected workspace by id (i.e. mark as just-opened).
+  // Set the currently-selected workspace by id (mark as just-opened).
   app.put("/current", async (c) => {
     const parsed = await parseJsonBody<PutCurrentBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -174,7 +104,7 @@ export function workspacesRoutes(deps: {
       return c.json({ error: "id is required (string)" }, 400);
     }
     try {
-      await service.open({ id: parsed.body.id });
+      await service.open(parsed.body.id);
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
@@ -185,9 +115,9 @@ export function workspacesRoutes(deps: {
   // Get a single workspace.
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
-    let view: Awaited<ReturnType<WorkspaceService["getById"]>>;
+    let view: Awaited<ReturnType<typeof service.getById>>;
     try {
-      view = await queries.getById(id);
+      view = await service.getById(id);
     } catch (err) {
       return wsErrorJson(c, err, 500);
     }
@@ -200,27 +130,20 @@ export function workspacesRoutes(deps: {
     return c.json(view);
   });
 
-  // Update a workspace's mutable fields (name).
-  //
-  // Wire-break note (issue #121): the `defaults` field on the patch is
-  // gone. The only mutable field today is `name`.
+  // Rename a workspace (`name` is currently the only mutable field).
   app.patch("/:id", async (c) => {
     const id = c.req.param("id");
     const parsed = await parseJsonBody<PatchBodyRaw>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const body = parsed.body;
-
     if (body.name === undefined) {
       return c.json({ error: "patch must include 'name'" }, 400);
     }
     if (typeof body.name !== "string") {
       return c.json({ error: "name, when present, must be a string" }, 400);
     }
-
     try {
-      await service.rename({ id, newName: body.name });
-      await cache.invalidate(id);
-      const view = await queries.getById(id);
+      const view = await core.renameWorkspace(id, { newName: body.name });
       if (!view) {
         return c.json(
           { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
@@ -234,44 +157,32 @@ export function workspacesRoutes(deps: {
     }
   });
 
-  // Remove a workspace. Default behaviour removes only the metadata
-  // (the row in `global.db`); user files preserved. Pass
-  // `?purge=1` to also rm every emploke-owned subdirectory under the
-  // workspace's workspaceDir (sessions/, tasks/). The workspaceDir
-  // itself is never removed.
+  // Remove a workspace (idempotent). Default removes only metadata;
+  // `?purge=1` also deletes emploke-owned subdirs (sessions/, tasks/).
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
     const purge = c.req.query("purge") === "1";
     try {
-      await service.unregister({ id, purge });
+      await core.unregisterWorkspace(id, { purge });
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
-    await cache.invalidate(id);
     logEvent(c, "workspace deleted", { workspaceId: id, purge });
     return c.body(null, 204);
   });
 
-  // Force the cached `PerWorkspaceContainer` for this id to be rebuilt
-  // on the next request. Use case: catalog drift — the user installed
-  // an agent through a separate process that mutated the workspace.db
-  // catalog tables out-of-band, and the cached `CatalogManager`'s
-  // SQLite handle (or downstream caches) need a clean restart.
-  //
-  // Returns:
+  // Force-rebuild the cached per-workspace container.
   //   - 204 on success (the fresh container is also pre-loaded so the
   //     next request hits cache).
   //   - 404 if the workspace is no longer registered.
-  //   - 409 with `code=WorkspaceHasLiveTasksError` when there are live
-  //     task subprocesses; reloading would orphan them and race the
-  //     fresh `recoverOrphaned` sweep. Caller cancels the tasks (or
-  //     waits) and retries.
-  //   - 500 for any other load failure, surfaced as `errorBody(err)`.
+  //   - 409 with `code=WorkspaceHasLiveTasksError` when reload would
+  //     orphan live task subprocesses.
+  //   - 500 for any other load failure.
   app.post("/:id/reload", async (c) => {
     const id = c.req.param("id");
     try {
-      const ctx = await cache.reload(id);
-      if (!ctx) {
+      const view = await core.reloadWorkspace(id);
+      if (view === null) {
         return c.json(
           { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
           404,
@@ -290,11 +201,7 @@ export function workspacesRoutes(deps: {
   return app;
 }
 
-/**
- * Map workspace errors to HTTP status codes. Generic 5xx for
- * unrecognised errors; the body is sanitised by `errorBody` so
- * internals never leak.
- */
+/** Map workspace errors to HTTP status codes; null falls back to caller default. */
 function workspaceErrorStatus(err: unknown): number | null {
   if (err instanceof WorkspaceNameInvalidError) return 400;
   if (err instanceof WorkspaceIdInvalidError) return 400;
