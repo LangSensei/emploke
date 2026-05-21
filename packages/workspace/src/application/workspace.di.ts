@@ -24,6 +24,7 @@ import { OpenWorkspaceCommandValidator } from "./validations/open-workspace.comm
 import { RegisterWorkspaceCommandValidator } from "./validations/register-workspace.command-validator.js";
 import { RenameWorkspaceCommandValidator } from "./validations/rename-workspace.command-validator.js";
 import { UnregisterWorkspaceCommandValidator } from "./validations/unregister-workspace.command-validator.js";
+import { UnitOfWork } from "./unit-of-work.js";
 
 /**
  * Concrete validators registered against the abstract `CommandValidator`
@@ -151,6 +152,11 @@ export async function composeWorkspaceModule(
   // DI keep working.
   const ctx = new WorkspaceContext(orm.em as EntityManager);
   container.bind(WorkspaceContext).toConstantValue(ctx);
+  // Also expose under the generic UnitOfWork token so the shared
+  // TransactionBehavior (and any other UnitOfWork-aware code) can
+  // resolve a BC-agnostic handle. Per-workspace child containers
+  // OVERRIDE this binding to point at their own per-workspace context.
+  container.bind(UnitOfWork).toConstantValue(ctx);
 
   // ── 3. Domain / application bindings ────────────────────
   container.bind(DomainEventDispatcher).toSelf().inSingletonScope();
