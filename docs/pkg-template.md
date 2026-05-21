@@ -85,6 +85,39 @@ This rule prevents the "where do I find the `Workspace` interface" drift
 that plagued emploke before (DTOs scattered across `service.ts`,
 `schema.ts`, separate `dto.ts`).
 
+## Test file naming
+
+Test files mirror the source file they test, with `.test.ts` appended.
+Large suites split by feature with a `.<feature>` infix.
+
+| source                          | test                                            |
+| ------------------------------- | ----------------------------------------------- |
+| `<entity>-service.ts`           | `<entity>-service.test.ts`                      |
+| `<entity>-service.ts` (per-feature suite) | `<entity>-service.<feature>.test.ts`  |
+| `<entity>-repository.ts`        | `<entity>-repository.test.ts`                   |
+| `<entity>-repository.ts` (per-feature) | `<entity>-repository.<feature>.test.ts`  |
+| `<entity>-entity.ts`            | `<entity>-entity.test.ts`                       |
+| `validate.ts`                   | `validate.test.ts`                              |
+| `paths.ts`                      | `paths.test.ts`                                 |
+| `compose.ts`                    | `compose.test.ts`                               |
+
+Examples in-tree:
+- `workspace-service.register.test.ts`, `workspace-service.rename.test.ts`,
+  `workspace-service.reads.test.ts` — per-feature splits of the same
+  service class.
+- `task-service.cancel-orphan.test.ts`, `task-service.delete-no-longer-kills.test.ts`
+  — per-scenario splits.
+- `task-repository.failure-union.test.ts`, `task-repository.origin-filter.test.ts`
+  — per-feature splits of the repository.
+
+Tests under a sub-folder mirror the source sub-folder:
+`packages/catalog/src/agent/agent-service.ts` →
+`packages/catalog/test/agent/agent-service.test.ts`.
+
+NEVER name a test file by an old class name (`manager.test.ts` was wrong
+after `SessionManager` was renamed to `SessionService`) or by a non-source
+concept word.
+
 ## Naming conventions
 
 > See `files/architecture-design.md` Section 9 for the full rationale.
