@@ -27,12 +27,7 @@ import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type DispatchOpts,
-  type Task,
-  TaskManager,
-  TaskRepository,
-} from "../../src/index.js";
+import { type DispatchOpts, type Task, TaskManager, TaskRepository } from "../../src/index.js";
 import { openTestTaskDb } from "../../src/testing.js";
 
 let tasksDir: string;

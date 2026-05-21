@@ -1,4 +1,4 @@
-import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
+import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import { McpNotFoundError, McpOriginConflictError } from "./errors.js";
 import { Mcp } from "./mcp-entity.js";

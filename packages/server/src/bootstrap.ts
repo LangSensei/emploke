@@ -1,8 +1,4 @@
-import {
-  composeEmplokeCore,
-  type EmplokeCore,
-  type EmplokeCoreOptions,
-} from "@emploke/core";
+import { composeEmplokeCore, type EmplokeCore, type EmplokeCoreOptions } from "@emploke/core";
 
 /**
  * Build the server-process composition root.

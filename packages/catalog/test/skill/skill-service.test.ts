@@ -1,5 +1,6 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { EntryFile } from "../../src/fetcher/index.js";
+import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import {
   PlanStaleError,
   SkillFrontmatterError,
@@ -8,7 +9,6 @@ import {
 } from "../../src/skill/errors.js";
 import { Skill } from "../../src/skill/skill-entity.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
@@ -58,7 +58,7 @@ let svc: SkillService;
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
-  
+
   repo = new DrizzleSkillRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);

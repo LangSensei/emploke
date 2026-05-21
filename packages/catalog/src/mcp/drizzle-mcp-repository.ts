@@ -1,8 +1,8 @@
-import { eq, count } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
-import { agentMcpDeps, mcps, skillMcpDeps } from "../schema.js";
+import { count, eq } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type * as schema from "../schema.js";
+import { agentMcpDeps, mcps, skillMcpDeps } from "../schema.js";
 import { Mcp } from "./mcp-entity.js";
 import type { McpRepository } from "./mcp-repository.js";
 
@@ -58,17 +58,11 @@ export class DrizzleMcpRepository implements McpRepository {
 
   async delete(fqn: string): Promise<void> {
     const skillDepCount =
-      this.db
-        .select({ c: count() })
-        .from(skillMcpDeps)
-        .where(eq(skillMcpDeps.targetFqn, fqn))
-        .get()?.c ?? 0;
+      this.db.select({ c: count() }).from(skillMcpDeps).where(eq(skillMcpDeps.targetFqn, fqn)).get()
+        ?.c ?? 0;
     const agentDepCount =
-      this.db
-        .select({ c: count() })
-        .from(agentMcpDeps)
-        .where(eq(agentMcpDeps.targetFqn, fqn))
-        .get()?.c ?? 0;
+      this.db.select({ c: count() }).from(agentMcpDeps).where(eq(agentMcpDeps.targetFqn, fqn)).get()
+        ?.c ?? 0;
     if (skillDepCount + agentDepCount > 0) {
       const e = new Error(
         `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,

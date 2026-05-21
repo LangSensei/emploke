@@ -1,19 +1,9 @@
 import path from "node:path";
-import {
-  type CatalogQueries,
-  type CatalogService,
-  composeCatalogModule,
-} from "@emploke/catalog";
+import { type CatalogQueries, type CatalogService, composeCatalogModule } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import {
-  composeSessionModule,
-  type SessionManager,
-} from "@emploke/session";
-import {
-  composeTaskModule,
-  type TaskManager,
-} from "@emploke/task";
+import { composeSessionModule, type SessionManager } from "@emploke/session";
+import { composeTaskModule, type TaskManager } from "@emploke/task";
 import {
   composeWorkspaceModule,
   type WorkspaceModuleOptions,
@@ -80,9 +70,7 @@ export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<Empl
     queries: workspaceModule.queries,
     runtimeRegistry: opts.runtimeRegistry,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-    ...(opts.subprocessEnvBase !== undefined
-      ? { subprocessEnvBase: opts.subprocessEnvBase }
-      : {}),
+    ...(opts.subprocessEnvBase !== undefined ? { subprocessEnvBase: opts.subprocessEnvBase } : {}),
   });
   return {
     workspaceService: workspaceModule.service,

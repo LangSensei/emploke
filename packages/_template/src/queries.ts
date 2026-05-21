@@ -1,6 +1,6 @@
 import type { __Entity__Repository } from "./repository.js";
 import type { __Entity__Row } from "./schema.js";
-import type { List__Entity__Opts, __Entity__ } from "./types.js";
+import type { __Entity__, List__Entity__Opts } from "./types.js";
 
 /**
  * Read surface for `@emploke/__PKG__`. ALL list / get / lookup methods

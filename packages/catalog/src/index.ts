@@ -11,16 +11,8 @@
  *     `server/_shared.ts` can name them.
  */
 
-// ─── catalog-fetcher re-exports ─────────────────────
-export {
-  FetchError,
-  type FetcherRegistry,
-  normalizeOrigin,
-  OriginParseError,
-  type ParsedOrigin,
-  parseOrigin,
-} from "@emploke/catalog-fetcher";
-
+// ─── Frontmatter utility (re-exported from @emploke/fs for convenience) ─
+export { applyFrontmatterPatch } from "@emploke/fs";
 // ─── Errors ─────────────────────────────────────────
 export {
   AgentFrontmatterError,
@@ -33,8 +25,12 @@ export {
 export type { AgentFetcher } from "./agent/index.js";
 export * as agent from "./agent/index.js";
 export { Agent } from "./agent/index.js";
-// ─── Drizzle schema (low-level row access for tests/migrations) ─
-export * as schema from "./schema.js";
+// ─── Composition root hook ─────────────────────────
+export {
+  type CatalogModule,
+  type CatalogModuleOptions,
+  composeCatalogModule,
+} from "./compose.js";
 // ─── Wire DTOs (HTTP-shaped projections) ────────────
 export type {
   Agent as AgentPojo,
@@ -74,8 +70,15 @@ export {
   type McpResolvedNode,
   type OrphanedEntry,
 } from "./facade/index.js";
-// ─── Frontmatter utility (markdown patch) ───────────
-export { applyFrontmatterPatch } from "./frontmatter/patch.js";
+// ─── catalog-fetcher re-exports ─────────────────────
+export {
+  FetchError,
+  type FetcherRegistry,
+  normalizeOrigin,
+  OriginParseError,
+  type ParsedOrigin,
+  parseOrigin,
+} from "./fetcher/index.js";
 export {
   McpInvalidJsonError,
   McpNameInvalidError,
@@ -94,14 +97,10 @@ export {
   writeMeta as writeMcpMeta,
 } from "./mcp/mcp-format.js";
 export { splitMcpName, validateMcpName } from "./mcp/validate.js";
-// ─── Composition root hook ─────────────────────────
-export {
-  composeCatalogModule,
-  type CatalogModule,
-  type CatalogModuleOptions,
-} from "./compose.js";
 // ─── Origin mutability ──────────────────────────────
 export { ImmutableOriginError, isOriginMutable } from "./origin-mutability.js";
+// ─── Drizzle schema (low-level row access for tests/migrations) ─
+export * as schema from "./schema.js";
 export {
   CyclicDependencyError,
   PlanStaleError,

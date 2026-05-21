@@ -1,5 +1,4 @@
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
-import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 import type {
   TaskCancellation,
   TaskFailure,
@@ -7,6 +6,7 @@ import type {
   TaskStatus,
   TaskSuccess,
 } from "./types.js";
+import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 
 const VALID_STATUSES = new Set<TaskStatus>(["running", "succeeded", "failed", "cancelled"]);
 const VALID_ORIGINS = new Set<TaskOrigin>(["standalone", "workflow"]);

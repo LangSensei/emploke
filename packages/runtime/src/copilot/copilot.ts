@@ -2,7 +2,6 @@ import { open, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { SessionEvent } from "@github/copilot-sdk";
 import {
   RuntimeDoesNotSupportRemoteError,
@@ -15,11 +14,13 @@ import type { PlaceholderContext } from "../placeholders.js";
 import type {
   ActivityItem,
   ActivityResult,
+  AgentContentSource,
   BuildInteractiveLaunchOpts,
   LaunchCommand,
   LaunchHeadlessOpts,
   ProvisionContext,
   ReadActivityOpts,
+  ResolvedAgent,
   Runtime,
   RuntimeCapabilities,
   RuntimeHandle,
@@ -203,8 +204,8 @@ export class CopilotRuntime implements Runtime {
 
   async provision(
     workdir: string,
-    agent: AgentResolveResult,
-    catalog: CatalogQueries,
+    agent: ResolvedAgent,
+    catalog: AgentContentSource,
     ctx: ProvisionContext,
   ): Promise<{ runtimeSessionId: string }> {
     const placeholders: PlaceholderContext = {

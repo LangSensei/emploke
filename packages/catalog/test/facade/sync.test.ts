@@ -1,22 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
 import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
-import {
-  buildCatalogRuntime,
-  CatalogQueries,
-} from "../../src/facade/catalog-queries.js";
+import { CatalogQueries } from "../../src/facade/catalog-queries.js";
 import { CatalogService } from "../../src/facade/catalog-service.js";
 import type {
   CatalogConflict,
   McpResolveAdapter,
   McpResolvedNode,
 } from "../../src/facade/plan-types.js";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
+import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
@@ -143,7 +140,7 @@ let mgr: { service: CatalogService; queries: CatalogQueries };
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
-  
+
   mcpRepo = new DrizzleMcpRepository({ db: orm.db });
   skillRepo = new DrizzleSkillRepository({ db: orm.db });
   agentRepo = new DrizzleAgentRepository({ db: orm.db });
@@ -368,7 +365,9 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  skills:\n    - "file:/abs/loner"`,
       ),
     });
-    await expect(mgr.service.installSkill("file:/abs/loner")).rejects.toBeInstanceOf(CyclicDependencyError);
+    await expect(mgr.service.installSkill("file:/abs/loner")).rejects.toBeInstanceOf(
+      CyclicDependencyError,
+    );
   });
 });
 

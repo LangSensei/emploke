@@ -1,9 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import {
-  WorkspaceIdInvalidError,
-  WorkspaceNameInvalidError,
-} from "./errors.js";
+import { WorkspaceIdInvalidError, WorkspaceNameInvalidError } from "./errors.js";
 
 /**
  * Validation helpers for workspace inputs.
@@ -61,9 +58,7 @@ export function isValidWorkspaceName(name: unknown): name is string {
 /** Resolve to absolute. Throws on empty / non-string. */
 export function normalizeWorkspaceDir(value: unknown): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new TypeError(
-      `workspaceDir must be a non-empty string, got ${String(value)}`,
-    );
+    throw new TypeError(`workspaceDir must be a non-empty string, got ${String(value)}`);
   }
   return path.resolve(value);
 }

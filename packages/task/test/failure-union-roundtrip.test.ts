@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TaskRepository, Task } from "../src/index.js";
+import { Task, TaskRepository } from "../src/index.js";
 import { openTestTaskDb } from "../src/testing.js";
 import type { TaskCancellation, TaskFailure } from "../src/types.js";
 

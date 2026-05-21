@@ -9,7 +9,6 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,

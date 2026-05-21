@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import {
   McpNameInvalidError,
   McpNotFoundError,
@@ -8,7 +9,6 @@ import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import type { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
@@ -26,7 +26,7 @@ const BACKENDS: Backend[] = [
     name: "DrizzleMcpRepository (in-memory)",
     setup: async () => {
       const orm = bootstrapCatalogDb();
-      
+
       const repo = new DrizzleMcpRepository({ db: orm.db });
       return {
         repo,

@@ -21,7 +21,6 @@ import {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-import { assertValidTaskId, generateTaskId } from "./validate.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import { TaskRepository } from "./repository.js";
 import { Task } from "./task-entity.js";
@@ -34,6 +33,7 @@ import type {
   TaskManagerConfig,
   TaskOrigin,
 } from "./types.js";
+import { assertValidTaskId, generateTaskId } from "./validate.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;

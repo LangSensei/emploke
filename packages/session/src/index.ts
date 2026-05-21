@@ -19,24 +19,22 @@ export {
   TrustRegistrationFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
-
-export {
-  AgentNotFoundError,
-  InvalidSessionIdError,
-  SessionCorruptedError,
-  SessionIdAllocationFailedError,
-  SessionNotFoundError,
-  SessionError,
-} from "./errors.js";
-
-export { type Session, type NewSession, sessions } from "./schema.js";
-export { SessionRepository, type ListSessionStateOpts } from "./repository.js";
-export { SessionManager } from "./manager.js";
 export {
   composeSessionModule,
   type SessionModule,
   type SessionModuleOptions,
 } from "./compose.js";
+export {
+  AgentNotFoundError,
+  InvalidSessionIdError,
+  SessionCorruptedError,
+  SessionError,
+  SessionIdAllocationFailedError,
+  SessionNotFoundError,
+} from "./errors.js";
+export { SessionManager } from "./manager.js";
+export { type ListSessionStateOpts, SessionRepository } from "./repository.js";
+export { type NewSession, type Session, sessions } from "./schema.js";
 export type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,

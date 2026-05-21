@@ -1,14 +1,11 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import type { Logger } from "@emploke/logger";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import type { Logger } from "@emploke/logger";
-import type { FetcherRegistry } from "@emploke/catalog-fetcher";
-import {
-  buildCatalogRuntime,
-  CatalogQueries,
-} from "./facade/catalog-queries.js";
+import { buildCatalogRuntime, CatalogQueries } from "./facade/catalog-queries.js";
 import { CatalogService } from "./facade/catalog-service.js";
+import type { FetcherRegistry } from "./fetcher/index.js";
 import type { Db } from "./runtime-types.js";
 import * as schema from "./schema.js";
 
@@ -63,7 +60,9 @@ function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   const dir = path.join(import.meta.dirname, "..", "drizzle");
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
   } catch {
     return;
   }

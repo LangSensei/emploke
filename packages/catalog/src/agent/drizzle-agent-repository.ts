@@ -1,13 +1,8 @@
+import { type Logger, silentLogger } from "@emploke/logger";
 import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { type Logger, silentLogger } from "@emploke/logger";
-import {
-  agentFiles,
-  agentMcpDeps,
-  agents,
-  agentSkillDeps,
-} from "../schema.js";
 import type * as schema from "../schema.js";
+import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
 import { Agent, type AgentDependencies } from "./agent-entity.js";
 import type { AgentFile, AgentRepoAddDeps, AgentRepository } from "./agent-repository.js";
 import { AgentNotFoundError } from "./errors.js";
@@ -66,9 +61,7 @@ export class DrizzleAgentRepository implements AgentRepository {
       }
       tx.delete(agentFiles).where(eq(agentFiles.agentFqn, agent.fqn)).run();
       for (const [relPath, content] of files) {
-        tx.insert(agentFiles)
-          .values({ agentFqn: agent.fqn, relPath, content })
-          .run();
+        tx.insert(agentFiles).values({ agentFqn: agent.fqn, relPath, content }).run();
       }
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, agent.fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
@@ -76,17 +69,13 @@ export class DrizzleAgentRepository implements AgentRepository {
       for (const targetFqn of deps.skills) {
         if (seenSkill.has(targetFqn)) continue;
         seenSkill.add(targetFqn);
-        tx.insert(agentSkillDeps)
-          .values({ sourceFqn: agent.fqn, targetFqn })
-          .run();
+        tx.insert(agentSkillDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
       }
       const seenMcp = new Set<string>();
       for (const targetFqn of deps.mcps) {
         if (seenMcp.has(targetFqn)) continue;
         seenMcp.add(targetFqn);
-        tx.insert(agentMcpDeps)
-          .values({ sourceFqn: agent.fqn, targetFqn })
-          .run();
+        tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
       }
     });
   }
@@ -137,7 +126,9 @@ export class DrizzleAgentRepository implements AgentRepository {
     for (const row of rows) {
       yield {
         relPath: row.relPath,
-        content: Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array),
+        content: Buffer.isBuffer(row.content)
+          ? row.content
+          : Buffer.from(row.content as Uint8Array),
       };
     }
   }
@@ -149,9 +140,7 @@ export class DrizzleAgentRepository implements AgentRepository {
       .where(and(eq(agentFiles.agentFqn, fqn), eq(agentFiles.relPath, "AGENTS.md")))
       .get();
     if (row === undefined) throw new AgentNotFoundError(fqn);
-    const buf = Buffer.isBuffer(row.content)
-      ? row.content
-      : Buffer.from(row.content as Uint8Array);
+    const buf = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array);
     return buf.toString("utf8");
   }
 
@@ -210,10 +199,7 @@ export class DrizzleAgentRepository implements AgentRepository {
   }
 }
 
-function rowToAgent(
-  row: typeof agents.$inferSelect,
-  deps: AgentDependencies,
-): Agent {
+function rowToAgent(row: typeof agents.$inferSelect, deps: AgentDependencies): Agent {
   return Agent.fromStored({
     fqn: row.fqn,
     origin: row.origin,

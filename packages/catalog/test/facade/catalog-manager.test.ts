@@ -1,25 +1,22 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
 import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
-import {
-  buildCatalogRuntime,
-  CatalogQueries,
-} from "../../src/facade/catalog-queries.js";
+import { CatalogQueries } from "../../src/facade/catalog-queries.js";
 import { CatalogService } from "../../src/facade/catalog-service.js";
+import { HasDependentsError } from "../../src/facade/errors.js";
 import type {
   CatalogConflict,
   McpResolveAdapter,
   McpResolvedNode,
 } from "../../src/facade/plan-types.js";
-import { HasDependentsError } from "../../src/facade/errors.js";
+import type { EntryFile } from "../../src/fetcher/index.js";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
+import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
@@ -158,7 +155,7 @@ beforeEach(async () => {
   // All three catalog repos share one in-memory connection — same as
   // production where they share the workspace's `workspace.db` handle.
   orm = bootstrapCatalogDb();
-  
+
   mcpRepo = new DrizzleMcpRepository({ db: orm.db });
   skillRepo = new DrizzleSkillRepository({ db: orm.db });
   agentRepo = new DrizzleAgentRepository({ db: orm.db });
@@ -176,8 +173,12 @@ beforeEach(async () => {
   // tests inject the per-entity services directly, so we construct CatalogQueries/Service
   // against a manual runtime object that conforms to CatalogRuntime.
   const rt = {
-    mcp: mcpSvc, skill: skillSvc, agent: agentSvc,
-    mcpRepo, skillRepo, agentRepo,
+    mcp: mcpSvc,
+    skill: skillSvc,
+    agent: agentSvc,
+    mcpRepo,
+    skillRepo,
+    agentRepo,
     resolveMcpAdapter: fetchers.mcpResolveAdapter,
     logger: (await import("@emploke/logger")).silentLogger,
   };
@@ -270,7 +271,9 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/a", {
       "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/a"`),
     });
-    await expect(mgr.queries.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
+    await expect(mgr.queries.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(
+      CyclicDependencyError,
+    );
   });
 
   it("rejects a two-skill cycle (A → B → A)", async () => {

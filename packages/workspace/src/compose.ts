@@ -1,8 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
-import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "@emploke/logger";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import { WorkspaceQueries } from "./queries.js";
 import { WorkspaceRepository } from "./repository.js";
 import * as schema from "./schema.js";
@@ -15,10 +15,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * pending migrations) or `db` (the caller passes a pre-built Drizzle
  * instance — typical for tests sharing an in-memory connection).
  */
-export type WorkspaceModuleOptions = (
-  | { readonly dbFile: string }
-  | { readonly db: Db }
-) & {
+export type WorkspaceModuleOptions = ({ readonly dbFile: string } | { readonly db: Db }) & {
   readonly logger?: Logger;
 };
 

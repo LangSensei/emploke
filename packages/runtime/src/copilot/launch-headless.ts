@@ -21,7 +21,6 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import {
   approveAll,
   CopilotClient,
@@ -31,7 +30,7 @@ import {
 } from "@github/copilot-sdk";
 import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
-import type { RuntimeExit, RuntimeHandle } from "../types.js";
+import type { AgentContentSource, ResolvedAgent, RuntimeExit, RuntimeHandle } from "../types.js";
 import { COPILOT_MCP_CONFIG, provisionCopilotWorkdir } from "./provision.js";
 
 export { COPILOT_MCP_CONFIG };
@@ -63,8 +62,8 @@ export interface EventBuffer {
 
 export interface LaunchCopilotHeadlessOpts {
   readonly taskDir: string;
-  readonly agent: AgentResolveResult;
-  readonly catalog: CatalogQueries;
+  readonly agent: ResolvedAgent;
+  readonly catalog: AgentContentSource;
   readonly prompt: string;
   /**
    * Absolute path of the workspace this task lives under. Forwarded to

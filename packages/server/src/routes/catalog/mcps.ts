@@ -1,4 +1,3 @@
-
 import { Hono } from "hono";
 import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody, readPlanTokenBody } from "./helpers.js";

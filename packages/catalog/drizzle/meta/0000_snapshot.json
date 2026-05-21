@@ -39,9 +39,7 @@
       "indexes": {
         "agent_files_agent_fqn_idx": {
           "name": "agent_files_agent_fqn_idx",
-          "columns": [
-            "agent_fqn"
-          ],
+          "columns": ["agent_fqn"],
           "isUnique": false
         }
       },
@@ -78,16 +76,12 @@
       "indexes": {
         "agent_mcp_deps_src_idx": {
           "name": "agent_mcp_deps_src_idx",
-          "columns": [
-            "source_fqn"
-          ],
+          "columns": ["source_fqn"],
           "isUnique": false
         },
         "agent_mcp_deps_tgt_idx": {
           "name": "agent_mcp_deps_tgt_idx",
-          "columns": [
-            "target_fqn"
-          ],
+          "columns": ["target_fqn"],
           "isUnique": false
         }
       },
@@ -124,16 +118,12 @@
       "indexes": {
         "agent_skill_deps_src_idx": {
           "name": "agent_skill_deps_src_idx",
-          "columns": [
-            "source_fqn"
-          ],
+          "columns": ["source_fqn"],
           "isUnique": false
         },
         "agent_skill_deps_tgt_idx": {
           "name": "agent_skill_deps_tgt_idx",
-          "columns": [
-            "target_fqn"
-          ],
+          "columns": ["target_fqn"],
           "isUnique": false
         }
       },
@@ -214,16 +204,12 @@
       "indexes": {
         "agents_origin": {
           "name": "agents_origin",
-          "columns": [
-            "origin"
-          ],
+          "columns": ["origin"],
           "isUnique": false
         },
         "agents_updated_at": {
           "name": "agents_updated_at",
-          "columns": [
-            "updated_at"
-          ],
+          "columns": ["updated_at"],
           "isUnique": false
         }
       },
@@ -274,16 +260,12 @@
       "indexes": {
         "mcps_origin": {
           "name": "mcps_origin",
-          "columns": [
-            "origin"
-          ],
+          "columns": ["origin"],
           "isUnique": false
         },
         "mcps_updated_at": {
           "name": "mcps_updated_at",
-          "columns": [
-            "updated_at"
-          ],
+          "columns": ["updated_at"],
           "isUnique": false
         }
       },
@@ -327,9 +309,7 @@
       "indexes": {
         "skill_files_skill_fqn_idx": {
           "name": "skill_files_skill_fqn_idx",
-          "columns": [
-            "skill_fqn"
-          ],
+          "columns": ["skill_fqn"],
           "isUnique": false
         }
       },
@@ -366,16 +346,12 @@
       "indexes": {
         "skill_mcp_deps_src_idx": {
           "name": "skill_mcp_deps_src_idx",
-          "columns": [
-            "source_fqn"
-          ],
+          "columns": ["source_fqn"],
           "isUnique": false
         },
         "skill_mcp_deps_tgt_idx": {
           "name": "skill_mcp_deps_tgt_idx",
-          "columns": [
-            "target_fqn"
-          ],
+          "columns": ["target_fqn"],
           "isUnique": false
         }
       },
@@ -412,16 +388,12 @@
       "indexes": {
         "skill_skill_deps_src_idx": {
           "name": "skill_skill_deps_src_idx",
-          "columns": [
-            "source_fqn"
-          ],
+          "columns": ["source_fqn"],
           "isUnique": false
         },
         "skill_skill_deps_tgt_idx": {
           "name": "skill_skill_deps_tgt_idx",
-          "columns": [
-            "target_fqn"
-          ],
+          "columns": ["target_fqn"],
           "isUnique": false
         }
       },
@@ -494,16 +466,12 @@
       "indexes": {
         "skills_origin": {
           "name": "skills_origin",
-          "columns": [
-            "origin"
-          ],
+          "columns": ["origin"],
           "isUnique": false
         },
         "skills_updated_at": {
           "name": "skills_updated_at",
-          "columns": [
-            "updated_at"
-          ],
+          "columns": ["updated_at"],
           "isUnique": false
         }
       },

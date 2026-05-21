@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FetchError, GitHubFetcher } from "../src/index.js";
+import { FetchError, GitHubFetcher } from "../../src/fetcher/index.js";
 
 /**
  * `GitHubFetcher` integration tests focused on the credential-resolution
@@ -32,7 +32,7 @@ beforeEach(async () => {
   // Reset the gh-token cache so a stale entry from another test doesn't
   // cross-pollute. Reaching into the module directly is intentional —
   // the helper is package-internal.
-  const mod = await import("../src/gh-token.js");
+  const mod = await import("../../src/fetcher/gh-token.js");
   mod._resetGhTokenCache();
 });
 
@@ -116,7 +116,7 @@ describe("GitHubFetcher — anonymous when nothing is configured", () => {
     // Force gh fallback to return null by stubbing the spawn-backed helper.
     // We can't easily mock spawn from this test file (vi.mock would need
     // to be hoisted), but we can short-circuit via the cache: prime it with null.
-    const ghMod = await import("../src/gh-token.js");
+    const ghMod = await import("../../src/fetcher/gh-token.js");
     ghMod._resetGhTokenCache();
     // Calling resolveDefaultGitHubToken once with no env and a forced cache miss
     // would invoke real spawn — which on this machine might succeed. Instead

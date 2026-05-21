@@ -35,11 +35,7 @@ export interface ComputedStatus {
   readonly reason?: BlockedReason;
 }
 
-export function newCascadeContext(
-  skills: Skill[],
-  agents: Agent[],
-  mcps: Mcp[],
-): CascadeContext {
+export function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): CascadeContext {
   const referencedSkillFqns = new Set<string>();
   const referencedMcpFqns = new Set<string>();
   for (const a of agents) {

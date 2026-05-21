@@ -110,13 +110,15 @@ export async function makeTestCatalog(
     // Bypass the catalog's validation pipeline by issuing a raw UPDATE
     // through the underlying better-sqlite3 connection. The CatalogService
     // exposes the underlying repos via the runtime injected at construction.
-    const db = (service as unknown as {
-      rt: {
-        mcpRepo: {
-          db: { $client: { prepare(sql: string): { run(...args: unknown[]): unknown } } };
+    const db = (
+      service as unknown as {
+        rt: {
+          mcpRepo: {
+            db: { $client: { prepare(sql: string): { run(...args: unknown[]): unknown } } };
+          };
         };
-      };
-    }).rt.mcpRepo.db;
+      }
+    ).rt.mcpRepo.db;
     db.$client.prepare("UPDATE mcps SET spec = ? WHERE fqn = ?").run(content, specName);
   };
 

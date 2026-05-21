@@ -15,7 +15,7 @@ import { buildServerContainer } from "./bootstrap.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
-import { PerWorkspaceContainerCache } from "./per-workspace-container.js";
+import type { PerWorkspaceContainerCache } from "./per-workspace-container.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";

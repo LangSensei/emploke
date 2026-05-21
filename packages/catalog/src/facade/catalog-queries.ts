@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { Agent } from "../agent/agent-entity.js";
-import { AgentNotFoundError } from "../agent/errors.js";
-import { type AgentResolvedNode, AgentService } from "../agent/agent-service.js";
+import { AgentService } from "../agent/agent-service.js";
 import { DrizzleAgentRepository } from "../agent/drizzle-agent-repository.js";
+import { AgentNotFoundError } from "../agent/errors.js";
 import type {
   AgentEntry,
   Agent as AgentPojo,
@@ -16,22 +15,18 @@ import type {
   Skill as SkillPojo,
   SkillResolveResult,
 } from "../dto/types.js";
+import { defaultFetcherRegistry, type FetcherRegistry } from "../fetcher/index.js";
+import { DrizzleMcpRepository } from "../mcp/drizzle-mcp-repository.js";
 import { McpNotFoundError } from "../mcp/errors.js";
-import { Mcp } from "../mcp/mcp-entity.js";
+import type { Mcp } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
 import { type McpFetcher, McpService } from "../mcp/mcp-service.js";
-import { DrizzleMcpRepository } from "../mcp/drizzle-mcp-repository.js";
 import type { Db as CatalogDb } from "../runtime-types.js";
+import { DrizzleSkillRepository } from "../skill/drizzle-skill-repository.js";
 import { SkillNotFoundError } from "../skill/errors.js";
 import type { Skill } from "../skill/skill-entity.js";
-import { DrizzleSkillRepository } from "../skill/drizzle-skill-repository.js";
-import { type SkillFetcher, type SkillResolvedNode, SkillService } from "../skill/skill-service.js";
-import type {
-  CatalogPlan,
-  CatalogPlanNode,
-  McpResolveAdapter,
-  McpResolvedNode,
-} from "./plan-types.js";
+import { type SkillFetcher, SkillService } from "../skill/skill-service.js";
+import type { CatalogPlan, CatalogPlanNode, McpResolveAdapter } from "./plan-types.js";
 import {
   buildAgentEntry,
   buildSkillEntry,
@@ -276,6 +271,24 @@ export class CatalogQueries {
     return this.rt.mcp.getContent(fqn);
   }
 
+  /**
+   * Return the MCP spec as a parsed JSON object with emploke's
+   * internal `_meta` block stripped. This is the form runtime
+   * adapters consume when writing client-side config files (e.g.
+   * Copilot CLI's `.mcp.json`) — `_meta.name` is round-trip
+   * bookkeeping that catalog uses to derive identity at install
+   * time and should never leak into user-visible config.
+   *
+   * Throws {@link McpNotFoundError} if no MCP exists at `fqn`.
+   * Throws {@link McpInvalidJsonError} if the stored spec is
+   * unparseable (only possible if the row was tampered with
+   * out-of-band — catalog validates on every write).
+   */
+  async getMcpRuntimeConfig(fqn: string): Promise<Record<string, unknown>> {
+    const raw = await this.rt.mcp.getContent(fqn);
+    return McpFormat.stripMeta(raw, `mcps:${fqn}`);
+  }
+
   async getSkill(fqn: string): Promise<SkillPojo | null> {
     const s = await this.rt.skill.get(fqn);
     if (s === null) return null;
@@ -410,9 +423,7 @@ export class CatalogQueries {
     ];
   }
 
-  async findMcpDependents(
-    targetFqn: string,
-  ): Promise<{ kind: "skill" | "agent"; name: string }[]> {
+  async findMcpDependents(targetFqn: string): Promise<{ kind: "skill" | "agent"; name: string }[]> {
     const [agents, skills] = await Promise.all([
       this.rt.mcpRepo.findDependentAgents(targetFqn),
       this.rt.mcpRepo.findDependentSkills(targetFqn),

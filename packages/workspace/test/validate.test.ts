@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  WorkspaceIdInvalidError,
-  WorkspaceNameInvalidError,
-} from "../src/index.js";
+import { WorkspaceIdInvalidError, WorkspaceNameInvalidError } from "../src/index.js";
 import {
   assertValidWorkspaceId,
   assertValidWorkspaceName,

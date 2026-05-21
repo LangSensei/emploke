@@ -1,10 +1,10 @@
-import { type SQL, and, eq, gte } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { and, eq, gte, type SQL } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";
-import { SESSION_ID_RE } from "./validate.js";
-import { type Session, sessions } from "./schema.js";
 import type * as schema from "./schema.js";
+import { type Session, sessions } from "./schema.js";
+import { SESSION_ID_RE } from "./validate.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 

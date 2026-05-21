@@ -1,5 +1,4 @@
 import type { Agent } from "../agent/agent-entity.js";
-import { AgentService } from "../agent/agent-service.js";
 import type {
   AgentMetadataPatch,
   Agent as AgentPojo,
@@ -7,9 +6,7 @@ import type {
   Skill as SkillPojo,
 } from "../dto/types.js";
 import { Mcp } from "../mcp/mcp-entity.js";
-import { McpService } from "../mcp/mcp-service.js";
 import type { Skill } from "../skill/skill-entity.js";
-import { SkillService } from "../skill/skill-service.js";
 import type { CatalogQueries, CatalogRuntime } from "./catalog-queries.js";
 import { HasDependentsError } from "./errors.js";
 import type {

@@ -15,6 +15,7 @@ export {
   type AgentResolvePlan,
   AgentService,
 } from "./agent-service.js";
+export { DrizzleAgentRepository } from "./drizzle-agent-repository.js";
 export {
   AgentFrontmatterError,
   AgentNameInvalidError,
@@ -22,7 +23,6 @@ export {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
-export { DrizzleAgentRepository } from "./drizzle-agent-repository.js";
 export {
   DEFAULT_SCOPE,
   makeFqn,

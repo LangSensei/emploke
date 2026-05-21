@@ -30,7 +30,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const { _resetGhTokenCache, resolveDefaultGitHubToken, tryGhAuthToken } = await import(
-  "../src/gh-token.js"
+  "../../src/fetcher/gh-token.js"
 );
 
 function makeMockChild(): MockChildProcess {

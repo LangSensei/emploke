@@ -1,8 +1,8 @@
 import { count } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { composeWorkspaceModule } from "../src/index.js";
-import { openTestWorkspaceDb } from "../src/testing.js";
 import { workspaces } from "../src/schema.js";
+import { openTestWorkspaceDb } from "../src/testing.js";
 
 describe("composeWorkspaceModule", () => {
   it("returns a service + queries pair backed by the given db", async () => {

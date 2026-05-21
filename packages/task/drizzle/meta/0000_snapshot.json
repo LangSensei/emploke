@@ -109,30 +109,22 @@
       "indexes": {
         "tasks_agent_idx": {
           "name": "tasks_agent_idx",
-          "columns": [
-            "agent"
-          ],
+          "columns": ["agent"],
           "isUnique": false
         },
         "tasks_runtime_idx": {
           "name": "tasks_runtime_idx",
-          "columns": [
-            "runtime"
-          ],
+          "columns": ["runtime"],
           "isUnique": false
         },
         "tasks_status_idx": {
           "name": "tasks_status_idx",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         },
         "tasks_origin_idx": {
           "name": "tasks_origin_idx",
-          "columns": [
-            "origin"
-          ],
+          "columns": ["origin"],
           "isUnique": false
         }
       },

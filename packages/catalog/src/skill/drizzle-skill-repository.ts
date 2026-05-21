@@ -1,14 +1,8 @@
-import { and, eq, count } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
-import {
-  agentSkillDeps,
-  skillFiles,
-  skillMcpDeps,
-  skills,
-  skillSkillDeps,
-} from "../schema.js";
+import { and, count, eq } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type * as schema from "../schema.js";
+import { agentSkillDeps, skillFiles, skillMcpDeps, skillSkillDeps, skills } from "../schema.js";
 import { SkillNotFoundError } from "./errors.js";
 import { Skill, type SkillDependencies } from "./skill-entity.js";
 import type { SkillFile, SkillRepoAddDeps, SkillRepository } from "./skill-repository.js";
@@ -62,9 +56,7 @@ export class DrizzleSkillRepository implements SkillRepository {
       }
       tx.delete(skillFiles).where(eq(skillFiles.skillFqn, skill.fqn)).run();
       for (const [relPath, content] of files) {
-        tx.insert(skillFiles)
-          .values({ skillFqn: skill.fqn, relPath, content })
-          .run();
+        tx.insert(skillFiles).values({ skillFqn: skill.fqn, relPath, content }).run();
       }
       tx.delete(skillSkillDeps).where(eq(skillSkillDeps.sourceFqn, skill.fqn)).run();
       tx.delete(skillMcpDeps).where(eq(skillMcpDeps.sourceFqn, skill.fqn)).run();
@@ -149,7 +141,9 @@ export class DrizzleSkillRepository implements SkillRepository {
     for (const row of rows) {
       yield {
         relPath: row.relPath,
-        content: Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array),
+        content: Buffer.isBuffer(row.content)
+          ? row.content
+          : Buffer.from(row.content as Uint8Array),
       };
     }
   }
@@ -161,9 +155,7 @@ export class DrizzleSkillRepository implements SkillRepository {
       .where(and(eq(skillFiles.skillFqn, fqn), eq(skillFiles.relPath, "SKILL.md")))
       .get();
     if (row === undefined) throw new SkillNotFoundError(fqn);
-    const buf = Buffer.isBuffer(row.content)
-      ? row.content
-      : Buffer.from(row.content as Uint8Array);
+    const buf = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array);
     return buf.toString("utf8");
   }
 
@@ -239,10 +231,7 @@ export class DrizzleSkillRepository implements SkillRepository {
   }
 }
 
-function rowToSkill(
-  row: typeof skills.$inferSelect,
-  deps: SkillDependencies,
-): Skill {
+function rowToSkill(row: typeof skills.$inferSelect, deps: SkillDependencies): Skill {
   return Skill.fromStored({
     fqn: row.fqn,
     origin: row.origin,

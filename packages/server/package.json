@@ -23,7 +23,6 @@
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
-    "@emploke/catalog-fetcher": "workspace:*",
     "@emploke/core": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",

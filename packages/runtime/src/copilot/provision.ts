@@ -1,16 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  type AgentResolveResult,
-  applyFrontmatterPatch,
-  type CatalogQueries,
-  stripMcpMeta,
-} from "@emploke/catalog";
+import { applyFrontmatterPatch } from "@emploke/fs";
 import {
   type PlaceholderContext,
   substitutePlaceholdersDeep,
   UnknownPlaceholderError,
 } from "../placeholders.js";
+import type { AgentContentSource, ResolvedAgent } from "../types.js";
 import { InvalidMcpJson } from "./errors.js";
 
 const DOT_DIR = ".github";
@@ -98,8 +94,8 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  * need cleanup on session/task purge.
  *
  * Source data is pulled from the catalog as `AsyncIterable<{relPath, content}>`
- * streams (see {@link CatalogQueries.skillEntries} /
- * {@link CatalogQueries.agentEntries}). The runtime never resolves on-disk
+ * streams (see {@link AgentContentSource.skillEntries} /
+ * {@link AgentContentSource.agentEntries}). The runtime never resolves on-disk
  * catalog paths; a future SQLite-backed catalog implementation works the same
  * way.
  *
@@ -122,8 +118,8 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  */
 export async function provisionCopilotWorkdir(
   workdir: string,
-  agent: AgentResolveResult,
-  catalog: CatalogQueries,
+  agent: ResolvedAgent,
+  catalog: AgentContentSource,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
@@ -146,7 +142,7 @@ export async function provisionCopilotWorkdir(
 async function materializeAgent(
   workdir: string,
   agentName: string,
-  catalog: CatalogQueries,
+  catalog: AgentContentSource,
 ): Promise<void> {
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");
   let hooksDestReady = false;
@@ -195,17 +191,16 @@ async function materializeAgent(
 async function writeMcpConfig(
   workdir: string,
   mcps: readonly { readonly fqn: string }[],
-  catalog: CatalogQueries,
+  catalog: AgentContentSource,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   if (mcps.length === 0) return;
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
-    const raw = await catalog.getMcpContent(mcp.fqn);
-    let stripped: unknown;
+    let stripped: Record<string, unknown>;
     try {
-      stripped = stripMcpMeta(raw, `mcps:${mcp.fqn}`);
+      stripped = await catalog.getMcpRuntimeConfig(mcp.fqn);
     } catch (cause) {
       throw new InvalidMcpJson(mcp.fqn, cause as Error);
     }
@@ -240,7 +235,7 @@ async function writeMcpConfig(
 async function materializeSkills(
   workdir: string,
   skills: readonly { readonly skill: { readonly fqn: string } }[],
-  catalog: CatalogQueries,
+  catalog: AgentContentSource,
 ): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");

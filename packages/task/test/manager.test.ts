@@ -812,7 +812,26 @@ describe("get / list", () => {
 
     // Forge a row whose metadata is invalid JSON; rowToTask throws
     // CorruptedTaskError → repo.list catches, drops, warns.
-    orm.sqlite.prepare("INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("20260101-deadbeef", "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{");
+    orm.sqlite
+      .prepare(
+        "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "20260101-deadbeef",
+        "demo",
+        "copilot",
+        "standalone",
+        "running",
+        "i",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        null,
+        null,
+        null,
+        null,
+        "not-valid-json{",
+      );
 
     const all = await m.list();
     expect(all).toHaveLength(1); // good row survives, bogus is dropped
@@ -828,7 +847,26 @@ describe("get / list", () => {
   it("get() propagates CorruptedTaskError instead of returning null", async () => {
     const { m, orm } = await makeManager({ runtime: new StubRuntime() });
     const id = "20260101-deadbeef";
-    orm.sqlite.prepare("INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{");
+    orm.sqlite
+      .prepare(
+        "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        "demo",
+        "copilot",
+        "standalone",
+        "running",
+        "i",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        null,
+        null,
+        null,
+        null,
+        "not-valid-json{",
+      );
     await expect(m.get(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -990,7 +1028,26 @@ describe("delete (terminal-only post ADR-001)", () => {
   it("propagates CorruptedTaskError (operator sees the corruption)", async () => {
     const { m, orm } = await makeManager({ runtime: new StubRuntime() });
     const id = "20260101-deadbeef";
-    orm.sqlite.prepare("INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{");
+    orm.sqlite
+      .prepare(
+        "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        "demo",
+        "copilot",
+        "standalone",
+        "running",
+        "i",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        null,
+        null,
+        null,
+        null,
+        "not-valid-json{",
+      );
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
     await expect(m.delete(id, { purge: true })).rejects.toBeInstanceOf(CorruptedTaskError);
   });

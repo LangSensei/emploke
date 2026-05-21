@@ -14,16 +14,16 @@
  */
 
 export {
-  compose__Entity__Module,
   type __Entity__Module,
   type __Entity__ModuleOptions,
+  compose__Entity__Module,
 } from "./compose.js";
-export { Invalid__Entity__IdError, __Entity__NotFoundError } from "./errors.js";
+export { __Entity__NotFoundError, Invalid__Entity__IdError } from "./errors.js";
 export { __Entity__Queries } from "./queries.js";
-export { __Entity__Service } from "./service.js";
 export * as schema from "./schema.js";
-export {
-  type __Entity__,
-  type Create__Entity__Args,
-  type List__Entity__Opts,
+export { __Entity__Service } from "./service.js";
+export type {
+  __Entity__,
+  Create__Entity__Args,
+  List__Entity__Opts,
 } from "./types.js";

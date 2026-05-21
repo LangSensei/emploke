@@ -1,3 +1,4 @@
+export { DrizzleMcpRepository } from "./drizzle-mcp-repository.js";
 export {
   McpInvalidJsonError,
   McpNameInvalidError,
@@ -9,5 +10,4 @@ export type { McpFile, McpMeta } from "./mcp-format.js";
 export * as McpFormat from "./mcp-format.js";
 export type { McpRepository } from "./mcp-repository.js";
 export { type McpFetcher, McpService } from "./mcp-service.js";
-export { DrizzleMcpRepository } from "./drizzle-mcp-repository.js";
 export { splitMcpName, validateMcpName } from "./validate.js";

@@ -1,15 +1,12 @@
 import path from "node:path";
-import type { Database as BetterSqliteDatabase } from "better-sqlite3";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import type {
-  WorkspaceQueries,
-  WorkspaceService,
-} from "@emploke/workspace";
+import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { openTestWorkspaceDb } from "@emploke/workspace/testing";
+import type { Database as BetterSqliteDatabase } from "better-sqlite3";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { buildServerContainer } from "../src/bootstrap.js";
-import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
+import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
  * Shared scaffolding for server-side tests.

@@ -1,17 +1,18 @@
 /**
- * @emploke/catalog-fetcher
- *
- * Pluggable origin-URI fetchers for emploke's catalog. Owns:
+ * Catalog fetchers — pluggable origin-URI fetchers used by catalog's
+ * resolve + install pipeline. Owns:
  *
  *   - `parseOrigin` / `normalizeOrigin` — URI grammar
  *   - `Fetcher` interface (pure stream, fs-agnostic)
- *   - `FileFetcher`, `GitHubFetcher` — Phase 1 implementations
+ *   - `FileFetcher`, `GitHubFetcher` — built-in implementations
  *   - `FetcherRegistry` — scheme → fetcher dispatch
  *   - `OriginParseError`, `FetchError`
  *
- * Single responsibility: turn a URI into a stream of bytes. No knowledge
- * of frontmatter, scope, identity, dependencies — those live in
- * `@emploke/catalog`. Zero dependency on catalog (lower layer).
+ * Single responsibility: turn a URI into a stream of bytes. No
+ * knowledge of frontmatter, scope, identity, or dependencies — those
+ * live in the parent catalog package. Previously a standalone
+ * `@emploke/catalog-fetcher` package; folded into catalog because it
+ * has zero non-catalog consumers and changes always travel together.
  */
 
 export { FetchError, FetcherError, OriginParseError } from "./errors.js";

@@ -1,10 +1,9 @@
-import { type SQL, and, eq, gte, inArray } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
+import { and, eq, gte, inArray, type SQL } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
-import { TASK_ID_RE } from "./validate.js";
-import { type TaskRow, tasks } from "./schema.js";
 import type * as schema from "./schema.js";
+import { type TaskRow, tasks } from "./schema.js";
 import { Task } from "./task-entity.js";
 import type {
   ListTaskOpts,
@@ -14,6 +13,7 @@ import type {
   TaskStatus,
   TaskSuccess,
 } from "./types.js";
+import { TASK_ID_RE } from "./validate.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 

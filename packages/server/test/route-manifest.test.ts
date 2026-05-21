@@ -20,7 +20,7 @@
  *    runtime contract test); tracked as future work in the plan.
  */
 
-import { CatalogQueries, CatalogService, type CatalogOptions, defaultFetcherRegistry } from "@emploke/catalog";
+import { type CatalogOptions, CatalogService, defaultFetcherRegistry } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";

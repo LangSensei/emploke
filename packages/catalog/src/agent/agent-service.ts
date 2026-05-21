@@ -1,6 +1,6 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
-import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
-import { applyFrontmatterPatch } from "../frontmatter/patch.js";
+import { applyFrontmatterPatch } from "@emploke/fs";
+import type { EntryFile } from "../fetcher/index.js";
+import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import type { SkillRepository } from "../skill/skill-repository.js";

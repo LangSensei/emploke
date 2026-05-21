@@ -7,15 +7,14 @@ import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 
 import { readAgentName } from "./agent-file.js";
-import { type Session } from "./schema.js";
 import {
   AgentNotFoundError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-import { assertValidSessionId, generateSessionId } from "./validate.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import { SessionRepository } from "./repository.js";
+import type { Session } from "./schema.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
@@ -24,6 +23,7 @@ import type {
   SessionManagerConfig,
   SessionView,
 } from "./types.js";
+import { assertValidSessionId, generateSessionId } from "./validate.js";
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
@@ -414,5 +414,5 @@ function defaultRandomBytes(n: number): Buffer {
 
 // Re-export public sub-utilities for callers that want them.
 export { readAgentName } from "./agent-file.js";
-export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./validate.js";
 export { safeJoinUnderRoot } from "./paths.js";
+export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./validate.js";

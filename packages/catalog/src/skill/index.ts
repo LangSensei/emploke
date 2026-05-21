@@ -1,3 +1,4 @@
+export { DrizzleSkillRepository } from "./drizzle-skill-repository.js";
 export {
   CyclicDependencyError,
   PlanStaleError,
@@ -19,7 +20,6 @@ export {
   type SkillResolvePlan,
   SkillService,
 } from "./skill-service.js";
-export { DrizzleSkillRepository } from "./drizzle-skill-repository.js";
 export {
   DEFAULT_SCOPE,
   makeFqn,

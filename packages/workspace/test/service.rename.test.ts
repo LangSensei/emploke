@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  WorkspaceNameInvalidError,
-  WorkspaceNotRegisteredError,
-} from "../src/index.js";
+import { WorkspaceNameInvalidError, WorkspaceNotRegisteredError } from "../src/index.js";
 import {
   setupWorkspaceTestSubsystem,
   teardownWorkspaceTestSubsystem,
@@ -39,15 +36,15 @@ describe("WorkspaceService.rename", () => {
   });
 
   it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
-    await expect(
-      sys.service.rename({ id: UUID_A, newName: "X" }),
-    ).rejects.toBeInstanceOf(WorkspaceNotRegisteredError);
+    await expect(sys.service.rename({ id: UUID_A, newName: "X" })).rejects.toBeInstanceOf(
+      WorkspaceNotRegisteredError,
+    );
   });
 
   it("validates the new name (rejects empty)", async () => {
     await seed();
-    await expect(
-      sys.service.rename({ id: UUID_A, newName: "" }),
-    ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
+    await expect(sys.service.rename({ id: UUID_A, newName: "" })).rejects.toBeInstanceOf(
+      WorkspaceNameInvalidError,
+    );
   });
 });

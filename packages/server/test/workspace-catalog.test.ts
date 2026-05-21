@@ -37,7 +37,9 @@ async function ensureWorkspace(name: string): Promise<{ id: string; workspaceDir
 }
 
 function mountApp() {
-  const app = new Hono<{ Variables: { catalog: { service: CatalogService; queries: CatalogQueries } } }>();
+  const app = new Hono<{
+    Variables: { catalog: { service: CatalogService; queries: CatalogQueries } };
+  }>();
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);

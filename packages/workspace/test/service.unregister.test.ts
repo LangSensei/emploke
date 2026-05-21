@@ -57,12 +57,8 @@ describe("WorkspaceService.unregister", () => {
   });
 
   it("idempotent for unregistered ids (no throw)", async () => {
-    await expect(
-      sys.service.unregister({ id: UUID_A, purge: false }),
-    ).resolves.toBeUndefined();
-    await expect(
-      sys.service.unregister({ id: UUID_A, purge: true }),
-    ).resolves.toBeUndefined();
+    await expect(sys.service.unregister({ id: UUID_A, purge: false })).resolves.toBeUndefined();
+    await expect(sys.service.unregister({ id: UUID_A, purge: true })).resolves.toBeUndefined();
   });
 
   it("purge defaults to false", async () => {

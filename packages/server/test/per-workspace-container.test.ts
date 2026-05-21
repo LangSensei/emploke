@@ -2,10 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { captureLogger } from "@emploke/logger/testing";
-import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildServerContainer } from "../src/bootstrap.js";
 import {
   type PerWorkspaceContainerCache,
   WorkspaceHasLiveTasksError,

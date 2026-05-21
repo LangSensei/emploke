@@ -9,13 +9,7 @@
  * under names the server already uses.
  */
 
-import type { Logger } from "@emploke/logger";
-import type { RuntimeRegistry } from "@emploke/runtime";
-import type { WorkspaceQueries } from "@emploke/workspace";
-import {
-  type WorkspaceRuntime,
-  WorkspaceRuntimeCache,
-} from "@emploke/core";
+import { type WorkspaceRuntime, WorkspaceRuntimeCache } from "@emploke/core";
 
 export { WorkspaceHasLiveTasksError, type WorkspaceRuntime } from "@emploke/core";
 
@@ -31,13 +25,4 @@ export type PerWorkspaceContainer = WorkspaceRuntime;
  *   - No `db: DatabaseSync` on entries — each entity pkg owns its own
  *     ORM internally.
  */
-export class PerWorkspaceContainerCache extends WorkspaceRuntimeCache {
-  constructor(deps: {
-    runtimeRegistry: RuntimeRegistry;
-    queries: WorkspaceQueries;
-    logger?: Logger;
-    subprocessEnvBase?: NodeJS.ProcessEnv;
-  }) {
-    super(deps);
-  }
-}
+export class PerWorkspaceContainerCache extends WorkspaceRuntimeCache {}

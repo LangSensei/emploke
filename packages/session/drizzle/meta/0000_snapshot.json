@@ -53,9 +53,7 @@
       "indexes": {
         "sessions_agent_idx": {
           "name": "sessions_agent_idx",
-          "columns": [
-            "agent"
-          ],
+          "columns": ["agent"],
           "isUnique": false
         }
       },

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { __Entity__NotFoundError } from "./errors.js";
 import type { __Entity__Repository } from "./repository.js";
 import type { __Entity__Row } from "./schema.js";
-import type { Create__Entity__Args, __Entity__ } from "./types.js";
+import type { __Entity__, Create__Entity__Args } from "./types.js";
 
 /**
  * Write surface for `@emploke/__PKG__`. ALL create / update / delete

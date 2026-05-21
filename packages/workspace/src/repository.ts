@@ -1,8 +1,8 @@
+import { type Logger, silentLogger } from "@emploke/logger";
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { type Logger, silentLogger } from "@emploke/logger";
-import { type NewWorkspace, type Workspace, workspaces } from "./schema.js";
 import type * as schema from "./schema.js";
+import { type NewWorkspace, type Workspace, workspaces } from "./schema.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -27,11 +27,7 @@ export class WorkspaceRepository {
   }
 
   async findByPath(workspaceDir: string): Promise<Workspace | undefined> {
-    return this.db
-      .select()
-      .from(workspaces)
-      .where(eq(workspaces.workspaceDir, workspaceDir))
-      .get();
+    return this.db.select().from(workspaces).where(eq(workspaces.workspaceDir, workspaceDir)).get();
   }
 
   async insert(row: NewWorkspace): Promise<void> {

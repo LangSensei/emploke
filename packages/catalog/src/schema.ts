@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, blob, index } from "drizzle-orm/sqlite-core";
+import { blob, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // ─── Main entities ──────────────────────────────────────────
 
@@ -15,10 +15,7 @@ export const agents = sqliteTable(
     installedAt: text("installed_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [
-    index("agents_origin").on(t.origin),
-    index("agents_updated_at").on(t.updatedAt),
-  ],
+  (t) => [index("agents_origin").on(t.origin), index("agents_updated_at").on(t.updatedAt)],
 );
 
 export const skills = sqliteTable(
@@ -33,10 +30,7 @@ export const skills = sqliteTable(
     installedAt: text("installed_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [
-    index("skills_origin").on(t.origin),
-    index("skills_updated_at").on(t.updatedAt),
-  ],
+  (t) => [index("skills_origin").on(t.origin), index("skills_updated_at").on(t.updatedAt)],
 );
 
 export const mcps = sqliteTable(
@@ -48,10 +42,7 @@ export const mcps = sqliteTable(
     installedAt: text("installed_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [
-    index("mcps_origin").on(t.origin),
-    index("mcps_updated_at").on(t.updatedAt),
-  ],
+  (t) => [index("mcps_origin").on(t.origin), index("mcps_updated_at").on(t.updatedAt)],
 );
 
 // ─── File-blob tables ───────────────────────────────────────

@@ -1,14 +1,14 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
+import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
 import {
   AgentFrontmatterError,
   AgentNotFoundError,
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
-import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
+import type { EntryFile } from "../../src/fetcher/index.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
@@ -58,7 +58,7 @@ let svc: AgentService;
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
-  
+
   repo = new DrizzleAgentRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);

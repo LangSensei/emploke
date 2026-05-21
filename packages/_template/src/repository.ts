@@ -1,8 +1,8 @@
+import { type Logger, silentLogger } from "@emploke/logger";
 import { and, eq, like } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { type Logger, silentLogger } from "@emploke/logger";
-import * as schema from "./schema.js";
-import { __entities__, type __Entity__Row } from "./schema.js";
+import type * as schema from "./schema.js";
+import { type __Entity__Row, __entities__ } from "./schema.js";
 import { __ENTITY___ID_RE, assertValid__Entity__Id } from "./validate.js";
 
 type Db = BetterSQLite3Database<typeof schema>;

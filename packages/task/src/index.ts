@@ -2,6 +2,7 @@
  * @emploke/task — Task entity + TaskManager (Drizzle-backed).
  */
 
+export { composeTaskModule, type TaskModule, type TaskModuleOptions } from "./compose.js";
 export {
   AgentNotFoundError,
   CorruptedTaskError,
@@ -22,12 +23,10 @@ export {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-export { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 export { TaskManager } from "./manager.js";
-export { tasks, type TaskRow, type NewTaskRow } from "./schema.js";
-export { TaskRepository } from "./repository.js";
-export { composeTaskModule, type TaskModule, type TaskModuleOptions } from "./compose.js";
 export { safeJoinUnderRoot } from "./paths.js";
+export { TaskRepository } from "./repository.js";
+export { type NewTaskRow, type TaskRow, tasks } from "./schema.js";
 export {
   Task,
   type TaskCreateArgs,
@@ -46,3 +45,4 @@ export type {
   TaskSuccess,
   TerminalStatus,
 } from "./types.js";
+export { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";

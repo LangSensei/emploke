@@ -5,7 +5,7 @@ import {
   normalizeOrigin,
   OriginParseError,
   parseOrigin,
-} from "../src/index.js";
+} from "../../src/fetcher/index.js";
 
 describe("parseOrigin", () => {
   it("parses file: URI with absolute path", () => {

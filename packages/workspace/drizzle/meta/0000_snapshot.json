@@ -46,9 +46,7 @@
       "indexes": {
         "workspaces_workspace_dir_unique": {
           "name": "workspaces_workspace_dir_unique",
-          "columns": [
-            "workspace_dir"
-          ],
+          "columns": ["workspace_dir"],
           "isUnique": true
         }
       },

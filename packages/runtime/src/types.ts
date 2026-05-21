@@ -1,4 +1,37 @@
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+/**
+ * Minimal resolved-agent shape consumed by runtime adapters during
+ * {@link Runtime.provision}. Defined here (not imported from
+ * `@emploke/catalog`) so this package depends on the catalog only by
+ * structural typing — any object satisfying this shape works.
+ *
+ * `@emploke/catalog`'s `ResolvedAgent` is a superset of this
+ * type; passing it through as-is type-checks via structural
+ * compatibility.
+ */
+export interface ResolvedAgent {
+  readonly agent: { readonly fqn: string };
+  readonly skills: readonly { readonly skill: { readonly fqn: string } }[];
+  readonly mcps: readonly { readonly fqn: string }[];
+}
+
+/**
+ * Minimal capability surface a content provider must implement for
+ * runtime adapters to materialise a workdir. `AgentContentSource` from
+ * `@emploke/catalog` satisfies this interface; runtime never imports
+ * from catalog.
+ */
+export interface AgentContentSource {
+  resolveAgent(fqn: string): Promise<ResolvedAgent>;
+  agentEntries(fqn: string): AsyncIterable<{ relPath: string; content: Buffer }>;
+  skillEntries(fqn: string): AsyncIterable<{ relPath: string; content: Buffer }>;
+  /**
+   * MCP spec as a parsed JSON object, ready to embed under
+   * `mcpServers` in the target CLI's config. Emploke's internal
+   * `_meta` block is stripped by the content source — runtime does
+   * NOT need to know catalog's storage format.
+   */
+  getMcpRuntimeConfig(fqn: string): Promise<Record<string, unknown>>;
+}
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
@@ -76,8 +109,8 @@ export interface Runtime {
    */
   provision(
     workdir: string,
-    agent: AgentResolveResult,
-    catalog: CatalogQueries,
+    agent: ResolvedAgent,
+    catalog: AgentContentSource,
     ctx: ProvisionContext,
   ): Promise<{
     runtimeSessionId: string | null;
@@ -265,8 +298,8 @@ export interface RuntimeCapabilities {
  */
 export interface LaunchHeadlessOpts {
   readonly workdir: string;
-  readonly agent: AgentResolveResult;
-  readonly catalog: CatalogQueries;
+  readonly agent: ResolvedAgent;
+  readonly catalog: AgentContentSource;
   readonly prompt: string;
   readonly workspaceDir: string;
   /**
