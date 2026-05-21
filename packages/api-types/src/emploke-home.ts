@@ -2,14 +2,20 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 /** Fallback `~/.emploke` when no `EMPLOKE_HOME` env var is set. */
-export const DEFAULT_EMPLOKE_HOME: string = path.join(homedir(), ".emploke");
+export const DEFAULT_EMPLOKE_HOME = path.join(homedir(), ".emploke");
 
 /**
  * Resolve the emploke home directory from environment. Pure: no fs
  * access. Empty-string overrides (`EMPLOKE_HOME=""`) are treated as
  * unset.
+ *
+ * Callers MUST pass `process.env` explicitly. The previous shape
+ * defaulted to `{}` which silently returned `DEFAULT_EMPLOKE_HOME`
+ * even when the caller meant "use the running process's env" — a
+ * footgun that bit when a refactor accidentally dropped the
+ * `process.env` argument and the function became a no-op constant.
  */
-export function resolveEmplokeHome(env: NodeJS.ProcessEnv = {}): string {
+export function resolveEmplokeHome(env: NodeJS.ProcessEnv): string {
   const homeOverride = env.EMPLOKE_HOME;
   return path.resolve(
     homeOverride && homeOverride.length > 0 ? homeOverride : DEFAULT_EMPLOKE_HOME,
