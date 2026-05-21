@@ -9,6 +9,8 @@ export {
   composeEmplokeCore,
   type EmplokeCore,
   type EmplokeCoreOptions,
+  type SpawnFn,
+  type SpawnSessionResult,
   WorkspaceHasLiveTasksError,
   type WorkspaceRuntime,
   WorkspaceRuntimeCache,

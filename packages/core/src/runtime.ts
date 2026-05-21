@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
 import { composeSessionModule, type SessionService } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
@@ -20,9 +17,11 @@ import {
   composeWorkspaceModule,
   type Workspace,
   type WorkspaceModuleOptions,
-  type WorkspaceNotRegisteredError,
   type WorkspaceService,
 } from "@emploke/workspace";
+import pino, { type Logger } from "pino";
+
+const silentLogger: Logger = pino({ level: "silent" });
 
 /**
  * Inject a fake terminal spawner. Tests pass a stub to avoid touching
@@ -153,6 +152,11 @@ export interface EmplokeCoreOptions {
 }
 
 export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<EmplokeCore> {
+  if (!path.isAbsolute(opts.defaultWorkspaceParent)) {
+    throw new Error(
+      `composeEmplokeCore: defaultWorkspaceParent must be an absolute path; got ${JSON.stringify(opts.defaultWorkspaceParent)}`,
+    );
+  }
   const workspaceModule = await composeWorkspaceModule(opts.workspace);
   const cache = new WorkspaceRuntimeCache({
     workspaceService: workspaceModule.service,
@@ -305,6 +309,19 @@ export class WorkspaceRuntimeCache {
   }
 
   async closeAll(): Promise<void> {
+    // Drain in-flight loads first. Without this, a concurrent
+    // `get(id)` whose promise resolves AFTER our iteration over
+    // `entries` would re-populate the map post-close and leak the
+    // newly-built runtime past process exit. Same drain-then-act
+    // pattern used by `reload(id)`.
+    const inflight = [...this.inflight.values()];
+    for (const p of inflight) {
+      try {
+        await p;
+      } catch {
+        // best-effort
+      }
+    }
     for (const rt of this.entries.values()) {
       try {
         await rt.close();
@@ -320,31 +337,60 @@ export class WorkspaceRuntimeCache {
     if (!workspace) return null;
 
     const dbFile = path.join(workspace.workspaceDir, "workspace.db");
-    const { mkdir } = await import("node:fs/promises");
     await mkdir(workspace.workspaceDir, { recursive: true });
 
-    const catalogModule = await composeCatalogModule({
-      dbFile,
-      logger: this.logger,
-    });
-    const sessionModule = await composeSessionModule({
-      dbFile,
-      catalog: catalogModule.service,
-      runtimeRegistry: this.runtimeRegistry,
-      workspaceDir: workspace.workspaceDir,
-      workspaceId: id,
-      logger: this.logger,
-    });
-    const taskModule = await composeTaskModule({
-      dbFile,
-      catalog: catalogModule.service,
-      runtimeRegistry: this.runtimeRegistry,
-      workspaceDir: workspace.workspaceDir,
-      workspaceId: id,
-      logger: this.logger,
-    });
+    // Partial-failure safety: each successive composeXxxModule opens
+    // its own SQLite handle. If a later one throws, the earlier
+    // handles would leak (file lock held, WAL file pinned, …) unless
+    // we tear them down on the failure path. Track each handle as we
+    // build, and on any throw run them in reverse order so the
+    // entire load is "all-or-nothing" from a resource POV.
+    const cleanup: Array<() => Promise<void>> = [];
+    const teardown = async (): Promise<void> => {
+      while (cleanup.length > 0) {
+        const fn = cleanup.pop();
+        if (!fn) break;
+        try {
+          await fn();
+        } catch {
+          // best-effort — primary error has already been thrown
+        }
+      }
+    };
 
-    await taskModule.service.recoverOrphaned();
+    let catalogModule: Awaited<ReturnType<typeof composeCatalogModule>>;
+    let sessionModule: Awaited<ReturnType<typeof composeSessionModule>>;
+    let taskModule: Awaited<ReturnType<typeof composeTaskModule>>;
+    try {
+      catalogModule = await composeCatalogModule({
+        dbFile,
+        logger: this.logger,
+      });
+      cleanup.push(() => catalogModule.close());
+      sessionModule = await composeSessionModule({
+        dbFile,
+        catalog: catalogModule.service,
+        runtimeRegistry: this.runtimeRegistry,
+        workspaceDir: workspace.workspaceDir,
+        workspaceId: id,
+        logger: this.logger,
+      });
+      cleanup.push(() => sessionModule.close());
+      taskModule = await composeTaskModule({
+        dbFile,
+        catalog: catalogModule.service,
+        runtimeRegistry: this.runtimeRegistry,
+        workspaceDir: workspace.workspaceDir,
+        workspaceId: id,
+        logger: this.logger,
+      });
+      cleanup.push(() => taskModule.close());
+
+      await taskModule.service.recoverOrphaned();
+    } catch (err) {
+      await teardown();
+      throw err;
+    }
 
     const sessions = sessionModule.service;
     const spawnFn = this.spawnFn;
@@ -395,7 +441,3 @@ function spawnErrorCode(err: unknown): string {
   if (err instanceof Error && err.name) return err.name;
   return "SpawnError";
 }
-
-// Type-only re-imports kept compile-only to silence unused warnings on
-// the imported `WorkspaceNotRegisteredError` symbol (used in jsdoc).
-void (undefined as WorkspaceNotRegisteredError | undefined);
