@@ -1,32 +1,10 @@
-/**
- * Test-only entry point.
- *
- * Tests need direct access to a few things the main public API hides:
- *
- *   - The `Workspace` MikroORM entity, so unit tests can persist /
- *     hydrate rows without going through the service.
- *   - `WorkspaceRepository` — same reason.
- *   - `openTestWorkspaceOrm()` — opens an in-memory MikroORM instance
- *     with the pkg's entity list pre-registered.
- *
- * Example:
- *
- * ```ts
- * import { openTestWorkspaceOrm, WorkspaceRepository } from "@emploke/workspace/testing";
- *
- * const orm = await openTestWorkspaceOrm();
- * const em = orm.em.fork();
- * const repo = new WorkspaceRepository(em);
- * // ... run test ...
- * await orm.close(true);
- * ```
- */
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema.js";
 
-import { defineConfig, type Options } from "@mikro-orm/better-sqlite";
-import type { MikroORM } from "@mikro-orm/core";
-import { WORKSPACE_ENTITIES } from "./entity.js";
-
-export { Workspace, WORKSPACE_ENTITIES } from "./entity.js";
+export { workspaces, type Workspace, type NewWorkspace } from "./schema.js";
 export { WorkspaceQueries } from "./queries.js";
 export { WorkspaceRepository } from "./repository.js";
 export { WorkspaceService } from "./service.js";
@@ -38,20 +16,32 @@ export {
   normalizeWorkspaceDir,
 } from "./validators.js";
 
+type Db = BetterSQLite3Database<typeof schema>;
+
 /**
- * Open an in-memory MikroORM instance for tests. Builds the full
- * schema from the pkg's entity list, so tests don't hand-create any
- * tables.
+ * Open an in-memory Drizzle-wrapped better-sqlite3 instance for
+ * tests, with the workspace schema pre-applied by replaying every
+ * SQL file under `drizzle/` in lexical order (same logic the
+ * production `runPendingMigrations` uses).
  */
-export async function openTestWorkspaceOrm(overrides?: Partial<Options>): Promise<MikroORM> {
-  const { MikroORM: MikroORMCtor } = await import("@mikro-orm/better-sqlite");
-  const config = defineConfig({
-    entities: [...WORKSPACE_ENTITIES],
-    dbName: ":memory:",
-    allowGlobalContext: true,
-    ...(overrides ?? {}),
-  });
-  const orm = await MikroORMCtor.init(config);
-  await orm.schema.createSchema();
-  return orm;
+export function openTestWorkspaceDb(): {
+  db: Db;
+  sqlite: BetterSqliteDatabase;
+  close(): void;
+} {
+  const sqlite = new Database(":memory:");
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  const db = drizzle(sqlite, { schema });
+  const dir = path.join(import.meta.dirname, "..", "drizzle");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+    sqlite.exec(readFileSync(path.join(dir, f), "utf8"));
+  }
+  return {
+    db,
+    sqlite,
+    close() {
+      sqlite.close();
+    },
+  };
 }

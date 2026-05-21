@@ -1,21 +1,38 @@
-import { MikroORM } from "@mikro-orm/better-sqlite";
-import { SESSION_ENTITIES } from "./entity.js";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema.js";
 
-export { Session, SESSION_ENTITIES } from "./entity.js";
+export { type Session, type NewSession, sessions } from "./schema.js";
 export { SessionRepository } from "./repository.js";
 export { SessionManager } from "./manager.js";
 export { composeSessionModule } from "./compose.js";
 
+type Db = BetterSQLite3Database<typeof schema>;
+
 /**
- * Open an in-memory MikroORM instance with the session entities
- * registered and the schema created. Convenience for tests.
+ * Open an in-memory Drizzle-wrapped better-sqlite3 instance for tests
+ * with the session schema pre-applied.
  */
-export async function openTestSessionOrm(): Promise<MikroORM> {
-  const orm = await MikroORM.init({
-    entities: [...SESSION_ENTITIES],
-    dbName: ":memory:",
-    allowGlobalContext: true,
-  });
-  await orm.schema.createSchema();
-  return orm;
+export function openTestSessionDb(): {
+  db: Db;
+  sqlite: BetterSqliteDatabase;
+  close(): void;
+} {
+  const sqlite = new Database(":memory:");
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  const db = drizzle(sqlite, { schema });
+  const dir = path.join(import.meta.dirname, "..", "drizzle");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+    sqlite.exec(readFileSync(path.join(dir, f), "utf8"));
+  }
+  return {
+    db,
+    sqlite,
+    close() {
+      sqlite.close();
+    },
+  };
 }

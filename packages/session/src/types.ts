@@ -1,10 +1,13 @@
 import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager } from "@mikro-orm/core";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type * as schema from "./schema.js";
 
 /** Re-export `LaunchCommand` so call sites only need one import. */
 export type { LaunchCommand } from "@emploke/runtime";
+
+type Db = BetterSQLite3Database<typeof schema>;
 
 /**
  * Wire-level session value — combines the persisted row with workdir
@@ -56,10 +59,10 @@ export interface SessionManagerConfig {
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
   /**
-   * MikroORM `EntityManager` backing the `sessions` table. The manager
-   * forks per-transaction inside `em.transactional(...)`.
+   * Drizzle-wrapped better-sqlite3 connection backing the `sessions`
+   * table.
    */
-  readonly em: EntityManager;
+  readonly db: Db;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */

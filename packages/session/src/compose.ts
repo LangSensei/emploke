@@ -1,18 +1,18 @@
-import type { EntityManager, MikroORM as IMikroORM } from "@mikro-orm/core";
-import { MikroORM } from "@mikro-orm/better-sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import { SESSION_ENTITIES } from "./entity.js";
 import { SessionManager } from "./manager.js";
+import * as schema from "./schema.js";
 
-/**
- * Options for `composeSessionModule`. Either `orm` (caller owns the
- * lifecycle) or `dbFile` (the compose function opens + owns the ORM).
- */
+type Db = BetterSQLite3Database<typeof schema>;
+
 export type SessionModuleOptions = (
-  | { readonly orm: IMikroORM; readonly dbFile?: never }
-  | { readonly dbFile: string; readonly orm?: never }
+  | { readonly db: Db; readonly dbFile?: never }
+  | { readonly dbFile: string; readonly db?: never }
 ) & {
   readonly catalog: CatalogManager;
   readonly runtimeRegistry: RuntimeRegistry;
@@ -26,33 +26,22 @@ export type SessionModuleOptions = (
 
 export interface SessionModule {
   readonly manager: SessionManager;
-  /**
-   * Releases the ORM if compose opened it (i.e. `dbFile` was passed).
-   * No-op when the caller passed their own `orm`. Idempotent.
-   */
   close(): Promise<void>;
 }
 
-/**
- * Construct a `SessionManager` wired against a MikroORM `EntityManager`.
- *
- * Two modes:
- *   - `{ orm }`: caller owns the ORM lifecycle (typical for tests and
- *     for the @emploke/core orchestrator which keeps the ORM open for
- *     the workspace's lifetime).
- *   - `{ dbFile }`: compose opens the ORM internally and `close()`
- *     shuts it down. Used by ad-hoc consumers.
- */
 export async function composeSessionModule(opts: SessionModuleOptions): Promise<SessionModule> {
-  const ownsOrm = opts.orm === undefined;
-  const orm =
-    opts.orm ??
-    (await MikroORM.init({
-      entities: [...SESSION_ENTITIES],
-      dbName: opts.dbFile as string,
-    }));
-  if (ownsOrm) {
-    await orm.schema.updateSchema({ safe: true });
+  let sqlite: BetterSqliteDatabase | null = null;
+  let db: Db;
+  if ("db" in opts && opts.db !== undefined) {
+    db = opts.db;
+  } else {
+    sqlite = new Database(opts.dbFile as string);
+    sqlite.pragma("journal_mode = WAL");
+    sqlite.pragma("synchronous = NORMAL");
+    sqlite.pragma("foreign_keys = ON");
+    sqlite.pragma("busy_timeout = 5000");
+    db = drizzle(sqlite, { schema });
+    runPendingMigrations(sqlite);
   }
 
   const manager = new SessionManager({
@@ -64,15 +53,41 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
     ...(opts.subprocessEnv !== undefined ? { subprocessEnv: opts.subprocessEnv } : {}),
     ...(opts.defaultRuntime !== undefined ? { defaultRuntime: opts.defaultRuntime } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-    em: orm.em as EntityManager,
+    db,
   });
 
   return {
     manager,
     async close() {
-      if (ownsOrm) {
-        await orm.close(true);
-      }
+      sqlite?.close();
     },
   };
+}
+
+function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
+  sqlite.exec(
+    "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",
+  );
+  const dir = path.join(import.meta.dirname, "..", "drizzle");
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+  } catch {
+    return;
+  }
+  const applied = new Set(
+    sqlite
+      .prepare("SELECT name FROM __drizzle_migrations")
+      .all()
+      .map((r) => (r as { name: string }).name),
+  );
+  const insertApplied = sqlite.prepare(
+    "INSERT INTO __drizzle_migrations (name, applied_at) VALUES (?, ?)",
+  );
+  for (const name of files) {
+    if (applied.has(name)) continue;
+    const sql = readFileSync(path.join(dir, name), "utf8");
+    sqlite.exec(sql);
+    insertApplied.run(name, new Date().toISOString());
+  }
 }

@@ -1,7 +1,6 @@
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
+import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
 import {
   type CatalogConflict,
   CatalogManager,
@@ -10,11 +9,11 @@ import {
 } from "../../src/facade/catalog-manager.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { MikroSkillRepository } from "../../src/skill/mikro-skill-repository.js";
-import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
+import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * Tests for the sync flow: identity check, version short-circuit, dep
@@ -131,19 +130,19 @@ ${extra}
 
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
-let orm: MikroORM;
-let mcpRepo: MikroMcpRepository;
-let skillRepo: MikroSkillRepository;
-let agentRepo: MikroAgentRepository;
+let orm: ReturnType<typeof openTestCatalogDb>;
+let mcpRepo: DrizzleMcpRepository;
+let skillRepo: DrizzleSkillRepository;
+let agentRepo: DrizzleAgentRepository;
 let fakes: Fakes;
 let mgr: CatalogManager;
 
 beforeEach(async () => {
-  orm = await bootstrapCatalogOrm();
+  orm = bootstrapCatalogDb();
   
-  mcpRepo = new MikroMcpRepository({ em: orm.em as EntityManager });
-  skillRepo = new MikroSkillRepository({ em: orm.em as EntityManager });
-  agentRepo = new MikroAgentRepository({ em: orm.em as EntityManager });
+  mcpRepo = new DrizzleMcpRepository({ db: orm.db });
+  skillRepo = new DrizzleSkillRepository({ db: orm.db });
+  agentRepo = new DrizzleAgentRepository({ db: orm.db });
   fakes = makeFakes();
   const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchFile);
   const skillSvc = new SkillService(skillRepo, fakes.skillFetcher, { mcps: mcpRepo });
@@ -156,7 +155,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   try {
-    await orm.close(true);
+    orm.close();
   } catch {
     // already closed
   }

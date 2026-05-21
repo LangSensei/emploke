@@ -5,9 +5,9 @@ import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager } from "@mikro-orm/core";
+
 import { readAgentName } from "./agent-file.js";
-import { Session } from "./entity.js";
+import { type Session } from "./schema.js";
 import {
   AgentNotFoundError,
   SessionIdAllocationFailedError,
@@ -49,7 +49,7 @@ export class SessionManager {
   private readonly workspaceDir: string;
   private readonly workspaceId: string | undefined;
   private readonly subprocessEnvBase: NodeJS.ProcessEnv;
-  private readonly em: EntityManager;
+  private readonly repo: SessionRepository;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
@@ -63,18 +63,9 @@ export class SessionManager {
     this.workspaceId = config.workspaceId;
     this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
-    this.em = config.em;
+    this.repo = new SessionRepository(config.db);
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
-  }
-
-  /**
-   * Build a fresh `SessionRepository` against a forked EM. We fork on
-   * every read so identity-map caching from writes done through other
-   * EM forks (or other server processes) doesn't return stale rows.
-   */
-  private repo(): SessionRepository {
-    return new SessionRepository(this.em.fork() as EntityManager);
   }
 
   // ─── create ──────────────────────────────────────────────
@@ -125,15 +116,12 @@ export class SessionManager {
       // scope/name pair (potentially differing from `agentName` if the
       // user passed an alias); read it back so the persisted row matches.
       const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
-      await this.em.transactional(async (em) => {
-        const repo = new SessionRepository(em);
-        await repo.insert({
-          id: id as string,
-          agent: canonicalAgent,
-          runtime: runtime.kind,
-          createdAt,
-          runtimeSessionId,
-        });
+      await this.repo.insert({
+        id: id as string,
+        agent: canonicalAgent,
+        runtime: runtime.kind,
+        createdAt,
+        runtimeSessionId,
       });
       return {
         id,
@@ -160,7 +148,7 @@ export class SessionManager {
     if (opts.agent !== undefined) repoOpts.agent = opts.agent;
     let entries: Session[];
     try {
-      entries = await this.repo().list(repoOpts);
+      entries = await this.repo.list(repoOpts);
     } catch (err) {
       this.logger.warn(
         { error: err instanceof Error ? err.message : String(err) },
@@ -226,18 +214,14 @@ export class SessionManager {
       if (session.runtimeSessionId !== null) {
         await runtime.deleteState(session.runtimeSessionId);
       }
-      await this.em.transactional(async (em) => {
-        await new SessionRepository(em).delete(id);
-      });
+      await this.repo.delete(id);
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
       return;
     }
 
     // Archive (default): forget the row but leave its files behind.
-    await this.em.transactional(async (em) => {
-      await new SessionRepository(em).delete(id);
-    });
+    await this.repo.delete(id);
   }
 
   // ─── buildInteractiveLaunch ─────────────────────────────────────────
@@ -271,9 +255,7 @@ export class SessionManager {
     const desiredMode: "local" | "remote" = opts.remote === true ? "remote" : "local";
     if (session.lastLaunchMode !== desiredMode) {
       try {
-        await this.em.transactional(async (em) => {
-          await new SessionRepository(em).patchLastLaunchMode(id, desiredMode);
-        });
+        await this.repo.patchLastLaunchMode(id, desiredMode);
       } catch (err) {
         this.logger.warn(
           {
@@ -392,9 +374,9 @@ export class SessionManager {
   }
 
   private async loadSession(id: string): Promise<SessionView | null> {
-    let row: Session | null;
+    let row: Session | undefined;
     try {
-      row = await this.repo().read(id);
+      row = await this.repo.read(id);
     } catch (err) {
       this.logger.warn(
         {
@@ -405,7 +387,7 @@ export class SessionManager {
       );
       return null;
     }
-    if (row === null) return null;
+    if (row === undefined) return null;
     const draft = await this.draftFromRow(row);
     if (draft === null) return null;
     return this.refreshSession(draft);

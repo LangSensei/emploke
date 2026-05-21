@@ -1,8 +1,7 @@
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
+import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
 import {
   type CatalogConflict,
   CatalogManager,
@@ -13,11 +12,11 @@ import { HasDependentsError } from "../../src/facade/errors.js";
 import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { MikroSkillRepository } from "../../src/skill/mikro-skill-repository.js";
-import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
+import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * Shared fake fetcher: one in-memory map of (origin → file map) used
@@ -144,21 +143,21 @@ const MCP_BODY = `{
   "args": ["server.js"]
 }`;
 
-let orm: MikroORM;
-let mcpRepo: MikroMcpRepository;
-let skillRepo: MikroSkillRepository;
-let agentRepo: MikroAgentRepository;
+let orm: ReturnType<typeof openTestCatalogDb>;
+let mcpRepo: DrizzleMcpRepository;
+let skillRepo: DrizzleSkillRepository;
+let agentRepo: DrizzleAgentRepository;
 let fetchers: ReturnType<typeof makeFakeFetchers>;
 let mgr: CatalogManager;
 
 beforeEach(async () => {
   // All three catalog repos share one in-memory connection — same as
   // production where they share the workspace's `workspace.db` handle.
-  orm = await bootstrapCatalogOrm();
+  orm = bootstrapCatalogDb();
   
-  mcpRepo = new MikroMcpRepository({ em: orm.em as EntityManager });
-  skillRepo = new MikroSkillRepository({ em: orm.em as EntityManager });
-  agentRepo = new MikroAgentRepository({ em: orm.em as EntityManager });
+  mcpRepo = new DrizzleMcpRepository({ db: orm.db });
+  skillRepo = new DrizzleSkillRepository({ db: orm.db });
+  agentRepo = new DrizzleAgentRepository({ db: orm.db });
   fetchers = makeFakeFetchers();
 
   // McpService is wired against a single-file fetcher that returns
@@ -174,7 +173,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   try {
-    await orm.close(true);
+    orm.close();
   } catch {
     // already closed
   }

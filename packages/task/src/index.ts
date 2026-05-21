@@ -1,5 +1,5 @@
 /**
- * @emploke/task — Task entity + TaskManager (MikroORM-backed).
+ * @emploke/task — Task entity + TaskManager (Drizzle-backed).
  */
 
 export {
@@ -22,13 +22,9 @@ export {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-export {
-  assertValidTaskId,
-  generateTaskId,
-  TASK_ID_RE,
-} from "./ids.js";
+export { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
 export { TaskManager } from "./manager.js";
-export { TASK_ENTITIES, TaskRow } from "./entity.js";
+export { tasks, type TaskRow, type NewTaskRow } from "./schema.js";
 export { TaskRepository } from "./repository.js";
 export { composeTaskModule, type TaskModule, type TaskModuleOptions } from "./compose.js";
 export { safeJoinUnderRoot } from "./paths.js";

@@ -26,7 +26,6 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DispatchOpts,
@@ -34,19 +33,19 @@ import {
   TaskManager,
   TaskRepository,
 } from "../../src/index.js";
-import { openTestTaskOrm } from "../../src/testing.js";
+import { openTestTaskDb } from "../../src/testing.js";
 
 let tasksDir: string;
-const openOrms: MikroORM[] = [];
+const openHandles: ReturnType<typeof openTestTaskDb>[] = [];
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-real-spawn-"));
 });
 
 afterEach(async () => {
-  for (const o of openOrms.splice(0)) {
+  for (const o of openHandles.splice(0)) {
     try {
-      await o.close(true);
+      o.close();
     } catch {
       // already closed
     }
@@ -151,15 +150,15 @@ const makeManager = async (
 ): Promise<{ m: TaskManager; repo: TaskRepository }> => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
-  const orm = await openTestTaskOrm();
-  openOrms.push(orm);
-  const repo = new TaskRepository({ em: orm.em as EntityManager });
+  const orm = openTestTaskDb();
+  openHandles.push(orm);
+  const repo = new TaskRepository({ db: orm.db });
   const m = new TaskManager({
     catalog,
     runtimeRegistry: reg,
     tasksDir,
     workspaceDir: tasksDir,
-    em: orm.em as EntityManager,
+    db: orm.db,
   });
   return { m, repo };
 };

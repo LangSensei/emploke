@@ -14,9 +14,8 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { TaskManager, TaskRepository } from "../src/index.js";
-import { openTestTaskOrm } from "../src/testing.js";
+import { openTestTaskDb } from "../src/testing.js";
 
 /**
  * Records every kill + lets the test drive the exit timing. By
@@ -78,7 +77,7 @@ export class TestRuntime implements Runtime {
 
 export interface CancelFixture {
   readonly tasksDir: string;
-  readonly orm: MikroORM;
+  readonly orm: ReturnType<typeof openTestTaskDb>;
   readonly repo: TaskRepository;
   readonly rt: TestRuntime;
   readonly m: TaskManager;
@@ -91,18 +90,18 @@ export async function setupCancelFixture(
   } = {},
 ): Promise<CancelFixture> {
   const tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
-  const orm = await openTestTaskOrm();
+  const orm = openTestTaskDb();
   const rt = new TestRuntime();
   if (opts.autoExitOnKill) rt.autoExitOnKill = true;
   const reg = new RuntimeRegistry();
   reg.register(rt);
-  const repo = new TaskRepository({ em: orm.em as EntityManager });
+  const repo = new TaskRepository({ db: orm.db });
   const m = new TaskManager({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
     tasksDir,
     workspaceDir: tasksDir,
-    em: orm.em as EntityManager,
+    db: orm.db,
     now: () => new Date("2026-05-18T01:00:00.000Z"),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
@@ -111,7 +110,7 @@ export async function setupCancelFixture(
 
 export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   try {
-    await fx.orm.close(true);
+    fx.orm.close();
   } catch {
     // already closed
   }

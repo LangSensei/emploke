@@ -1,4 +1,3 @@
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent-entity.js";
@@ -9,8 +8,8 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
-import { MikroAgentRepository } from "../../src/agent/mikro-agent-repository.js";
-import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
+import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
   fetcher: AgentFetcher;
@@ -52,22 +51,22 @@ ${deps}
 # Body
 `;
 
-let orm: MikroORM;
-let repo: MikroAgentRepository;
+let orm: ReturnType<typeof openTestCatalogDb>;
+let repo: DrizzleAgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
 beforeEach(async () => {
-  orm = await bootstrapCatalogOrm();
+  orm = bootstrapCatalogDb();
   
-  repo = new MikroAgentRepository({ em: orm.em as EntityManager });
+  repo = new DrizzleAgentRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
 });
 
 afterEach(async () => {
   try {
-    await orm.close(true);
+    orm.close();
   } catch {
     // already closed
   }

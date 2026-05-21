@@ -15,7 +15,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogManager } from "@emploke/catalog";
 import { type Runtime, RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readAgentNameCalls: string[] = [];
@@ -31,21 +30,21 @@ vi.mock("../src/agent-file.js", () => ({
 // Imports BELOW vi.mock so the mock is active when the manager module
 // resolves the agent-file dependency.
 const { SessionManager, SessionRepository } = await import("../src/index.js");
-const { openTestSessionOrm } = await import("../src/testing.js");
+const { openTestSessionDb } = await import("../src/testing.js");
 
 let sessionsDir: string;
 let scratch: string;
-let orm: MikroORM;
+let dbHandle: ReturnType<typeof openTestSessionDb>;
 
 beforeEach(async () => {
   sessionsDir = await mkdtemp(path.join(tmpdir(), "emploke-no-fs-sessions-"));
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-no-fs-scratch-"));
-  orm = await openTestSessionOrm();
+  dbHandle = openTestSessionDb();
   readAgentNameCalls.length = 0;
 });
 afterEach(async () => {
   try {
-    await orm.close(true);
+    dbHandle.close();
   } catch {
     // already closed
   }
@@ -75,7 +74,7 @@ function stubRuntime(): Runtime {
 }
 
 async function seedSession(id: string, agent: string): Promise<void> {
-  const repo = new SessionRepository(orm.em.fork() as EntityManager);
+  const repo = new SessionRepository(dbHandle.db);
   await repo.insert({
     id,
     runtime: "copilot",
@@ -93,7 +92,7 @@ function buildManager(): SessionManager {
     runtimeRegistry: reg,
     sessionsDir,
     workspaceDir: scratch,
-    em: orm.em as EntityManager,
+    db: dbHandle.db,
   });
 }
 

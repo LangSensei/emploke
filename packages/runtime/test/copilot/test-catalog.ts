@@ -101,14 +101,16 @@ export async function makeTestCatalog(
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
     // Bypass the catalog's validation pipeline by issuing a raw UPDATE
-    // through the ORM connection. The new MikroORM-backed catalog
-    // doesn't enforce json_valid at the DDL level (we dropped that
-    // constraint along with the FK constraints in the de-DDD pass),
-    // so no table swap is needed.
-    const em = (catalog as unknown as {
-      mcp: { repo: { em: { getConnection(): { execute(sql: string, args: unknown[]): Promise<unknown> } } } };
-    }).mcp.repo.em;
-    await em.getConnection().execute("UPDATE mcps SET spec = ? WHERE fqn = ?", [content, specName]);
+    // through the underlying better-sqlite3 connection. The Drizzle
+    // wrapper exposes it on `.$client` for drizzle 0.45+.
+    const db = (catalog as unknown as {
+      mcp: {
+        repo: {
+          db: { $client: { prepare(sql: string): { run(...args: unknown[]): unknown } } };
+        };
+      };
+    }).mcp.repo.db;
+    db.$client.prepare("UPDATE mcps SET spec = ? WHERE fqn = ?").run(content, specName);
   };
 
   return {

@@ -4,21 +4,20 @@
  * origin are excluded.
  */
 
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TaskRepository, Task } from "../src/index.js";
-import { openTestTaskOrm } from "../src/testing.js";
+import { openTestTaskDb } from "../src/testing.js";
 import type { TaskOrigin } from "../src/types.js";
 
-let orm: MikroORM;
+let orm: ReturnType<typeof openTestTaskDb>;
 let repo: TaskRepository;
 
 beforeEach(async () => {
-  orm = await openTestTaskOrm();
-  repo = new TaskRepository({ em: orm.em as EntityManager });
+  orm = openTestTaskDb();
+  repo = new TaskRepository({ db: orm.db });
 });
 afterEach(async () => {
-  await orm.close(true);
+  orm.close();
 });
 
 async function seed(id: string, origin: TaskOrigin): Promise<void> {

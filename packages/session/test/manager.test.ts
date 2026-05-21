@@ -9,7 +9,7 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
@@ -19,7 +19,7 @@ import {
   SessionNotFoundError,
   SessionRepository,
 } from "../src/index.js";
-import { openTestSessionOrm } from "../src/testing.js";
+import { openTestSessionDb } from "../src/testing.js";
 
 // ───── helpers ──────────────────────────────────────────────
 
@@ -31,27 +31,28 @@ let catalogDir: string;
  * Per-test ORMs that the buildManager helper hands out. Tracked so
  * afterEach can close them.
  */
-let openOrms: MikroORM[] = [];
+type DbHandle = ReturnType<typeof openTestSessionDb>;
+let openHandles: DbHandle[] = [];
 
-async function makeOrm(): Promise<MikroORM> {
-  const orm = await openTestSessionOrm();
-  openOrms.push(orm);
-  return orm;
+function makeDb(): DbHandle {
+  const handle = openTestSessionDb();
+  openHandles.push(handle);
+  return handle;
 }
 
 /**
- * Construct a `SessionManager` with a fresh `:memory:` MikroORM
- * instance injected. Tests that need to inspect the persisted state
- * can override `opts.em` with their own.
+ * Construct a `SessionManager` with a fresh `:memory:` Drizzle db
+ * injected. Tests that need to inspect the persisted state can
+ * override `opts.db` with their own.
  */
 async function buildManager(
-  opts: Omit<SessionManagerConfig, "em"> & Partial<Pick<SessionManagerConfig, "em">>,
+  opts: Omit<SessionManagerConfig, "db"> & Partial<Pick<SessionManagerConfig, "db">>,
 ): Promise<SessionManager> {
-  if (opts.em !== undefined) {
+  if (opts.db !== undefined) {
     return new SessionManager(opts as SessionManagerConfig);
   }
-  const orm = await makeOrm();
-  return new SessionManager({ ...opts, em: orm.em as EntityManager });
+  const orm = makeDb();
+  return new SessionManager({ ...opts, db: orm.db });
 }
 
 beforeEach(async () => {
@@ -60,14 +61,14 @@ beforeEach(async () => {
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
-  for (const o of openOrms.splice(0)) {
+  for (const o of openHandles.splice(0)) {
     try {
-      await o.close(true);
+      o.close();
     } catch {
       // already closed
     }
   }
-  openOrms = [];
+  openHandles = [];
   await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });
@@ -239,7 +240,7 @@ describe("SessionManager construction", () => {
 describe("create()", () => {
   it("provisions, persists state, returns Session shape", async () => {
     const rt = new StubRuntime();
-    const orm = await makeOrm();
+    const orm = makeDb();
     const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
@@ -247,7 +248,7 @@ describe("create()", () => {
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
       randomBytes: seqRandom(),
-      em: orm.em as EntityManager,
+      db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
 
@@ -263,7 +264,7 @@ describe("create()", () => {
     // workdir sidecar. Inspect via the same handle the manager wrote
     // through. `persisted` is a Session entity — compare its
     // POJO projection so the assertion stays shape-only.
-    const persisted = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
+    const persisted = await new SessionRepository(orm.db).read(s.id);
     expect(persisted).not.toBeNull();
     expect(persisted?.runtime).toBe("copilot");
     expect(persisted?.agent).toBe("public/demo");
@@ -482,14 +483,14 @@ describe("list()", () => {
     // registry doesn't know "copilot". Both managers share the same
     // SQLite repository so the runtime-mismatch happens at the manager
     // layer, not at the storage layer.
-    const sharedOrm = await makeOrm();
+    const sharedOrm = makeDb();
     const rtA = new StubRuntime();
     const m1 = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
       sessionsDir,
       workspaceDir: scratch,
-      em: sharedOrm.em as EntityManager,
+      db: sharedOrm.db,
     });
     await m1.create({ agent: "demo" });
 
@@ -499,7 +500,7 @@ describe("list()", () => {
       sessionsDir,
       workspaceDir: scratch,
       logger: r.logger,
-      em: sharedOrm.em as EntityManager,
+      db: sharedOrm.db,
     });
     expect(await m2.list()).toEqual([]);
     expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
@@ -519,18 +520,18 @@ describe("list()", () => {
       title: null,
       userTitled: false,
     };
-    const orm = await makeOrm();
+    const orm = makeDb();
     const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      em: orm.em as EntityManager,
+      db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
     const [out] = await m.list();
     expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-    const persisted = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
+    const persisted = await new SessionRepository(orm.db).read(s.id);
     expect(persisted?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
@@ -818,19 +819,19 @@ describe("buildInteractiveLaunch()", () => {
 
   it("persists lastLaunchMode after a successful launch", async () => {
     const rt = new StubRuntime();
-    const orm = await makeOrm();
+    const orm = makeDb();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      em: orm.em as EntityManager,
+      db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
     await m.buildInteractiveLaunch(s.id, { remote: true });
-    expect((await new SessionRepository(orm.em.fork() as EntityManager).read(s.id))?.lastLaunchMode).toBe("remote");
+    expect((await new SessionRepository(orm.db).read(s.id))?.lastLaunchMode).toBe("remote");
     await m.buildInteractiveLaunch(s.id, { remote: false });
-    expect((await new SessionRepository(orm.em.fork() as EntityManager).read(s.id))?.lastLaunchMode).toBe("local");
+    expect((await new SessionRepository(orm.db).read(s.id))?.lastLaunchMode).toBe("local");
   });
 
   it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {
@@ -843,32 +844,33 @@ describe("buildInteractiveLaunch()", () => {
     // path scopes its write to a single column, so both updates
     // survive.
     const rt = new StubRuntime();
-    const orm = await makeOrm();
+    const orm = makeDb();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      em: orm.em as EntityManager,
+      db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
-    const before = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
-    if (before === null) throw new Error("session row missing after create");
+    const before = await new SessionRepository(orm.db).read(s.id);
+    if (before === undefined) throw new Error("session row missing after create");
     // Fire both writes concurrently. The "parallel writer" path uses a
-    // fresh EM fork doing a nativeUpdate on runtime_session_id only —
-    // matches what a discovery-runtime's refresh path would do.
+    // direct drizzle update on runtime_session_id only — matches what a
+    // discovery-runtime's refresh path would do.
     await Promise.all([
       m.buildInteractiveLaunch(s.id, { remote: true }),
       (async () => {
-        const { Session } = await import("../src/entity.js");
-        await (orm.em.fork() as EntityManager).nativeUpdate(
-          Session,
-          { id: s.id },
-          { runtimeSessionId: "from-parallel-writer" },
-        );
+        const { eq } = await import("drizzle-orm");
+        const { sessions } = await import("../src/schema.js");
+        orm.db
+          .update(sessions)
+          .set({ runtimeSessionId: "from-parallel-writer" })
+          .where(eq(sessions.id, s.id))
+          .run();
       })(),
     ]);
-    const after = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
+    const after = await new SessionRepository(orm.db).read(s.id);
     expect(after?.runtimeSessionId).toBe("from-parallel-writer");
     expect(after?.lastLaunchMode).toBe("remote");
   });
@@ -891,7 +893,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-uuid-alpha",
       subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
-      em: (await makeOrm()).em as EntityManager,
+      db: makeDb().db,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -914,7 +916,7 @@ describe("buildInteractiveLaunch()", () => {
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      em: (await makeOrm()).em as EntityManager,
+      db: makeDb().db,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -938,7 +940,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-A",
       subprocessEnv: sharedBase,
-      em: (await makeOrm()).em as EntityManager,
+      db: makeDb().db,
     });
     const mB = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -947,7 +949,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-B",
       subprocessEnv: sharedBase,
-      em: (await makeOrm()).em as EntityManager,
+      db: makeDb().db,
     });
 
     const sA = await mA.create({ agent: "demo" });
@@ -987,7 +989,7 @@ describe("buildInteractiveLaunch()", () => {
         ROGUE_NULL: null as unknown as string,
         ROGUE_OBJ: { not: "a string" } as unknown as string,
       },
-      em: (await makeOrm()).em as EntityManager,
+      db: makeDb().db,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);

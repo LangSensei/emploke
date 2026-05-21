@@ -1,18 +1,39 @@
-import { MikroORM } from "@mikro-orm/better-sqlite";
-import { TASK_ENTITIES } from "./entity.js";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema.js";
 
-export { Task } from "./task-entity.js";
-export { TaskRow, TASK_ENTITIES } from "./entity.js";
+export { type TaskRow, type NewTaskRow, tasks } from "./schema.js";
 export { TaskRepository } from "./repository.js";
 export { TaskManager } from "./manager.js";
+export { Task } from "./task-entity.js";
 export { composeTaskModule } from "./compose.js";
 
-export async function openTestTaskOrm(): Promise<MikroORM> {
-  const orm = await MikroORM.init({
-    entities: [...TASK_ENTITIES],
-    dbName: ":memory:",
-    allowGlobalContext: true,
-  });
-  await orm.schema.createSchema();
-  return orm;
+type Db = BetterSQLite3Database<typeof schema>;
+
+/**
+ * Open an in-memory Drizzle-wrapped better-sqlite3 instance for tests
+ * with the task schema pre-applied.
+ */
+export function openTestTaskDb(): {
+  db: Db;
+  sqlite: BetterSqliteDatabase;
+  close(): void;
+} {
+  const sqlite = new Database(":memory:");
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  const db = drizzle(sqlite, { schema });
+  const dir = path.join(import.meta.dirname, "..", "drizzle");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+    sqlite.exec(readFileSync(path.join(dir, f), "utf8"));
+  }
+  return {
+    db,
+    sqlite,
+    close() {
+      sqlite.close();
+    },
+  };
 }

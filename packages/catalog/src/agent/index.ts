@@ -22,7 +22,7 @@ export {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
-export { MikroAgentRepository } from "./mikro-agent-repository.js";
+export { DrizzleAgentRepository } from "./drizzle-agent-repository.js";
 export {
   DEFAULT_SCOPE,
   makeFqn,

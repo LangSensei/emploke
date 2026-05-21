@@ -42,19 +42,8 @@ export { AgentFqn } from "./domain/value-objects/agent-fqn.js";
 export { McpName } from "./domain/value-objects/mcp-name.js";
 export { Origin } from "./domain/value-objects/origin.js";
 export { SkillFqn } from "./domain/value-objects/skill-fqn.js";
-// ─── Row entities (MikroORM-internal carriers) + helpers ─
-export {
-  AgentFileRow,
-  AgentMcpDepRow,
-  AgentRow,
-  AgentSkillDepRow,
-  CATALOG_ENTITIES,
-  McpRow,
-  SkillFileRow,
-  SkillMcpDepRow,
-  SkillRow,
-  SkillSkillDepRow,
-} from "./entity.js";
+// ─── Drizzle schema (low-level row access for tests/migrations) ─
+export * as schema from "./schema.js";
 // ─── Wire DTOs (HTTP-shaped projections) ────────────
 export type {
   Agent as AgentPojo,

@@ -29,7 +29,7 @@ export {
   SessionsError,
 } from "./errors.js";
 
-export { Session, SESSION_ENTITIES } from "./entity.js";
+export { type Session, type NewSession, sessions } from "./schema.js";
 export { SessionRepository, type ListSessionStateOpts } from "./repository.js";
 export { SessionManager } from "./manager.js";
 export {

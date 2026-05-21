@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { EntityManager } from "@mikro-orm/core";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { defaultFetcherRegistry, type FetcherRegistry } from "@emploke/catalog-fetcher";
 import { type Logger, silentLogger } from "@emploke/logger";
 import type { Agent } from "../agent/agent-entity.js";
 import { type AgentResolvedNode, AgentService } from "../agent/agent-service.js";
 import { AgentNotFoundError } from "../agent/errors.js";
-import { MikroAgentRepository } from "../agent/mikro-agent-repository.js";
+import { DrizzleAgentRepository } from "../agent/drizzle-agent-repository.js";
 import type {
   AgentEntry,
   AgentMetadataPatch,
@@ -27,12 +27,13 @@ import { McpNotFoundError } from "../mcp/errors.js";
 import { Mcp } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
 import { type McpFetcher, McpService } from "../mcp/mcp-service.js";
-import { MikroMcpRepository } from "../mcp/mikro-mcp-repository.js";
+import { DrizzleMcpRepository } from "../mcp/drizzle-mcp-repository.js";
 import { isOriginMutable } from "../origin-mutability.js";
+import type * as schema from "../schema.js";
 import { SkillNotFoundError } from "../skill/errors.js";
 import type { Skill } from "../skill/skill-entity.js";
 import { type SkillFetcher, type SkillResolvedNode, SkillService } from "../skill/skill-service.js";
-import { MikroSkillRepository } from "../skill/mikro-skill-repository.js";
+import { DrizzleSkillRepository } from "../skill/drizzle-skill-repository.js";
 import { HasDependentsError } from "./errors.js";
 import {
   buildLocalClosure,
@@ -246,11 +247,11 @@ export interface CatalogSyncResult extends CatalogInstallResult {
 
 export interface CatalogOptions {
   /**
-   * MikroORM EntityManager backing the per-workspace `workspace.db`.
-   * Catalog forks per-call internally. The caller owns the ORM's
-   * lifecycle; the facade never closes anything.
+   * Drizzle (better-sqlite3) database handle backing the per-workspace
+   * `workspace.db`. The caller owns the connection lifecycle; the
+   * facade never closes anything.
    */
-  readonly em: EntityManager;
+  readonly db: BetterSQLite3Database<typeof schema>;
   readonly fetchers?: FetcherRegistry;
   readonly logger?: Logger;
 }
@@ -315,9 +316,9 @@ export class CatalogManager {
     const fetchers = opts.fetchers ?? defaultFetcherRegistry();
     const logger = opts.logger ?? silentLogger;
 
-    const mcpRepo = new MikroMcpRepository({ em: opts.em, logger });
-    const skillRepo = new MikroSkillRepository({ em: opts.em, logger });
-    const agentRepo = new MikroAgentRepository({ em: opts.em, logger });
+    const mcpRepo = new DrizzleMcpRepository({ db: opts.db, logger });
+    const skillRepo = new DrizzleSkillRepository({ db: opts.db, logger });
+    const agentRepo = new DrizzleAgentRepository({ db: opts.db, logger });
 
     const mcpFetcher: McpFetcher = (origin) =>
       fetchers.dispatchFile(origin, "").then((b) => b.toString("utf8"));
@@ -1031,14 +1032,14 @@ export class CatalogManager {
     // Internal access to the SqliteSkillRepository's reverse-dep
     // methods through the service. We keep the reach narrow by typing
     // to just the methods we need.
-    return (this.skill as unknown as { repo: MikroSkillRepository }).repo;
+    return (this.skill as unknown as { repo: DrizzleSkillRepository }).repo;
   }
 
   private getMcpRepo(): {
     findDependentAgents(targetFqn: string): Promise<string[]>;
     findDependentSkills(targetFqn: string): Promise<string[]>;
   } {
-    return (this.mcp as unknown as { repo: MikroMcpRepository }).repo;
+    return (this.mcp as unknown as { repo: DrizzleMcpRepository }).repo;
   }
 
   // ─── Internals: install dispatch ───────────────────────

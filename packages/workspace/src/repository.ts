@@ -1,36 +1,42 @@
-import type { EntityManager } from "@mikro-orm/core";
-import { Workspace } from "./entity.js";
+import { eq } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { type NewWorkspace, type Workspace, workspaces } from "./schema.js";
+import type * as schema from "./schema.js";
+
+type Db = BetterSQLite3Database<typeof schema>;
 
 /**
- * Persistence surface for `Workspace`.
- *
- * Plain class — no DI container, no abstract / repository pattern
- * ceremony beyond what the service finds convenient. Tests inject a
- * fork of the test EM directly; production wires the same way via
- * `composeWorkspaceModule`.
- *
- * Methods do NOT call `em.flush`. The service wraps each use case in
- * `em.transactional(() => ...)` and lets MikroORM flush on close.
+ * Drizzle-backed workspace repository. Sync at the SQLite layer
+ * (better-sqlite3 driver). Repository methods are typed as
+ * `Promise<...>` so async service signatures stay unchanged.
  */
 export class WorkspaceRepository {
-  constructor(private readonly em: EntityManager) {}
+  constructor(private readonly db: Db) {}
 
-  /** Enroll a fresh row with the unit-of-work. */
-  add(ws: Workspace): void {
-    this.em.persist(ws);
+  async findById(id: string): Promise<Workspace | undefined> {
+    return this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
   }
 
-  findById(id: string): Promise<Workspace | null> {
-    return this.em.findOne(Workspace, { id });
+  async findByPath(workspaceDir: string): Promise<Workspace | undefined> {
+    return this.db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.workspaceDir, workspaceDir))
+      .get();
   }
 
-  findByPath(workspaceDir: string): Promise<Workspace | null> {
-    return this.em.findOne(Workspace, { workspaceDir });
+  async insert(row: NewWorkspace): Promise<void> {
+    this.db.insert(workspaces).values(row).run();
+  }
+
+  async update(
+    id: string,
+    patch: Partial<Pick<Workspace, "name" | "lastOpenedAt">>,
+  ): Promise<void> {
+    this.db.update(workspaces).set(patch).where(eq(workspaces.id, id)).run();
   }
 
   async delete(id: string): Promise<void> {
-    const ws = await this.em.findOne(Workspace, { id });
-    if (!ws) return;
-    this.em.remove(ws);
+    this.db.delete(workspaces).where(eq(workspaces.id, id)).run();
   }
 }

@@ -5,7 +5,6 @@ import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
-import type { EntityManager } from "@mikro-orm/core";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
@@ -173,7 +172,7 @@ export class TaskManager {
     this.workspaceId = config.workspaceId;
     this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
-    this.repository = new TaskRepository({ em: config.em, logger: this.logger });
+    this.repository = new TaskRepository({ db: config.db, logger: this.logger });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }

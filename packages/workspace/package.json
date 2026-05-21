@@ -21,7 +21,7 @@
   },
   "files": [
     "dist",
-    "mikro-orm.config.ts",
+    "drizzle",
     "README.md",
     "LICENSE"
   ],
@@ -30,21 +30,20 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "orm:migration:create": "mikro-orm migration:create",
-    "orm:migration:up": "mikro-orm migration:up",
-    "orm:schema:fresh": "mikro-orm schema:fresh --run"
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
   },
   "dependencies": {
     "@emploke/fs": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",
-    "@mikro-orm/better-sqlite": "^6.6.0",
-    "@mikro-orm/core": "^6.6.0",
+    "better-sqlite3": "^12.10.0",
+    "drizzle-orm": "^0.45.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@mikro-orm/migrations": "^6.6.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"
   },

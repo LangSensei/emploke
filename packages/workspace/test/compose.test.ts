@@ -1,11 +1,12 @@
+import { count } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { composeWorkspaceModule } from "../src/index.js";
-import { openTestWorkspaceOrm } from "../src/testing.js";
+import { openTestWorkspaceDb, workspaces } from "../src/testing.js";
 
 describe("composeWorkspaceModule", () => {
-  it("returns a service + queries pair backed by the given ORM", async () => {
-    const orm = await openTestWorkspaceOrm();
-    const mod = await composeWorkspaceModule({ orm });
+  it("returns a service + queries pair backed by the given db", async () => {
+    const handle = openTestWorkspaceDb();
+    const mod = await composeWorkspaceModule({ db: handle.db });
     try {
       expect(await mod.queries.list()).toEqual([]);
       await mod.service.register({
@@ -17,18 +18,17 @@ describe("composeWorkspaceModule", () => {
       expect(view?.name).toBe("Compose");
     } finally {
       await mod.close();
-      await orm.close(true);
+      handle.close();
     }
   });
 
-  it("compose({ orm }) close is a no-op (caller owns ORM lifecycle)", async () => {
-    const orm = await openTestWorkspaceOrm();
-    const mod = await composeWorkspaceModule({ orm });
+  it("compose({ db }) close is a no-op (caller owns connection lifecycle)", async () => {
+    const handle = openTestWorkspaceDb();
+    const mod = await composeWorkspaceModule({ db: handle.db });
     await mod.close();
-    // ORM still usable after module close because the module didn't own it.
-    expect(await orm.em.fork().count(await import("../src/entity.js").then((m) => m.Workspace))).toBe(
-      0,
-    );
-    await orm.close(true);
+    // Connection still usable after module close because the module didn't own it.
+    const row = handle.db.select({ value: count() }).from(workspaces).get();
+    expect(row?.value).toBe(0);
+    handle.close();
   });
 });

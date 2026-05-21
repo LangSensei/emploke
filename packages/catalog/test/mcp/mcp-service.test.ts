@@ -1,4 +1,3 @@
-import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   McpNameInvalidError,
@@ -9,8 +8,8 @@ import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import type { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { MikroMcpRepository } from "../../src/mcp/mikro-mcp-repository.js";
-import { bootstrapCatalogOrm } from "../helpers/bootstrap.js";
+import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
+import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 /**
  * The McpService contract is repository-agnostic. Set up as a backend
@@ -24,15 +23,15 @@ type Backend = {
 
 const BACKENDS: Backend[] = [
   {
-    name: "MikroMcpRepository (in-memory)",
+    name: "DrizzleMcpRepository (in-memory)",
     setup: async () => {
-      const orm = await bootstrapCatalogOrm();
+      const orm = bootstrapCatalogDb();
       
-      const repo = new MikroMcpRepository({ em: orm.em as EntityManager });
+      const repo = new DrizzleMcpRepository({ db: orm.db });
       return {
         repo,
         teardown: async () => {
-          await orm.close(true);
+          orm.close();
         },
       };
     },

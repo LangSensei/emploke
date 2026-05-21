@@ -1,8 +1,10 @@
-import type { EntityManager } from "@mikro-orm/core";
+import { type SQL, and, eq, gte, inArray } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
 import { TASK_ID_RE } from "./ids.js";
-import { TaskRow } from "./entity.js";
+import { type TaskRow, tasks } from "./schema.js";
+import type * as schema from "./schema.js";
 import { Task } from "./task-entity.js";
 import type {
   ListTaskOpts,
@@ -13,66 +15,64 @@ import type {
   TaskSuccess,
 } from "./types.js";
 
+type Db = BetterSQLite3Database<typeof schema>;
+
 export class TaskRepository {
-  private readonly em: EntityManager;
+  private readonly db: Db;
   private readonly logger: Logger;
 
-  constructor(opts: { em: EntityManager; logger?: Logger }) {
-    this.em = opts.em;
+  constructor(opts: { db: Db; logger?: Logger }) {
+    this.db = opts.db;
     this.logger = opts.logger ?? silentLogger;
   }
 
   close(): void {
-    // intentionally empty
+    // intentionally empty — db lifecycle owned by the composer
   }
 
   async read(id: string): Promise<Task | null> {
     if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
-    const row = await this.em.fork().findOne(TaskRow, { id });
-    if (row === null) return null;
+    const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (row === undefined) return null;
     return rowToTask(row);
   }
 
   async save(task: Task): Promise<void> {
     if (!TASK_ID_RE.test(task.id)) throw new InvalidTaskIdError(task.id);
-    const em = this.em.fork();
-    const existing = await em.findOne(TaskRow, { id: task.id });
-    if (existing !== null) {
-      Object.assign(existing, taskToRowFields(task));
-      await em.persistAndFlush(existing);
+    const fields = taskToRowFields(task);
+    const existing = this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.id, task.id))
+      .get();
+    if (existing !== undefined) {
+      this.db.update(tasks).set(fields).where(eq(tasks.id, task.id)).run();
     } else {
-      const row = em.create(TaskRow, taskToRowFields(task));
-      await em.persistAndFlush(row);
+      this.db.insert(tasks).values(fields).run();
     }
   }
 
   async delete(id: string): Promise<void> {
     if (!TASK_ID_RE.test(id)) return;
-    await this.em.fork().nativeDelete(TaskRow, { id });
+    this.db.delete(tasks).where(eq(tasks.id, id)).run();
   }
 
   async list(opts: ListTaskOpts = {}): Promise<Task[]> {
-    const em = this.em.fork();
-    const where: {
-      agent?: string;
-      runtime?: string;
-      createdAt?: { $gte: string };
-      status?: { $in: TaskStatus[] };
-      origin?: { $in: TaskOrigin[] };
-    } = {};
-    if (opts.agent !== undefined) where.agent = opts.agent;
-    if (opts.runtime !== undefined) where.runtime = opts.runtime;
-    if (opts.createdSince !== undefined) where.createdAt = { $gte: opts.createdSince };
+    const filters: SQL[] = [];
+    if (opts.agent !== undefined) filters.push(eq(tasks.agent, opts.agent));
+    if (opts.runtime !== undefined) filters.push(eq(tasks.runtime, opts.runtime));
+    if (opts.createdSince !== undefined) filters.push(gte(tasks.createdAt, opts.createdSince));
     if (opts.statuses && opts.statuses.length > 0) {
-      where.status = { $in: [...opts.statuses] };
+      filters.push(inArray(tasks.status, [...opts.statuses]));
     }
     if (opts.origin !== undefined) {
-      const origins = Array.isArray(opts.origin)
+      const origins: TaskOrigin[] = Array.isArray(opts.origin)
         ? [...(opts.origin as readonly TaskOrigin[])]
         : [opts.origin as TaskOrigin];
-      if (origins.length > 0) where.origin = { $in: origins };
+      if (origins.length > 0) filters.push(inArray(tasks.origin, origins));
     }
-    const rows = await em.find(TaskRow, where);
+    const query = this.db.select().from(tasks);
+    const rows = filters.length > 0 ? query.where(and(...filters)).all() : query.all();
     const out: Task[] = [];
     for (const row of rows) {
       try {
@@ -157,8 +157,8 @@ function rowToTask(row: TaskRow): Task {
     agent: row.agent,
     brief: row.brief,
     ...(row.details !== null ? { details: row.details } : {}),
-    origin: row.origin,
-    status: row.status,
+    origin: row.origin as TaskOrigin,
+    status: row.status as TaskStatus,
     metadata,
     createdAt: row.createdAt,
     startedAt: row.startedAt,

@@ -1,44 +1,31 @@
-import type { EntityManager } from "@mikro-orm/core";
+import { type SQL, and, eq, gte } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";
 import { SESSION_ID_RE } from "./ids.js";
-import { Session } from "./entity.js";
+import { type Session, sessions } from "./schema.js";
+import type * as schema from "./schema.js";
+
+type Db = BetterSQLite3Database<typeof schema>;
 
 export interface ListSessionStateOpts {
-  /**
-   * Drop entries whose `createdAt` is strictly before this ISO 8601
-   * timestamp. ISO strings sort lexicographically as dates.
-   */
   readonly createdSince?: string;
-  /**
-   * Filter to sessions whose persisted `agent` (FQN) matches this exact
-   * value. Indexed by `sessions_agent_idx`.
-   */
   readonly agent?: string;
 }
 
 /**
- * MikroORM-backed CRUD for the `sessions` table. Plain class — no DI,
- * no interface, no abstract base. `SessionManager` owns one instance
- * via `compose`.
- *
- * Defense-in-depth: every public method validates `id` against
- * `SESSION_ID_RE` before reaching the EM. SQLite parameter binding
- * already makes injection harmless; the validation keeps the
- * "sessions namespace, not arbitrary keys" contract explicit.
+ * Drizzle-backed CRUD for the `sessions` table. Defense-in-depth: every
+ * public method validates `id` against `SESSION_ID_RE` before reaching
+ * the DB. The validation keeps the "sessions namespace, not arbitrary
+ * keys" contract explicit.
  */
 export class SessionRepository {
-  constructor(private readonly em: EntityManager) {}
+  constructor(private readonly db: Db) {}
 
-  async read(id: string): Promise<Session | null> {
+  async read(id: string): Promise<Session | undefined> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
-    return this.em.findOne(Session, { id });
+    return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
   }
 
-  /**
-   * Insert a fresh row. Caller is responsible for ensuring the id is
-   * unused (the manager retries on EEXIST during workdir allocation,
-   * so collisions on the row insert are vanishingly unlikely).
-   */
   async insert(row: {
     id: string;
     agent: string;
@@ -46,47 +33,38 @@ export class SessionRepository {
     createdAt: string;
     runtimeSessionId: string | null;
     lastLaunchMode?: "local" | "remote" | null;
-  }): Promise<Session> {
+  }): Promise<void> {
     if (!SESSION_ID_RE.test(row.id)) throw new InvalidSessionIdError(row.id);
-    const session = this.em.create(Session, {
-      id: row.id,
-      agent: row.agent,
-      runtime: row.runtime,
-      createdAt: row.createdAt,
-      runtimeSessionId: row.runtimeSessionId,
-      lastLaunchMode: row.lastLaunchMode ?? null,
-    });
-    await this.em.persistAndFlush(session);
-    return session;
+    this.db
+      .insert(sessions)
+      .values({
+        id: row.id,
+        agent: row.agent,
+        runtime: row.runtime,
+        createdAt: row.createdAt,
+        runtimeSessionId: row.runtimeSessionId,
+        lastLaunchMode: row.lastLaunchMode ?? null,
+      })
+      .run();
   }
 
-  /**
-   * Atomically update only the `lastLaunchMode` column. No-op when the
-   * row does not exist (mirrors `delete`'s idempotent semantics).
-   */
+  /** Atomically update only the `lastLaunchMode` column. */
   async patchLastLaunchMode(id: string, mode: "local" | "remote"): Promise<void> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
-    await this.em.nativeUpdate(Session, { id }, { lastLaunchMode: mode });
+    this.db.update(sessions).set({ lastLaunchMode: mode }).where(eq(sessions.id, id)).run();
   }
 
-  /**
-   * Remove the row. Idempotent: deleting a missing id is a no-op.
-   * Does NOT touch agent-owned content under the session's workdir —
-   * that concern lives in `SessionManager.delete(id, { purge })`.
-   */
+  /** Idempotent delete. */
   async delete(id: string): Promise<void> {
     if (!SESSION_ID_RE.test(id)) return;
-    await this.em.nativeDelete(Session, { id });
+    this.db.delete(sessions).where(eq(sessions.id, id)).run();
   }
 
-  /**
-   * Snapshot of every session this repository knows about. Filters
-   * apply at the SQL layer.
-   */
   async list(opts: ListSessionStateOpts = {}): Promise<Session[]> {
-    const where: { createdAt?: { $gte: string }; agent?: string } = {};
-    if (opts.createdSince !== undefined) where.createdAt = { $gte: opts.createdSince };
-    if (opts.agent !== undefined) where.agent = opts.agent;
-    return this.em.find(Session, where);
+    const filters: SQL[] = [];
+    if (opts.createdSince !== undefined) filters.push(gte(sessions.createdAt, opts.createdSince));
+    if (opts.agent !== undefined) filters.push(eq(sessions.agent, opts.agent));
+    const query = this.db.select().from(sessions);
+    return filters.length > 0 ? query.where(and(...filters)).all() : query.all();
   }
 }
