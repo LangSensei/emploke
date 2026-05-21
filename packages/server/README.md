@@ -53,9 +53,8 @@ catalog the dashboard sees.
 
 The server holds one `WorkspaceService` process-wide (via
 `@emploke/core`) and lazily mints per-workspace
-`{catalog, sessions, tasks}` bundles behind a `WorkspaceRuntimeCache`
-(re-exported as `PerWorkspaceContainerCache` for callsite
-stability). Implicit invalidation happens on workspace deletion or
+`{catalog, sessions, tasks}` bundles behind a `WorkspaceRuntimeCache`.
+Implicit invalidation happens on workspace deletion or
 rename; an explicit `POST /api/workspaces/:id/reload` is also
 available for operator-driven reload (e.g. recovering after the
 persisted state on disk has been edited externally). Reload is

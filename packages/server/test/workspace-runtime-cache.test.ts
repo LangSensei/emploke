@@ -1,12 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { WorkspaceHasLiveTasksError, type WorkspaceRuntimeCache } from "@emploke/core";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type PerWorkspaceContainerCache,
-  WorkspaceHasLiveTasksError,
-} from "../src/per-workspace-container.js";
 import { captureLogger } from "./_capture-logger.js";
 import {
   type ServerTestSubsystem,
@@ -40,7 +37,7 @@ afterEach(async () => {
 
 interface CacheHarness {
   cap: ReturnType<typeof captureLogger>;
-  cache: PerWorkspaceContainerCache;
+  cache: WorkspaceRuntimeCache;
   service: WorkspaceService;
   queries: WorkspaceQueries;
 }
@@ -65,7 +62,7 @@ async function registerWs(
   return { id: result.id, workspaceDir: path.resolve(args.workspaceDir) };
 }
 
-describe("PerWorkspaceContainerCache observability", () => {
+describe("WorkspaceRuntimeCache observability", () => {
   it("emits an info line on first container build, with workspaceId + workspaceDir", async () => {
     const { cap, cache, service } = await makeCache();
     const ws = await registerWs(service, {

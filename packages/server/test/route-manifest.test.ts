@@ -25,13 +25,13 @@ import pino from "pino";
 
 const silentLogger = pino({ level: "silent" });
 
+import type { WorkspaceRuntimeCache } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionService } from "@emploke/session";
 import type { TaskService } from "@emploke/task";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import { configRoutes } from "../src/routes/config.js";
 import { healthRoutes } from "../src/routes/health.js";
@@ -186,8 +186,8 @@ function stubWorkspaceQueries(): WorkspaceQueries {
   });
 }
 
-function stubPerWorkspaceContainerCache(): PerWorkspaceContainerCache {
-  return new Proxy({} as PerWorkspaceContainerCache, {
+function stubPerWorkspaceContainerCache(): WorkspaceRuntimeCache {
+  return new Proxy({} as WorkspaceRuntimeCache, {
     get() {
       throw new Error("stubPerWorkspaceContainerCache: not callable");
     },

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
+import type { WorkspaceRuntimeCache } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
 import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
@@ -13,7 +14,6 @@ import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
-import type { PerWorkspaceContainerCache } from "./per-workspace-container.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
@@ -423,12 +423,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
  *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
  */
 function workspaceContextMiddleware(
-  cache: PerWorkspaceContainerCache,
+  cache: WorkspaceRuntimeCache,
 ): MiddlewareHandler<{ Variables: WorkspaceVars }> {
   return async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    let runtime: Awaited<ReturnType<PerWorkspaceContainerCache["get"]>>;
+    let runtime: Awaited<ReturnType<WorkspaceRuntimeCache["get"]>>;
     try {
       runtime = await cache.get(id);
     } catch (err) {

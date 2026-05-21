@@ -1,10 +1,9 @@
 import path from "node:path";
-import type { EmplokeCore } from "@emploke/core";
+import type { EmplokeCore, WorkspaceRuntimeCache } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceService } from "@emploke/workspace";
 import type { Logger } from "pino";
 import { buildServerContainer } from "../src/bootstrap.js";
-import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
  * Shared scaffolding for server-side tests. Builds the full `EmplokeCore`
@@ -14,7 +13,7 @@ export interface ServerTestSubsystem {
   readonly core: EmplokeCore;
   readonly service: WorkspaceService;
   readonly runtimeRegistry: RuntimeRegistry;
-  readonly cache: PerWorkspaceContainerCache;
+  readonly cache: WorkspaceRuntimeCache;
   readonly defaultWorkspaceParent: string;
   /** Close the workspace registry's sqlite connection. */
   close(): Promise<void>;
@@ -39,7 +38,7 @@ export async function setupTestSubsystem(opts: {
     core: composition,
     service: composition.workspaceService,
     runtimeRegistry,
-    cache: composition.runtimes as PerWorkspaceContainerCache,
+    cache: composition.runtimes as WorkspaceRuntimeCache,
     defaultWorkspaceParent,
     async close() {
       await composition.close();

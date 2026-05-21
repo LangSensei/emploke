@@ -2,10 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogService } from "@emploke/catalog";
+import type { WorkspaceRuntimeCache } from "@emploke/core";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import {
   type ServerTestSubsystem,
@@ -16,7 +16,7 @@ import {
 let scratch: string;
 let sys: ServerTestSubsystem;
 let service: WorkspaceService;
-let cache: PerWorkspaceContainerCache;
+let cache: WorkspaceRuntimeCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
