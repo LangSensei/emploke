@@ -13,10 +13,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { CatalogManager } from "@emploke/catalog";
 import { type Runtime, RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readAgentNameCalls: string[] = [];
@@ -31,24 +30,22 @@ vi.mock("../src/agent-file.js", () => ({
 
 // Imports BELOW vi.mock so the mock is active when the manager module
 // resolves the agent-file dependency.
-const { SESSION_MIGRATIONS, Session, SessionManager, SqliteSessionRepository } = await import(
-  "../src/index.js"
-);
+const { SessionManager, SessionRepository } = await import("../src/index.js");
+const { openTestSessionOrm } = await import("../src/testing.js");
 
 let sessionsDir: string;
 let scratch: string;
-let db: DatabaseSync;
+let orm: MikroORM;
 
 beforeEach(async () => {
   sessionsDir = await mkdtemp(path.join(tmpdir(), "emploke-no-fs-sessions-"));
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-no-fs-scratch-"));
-  db = new DatabaseSync(":memory:");
-  await runPkgMigrations(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+  orm = await openTestSessionOrm();
   readAgentNameCalls.length = 0;
 });
 afterEach(async () => {
   try {
-    db.close();
+    await orm.close(true);
   } catch {
     // already closed
   }
@@ -78,16 +75,14 @@ function stubRuntime(): Runtime {
 }
 
 async function seedSession(id: string, agent: string): Promise<void> {
-  const repo = new SqliteSessionRepository({ db });
-  await repo.save(
+  const repo = new SessionRepository(orm.em.fork() as EntityManager);
+  await repo.insert({
     id,
-    Session.create({
-      runtime: "copilot",
-      agent,
-      createdAt: "2026-05-19T01:00:00.000Z",
-      runtimeSessionId: null,
-    }),
-  );
+    runtime: "copilot",
+    agent,
+    createdAt: "2026-05-19T01:00:00.000Z",
+    runtimeSessionId: null,
+  });
 }
 
 function buildManager(): SessionManager {
@@ -98,7 +93,7 @@ function buildManager(): SessionManager {
     runtimeRegistry: reg,
     sessionsDir,
     workspaceDir: scratch,
-    repository: new SqliteSessionRepository({ db }),
+    em: orm.em as EntityManager,
   });
 }
 

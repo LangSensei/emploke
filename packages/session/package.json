@@ -34,11 +34,12 @@
     "@emploke/catalog": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
-    "@emploke/workspace": "workspace:*",
-    "inversify": "^7.0.0",
+    "@mikro-orm/better-sqlite": "^6.6.0",
+    "@mikro-orm/core": "^6.6.0",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@mikro-orm/migrations": "^6.6.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",

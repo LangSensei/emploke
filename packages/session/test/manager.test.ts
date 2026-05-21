@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime } from "@emploke/runtime";
 import {
@@ -10,17 +9,17 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
-  SESSION_MIGRATIONS,
   SessionManager,
   type SessionManagerConfig,
   SessionNotFoundError,
-  SqliteSessionRepository,
+  SessionRepository,
 } from "../src/index.js";
+import { openTestSessionOrm } from "../src/testing.js";
 
 // ───── helpers ──────────────────────────────────────────────
 
@@ -29,29 +28,30 @@ let scratch: string;
 let catalogDir: string;
 
 /**
- * Per-test connections that the buildManager helper hands out. Tracked
- * so afterEach can close them — important because repos no longer own
- * the connection (the workspace pkg does in production; the test owns
- * it here). Using `:memory:` SQLite means there's no on-disk file to
- * leak, but we still close to release any internal handles.
+ * Per-test ORMs that the buildManager helper hands out. Tracked so
+ * afterEach can close them.
  */
-let openDbs: DatabaseSync[] = [];
+let openOrms: MikroORM[] = [];
 
-async function makeRepo(): Promise<SqliteSessionRepository> {
-  const db = new DatabaseSync(":memory:");
-  openDbs.push(db);
-  await runPkgMigrations(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
-  return new SqliteSessionRepository({ db });
+async function makeOrm(): Promise<MikroORM> {
+  const orm = await openTestSessionOrm();
+  openOrms.push(orm);
+  return orm;
 }
 
 /**
- * Construct a `SessionManager` with a fresh `:memory:` SQLite
- * repository injected. Tests that need to inspect the persisted state
- * can override `opts.repository` with their own repo instance (the
- * spread order means `opts` wins over the default).
+ * Construct a `SessionManager` with a fresh `:memory:` MikroORM
+ * instance injected. Tests that need to inspect the persisted state
+ * can override `opts.em` with their own.
  */
-async function buildManager(opts: SessionManagerConfig): Promise<SessionManager> {
-  return new SessionManager({ repository: await makeRepo(), ...opts });
+async function buildManager(
+  opts: Omit<SessionManagerConfig, "em"> & Partial<Pick<SessionManagerConfig, "em">>,
+): Promise<SessionManager> {
+  if (opts.em !== undefined) {
+    return new SessionManager(opts as SessionManagerConfig);
+  }
+  const orm = await makeOrm();
+  return new SessionManager({ ...opts, em: orm.em as EntityManager });
 }
 
 beforeEach(async () => {
@@ -60,14 +60,14 @@ beforeEach(async () => {
   catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
-  for (const d of openDbs.splice(0)) {
+  for (const o of openOrms.splice(0)) {
     try {
-      d.close();
+      await o.close(true);
     } catch {
       // already closed
     }
   }
-  openDbs = [];
+  openOrms = [];
   await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
   await rm(catalogDir, { recursive: true, force: true });
@@ -239,7 +239,7 @@ describe("SessionManager construction", () => {
 describe("create()", () => {
   it("provisions, persists state, returns Session shape", async () => {
     const rt = new StubRuntime();
-    const repo = await makeRepo();
+    const orm = await makeOrm();
     const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
@@ -247,7 +247,7 @@ describe("create()", () => {
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
       randomBytes: seqRandom(),
-      repository: repo,
+      em: orm.em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
 
@@ -263,13 +263,12 @@ describe("create()", () => {
     // workdir sidecar. Inspect via the same handle the manager wrote
     // through. `persisted` is a Session entity — compare its
     // POJO projection so the assertion stays shape-only.
-    const persisted = await repo.read(s.id);
-    expect(persisted?.toJSON()).toEqual({
-      runtime: "copilot",
-      agent: "public/demo",
-      createdAt: "2026-05-08T01:05:00.000Z",
-      runtimeSessionId: "12345678-1234-1234-1234-1234567890ab",
-    });
+    const persisted = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.runtime).toBe("copilot");
+    expect(persisted?.agent).toBe("public/demo");
+    expect(persisted?.createdAt).toBe("2026-05-08T01:05:00.000Z");
+    expect(persisted?.runtimeSessionId).toBe("12345678-1234-1234-1234-1234567890ab");
   });
 
   it("throws AgentNotFoundError for empty agent", async () => {
@@ -483,14 +482,14 @@ describe("list()", () => {
     // registry doesn't know "copilot". Both managers share the same
     // SQLite repository so the runtime-mismatch happens at the manager
     // layer, not at the storage layer.
-    const sharedRepo = await makeRepo();
+    const sharedOrm = await makeOrm();
     const rtA = new StubRuntime();
     const m1 = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
       sessionsDir,
       workspaceDir: scratch,
-      repository: sharedRepo,
+      em: sharedOrm.em as EntityManager,
     });
     await m1.create({ agent: "demo" });
 
@@ -500,7 +499,7 @@ describe("list()", () => {
       sessionsDir,
       workspaceDir: scratch,
       logger: r.logger,
-      repository: sharedRepo,
+      em: sharedOrm.em as EntityManager,
     });
     expect(await m2.list()).toEqual([]);
     expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
@@ -520,18 +519,18 @@ describe("list()", () => {
       title: null,
       userTitled: false,
     };
-    const repo = await makeRepo();
+    const orm = await makeOrm();
     const m = await buildManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      repository: repo,
+      em: orm.em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
     const [out] = await m.list();
     expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-    const persisted = await repo.read(s.id);
+    const persisted = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
     expect(persisted?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
@@ -819,19 +818,19 @@ describe("buildInteractiveLaunch()", () => {
 
   it("persists lastLaunchMode after a successful launch", async () => {
     const rt = new StubRuntime();
-    const repo = await makeRepo();
+    const orm = await makeOrm();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      repository: repo,
+      em: orm.em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
     await m.buildInteractiveLaunch(s.id, { remote: true });
-    expect((await repo.read(s.id))?.lastLaunchMode).toBe("remote");
+    expect((await new SessionRepository(orm.em.fork() as EntityManager).read(s.id))?.lastLaunchMode).toBe("remote");
     await m.buildInteractiveLaunch(s.id, { remote: false });
-    expect((await repo.read(s.id))?.lastLaunchMode).toBe("local");
+    expect((await new SessionRepository(orm.em.fork() as EntityManager).read(s.id))?.lastLaunchMode).toBe("local");
   });
 
   it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {
@@ -844,23 +843,32 @@ describe("buildInteractiveLaunch()", () => {
     // path scopes its write to a single column, so both updates
     // survive.
     const rt = new StubRuntime();
-    const repo = await makeRepo();
+    const orm = await makeOrm();
     const m = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      repository: repo,
+      em: orm.em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
-    const before = await repo.read(s.id);
+    const before = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
     if (before === null) throw new Error("session row missing after create");
-    // Fire both writes concurrently.
+    // Fire both writes concurrently. The "parallel writer" path uses a
+    // fresh EM fork doing a nativeUpdate on runtime_session_id only —
+    // matches what a discovery-runtime's refresh path would do.
     await Promise.all([
       m.buildInteractiveLaunch(s.id, { remote: true }),
-      repo.save(s.id, before.withRuntimeSessionId("from-parallel-writer")),
+      (async () => {
+        const { Session } = await import("../src/entity.js");
+        await (orm.em.fork() as EntityManager).nativeUpdate(
+          Session,
+          { id: s.id },
+          { runtimeSessionId: "from-parallel-writer" },
+        );
+      })(),
     ]);
-    const after = await repo.read(s.id);
+    const after = await new SessionRepository(orm.em.fork() as EntityManager).read(s.id);
     expect(after?.runtimeSessionId).toBe("from-parallel-writer");
     expect(after?.lastLaunchMode).toBe("remote");
   });
@@ -883,7 +891,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-uuid-alpha",
       subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
-      repository: await makeRepo(),
+      em: (await makeOrm()).em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -906,7 +914,7 @@ describe("buildInteractiveLaunch()", () => {
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
       workspaceDir: scratch,
-      repository: await makeRepo(),
+      em: (await makeOrm()).em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
@@ -930,7 +938,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-A",
       subprocessEnv: sharedBase,
-      repository: await makeRepo(),
+      em: (await makeOrm()).em as EntityManager,
     });
     const mB = new SessionManager({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -939,7 +947,7 @@ describe("buildInteractiveLaunch()", () => {
       workspaceDir: scratch,
       workspaceId: "ws-B",
       subprocessEnv: sharedBase,
-      repository: await makeRepo(),
+      em: (await makeOrm()).em as EntityManager,
     });
 
     const sA = await mA.create({ agent: "demo" });
@@ -979,7 +987,7 @@ describe("buildInteractiveLaunch()", () => {
         ROGUE_NULL: null as unknown as string,
         ROGUE_OBJ: { not: "a string" } as unknown as string,
       },
-      repository: await makeRepo(),
+      em: (await makeOrm()).em as EntityManager,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);

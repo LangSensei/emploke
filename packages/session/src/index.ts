@@ -2,18 +2,15 @@
  * @emploke/session — per-session workdir manager.
  *
  * Each session is a provisioned workdir for one agent under one runtime
- * (e.g. copilot, gemini). The agent name is read from the provisioned
- * `AGENTS.md` frontmatter; runtime + createdAt + runtimeSessionId are
- * persisted via the configured `SessionRepository` (defaults to
- * `SqliteSessionRepository`, which writes to the per-workspace shared
- * `workspace.db`'s `sessions` table).
- * Activity (lastActiveAt, preview) is read fresh from the runtime on
- * every list/get call. The package never spawns processes —
- * `buildInteractiveLaunch()` returns a shell-runnable `LaunchCommand`.
+ * (e.g. copilot, gemini). Persistence is backed by MikroORM via a
+ * per-workspace `workspace.db`. Activity (lastActiveAt, preview) is
+ * read fresh from the runtime on every list/get call.
+ *
+ * The package never spawns processes — `buildInteractiveLaunch()`
+ * returns a shell-runnable `LaunchCommand`.
  */
 
-// Re-export runtime errors that callers commonly want to catch alongside
-// session errors.
+// Re-export runtime errors callers commonly want to catch alongside session errors.
 export {
   RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
@@ -22,6 +19,7 @@ export {
   TrustRegistrationFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
+
 export {
   AgentNotFoundError,
   InvalidSessionIdError,
@@ -30,20 +28,15 @@ export {
   SessionNotFoundError,
   SessionsError,
 } from "./errors.js";
+
+export { Session, SESSION_ENTITIES } from "./entity.js";
+export { SessionRepository, type ListSessionStateOpts } from "./repository.js";
 export { SessionManager } from "./manager.js";
-export { SESSION_MIGRATIONS } from "./migrations/index.js";
-export { composeSessionModule } from "./module.js";
-export type {
-  ListSessionStateOpts,
-  SessionRepository,
-} from "./repositories/repository.js";
-export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
 export {
-  Session,
-  type SessionCreateArgs,
-  type SessionFromStoredArgs,
-  type SessionLaunchMode,
-} from "./session-entity.js";
+  composeSessionModule,
+  type SessionModule,
+  type SessionModuleOptions,
+} from "./compose.js";
 export type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,

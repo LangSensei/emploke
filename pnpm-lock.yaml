@@ -328,16 +328,19 @@ importers:
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@emploke/workspace':
-        specifier: workspace:*
-        version: link:../workspace
-      inversify:
-        specifier: ^7.0.0
-        version: 7.11.0(reflect-metadata@0.2.2)
+      '@mikro-orm/better-sqlite':
+        specifier: ^6.6.0
+        version: 6.6.14(@mikro-orm/core@6.6.14)
+      '@mikro-orm/core':
+        specifier: ^6.6.0
+        version: 6.6.14
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
     devDependencies:
+      '@mikro-orm/migrations':
+        specifier: ^6.6.0
+        version: 6.6.14(@mikro-orm/core@6.6.14)(@types/node@22.19.17)(better-sqlite3@12.10.0)
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9

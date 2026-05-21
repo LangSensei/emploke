@@ -5,7 +5,9 @@ import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
+import type { EntityManager } from "@mikro-orm/core";
 import { readAgentName } from "./agent-file.js";
+import { Session } from "./entity.js";
 import {
   AgentNotFoundError,
   SessionIdAllocationFailedError,
@@ -13,8 +15,7 @@ import {
 } from "./errors.js";
 import { assertValidSessionId, generateSessionId } from "./ids.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import type { SessionRepository } from "./repositories/repository.js";
-import { Session } from "./repositories/repository.js";
+import { SessionRepository } from "./repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
@@ -28,17 +29,17 @@ const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
 /**
- * Per-session workdir manager, parameterised over a set of CLI runtimes
- * and a `SessionRepository`. Construction takes a fully-built repository
- * (in production, a `SqliteSessionRepository` backed by the workspace's
- * shared `workspace.db` connection); the manager itself never opens a
- * database.
+ * Per-session workdir manager.
  *
- * Each session has two stores: the *repository* holds the persistent
- * state (`runtime`, `createdAt`, `runtimeSessionId`); the *workdir* on
- * disk holds AGENTS.md plus any agent-produced files. The manager
- * combines them — together with `runtime.refresh()` for live activity —
- * into a full `SessionView` for downstream callers.
+ * Persistence is backed by MikroORM via `SessionRepository` against the
+ * per-workspace `workspace.db`. Live activity (`lastActiveAt`,
+ * `preview`) is recomputed per call from the runtime registry; workdir
+ * paths are resolved from the workspace layout.
+ *
+ * The manager owns no DDD ceremony: no aggregate factories, no value
+ * objects, no domain events, no command/handler indirection. Each
+ * method is a plain async function that combines the repository, the
+ * runtime adapter, and on-disk workdir operations directly.
  */
 export class SessionManager {
   private readonly catalog: CatalogManager;
@@ -48,7 +49,7 @@ export class SessionManager {
   private readonly workspaceDir: string;
   private readonly workspaceId: string | undefined;
   private readonly subprocessEnvBase: NodeJS.ProcessEnv;
-  private readonly repository: SessionRepository;
+  private readonly em: EntityManager;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
@@ -62,9 +63,18 @@ export class SessionManager {
     this.workspaceId = config.workspaceId;
     this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
-    this.repository = config.repository;
+    this.em = config.em;
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
+  }
+
+  /**
+   * Build a fresh `SessionRepository` against a forked EM. We fork on
+   * every read so identity-map caching from writes done through other
+   * EM forks (or other server processes) doesn't return stale rows.
+   */
+  private repo(): SessionRepository {
+    return new SessionRepository(this.em.fork() as EntityManager);
   }
 
   // ─── create ──────────────────────────────────────────────
@@ -111,19 +121,20 @@ export class SessionManager {
         workspaceDir: this.workspaceDir,
       });
       const createdAt = this.now().toISOString();
-      // v2 (issue #120): agent is persisted as a first-class column on
-      // the session row. The provisioner has just written AGENTS.md
-      // with the canonical scope/name pair (potentially differing
-      // from `agentName` if the user passed an alias); read it back so
-      // the persisted row matches what `list()` would surface.
+      // The provisioner has just written AGENTS.md with the canonical
+      // scope/name pair (potentially differing from `agentName` if the
+      // user passed an alias); read it back so the persisted row matches.
       const canonicalAgent = (await readAgentName(workdir)) ?? agentName;
-      const state = Session.create({
-        runtime: runtime.kind,
-        agent: canonicalAgent,
-        createdAt,
-        runtimeSessionId,
+      await this.em.transactional(async (em) => {
+        const repo = new SessionRepository(em);
+        await repo.insert({
+          id: id as string,
+          agent: canonicalAgent,
+          runtime: runtime.kind,
+          createdAt,
+          runtimeSessionId,
+        });
       });
-      await this.repository.save(id, state);
       return {
         id,
         workdir,
@@ -144,30 +155,21 @@ export class SessionManager {
   // ─── list ────────────────────────────────────────────────
 
   async list(opts: ListSessionOpts = {}): Promise<SessionView[]> {
-    // v2 (issue #120): both filters push down to the SQLite layer.
-    // `agent` is now a first-class indexed column on `sessions`, so
-    // the manager no longer scans every workdir's AGENTS.md just to
-    // discard the non-matching rows.
     const repoOpts: { createdSince?: string; agent?: string } = {};
     if (opts.createdSince !== undefined) repoOpts.createdSince = opts.createdSince;
     if (opts.agent !== undefined) repoOpts.agent = opts.agent;
-    let entries: { id: string; state: Session }[];
+    let entries: Session[];
     try {
-      entries = await this.repository.list(repoOpts);
+      entries = await this.repo().list(repoOpts);
     } catch (err) {
       this.logger.warn(
-        {
-          error: err instanceof Error ? err.message : String(err),
-        },
+        { error: err instanceof Error ? err.message : String(err) },
         "sessions: repository.list failed",
       );
       return [];
     }
 
-    const drafts = await Promise.all(
-      entries.map((entry) => this.draftFromState(entry.id, entry.state)),
-    );
-
+    const drafts = await Promise.all(entries.map((row) => this.draftFromRow(row)));
     const survivors: SessionView[] = [];
     for (const draft of drafts) {
       if (draft === null) continue;
@@ -176,14 +178,6 @@ export class SessionManager {
 
     const refreshed = await Promise.all(survivors.map((s) => this.refreshSession(s)));
 
-    // `activeSince` is post-refresh because lastActiveAt is only known
-    // after `runtime.refresh()`. A session passes the predicate if EITHER:
-    //   - it has been launched at or after the cutoff (lastActiveAt ≥ X), OR
-    //   - it was created at or after the cutoff and never launched
-    //     (createdAt ≥ X && lastActiveAt === null).
-    // The second arm matters for "today" / "7d" filters: a session you
-    // just created should show up immediately, even though it has no
-    // launch activity yet.
     const filtered =
       opts.activeSince !== undefined
         ? refreshed.filter((s) => {
@@ -193,13 +187,9 @@ export class SessionManager {
           })
         : refreshed;
 
-    // Never-launched sessions (lastActiveAt === null) ALWAYS sort first
-    // regardless of their createdAt — a freshly created session must be
-    // immediately findable at the top of the list so the user can launch
-    // it without scrolling past stale active sessions. Among never-launched
-    // sessions, secondary sort by createdAt desc (newest first). Active
-    // sessions sort below by lastActiveAt desc, ties broken by id desc
-    // for stability.
+    // Never-launched sessions sort first (so a freshly created session is
+    // immediately findable at the top of the list). Among never-launched,
+    // newest createdAt first; among launched, most-recently-active first.
     filtered.sort((a, b) => {
       const aNull = a.lastActiveAt === null;
       const bNull = b.lastActiveAt === null;
@@ -232,22 +222,22 @@ export class SessionManager {
     }
 
     if (opts.purge === true) {
-      // Full purge: runtime state first (it can fail loudly and we want
-      // to bail before we've started removing things). Only after it
-      // succeeds do we drop the metadata row + workdir.
       const runtime = this.runtimeRegistry.get(session.runtime);
       if (session.runtimeSessionId !== null) {
         await runtime.deleteState(session.runtimeSessionId);
       }
-      await this.repository.delete(id);
+      await this.em.transactional(async (em) => {
+        await new SessionRepository(em).delete(id);
+      });
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
       return;
     }
 
-    // Archive (default): forget the entity but leave its files behind so
-    // the user can recover the agent's product or runtime conversation.
-    await this.repository.delete(id);
+    // Archive (default): forget the row but leave its files behind.
+    await this.em.transactional(async (em) => {
+      await new SessionRepository(em).delete(id);
+    });
   }
 
   // ─── buildInteractiveLaunch ─────────────────────────────────────────
@@ -270,53 +260,20 @@ export class SessionManager {
       },
     );
 
-    // Layer in the per-session env bag on top of whatever the runtime
-    // returned. Per-session adds: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR /
-    // EMPLOKE_WORK_KIND="session" / EMPLOKE_WORK_ID / EMPLOKE_WORK_DIR.
-    // Server-supplied base adds: EMPLOKE_SERVER / EMPLOKE_SHARED_DIR. Both
-    // layers are merged with the runtime's own (currently empty) env
-    // field — letting a future runtime contribute its own vars (e.g. a
-    // CLI-specific flag).
-    //
-    // CONCURRENCY: the resulting env object is a fresh shallow copy.
-    // The shared base (`this.subprocessEnvBase`) is never mutated;
-    // see SessionManagerConfig.subprocessEnv for the rationale (same
-    // contract as TaskManager).
-    //
-    // Why we filter out `undefined` values: NodeJS.ProcessEnv allows
-    // `string | undefined`, but `LaunchCommand.env` is
-    // `Record<string, string>` — inlining `undefined` into a shell
-    // `export K='undefined'` would set the literal string. The
-    // mergeEnv approach used by the task path drops them; we do the
-    // same here for symmetry.
-    //
-    // assembleLaunchEnv unconditionally writes EMPLOKE_WORKSPACE_DIR,
-    // EMPLOKE_WORK_KIND, EMPLOKE_WORK_ID, and EMPLOKE_WORK_DIR, so
-    // `launchEnv` is always non-empty (size ≥ 4).
     const launchWithEnv: LaunchCommand = {
       ...launch,
       env: this.assembleLaunchEnv(id, session.workdir, launch.env),
     };
 
-    // Best-effort: remember the user's last intent for this session so
-    // the next dashboard render can default the Resume button. Persisted
-    // only after `buildInteractiveLaunch` succeeded — if the runtime threw (e.g.
-    // RuntimeDoesNotSupportRemoteError), we shouldn't update intent.
-    // A failed save is logged but does not fail the call: the launch
-    // command is already valid and the worst case is the next page
-    // refresh shows the previous default.
-    //
-    // Uses `patchLastLaunchMode` (a single-statement UPDATE) instead
-    // of `read → save({...prev, lastLaunchMode})` so two concurrent
-    // `buildInteractiveLaunch` calls for the same session id (e.g. "Resume Local"
-    // in tab A and "Resume Remote" in tab B fired within the same
-    // event-loop tick) cannot lose each other's writes to OTHER
-    // persisted fields. Last writer of `lastLaunchMode` itself still
-    // wins, which is the intended UX. See issue #56.
+    // Best-effort: remember the user's last intent so the next dashboard
+    // render can default the Resume button. Persisted only after launch
+    // build succeeded — a failed save is logged but doesn't fail the call.
     const desiredMode: "local" | "remote" = opts.remote === true ? "remote" : "local";
     if (session.lastLaunchMode !== desiredMode) {
       try {
-        await this.repository.patchLastLaunchMode(id, desiredMode);
+        await this.em.transactional(async (em) => {
+          await new SessionRepository(em).patchLastLaunchMode(id, desiredMode);
+        });
       } catch (err) {
         this.logger.warn(
           {
@@ -334,19 +291,9 @@ export class SessionManager {
   /**
    * Build the env bag layered onto the LaunchCommand returned by the
    * runtime. Order (later wins on key collision):
-   *
-   *   1. The server-supplied base (`subprocessEnvBase`) — typically
-   *      EMPLOKE_SERVER / EMPLOKE_SHARED_DIR.
-   *   2. Whatever the runtime contributed via `LaunchCommand.env`
-   *      (presently nothing for Copilot; reserved for future runtimes
-   *      that need their own vars).
-   *   3. Per-session fields: EMPLOKE_WORKSPACE (when known),
-   *      EMPLOKE_WORKSPACE_DIR, EMPLOKE_WORK_KIND="session",
-   *      EMPLOKE_WORK_ID=<sessionId>, EMPLOKE_WORK_DIR=<sessionWorkdir>.
-   *
-   * `undefined` values are dropped so they don't get inlined as the
-   * literal string "undefined" by the shell-export prefix in
-   * `@emploke/terminal`.
+   *   1. `subprocessEnvBase` (server-supplied: EMPLOKE_SERVER / EMPLOKE_SHARED_DIR)
+   *   2. Runtime-contributed env (presently empty for Copilot)
+   *   3. Per-session: EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_*
    */
   private assembleLaunchEnv(
     sessionId: string,
@@ -370,117 +317,29 @@ export class SessionManager {
     return out;
   }
 
-  // ─── backfillAgentColumn ─────────────────────────────────
-
-  /**
-   * v2 migration follow-up (issue #120). The SQL migration adds the
-   * `agent` column with a `''` default for existing v1 rows; this
-   * method finds those rows and resolves the canonical FQN by reading
-   * `<sessionsDir>/<id>/AGENTS.md` (the same helper `create()` uses
-   * for the read-back-after-provision check).
-   *
-   * Rows whose AGENTS.md is missing / unreadable / malformed stay at
-   * `''` and surface a one-line structured warning so an operator can
-   * spot the corruption. Such rows are then dropped from `list()` /
-   * `get()` results by `Session.fromStored`'s non-empty-agent check —
-   * matching the pre-v2 behaviour where the same condition caused
-   * the row to be silently filtered out.
-   *
-   * Idempotent: a second call simply finds no `''` rows and exits.
-   * The `WorkspaceContextCache` invokes this once on first construction
-   * of each manager, before the context is exposed to route handlers,
-   * so the first `list()` call already sees the populated column.
-   * No race because the call is awaited before the context is cached.
-   */
-  async backfillAgentColumn(): Promise<void> {
-    let ids: readonly string[];
-    try {
-      ids = await this.repository.findEmptyAgentIds();
-    } catch (err) {
-      this.logger.warn(
-        {
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "sessions: backfillAgentColumn lookup failed",
-      );
-      return;
-    }
-    for (const id of ids) {
-      const workdir = safeJoinUnderRoot(this.sessionsDir, id);
-      let agent: string | null;
-      try {
-        agent = await readAgentName(workdir);
-      } catch (err) {
-        this.logger.warn(
-          {
-            sessionId: id,
-            reason: err instanceof Error ? err.message : String(err),
-          },
-          "sessions: backfillAgentColumn readAgentName threw",
-        );
-        continue;
-      }
-      if (agent === null) {
-        this.logger.warn(
-          { sessionId: id, reason: "AGENTS.md missing or unreadable" },
-          "sessions: backfillAgentColumn left row at empty agent",
-        );
-        continue;
-      }
-      try {
-        await this.repository.setAgent(id, agent);
-      } catch (err) {
-        this.logger.warn(
-          {
-            sessionId: id,
-            reason: err instanceof Error ? err.message : String(err),
-          },
-          "sessions: backfillAgentColumn setAgent failed",
-        );
-      }
-    }
-  }
-
   // ─── close ───────────────────────────────────────────────
 
   /**
-   * Release the underlying repository handle. After `close()`, the
-   * manager must not be used. Idempotent: calling twice is a no-op.
-   *
-   * Servers that swap or evict a `SessionManager` (e.g. `WorkspaceContextCache`
-   * on workspace removal / cache reload) must call this so the SQLite
-   * file handle releases — Windows requires it before the workspace
-   * directory can be `rm`-ed.
+   * Released the manager's hold on the ORM. After `close()` the manager
+   * must not be used. ORM lifecycle is owned by the caller — this is a
+   * no-op today, retained for API symmetry with the rest of the pkg.
    */
   close(): void {
-    const repo = this.repository as { close?: () => void };
-    if (typeof repo.close === "function") {
-      try {
-        repo.close();
-      } catch {
-        // best-effort
-      }
-    }
+    // intentionally empty
   }
 
   // ─── internals ───────────────────────────────────────────
 
-  private async draftFromState(id: string, state: Session): Promise<SessionView | null> {
-    const workdir = safeJoinUnderRoot(this.sessionsDir, id);
+  private async draftFromRow(row: Session): Promise<SessionView | null> {
+    const workdir = safeJoinUnderRoot(this.sessionsDir, row.id);
 
-    // v2 (issue #120): the agent FQN is persisted on the row. We no
-    // longer parse AGENTS.md on every list/get — that scan was the
-    // motivation for the v2 refactor. The backfill path
-    // (`backfillAgentColumn`) still reads AGENTS.md once on first
-    // load, but the steady-state hot path never touches the FS for
-    // the agent field.
     try {
-      this.runtimeRegistry.get(state.runtime);
+      this.runtimeRegistry.get(row.runtime);
     } catch (err) {
       this.logger.warn(
         {
-          sessionId: id,
-          runtime: state.runtime,
+          sessionId: row.id,
+          runtime: row.runtime,
           error: err instanceof Error ? err.message : String(err),
         },
         "sessions: skipping session with unregistered runtime",
@@ -489,24 +348,21 @@ export class SessionManager {
     }
 
     return {
-      id,
+      id: row.id,
       workdir,
-      agent: state.agent,
-      runtime: state.runtime,
-      runtimeSessionId: state.runtimeSessionId,
-      createdAt: state.createdAt,
+      agent: row.agent,
+      runtime: row.runtime,
+      runtimeSessionId: row.runtimeSessionId,
+      createdAt: row.createdAt,
       lastActiveAt: null,
       preview: null,
-      lastLaunchMode: state.lastLaunchMode ?? null,
+      lastLaunchMode: row.lastLaunchMode,
     };
   }
 
   private async refreshSession(draft: SessionView): Promise<SessionView> {
     const runtime = this.runtimeRegistry.get(draft.runtime);
     if (typeof runtime.readMetadata !== "function" || draft.runtimeSessionId === null) {
-      // Runtime doesn't expose metadata, or we have no id to look up
-      // (discovery-only runtime that hasn't launched yet) — leave the
-      // draft untouched.
       return draft;
     }
 
@@ -530,19 +386,15 @@ export class SessionManager {
 
     return {
       ...draft,
-      // Runtime supplies title via `title`; emploke's session API surfaces
-      // this as `preview` (legacy field name). Map at the boundary so
-      // session API consumers don't break — the rename is queued as a
-      // separate breaking-change PR.
       lastActiveAt: refreshed.lastActiveAt ?? draft.lastActiveAt,
       preview: refreshed.title ?? draft.preview,
     };
   }
 
   private async loadSession(id: string): Promise<SessionView | null> {
-    let state: Session | null;
+    let row: Session | null;
     try {
-      state = await this.repository.read(id);
+      row = await this.repo().read(id);
     } catch (err) {
       this.logger.warn(
         {
@@ -553,8 +405,8 @@ export class SessionManager {
       );
       return null;
     }
-    if (state === null) return null;
-    const draft = await this.draftFromState(id, state);
+    if (row === null) return null;
+    const draft = await this.draftFromRow(row);
     if (draft === null) return null;
     return this.refreshSession(draft);
   }

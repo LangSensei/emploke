@@ -1,25 +1,15 @@
 import type { CatalogManager } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
-import type { SessionRepository } from "./repositories/repository.js";
+import type { EntityManager } from "@mikro-orm/core";
 
 /** Re-export `LaunchCommand` so call sites only need one import. */
 export type { LaunchCommand } from "@emploke/runtime";
 
 /**
- * The wire-level session value type — a derived view that combines
- * the persisted {@link Session} entity (runtime / createdAt /
- * runtimeSessionId / lastLaunchMode) with three other sources:
- *   - `workdir`: computed from the workspace layout
- *   - `agent`: parsed from `<workdir>/AGENTS.md` frontmatter
- *   - `lastActiveAt` / `preview`: refreshed live from the runtime per call
- *
- * `SessionView` is what `SessionManager.list()` / `.get()` returns and
- * what `c.json(session)` ships down the HTTP wire to the dashboard.
- *
- * Owned by `@emploke/session` (the Runtime layer is intentionally
- * domain-agnostic and doesn't know what a "session" is — it just sees
- * opaque `runtimeSessionId`s).
+ * Wire-level session value — combines the persisted row with workdir
+ * (computed from layout), live `lastActiveAt` + `preview` from the
+ * runtime, and the `lastLaunchMode` UI hint.
  */
 export interface SessionView {
   readonly id: string;
@@ -30,15 +20,15 @@ export interface SessionView {
   readonly createdAt: string;
   readonly lastActiveAt: string | null;
   readonly preview: string | null;
-  /**
-   * Mode the user chose for the most recent successful launch of this
-   * session, or `null` if it has never been launched. Defaults the
-   * dashboard's Resume button to the user's last intent.
-   */
   readonly lastLaunchMode: "local" | "remote" | null;
 }
 
-/** Configuration for SessionManager. All fields are optional except `catalog`, `runtimeRegistry`, and `sessionsDir`. */
+/**
+ * Configuration for SessionManager. After the de-DDD simplification,
+ * persistence is supplied directly as an `EntityManager` (one EM per
+ * workspace, owned by the @emploke/core orchestrator). The manager
+ * builds a `SessionRepository` internally.
+ */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: CatalogManager;
@@ -47,57 +37,29 @@ export interface SessionManagerConfig {
   /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */
   readonly defaultRuntime?: string;
   /**
-   * Absolute directory under which per-session workdirs are created. Required.
-   * In production this is `<workspace>/sessions/`; the server hands it through
-   * after opening the workspace. SessionManager itself has no notion of a
-   * "workspace" — it only knows about the directory you tell it to manage.
+   * Absolute directory under which per-session workdirs are created.
+   * In production this is `<workspace>/sessions/` (from `workspaceLayout`).
    */
   readonly sessionsDir: string;
-  /**
-   * Absolute path of the workspace this manager belongs to. Required.
-   *
-   * Threaded through `buildInteractiveLaunch` to the runtime so runtimes whose
-   * interactive launch needs a workspace-rooted preflight (e.g. Copilot
-   * needs to ensure `workspaceDir` is in `~/.copilot/config.json`
-   * `trustedFolders` to suppress its trust prompt) can run that
-   * preflight at the moment of launch. Pure runtimes ignore the value.
-   *
-   * This is intentionally a peer of `sessionsDir` rather than derived
-   * from it: the manager's lifetime is per-workspace by construction
-   * and the server already knows both paths from `workspaceLayout()`.
-   */
+  /** Absolute path of the workspace this manager belongs to. */
   readonly workspaceDir: string;
   /**
    * Workspace UUID this manager belongs to. Surfaced as
    * `EMPLOKE_WORKSPACE` in the env bag of every interactive session
-   * spawn so the shell that ends up running `copilot --resume <id>`
-   * (and any `emploke ...` calls the user makes inside it) inherits
-   * the workspace identity automatically. See the `subprocessEnv`
-   * field below for how the bag is assembled.
-   *
-   * Optional for back-compat with tests that build a SessionManager
-   * without a real workspace registration; production call sites in
-   * `WorkspaceContext` always pass it.
+   * launch. Optional for tests that don't need workspace identity.
    */
   readonly workspaceId?: string;
   /**
-   * Static env overrides merged into every session-launch env bag on
-   * top of the per-session additions assembled in
-   * `buildInteractiveLaunch()`. Production wires this from the server
-   * with `EMPLOKE_SERVER` and `EMPLOKE_SHARED_DIR` so a shell launched
-   * by `session spawn` can call back into the same server it was
-   * launched from and write to the machine-shared dir. Tests typically
-   * leave this unset.
+   * Static env overrides merged into every session-launch env bag.
+   * Production wires this from the server with `EMPLOKE_SERVER` and
+   * `EMPLOKE_SHARED_DIR`.
    */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
   /**
-   * Persistence backend for session state. Required: callers (server
-   * `WorkspaceContext` in production, tests) construct a
-   * `SqliteSessionRepository({ db: <workspace.db connection> })` and
-   * pass it. There is no default — the session pkg no longer owns a DB
-   * file path; the workspace pkg does.
+   * MikroORM `EntityManager` backing the `sessions` table. The manager
+   * forks per-transaction inside `em.transactional(...)`.
    */
-  readonly repository: SessionRepository;
+  readonly em: EntityManager;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */
@@ -110,52 +72,29 @@ export interface SessionManagerConfig {
 export interface CreateSessionOpts {
   /** Catalog agent name. */
   readonly agent: string;
-  /**
-   * Runtime kind to use. Defaults to `SessionManagerConfig.defaultRuntime`,
-   * which itself defaults to `"copilot"`.
-   */
+  /** Runtime kind. Defaults to `SessionManagerConfig.defaultRuntime`. */
   readonly runtime?: string;
 }
 
-/**
- * Options for `SessionManager.buildInteractiveLaunch`. The session's persisted
- * record is unchanged across calls — these flags only modify how the
- * runtime renders the launch command this time around. The dashboard
- * sets these from the user's choice of "Spawn local" vs "Spawn remote"
- * button so the same session can be launched either way.
- */
+/** Options for `SessionManager.buildInteractiveLaunch`. */
 export interface BuildInteractiveLaunchSessionOpts {
   /**
-   * If `true`, ask the runtime to enable remote control of the
-   * interactive session (browser / mobile steering). Forwarded to
-   * `Runtime.buildInteractiveLaunch`'s `BuildInteractiveLaunchOpts.remote`. The runtime
-   * throws `RuntimeDoesNotSupportRemoteError` if it doesn't support
-   * the flag — the route layer maps that to HTTP 400.
+   * If `true`, ask the runtime to enable remote control. Runtimes that
+   * don't support remote throw `RuntimeDoesNotSupportRemoteError`.
    */
   readonly remote?: boolean;
 }
 
 /** Options for SessionManager.list. */
 export interface ListSessionOpts {
-  /** Filter to sessions whose AGENTS.md frontmatter name matches this exact value. */
+  /** Filter to sessions whose agent FQN matches exactly. */
   readonly agent?: string;
-  /**
-   * Drop sessions whose `createdAt` is strictly before this ISO 8601 timestamp.
-   * Applied at the repository layer (a `WHERE created_at >= ?` filter on the
-   * `sessions` table) before AGENTS.md parsing and BEFORE the (more
-   * expensive) `runtime.refresh()` call, so excluded entries pay zero
-   * refresh cost.
-   */
+  /** Drop sessions whose `createdAt` is strictly before this ISO timestamp. */
   readonly createdSince?: string;
   /**
-   * Drop sessions whose `lastActiveAt` is strictly before this ISO 8601
-   * timestamp. Applied AFTER `runtime.refresh()` (lastActiveAt only exists
-   * post-refresh). Sessions that have never been launched
-   * (`lastActiveAt === null`) are dropped by this filter — "never active"
-   * fails the "active since X" predicate by definition.
-   *
-   * Use `createdSince` instead if you want a cheaper pre-refresh filter
-   * keyed off creation time.
+   * Drop sessions whose `lastActiveAt` is strictly before this ISO
+   * timestamp. Applied after `runtime.refresh()`. Never-launched
+   * sessions pass iff their `createdAt >= activeSince`.
    */
   readonly activeSince?: string;
 }
@@ -163,22 +102,12 @@ export interface ListSessionOpts {
 /** Options for SessionManager.delete. */
 export interface DeleteSessionOpts {
   /**
-   * If `true`, perform a full purge: remove the session's metadata
-   * row, the per-session workdir under `<sessionsDir>/<id>/`
-   * (AGENTS.md, agent-produced files, ...), AND ask the runtime
-   * adapter to drop its own per-session state (e.g. for copilot,
-   * `~/.copilot/session-state/<runtimeSessionId>/`).
-   *
-   * Defaults to `false` ("archive"): only the metadata row is removed
-   * — workdir contents and runtime state are preserved on disk so the
-   * user can recover or inspect them later. Same default semantics as
-   * `WorkspaceManager.delete({ purge })` and
-   * `TaskManager.delete({ purge })` — a single verb across all the
-   * entity managers.
-   *
-   * The runtime-state cleanup runs *before* the workdir is removed; a
-   * runtime failure leaves both the workdir AND the metadata row
-   * intact so the user can retry without partial state.
+   * If `true`, full purge: remove the row, the per-session workdir, and
+   * ask the runtime to drop its own per-session state. Default `false`
+   * (archive): only the row is removed; workdir contents and runtime
+   * state preserved. Same default semantics as
+   * `WorkspaceManager.unregister({ purge })` and
+   * `TaskManager.delete({ purge })`.
    */
   readonly purge?: boolean;
 }
