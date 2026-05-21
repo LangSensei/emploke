@@ -1,60 +1,52 @@
 import { inject, injectable } from "inversify";
 import { type PipelineBehavior, pipelineBehavior, type RequestData } from "mediatr-ts";
-import { runWithAfterCommitQueue, UnitOfWork } from "../unit-of-work.js";
+import { runWithAfterCommitQueue } from "../after-commit-queue.js";
+import { WorkspaceContext } from "../../infrastructure/workspace-context.js";
 
 const pipelineBehaviorDecorator = pipelineBehavior() as ClassDecorator;
 
 /**
- * Mediator pipeline behaviour that wraps every command in
- * em.transactional **plus** drains a per-command after-commit queue
- * once the transaction successfully commits.
+ * Workspace pkg's transaction wrapper. Wraps every command sent
+ * through the workspace pkg's Mediator in `em.transactional` and
+ * drains the after-commit queue once the transaction commits
+ * successfully.
  *
- * ## Per-BC dispatch via inversify resolver
+ * ## Per-BC behavior (design A)
  *
- * `pipelineBehavior()` registers this CLASS on mediatr-ts's module
- * singleton. Each `Mediator` instance has its OWN inversify resolver,
- * and resolves `TransactionBehavior` against its own container per
- * `send()`. The `@inject(UnitOfWork)` annotation therefore resolves
- * to whatever `UnitOfWork` is bound in THAT mediator's container:
- *
- *   - root container: workspace pkg's `WorkspaceContext` (global.db EM)
- *   - per-workspace child container: per-workspace context (workspace.db EM)
- *
- * One behavior class, two contexts. No per-BC duplication.
- *
- * ## After-commit queue
- *
- * Inside {@link runWithAfterCommitQueue} an AsyncLocalStorage slot
- * holds a fresh queue for the lifetime of one command. Handler code
- * calls `uow.enqueueAfterCommit(fn)` to schedule a callback (typical
- * use: spawn a subprocess after the persistence transaction commits,
- * so a rolled-back commit cannot leak the side-effect). The queue
- * drains AFTER `em.transactional(...)` resolves successfully — a
- * throw from the transactional body bypasses the drain entirely.
- *
- * ## Pipeline order
- *
- * Must register AFTER ValidationBehavior so mediatr-ts puts it inner
- * in the pipeline. Logging wraps both. See workspace.di.test.ts for
- * the order-asserting unit test that catches accidental import
- * re-ordering.
+ * Each bounded context owns its OWN TransactionBehavior class bound
+ * to its OWN EM. Workspace pkg's lives here (injects WorkspaceContext
+ * → global.db EM). Session / task / catalog each define an analogous
+ * class injecting their respective contexts. No abstract UnitOfWork,
+ * no per-Mediator token-override gymnastics — each BC's compose
+ * function constructs its own Mediator and registers ONLY that BC's
+ * behaviors (via the `@pipelineBehavior` decorator side-effect at its
+ * own module import, which the BC's compose function controls).
  *
  * ## Domain-event dispatch
  *
- * Domain-event dispatch happens via `DomainEventDispatcher` (a
- * MikroORM `beforeFlush` subscriber registered in bootstrap), so this
- * behaviour stays single-purpose: BEGIN / COMMIT / ROLLBACK +
+ * Domain events fire via `DomainEventDispatcher` (a MikroORM
+ * `beforeFlush` subscriber registered in `composeWorkspaceModule`),
+ * so this behavior stays single-purpose: BEGIN / COMMIT / ROLLBACK +
  * after-commit drain. `em.transactional` auto-flushes at the end of
- * the callback, which fires the subscriber's `beforeFlush` hook
- * (events dispatched, then SQL writes).
+ * the callback, firing the subscriber's hook (events dispatched,
+ * then SQL writes hit SQLite — all atomic).
+ *
+ * ## After-commit queue
+ *
+ * The queue is opened via {@link runWithAfterCommitQueue} for the
+ * lifetime of one command. Handlers (and anything reachable from
+ * them) call `enqueueAfterCommit(fn)` from `@emploke/workspace` to
+ * stage callbacks. Drained AFTER `em.transactional` resolves
+ * successfully — a throw inside the transactional body discards the
+ * queue.
  */
 @injectable()
 export class TransactionBehavior implements PipelineBehavior {
-  constructor(@inject(UnitOfWork) private readonly uow: UnitOfWork) {}
+  constructor(@inject(WorkspaceContext) private readonly ctx: WorkspaceContext) {}
 
   async handle(_request: RequestData<unknown>, next: () => unknown): Promise<unknown> {
     return runWithAfterCommitQueue(async (queue) => {
-      const result = await this.uow.em.transactional(() => next());
+      const result = await this.ctx.em.transactional(() => next());
       await queue.drain();
       return result;
     });

@@ -71,12 +71,11 @@ export { UnregisterWorkspaceCommand } from "./application/commands/unregister-wo
 export type { WorkspaceSummaryView } from "./application/queries/views/workspace-summary-view.js";
 export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
 export { WorkspaceQueries } from "./application/queries/workspace-queries.js";
-export type { AfterCommitCallback, AfterCommitQueue } from "./application/unit-of-work.js";
+export type { AfterCommitCallback, AfterCommitQueue } from "./application/after-commit-queue.js";
 export {
-  currentAfterCommitQueue,
+  enqueueAfterCommit,
   runWithAfterCommitQueue,
-  UnitOfWork,
-} from "./application/unit-of-work.js";
+} from "./application/after-commit-queue.js";
 export { CommandValidationError } from "./application/validations/command-validator.js";
 export type {
   WorkspaceModuleHandle,
