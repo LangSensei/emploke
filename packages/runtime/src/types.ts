@@ -230,8 +230,8 @@ export interface Runtime {
    *
    * Throws on partial failure (e.g. permission denied removing some
    * files); the caller is responsible for surfacing this to the user.
-   * Both `SessionManager.delete({purge:true})` and
-   * `TaskManager.delete({purge:true})` call this — runtime first, so
+   * Both `SessionService.delete({purge:true})` and
+   * `TaskService.delete({purge:true})` call this — runtime first, so
    * a runtime failure aborts before any local removal.
    */
   deleteState(runtimeSessionId: string): Promise<void>;
@@ -344,7 +344,7 @@ export interface RuntimeHandle {
    * Optional because only pre-allocating runtimes (Copilot) know it
    * up front; discovery-only runtimes leave it undefined.
    *
-   * Persisted by callers (TaskManager / SessionManager) so observability
+   * Persisted by callers (TaskService / SessionService) so observability
    * methods (`readActivity`, `readMetadata`, etc.) can reference it
    * later, plus drive the underlying CLI directly
    * (e.g. `copilot --resume=<id>`).
@@ -536,7 +536,7 @@ export interface LaunchCommand {
    * the shell command itself (`export K='v' && exec foo args` on
    * POSIX, `$env:K='v'; & foo args` for pwsh). The terminal package
    * does that work; this field carries the bag from
-   * `SessionManager.buildInteractiveLaunch` to `spawnTerminal`.
+   * `SessionService.buildInteractiveLaunch` to `spawnTerminal`.
    *
    * Values must be plain strings — no `undefined` (semantically
    * meaningless when inlining), no `null`, no arrays. `undefined`

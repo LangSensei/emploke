@@ -1,19 +1,20 @@
+import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
-import { type CatalogFacade, type CatalogResolver, resolveCatalog } from "./resolver.js";
+import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 import { skillsRoutes } from "./skills.js";
 
 /**
  * Workspace-scoped catalog routes. The routes pull a per-workspace
- * `CatalogFacade` ({@link CatalogService} writes + {@link CatalogQueries}
+ * `CatalogService` ({@link CatalogService} writes + {@link CatalogService}
  * reads) off the Hono context, set up by the workspace middleware.
  *
- * Tests can pass a `CatalogFacade` directly. The catalog brings its
+ * Tests can pass a `CatalogService` directly. The catalog brings its
  * own `FetcherRegistry` via `CatalogOptions.fetchers`; routes don't
  * thread fetchers through.
  */
-export function catalogRoutes(arg: CatalogResolver | CatalogFacade): Hono {
+export function catalogRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -22,7 +23,7 @@ export function catalogRoutes(arg: CatalogResolver | CatalogFacade): Hono {
   app.route("/mcps", mcpsRoutes(getCatalog));
 
   app.get("/overview", async (c) => {
-    const { queries } = getCatalog(c);
+    const queries = getCatalog(c);
     const [skills, agents, mcps] = await Promise.all([
       queries.listSkillEntries(),
       queries.listAgentEntries(),
@@ -45,4 +46,4 @@ export function catalogRoutes(arg: CatalogResolver | CatalogFacade): Hono {
   return app;
 }
 
-export type { CatalogFacade, CatalogResolver } from "./resolver.js";
+export type { CatalogResolver } from "./resolver.js";

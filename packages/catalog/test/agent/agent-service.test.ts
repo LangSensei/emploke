@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Agent } from "../../src/agent/agent-entity.js";
+import { AgentEntity } from "../../src/agent/agent-entity.js";
+import { AgentRepository } from "../../src/agent/agent-repository.js";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
 import {
   AgentFrontmatterError,
   AgentNotFoundError,
@@ -52,14 +52,14 @@ ${deps}
 `;
 
 let orm: ReturnType<typeof openTestCatalogDb>;
-let repo: DrizzleAgentRepository;
+let repo: AgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
 
-  repo = new DrizzleAgentRepository({ db: orm.db });
+  repo = new AgentRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
 });
@@ -202,9 +202,9 @@ describe("AgentService — single-entity API", () => {
     await svc.install("file:/abs/agent");
   });
 
-  it("get returns Agent entity", async () => {
+  it("get returns AgentEntity entity", async () => {
     const a = await svc.get("public/agent");
-    expect(a).toBeInstanceOf(Agent);
+    expect(a).toBeInstanceOf(AgentEntity);
     expect(a!.fqn).toBe("public/agent");
   });
 

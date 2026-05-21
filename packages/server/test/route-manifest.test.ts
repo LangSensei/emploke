@@ -26,8 +26,8 @@ import pino from "pino";
 const silentLogger = pino({ level: "silent" });
 
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import type { SessionManager } from "@emploke/session";
-import type { TaskManager } from "@emploke/task";
+import type { SessionService } from "@emploke/session";
+import type { TaskService } from "@emploke/task";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
@@ -194,16 +194,16 @@ function stubPerWorkspaceContainerCache(): PerWorkspaceContainerCache {
   });
 }
 
-function stubSessionManager(): SessionManager {
-  return new Proxy({} as SessionManager, {
+function stubSessionManager(): SessionService {
+  return new Proxy({} as SessionService, {
     get() {
       throw new Error("stubSessionManager: not callable");
     },
   });
 }
 
-function stubTaskManager(): TaskManager {
-  return new Proxy({} as TaskManager, {
+function stubTaskManager(): TaskService {
+  return new Proxy({} as TaskService, {
     get() {
       throw new Error("stubTaskManager: not callable");
     },

@@ -1,13 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { buildCatalogRuntime, CatalogQueries } from "./facade/catalog-queries.js";
-import { CatalogService } from "./facade/catalog-service.js";
+import { buildCatalogRuntime, CatalogService } from "./facade/catalog-service.js";
 import type { FetcherRegistry } from "./fetcher/index.js";
-import type { Db } from "./runtime-types.js";
 import * as schema from "./schema.js";
+
+type Db = BetterSQLite3Database<typeof schema>;
 
 export type CatalogModuleOptions = (
   | { readonly db: Db; readonly dbFile?: never }
@@ -19,7 +19,6 @@ export type CatalogModuleOptions = (
 
 export interface CatalogModule {
   readonly service: CatalogService;
-  readonly queries: CatalogQueries;
   close(): Promise<void>;
 }
 
@@ -42,11 +41,9 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
     ...(opts.fetchers !== undefined ? { fetchers: opts.fetchers } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
-  const queries = new CatalogQueries(rt);
-  const service = new CatalogService(rt, queries);
+  const service = new CatalogService(rt);
   return {
     service,
-    queries,
     async close() {
       sqlite?.close();
     },

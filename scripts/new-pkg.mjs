@@ -54,6 +54,12 @@ const tokens = {
   __Entity__: rawEntity,
   __entity__: rawEntity[0].toLowerCase() + rawEntity.slice(1),
   __entities__: rawTable,
+  // kebab-case form of the entity name (Note → note, TaskGroup → task-group).
+  // Used in file names per the <entity>-<role>.ts convention.
+  "__entity-kebab__": rawEntity
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase(),
 };
 
 const dest = path.join(ROOT, "packages", rawPkg);

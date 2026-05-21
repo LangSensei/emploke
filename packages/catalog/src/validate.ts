@@ -37,9 +37,9 @@
  * shape: the field exists and is a non-empty string.
  */
 
-import { AgentFrontmatterError } from "../agent/errors.js";
-import { McpInvalidJsonError } from "../mcp/errors.js";
-import { SkillFrontmatterError } from "../skill/errors.js";
+import { AgentFrontmatterError } from "./agent/errors.js";
+import { McpInvalidJsonError } from "./mcp/errors.js";
+import { SkillFrontmatterError } from "./skill/errors.js";
 
 /**
  * Resolved install body. Wire shape is identical (single `origin`

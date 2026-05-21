@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { LaunchCommand, Runtime } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
@@ -13,10 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
-  SessionManager,
   type SessionManagerConfig,
   SessionNotFoundError,
   SessionRepository,
+  SessionService,
 } from "../src/index.js";
 import { openTestSessionDb } from "../src/testing.js";
 
@@ -40,18 +40,18 @@ function makeDb(): DbHandle {
 }
 
 /**
- * Construct a `SessionManager` with a fresh `:memory:` Drizzle db
+ * Construct a `SessionService` with a fresh `:memory:` Drizzle db
  * injected. Tests that need to inspect the persisted state can
  * override `opts.db` with their own.
  */
 async function buildManager(
   opts: Omit<SessionManagerConfig, "db"> & Partial<Pick<SessionManagerConfig, "db">>,
-): Promise<SessionManager> {
+): Promise<SessionService> {
   if (opts.db !== undefined) {
-    return new SessionManager(opts as SessionManagerConfig);
+    return new SessionService(opts as SessionManagerConfig);
   }
   const orm = makeDb();
-  return new SessionManager({ ...opts, db: orm.db });
+  return new SessionService({ ...opts, db: orm.db });
 }
 
 beforeEach(async () => {
@@ -78,7 +78,7 @@ interface StubCatalogOpts {
   resolveError?: Error;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): CatalogQueries {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogService {
   const agents = opts.agents ?? {};
   return {
     catalogDir,
@@ -88,7 +88,7 @@ function stubCatalog(opts: StubCatalogOpts = {}): CatalogQueries {
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-  } as unknown as CatalogQueries;
+  } as unknown as CatalogService;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>
@@ -222,7 +222,7 @@ const recorder = () => {
 
 // ───── construction ──────────────────────────────────────────
 
-describe("SessionManager construction", () => {
+describe("SessionService construction", () => {
   it("constructs with catalog + runtimeRegistry + sessionsDir", async () => {
     const m = await buildManager({
       catalog: stubCatalog(),
@@ -819,7 +819,7 @@ describe("buildInteractiveLaunch()", () => {
   it("persists lastLaunchMode after a successful launch", async () => {
     const rt = new StubRuntime();
     const orm = makeDb();
-    const m = new SessionManager({
+    const m = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -844,7 +844,7 @@ describe("buildInteractiveLaunch()", () => {
     // survive.
     const rt = new StubRuntime();
     const orm = makeDb();
-    const m = new SessionManager({
+    const m = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -876,16 +876,16 @@ describe("buildInteractiveLaunch()", () => {
 
   // ─── env injection ──────────────────────────────────────────────
   //
-  // SessionManager layers a self-describing env bag onto the
+  // SessionService layers a self-describing env bag onto the
   // LaunchCommand returned by the runtime so the shell that ends up
   // running `copilot --resume <id>` (and any nested `emploke ...`
   // calls the user makes inside it) inherits the workspace identity.
   // See SessionManagerConfig.subprocessEnv for the rationale; same
-  // contract as TaskManager.
+  // contract as TaskService.
 
   it("layers EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_* onto the LaunchCommand", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -910,7 +910,7 @@ describe("buildInteractiveLaunch()", () => {
 
   it("omits EMPLOKE_WORKSPACE when no workspaceId is configured (back-compat)", async () => {
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,
@@ -927,12 +927,12 @@ describe("buildInteractiveLaunch()", () => {
 
   it("two managers for two workspaces produce isolated launch envs (sharing a frozen base)", async () => {
     // Mimics what WorkspaceContextCache does: one shared frozen base
-    // passed by reference into every per-workspace SessionManager.
+    // passed by reference into every per-workspace SessionService.
     // The base must NEVER be mutated by buildInteractiveLaunch; per-
     // session fields go on a fresh layer on top.
     const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
 
-    const mA = new SessionManager({
+    const mA = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -941,7 +941,7 @@ describe("buildInteractiveLaunch()", () => {
       subprocessEnv: sharedBase,
       db: makeDb().db,
     });
-    const mB = new SessionManager({
+    const mB = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir,
@@ -973,7 +973,7 @@ describe("buildInteractiveLaunch()", () => {
     // but the guard is defense-in-depth, so it deserves a test that
     // would catch a regression that removed it.
     const rt = new StubRuntime();
-    const m = new SessionManager({
+    const m = new SessionService({
       catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       sessionsDir,

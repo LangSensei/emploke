@@ -9,9 +9,9 @@ import {
   ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
-  type TaskManager,
   TaskNotFoundError,
   type TaskOrigin,
+  type TaskService,
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
@@ -27,10 +27,10 @@ type TaskDispatchBodyRaw = { [K in keyof TaskDispatchBody]?: unknown };
 
 /**
  * Resolver passed in by the mount point so route handlers pull the
- * workspace-scoped TaskManager out of Hono's per-request context. Mirrors
- * the SessionManager pattern exactly.
+ * workspace-scoped TaskService out of Hono's per-request context. Mirrors
+ * the SessionService pattern exactly.
  */
-export type TaskManagerResolver = (c: import("hono").Context) => TaskManager;
+export type TaskManagerResolver = (c: import("hono").Context) => TaskService;
 
 function statusForError(err: unknown): number | null {
   // Client-side / input errors → 4xx.
@@ -417,7 +417,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
       limit = parsed;
     }
 
-    let payload: Awaited<ReturnType<TaskManager["getTaskActivity"]>>;
+    let payload: Awaited<ReturnType<TaskService["getTaskActivity"]>>;
     try {
       payload = await getManager(c).getTaskActivity(id, {
         ...(before !== undefined ? { before } : {}),
@@ -442,7 +442,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   // consume (curl -N, EventSource, eventsource-parser).
   //
   // The SSE iterator is cancelled when the HTTP client disconnects
-  // (request `signal` propagates to the runtime via TaskManager).
+  // (request `signal` propagates to the runtime via TaskService).
   // This route is HUMAN-only: not exposed via MCP because LLM tool
   // surfaces require bounded responses, not streams.
   //

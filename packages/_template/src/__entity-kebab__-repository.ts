@@ -12,10 +12,9 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 /**
  * Drizzle-backed CRUD for the `__entities__` table. Private to the
- * pkg: external callers go through `__Entity__Service` (writes) or
- * `__Entity__Queries` (reads). Defense-in-depth id validation lives
- * here so the table grammar is enforced even if a future caller
- * forgets to validate at the boundary.
+ * pkg: external callers go through `__Entity__Service`. Defense-in-
+ * depth id validation lives here so the table grammar is enforced
+ * even if a future caller forgets to validate at the boundary.
  */
 export class __Entity__Repository {
   private readonly db: Db;

@@ -1,7 +1,7 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { CatalogQueries } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import type { Logger } from "pino";
 import pino from "pino";
 
@@ -16,15 +16,15 @@ import {
   SessionNotFoundError,
 } from "./errors.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import { SessionRepository } from "./repository.js";
-import type { Session } from "./schema.js";
+import type { SessionRow } from "./schema.js";
+import { SessionRepository } from "./session-repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   ListSessionOpts,
+  Session,
   SessionManagerConfig,
-  SessionView,
 } from "./types.js";
 import { assertValidSessionId, generateSessionId } from "./validate.js";
 
@@ -44,8 +44,8 @@ const MAX_CREATE_RETRIES = 5;
  * method is a plain async function that combines the repository, the
  * runtime adapter, and on-disk workdir operations directly.
  */
-export class SessionManager {
-  private readonly catalog: CatalogQueries;
+export class SessionService {
+  private readonly catalog: CatalogService;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
@@ -73,13 +73,13 @@ export class SessionManager {
 
   // ─── create ──────────────────────────────────────────────
 
-  async create(opts: CreateSessionOpts): Promise<SessionView> {
+  async create(opts: CreateSessionOpts): Promise<Session> {
     const agentName = opts.agent;
     if (typeof agentName !== "string" || agentName.length === 0) {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    let resolveResult: Awaited<ReturnType<CatalogQueries["resolveAgent"]>>;
+    let resolveResult: Awaited<ReturnType<CatalogService["resolveAgent"]>>;
     try {
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
@@ -145,11 +145,11 @@ export class SessionManager {
 
   // ─── list ────────────────────────────────────────────────
 
-  async list(opts: ListSessionOpts = {}): Promise<SessionView[]> {
+  async list(opts: ListSessionOpts = {}): Promise<Session[]> {
     const repoOpts: { createdSince?: string; agent?: string } = {};
     if (opts.createdSince !== undefined) repoOpts.createdSince = opts.createdSince;
     if (opts.agent !== undefined) repoOpts.agent = opts.agent;
-    let entries: Session[];
+    let entries: SessionRow[];
     try {
       entries = await this.repo.list(repoOpts);
     } catch (err) {
@@ -161,7 +161,7 @@ export class SessionManager {
     }
 
     const drafts = await Promise.all(entries.map((row) => this.draftFromRow(row)));
-    const survivors: SessionView[] = [];
+    const survivors: Session[] = [];
     for (const draft of drafts) {
       if (draft === null) continue;
       survivors.push(draft);
@@ -197,7 +197,7 @@ export class SessionManager {
 
   // ─── get ─────────────────────────────────────────────────
 
-  async get(id: string): Promise<SessionView | null> {
+  async get(id: string): Promise<Session | null> {
     assertValidSessionId(id);
     return this.loadSession(id);
   }
@@ -315,7 +315,7 @@ export class SessionManager {
 
   // ─── internals ───────────────────────────────────────────
 
-  private async draftFromRow(row: Session): Promise<SessionView | null> {
+  private async draftFromRow(row: SessionRow): Promise<Session | null> {
     const workdir = safeJoinUnderRoot(this.sessionsDir, row.id);
 
     try {
@@ -345,7 +345,7 @@ export class SessionManager {
     };
   }
 
-  private async refreshSession(draft: SessionView): Promise<SessionView> {
+  private async refreshSession(draft: Session): Promise<Session> {
     const runtime = this.runtimeRegistry.get(draft.runtime);
     if (typeof runtime.readMetadata !== "function" || draft.runtimeSessionId === null) {
       return draft;
@@ -376,8 +376,8 @@ export class SessionManager {
     };
   }
 
-  private async loadSession(id: string): Promise<SessionView | null> {
-    let row: Session | undefined;
+  private async loadSession(id: string): Promise<Session | null> {
+    let row: SessionRow | undefined;
     try {
       row = await this.repo.read(id);
     } catch (err) {

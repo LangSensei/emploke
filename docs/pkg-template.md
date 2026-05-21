@@ -25,92 +25,156 @@ your schema.
 ```
 packages/<pkg>/
   src/
-    schema.ts        Drizzle table defs (private; only types are exported)
-    errors.ts        Domain error classes (exported)
-    types.ts         Public DTOs + option shapes (exported)
-    validate.ts      id regex + assertValidXxxId (+ other input validators)
-    repository.ts    Drizzle CRUD (PRIVATE — never exported)
-    queries.ts       <Entity>Queries — all reads, returns DTOs (exported)
-    service.ts       <Entity>Service — all writes, returns DTOs (exported)
-    compose.ts       compose<Entity>Module({dbFile|db}) (exported)
-    testing.ts       openTest<Entity>Db() helper (exported via /testing)
-    index.ts         public barrel
-  drizzle/           generated SQL migrations (committed)
-  drizzle.config.ts  drizzle-kit codegen config
-  package.json       depends on better-sqlite3 + drizzle-orm + @emploke/logger
-  tsconfig.json      extends ../../tsconfig.base.json
+    schema.ts                  Drizzle table defs (private; only types are exported)
+    errors.ts                  Domain error classes (exported)
+    types.ts                   Public DTOs + option shapes (exported)
+    validate.ts                id regex + assertValidXxxId (+ other input validators)
+    <entity>-repository.ts     Drizzle CRUD (PRIVATE — never exported from index)
+    <entity>-service.ts        <Entity>Service — reads + writes, returns DTOs (exported)
+    <entity>-entity.ts         <Entity>Entity class (OPTIONAL — only if BC needs it)
+    compose.ts                 compose<Entity>Module({dbFile|db}) (exported)
+    testing.ts                 openTest<Entity>Db() helper (exported via /testing)
+    index.ts                   public barrel
+  drizzle/                     generated SQL migrations (committed)
+  drizzle.config.ts            drizzle-kit codegen config
+  package.json                 depends on better-sqlite3 + drizzle-orm + pino
+  tsconfig.json                extends ../../tsconfig.base.json
   vitest.config.ts
 ```
 
+## File naming convention
+
+> See `files/architecture-design.md` Section 10 for the full rationale.
+
+**Files exposing a class get an `<entity>-<role>.ts` prefix**:
+
+| file pattern | exports |
+|---|---|
+| `<entity>-service.ts` | `<Entity>Service` |
+| `<entity>-repository.ts` | `<Entity>Repository` |
+| `<entity>-entity.ts` | `<Entity>Entity` |
+
+**Utility / glue files use bare role names** (no entity prefix):
+
+`errors.ts`, `types.ts`, `validate.ts`, `schema.ts`, `paths.ts`, `compose.ts`,
+`testing.ts`, `index.ts`, `projection.ts`, `plan-types.ts`,
+`framing.ts`, `format.ts`.
+
+Rationale: TypeScript imports always carry the full path, so file names
+are the grep / IDE token for class location. NestJS, Cal.com, VS Code,
+TypeORM, etc. all prefix the class-bearing files. Single-entity packages
+in emploke (workspace, session, task) still prefix to keep the
+convention uniform across the monorepo.
+
+## Where DTOs live
+
+> See `files/architecture-design.md` Section 11.
+
+**ALL public types — DTOs, option shapes, enums, union types — live in
+`types.ts`.** Every package has one, regardless of size.
+
+Other files must NOT `export interface` or `export type` consumer-facing
+types. The exceptions are:
+- `schema.ts` can export `<Entity>Row` (Drizzle `$inferSelect` alias —
+  internal, used by repository only)
+- `errors.ts` exports Error subclasses (classes are values, not pure types)
+- `<entity>-entity.ts` exports the class (a value)
+- Multi-entity BCs' `facade/plan-types.ts` may export facade-internal types
+
+This rule prevents the "where do I find the `Workspace` interface" drift
+that plagued emploke before (DTOs scattered across `service.ts`,
+`schema.ts`, separate `dto.ts`).
+
 ## Naming conventions
+
+> See `files/architecture-design.md` Section 9 for the full rationale.
+
+### Public types (exported from `index.ts`)
 
 | concept            | name                                |
 | ------------------ | ----------------------------------- |
 | package name       | `@emploke/<pkg>`                    |
-| main entity class  | `<Entity>` (PascalCase singular)    |
-| Drizzle table      | `<entities>` (snake_case plural)    |
-| write surface      | `<Entity>Service`                   |
-| read surface       | `<Entity>Queries`                   |
-| repository class   | `<Entity>Repository` (private)      |
+| **DTO** (wire shape)| `<Entity>` — bare noun             |
+| list entry         | `<Entity>Entry` (only if it differs from DTO) |
+| write+read surface | `<Entity>Service`                   |
 | compose function   | `compose<Entity>Module`             |
+| module options     | `<Entity>ModuleOptions`             |
+| module result type | `<Entity>Module`                    |
 | test-db helper     | `openTest<Entity>Db`                |
-| module options    | `<Entity>ModuleOptions`              |
-| module result type | `<Entity>Module`                     |
 
-NEVER use the suffix `Manager` for new services. Manager-shaped legacy
-classes (`SessionManager`, `TaskManager`) will be migrated to the
-`Service` / `Queries` split incrementally.
+### Internal types (NOT exported)
 
-## Read / write split
+| concept            | name                                |
+| ------------------ | ----------------------------------- |
+| Drizzle row        | `<Entity>Row`                       |
+| repository class   | `<Entity>Repository`                |
+| entity class (only if BC needs one) | `<Entity>Entity`     |
 
-Every BC exposes exactly TWO public classes:
+NEVER use these suffixes:
+- `Manager` — replaced by `Service`
+- `Queries` — merged into `Service`
+- `View` / `Pojo` / `Dto` — replaced by bare-noun DTO
 
-- **`<Entity>Service`** — writes (create / update / delete / state
-  transitions). Returns wire-shape DTOs so callers don't need a follow-up
-  read. NEVER add read-only methods here.
-- **`<Entity>Queries`** — reads (list / get / lookup / resolve / preview).
-  Returns DTOs. NEVER add mutations here.
+## DTO vs entity class
 
-Both share the same `<Entity>Repository` instance built by
-`compose<Entity>Module`. Writes from the service are immediately visible
-to subsequent queries calls — there is no in-memory cache to invalidate.
+Every BC exports a **bare-noun DTO** (`Workspace`, `Session`, `Agent`).
+Inside the package, that DTO is what `<Entity>Service` returns to its
+callers. Drizzle rows (`<Entity>Row`) are private to the repository
+layer.
 
-## Downstream dependencies
+An **entity class** (`<Entity>Entity`) is added ONLY when the BC has
+non-trivial domain logic to encapsulate:
 
-Downstream packages should declare their dependency on `<Entity>Queries`
-(or a narrower capability interface), NOT on the concrete
-`<Entity>Service`. The write surface is reserved for the composition
-root (`@emploke/core`) and admin-style routes in `@emploke/server`.
+| Has entity class? | When |
+|---|---|
+| Yes | Non-trivial state transitions (`pending → running → succeeded`), invariant validation on every mutation, immutable functional updates |
+| No  | Pure CRUD: change a name, set a timestamp |
 
-Example (session pkg consuming catalog):
+Existing examples:
 
-```typescript
-// packages/session/src/types.ts
-import type { CatalogQueries } from "@emploke/catalog";
+- `catalog`: `AgentEntity`, `SkillEntity`, `McpEntity` — encapsulate
+  frontmatter validation, `acknowledgePrereqs()`, immutable updates.
+- `task`: `TaskEntity` — owns the status-state-machine.
+- `workspace`, `session`: no entity class.
 
-export interface SessionManagerConfig {
-  readonly catalog: CatalogQueries;  // narrows to reads only
-  // ...
-}
-```
+The template ships WITHOUT an entity class (most BCs don't need one).
+Add one when state transitions show up; place it in `src/<entity>-entity.ts`
+and keep it un-exported from `index.ts`.
 
-If a downstream pkg uses only one or two catalog methods, define a
-narrow capability interface in the downstream pkg and depend on that
-instead:
+## Single service per BC
+
+Every BC exposes exactly ONE public class:
+
+- **`<Entity>Service`** — both reads (list / get / lookup) and writes
+  (create / update / delete / state transitions). Returns DTOs.
+
+The previous read/write class split (`<Entity>Queries` + `<Entity>Service`)
+was retired: industry research (codex, NestJS, tRPC, Cal.com, Plane,
+Coder) found everyone uses a single class per BC. The split added
+indirection without payoff at emploke's scale.
+
+If a downstream package only needs a narrow subset of methods, declare
+a small **capability interface** in the downstream package and depend
+on that, rather than importing the whole service type:
 
 ```typescript
 // packages/runtime/src/types.ts — minimal surface for "resolve an agent"
-export interface AgentResolver {
+export interface AgentContentSource {
   resolveAgent(fqn: string): Promise<AgentResolveResult>;
+  // ... 3 more methods, total 4
 }
 ```
+
+The downstream pkg accepts `AgentContentSource`; the composition root
+passes a `CatalogService` instance (which structurally implements the
+interface). This is a real example from `@emploke/runtime`.
 
 ## Composition root
 
 The composition root (`@emploke/core`'s `WorkspaceRuntimeCache.load`)
 calls each `compose<Entity>Module({ dbFile })` once per workspace and
-threads the `queries` half into downstream pkgs. The `service` half
-flows to admin routes via the per-workspace runtime container.
+threads the `service` into downstream pkgs (either as-is or through a
+capability interface).
 
 ## Errors
 
@@ -184,48 +248,54 @@ export function safeJoinUnderRoot(root: string, ...parts: string[]): string {
 }
 ```
 
-Service / queries import from `paths.ts` instead of doing `path.join`
-inline. Existing examples: `packages/session/src/paths.ts`,
+The service imports from `paths.ts` instead of doing `path.join` inline.
+Existing examples: `packages/session/src/paths.ts`,
 `packages/task/src/paths.ts`.
 
 ### Multi-entity BCs → subfolder per entity + `facade/`
 
 If the BC owns more than one rich entity that participates in
 cross-entity orchestration (catalog owns Agent + Skill + Mcp), mirror
-the standard layout into per-entity subfolders:
+the standard layout into per-entity subfolders. **The file-naming
+convention is the same — `<entity>-<role>.ts` even inside a subfolder**:
 
 ```
 src/
   schema.ts                 cross-entity table definitions
-  errors.ts                 (optional) base error + cross-entity errors
-  testing.ts                openTestXxxDb() — single test helper covering all tables
+  dto.ts                    cross-entity DTOs (bare nouns: Agent / Skill / Mcp)
   index.ts                  public barrel
 
   agent/
-    agent-entity.ts         rich entity class (if any)
-    agent-repository.ts     interface
-    drizzle-agent-repository.ts  impl
+    agent-entity.ts         AgentEntity class (internal)
+    agent-repository.ts     AgentRepository (internal)
     agent-service.ts        per-entity write logic (internal)
-    errors.ts               per-entity errors
-    validate.ts             per-entity input validators
+    errors.ts               per-entity errors (bare role file)
+    validate.ts             per-entity input validators (bare role file)
     index.ts                subfolder barrel
 
   skill/  … mirror
-  mcp/    … mirror
+  mcp/
+    mcp-entity.ts
+    mcp-repository.ts
+    mcp-service.ts
+    mcp-format.ts           entity-specific format helpers
+    errors.ts
+    validate.ts
+    index.ts
 
   facade/
-    catalog-service.ts      write surface across all entities
-    catalog-queries.ts      read surface across all entities
+    catalog-service.ts      unified read+write surface across all entities
     plan-types.ts           shared cross-entity DTOs
-    projection.ts           pure projection helpers shared by service + queries
+    projection.ts           pure projection helpers (Row → DTO)
+    errors.ts
     index.ts                facade barrel
 
-  compose.ts                composeCatalogModule({...}) — builds both halves
+  compose.ts                composeCatalogModule({...})
 ```
 
-The per-entity `XxxService` classes are **internal** to the BC; they are
-not exported from the package barrel. External callers go through the
-facade only. Existing example: `packages/catalog/`.
+The per-entity `<entity>-service.ts` classes are **internal** to the
+BC; they are not exported from the package barrel. External callers go
+through the facade only. Existing example: `packages/catalog/`.
 
 ### Test seams (clock, randomness)
 

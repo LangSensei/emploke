@@ -1,12 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { CatalogQueries } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { SessionManager } from "./manager.js";
 import * as schema from "./schema.js";
+import { SessionService } from "./session-service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -14,7 +14,7 @@ export type SessionModuleOptions = (
   | { readonly db: Db; readonly dbFile?: never }
   | { readonly dbFile: string; readonly db?: never }
 ) & {
-  readonly catalog: CatalogQueries;
+  readonly catalog: CatalogService;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly sessionsDir: string;
   readonly workspaceDir: string;
@@ -25,7 +25,7 @@ export type SessionModuleOptions = (
 };
 
 export interface SessionModule {
-  readonly manager: SessionManager;
+  readonly service: SessionService;
   close(): Promise<void>;
 }
 
@@ -44,7 +44,7 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
     runPendingMigrations(sqlite);
   }
 
-  const manager = new SessionManager({
+  const service = new SessionService({
     catalog: opts.catalog,
     runtimeRegistry: opts.runtimeRegistry,
     sessionsDir: opts.sessionsDir,
@@ -57,7 +57,7 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   });
 
   return {
-    manager,
+    service,
     async close() {
       sqlite?.close();
     },

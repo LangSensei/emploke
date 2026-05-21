@@ -1,29 +1,29 @@
 /**
  * Pure projection + cascade-status helpers shared by `CatalogService`
  * (writes; needs to project the post-write result into DTOs) and
- * `CatalogQueries` (reads). No I/O — every function operates over
+ * `CatalogService` (reads). No I/O — every function operates over
  * already-loaded entities + a {@link CascadeContext} snapshot.
  */
 
-import type { Agent } from "../agent/agent-entity.js";
+import type { AgentEntity } from "../agent/agent-entity.js";
+import type { McpEntity } from "../mcp/mcp-entity.js";
+import { isOriginMutable } from "../origin-mutability.js";
+import type { SkillEntity } from "../skill/skill-entity.js";
 import type {
+  Agent,
   AgentEntry,
-  Agent as AgentPojo,
   BlockedDep,
   BlockedReason,
   EntryStatus,
-  McpMetadata,
+  Mcp,
   MissingDep,
+  Skill,
   SkillEntry,
-  Skill as SkillPojo,
-} from "../dto/types.js";
-import type { Mcp } from "../mcp/mcp-entity.js";
-import { isOriginMutable } from "../origin-mutability.js";
-import type { Skill } from "../skill/skill-entity.js";
+} from "../types.js";
 
 export interface CascadeContext {
-  readonly skillByFqn: ReadonlyMap<string, Skill>;
-  readonly mcpByFqn: ReadonlyMap<string, Mcp>;
+  readonly skillByFqn: ReadonlyMap<string, SkillEntity>;
+  readonly mcpByFqn: ReadonlyMap<string, McpEntity>;
   readonly skillCache: Map<string, ComputedStatus>;
   readonly inFlight: Set<string>;
   readonly referencedSkillFqns: ReadonlySet<string>;
@@ -35,7 +35,11 @@ export interface ComputedStatus {
   readonly reason?: BlockedReason;
 }
 
-export function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[]): CascadeContext {
+export function newCascadeContext(
+  skills: SkillEntity[],
+  agents: AgentEntity[],
+  mcps: McpEntity[],
+): CascadeContext {
   const referencedSkillFqns = new Set<string>();
   const referencedMcpFqns = new Set<string>();
   for (const a of agents) {
@@ -56,27 +60,27 @@ export function newCascadeContext(skills: Skill[], agents: Agent[], mcps: Mcp[])
   };
 }
 
-export function projectSkillPojo(s: Skill, ctx: CascadeContext): SkillPojo {
+export function projectSkillPojo(s: SkillEntity, ctx: CascadeContext): Skill {
   return {
     ...(s.toJSON() as object),
     mutable: isOriginMutable(s.origin),
     orphaned: !ctx.referencedSkillFqns.has(s.fqn),
-  } as unknown as SkillPojo;
+  } as unknown as Skill;
 }
 
-export function projectAgentPojo(a: Agent): AgentPojo {
+export function projectAgentPojo(a: AgentEntity): Agent {
   return {
     ...(a.toJSON() as object),
     mutable: isOriginMutable(a.origin),
-  } as unknown as AgentPojo;
+  } as unknown as Agent;
 }
 
-export function projectMcpMetadata(m: Mcp, ctx: CascadeContext): McpMetadata {
+export function projectMcpMetadata(m: McpEntity, ctx: CascadeContext): Mcp {
   return {
     ...(m.toJSON() as object),
     mutable: isOriginMutable(m.origin),
     orphaned: !ctx.referencedMcpFqns.has(m.fqn),
-  } as unknown as McpMetadata;
+  } as unknown as Mcp;
 }
 
 interface SelfConditions {
@@ -134,7 +138,7 @@ function computeWithDeps(
   return { status: "blocked", reason: reason as BlockedReason };
 }
 
-export function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedStatus {
+export function computeSkillStatus(skill: SkillEntity, ctx: CascadeContext): ComputedStatus {
   const cached = ctx.skillCache.get(skill.fqn);
   if (cached !== undefined) return cached;
   if (ctx.inFlight.has(skill.fqn)) {
@@ -156,7 +160,7 @@ export function computeSkillStatus(skill: Skill, ctx: CascadeContext): ComputedS
   return result;
 }
 
-export function computeAgentStatus(agent: Agent, ctx: CascadeContext): ComputedStatus {
+export function computeAgentStatus(agent: AgentEntity, ctx: CascadeContext): ComputedStatus {
   return computeWithDeps(
     {
       prereqs: agent.prereqs,
@@ -169,7 +173,7 @@ export function computeAgentStatus(agent: Agent, ctx: CascadeContext): ComputedS
   );
 }
 
-export function buildSkillEntry(s: Skill, ctx: CascadeContext): SkillEntry {
+export function buildSkillEntry(s: SkillEntity, ctx: CascadeContext): SkillEntry {
   const skill = projectSkillPojo(s, ctx);
   const computed = computeSkillStatus(s, ctx);
   if (computed.status === "ready") return { skill, status: "ready" };
@@ -181,7 +185,7 @@ export function buildSkillEntry(s: Skill, ctx: CascadeContext): SkillEntry {
   return out;
 }
 
-export function buildAgentEntry(a: Agent, ctx: CascadeContext): AgentEntry {
+export function buildAgentEntry(a: AgentEntity, ctx: CascadeContext): AgentEntry {
   const agent = projectAgentPojo(a);
   const computed = computeAgentStatus(a, ctx);
   if (computed.status === "ready") return { agent, status: "ready" };

@@ -33,12 +33,10 @@ async function makeApp() {
   return {
     app: workspacesRoutes({
       service: sys.service,
-      queries: sys.queries,
       cache: sys.cache,
       defaultWorkspaceParent: sys.defaultWorkspaceParent,
     }),
     service: sys.service,
-    queries: sys.queries,
     cache: sys.cache,
     defaultWorkspaceParent: sys.defaultWorkspaceParent,
   };
@@ -59,21 +57,21 @@ async function register(
 
 describe("workspacesRoutes — empty registry", () => {
   it("GET / returns []", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
 
   it("GET /current returns null", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/current");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: null });
   });
 
   it("PUT /current rejects unknown id", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/current", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -83,7 +81,7 @@ describe("workspacesRoutes — empty registry", () => {
   });
 
   it("DELETE /:id is idempotent for unknown id (204)", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/22222222-2222-4222-8222-222222222222", { method: "DELETE" });
     expect(res.status).toBe(204);
   });
@@ -91,7 +89,7 @@ describe("workspacesRoutes — empty registry", () => {
 
 describe("workspacesRoutes — POST /", () => {
   it("creates a workspace with a generated UUID and registers it", async () => {
-    const { app, queries } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const wsDir = path.join(scratch, "ws1");
     const res = await app.request("/", {
       method: "POST",
@@ -103,11 +101,11 @@ describe("workspacesRoutes — POST /", () => {
     expect(body.name).toBe("Workspace One");
     expect(body.workspaceDir).toBe(path.resolve(wsDir));
     expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await queries.getById(body.id)).not.toBeNull();
+    expect(await service.getById(body.id)).not.toBeNull();
   });
 
   it("rejects missing name", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -132,7 +130,7 @@ describe("workspacesRoutes — POST /", () => {
   });
 
   it("rejects empty-string workspaceDir (use omission to pick the default)", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -142,7 +140,7 @@ describe("workspacesRoutes — POST /", () => {
   });
 
   it("returns 409 on duplicate workspaceDir", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const wsDir = path.join(scratch, "ws-dup");
     const post = async () =>
       app.request("/", {
@@ -155,7 +153,7 @@ describe("workspacesRoutes — POST /", () => {
   });
 
   it("returns 400 on empty display name", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -165,7 +163,7 @@ describe("workspacesRoutes — POST /", () => {
   });
 
   it("accepts unicode display names", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -201,7 +199,7 @@ describe("workspacesRoutes — POST /", () => {
 
 describe("workspacesRoutes — list / get / current / delete", () => {
   it("GET / lists registered workspaces", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     await register(service, { name: "A", workspaceDir: path.join(scratch, "a") });
     await register(service, { name: "B", workspaceDir: path.join(scratch, "b") });
     const res = await app.request("/");
@@ -211,7 +209,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("GET /:id returns the workspace", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "Hello", workspaceDir: path.join(scratch, "h") });
     const res = await app.request(`/${id}`);
     expect(res.status).toBe(200);
@@ -221,13 +219,13 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("GET /:id returns 404 for unknown id", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/00000000-0000-0000-0000-000000000000");
     expect(res.status).toBe(404);
   });
 
   it("PUT /current sets the current workspace", async () => {
-    const { app, service, queries } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "Cur", workspaceDir: path.join(scratch, "cur") });
     const res = await app.request("/current", {
       method: "PUT",
@@ -235,23 +233,23 @@ describe("workspacesRoutes — list / get / current / delete", () => {
       body: JSON.stringify({ id }),
     });
     expect(res.status).toBe(200);
-    expect(await queries.getLastOpenedId()).toBe(id);
+    expect(await service.getLastOpenedId()).toBe(id);
   });
 
   it("DELETE /:id default removes only metadata; user files preserved", async () => {
-    const { app, service, queries } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const workspaceDir = path.join(scratch, "del");
     const id = await register(service, { name: "Del", workspaceDir });
     const fs = await import("node:fs/promises");
     await fs.writeFile(path.join(workspaceDir, "user-file.txt"), "user", "utf8");
     const res = await app.request(`/${id}`, { method: "DELETE" });
     expect(res.status).toBe(204);
-    expect(await queries.getById(id)).toBeNull();
+    expect(await service.getById(id)).toBeNull();
     expect(await fs.readFile(path.join(workspaceDir, "user-file.txt"), "utf8")).toBe("user");
   });
 
   it("DELETE /:id?purge=1 also removes emploke-owned subdirs", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const workspaceDir = path.join(scratch, "purge");
     const id = await register(service, { name: "Purge", workspaceDir });
     const fs = await import("node:fs/promises");
@@ -267,7 +265,7 @@ describe("workspacesRoutes — list / get / current / delete", () => {
 
 describe("workspacesRoutes — PATCH /:id", () => {
   it("renames the display name", async () => {
-    const { app, service, queries } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "Old", workspaceDir: path.join(scratch, "x") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
@@ -277,12 +275,12 @@ describe("workspacesRoutes — PATCH /:id", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { name: string };
     expect(body.name).toBe("New");
-    const stored = await queries.getById(id);
+    const stored = await service.getById(id);
     expect(stored?.name).toBe("New");
   });
 
   it("returns 400 when no patchable fields are present", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "X", workspaceDir: path.join(scratch, "y") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
@@ -293,7 +291,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
   });
 
   it("returns 400 on empty display name", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "X", workspaceDir: path.join(scratch, "z") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
@@ -309,7 +307,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
   });
 
   it("returns 404 for unknown id (and does not re-create the workspace)", async () => {
-    const { app, queries } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = "00000000-0000-0000-0000-000000000000";
     const res = await app.request(`/${id}`, {
       method: "PATCH",
@@ -319,7 +317,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
     expect(res.status).toBe(404);
     // Strict-update semantics: the rename atomically fails — no row
     // ever appeared.
-    expect(await queries.getById(id)).toBeNull();
+    expect(await service.getById(id)).toBeNull();
   });
 });
 
@@ -329,7 +327,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
 // `CatalogManager` snapshot is stale) without restarting the server.
 describe("workspacesRoutes — POST /:id/reload", () => {
   it("returns 204 on cold cache (no entry yet)", async () => {
-    const { app, service } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const id = await register(service, { name: "Cold", workspaceDir: path.join(scratch, "cold") });
     const res = await app.request(`/${id}/reload`, { method: "POST" });
     expect(res.status).toBe(204);
@@ -349,7 +347,7 @@ describe("workspacesRoutes — POST /:id/reload", () => {
   });
 
   it("returns 404 for an unknown workspace id", async () => {
-    const { app } = await makeApp();
+    const { app, service: _service } = await makeApp();
     const res = await app.request("/00000000-0000-0000-0000-000000000000/reload", {
       method: "POST",
     });
@@ -391,7 +389,6 @@ describe("workspacesRoutes — observability (issue #58)", () => {
       "/",
       workspacesRoutes({
         service: sys.service,
-        queries: sys.queries,
         cache: sys.cache,
         defaultWorkspaceParent: sys.defaultWorkspaceParent,
       }),
@@ -401,7 +398,6 @@ describe("workspacesRoutes — observability (issue #58)", () => {
       root,
       cap,
       service: sys.service,
-      queries: sys.queries,
       cache: sys.cache,
     };
   }

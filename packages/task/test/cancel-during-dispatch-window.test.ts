@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InvalidTransition, type TaskManager } from "../src/index.js";
+import { InvalidTransition, type TaskService } from "../src/index.js";
 import { type CancelFixture, setupCancelFixture, teardownCancelFixture } from "./cancel-fixture.js";
 
 let fx: CancelFixture;
@@ -24,7 +24,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — during-dispatch window (R-1)", () => {
+describe("TaskService.cancel — during-dispatch window (R-1)", () => {
   it("throws InvalidTransition with eventType='cancel-during-dispatch'", async () => {
     const id = "20260518-aaaaaaaa";
 
@@ -49,9 +49,9 @@ describe("TaskManager.cancel — during-dispatch window (R-1)", () => {
     }
   });
 
-  it("type alias keeps TaskManager imported for the cast", () => {
+  it("type alias keeps TaskService imported for the cast", () => {
     // Silences unused-import lint; the import is the contract carrier.
-    const t: typeof TaskManager = fx.m.constructor as typeof TaskManager;
+    const t: typeof TaskService = fx.m.constructor as typeof TaskService;
     expect(typeof t).toBe("function");
   });
 });

@@ -1,3 +1,4 @@
+import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import {
@@ -7,7 +8,7 @@ import {
   readSkillInstallBody,
 } from "./helpers.js";
 import { planToManifest } from "./plan-to-manifest.js";
-import { type CatalogFacade, type CatalogResolver, resolveCatalog } from "./resolver.js";
+import { type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /skills/* relative to the parent mount. Mounted by
@@ -20,18 +21,18 @@ import { type CatalogFacade, type CatalogResolver, resolveCatalog } from "./reso
  * Dashboard's two-phase flow uses `/resolve` to show the user what
  * will happen, then `/` to commit.
  */
-export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
+export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
-  app.get("/", async (c) => c.json(await getCatalog(c).queries.listSkillEntries()));
+  app.get("/", async (c) => c.json(await getCatalog(c).listSkillEntries()));
 
   app.post("/resolve", async (c) => {
     const catalog = getCatalog(c);
     const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const plan = await catalog.queries.resolveSkill(parsed.origin);
+      const plan = await catalog.resolveSkill(parsed.origin);
       return c.json(planToManifest(plan));
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -43,7 +44,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const content = await catalog.queries.getSkillContent(name);
+      const content = await catalog.getSkillContent(name);
       return c.json({ content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -55,9 +56,9 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const entry = await catalog.queries.getSkillEntry(name);
+      const entry = await catalog.getSkillEntry(name);
       if (!entry) return c.json({ error: "not found", code: "NotFound" }, 404);
-      const content = await catalog.queries.getSkillContent(name);
+      const content = await catalog.getSkillContent(name);
       return c.json({ ...entry, content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -70,7 +71,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const parsed = await readSkillInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const result = await catalog.service.installSkill(parsed.origin);
+      const result = await catalog.installSkill(parsed.origin);
       const status = result.failed.length > 0 ? 207 : 201;
       logEvent(c, "catalog: skill install completed", {
         kind: "skill",
@@ -93,12 +94,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     try {
       // resolveSyncSkill reads the local origin off the row and stamps
       // it onto plan.rootOrigin — no second catalog round-trip needed.
-      const plan = await catalog.queries.resolveSyncSkill(name);
+      const plan = await catalog.resolveSyncSkill(name);
       // Cache the plan and ship the token to the dashboard. /sync
       // trades the token back for this exact plan, so apply runs the
       // closure the user previewed (not a fresh resolve that could
       // silently differ).
-      const planToken = catalog.queries.cachePlan(plan);
+      const planToken = catalog.cachePlan(plan);
       return c.json(planToManifest(plan, planToken));
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -110,7 +111,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const catalog = getCatalog(c);
     const parsed = await readPlanTokenBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
-    const plan = catalog.queries.takePlan(parsed.planToken);
+    const plan = catalog.takePlan(parsed.planToken);
     if (plan === null) {
       // Token unknown / already taken / expired → tell the caller to
       // re-preview. 410 Gone matches the "the resource you referenced
@@ -125,7 +126,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
       );
     }
     try {
-      const result = await catalog.service.applySync(plan);
+      const result = await catalog.applySync(plan);
       const status = result.failed.length > 0 ? 207 : 200;
       logEvent(c, "catalog: skill sync applied", {
         kind: "skill",
@@ -145,7 +146,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const skill = await catalog.service.acknowledgeSkillPrereqs(name);
+      const skill = await catalog.acknowledgeSkillPrereqs(name);
       logEvent(c, "catalog: skill prereqs acknowledged", { kind: "skill", fqn: name });
       return c.json(skill);
     } catch (e: unknown) {
@@ -160,7 +161,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const parsed = await readContentBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const skill = await catalog.service.updateSkillContent(name, parsed.content);
+      const skill = await catalog.updateSkillContent(name, parsed.content);
       logEvent(c, "catalog: skill content updated", { kind: "skill", fqn: name });
       return c.json(skill);
     } catch (e: unknown) {
@@ -175,9 +176,9 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const parsed = await readMetadataBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const skill = await catalog.service.updateSkillMetadata(
+      const skill = await catalog.updateSkillMetadata(
         name,
-        parsed.body as Parameters<typeof catalog.service.updateSkillMetadata>[1],
+        parsed.body as Parameters<typeof catalog.updateSkillMetadata>[1],
       );
       logEvent(c, "catalog: skill metadata updated", { kind: "skill", fqn: name });
       return c.json(skill);
@@ -191,7 +192,7 @@ export function skillsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      await catalog.service.deleteSkill(name);
+      await catalog.deleteSkill(name);
       logEvent(c, "catalog: skill removed", { kind: "skill", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {

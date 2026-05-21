@@ -32,15 +32,15 @@ export {
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-export { SessionManager } from "./manager.js";
-export { type ListSessionStateOpts, SessionRepository } from "./repository.js";
-export { type NewSession, type Session, sessions } from "./schema.js";
+export { type NewSessionRow, type SessionRow, sessions } from "./schema.js";
+export { type ListSessionStateOpts, SessionRepository } from "./session-repository.js";
+export { SessionService } from "./session-service.js";
 export type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   LaunchCommand,
   ListSessionOpts,
+  Session,
   SessionManagerConfig,
-  SessionView,
 } from "./types.js";

@@ -14,7 +14,7 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     from the dep-tables join); `depsRefs` carries the frontmatter
  *     origins for the install pipeline's lookup.
  */
-export class Skill {
+export class SkillEntity {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -28,15 +28,15 @@ export class Skill {
     private readonly _updatedAt: string,
   ) {}
 
-  static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
+  static create(rawSkillMd: string, origin: string, sourceLabel: string): SkillEntity {
     if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("Skill.create requires a non-empty origin string");
+      throw new TypeError("SkillEntity.create requires a non-empty origin string");
     }
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     const now = new Date().toISOString();
-    return new Skill(
+    return new SkillEntity(
       fqn,
       origin,
       meta.description,
@@ -60,9 +60,9 @@ export class Skill {
     prereqsAck: boolean;
     installedAt: string;
     updatedAt: string;
-  }): Skill {
+  }): SkillEntity {
     validateFqn(args.fqn);
-    return new Skill(
+    return new SkillEntity(
       args.fqn,
       args.origin,
       args.description,
@@ -144,16 +144,16 @@ export class Skill {
     };
   }
 
-  withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
+  withAnchor(rawSkillMd: string, sourceLabel: string): SkillEntity {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const newFqn = makeFqn(meta.scope, meta.shortName);
     if (newFqn !== this._fqn) {
       throw new TypeError(
-        `Skill.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
+        `SkillEntity.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
           "Delete and reinstall to rename.",
       );
     }
-    return new Skill(
+    return new SkillEntity(
       this._fqn,
       this._origin,
       meta.description,
@@ -167,8 +167,8 @@ export class Skill {
     );
   }
 
-  withState(state: { prereqsAck?: boolean }): Skill {
-    return new Skill(
+  withState(state: { prereqsAck?: boolean }): SkillEntity {
+    return new SkillEntity(
       this._fqn,
       this._origin,
       this._description,
@@ -182,8 +182,8 @@ export class Skill {
     );
   }
 
-  withDependencies(deps: SkillDependencies): Skill {
-    return new Skill(
+  withDependencies(deps: SkillDependencies): SkillEntity {
+    return new SkillEntity(
       this._fqn,
       this._origin,
       this._description,

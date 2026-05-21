@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
 import {
@@ -34,7 +34,7 @@ const exists = async (p: string): Promise<boolean> => {
   }
 };
 
-async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogQueries }> {
+async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogService }> {
   const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
   const { catalog } = await makeTestCatalog({
     agents: { demo: { "AGENTS.md": agentBody } },

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,11 +19,11 @@ import {
   TASK_FILENAME,
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
-  Task,
-  TaskManager,
   TaskNotFoundError,
-  TaskRepository,
+  TaskService,
 } from "../src/index.js";
+import { TaskEntity } from "../src/task-entity.js";
+import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
 
 // ───── filesystem fixture lifecycle ────────────────────────
@@ -70,7 +70,7 @@ interface StubCatalogOpts {
   blockedAgents?: Record<string, import("@emploke/catalog").BlockedReason>;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): CatalogQueries {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogService {
   const agents = opts.agents ?? {};
   const blocked = opts.blockedAgents ?? {};
   return {
@@ -93,17 +93,17 @@ function stubCatalog(opts: StubCatalogOpts = {}): CatalogQueries {
           agent: { fqn: name } as unknown,
           status: "blocked" as const,
           blockedReason: reason,
-        } as unknown as ReturnType<CatalogQueries["getAgentEntry"]> extends Promise<infer T>
+        } as unknown as ReturnType<CatalogService["getAgentEntry"]> extends Promise<infer T>
           ? T
           : never;
       }
       return { agent: { fqn: name } as unknown, status: "ready" as const } as unknown as ReturnType<
-        CatalogQueries["getAgentEntry"]
+        CatalogService["getAgentEntry"]
       > extends Promise<infer T>
         ? T
         : never;
     },
-  } as unknown as CatalogQueries;
+  } as unknown as CatalogService;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>
@@ -355,7 +355,7 @@ const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
 
 const makeManager = async (
   overrides: {
-    catalog?: CatalogQueries;
+    catalog?: CatalogService;
     runtime?: Runtime;
     registry?: RuntimeRegistry;
     now?: () => Date;
@@ -366,7 +366,7 @@ const makeManager = async (
     workspaceId?: string;
     subprocessEnv?: NodeJS.ProcessEnv;
   } = {},
-): Promise<{ m: TaskManager; repo: TaskRepository; orm: ReturnType<typeof openTestTaskDb> }> => {
+): Promise<{ m: TaskService; repo: TaskRepository; orm: ReturnType<typeof openTestTaskDb> }> => {
   const rt = overrides.runtime ?? new StubRuntime();
   const registry = overrides.registry ?? makeRegistry(rt);
   let orm: ReturnType<typeof openTestTaskDb>;
@@ -382,7 +382,7 @@ const makeManager = async (
     orm = built.orm;
     repo = built.repo;
   }
-  const m = new TaskManager({
+  const m = new TaskService({
     catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
     runtimeRegistry: registry,
     tasksDir,
@@ -400,7 +400,7 @@ const makeManager = async (
 // ═════ tests ════════════════════════════════════════════════
 
 describe("dispatch — happy path", () => {
-  it("creates dir, persists running task to repository, populates runtime metadata, returns Task", async () => {
+  it("creates dir, persists running task to repository, populates runtime metadata, returns TaskEntity", async () => {
     const rt = new StubRuntime();
     const { m, repo } = await makeManager({ runtime: rt });
 
@@ -1051,7 +1051,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
     await expect(m.delete(id, { purge: true })).rejects.toBeInstanceOf(CorruptedTaskError);
   });
-  // Mirrors SessionManager.delete({purge:true}): runtime per-task state
+  // Mirrors SessionService.delete({purge:true}): runtime per-task state
   // (e.g. Copilot's <copilotStateDir>/<runtimeSessionId>/) must be cleaned
   // up too, otherwise purge leaks events.jsonl + transcripts forever.
   it("purge: true asks the runtime to wipe its per-task state, with task metadata", async () => {
@@ -1216,7 +1216,7 @@ describe("recoverOrphaned", () => {
     const id = "20260508-deadbeef";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const orphan = Task.fromStored({
+    const orphan = TaskEntity.fromStored({
       id,
       agent: "demo",
       brief: "do something",
@@ -1241,7 +1241,7 @@ describe("recoverOrphaned", () => {
     const id = "20260508-cafef00d";
     const workdir = path.join(tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const done = Task.fromStored({
+    const done = TaskEntity.fromStored({
       id,
       agent: "demo",
       brief: "did it",
@@ -1300,8 +1300,8 @@ async function waitFor(
 }
 
 /** Poll the manager until the task has reached a terminal status. */
-async function awaitTerminal(m: TaskManager, id: string): Promise<Task> {
-  let last: Task | null = null;
+async function awaitTerminal(m: TaskService, id: string): Promise<TaskEntity> {
+  let last: TaskEntity | null = null;
   await waitFor(async () => {
     last = await m.get(id);
     if (last === null) return false;
@@ -1457,7 +1457,7 @@ describe("dispatch — subprocess env injection", () => {
     // value at spawn time. That contract relies on the `undefined`
     // surviving every intermediate hop:
     //   buildSubprocessEnvBase  -> base bag with `EMPLOKE_HOME: undefined`
-    //   TaskManager construction -> `subprocessEnvBase` field
+    //   TaskService construction -> `subprocessEnvBase` field
     //   dispatch()              -> spread `{ ...this.subprocessEnvBase, ... }`
     //   runtime.launchHeadless  -> `opts.subprocessEnv`
     //   mergeEnv                -> deletes from inherited base
@@ -1491,7 +1491,7 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
   // Post-#111: Copilot's auto-generated session `name` reflects the
   // framing prompt rather than the user's task, so deriving a task
   // headline from runtime metadata is actively misleading. The
-  // first-class `Task.brief` field is now the only source of truth
+  // first-class `TaskEntity.brief` field is now the only source of truth
   // for the displayed label. The runtime layer's `readMetadata`
   // surface is preserved (Session still uses it for `preview` via
   // `readCopilotWorkspaceYaml`), but the task manager's enrichment

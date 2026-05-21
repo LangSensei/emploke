@@ -9,8 +9,8 @@ import {
   RuntimeDoesNotSupportTasksError,
   type Task,
   TaskIdAllocationFailedError,
-  type TaskManager,
   TaskNotFoundError,
+  type TaskService,
 } from "@emploke/task";
 import { describe, expect, it, vi } from "vitest";
 import { tasksRoutes } from "../src/routes/tasks.js";
@@ -30,8 +30,8 @@ const sampleTask: Task = {
   startedAt: "2026-06-01T00:00:01.000Z",
 } as unknown as Task;
 
-function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): TaskManager {
-  const stub: Partial<Record<keyof TaskManager, unknown>> = {
+function stubManager(overrides: Partial<Record<keyof TaskService, unknown>>): TaskService {
+  const stub: Partial<Record<keyof TaskService, unknown>> = {
     list: vi.fn(async () => [sampleTask]),
     get: vi.fn(async () => sampleTask),
     dispatch: vi.fn(async () => sampleTask),
@@ -42,7 +42,7 @@ function stubManager(overrides: Partial<Record<keyof TaskManager, unknown>>): Ta
     getTaskActivity: vi.fn(async () => null),
     ...overrides,
   };
-  return stub as unknown as TaskManager;
+  return stub as unknown as TaskService;
 }
 
 describe("tasksRoutes", () => {
@@ -521,7 +521,7 @@ describe("tasksRoutes", () => {
   describe("GET /:tid/activity", () => {
     it("404 NoEventsYet when manager returns null (task missing, runtime declines, or no events yet)", async () => {
       // The route delegates the entire read+parse+derive to
-      // `TaskManager.getTaskActivity`, which itself fans down to
+      // `TaskService.getTaskActivity`, which itself fans down to
       // `Runtime.readActivity`. A `null` return collapses every
       // "nothing to show" case (task missing, runtime omits the
       // surface, log file not on disk yet) into a single 404

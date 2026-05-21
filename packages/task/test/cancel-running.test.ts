@@ -18,7 +18,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — happy path", () => {
+describe("TaskService.cancel — happy path", () => {
   it("kills the live subprocess and persists status='cancelled' with kind='user'", async () => {
     const dispatched = await fx.m.dispatch({ agent: "demo", brief: "slow task" });
 

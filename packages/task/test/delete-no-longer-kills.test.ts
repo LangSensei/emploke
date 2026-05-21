@@ -23,7 +23,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.delete — no longer kills subprocesses", () => {
+describe("TaskService.delete — no longer kills subprocesses", () => {
   it("delete on a success task never calls handle.kill", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "succeeds" });
     fx.rt.handles[0].resolveExit({ code: 0, signal: null });

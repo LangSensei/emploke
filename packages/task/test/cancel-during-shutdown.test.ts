@@ -6,7 +6,7 @@
  * `shuttingDown` flag before cancel() takes its check, or cancel
  * might pass the check first. Either outcome is correct as long as:
  *   - the persisted status is one of {cancelled, failure(kind:shutdown)}
- *   - cancel() either resolves to a cancelled Task, OR
+ *   - cancel() either resolves to a cancelled TaskEntity, OR
  *   - cancel() rejects with ManagerShuttingDownError (shutdown won before
  *     cancel's pre-check), OR
  *   - cancel() rejects with InvalidTransition (cancel passed the
@@ -32,7 +32,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — concurrent with shutdown", () => {
+describe("TaskService.cancel — concurrent with shutdown", () => {
   it("settles to one of the ADR-blessed combinations (cancelled | failure:shutdown × resolve | reject)", async () => {
     const dispatched = await fx.m.dispatch({ agent: "demo", brief: "race" });
 

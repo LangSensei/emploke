@@ -4,16 +4,16 @@ import {
   type LaunchCommand,
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
+  type Session,
   SessionIdAllocationFailedError,
-  type SessionManager,
   SessionNotFoundError,
-  type SessionView,
+  type SessionService,
   UnknownRuntimeError,
 } from "@emploke/session";
 import { describe, expect, it, vi } from "vitest";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 
-const sampleRecord: SessionView = {
+const sampleRecord: Session = {
   id: "20260508-9dfbdf05",
   workdir: "/tmp/wd",
   agent: "demo",
@@ -32,8 +32,8 @@ const sampleLaunch: LaunchCommand = {
   display: 'cd "/tmp/wd" && copilot --resume=12345678-1234-1234-1234-1234567890ab',
 };
 
-function stubManager(overrides: Partial<Record<keyof SessionManager, unknown>>): SessionManager {
-  const stub: Partial<Record<keyof SessionManager, unknown>> = {
+function stubManager(overrides: Partial<Record<keyof SessionService, unknown>>): SessionService {
+  const stub: Partial<Record<keyof SessionService, unknown>> = {
     list: vi.fn(async () => [sampleRecord]),
     get: vi.fn(async () => sampleRecord),
     create: vi.fn(async () => sampleRecord),
@@ -41,7 +41,7 @@ function stubManager(overrides: Partial<Record<keyof SessionManager, unknown>>):
     buildInteractiveLaunch: vi.fn(async () => sampleLaunch),
     ...overrides,
   };
-  return stub as unknown as SessionManager;
+  return stub as unknown as SessionService;
 }
 
 describe("sessionsRoutes", () => {

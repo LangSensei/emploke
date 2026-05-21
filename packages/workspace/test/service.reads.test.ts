@@ -24,11 +24,11 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-describe("WorkspaceQueries", () => {
+describe("WorkspaceService reads", () => {
   it("getById returns the full view for a registered workspace", async () => {
     const wsDir = path.join(scratch, "p");
     await sys.service.register({ id: UUID_A, workspaceDir: wsDir, name: "Project" });
-    const view = await sys.queries.getById(UUID_A);
+    const view = await sys.service.getById(UUID_A);
     expect(view).not.toBeNull();
     expect(view).toMatchObject({
       id: UUID_A,
@@ -40,11 +40,11 @@ describe("WorkspaceQueries", () => {
   });
 
   it("getById returns null for an unknown id", async () => {
-    expect(await sys.queries.getById(UUID_A)).toBeNull();
+    expect(await sys.service.getById(UUID_A)).toBeNull();
   });
 
   it("getById returns null for a malformed id (no throw)", async () => {
-    expect(await sys.queries.getById("not-a-uuid")).toBeNull();
+    expect(await sys.service.getById("not-a-uuid")).toBeNull();
   });
 
   it("list returns workspaces ordered by lastOpenedAt DESC", async () => {
@@ -59,7 +59,7 @@ describe("WorkspaceQueries", () => {
       workspaceDir: path.join(scratch, "b"),
       name: "B",
     });
-    const list = await sys.queries.list();
+    const list = await sys.service.list();
     expect(list.map((v) => v.id)).toEqual([UUID_B, UUID_A]);
     expect(list[0]).toHaveProperty("name");
     expect(list[0]).toHaveProperty("workspaceDir");
@@ -67,11 +67,11 @@ describe("WorkspaceQueries", () => {
   });
 
   it("list returns [] on an empty registry", async () => {
-    expect(await sys.queries.list()).toEqual([]);
+    expect(await sys.service.list()).toEqual([]);
   });
 
   it("getLastOpenedId returns null on an empty registry", async () => {
-    expect(await sys.queries.getLastOpenedId()).toBeNull();
+    expect(await sys.service.getLastOpenedId()).toBeNull();
   });
 
   it("getLastOpenedId returns the most-recently-opened workspace's id", async () => {
@@ -86,7 +86,7 @@ describe("WorkspaceQueries", () => {
       workspaceDir: path.join(scratch, "b"),
       name: "B",
     });
-    expect(await sys.queries.getLastOpenedId()).toBe(UUID_B);
+    expect(await sys.service.getLastOpenedId()).toBe(UUID_B);
   });
 
   it("getLastOpened returns the full view of the most-recently-opened workspace", async () => {
@@ -95,7 +95,7 @@ describe("WorkspaceQueries", () => {
       workspaceDir: path.join(scratch, "a"),
       name: "X",
     });
-    const view = await sys.queries.getLastOpened();
+    const view = await sys.service.getLastOpened();
     expect(view?.id).toBe(UUID_A);
     expect(view?.name).toBe("X");
     expect(typeof view?.lastOpenedAt).toBe("string");

@@ -1,25 +1,24 @@
 import path from "node:path";
-import { type CatalogQueries, type CatalogService, composeCatalogModule } from "@emploke/catalog";
+import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
 import pino, { type Logger } from "pino";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
 import type { RuntimeRegistry } from "@emploke/runtime";
-import { composeSessionModule, type SessionManager } from "@emploke/session";
-import { composeTaskModule, type TaskManager } from "@emploke/task";
+import { composeSessionModule, type SessionService } from "@emploke/session";
+import { composeTaskModule, type TaskService } from "@emploke/task";
 import {
   composeWorkspaceModule,
+  type Workspace,
   type WorkspaceModuleOptions,
-  type WorkspaceQueries,
   type WorkspaceService,
-  type WorkspaceView,
   workspaceLayout,
 } from "@emploke/workspace";
 
 /**
  * Thrown by `WorkspaceRuntimeCache.reload` when the cached runtime
  * still has live task subprocesses being supervised by its
- * `TaskManager`. Reload would orphan them.
+ * `TaskService`. Reload would orphan them.
  */
 export class WorkspaceHasLiveTasksError extends Error {
   constructor(
@@ -32,17 +31,15 @@ export class WorkspaceHasLiveTasksError extends Error {
 }
 
 /**
- * Per-workspace bundle of long-lived state. Holds three MikroORM
- * instances (one per BC against the same `workspace.db` file via WAL)
- * and the rich managers built on top.
+ * Per-workspace bundle of long-lived state. Holds three SQLite-backed
+ * services (one per BC, sharing one `workspace.db` via WAL).
  */
 export interface WorkspaceRuntime {
-  readonly workspace: WorkspaceView;
+  readonly workspace: Workspace;
   readonly catalog: CatalogService;
-  readonly catalogQueries: CatalogQueries;
-  readonly sessions: SessionManager;
-  readonly tasks: TaskManager;
-  /** Closes all three ORMs. Idempotent. */
+  readonly sessions: SessionService;
+  readonly tasks: TaskService;
+  /** Closes all backing connections. Idempotent. */
   close(): Promise<void>;
 }
 
@@ -54,9 +51,8 @@ export interface WorkspaceRuntime {
  */
 export interface EmplokeCore {
   readonly workspaceService: WorkspaceService;
-  readonly workspaceQueries: WorkspaceQueries;
   readonly runtimes: WorkspaceRuntimeCache;
-  /** Closes the global registry ORM. Cache must be `closeAll()`'d first. */
+  /** Closes the global registry connection. Cache must be `closeAll()`'d first. */
   close(): Promise<void>;
 }
 
@@ -70,14 +66,13 @@ export interface EmplokeCoreOptions {
 export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<EmplokeCore> {
   const workspaceModule = await composeWorkspaceModule(opts.workspace);
   const cache = new WorkspaceRuntimeCache({
-    queries: workspaceModule.queries,
+    workspaceService: workspaceModule.service,
     runtimeRegistry: opts.runtimeRegistry,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     ...(opts.subprocessEnvBase !== undefined ? { subprocessEnvBase: opts.subprocessEnvBase } : {}),
   });
   return {
     workspaceService: workspaceModule.service,
-    workspaceQueries: workspaceModule.queries,
     runtimes: cache,
     async close() {
       await workspaceModule.close();
@@ -87,11 +82,11 @@ export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<Empl
 
 /**
  * Lazy, memoised resolver from URL workspace id (UUID) to a
- * `WorkspaceRuntime`. Builds per-workspace ORMs + managers on first
- * touch, caches them for subsequent requests.
+ * `WorkspaceRuntime`. Builds per-workspace SQLite handles + services on
+ * first touch, caches them for subsequent requests.
  */
 export class WorkspaceRuntimeCache {
-  private readonly queries: WorkspaceQueries;
+  private readonly workspaceService: WorkspaceService;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly logger: Logger;
   private readonly subprocessEnvBase: NodeJS.ProcessEnv;
@@ -99,12 +94,12 @@ export class WorkspaceRuntimeCache {
   private readonly inflight = new Map<string, Promise<WorkspaceRuntime | null>>();
 
   constructor(deps: {
-    queries: WorkspaceQueries;
+    workspaceService: WorkspaceService;
     runtimeRegistry: RuntimeRegistry;
     logger?: Logger;
     subprocessEnvBase?: NodeJS.ProcessEnv;
   }) {
-    this.queries = deps.queries;
+    this.workspaceService = deps.workspaceService;
     this.runtimeRegistry = deps.runtimeRegistry;
     this.logger = deps.logger ?? silentLogger;
     this.subprocessEnvBase = deps.subprocessEnvBase ?? {};
@@ -176,7 +171,7 @@ export class WorkspaceRuntimeCache {
   }
 
   private async load(id: string): Promise<WorkspaceRuntime | null> {
-    const workspace = await this.queries.getById(id);
+    const workspace = await this.workspaceService.getById(id);
     if (!workspace) return null;
 
     const layout = workspaceLayout(workspace.workspaceDir);
@@ -190,7 +185,7 @@ export class WorkspaceRuntimeCache {
     });
     const sessionModule = await composeSessionModule({
       dbFile,
-      catalog: catalogModule.queries,
+      catalog: catalogModule.service,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
       workspaceDir: workspace.workspaceDir,
@@ -200,7 +195,7 @@ export class WorkspaceRuntimeCache {
     });
     const taskModule = await composeTaskModule({
       dbFile,
-      catalog: catalogModule.queries,
+      catalog: catalogModule.service,
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
       workspaceDir: workspace.workspaceDir,
@@ -209,14 +204,13 @@ export class WorkspaceRuntimeCache {
       logger: this.logger,
     });
 
-    await taskModule.manager.recoverOrphaned();
+    await taskModule.service.recoverOrphaned();
 
     const runtime: WorkspaceRuntime = {
       workspace,
       catalog: catalogModule.service,
-      catalogQueries: catalogModule.queries,
-      sessions: sessionModule.manager,
-      tasks: taskModule.manager,
+      sessions: sessionModule.service,
+      tasks: taskModule.service,
       async close() {
         await taskModule.close();
         await sessionModule.close();

@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { type CancelFixture, setupCancelFixture, teardownCancelFixture } from "./cancel-fixture.js";
 
-describe("TaskManager.dispatch — origin plumbing", () => {
+describe("TaskService.dispatch — origin plumbing", () => {
   it("persists the explicit origin and round-trips through the repository", async () => {
     const fx: CancelFixture = await setupCancelFixture({ autoExitOnKill: true });
     try {

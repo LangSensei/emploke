@@ -21,7 +21,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.delete — requires terminal status", () => {
+describe("TaskService.delete — requires terminal status", () => {
   it("throws InvalidTransition when called on a running task; succeeds after cancel", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "delete-me-eventually" });
     // Live task → delete refuses.

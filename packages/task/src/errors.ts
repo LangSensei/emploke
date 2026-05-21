@@ -46,7 +46,7 @@ export class InvalidTaskIdError extends TaskError {
 }
 
 /**
- * Thrown by `TaskManager.dispatch` when the agent name does not resolve
+ * Thrown by `TaskService.dispatch` when the agent name does not resolve
  * in the catalog. The original cause (whatever the catalog threw) is
  * attached as `this.cause`.
  */
@@ -62,7 +62,7 @@ export class AgentNotFoundError extends TaskError {
 }
 
 /**
- * Thrown by `TaskManager.get` / `delete` when the requested id has no
+ * Thrown by `TaskService.get` / `delete` when the requested id has no
  * persisted record (no row in the workspace's `tasks` table and, in
  * default-archive mode, the row is unparseable; in `purge: true` mode,
  * the workdir is absent too).
@@ -76,7 +76,7 @@ export class TaskNotFoundError extends TaskError {
 }
 
 /**
- * Thrown by `TaskManager.dispatch` when the chosen runtime does not
+ * Thrown by `TaskService.dispatch` when the chosen runtime does not
  * implement the optional `dispatchTask` method. Surfaced to the user as
  * a clear "this CLI can't run autonomous tasks" rather than a confusing
  * `TypeError: dispatchTask is not a function`.
@@ -90,7 +90,7 @@ export class RuntimeDoesNotSupportTasksError extends TaskError {
 }
 
 /**
- * Thrown by `TaskManager.dispatch` when the agent (or one of its
+ * Thrown by `TaskService.dispatch` when the agent (or one of its
  * transitive deps) is currently `blocked` — typically because:
  *   - the agent's prereqs haven't been acknowledged yet
  *   - the agent has been disabled by the user
@@ -126,7 +126,7 @@ function summariseReason(r: BlockedReason | undefined): string {
 }
 
 /**
- * Thrown when `TaskManager.dispatch` exhausts its mkdir-retry budget
+ * Thrown when `TaskService.dispatch` exhausts its mkdir-retry budget
  * trying to allocate a fresh task id (vanishingly unlikely in practice
  * — a 4-byte random suffix gives 2^32 ids per day).
  */
@@ -156,7 +156,7 @@ export class CorruptedTaskError extends TaskError {
 }
 
 /**
- * Thrown by `TaskManager.dispatch()` and `TaskManager.cancel()` when
+ * Thrown by `TaskService.dispatch()` and `TaskService.cancel()` when
  * the manager has begun shutting down. The HTTP route maps this to
  * **503 Service Unavailable** so callers (CLI, dashboard) can show a
  * one-shot "server is restarting" toast and retry once the new server

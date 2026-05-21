@@ -45,7 +45,7 @@ describe("buildSubprocessEnvBase", () => {
 
   it("freezes the returned object so accidental mutations fail loudly", () => {
     // The returned env is shared by reference into every per-workspace
-    // TaskManager (via PerWorkspaceContainerCache). Concurrency-safety
+    // TaskService (via PerWorkspaceContainerCache). Concurrency-safety
     // depends on it being immutable — a stray mutation would silently
     // poison every subsequent task across every workspace. Freeze
     // turns that footgun into a TypeError in strict mode.

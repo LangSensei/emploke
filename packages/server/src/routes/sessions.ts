@@ -6,8 +6,8 @@ import {
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
   SessionIdAllocationFailedError,
-  type SessionManager,
   SessionNotFoundError,
+  type SessionService,
   TrustRegistrationFailed,
   UnknownRuntimeError,
 } from "@emploke/session";
@@ -35,14 +35,14 @@ type SessionCreateBodyRaw = { [K in keyof SessionCreateBody]?: unknown };
 
 /**
  * Resolver passed into `sessionsRoutes` so the routes can pull the
- * workspace-scoped `SessionManager` out of Hono's per-request context.
+ * workspace-scoped `SessionService` out of Hono's per-request context.
  *
  * In production (`mountWorkspaceSessions` in index.ts) this reads
- * `c.var.sessionManager` set by the workspace middleware. Tests can pass a
+ * `c.var.SessionService` set by the workspace middleware. Tests can pass a
  * trivial `() => stubManager` for direct route invocation without going
  * through the middleware chain.
  */
-export type SessionManagerResolver = (c: import("hono").Context) => SessionManager;
+export type SessionManagerResolver = (c: import("hono").Context) => SessionService;
 
 /**
  * Map sessions errors to HTTP status codes. Returns null for unknown errors
@@ -72,7 +72,7 @@ function statusForError(err: unknown): number | null {
  * Routes for `/api/workspaces/:name/sessions/*`. The Hono mount point in
  * `index.ts` strips the prefix, so paths here are relative ("/", "/:id", …).
  *
- * The route doesn't take a `SessionManager` directly: it takes a resolver
+ * The route doesn't take a `SessionService` directly: it takes a resolver
  * that pulls the workspace-scoped manager off the Hono context (set by the
  * workspace middleware on the parent route). This keeps the route generic
  * across whatever workspace happens to be in play for a given request.
@@ -191,7 +191,7 @@ export function sessionsRoutes(
   //
   // `?purge=1` ("hard delete"): row + workdir + runtime state, all
   // gone. Mirrors what `WorkspaceManager.delete` and
-  // `TaskManager.delete` mean by `purge` — single verb across the
+  // `TaskService.delete` mean by `purge` — single verb across the
   // entity managers.
   app.delete("/:sid", async (c) => {
     const id = c.req.param("sid");

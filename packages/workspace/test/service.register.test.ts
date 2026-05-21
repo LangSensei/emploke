@@ -40,7 +40,7 @@ describe("WorkspaceService.register", () => {
     });
     expect(result.id).toBe(UUID_A);
 
-    const view = await sys.queries.getById(UUID_A);
+    const view = await sys.service.getById(UUID_A);
     expect(view).not.toBeNull();
     expect(view?.name).toBe("My Project");
     expect(view?.workspaceDir).toBe(path.resolve(wsDir));
@@ -55,7 +55,7 @@ describe("WorkspaceService.register", () => {
     await expect(
       sys.service.register({ id: UUID_A, workspaceDir: path.join(scratch, "x"), name: "" }),
     ).rejects.toBeInstanceOf(WorkspaceNameInvalidError);
-    expect(await sys.queries.getById(UUID_A)).toBeNull();
+    expect(await sys.service.getById(UUID_A)).toBeNull();
   });
 
   it("rejects a non-UUID id", async () => {

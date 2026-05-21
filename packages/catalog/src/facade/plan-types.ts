@@ -1,6 +1,6 @@
 /**
  * Shared types + the adapter signature used by both `CatalogService`
- * (writes/install) and `CatalogQueries` (resolves). Pulled out so
+ * (writes/install) and `CatalogService` (resolves). Pulled out so
  * neither class needs to import the other.
  */
 

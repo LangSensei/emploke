@@ -5,7 +5,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Task, TaskRepository } from "../src/index.js";
+import { TaskEntity } from "../src/task-entity.js";
+import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
 import type { TaskOrigin } from "../src/types.js";
 
@@ -22,7 +23,7 @@ afterEach(async () => {
 
 async function seed(id: string, origin: TaskOrigin): Promise<void> {
   await repo.save(
-    Task.fromStored({
+    TaskEntity.fromStored({
       id,
       agent: "demo",
       brief: "b",

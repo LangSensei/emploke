@@ -11,10 +11,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { TaskManager, TaskRepository } from "../src/index.js";
+import { TaskService } from "../src/index.js";
+import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
 
 /**
@@ -80,7 +81,7 @@ export interface CancelFixture {
   readonly orm: ReturnType<typeof openTestTaskDb>;
   readonly repo: TaskRepository;
   readonly rt: TestRuntime;
-  readonly m: TaskManager;
+  readonly m: TaskService;
 }
 
 export async function setupCancelFixture(
@@ -96,7 +97,7 @@ export async function setupCancelFixture(
   const reg = new RuntimeRegistry();
   reg.register(rt);
   const repo = new TaskRepository({ db: orm.db });
-  const m = new TaskManager({
+  const m = new TaskService({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
     tasksDir,
@@ -117,7 +118,7 @@ export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   await rm(fx.tasksDir, { recursive: true, force: true });
 }
 
-export function fakeCatalog(): CatalogQueries {
+export function fakeCatalog(): CatalogService {
   return {
     catalogDir: "/tmp/catalog",
     async resolveAgent(_name: string): Promise<AgentResolveResult> {
@@ -132,11 +133,11 @@ export function fakeCatalog(): CatalogQueries {
       return {
         agent: { fqn: "demo" } as unknown,
         status: "ready" as const,
-      } as unknown as ReturnType<CatalogQueries["getAgentEntry"]> extends Promise<infer T>
+      } as unknown as ReturnType<CatalogService["getAgentEntry"]> extends Promise<infer T>
         ? T
         : never;
     },
-  } as unknown as CatalogQueries;
+  } as unknown as CatalogService;
 }
 
 /**
@@ -161,7 +162,7 @@ export function captureLogger(): {
 }
 
 /** Poll the manager until the task has reached a terminal status. */
-export async function awaitTerminal(m: TaskManager, id: string): Promise<void> {
+export async function awaitTerminal(m: TaskService, id: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     const t = await m.get(id);
     if (t !== null && t.status !== "running" && t.status !== "not_started") return;

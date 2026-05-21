@@ -1,5 +1,5 @@
 /**
- * Issue #120 acceptance test: `SessionManager.list({ agent })` pushes
+ * Issue #120 acceptance test: `SessionService.list({ agent })` pushes
  * the filter down to the SQLite layer via the new `agent` column —
  * the manager must not invoke `readAgentName` (and therefore must not
  * scan workdir AGENTS.md files) on the happy path.
@@ -13,7 +13,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogQueries } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import { type Runtime, RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,7 +29,7 @@ vi.mock("../src/agent-file.js", () => ({
 
 // Imports BELOW vi.mock so the mock is active when the manager module
 // resolves the agent-file dependency.
-const { SessionManager, SessionRepository } = await import("../src/index.js");
+const { SessionService, SessionRepository } = await import("../src/index.js");
 const { openTestSessionDb } = await import("../src/testing.js");
 
 let sessionsDir: string;
@@ -52,13 +52,13 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-function fakeCatalog(): CatalogQueries {
+function fakeCatalog(): CatalogService {
   return {
     catalogDir: "/tmp",
     async resolveAgent() {
       return {} as never;
     },
-  } as unknown as CatalogQueries;
+  } as unknown as CatalogService;
 }
 
 function stubRuntime(): Runtime {
@@ -84,10 +84,10 @@ async function seedSession(id: string, agent: string): Promise<void> {
   });
 }
 
-function buildManager(): SessionManager {
+function buildManager(): SessionService {
   const reg = new RuntimeRegistry();
   reg.register(stubRuntime());
-  return new SessionManager({
+  return new SessionService({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
     sessionsDir,
@@ -96,7 +96,7 @@ function buildManager(): SessionManager {
   });
 }
 
-describe("SessionManager.list — agent filter pushed down", () => {
+describe("SessionService.list — agent filter pushed down", () => {
   it("does not call readAgentName when listing with the agent filter", async () => {
     await seedSession("20260519-aaaaaaaa", "public/writer");
     await seedSession("20260519-bbbbbbbb", "public/reviewer");

@@ -1,7 +1,7 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { Logger } from "pino";
 import pino from "pino";
 
@@ -25,9 +25,9 @@ import {
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
 import { safeJoinUnderRoot } from "./paths.js";
-import { TaskRepository } from "./repository.js";
-import { Task } from "./task-entity.js";
+import { TaskEntity } from "./task-entity.js";
 import { readTaskRuntimeMetadata } from "./task-meta.js";
+import { TaskRepository } from "./task-repository.js";
 import type {
   DispatchOpts,
   ListTaskOpts,
@@ -50,8 +50,8 @@ const MAX_CREATE_RETRIES = 5;
  * to classify the terminal status. It says "why did this manager
  * invoke handle.kill() for this task". Values:
  *   - `null`       — subprocess exited on its own (success / non-zero / signal)
- *   - `'shutdown'` — `TaskManager.shutdown()` killed it (server going down)
- *   - `'cancel'`   — `TaskManager.cancel(id)` killed it (user-initiated)
+ *   - `'shutdown'` — `TaskService.shutdown()` killed it (server going down)
+ *   - `'cancel'`   — `TaskService.cancel(id)` killed it (user-initiated)
  *
  * `delete()` no longer sets this — after ADR-001, `delete()` requires
  * the task be terminal and never kills a subprocess. Orphan recovery
@@ -115,11 +115,11 @@ interface LiveTask {
  *   - on bootstrap, marks orphaned `running` tasks (server crashed
  *     mid-flight) as `failure` so they don't appear hanging forever
  *
- * The Task value type itself is the FSM; this class just orchestrates
+ * The TaskEntity value type itself is the FSM; this class just orchestrates
  * persistence + side effects around it.
  */
-export class TaskManager {
-  private readonly catalog: CatalogQueries;
+export class TaskService {
+  private readonly catalog: CatalogService;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly tasksDir: string;
@@ -143,10 +143,10 @@ export class TaskManager {
    *
    * Surfaced via `liveCount()` so callers like `WorkspaceContextCache.reload`
    * — which uses a non-zero count to refuse to evict the cached
-   * `TaskManager` — see in-flight dispatches as "live" too. Without
+   * `TaskService` — see in-flight dispatches as "live" too. Without
    * this, a reload landing in the window between the workdir mkdir
    * and `live.set` would evict the manager, the next request would
-   * lazy-build a fresh `TaskManager` whose `recoverOrphaned` sweep
+   * lazy-build a fresh `TaskService` whose `recoverOrphaned` sweep
    * runs against the half-written disk row. (`recoverOrphaned` does
    * have a PID-alive probe that prevents the worst-case flip to
    * failure for already-running tasks, but the old manager would
@@ -182,7 +182,7 @@ export class TaskManager {
 
   // ─── dispatch ────────────────────────────────────────────
 
-  async dispatch(opts: DispatchOpts): Promise<Task> {
+  async dispatch(opts: DispatchOpts): Promise<TaskEntity> {
     if (this.shuttingDown) {
       // Refuse new work once shutdown has been called. Avoids a race where
       // a request is mid-flight when the SIGTERM lands and we end up
@@ -255,7 +255,7 @@ export class TaskManager {
     }
 
     // From this point on the workdir exists on disk, so a freshly
-    // constructed sibling `TaskManager` for the same `tasksDir` —
+    // constructed sibling `TaskService` for the same `tasksDir` —
     // e.g. one built after `WorkspaceContextCache.reload` evicts us —
     // could see this row. Mark `id` as in-flight so `liveCount()`
     // refuses such evictions until the `LiveTask` entry below is
@@ -287,7 +287,7 @@ export class TaskManager {
     origin: TaskOrigin;
     runtime: Runtime;
     resolveResult: AgentResolveResult;
-  }): Promise<Task> {
+  }): Promise<TaskEntity> {
     const { id, workdir, agentName, brief, details, origin, runtime, resolveResult } = args;
     // Re-narrow `runtime.launchHeadless` for TypeScript. The caller
     // (`dispatch()`) already checked this and throws `RuntimeDoesNotSupportTasksError`
@@ -300,7 +300,7 @@ export class TaskManager {
       throw new RuntimeDoesNotSupportTasksError(runtime.kind);
     }
 
-    // 4. Persist the initial Task. Status is `running` from create
+    // 4. Persist the initial TaskEntity. Status is `running` from create
     //    time (v4 dropped the `not_started` placeholder — see TaskStatus).
     //    If anything below fails, we roll back the workdir entirely;
     //    pre-spawn failures should not leave a ghost row on disk.
@@ -309,7 +309,7 @@ export class TaskManager {
       workdir,
       runtime: runtime.kind,
     };
-    const initial = Task.create({
+    const initial = TaskEntity.create({
       id,
       agent: agentName,
       brief,
@@ -423,7 +423,7 @@ export class TaskManager {
     //    surface the error to the caller with the subprocess still live
     //    and the row still on disk. The orphan recovery path will mark
     //    it failed at the next bootstrap if the server then restarts.
-    let running: Task = initial;
+    let running: TaskEntity = initial;
     if (handle.runtimeSessionId !== undefined) {
       running = initial.withMetadata({
         ...initial.metadata,
@@ -513,7 +513,7 @@ export class TaskManager {
    * doesn't ship the other 95% of the workspace's tasks across the
    * wire on every poll).
    */
-  async list(opts: ListTaskOpts = {}): Promise<Task[]> {
+  async list(opts: ListTaskOpts = {}): Promise<TaskEntity[]> {
     // Push every filter (status, agent, runtime, createdSince) down to
     // the SQLite repository so the dashboard's filter UI hits a single
     // indexed query instead of the old O(N) `readdir` + per-row read +
@@ -521,7 +521,7 @@ export class TaskManager {
     // corrupted rows and warns via our injected logger, so callers see
     // the same "skip-and-warn" semantics they had under the FS impl —
     // just emitted from one layer down.
-    let tasks: Task[];
+    let tasks: TaskEntity[];
     try {
       tasks = await this.repository.list(opts);
     } catch (err) {
@@ -555,7 +555,7 @@ export class TaskManager {
 
   // ─── get ─────────────────────────────────────────────────
 
-  async get(id: string): Promise<Task | null> {
+  async get(id: string): Promise<TaskEntity | null> {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
     const task = await this.loadTask(id, workdir);
@@ -663,7 +663,7 @@ export class TaskManager {
    * User-initiated cancellation of a live task. Kills the subprocess
    * (SIGTERM via the runtime's best-effort `handle.kill()`), waits
    * for the exit watcher to persist the terminal status, and returns
-   * the cancelled `Task` (status='cancelled', `cancellation.kind='user'`).
+   * the cancelled `TaskEntity` (status='cancelled', `cancellation.kind='user'`).
    *
    * Contract:
    *   - **Idempotency**: terminal-state input throws
@@ -690,7 +690,7 @@ export class TaskManager {
    *     {@link ManagerShuttingDownError}. The route layer maps this
    *     to 503 (mirrors the dispatch() refusal).
    */
-  async cancel(id: string): Promise<Task> {
+  async cancel(id: string): Promise<TaskEntity> {
     assertValidTaskId(id);
     if (this.shuttingDown) throw new ManagerShuttingDownError();
 
@@ -781,7 +781,7 @@ export class TaskManager {
    *      `<copilotStateDir>/<runtimeSessionId>/`) via
    *      `runtime.deleteState`. Runtime first so a permission-denied
    *      or network failure aborts BEFORE any local removal — same
-   *      ordering as `SessionManager.delete`. Runtimes without
+   *      ordering as `SessionService.delete`. Runtimes without
    *      per-task state simply omit the method and we skip this step.
    *   2. Remove the metadata row from the repository.
    *   3. `rm -rf` the workdir.
@@ -875,7 +875,7 @@ export class TaskManager {
     // first save), not an orphan task — `recoverOrphaned` deliberately
     // leaves those for a separate cleanup. So a single SQL query for
     // status='running' is the complete candidate set.
-    let candidates: Task[];
+    let candidates: TaskEntity[];
     try {
       candidates = await this.repository.list({ statuses: ["running"] });
     } catch (err) {
@@ -986,7 +986,7 @@ export class TaskManager {
    * Release the underlying repository handle. After `close()`, the
    * manager must not be used. Idempotent.
    *
-   * Servers that swap or evict a `TaskManager` (e.g. `WorkspaceContextCache`
+   * Servers that swap or evict a `TaskService` (e.g. `WorkspaceContextCache`
    * on workspace removal / cache reload) must call this so the SQLite
    * file handle releases — Windows requires it before the workspace
    * directory can be `rm`-ed. `shutdown()` deliberately does NOT call
@@ -1021,7 +1021,7 @@ export class TaskManager {
    * above. The `list()` path does NOT go through this method; it
    * skip+warns at the repo layer (see `SqliteTaskRepository.list`).
    */
-  private async loadTask(id: string, _workdir: string): Promise<Task | null> {
+  private async loadTask(id: string, _workdir: string): Promise<TaskEntity | null> {
     const task = await this.repository.read(id);
     if (task === null) return null;
     if (task.id !== id) {
@@ -1060,12 +1060,12 @@ export class TaskManager {
    * are deliberately NOT injected here anymore. Post-#109 the
    * Copilot-generated session `name` reflects the framing prompt,
    * not the user's task, so the derived title was actively
-   * misleading as a task headline. The Task entity's first-class
+   * misleading as a task headline. The TaskEntity entity's first-class
    * `brief` field is now the source of truth for the displayed
    * label. `readCopilotWorkspaceYaml` itself stays — it's still
    * used by `Session` for the session preview field.
    */
-  private async enrichWithRuntimeMetadata(task: Task): Promise<Task> {
+  private async enrichWithRuntimeMetadata(task: TaskEntity): Promise<TaskEntity> {
     const runtimeName = task.metadata.runtime;
     if (typeof runtimeName !== "string") return task;
     let runtime: Runtime;
@@ -1105,7 +1105,7 @@ export class TaskManager {
   }
 
   /** Atomic write of the persisted record. */
-  private async persist(_workdir: string, task: Task): Promise<void> {
+  private async persist(_workdir: string, task: TaskEntity): Promise<void> {
     await this.repository.save(task);
   }
 
@@ -1120,10 +1120,10 @@ export class TaskManager {
    */
   private async applyTerminal(
     workdir: string,
-    running: Task,
+    running: TaskEntity,
     decision: TerminalDecision,
   ): Promise<void> {
-    let next: Task;
+    let next: TaskEntity;
     try {
       switch (decision.kind) {
         case "succeeded":
@@ -1168,7 +1168,7 @@ export class TaskManager {
 
 /**
  * Outcome of classifying a subprocess exit. Discriminated by `kind`
- * so {@link TaskManager.applyTerminal} can dispatch typed transitions
+ * so {@link TaskService.applyTerminal} can dispatch typed transitions
  * to the entity (`complete` / `fail` / `cancel`). v4 (issue #119)
  * dropped the parallel `exitCode` / `exitSignal` fields here — the
  * exit-code / signal context, when relevant, lives inside the typed

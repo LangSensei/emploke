@@ -1,5 +1,9 @@
 /**
- * @emploke/task — Task entity + TaskManager (Drizzle-backed).
+ * @emploke/task — TaskService (Drizzle-backed) + Task DTO.
+ *
+ * The `TaskEntity` class with state-machine methods is internal to
+ * this package. External consumers see the `Task` DTO returned by
+ * `TaskService` reads/writes.
  */
 
 export { composeTaskModule, type TaskModule, type TaskModuleOptions } from "./compose.js";
@@ -23,20 +27,14 @@ export {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-export { TaskManager } from "./manager.js";
 export { safeJoinUnderRoot } from "./paths.js";
-export { TaskRepository } from "./repository.js";
-export { type NewTaskRow, type TaskRow, tasks } from "./schema.js";
-export {
-  Task,
-  type TaskCreateArgs,
-  type TaskFromStoredArgs,
-  type TaskTransitionOpts,
-} from "./task-entity.js";
-export { readTaskRuntimeMetadata, type TaskRuntimeMetadata } from "./task-meta.js";
+export type { TaskRuntimeMetadata } from "./task-meta.js";
+export { readTaskRuntimeMetadata } from "./task-meta.js";
+export { TaskService } from "./task-service.js";
 export type {
   DispatchOpts,
   ListTaskOpts,
+  Task,
   TaskCancellation,
   TaskFailure,
   TaskManagerConfig,

@@ -9,13 +9,13 @@ describe("composeWorkspaceModule", () => {
     const handle = openTestWorkspaceDb();
     const mod = await composeWorkspaceModule({ db: handle.db });
     try {
-      expect(await mod.queries.list()).toEqual([]);
+      expect(await mod.service.list()).toEqual([]);
       await mod.service.register({
         id: "11111111-1111-4111-8111-111111111111",
         workspaceDir: "/tmp/emploke-compose-test",
         name: "Compose",
       });
-      const view = await mod.queries.getById("11111111-1111-4111-8111-111111111111");
+      const view = await mod.service.getById("11111111-1111-4111-8111-111111111111");
       expect(view?.name).toBe("Compose");
     } finally {
       await mod.close();

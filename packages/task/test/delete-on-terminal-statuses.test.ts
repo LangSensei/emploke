@@ -35,7 +35,7 @@ async function workdirExists(dir: string): Promise<boolean> {
   }
 }
 
-describe("TaskManager.delete — every terminal status is deletable (archive mode)", () => {
+describe("TaskService.delete — every terminal status is deletable (archive mode)", () => {
   it("deletes a success task; row gone, workdir preserved", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "ok" });
     fx.rt.handles[0].resolveExit({ code: 0, signal: null });

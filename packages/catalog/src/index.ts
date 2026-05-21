@@ -22,34 +22,12 @@ export {
 // ─── Entities + service namespaces ──────────────────
 export type { AgentFetcher } from "./agent/index.js";
 export * as agent from "./agent/index.js";
-export { Agent } from "./agent/index.js";
 // ─── Composition root hook ─────────────────────────
 export {
   type CatalogModule,
   type CatalogModuleOptions,
   composeCatalogModule,
 } from "./compose.js";
-// ─── Wire DTOs (HTTP-shaped projections) ────────────
-export type {
-  Agent as AgentPojo,
-  AgentEntry,
-  AgentMetadataPatch,
-  AgentResolveResult,
-  BlockedDep,
-  BlockedReason,
-  CatalogKind,
-  DependencyKind,
-  DependencyRef,
-  EntryStatus,
-  McpMetadata,
-  MissingDep,
-  ResolvedMcp,
-  ResolvedSkill,
-  Skill as SkillPojo,
-  SkillEntry,
-  SkillMetadataPatch,
-  SkillResolveResult,
-} from "./dto/types.js";
 // ─── Facade ─────────────────────────────────────────
 export * as facade from "./facade/index.js";
 export {
@@ -61,7 +39,6 @@ export {
   type CatalogOptions,
   type CatalogPlan,
   type CatalogPlanNode,
-  CatalogQueries,
   CatalogService,
   type CatalogSyncResult,
   HasDependentsError,
@@ -85,7 +62,6 @@ export {
 } from "./mcp/errors.js";
 export type { McpFetcher } from "./mcp/index.js";
 export * as mcp from "./mcp/index.js";
-export { Mcp } from "./mcp/index.js";
 // ─── MCP file format codec ──────────────────────────
 export {
   type McpFile as McpFileShape,
@@ -109,8 +85,6 @@ export {
 } from "./skill/errors.js";
 export type { SkillFetcher } from "./skill/index.js";
 export * as skill from "./skill/index.js";
-export { Skill } from "./skill/index.js";
-
 // ─── FQN / scope / shortName helpers ────────────────
 export {
   DEFAULT_SCOPE,
@@ -120,6 +94,27 @@ export {
   validateScope,
   validateShortName,
 } from "./skill/validate.js";
+// ─── Wire DTOs (HTTP-shaped projections) ────────────
+export type {
+  Agent,
+  AgentEntry,
+  AgentMetadataPatch,
+  AgentResolveResult,
+  BlockedDep,
+  BlockedReason,
+  CatalogKind,
+  DependencyKind,
+  DependencyRef,
+  EntryStatus,
+  Mcp,
+  MissingDep,
+  ResolvedMcp,
+  ResolvedSkill,
+  Skill,
+  SkillEntry,
+  SkillMetadataPatch,
+  SkillResolveResult,
+} from "./types.js";
 // ─── Install-body validators (HTTP boundary) ────────
 export {
   type AgentInstallBody,
@@ -128,4 +123,4 @@ export {
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,
-} from "./validate/install-input.js";
+} from "./validate.js";

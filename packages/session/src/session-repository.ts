@@ -6,7 +6,7 @@ import { and, eq, gte, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";
 import type * as schema from "./schema.js";
-import { type Session, sessions } from "./schema.js";
+import { type SessionRow, sessions } from "./schema.js";
 import { SESSION_ID_RE } from "./validate.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
@@ -32,7 +32,7 @@ export class SessionRepository {
     void this.logger;
   }
 
-  async read(id: string): Promise<Session | undefined> {
+  async read(id: string): Promise<SessionRow | undefined> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
   }
@@ -71,7 +71,7 @@ export class SessionRepository {
     this.db.delete(sessions).where(eq(sessions.id, id)).run();
   }
 
-  async list(opts: ListSessionStateOpts = {}): Promise<Session[]> {
+  async list(opts: ListSessionStateOpts = {}): Promise<SessionRow[]> {
     const filters: SQL[] = [];
     if (opts.createdSince !== undefined) filters.push(gte(sessions.createdAt, opts.createdSince));
     if (opts.agent !== undefined) filters.push(eq(sessions.agent, opts.agent));

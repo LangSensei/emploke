@@ -3,10 +3,9 @@ import path from "node:path";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { WorkspaceQueries } from "./queries.js";
-import { WorkspaceRepository } from "./repository.js";
 import * as schema from "./schema.js";
-import { WorkspaceService } from "./service.js";
+import { WorkspaceRepository } from "./workspace-repository.js";
+import { WorkspaceService } from "./workspace-service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -21,7 +20,6 @@ export type WorkspaceModuleOptions = ({ readonly dbFile: string } | { readonly d
 
 export interface WorkspaceModule {
   readonly service: WorkspaceService;
-  readonly queries: WorkspaceQueries;
   /** Closes the underlying connection when the composer opened it. */
   close(): Promise<void>;
 }
@@ -44,12 +42,10 @@ export async function composeWorkspaceModule(
   }
 
   const repo = new WorkspaceRepository({ db: db });
-  const queries = new WorkspaceQueries(db);
-  const service = new WorkspaceService(repo, options.logger);
+  const service = new WorkspaceService(repo, db, options.logger);
 
   return {
     service,
-    queries,
     async close() {
       sqlite?.close();
     },

@@ -1,4 +1,6 @@
 import { mkdir, rm } from "node:fs/promises";
+import { desc, eq } from "drizzle-orm";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 
 const silentLogger: Logger = pino({ level: "silent" });
@@ -9,7 +11,9 @@ import {
   WorkspacePathConflictError,
 } from "./errors.js";
 import { workspaceLayout } from "./layout.js";
-import type { WorkspaceRepository } from "./repository.js";
+import type * as schema from "./schema.js";
+import { workspaces } from "./schema.js";
+import type { Workspace } from "./types.js";
 import {
   assertValidWorkspaceId,
   assertValidWorkspaceName,
@@ -20,21 +24,65 @@ import {
   RenameWorkspaceInput,
   UnregisterWorkspaceInput,
 } from "./validate.js";
+import type { WorkspaceRepository } from "./workspace-repository.js";
+
+type Db = BetterSQLite3Database<typeof schema>;
 
 /**
  * Workspace use-case API.
  *
- * Each method: parse input → validate → run async FS work outside the
- * DB transaction → run the DB transaction last. SQLite transactions
- * are synchronous under better-sqlite3, so the FS-then-DB ordering is
- * mandatory: long-running async work inside `db.transaction()` would
- * hold the connection lock for the duration.
+ * Exposes the full workspace surface: write commands (`register`,
+ * `open`, `rename`, `unregister`) and read projections (`getById`,
+ * `list`, `getLastOpened`, `getLastOpenedId`). Both halves share the
+ * same db handle, so writes are immediately visible to subsequent
+ * reads with no cache invalidation.
+ *
+ * Each write method: parse input → validate → run async FS work
+ * outside the DB transaction → run the DB transaction last. SQLite
+ * transactions are synchronous under better-sqlite3, so the FS-then-DB
+ * ordering is mandatory: long-running async work inside
+ * `db.transaction()` would hold the connection lock for the duration.
  */
 export class WorkspaceService {
   constructor(
     private readonly repo: WorkspaceRepository,
+    private readonly db: Db,
     private readonly logger: Logger = silentLogger,
   ) {}
+
+  // ─── Reads ─────────────────────────────────────────────
+
+  async getById(id: string): Promise<Workspace | null> {
+    const row = this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
+    return row ? toView(row) : null;
+  }
+
+  async list(): Promise<Workspace[]> {
+    const rows = this.db.select().from(workspaces).orderBy(desc(workspaces.lastOpenedAt)).all();
+    return rows.map(toView);
+  }
+
+  async getLastOpened(): Promise<Workspace | null> {
+    const row = this.db
+      .select()
+      .from(workspaces)
+      .orderBy(desc(workspaces.lastOpenedAt))
+      .limit(1)
+      .get();
+    return row ? toView(row) : null;
+  }
+
+  async getLastOpenedId(): Promise<string | null> {
+    const row = this.db
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .orderBy(desc(workspaces.lastOpenedAt))
+      .limit(1)
+      .get();
+    return row?.id ?? null;
+  }
+
+  // ─── Writes ────────────────────────────────────────────
 
   async register(input: {
     id: string;
@@ -51,10 +99,6 @@ export class WorkspaceService {
       assertValidWorkspaceName(input.name);
       const workspaceDir = normalizeWorkspaceDir(input.workspaceDir);
 
-      // FS-first: surface mount/permission errors before any registry
-      // mutation so a write-protected path doesn't leave an orphan row.
-      // Uniqueness check happens at the row insert below (DB UNIQUE
-      // constraint on workspace_dir + explicit findById pre-check).
       const byId = await this.repo.findById(input.id);
       if (byId) throw new WorkspaceIdConflictError(input.id);
       const byPath = await this.repo.findByPath(workspaceDir);
@@ -152,4 +196,14 @@ export class WorkspaceService {
       throw err;
     }
   }
+}
+
+function toView(row: typeof workspaces.$inferSelect): Workspace {
+  return {
+    id: row.id,
+    name: row.name,
+    workspaceDir: row.workspaceDir,
+    createdAt: row.createdAt,
+    lastOpenedAt: row.lastOpenedAt ?? row.createdAt,
+  };
 }

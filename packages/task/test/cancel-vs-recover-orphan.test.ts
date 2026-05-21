@@ -10,7 +10,7 @@
  * The ADR's wording suggests pinning the route-layer ordering in
  * server/test/, but the actual ordering invariant — "recoverOrphaned
  * completes synchronously before user calls" — is testable at the
- * TaskManager layer. We mirror the production sequence (pre-write
+ * TaskService layer. We mirror the production sequence (pre-write
  * `running` row → construct manager → await recoverOrphaned() →
  * cancel) and assert that by the time cancel runs, the row is
  * already terminal (failure:orphan), so cancel throws
@@ -20,7 +20,8 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InvalidTransition, Task } from "../src/index.js";
+import { InvalidTransition } from "../src/index.js";
+import { TaskEntity } from "../src/task-entity.js";
 import { type CancelFixture, setupCancelFixture, teardownCancelFixture } from "./cancel-fixture.js";
 
 let fx: CancelFixture;
@@ -32,12 +33,12 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — vs recoverOrphaned", () => {
+describe("TaskService.cancel — vs recoverOrphaned", () => {
   it("after recoverOrphaned the row is failure:orphan; cancel then throws InvalidTransition", async () => {
     const id = "20260518-cccccccc";
     const workdir = path.join(fx.tasksDir, id);
     await mkdir(workdir, { recursive: true });
-    const orphan = Task.fromStored({
+    const orphan = TaskEntity.fromStored({
       id,
       agent: "demo",
       brief: "orphan",

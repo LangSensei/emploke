@@ -12,7 +12,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Task } from "../src/index.js";
+import { TaskEntity } from "../src/task-entity.js";
 import { type CancelFixture, setupCancelFixture, teardownCancelFixture } from "./cancel-fixture.js";
 
 let fx: CancelFixture;
@@ -24,7 +24,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — orphan path shape parity", () => {
+describe("TaskService.cancel — orphan path shape parity", () => {
   it("orphan-cancel row matches normal-cancel row except cancellation.kind", async () => {
     // Normal-path cancel: dispatch + cancel.
     const normalDispatched = await fx.m.dispatch({ agent: "demo", brief: "normal" });
@@ -34,7 +34,7 @@ describe("TaskManager.cancel — orphan path shape parity", () => {
     const orphanId = "20260518-bbbbbbbb";
     const workdir = path.join(fx.tasksDir, orphanId);
     await mkdir(workdir, { recursive: true });
-    const orphanSeed = Task.fromStored({
+    const orphanSeed = TaskEntity.fromStored({
       id: orphanId,
       agent: "demo",
       brief: "orphan",

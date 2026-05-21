@@ -18,7 +18,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — non-existent id", () => {
+describe("TaskService.cancel — non-existent id", () => {
   it("throws TaskNotFoundError when no row exists for the id", async () => {
     await expect(fx.m.cancel("20260518-deadbeef")).rejects.toBeInstanceOf(TaskNotFoundError);
   });

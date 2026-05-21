@@ -2,8 +2,8 @@
  * Builds the static portion of the env bag that the server hands to
  * every emploke-spawned subprocess. Per-run additions
  * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_WORK_*`) are
- * layered on top inside `TaskManager.dispatch` /
- * `SessionManager.assembleLaunchEnv`; this helper is for fields the
+ * layered on top inside `TaskService.dispatch` /
+ * `SessionService.assembleLaunchEnv`; this helper is for fields the
  * server itself owns (where to dial back, where the cross-workspace
  * shared state directory lives).
  *
@@ -57,7 +57,7 @@ export function buildSubprocessEnvBase(input: {
     // `packages/runtime/src/copilot/launch-headless.ts`, which
     // honours `undefined` as "delete this key from the parent env".
     //
-    // The session-interactive path (`SessionManager.assembleLaunchEnv`)
+    // The session-interactive path (`SessionService.assembleLaunchEnv`)
     // intentionally filters `undefined` values out before reaching
     // the terminal-side shell-env helpers, so the parent's
     // `EMPLOKE_HOME` leaks through ambient inheritance — that's by
@@ -66,7 +66,7 @@ export function buildSubprocessEnvBase(input: {
     EMPLOKE_HOME: undefined,
   };
   // Freeze: this object is shared by reference into every per-workspace
-  // `TaskManager` (via `WorkspaceContextCache`) and read on every
+  // `TaskService` (via `WorkspaceContextCache`) and read on every
   // `dispatch()`. A stray mutation anywhere would silently leak
   // across workspaces and across in-flight tasks. Freezing turns
   // that footgun into a loud TypeError. Callers always layer their

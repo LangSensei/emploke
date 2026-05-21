@@ -10,7 +10,6 @@ import {
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-  type WorkspaceQueries,
   type WorkspaceService,
 } from "@emploke/workspace";
 import type { Context } from "hono";
@@ -79,12 +78,12 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  */
 export function workspacesRoutes(deps: {
   service: WorkspaceService;
-  queries: WorkspaceQueries;
   cache: PerWorkspaceContainerCache;
   defaultWorkspaceParent: string;
 }): Hono {
   const app = new Hono();
-  const { service, queries, cache, defaultWorkspaceParent } = deps;
+  const { service, cache, defaultWorkspaceParent } = deps;
+  const queries = service;
 
   // List all registered workspaces.
   app.get("/", async (c) => {
@@ -186,7 +185,7 @@ export function workspacesRoutes(deps: {
   // Get a single workspace.
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
-    let view: Awaited<ReturnType<WorkspaceQueries["getById"]>>;
+    let view: Awaited<ReturnType<WorkspaceService["getById"]>>;
     try {
       view = await queries.getById(id);
     } catch (err) {

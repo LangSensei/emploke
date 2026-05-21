@@ -7,7 +7,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
 import type * as schema from "./schema.js";
 import { type TaskRow, tasks } from "./schema.js";
-import { Task } from "./task-entity.js";
+import { TaskEntity } from "./task-entity.js";
 import type {
   ListTaskOpts,
   TaskCancellation,
@@ -29,14 +29,14 @@ export class TaskRepository {
     this.logger = opts.logger ?? silentLogger;
   }
 
-  async read(id: string): Promise<Task | null> {
+  async read(id: string): Promise<TaskEntity | null> {
     if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
     const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (row === undefined) return null;
     return rowToTask(row);
   }
 
-  async save(task: Task): Promise<void> {
+  async save(task: TaskEntity): Promise<void> {
     if (!TASK_ID_RE.test(task.id)) throw new InvalidTaskIdError(task.id);
     const fields = taskToRowFields(task);
     const existing = this.db
@@ -56,7 +56,7 @@ export class TaskRepository {
     this.db.delete(tasks).where(eq(tasks.id, id)).run();
   }
 
-  async list(opts: ListTaskOpts = {}): Promise<Task[]> {
+  async list(opts: ListTaskOpts = {}): Promise<TaskEntity[]> {
     const filters: SQL[] = [];
     if (opts.agent !== undefined) filters.push(eq(tasks.agent, opts.agent));
     if (opts.runtime !== undefined) filters.push(eq(tasks.runtime, opts.runtime));
@@ -72,7 +72,7 @@ export class TaskRepository {
     }
     const query = this.db.select().from(tasks);
     const rows = filters.length > 0 ? query.where(and(...filters)).all() : query.all();
-    const out: Task[] = [];
+    const out: TaskEntity[] = [];
     for (const row of rows) {
       try {
         out.push(rowToTask(row));
@@ -87,7 +87,7 @@ export class TaskRepository {
   }
 }
 
-function taskToRowFields(task: Task): {
+function taskToRowFields(task: TaskEntity): {
   id: string;
   agent: string;
   runtime: string | null;
@@ -129,7 +129,7 @@ function taskToRowFields(task: Task): {
   };
 }
 
-function rowToTask(row: TaskRow): Task {
+function rowToTask(row: TaskRow): TaskEntity {
   let metaParsed: unknown;
   try {
     metaParsed = JSON.parse(row.metadata);
@@ -151,7 +151,7 @@ function rowToTask(row: TaskRow): Task {
   const failure = parseJsonColumn<TaskFailure>(row.id, "failure", row.failure);
   const cancellation = parseJsonColumn<TaskCancellation>(row.id, "cancellation", row.cancellation);
 
-  return Task.fromStored({
+  return TaskEntity.fromStored({
     id: row.id,
     agent: row.agent,
     brief: row.brief,

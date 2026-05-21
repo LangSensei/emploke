@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import {
   McpNameInvalidError,
   McpNotFoundError,
   McpOriginConflictError,
 } from "../../src/mcp/errors.js";
-import { Mcp } from "../../src/mcp/mcp-entity.js";
+import { McpEntity } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
-import type { McpRepository } from "../../src/mcp/mcp-repository.js";
+import { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
@@ -23,11 +22,11 @@ type Backend = {
 
 const BACKENDS: Backend[] = [
   {
-    name: "DrizzleMcpRepository (in-memory)",
+    name: "McpRepository (in-memory)",
     setup: async () => {
       const orm = bootstrapCatalogDb();
 
-      const repo = new DrizzleMcpRepository({ db: orm.db });
+      const repo = new McpRepository({ db: orm.db });
       return {
         repo,
         teardown: async () => {
@@ -60,7 +59,7 @@ for (const backend of BACKENDS) {
     describe("install", () => {
       it("persists a new entity", async () => {
         const m = await svc.install("azure/mcp", "file:/abs/azure", '{"command":"node"}');
-        expect(m).toBeInstanceOf(Mcp);
+        expect(m).toBeInstanceOf(McpEntity);
         expect(m.fqn).toBe("azure/mcp");
         expect(m.origin).toBe("file:/abs/azure");
         expect(await svc.has("azure/mcp")).toBe(true);
@@ -217,10 +216,10 @@ for (const backend of BACKENDS) {
         expect(await svc.get("missing/x")).toBeNull();
       });
 
-      it("get returns a Mcp entity", async () => {
+      it("get returns a McpEntity entity", async () => {
         await svc.install("x/y", "file:/abs/x", "{}");
         const m = await svc.get("x/y");
-        expect(m).toBeInstanceOf(Mcp);
+        expect(m).toBeInstanceOf(McpEntity);
         expect(m!.fqn).toBe("x/y");
       });
 

@@ -22,24 +22,24 @@ afterEach(async () => {
 describe("WorkspaceService.open", () => {
   it("registration sets lastOpenedAt so the freshly-registered workspace is current", async () => {
     await sys.service.register({ id: UUID_A, workspaceDir: "/tmp/a", name: "A" });
-    expect(await sys.queries.getLastOpenedId()).toBe(UUID_A);
+    expect(await sys.service.getLastOpenedId()).toBe(UUID_A);
   });
 
   it("opening a workspace promotes it to most-recently-opened", async () => {
     await sys.service.register({ id: UUID_A, workspaceDir: "/tmp/a", name: "A" });
     await new Promise((r) => setTimeout(r, 5));
     await sys.service.register({ id: UUID_B, workspaceDir: "/tmp/b", name: "B" });
-    expect(await sys.queries.getLastOpenedId()).toBe(UUID_B);
+    expect(await sys.service.getLastOpenedId()).toBe(UUID_B);
 
     await new Promise((r) => setTimeout(r, 5));
     await sys.service.open({ id: UUID_A });
-    expect(await sys.queries.getLastOpenedId()).toBe(UUID_A);
+    expect(await sys.service.getLastOpenedId()).toBe(UUID_A);
   });
 
   it("throws WorkspaceNotRegisteredError for an unknown id", async () => {
     await expect(sys.service.open({ id: UUID_A })).rejects.toBeInstanceOf(
       WorkspaceNotRegisteredError,
     );
-    expect(await sys.queries.getLastOpenedId()).toBeNull();
+    expect(await sys.service.getLastOpenedId()).toBeNull();
   });
 });

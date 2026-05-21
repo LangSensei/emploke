@@ -5,7 +5,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     environment: "node",
     globals: false,
-    pool: "threads",
+    pool: "forks",
     testTimeout: 30000,
     // Match testTimeout + healthTimeoutMs so beforeEach hooks that
     // boot a real server (commands.test.ts: `emploke start` + 60s

@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
-import type { CatalogQueries, CatalogService } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
-import type { SessionManager } from "@emploke/session";
-import type { TaskManager } from "@emploke/task";
+import type { SessionService } from "@emploke/session";
+import type { TaskService } from "@emploke/task";
 import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -71,9 +71,9 @@ export {
  * Both managers point at the same workspace; routes pull whichever they need.
  */
 type WorkspaceVars = {
-  sessionManager: SessionManager;
-  taskManager: TaskManager;
-  catalog: { service: CatalogService; queries: CatalogQueries };
+  sessions: SessionService;
+  tasks: TaskService;
+  catalog: CatalogService;
 };
 
 /**
@@ -209,7 +209,6 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
   const workspaceService = composition.workspaceService;
-  const workspaceQueries = composition.workspaceQueries;
   const cache = composition.runtimes;
 
   const app = new Hono();
@@ -250,7 +249,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => workspaceQueries.getLastOpenedId(),
+      currentWorkspace: () => workspaceService.getLastOpenedId(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
@@ -258,21 +257,20 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     "/api/workspaces",
     workspacesRoutes({
       service: workspaceService,
-      queries: workspaceQueries,
       cache,
       defaultWorkspaceParent: workspacesParentDir(home),
     }),
   );
 
   // Workspace-scoped sessions and catalog. The middleware resolves :id
-  // context and stashes both `sessionManager` and `catalog` on c.var; each
+  // context and stashes both `SessionService` and `catalog` on c.var; each
   // route family reads back the one it needs via the resolver. 404 if id
   // unknown; 5xx if the workspace row is corrupted or workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
   sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
     "/:id/sessions",
-    sessionsRoutes((c) => c.get("sessionManager")),
+    sessionsRoutes((c) => c.get("sessions")),
   );
   app.route("/api/workspaces", sessionsApp);
 
@@ -281,7 +279,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
   tasksApp.route(
     "/:id/tasks",
-    tasksRoutes((c) => c.get("taskManager")),
+    tasksRoutes((c) => c.get("tasks")),
   );
   app.route("/api/workspaces", tasksApp);
 
@@ -289,7 +287,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes((c) => c.get("catalog")),
+    catalogRoutes((c: import("hono").Context) => c.get("catalog") as CatalogService),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -319,7 +317,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       listen: `http://${displayHost}:${port}`,
       home: home,
       globalDb: globalDbPath(home),
-      workspaces: (await workspaceQueries.list()).length,
+      workspaces: (await workspaceService.list()).length,
       runtimes: runtimeRegistry.kinds(),
       static: serveStaticFiles ? staticDir : null,
       logsDir: logsDir(home),
@@ -345,7 +343,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   //      (a) a `POST /tasks` arriving mid-shutdown spawning a new
   //      subprocess after we've already taken the snapshot, and (b) the
   //      first request to a workspace whose context wasn't loaded yet
-  //      lazy-instantiating a fresh TaskManager that wasn't in
+  //      lazy-instantiating a fresh TaskService that wasn't in
   //      `cache.loaded()` and would never get drained.
   //   2. `tasks.shutdown()` second — by now no new dispatches can land,
   //      so the snapshot of cached contexts is authoritative.
@@ -417,9 +415,9 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 
 /**
  * Hono middleware: pulls `:id` from the route params, asks the cache for
- * its `WorkspaceContext`, and stashes the per-workspace `SessionManager`
+ * its `WorkspaceContext`, and stashes the per-workspace `SessionService`
  * and `CatalogManager` on `c.var`. Sub-route families pull whichever they need
- * (sessions read `c.get("sessionManager")`; catalog reads `c.get("catalog")`).
+ * (sessions read `c.get("sessions")`; catalog reads `c.get("catalog")`).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
@@ -445,9 +443,9 @@ function workspaceContextMiddleware(
         404,
       );
     }
-    c.set("sessionManager", ctx.sessions);
-    c.set("taskManager", ctx.tasks);
-    c.set("catalog", { service: ctx.catalog, queries: ctx.catalogQueries });
+    c.set("sessions", ctx.sessions);
+    c.set("tasks", ctx.tasks);
+    c.set("catalog", ctx.catalog);
     await next();
   };
 }

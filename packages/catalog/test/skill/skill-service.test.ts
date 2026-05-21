@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EntryFile } from "../../src/fetcher/index.js";
-import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import {
   PlanStaleError,
   SkillFrontmatterError,
   SkillNotFoundError,
   SkillOriginConflictError,
 } from "../../src/skill/errors.js";
-import { Skill } from "../../src/skill/skill-entity.js";
+import { SkillEntity } from "../../src/skill/skill-entity.js";
+import { SkillRepository } from "../../src/skill/skill-repository.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
@@ -52,14 +52,14 @@ ${deps}
 `;
 
 let orm: ReturnType<typeof openTestCatalogDb>;
-let repo: DrizzleSkillRepository;
+let repo: SkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
 
-  repo = new DrizzleSkillRepository({ db: orm.db });
+  repo = new SkillRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);
 });
@@ -238,9 +238,9 @@ describe("SkillService — single-entity API", () => {
     await svc.install("file:/abs/tool");
   });
 
-  it("get returns Skill entity", async () => {
+  it("get returns SkillEntity entity", async () => {
     const s = await svc.get("public/tool");
-    expect(s).toBeInstanceOf(Skill);
+    expect(s).toBeInstanceOf(SkillEntity);
     expect(s!.fqn).toBe("public/tool");
   });
 

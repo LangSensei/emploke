@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SkillNameInvalidError } from "../../src/skill/errors.js";
-import { Skill } from "../../src/skill/skill-entity.js";
+import { SkillEntity } from "../../src/skill/skill-entity.js";
 
 const MIN_VALID = `---
 name: tool-use
@@ -10,9 +10,9 @@ version: 1.0.0
 # Body
 `;
 
-describe("Skill.create", () => {
+describe("SkillEntity.create", () => {
   it("returns an entity with derived FQN and exposed metadata", () => {
-    const s = Skill.create(MIN_VALID, "file:/abs/skills/tool-use", "test");
+    const s = SkillEntity.create(MIN_VALID, "file:/abs/skills/tool-use", "test");
     expect(s.fqn).toBe("public/tool-use");
     expect(s.scope).toBe("public"); // derived from fqn (catalog v2)
     expect(s.shortName).toBe("tool-use");
@@ -37,7 +37,7 @@ dependencies:
     - "file:/abs/mcps/azure"
 ---
 `;
-    const s = Skill.create(src, "file:/abs/parent", "test");
+    const s = SkillEntity.create(src, "file:/abs/parent", "test");
     expect(s.depsRefs.skills).toEqual(["file:/abs/child"]);
     expect(s.depsRefs.mcps).toEqual(["file:/abs/mcps/azure"]);
     // fqn-form deps stay empty until the install pipeline writes the dep tables.
@@ -45,14 +45,14 @@ dependencies:
   });
 
   it("rejects empty origin", () => {
-    expect(() => Skill.create(MIN_VALID, "", "test")).toThrow(TypeError);
+    expect(() => SkillEntity.create(MIN_VALID, "", "test")).toThrow(TypeError);
   });
 });
 
-describe("Skill.fromStored", () => {
+describe("SkillEntity.fromStored", () => {
   it("trusts persisted state without re-parsing anchor", () => {
     const now = "2026-05-19T00:00:00.000Z";
-    const s = Skill.fromStored({
+    const s = SkillEntity.fromStored({
       fqn: "public/tool-use",
       origin: "file:/abs/x",
       description: "y",
@@ -70,7 +70,7 @@ describe("Skill.fromStored", () => {
 
   it("validates name (defensive)", () => {
     expect(() =>
-      Skill.fromStored({
+      SkillEntity.fromStored({
         fqn: "no-slash",
         origin: "file:/abs/x",
         description: "x",
@@ -85,9 +85,9 @@ describe("Skill.fromStored", () => {
   });
 });
 
-describe("Skill.withAnchor", () => {
+describe("SkillEntity.withAnchor", () => {
   it("returns a new entity with updated metadata, preserved identity", () => {
-    const s1 = Skill.create(MIN_VALID, "file:/abs/x", "test");
+    const s1 = SkillEntity.create(MIN_VALID, "file:/abs/x", "test");
     const updated = MIN_VALID.replace(
       "description: Helpful patterns",
       "description: Updated",
@@ -101,15 +101,15 @@ describe("Skill.withAnchor", () => {
   });
 
   it("rejects identity change", () => {
-    const s1 = Skill.create(MIN_VALID, "file:/abs/x", "test");
+    const s1 = SkillEntity.create(MIN_VALID, "file:/abs/x", "test");
     const renamed = MIN_VALID.replace("tool-use", "renamed-skill");
     expect(() => s1.withAnchor(renamed, "test")).toThrow(/cannot change identity/);
   });
 });
 
-describe("Skill.toJSON", () => {
+describe("SkillEntity.toJSON", () => {
   it("emits the v2 wire shape (no scope/shortName/anchorContent, with timestamps)", () => {
-    const s = Skill.create(MIN_VALID, "file:/abs/x", "test");
+    const s = SkillEntity.create(MIN_VALID, "file:/abs/x", "test");
     const json = s.toJSON();
     expect(json).toHaveProperty("fqn");
     expect(json).toHaveProperty("installedAt");

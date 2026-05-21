@@ -38,7 +38,7 @@ describe("WorkspaceService.unregister", () => {
 
     await sys.service.unregister({ id: UUID_A, purge: false });
 
-    expect(await sys.queries.getById(UUID_A)).toBeNull();
+    expect(await sys.service.getById(UUID_A)).toBeNull();
     expect((await stat(path.join(wsDir, "user-file.txt"))).isFile()).toBe(true);
     expect((await stat(path.join(wsDir, "sessions", "trace.txt"))).isFile()).toBe(true);
   });

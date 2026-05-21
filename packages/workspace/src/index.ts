@@ -36,10 +36,6 @@ export {
   workspaceLayout,
   workspacesParentDir,
 } from "./layout.js";
-export {
-  WorkspaceQueries,
-  type WorkspaceSummaryView,
-  type WorkspaceView,
-} from "./queries.js";
-export { WorkspaceService } from "./service.js";
+export type { Workspace } from "./types.js";
 export { InputValidationError } from "./validate.js";
+export { WorkspaceService } from "./workspace-service.js";

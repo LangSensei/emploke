@@ -23,7 +23,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — already-terminal input", () => {
+describe("TaskService.cancel — already-terminal input", () => {
   it("throws InvalidTransition on a success task", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "completes" });
     fx.rt.handles[0].resolveExit({ code: 0, signal: null });

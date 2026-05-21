@@ -49,7 +49,7 @@ async function makeCache(): Promise<CacheHarness> {
   const cap = captureLogger();
   const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
   openSubsystems.push(sys);
-  return { cap, cache: sys.cache, service: sys.service, queries: sys.queries };
+  return { cap, cache: sys.cache, service: sys.service, queries: sys.service };
 }
 
 async function registerWs(

@@ -1,10 +1,9 @@
 export {
   buildCatalogRuntime,
   type CatalogOptions,
-  CatalogQueries,
   type CatalogRuntime,
-} from "./catalog-queries.js";
-export { CatalogService } from "./catalog-service.js";
+  CatalogService,
+} from "./catalog-service.js";
 export { HasDependentsError } from "./errors.js";
 export type {
   CatalogConflict,

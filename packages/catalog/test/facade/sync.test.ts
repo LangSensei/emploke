@@ -1,18 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AgentRepository } from "../../src/agent/agent-repository.js";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
-import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
-import { CatalogQueries } from "../../src/facade/catalog-queries.js";
 import { CatalogService } from "../../src/facade/catalog-service.js";
 import type {
   CatalogConflict,
   McpResolveAdapter,
   McpResolvedNode,
 } from "../../src/facade/plan-types.js";
-import { DrizzleMcpRepository } from "../../src/mcp/drizzle-mcp-repository.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
+import { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
-import { DrizzleSkillRepository } from "../../src/skill/drizzle-skill-repository.js";
 import { CyclicDependencyError } from "../../src/skill/errors.js";
+import { SkillRepository } from "../../src/skill/skill-repository.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
@@ -132,18 +131,18 @@ ${extra}
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
 let orm: ReturnType<typeof openTestCatalogDb>;
-let mcpRepo: DrizzleMcpRepository;
-let skillRepo: DrizzleSkillRepository;
-let agentRepo: DrizzleAgentRepository;
+let mcpRepo: McpRepository;
+let skillRepo: SkillRepository;
+let agentRepo: AgentRepository;
 let fakes: Fakes;
-let mgr: { service: CatalogService; queries: CatalogQueries };
+let mgr: CatalogService;
 
 beforeEach(async () => {
   orm = bootstrapCatalogDb();
 
-  mcpRepo = new DrizzleMcpRepository({ db: orm.db });
-  skillRepo = new DrizzleSkillRepository({ db: orm.db });
-  agentRepo = new DrizzleAgentRepository({ db: orm.db });
+  mcpRepo = new McpRepository({ db: orm.db });
+  skillRepo = new SkillRepository({ db: orm.db });
+  agentRepo = new AgentRepository({ db: orm.db });
   fakes = makeFakes();
   const mcpSvc = new McpService(mcpRepo, fakes.mcpFetchFile);
   const skillSvc = new SkillService(skillRepo, fakes.skillFetcher, { mcps: mcpRepo });
@@ -161,9 +160,7 @@ beforeEach(async () => {
     resolveMcpAdapter: fakes.mcpResolveAdapter,
     logger: (await import("pino")).default({ level: "silent" }),
   };
-  const queries = new CatalogQueries(rt);
-  const service = new CatalogService(rt, queries);
-  mgr = { service, queries };
+  mgr = new CatalogService(rt);
 });
 
 afterEach(async () => {
@@ -177,9 +174,9 @@ afterEach(async () => {
 describe("sync resolve — identity check", () => {
   it("up-to-date when fqn + version + deps unchanged", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/tool");
 
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
     expect(plan.isSync).toBe(true);
     expect(plan.upToDate).toBe(true);
     expect(plan.toInstall).toHaveLength(0);
@@ -188,11 +185,11 @@ describe("sync resolve — identity check", () => {
 
   it("identity-changed when upstream renames under the same URL", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/tool");
 
     // Upstream rename: same origin, different name
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("toolbox") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
     expect(plan.identityChange).toEqual({
       kind: "skill",
       oldFqn: "public/tool",
@@ -205,14 +202,14 @@ describe("sync resolve — identity check", () => {
 
   it("applySync on identity-changed deletes old fqn row + installs new", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/tool");
 
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("toolbox") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    await mgr.service.applySync(plan);
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    await mgr.applySync(plan);
 
-    expect(await mgr.queries.getSkill("public/tool")).toBeNull();
-    const renamed = await mgr.queries.getSkill("public/toolbox");
+    expect(await mgr.getSkill("public/tool")).toBeNull();
+    const renamed = await mgr.getSkill("public/toolbox");
     expect(renamed).not.toBeNull();
     expect(renamed?.origin).toBe("file:/abs/tool");
   });
@@ -221,10 +218,10 @@ describe("sync resolve — identity check", () => {
 describe("sync resolve — version short-circuit", () => {
   it("will-sync when version bumped", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.0.0") });
-    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/tool");
 
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.1.0") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
     expect(plan.upToDate).toBe(false);
     expect(plan.toInstall.find((n) => n.node.fqn === "public/tool")?.disposition).toBe("will-sync");
   });
@@ -236,16 +233,16 @@ describe("sync resolve — version short-circuit", () => {
     // `_meta.name` doesn't show as a spurious diff). Same upstream
     // bytes → up-to-date. Different bytes → will-sync.
     fakes.setMcp("file:/abs/mcp/x", "vendor/x", '{"command": "node", "args": ["v1.js"]}');
-    await mgr.service.installMcpFromOrigin("file:/abs/mcp/x");
+    await mgr.installMcpFromOrigin("file:/abs/mcp/x");
 
     // Same content — sync should report up-to-date.
-    let plan = await mgr.queries.resolveSyncMcp("vendor/x");
+    let plan = await mgr.resolveSyncMcp("vendor/x");
     expect(plan.upToDate).toBe(true);
     expect(plan.toInstall).toHaveLength(0);
 
     // Drift the upstream content (without changing the spec name).
     fakes.setMcp("file:/abs/mcp/x", "vendor/x", '{"command": "node", "args": ["v2.js"]}');
-    plan = await mgr.queries.resolveSyncMcp("vendor/x");
+    plan = await mgr.resolveSyncMcp("vendor/x");
     expect(plan.upToDate).toBe(false);
     expect(plan.toInstall.find((n) => n.node.fqn === "vendor/x")?.disposition).toBe("will-sync");
   });
@@ -257,12 +254,12 @@ describe("sync resolve — orphan detection", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    expect(await mgr.queries.getMcp("vendor/x")).not.toBeNull();
+    await mgr.installSkill("file:/abs/tool");
+    expect(await mgr.getMcp("vendor/x")).not.toBeNull();
 
     // Upstream drops the mcp dep and bumps the version
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.1.0") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
     expect(plan.orphans).toHaveLength(1);
     expect(plan.orphans[0]).toMatchObject({ kind: "mcp", fqn: "vendor/x" });
   });
@@ -279,11 +276,11 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`,
       ),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    await mgr.service.installSkill("file:/abs/sibling");
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/sibling");
 
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.1.0") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
     expect(plan.orphans).toHaveLength(0);
   });
 
@@ -292,16 +289,16 @@ describe("sync resolve — orphan detection", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.installSkill("file:/abs/tool");
 
     // Drop the dep + sync
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.1.0") });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    const result = await mgr.service.applySync(plan);
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    const result = await mgr.applySync(plan);
     // applySync result includes the orphans surfaced by the diff.
     expect(result.orphansFlagged).toHaveLength(1);
     expect(result.orphansFlagged[0]).toMatchObject({ kind: "mcp", fqn: "vendor/x" });
-    const orphaned = await mgr.queries.getMcp("vendor/x");
+    const orphaned = await mgr.getMcp("vendor/x");
     expect(orphaned?.orphaned).toBe(true);
 
     // Install a NEW skill that references the orphan again — recompute
@@ -313,8 +310,8 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`,
       ),
     });
-    await mgr.service.installSkill("file:/abs/restorer");
-    const restored = await mgr.queries.getMcp("vendor/x");
+    await mgr.installSkill("file:/abs/restorer");
+    const restored = await mgr.getMcp("vendor/x");
     expect(restored?.orphaned).toBe(false);
   });
 
@@ -332,18 +329,18 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  skills:\n    - "file:/abs/tool"`,
       ),
     });
-    await mgr.service.installAgent("file:/abs/agent");
+    await mgr.installAgent("file:/abs/agent");
 
     // While the agent exists, the tool skill has a reverse-dep and
     // is not orphan.
-    let tool = await mgr.queries.getSkill("public/tool");
+    let tool = await mgr.getSkill("public/tool");
     expect(tool?.orphaned).toBe(false);
 
-    await mgr.service.deleteAgent("public/writer");
+    await mgr.deleteAgent("public/writer");
 
     // Removing the agent leaves the tool with zero reverse-deps —
     // it should now read as orphan from the very next projection.
-    tool = await mgr.queries.getSkill("public/tool");
+    tool = await mgr.getSkill("public/tool");
     expect(tool?.orphaned).toBe(true);
   });
 
@@ -365,9 +362,7 @@ describe("sync resolve — orphan detection", () => {
         `dependencies:\n  skills:\n    - "file:/abs/loner"`,
       ),
     });
-    await expect(mgr.service.installSkill("file:/abs/loner")).rejects.toBeInstanceOf(
-      CyclicDependencyError,
-    );
+    await expect(mgr.installSkill("file:/abs/loner")).rejects.toBeInstanceOf(CyclicDependencyError);
   });
 });
 
@@ -376,21 +371,21 @@ describe("sync resolve — prereq carry-over", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    let s = await mgr.queries.getSkill("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    let s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(false);
 
-    await mgr.service.acknowledgeSkillPrereqs("public/tool");
-    s = await mgr.queries.getSkill("public/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
+    s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(true);
 
     // Bump version but keep the prereqs text the same
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo'"),
     });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    await mgr.service.applySync(plan);
-    s = await mgr.queries.getSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    await mgr.applySync(plan);
+    s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(true);
   });
 
@@ -398,15 +393,15 @@ describe("sync resolve — prereq carry-over", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    await mgr.service.acknowledgeSkillPrereqs("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
 
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo AND bar'"),
     });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    await mgr.service.applySync(plan);
-    const s = await mgr.queries.getSkill("public/tool");
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    await mgr.applySync(plan);
+    const s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(false);
   });
 });
@@ -416,15 +411,15 @@ describe("install — prereq default", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'do something'"),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    const s = await mgr.queries.getSkill("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    const s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(false);
   });
 
   it("install without prereqs lands prereqsAck = true", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    await mgr.service.installSkill("file:/abs/tool");
-    const s = await mgr.queries.getSkill("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    const s = await mgr.getSkill("public/tool");
     expect(s?.prereqsAck).toBe(true);
   });
 });
@@ -434,7 +429,7 @@ describe("install / sync result — prereqs surfaced on installed[]", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
     });
-    const result = await mgr.service.installSkill("file:/abs/tool");
+    const result = await mgr.installSkill("file:/abs/tool");
     expect(result.installed).toHaveLength(1);
     const entry = result.installed[0];
     expect(entry?.kind).toBe("skill");
@@ -445,7 +440,7 @@ describe("install / sync result — prereqs surfaced on installed[]", () => {
 
   it("installed[] for a skill without prereqs omits the prereqs field", async () => {
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    const result = await mgr.service.installSkill("file:/abs/tool");
+    const result = await mgr.installSkill("file:/abs/tool");
     const entry = result.installed[0];
     expect(entry?.prereqs).toBeUndefined();
     expect(entry?.prereqsAck).toBe(true);
@@ -453,7 +448,7 @@ describe("install / sync result — prereqs surfaced on installed[]", () => {
 
   it("installed[] for an mcp omits prereqs and prereqsAck", async () => {
     fakes.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
-    const result = await mgr.service.installMcpFromOrigin("file:/abs/mcp/x");
+    const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x");
     const entry = result.installed[0];
     expect(entry?.kind).toBe("mcp");
     expect(entry?.prereqs).toBeUndefined();
@@ -464,14 +459,14 @@ describe("install / sync result — prereqs surfaced on installed[]", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    await mgr.service.acknowledgeSkillPrereqs("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
 
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo AND bar'"),
     });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    const result = await mgr.service.applySync(plan);
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    const result = await mgr.applySync(plan);
     const entry = result.installed.find((e) => e.fqn === "public/tool");
     expect(entry?.prereqs).toBe("install foo AND bar");
     expect(entry?.prereqsAck).toBe(false);
@@ -481,15 +476,15 @@ describe("install / sync result — prereqs surfaced on installed[]", () => {
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.0.0", "prereqs: 'install foo'"),
     });
-    await mgr.service.installSkill("file:/abs/tool");
-    await mgr.service.acknowledgeSkillPrereqs("public/tool");
+    await mgr.installSkill("file:/abs/tool");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
 
     // Bump version but keep prereqs identical
     fakes.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", "1.1.0", "prereqs: 'install foo'"),
     });
-    const plan = await mgr.queries.resolveSyncSkill("public/tool");
-    const result = await mgr.service.applySync(plan);
+    const plan = await mgr.resolveSyncSkill("public/tool");
+    const result = await mgr.applySync(plan);
     const entry = result.installed.find((e) => e.fqn === "public/tool");
     expect(entry?.prereqs).toBe("install foo");
     expect(entry?.prereqsAck).toBe(true);
@@ -508,9 +503,9 @@ describe("recursive cascade computeStatus", () => {
         `dependencies:\n  skills:\n    - "file:/abs/tool"`,
       ),
     });
-    await mgr.service.installAgent("file:/abs/agent");
+    await mgr.installAgent("file:/abs/agent");
 
-    const entries = await mgr.queries.listAgentEntries();
+    const entries = await mgr.listAgentEntries();
     const agent = entries.find((e) => e.agent.fqn === "public/researcher");
     expect(agent?.status).toBe("blocked");
     expect(agent?.blockedReason?.blockedDeps).toContainEqual({ kind: "skill", fqn: "public/tool" });
@@ -527,10 +522,10 @@ describe("recursive cascade computeStatus", () => {
         `dependencies:\n  skills:\n    - "file:/abs/tool"`,
       ),
     });
-    await mgr.service.installAgent("file:/abs/agent");
-    await mgr.service.acknowledgeSkillPrereqs("public/tool");
+    await mgr.installAgent("file:/abs/agent");
+    await mgr.acknowledgeSkillPrereqs("public/tool");
 
-    const entries = await mgr.queries.listAgentEntries();
+    const entries = await mgr.listAgentEntries();
     expect(entries[0]?.status).toBe("ready");
   });
 
@@ -543,10 +538,10 @@ describe("recursive cascade computeStatus", () => {
         `dependencies:\n  skills:\n    - "file:/abs/tool"`,
       ),
     });
-    await mgr.service.installAgent("file:/abs/agent");
-    await mgr.service.disableAgent("public/researcher");
+    await mgr.installAgent("file:/abs/agent");
+    await mgr.disableAgent("public/researcher");
 
-    const skills = await mgr.queries.listSkillEntries();
+    const skills = await mgr.listSkillEntries();
     expect(skills.find((s) => s.skill.fqn === "public/tool")?.status).toBe("ready");
   });
 });

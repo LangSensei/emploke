@@ -1,4 +1,4 @@
-import type { CatalogQueries } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
@@ -14,7 +14,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * (computed from layout), live `lastActiveAt` + `preview` from the
  * runtime, and the `lastLaunchMode` UI hint.
  */
-export interface SessionView {
+export interface Session {
   readonly id: string;
   readonly workdir: string;
   readonly agent: string;
@@ -27,14 +27,14 @@ export interface SessionView {
 }
 
 /**
- * Configuration for SessionManager. After the de-DDD simplification,
+ * Configuration for SessionService. After the de-DDD simplification,
  * persistence is supplied directly as an `EntityManager` (one EM per
  * workspace, owned by the @emploke/core orchestrator). The manager
  * builds a `SessionRepository` internally.
  */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
-  readonly catalog: CatalogQueries;
+  readonly catalog: CatalogService;
   /** Registry of runtime adapters; must contain at least the default runtime. */
   readonly runtimeRegistry: RuntimeRegistry;
   /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */
@@ -71,7 +71,7 @@ export interface SessionManagerConfig {
   readonly randomBytes?: (n: number) => Buffer;
 }
 
-/** Options for SessionManager.create. */
+/** Options for SessionService.create. */
 export interface CreateSessionOpts {
   /** Catalog agent name. */
   readonly agent: string;
@@ -79,7 +79,7 @@ export interface CreateSessionOpts {
   readonly runtime?: string;
 }
 
-/** Options for `SessionManager.buildInteractiveLaunch`. */
+/** Options for `SessionService.buildInteractiveLaunch`. */
 export interface BuildInteractiveLaunchSessionOpts {
   /**
    * If `true`, ask the runtime to enable remote control. Runtimes that
@@ -88,7 +88,7 @@ export interface BuildInteractiveLaunchSessionOpts {
   readonly remote?: boolean;
 }
 
-/** Options for SessionManager.list. */
+/** Options for SessionService.list. */
 export interface ListSessionOpts {
   /** Filter to sessions whose agent FQN matches exactly. */
   readonly agent?: string;
@@ -102,7 +102,7 @@ export interface ListSessionOpts {
   readonly activeSince?: string;
 }
 
-/** Options for SessionManager.delete. */
+/** Options for SessionService.delete. */
 export interface DeleteSessionOpts {
   /**
    * If `true`, full purge: remove the row, the per-session workdir, and
@@ -110,7 +110,7 @@ export interface DeleteSessionOpts {
    * (archive): only the row is removed; workdir contents and runtime
    * state preserved. Same default semantics as
    * `WorkspaceManager.unregister({ purge })` and
-   * `TaskManager.delete({ purge })`.
+   * `TaskService.delete({ purge })`.
    */
   readonly purge?: boolean;
 }

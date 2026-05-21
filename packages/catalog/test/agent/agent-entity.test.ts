@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Agent } from "../../src/agent/agent-entity.js";
+import { AgentEntity } from "../../src/agent/agent-entity.js";
 import { AgentFrontmatterError, AgentNameInvalidError } from "../../src/agent/errors.js";
 
 const MIN_VALID = `---
@@ -10,9 +10,9 @@ version: 1.0.0
 # Body
 `;
 
-describe("Agent.create", () => {
+describe("AgentEntity.create", () => {
   it("returns an entity with derived FQN and exposed metadata", () => {
-    const a = Agent.create(MIN_VALID, "file:/abs/agents/researcher", "test");
+    const a = AgentEntity.create(MIN_VALID, "file:/abs/agents/researcher", "test");
     expect(a.fqn).toBe("public/researcher");
     expect(a.scope).toBe("public");
     expect(a.shortName).toBe("researcher");
@@ -25,26 +25,26 @@ describe("Agent.create", () => {
   });
 
   it("rejects empty origin", () => {
-    expect(() => Agent.create(MIN_VALID, "", "test")).toThrow(TypeError);
+    expect(() => AgentEntity.create(MIN_VALID, "", "test")).toThrow(TypeError);
   });
 
   it("propagates frontmatter errors", () => {
-    expect(() => Agent.create("# no frontmatter\n", "file:/abs/x", "test")).toThrow(
+    expect(() => AgentEntity.create("# no frontmatter\n", "file:/abs/x", "test")).toThrow(
       AgentFrontmatterError,
     );
   });
 
   it("propagates name validation errors", () => {
     expect(() =>
-      Agent.create(MIN_VALID.replace("researcher", "BadName"), "file:/abs/x", "test"),
+      AgentEntity.create(MIN_VALID.replace("researcher", "BadName"), "file:/abs/x", "test"),
     ).toThrow(AgentNameInvalidError);
   });
 });
 
-describe("Agent.fromStored", () => {
+describe("AgentEntity.fromStored", () => {
   it("trusts persisted state without re-parsing anchor", () => {
     const now = "2026-05-19T00:00:00.000Z";
-    const a = Agent.fromStored({
+    const a = AgentEntity.fromStored({
       fqn: "public/researcher",
       origin: "file:/abs/x",
       description: "y",
@@ -63,7 +63,7 @@ describe("Agent.fromStored", () => {
 
   it("validates name (defensive)", () => {
     expect(() =>
-      Agent.fromStored({
+      AgentEntity.fromStored({
         fqn: "no-slash",
         origin: "file:/abs/x",
         description: "x",
@@ -79,9 +79,9 @@ describe("Agent.fromStored", () => {
   });
 });
 
-describe("Agent.withAnchor", () => {
+describe("AgentEntity.withAnchor", () => {
   it("returns a new entity with updated metadata, preserved identity", () => {
-    const a1 = Agent.create(MIN_VALID, "file:/abs/x", "test");
+    const a1 = AgentEntity.create(MIN_VALID, "file:/abs/x", "test");
     const updated = MIN_VALID.replace(
       "description: Helpful researcher",
       "description: Updated",
@@ -95,13 +95,13 @@ describe("Agent.withAnchor", () => {
   });
 
   it("rejects scope change", () => {
-    const a1 = Agent.create(MIN_VALID, "file:/abs/x", "test");
+    const a1 = AgentEntity.create(MIN_VALID, "file:/abs/x", "test");
     const evil = MIN_VALID.replace("name: researcher", "name: researcher\nscope: io.evil");
     expect(() => a1.withAnchor(evil, "test")).toThrow(/cannot change identity/);
   });
 
   it("rejects short name change", () => {
-    const a1 = Agent.create(MIN_VALID, "file:/abs/x", "test");
+    const a1 = AgentEntity.create(MIN_VALID, "file:/abs/x", "test");
     const renamed = MIN_VALID.replace("researcher", "renamed-agent");
     expect(() => a1.withAnchor(renamed, "test")).toThrow(/cannot change identity/);
   });

@@ -5,7 +5,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Task, TaskRepository } from "../src/index.js";
+import { TaskEntity } from "../src/task-entity.js";
+import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
 import type { TaskCancellation, TaskFailure } from "../src/types.js";
 
@@ -24,8 +25,8 @@ const CREATED_AT = "2026-06-01T00:00:00.000Z";
 const STARTED_AT = "2026-06-01T00:00:01.000Z";
 const ENDED_AT = "2026-06-01T00:00:02.000Z";
 
-function buildFailure(id: string, failure: TaskFailure): Task {
-  return Task.fromStored({
+function buildFailure(id: string, failure: TaskFailure): TaskEntity {
+  return TaskEntity.fromStored({
     id,
     agent: "writer",
     brief: "do the thing",
@@ -39,8 +40,8 @@ function buildFailure(id: string, failure: TaskFailure): Task {
   });
 }
 
-function buildCancellation(id: string, cancellation: TaskCancellation): Task {
-  return Task.fromStored({
+function buildCancellation(id: string, cancellation: TaskCancellation): TaskEntity {
+  return TaskEntity.fromStored({
     id,
     agent: "writer",
     brief: "do the thing",

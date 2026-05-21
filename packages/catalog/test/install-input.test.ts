@@ -3,7 +3,7 @@ import {
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,
-} from "../src/validate/install-input.js";
+} from "../src/validate.js";
 
 describe("validateSkillInstallInput", () => {
   it("accepts a plain { origin: <github-url> }", () => {

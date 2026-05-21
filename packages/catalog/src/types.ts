@@ -133,7 +133,7 @@ export interface Agent {
   };
 }
 
-export interface McpMetadata {
+export interface Mcp {
   /** Renamed from `name` in catalog v2 (issue #122). */
   readonly fqn: string;
   readonly origin: string;

@@ -3,10 +3,9 @@ import path from "node:path";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { __Entity__Queries } from "./queries.js";
-import { __Entity__Repository } from "./repository.js";
+import { __Entity__Repository } from "./__entity-kebab__-repository.js";
+import { __Entity__Service } from "./__entity-kebab__-service.js";
 import * as schema from "./schema.js";
-import { __Entity__Service } from "./service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -20,7 +19,6 @@ export type __Entity__ModuleOptions = (
 
 export interface __Entity__Module {
   readonly service: __Entity__Service;
-  readonly queries: __Entity__Queries;
   close(): Promise<void>;
 }
 
@@ -29,9 +27,6 @@ export interface __Entity__Module {
  * (the pkg opens its own better-sqlite3 connection in WAL mode and
  * runs pending migrations); tests pass an existing `db` from
  * `openTest__Entity__Db()`.
- *
- * Returns both halves of the read/write split. Downstream packages
- * should only ever hold the half they actually use.
  */
 export async function compose__Entity__Module(
   opts: __Entity__ModuleOptions,
@@ -53,11 +48,9 @@ export async function compose__Entity__Module(
     db,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
-  const queries = new __Entity__Queries(repo);
   const service = new __Entity__Service(repo, opts.now !== undefined ? { now: opts.now } : {});
   return {
     service,
-    queries,
     async close() {
       sqlite?.close();
     },

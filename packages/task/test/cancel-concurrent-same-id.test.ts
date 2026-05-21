@@ -25,7 +25,7 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskManager.cancel — concurrent same-id", () => {
+describe("TaskService.cancel — concurrent same-id", () => {
   it("exactly one cancel resolves; the other throws InvalidTransition", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "race-with-myself" });
 

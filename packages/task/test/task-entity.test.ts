@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { InvalidTaskIdError, InvalidTransition } from "../src/errors.js";
-import { Task } from "../src/task-entity.js";
+import { TaskEntity } from "../src/task-entity.js";
 import type { TaskStatus } from "../src/types.js";
 
 const fixedNow = "2025-06-01T12:00:00.000Z";
 const FIXED_ID = "20260101-aaaaaaaa";
 
-const makeTask = (overrides: { metadata?: Readonly<Record<string, unknown>> } = {}): Task =>
-  Task.create({
+const makeTask = (overrides: { metadata?: Readonly<Record<string, unknown>> } = {}): TaskEntity =>
+  TaskEntity.create({
     id: FIXED_ID,
     agent: "a",
     brief: "go",
@@ -15,9 +15,9 @@ const makeTask = (overrides: { metadata?: Readonly<Record<string, unknown>> } = 
     ...(overrides.metadata !== undefined ? { metadata: overrides.metadata } : {}),
   });
 
-describe("Task.create", () => {
+describe("TaskEntity.create", () => {
   it("starts in running with success/failure/cancellation unset and startedAt = createdAt", () => {
-    const t = Task.create({ agent: "a", brief: "do", createdAt: fixedNow });
+    const t = TaskEntity.create({ agent: "a", brief: "do", createdAt: fixedNow });
     expect(t.status).toBe("running");
     expect(t.success).toBeUndefined();
     expect(t.failure).toBeUndefined();
@@ -29,46 +29,50 @@ describe("Task.create", () => {
   });
 
   it("captures details when provided", () => {
-    const t = Task.create({ agent: "a", brief: "do", details: "Tone: warm.\nLength: short." });
+    const t = TaskEntity.create({
+      agent: "a",
+      brief: "do",
+      details: "Tone: warm.\nLength: short.",
+    });
     expect(t.details).toBe("Tone: warm.\nLength: short.");
   });
 
   it("rejects empty brief at the entity boundary", () => {
-    expect(() => Task.create({ agent: "a", brief: "" })).toThrow(TypeError);
+    expect(() => TaskEntity.create({ agent: "a", brief: "" })).toThrow(TypeError);
   });
 
   it("mints distinct canonical task ids by default", () => {
-    const a = Task.create({ agent: "x", brief: "go" });
-    const b = Task.create({ agent: "x", brief: "go" });
+    const a = TaskEntity.create({ agent: "x", brief: "go" });
+    const b = TaskEntity.create({ agent: "x", brief: "go" });
     expect(a.id).not.toBe(b.id);
     expect(a.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
   });
 
   it("rejects an explicit non-canonical id", () => {
-    expect(() => Task.create({ agent: "a", brief: "go", id: "fixed-id" })).toThrow(
+    expect(() => TaskEntity.create({ agent: "a", brief: "go", id: "fixed-id" })).toThrow(
       InvalidTaskIdError,
     );
   });
 
   it("honours an explicit createdAt override and mirrors into startedAt", () => {
     const stamp = "2025-12-31T23:59:59.999Z";
-    const t = Task.create({ agent: "a", brief: "go", createdAt: stamp });
+    const t = TaskEntity.create({ agent: "a", brief: "go", createdAt: stamp });
     expect(t.createdAt).toBe(stamp);
     expect(t.startedAt).toBe(stamp);
   });
 
   it("captures the explicit origin", () => {
-    const t = Task.create({ agent: "a", brief: "go", origin: "workflow" });
+    const t = TaskEntity.create({ agent: "a", brief: "go", origin: "workflow" });
     expect(t.origin).toBe("workflow");
   });
 
   it("defaults metadata to an empty object", () => {
-    const t = Task.create({ agent: "a", brief: "go" });
+    const t = TaskEntity.create({ agent: "a", brief: "go" });
     expect(t.metadata).toEqual({});
   });
 });
 
-describe("Task — happy paths", () => {
+describe("TaskEntity — happy paths", () => {
   it("complete: running → succeeded, captures success and endedAt", () => {
     const r = makeTask().complete({ output: "ok" }, { now: fixedNow });
     expect(r.status).toBe("succeeded");
@@ -101,7 +105,7 @@ describe("Task — happy paths", () => {
   });
 
   it("transitions preserve brief + details + origin verbatim", () => {
-    const t = Task.create({
+    const t = TaskEntity.create({
       id: FIXED_ID,
       agent: "a",
       brief: "the brief",
@@ -116,7 +120,7 @@ describe("Task — happy paths", () => {
   });
 });
 
-describe("Task — invalid transitions", () => {
+describe("TaskEntity — invalid transitions", () => {
   it("rejects every transition on a terminal succeeded task", () => {
     const ok = makeTask().complete({ output: "y" }, { now: fixedNow });
     expect(() => ok.complete({ output: "x" }, { now: fixedNow })).toThrow(InvalidTransition);
@@ -160,7 +164,7 @@ describe("Task — invalid transitions", () => {
   });
 });
 
-describe("Task — metadata merge on transitions", () => {
+describe("TaskEntity — metadata merge on transitions", () => {
   it("complete merges metadata into the task's existing metadata", () => {
     const t = makeTask({ metadata: { creator: "alice" } });
     const r = t.complete({ output: "ok" }, { metadata: { attempt: 2 }, now: fixedNow });
@@ -189,7 +193,7 @@ describe("Task — metadata merge on transitions", () => {
   });
 });
 
-describe("Task — purity", () => {
+describe("TaskEntity — purity", () => {
   it("does not mutate the input task", () => {
     const t = makeTask({ metadata: { a: 1 } });
     const snapshot = JSON.stringify(t);
@@ -198,7 +202,7 @@ describe("Task — purity", () => {
   });
 });
 
-describe("Task.withMetadata", () => {
+describe("TaskEntity.withMetadata", () => {
   it("replaces metadata wholesale, preserves status + timing + identity + origin", () => {
     const t = makeTask({ metadata: { keep: "no" } });
     const r = t.withMetadata({ lastActiveAtRuntime: "2026-01-01T00:00:00.000Z" });
@@ -214,9 +218,9 @@ describe("Task.withMetadata", () => {
   });
 });
 
-describe("Task.fromStored", () => {
+describe("TaskEntity.fromStored", () => {
   it("rebuilds a task from a storage row", () => {
-    const t = Task.fromStored({
+    const t = TaskEntity.fromStored({
       id: FIXED_ID,
       agent: "a",
       brief: "do",
@@ -236,7 +240,7 @@ describe("Task.fromStored", () => {
 
   it("throws InvalidTaskIdError on a malformed id", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: "../../etc",
         agent: "a",
         brief: "do",
@@ -251,7 +255,7 @@ describe("Task.fromStored", () => {
 
   it("throws CorruptedTaskError on an unknown status", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -266,7 +270,7 @@ describe("Task.fromStored", () => {
 
   it("throws CorruptedTaskError on an unknown origin", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -281,7 +285,7 @@ describe("Task.fromStored", () => {
 
   it("throws CorruptedTaskError on non-object metadata", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -295,7 +299,7 @@ describe("Task.fromStored", () => {
   });
 });
 
-describe("Task.toJSON", () => {
+describe("TaskEntity.toJSON", () => {
   it("serialises automatically via JSON.stringify with byte-identical wire shape", () => {
     const t = makeTask({ metadata: { creator: "alice" } });
     const wire = JSON.parse(JSON.stringify(t));
@@ -346,10 +350,10 @@ describe("Task.toJSON", () => {
   });
 });
 
-describe("Task.fromStored — typed payload invariants", () => {
+describe("TaskEntity.fromStored — typed payload invariants", () => {
   it("rejects status='failed' without a failure payload", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -365,7 +369,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("rejects status='cancelled' without a cancellation payload", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -381,7 +385,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("rejects status='succeeded' without a success payload", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -397,7 +401,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("rejects an out-of-union failure kind", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -415,7 +419,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("rejects an out-of-union cancellation kind", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -433,7 +437,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("requires exit_code on failure.kind='exited'", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",
@@ -451,7 +455,7 @@ describe("Task.fromStored — typed payload invariants", () => {
 
   it("requires signal on failure.kind='signal'", () => {
     expect(() =>
-      Task.fromStored({
+      TaskEntity.fromStored({
         id: FIXED_ID,
         agent: "a",
         brief: "do",

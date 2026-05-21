@@ -4,13 +4,12 @@ import path from "node:path";
 import {
   type AgentResolveResult,
   type CatalogModule,
-  type CatalogQueries,
   type CatalogService,
   composeCatalogModule,
 } from "@emploke/catalog";
 
 /**
- * Build a `CatalogService` + `CatalogQueries` pair backed by an in-memory
+ * Build a `CatalogService` + `CatalogService` pair backed by an in-memory
  * Drizzle catalog DB, with optional fixtures pre-installed.
  *
  * Each fixture entry is a map of relative paths → file contents.
@@ -50,12 +49,10 @@ export async function makeTestCatalog(
   fixtures: TestCatalogFixtures = {},
   sourceRootArg?: string,
 ): Promise<{
-  /** Read handle (CatalogQueries) — typical test access via `catalog.resolveAgent(...)`. */
-  catalog: CatalogQueries;
-  /** Write handle (CatalogService) for tests that need to install/delete/update. */
+  /** Unified read+write handle (post Section 8 merge). */
+  catalog: CatalogService;
+  /** Alias of `catalog`; kept for tests that destructured `service`. */
   service: CatalogService;
-  /** Same as `catalog`; kept for clarity when both halves are destructured. */
-  queries: CatalogQueries;
   /** Close the underlying ORM. Tests should call this in cleanup. */
   close: () => Promise<void>;
   /**
@@ -67,7 +64,6 @@ export async function makeTestCatalog(
   const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
   const module: CatalogModule = await composeCatalogModule({ dbFile: ":memory:" });
   const service = module.service;
-  const queries = module.queries;
 
   for (const [fqn, content] of Object.entries(fixtures.mcps ?? {})) {
     if (!fqn.includes("/")) {
@@ -123,9 +119,8 @@ export async function makeTestCatalog(
   };
 
   return {
-    catalog: queries,
+    catalog: service,
     service,
-    queries,
     async close() {
       await module.close();
     },
@@ -133,12 +128,12 @@ export async function makeTestCatalog(
   };
 }
 
-/** Build an `AgentResolveResult` from a catalog queries handle plus a name. */
+/** Build an `AgentResolveResult` from a catalog handle plus a name. */
 export function resolveTestAgent(
-  queries: CatalogQueries,
+  catalog: CatalogService,
   name: string,
 ): Promise<AgentResolveResult> {
-  return queries.resolveAgent(name);
+  return catalog.resolveAgent(name);
 }
 
 export type { AgentResolveResult };

@@ -16,7 +16,7 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     origins to fqns yet. The frontmatter-declared origins live on
  *     {@link depsRefs} and drive that resolution.
  */
-export class Agent {
+export class AgentEntity {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -31,15 +31,15 @@ export class Agent {
     private readonly _updatedAt: string,
   ) {}
 
-  static create(rawAgentMd: string, origin: string, sourceLabel: string): Agent {
+  static create(rawAgentMd: string, origin: string, sourceLabel: string): AgentEntity {
     if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("Agent.create requires a non-empty origin string");
+      throw new TypeError("AgentEntity.create requires a non-empty origin string");
     }
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     const now = new Date().toISOString();
-    return new Agent(
+    return new AgentEntity(
       fqn,
       origin,
       meta.description,
@@ -65,9 +65,9 @@ export class Agent {
     disabledByUser: boolean;
     installedAt: string;
     updatedAt: string;
-  }): Agent {
+  }): AgentEntity {
     validateFqn(args.fqn);
-    return new Agent(
+    return new AgentEntity(
       args.fqn,
       args.origin,
       args.description,
@@ -171,16 +171,16 @@ export class Agent {
    * `agent_files`); this method merely projects the updated metadata
    * and dep refs back onto the entity.
    */
-  withAnchor(rawAgentMd: string, sourceLabel: string): Agent {
+  withAnchor(rawAgentMd: string, sourceLabel: string): AgentEntity {
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
     const newFqn = makeFqn(meta.scope, meta.shortName);
     if (newFqn !== this._fqn) {
       throw new TypeError(
-        `Agent.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
+        `AgentEntity.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
           "Delete and reinstall to rename.",
       );
     }
-    return new Agent(
+    return new AgentEntity(
       this._fqn,
       this._origin,
       meta.description,
@@ -199,8 +199,8 @@ export class Agent {
    * Return a new entity with one or more per-installation flags
    * replaced. Identity and frontmatter are preserved.
    */
-  withState(state: { prereqsAck?: boolean; disabledByUser?: boolean }): Agent {
-    return new Agent(
+  withState(state: { prereqsAck?: boolean; disabledByUser?: boolean }): AgentEntity {
+    return new AgentEntity(
       this._fqn,
       this._origin,
       this._description,
@@ -216,8 +216,8 @@ export class Agent {
   }
 
   /** Return a new entity carrying the given resolved fqn dependencies. */
-  withDependencies(deps: AgentDependencies): Agent {
-    return new Agent(
+  withDependencies(deps: AgentDependencies): AgentEntity {
+    return new AgentEntity(
       this._fqn,
       this._origin,
       this._description,
