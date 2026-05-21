@@ -285,7 +285,19 @@ export class CopilotRuntime implements Runtime {
     // Runtime owns the cross-cutting env base (`EMPLOKE_SERVER`,
     // `EMPLOKE_SHARED_DIR`, ...). Session / Task layer their own
     // work-context env on top of what we return here.
-    return { ...cmd, env: { ...this.subprocessEnvBase } as Record<string, string> };
+    //
+    // Filter `undefined` values from the base: those are "scrub from
+    // inherited env" markers used by the headless launch's mergeEnv
+    // path (which can actually delete a key from the child's
+    // environment). The interactive path has no equivalent — `cmd /k`
+    // / pwsh `$env:` can only SET values, not unset — so undefineds
+    // would either silently leak (env-base inheritance) or break the
+    // shell quoter downstream (`pwshQuote(undefined)` crashes).
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.subprocessEnvBase)) {
+      if (typeof v === "string") env[k] = v;
+    }
+    return { ...cmd, env };
   }
 
   async readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null> {
