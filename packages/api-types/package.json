@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/fs",
+  "name": "@emploke/api-types",
   "version": "0.0.1",
-  "description": "Filesystem primitives for emploke (atomic write, cross-process lock, JSON helpers)",
+  "description": "Shared contracts between emploke transports (HTTP, IPC). Routes types, wire shapes, EMPLOKE_HOME resolution.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -23,14 +23,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "js-yaml": "^4.1.0"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"
@@ -38,6 +35,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/fs"
+    "directory": "packages/api-types"
   }
 }

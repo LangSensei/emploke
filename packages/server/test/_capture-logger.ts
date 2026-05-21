@@ -1,6 +1,5 @@
 import { Writable } from "node:stream";
-import pino, { type Level } from "pino";
-import type { Logger } from "./logger.js";
+import pino, { type Level, type Logger } from "pino";
 
 /**
  * Test-only helpers for the logging surface. Re-exported under

@@ -33,9 +33,9 @@
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
   },
   "dependencies": {
-    "@emploke/logger": "workspace:*",
     "better-sqlite3": "^12.10.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "pino": "^9.5.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

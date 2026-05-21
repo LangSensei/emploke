@@ -23,18 +23,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
-    "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "@emploke/session": "workspace:*",
     "@emploke/task": "workspace:*",
     "@emploke/workspace": "workspace:*",
     "@mikro-orm/better-sqlite": "^6.6.0",
-    "@mikro-orm/core": "^6.6.0"
+    "@mikro-orm/core": "^6.6.0",
+    "pino": "^9.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

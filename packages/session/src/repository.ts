@@ -1,4 +1,7 @@
-import { type Logger, silentLogger } from "@emploke/logger";
+import pino, { type Logger } from "pino";
+
+const silentLogger: Logger = pino({ level: "silent" });
+
 import { and, eq, gte, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";

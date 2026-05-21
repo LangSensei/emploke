@@ -126,8 +126,8 @@ export type TaskCancellation =
 
 // 鈹€鈹€鈹€ TaskManager-side types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-import type { Logger } from "@emploke/logger";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type { Logger } from "pino";
 import type * as schema from "./schema.js";
 
 type Db = BetterSQLite3Database<typeof schema>;

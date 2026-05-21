@@ -28,7 +28,14 @@ export {
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "./errors.js";
-export { type WorkspaceLayout, workspaceLayout } from "./layout.js";
+export {
+  GLOBAL_DB_FILE,
+  globalDbPath,
+  WORKSPACES_PARENT_SUBDIR,
+  type WorkspaceLayout,
+  workspaceLayout,
+  workspacesParentDir,
+} from "./layout.js";
 export {
   WorkspaceQueries,
   type WorkspaceSummaryView,

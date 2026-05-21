@@ -11,7 +11,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveEmplokePaths } from "@emploke/paths";
+import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
 import { resolveLatestLog } from "../log-paths.js";
 import type { CommandResult } from "../result.js";
 
@@ -29,16 +29,16 @@ export interface LogsOpts {
 
 export async function logs(opts: LogsOpts = {}): Promise<CommandResult> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
   const out = opts.out ?? process.stdout;
   const intervalMs = opts.pollIntervalMs ?? 250;
-  let latest = await resolveLatestLog(paths.logsDir);
+  let latest = await resolveLatestLog(logsDir(home));
   if (!latest) {
     return {
       exitCode: 0,
-      stderr: `no logs found under ${paths.logsDir}\n`,
+      stderr: `no logs found under ${logsDir(home)}\n`,
     };
   }
   // Initial pre-follow read. Track byte count so the follow loop's
@@ -65,7 +65,7 @@ export async function logs(opts: LogsOpts = {}): Promise<CommandResult> {
         st = await stat(latest);
       } catch {
         // File rotated away or deleted. Re-resolve.
-        const next = await resolveLatestLog(paths.logsDir);
+        const next = await resolveLatestLog(logsDir(home));
         if (next && next !== latest) {
           latest = next;
           const bytes = await pipeFile(latest, 0, out);

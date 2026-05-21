@@ -1,6 +1,9 @@
 import path from "node:path";
 import { type CatalogQueries, type CatalogService, composeCatalogModule } from "@emploke/catalog";
-import { type Logger, silentLogger } from "@emploke/logger";
+import pino, { type Logger } from "pino";
+
+const silentLogger: Logger = pino({ level: "silent" });
+
 import type { RuntimeRegistry } from "@emploke/runtime";
 import { composeSessionModule, type SessionManager } from "@emploke/session";
 import { composeTaskModule, type TaskManager } from "@emploke/task";

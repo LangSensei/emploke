@@ -1,7 +1,7 @@
 {
   "name": "@emploke/task",
   "version": "0.0.1",
-  "description": "Task — pure value type and state machine for emploke",
+  "description": "Task \u2014 pure value type and state machine for emploke",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -34,10 +34,10 @@
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
-    "@emploke/logger": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "better-sqlite3": "^12.10.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "pino": "^9.5.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

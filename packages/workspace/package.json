@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workspace",
   "version": "0.0.1",
-  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
+  "description": "Workspace abstraction for emploke \u2014 per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -33,11 +33,9 @@
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
   },
   "dependencies": {
-    "@emploke/fs": "workspace:*",
-    "@emploke/logger": "workspace:*",
-    "@emploke/paths": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
+    "pino": "^9.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

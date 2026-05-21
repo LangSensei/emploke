@@ -40,6 +40,7 @@ export {
   UnknownPlaceholderError,
 } from "./placeholders.js";
 export { RuntimeRegistry } from "./registry.js";
+export { SHARED_SUBDIR, sharedDir } from "./shared-dir.js";
 export type {
   ActivityItem,
   ActivityResult,

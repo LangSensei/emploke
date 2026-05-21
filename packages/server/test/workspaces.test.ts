@@ -1,13 +1,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { captureLogger } from "@emploke/logger/testing";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
+import { captureLogger } from "./_capture-logger.js";
 import {
   type ServerTestSubsystem,
   setupTestSubsystem,

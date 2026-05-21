@@ -1,7 +1,7 @@
 import type { CatalogQueries } from "@emploke/catalog";
-import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type { Logger } from "pino";
 import type * as schema from "./schema.js";
 
 /** Re-export `LaunchCommand` so call sites only need one import. */

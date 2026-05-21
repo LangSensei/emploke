@@ -11,8 +11,8 @@
 
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import { writeJsonAtomic } from "@emploke/fs";
-import { RUNTIME_FILE_NAME } from "@emploke/paths";
+import { RUNTIME_FILE_NAME } from "@emploke/api-types";
+import writeFileAtomic from "write-file-atomic";
 
 /**
  * Shape persisted to disk. Bumped together with any breaking change so
@@ -42,7 +42,7 @@ export interface RuntimeFile {
  * Resolve `<home>/runtime.json`. Pure: no fs access. The literal filename
  * lives in `@emploke/paths` (`RUNTIME_FILE_NAME`) so it stays
  * single-sourced — callers that already have a resolved `EmplokePaths`
- * record should prefer `paths.runtimeFile` directly.
+ * record should prefer `runtimeFilePath(home)` directly.
  */
 export function runtimeFilePath(home: string): string {
   return path.join(home, RUNTIME_FILE_NAME);
@@ -75,7 +75,7 @@ export async function readRuntimeFile(home: string): Promise<RuntimeFile | null>
 export async function writeRuntimeFile(home: string, value: RuntimeFile): Promise<void> {
   await mkdir(home, { recursive: true });
   const p = runtimeFilePath(home);
-  await writeJsonAtomic(p, value);
+  await writeFileAtomic(p, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /** Idempotent delete. Tolerates a missing file (already cleaned up). */

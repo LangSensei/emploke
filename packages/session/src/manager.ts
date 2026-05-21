@@ -2,8 +2,11 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CatalogQueries } from "@emploke/catalog";
-import type { Logger } from "@emploke/logger";
-import { silentLogger } from "@emploke/logger";
+import type { Logger } from "pino";
+import pino from "pino";
+
+const silentLogger = pino({ level: "silent" });
+
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 
 import { readAgentName } from "./agent-file.js";

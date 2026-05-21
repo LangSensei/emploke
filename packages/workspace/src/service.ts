@@ -1,5 +1,8 @@
 import { mkdir, rm } from "node:fs/promises";
-import { type Logger, silentLogger } from "@emploke/logger";
+import pino, { type Logger } from "pino";
+
+const silentLogger: Logger = pino({ level: "silent" });
+
 import {
   WorkspaceIdConflictError,
   WorkspaceNotRegisteredError,

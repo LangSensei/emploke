@@ -18,7 +18,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, open } from "node:fs/promises";
 import path from "node:path";
-import { resolveEmplokePaths } from "@emploke/paths";
+import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
 import { waitForHealth } from "../health-probe.js";
 import type { CommandResult } from "../result.js";
 import {
@@ -66,10 +66,9 @@ export interface StartOpts {
 
 export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
-  const home = paths.home;
   const port = opts.port ?? Number(env.PORT || 8787);
   const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
   const healthTimeoutMs = opts.healthTimeoutMs ?? 60_000;
@@ -103,8 +102,8 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   // Step 2 — log destination for the child's stdout/stderr (boot errors
   // before pino-roll spins up land here; pino's structured logs go to
   // its own rotated files under <logsDir>).
-  await mkdir(paths.logsDir, { recursive: true });
-  const bootLog = path.join(paths.logsDir, "server-boot.log");
+  await mkdir(logsDir(home), { recursive: true });
+  const bootLog = path.join(logsDir(home), "server-boot.log");
   const logFh = await open(bootLog, "a");
   const logFd = logFh.fd;
 

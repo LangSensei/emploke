@@ -11,8 +11,6 @@
  *     `server/_shared.ts` can name them.
  */
 
-// ─── Frontmatter utility (re-exported from @emploke/fs for convenience) ─
-export { applyFrontmatterPatch } from "@emploke/fs";
 // ─── Errors ─────────────────────────────────────────
 export {
   AgentFrontmatterError,

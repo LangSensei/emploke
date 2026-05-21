@@ -1,9 +1,9 @@
-import { captureLogger } from "@emploke/logger/testing";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
 import { logEvent, logFault } from "../src/routes/_shared.js";
+import { captureLogger } from "./_capture-logger.js";
 
 /**
  * Tests for the `logEvent` / `logFault` helpers. Both surface the

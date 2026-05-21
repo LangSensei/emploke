@@ -1,10 +1,10 @@
 import path from "node:path";
-import type { Logger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { openTestWorkspaceDb } from "@emploke/workspace/testing";
 import type { Database as BetterSqliteDatabase } from "better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type { Logger } from "pino";
 import { buildServerContainer } from "../src/bootstrap.js";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 

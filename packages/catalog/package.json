@@ -33,11 +33,11 @@
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
   },
   "dependencies": {
-    "@emploke/fs": "workspace:*",
-    "@emploke/logger": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
+    "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0",
+    "pino": "^9.5.0",
     "tar-stream": "^3.1.7"
   },
   "devDependencies": {

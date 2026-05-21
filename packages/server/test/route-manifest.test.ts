@@ -21,7 +21,10 @@
  */
 
 import { type CatalogOptions, CatalogService, defaultFetcherRegistry } from "@emploke/catalog";
-import { silentLogger } from "@emploke/logger";
+import pino from "pino";
+
+const silentLogger = pino({ level: "silent" });
+
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";

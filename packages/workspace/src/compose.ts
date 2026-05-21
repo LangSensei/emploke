@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Logger } from "@emploke/logger";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
+import type { Logger } from "pino";
 import { WorkspaceQueries } from "./queries.js";
 import { WorkspaceRepository } from "./repository.js";
 import * as schema from "./schema.js";

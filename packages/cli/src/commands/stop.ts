@@ -19,7 +19,7 @@
  */
 
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveEmplokePaths } from "@emploke/paths";
+import { resolveEmplokeHome } from "@emploke/api-types";
 import type { CommandResult } from "../result.js";
 import { deleteRuntimeFile, isPidAlive, readRuntimeFile } from "../runtime-file.js";
 
@@ -33,10 +33,9 @@ export interface StopOpts {
 
 export async function stop(opts: StopOpts = {}): Promise<CommandResult> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
-  const home = paths.home;
   const existing = await readRuntimeFile(home);
   if (!existing) {
     return { exitCode: 0, stdout: "emploke is not running\n" };

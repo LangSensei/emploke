@@ -1,4 +1,4 @@
-import { applyFrontmatterPatch } from "@emploke/fs";
+import matter from "gray-matter";
 import type { EntryFile } from "../fetcher/index.js";
 import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
@@ -11,6 +11,21 @@ import {
 } from "./errors.js";
 import { Skill } from "./skill-entity.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
+
+/**
+ * Apply a partial patch to the YAML frontmatter of a markdown document.
+ * `null` / `undefined` patch values DELETE the key. Body bytes preserved
+ * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
+ * original key order are NOT preserved (gray-matter / js-yaml limitation).
+ */
+function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
+  const file = matter(raw);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) delete file.data[k];
+    else file.data[k] = v;
+  }
+  return matter.stringify(file.content, file.data);
+}
 
 export interface SkillFetcher {
   fetchAnchor(origin: string): Promise<string>;

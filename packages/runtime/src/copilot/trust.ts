@@ -1,7 +1,11 @@
+import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { FsLockTimeoutError } from "@emploke/fs";
-import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/fs";
+import lockfile from "proper-lockfile";
+import writeFileAtomic from "write-file-atomic";
 import { TrustRegistrationFailed } from "./errors.js";
+
+/** Max size (10MB) for the trust config file. Anything bigger is rejected. */
+const MAX_CONFIG_BYTES = 10 * 1024 * 1024;
 
 /**
  * Persistence + concurrency for `~/.copilot/config.json.trustedFolders`.
@@ -91,26 +95,50 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
   const resolvedDir = path.resolve(dir);
 
   try {
-    await mkdirP(path.dirname(configPath));
-    await withFileLock(`${configPath}.lock`, async () => {
+    await mkdir(path.dirname(configPath), { recursive: true });
+    // proper-lockfile requires the locked file to exist; touch the
+    // config dir's lock-target if absent so lock acquisition has
+    // something to fasten onto.
+    const lockTarget = configPath;
+    // Ensure lockTarget exists (proper-lockfile needs an existing file).
+    try {
+      await stat(lockTarget);
+    } catch {
+      await writeFileAtomic(lockTarget, "{}");
+    }
+    const release = await lockfile.lock(lockTarget, {
+      retries: { retries: 100, factor: 1.1, minTimeout: 50, maxTimeout: 200 },
+      stale: 30000,
+    });
+    try {
       let config: Record<string, unknown> = {};
       try {
-        const parsed = await readJson<unknown>(configPath);
+        const st = await stat(configPath);
+        if (st.size > MAX_CONFIG_BYTES) {
+          throw new Error(
+            `refusing to read ${configPath}: ${st.size} bytes exceeds cap of ${MAX_CONFIG_BYTES}`,
+          );
+        }
+        const raw = await readFile(configPath, "utf8");
+        const parsed = JSON.parse(raw) as unknown;
         if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
           config = parsed as Record<string, unknown>;
         }
       } catch {
-        // Invalid JSON — start fresh. We never refuse to launch because
-        // the user's config is corrupted; the rewrite below will produce
-        // a valid file containing just `trustedFolders`.
+        // Missing or invalid JSON — start fresh. We never refuse to
+        // launch because the user's config is corrupted; the rewrite
+        // below will produce a valid file containing just
+        // `trustedFolders`.
       }
 
       const existing = readTrustedFolders(config.trustedFolders);
       if (isPathCovered(resolvedDir, existing)) return;
 
       config.trustedFolders = [...existing, resolvedDir];
-      await writeJsonAtomic(configPath, config);
-    });
+      await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    } finally {
+      await release();
+    }
   } catch (cause) {
     throw new TrustRegistrationFailed(configPath, resolvedDir, cause as Error);
   }

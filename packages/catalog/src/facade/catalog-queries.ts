@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { type Logger, silentLogger } from "@emploke/logger";
+import pino, { type Logger } from "pino";
+
+const silentLogger: Logger = pino({ level: "silent" });
+
 import type { Agent } from "../agent/agent-entity.js";
 import { AgentService } from "../agent/agent-service.js";
 import { DrizzleAgentRepository } from "../agent/drizzle-agent-repository.js";

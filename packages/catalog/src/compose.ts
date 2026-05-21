@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Logger } from "@emploke/logger";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
+import type { Logger } from "pino";
 import { buildCatalogRuntime, CatalogQueries } from "./facade/catalog-queries.js";
 import { CatalogService } from "./facade/catalog-service.js";
 import type { FetcherRegistry } from "./fetcher/index.js";

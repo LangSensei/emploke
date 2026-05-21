@@ -1,5 +1,5 @@
-import type { Logger } from "@emploke/logger";
 import type { Context } from "hono";
+import type { Logger } from "pino";
 
 /**
  * Parse a JSON request body. Returns either the parsed value or an error

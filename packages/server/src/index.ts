@@ -1,17 +1,18 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
+import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
 import type { CatalogQueries, CatalogService } from "@emploke/catalog";
-import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
-import { resolveEmplokePaths } from "@emploke/paths";
-import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
+import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
+import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
 import { buildServerContainer } from "./bootstrap.js";
+import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
@@ -135,7 +136,7 @@ function resolveStaticDir(serverDir: string): string {
  */
 export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
 
@@ -164,7 +165,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // for the operator. Level + format honour env so dev can stay pretty
   // and prod can pin JSON-only without code changes.
   const logger: Logger = buildLogger({
-    dir: paths.logsDir,
+    dir: logsDir(home),
     level: opts.logLevel ?? parseLogLevel(env.EMPLOKE_LOG_LEVEL),
     format: opts.logFormat ?? (env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty"),
   });
@@ -175,7 +176,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // Resolve `${sharedDir}` placeholders in MCP specs against
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
       // directory without baking host paths into JSON.
-      sharedDir: paths.sharedDir,
+      sharedDir: sharedDir(home),
     }),
   );
 
@@ -193,19 +194,19 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   //
   // We do NOT auto-create a default workspace — the dashboard's
   // landing page prompts the user to create one explicitly.
-  await mkdir(paths.home, { recursive: true });
+  await mkdir(home, { recursive: true });
 
   const composition = await buildServerContainer({
-    workspace: { dbFile: paths.globalDbFile },
+    workspace: { dbFile: globalDbPath(home) },
     runtimeRegistry,
     subprocessEnvBase: buildSubprocessEnvBase({
       hostname,
       port,
-      sharedDir: paths.sharedDir,
+      sharedDir: sharedDir(home),
     }),
     logger,
   });
-  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
+  logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
   const workspaceService = composition.workspaceService;
   const workspaceQueries = composition.workspaceQueries;
@@ -245,7 +246,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   app.route(
     "/api/config",
     configRoutes({
-      emplokeHome: paths.home,
+      emplokeHome: home,
       host: hostname,
       port,
       pathSeparator: pathSep,
@@ -259,7 +260,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       service: workspaceService,
       queries: workspaceQueries,
       cache,
-      defaultWorkspaceParent: paths.sharedWorkspacesDir,
+      defaultWorkspaceParent: workspacesParentDir(home),
     }),
   );
 
@@ -316,12 +317,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   logger.info(
     {
       listen: `http://${displayHost}:${port}`,
-      home: paths.home,
-      globalDb: paths.globalDbFile,
+      home: home,
+      globalDb: globalDbPath(home),
       workspaces: (await workspaceQueries.list()).length,
       runtimes: runtimeRegistry.kinds(),
       static: serveStaticFiles ? staticDir : null,
-      logsDir: paths.logsDir,
+      logsDir: logsDir(home),
     },
     "emploke server starting",
   );

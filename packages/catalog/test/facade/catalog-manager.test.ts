@@ -180,7 +180,7 @@ beforeEach(async () => {
     skillRepo,
     agentRepo,
     resolveMcpAdapter: fetchers.mcpResolveAdapter,
-    logger: (await import("@emploke/logger")).silentLogger,
+    logger: (await import("pino")).default({ level: "silent" }),
   };
   const queries = new CatalogQueries(rt);
   const service = new CatalogService(rt, queries);
