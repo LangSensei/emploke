@@ -11,12 +11,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
-import { SqliteTaskRepository, TASK_MIGRATIONS, TaskManager } from "../src/index.js";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
+import { TaskManager, TaskRepository } from "../src/index.js";
+import { openTestTaskOrm } from "../src/testing.js";
 
 /**
  * Records every kill + lets the test drive the exit timing. By
@@ -78,8 +78,8 @@ export class TestRuntime implements Runtime {
 
 export interface CancelFixture {
   readonly tasksDir: string;
-  readonly db: DatabaseSync;
-  readonly repo: SqliteTaskRepository;
+  readonly orm: MikroORM;
+  readonly repo: TaskRepository;
   readonly rt: TestRuntime;
   readonly m: TaskManager;
 }
@@ -91,28 +91,27 @@ export async function setupCancelFixture(
   } = {},
 ): Promise<CancelFixture> {
   const tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
-  const db = new DatabaseSync(":memory:");
-  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  const orm = await openTestTaskOrm();
   const rt = new TestRuntime();
   if (opts.autoExitOnKill) rt.autoExitOnKill = true;
   const reg = new RuntimeRegistry();
   reg.register(rt);
-  const repo = new SqliteTaskRepository({ db });
+  const repo = new TaskRepository({ em: orm.em as EntityManager });
   const m = new TaskManager({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
     tasksDir,
     workspaceDir: tasksDir,
-    repository: repo,
+    em: orm.em as EntityManager,
     now: () => new Date("2026-05-18T01:00:00.000Z"),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
-  return { tasksDir, db, repo, rt, m };
+  return { tasksDir, orm, repo, rt, m };
 }
 
 export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   try {
-    fx.db.close();
+    await fx.orm.close(true);
   } catch {
     // already closed
   }

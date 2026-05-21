@@ -23,33 +23,30 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DispatchOpts,
-  SqliteTaskRepository,
-  TASK_MIGRATIONS,
   type Task,
   TaskManager,
+  TaskRepository,
 } from "../../src/index.js";
-
-// ───────── fixture lifecycle ─────────────────────────────────
+import { openTestTaskOrm } from "../../src/testing.js";
 
 let tasksDir: string;
-const openDbs: DatabaseSync[] = [];
+const openOrms: MikroORM[] = [];
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-real-spawn-"));
 });
 
 afterEach(async () => {
-  for (const d of openDbs.splice(0)) {
+  for (const o of openOrms.splice(0)) {
     try {
-      d.close();
+      await o.close(true);
     } catch {
       // already closed
     }
@@ -151,21 +148,18 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
 const makeManager = async (
   catalog: CatalogManager,
   runtime: Runtime,
-): Promise<{ m: TaskManager; repo: SqliteTaskRepository }> => {
+): Promise<{ m: TaskManager; repo: TaskRepository }> => {
   const reg = new RuntimeRegistry();
   reg.register(runtime);
-  // In-memory DB so the test owns the lifecycle (no file to leak,
-  // no Windows EBUSY on cleanup).
-  const db = new DatabaseSync(":memory:");
-  openDbs.push(db);
-  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-  const repo = new SqliteTaskRepository({ db });
+  const orm = await openTestTaskOrm();
+  openOrms.push(orm);
+  const repo = new TaskRepository({ em: orm.em as EntityManager });
   const m = new TaskManager({
     catalog,
     runtimeRegistry: reg,
     tasksDir,
     workspaceDir: tasksDir,
-    repository: repo,
+    em: orm.em as EntityManager,
   });
   return { m, repo };
 };

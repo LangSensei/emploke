@@ -127,56 +127,24 @@ export type TaskCancellation =
 // ─── TaskManager-side types ───────────────────────────────────
 
 import type { Logger } from "@emploke/logger";
-import type { TaskRepository } from "./repositories/repository.js";
+import type { EntityManager } from "@mikro-orm/core";
 
 /** Constructor options for `TaskManager`. */
 export interface TaskManagerConfig {
   readonly catalog: CatalogManager;
   readonly runtimeRegistry: RuntimeRegistry;
-  /** Absolute path to the directory holding per-task workdirs. */
   readonly tasksDir: string;
-  /**
-   * Absolute path of the workspace this manager belongs to. Threaded
-   * to `runtime.dispatchTask` as `workspaceDir` so MCP placeholder
-   * substitution at provision-time can resolve `${workspaceDir}` to a
-   * path that is shared across every session/task in this workspace.
-   */
   readonly workspaceDir: string;
-  /**
-   * Workspace UUID this manager belongs to. Surfaced as
-   * `EMPLOKE_WORKSPACE` in every task subprocess's env so the spawned
-   * binary (and any of its own children) can address its workspace
-   * over the API without the caller threading `--workspace` through
-   * every invocation.
-   *
-   * Optional for back-compat with existing tests that build a
-   * `TaskManager` without a real workspace registration; production
-   * call sites in `WorkspaceContext` always pass it.
-   */
   readonly workspaceId?: string;
-  /**
-   * Static env overrides merged into every task subprocess on top of
-   * the per-task additions assembled in `dispatch()`. Production wires
-   * this from the server with `EMPLOKE_SERVER` and `EMPLOKE_SHARED_DIR`
-   * so the spawned CLI can call back into the same server it was
-   * launched from and write to the machine-shared dir. Tests typically
-   * leave this unset.
-   */
   readonly subprocessEnv?: NodeJS.ProcessEnv;
-  /** Default runtime kind to use when `dispatch` doesn't override. */
   readonly defaultRuntime?: string;
   /**
-   * Persistence backend for task state. Required: callers (server
-   * `WorkspaceContext` in production, tests) construct a
-   * `SqliteTaskRepository({ db: <workspace.db connection> })` and pass
-   * it. There is no default — the task pkg no longer owns a DB file
-   * path; the workspace pkg does.
+   * MikroORM `EntityManager` backing the `tasks` table. The repository
+   * forks per-call for read/write isolation.
    */
-  readonly repository: TaskRepository;
+  readonly em: EntityManager;
   readonly logger?: Logger;
-  /** Test seam: clock injection. */
   readonly now?: () => Date;
-  /** Test seam: random source for id generation. */
   readonly randomBytes?: (n: number) => Buffer;
 }
 

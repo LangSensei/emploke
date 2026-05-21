@@ -4,22 +4,21 @@
  * shape with its discriminator + per-variant extras intact.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import { runPkgMigrations } from "@emploke/workspace";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SqliteTaskRepository, TASK_MIGRATIONS, Task } from "../src/index.js";
+import { TaskRepository, Task } from "../src/index.js";
+import { openTestTaskOrm } from "../src/testing.js";
 import type { TaskCancellation, TaskFailure } from "../src/types.js";
 
-let db: DatabaseSync;
-let repo: SqliteTaskRepository;
+let orm: MikroORM;
+let repo: TaskRepository;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-  repo = new SqliteTaskRepository({ db });
+  orm = await openTestTaskOrm();
+  repo = new TaskRepository({ em: orm.em as EntityManager });
 });
-afterEach(() => {
-  db.close();
+afterEach(async () => {
+  await orm.close(true);
 });
 
 const CREATED_AT = "2026-06-01T00:00:00.000Z";

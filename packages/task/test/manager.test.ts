@@ -1,11 +1,10 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
+import type { EntityManager, MikroORM } from "@mikro-orm/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
@@ -17,39 +16,41 @@ import {
   InvalidTaskIdError,
   RuntimeDoesNotSupportTasksError,
   readTaskRuntimeMetadata,
-  SqliteTaskRepository,
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
   TASK_FRAMING_PROMPT_COPILOT,
-  TASK_MIGRATIONS,
   TASK_TEMP_SUBDIR,
   Task,
   TaskManager,
   TaskNotFoundError,
+  TaskRepository,
+  TaskRow,
 } from "../src/index.js";
+import { openTestTaskOrm } from "../src/testing.js";
 
 // ───── filesystem fixture lifecycle ────────────────────────
 
 let tasksDir: string;
-const openDbs: DatabaseSync[] = [];
+const openOrms: MikroORM[] = [];
 
-async function makeRepo(): Promise<SqliteTaskRepository> {
-  const db = new DatabaseSync(":memory:");
-  openDbs.push(db);
-  // TASK_MIGRATIONS contains DDL-only migrations today, but we still
-  // bootstrap via the async runner so tests use the same code path
-  // production does (issue #133 — async-only).
-  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-  return new SqliteTaskRepository({ db });
+async function makeOrm(): Promise<MikroORM> {
+  const orm = await openTestTaskOrm();
+  openOrms.push(orm);
+  return orm;
+}
+
+async function makeRepo(): Promise<{ repo: TaskRepository; orm: MikroORM }> {
+  const orm = await makeOrm();
+  return { repo: new TaskRepository({ em: orm.em as EntityManager }), orm };
 }
 
 beforeEach(async () => {
   tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-tasks-root-"));
 });
 afterEach(async () => {
-  for (const d of openDbs.splice(0)) {
+  for (const o of openOrms.splice(0)) {
     try {
-      d.close();
+      await o.close(true);
     } catch {
       // already closed
     }
@@ -362,14 +363,27 @@ const makeManager = async (
     now?: () => Date;
     randomBytes?: (n: number) => Buffer;
     logger?: { warn: (meta: object | string, msg?: string) => void };
-    repository?: SqliteTaskRepository;
+    repository?: TaskRepository;
+    orm?: MikroORM;
     workspaceId?: string;
     subprocessEnv?: NodeJS.ProcessEnv;
   } = {},
-): Promise<{ m: TaskManager; repo: SqliteTaskRepository }> => {
+): Promise<{ m: TaskManager; repo: TaskRepository; orm: MikroORM }> => {
   const rt = overrides.runtime ?? new StubRuntime();
   const registry = overrides.registry ?? makeRegistry(rt);
-  const repo = overrides.repository ?? (await makeRepo());
+  let orm: MikroORM;
+  let repo: TaskRepository;
+  if (overrides.orm !== undefined) {
+    orm = overrides.orm;
+    repo = overrides.repository ?? new TaskRepository({ em: orm.em as EntityManager });
+  } else if (overrides.repository !== undefined) {
+    // Caller built a custom repo + ORM elsewhere; reuse them.
+    throw new Error("makeManager: pass `orm` alongside `repository`");
+  } else {
+    const built = await makeRepo();
+    orm = built.orm;
+    repo = built.repo;
+  }
   const m = new TaskManager({
     catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
     runtimeRegistry: registry,
@@ -378,11 +392,11 @@ const makeManager = async (
     now: overrides.now ?? fixedNow("2026-05-08T01:05:00.000Z"),
     randomBytes: overrides.randomBytes ?? seqRandom(),
     logger: overrides.logger,
-    repository: repo,
+    em: orm.em as EntityManager,
     ...(overrides.workspaceId !== undefined ? { workspaceId: overrides.workspaceId } : {}),
     ...(overrides.subprocessEnv !== undefined ? { subprocessEnv: overrides.subprocessEnv } : {}),
   });
-  return { m, repo };
+  return { m, repo, orm };
 };
 
 // ═════ tests ════════════════════════════════════════════════
@@ -795,36 +809,15 @@ describe("get / list", () => {
     // by reaching into the underlying DatabaseSync to forge a row
     // with an invalid status enum that rowToTask rejects.
     const r = recorder();
-    const db = new DatabaseSync(":memory:");
-    openDbs.push(db);
-    await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
-    const repo = new SqliteTaskRepository({ db, logger: r.logger });
-    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
+    const { m, orm } = await makeManager({ runtime: new StubRuntime(), logger: r.logger });
     await m.dispatch(dispatchOf()); // good row through public API
 
-    // Forge a row whose status is outside the closed enum; rowToTask
-    // throws CorruptedTaskError → repo.list catches, drops, warns.
-    const rawDb = (
-      repo as unknown as {
-        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
-      }
-    ).db;
-    rawDb
-      .prepare(
-        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        "20260101-deadbeef",
-        "demo",
-        "copilot",
-        "standalone",
-        "running",
-        "i",
-        null,
-        "2026-01-01T00:00:00.000Z",
-        "2026-01-01T00:00:00.000Z",
-        "not-valid-json{",
-      );
+    // Forge a row whose metadata is invalid JSON; rowToTask throws
+    // CorruptedTaskError → repo.list catches, drops, warns.
+    await orm.em.getConnection().execute(
+      "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ["20260101-deadbeef", "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{"],
+    );
 
     const all = await m.list();
     expect(all).toHaveLength(1); // good row survives, bogus is dropped
@@ -838,31 +831,12 @@ describe("get / list", () => {
   // for a tampered/bit-rotted row, and the next save would round-trip
   // an empty `{}` over the corrupt blob.
   it("get() propagates CorruptedTaskError instead of returning null", async () => {
-    const repo = await makeRepo();
-    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
-    // Forge the same kind of bogus row the list() test uses.
-    const rawDb = (
-      repo as unknown as {
-        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
-      }
-    ).db;
+    const { m, orm } = await makeManager({ runtime: new StubRuntime() });
     const id = "20260101-deadbeef";
-    rawDb
-      .prepare(
-        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        "demo",
-        "copilot",
-        "standalone",
-        "running",
-        "i",
-        null,
-        "2026-01-01T00:00:00.000Z",
-        "2026-01-01T00:00:00.000Z",
-        "not-valid-json{",
-      );
+    await orm.em.getConnection().execute(
+      "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{"],
+    );
     await expect(m.get(id)).rejects.toBeInstanceOf(CorruptedTaskError);
   });
 
@@ -1022,33 +996,15 @@ describe("delete (terminal-only post ADR-001)", () => {
   // ADR-001 removed the previous purge-tolerance for corrupted rows,
   // so both default AND purge propagate the error now.
   it("propagates CorruptedTaskError (operator sees the corruption)", async () => {
-    const repo = await makeRepo();
-    const { m } = await makeManager({ runtime: new StubRuntime(), repository: repo });
+    const { m, orm } = await makeManager({ runtime: new StubRuntime() });
     const id = "20260101-deadbeef";
-    const rawDb = (
-      repo as unknown as {
-        db: { prepare: (s: string) => { run: (...args: unknown[]) => void } };
-      }
-    ).db;
-    rawDb
-      .prepare(
-        `INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        "demo",
-        "copilot",
-        "standalone",
-        "running",
-        "i",
-        null,
-        "2026-01-01T00:00:00.000Z",
-        "2026-01-01T00:00:00.000Z",
-        "not-valid-json{",
-      );
+    await orm.em.getConnection().execute(
+      "INSERT INTO tasks (id, agent, runtime, origin, status, brief, details, created_at, started_at, ended_at, success, failure, cancellation, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, "demo", "copilot", "standalone", "running", "i", null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null, null, null, null, "not-valid-json{"],
+    );
     await expect(m.delete(id)).rejects.toBeInstanceOf(CorruptedTaskError);
+    await expect(m.delete(id, { purge: true })).rejects.toBeInstanceOf(CorruptedTaskError);
   });
-
   // Mirrors SessionManager.delete({purge:true}): runtime per-task state
   // (e.g. Copilot's <copilotStateDir>/<runtimeSessionId>/) must be cleaned
   // up too, otherwise purge leaks events.jsonl + transcripts forever.
