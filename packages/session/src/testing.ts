@@ -17,13 +17,21 @@ export function openTestSessionDb(): {
 } {
   const sqlite = new Database(":memory:");
   sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("foreign_keys = ON");
+  // No `foreign_keys = ON`  schema has no FK constraints; the
+  // pragma without FKs is a no-op and would mislead readers.
   const db = drizzle(sqlite, { schema });
+  // Apply migrations the same transactional way `compose.ts` does
+  // so a partial failure leaves a clean rollback (matters for the
+  // rare test that intentionally feeds a malformed migration; on
+  // the happy path the transaction wrapper is free).
   const dir = path.join(import.meta.dirname, "..", "drizzle");
-  for (const f of readdirSync(dir)
+  const applyOne = sqlite.transaction((name: string) => {
+    sqlite.exec(readFileSync(path.join(dir, name), "utf8"));
+  });
+  for (const name of readdirSync(dir)
     .filter((x) => x.endsWith(".sql"))
     .sort()) {
-    sqlite.exec(readFileSync(path.join(dir, f), "utf8"));
+    applyOne(name);
   }
   return {
     db,
