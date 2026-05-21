@@ -30,11 +30,6 @@ export class WorkspaceCorruptedError extends WorkspaceError {
   }
 }
 
-/**
- * Operator-actionable hint based on the direction of the mismatch.
- * Newer-on-disk = upgrade the server; older-on-disk = needs a migration
- * (which is not implemented yet).
- */
 function schemaDirectionHint(fromVersion: number, toVersion: number): string {
   if (fromVersion > toVersion) {
     return "Upgrade the server to read it (downgrading is unsafe).";
@@ -45,7 +40,7 @@ function schemaDirectionHint(fromVersion: number, toVersion: number): string {
   return "";
 }
 
-/** `RegisterWorkspaceCommand` refused to overwrite an existing workspace. */
+/** `register` refused to overwrite an existing workspace. */
 export class WorkspaceAlreadyExistsError extends WorkspaceError {
   constructor(public readonly dir: string) {
     super(`workspace already initialised at ${dir}`);
@@ -72,7 +67,6 @@ export class RegistryError extends WorkspaceError {
   }
 }
 
-/** `global.db.workspaces` row failed validation or schema drift. */
 export class RegistryCorruptedError extends RegistryError {
   constructor(
     public readonly file: string,
@@ -84,10 +78,6 @@ export class RegistryCorruptedError extends RegistryError {
   }
 }
 
-/**
- * The workspace pkg's row in `global.db.schema_meta` declares a
- * version this build doesn't understand.
- */
 export class RegistrySchemaMismatchError extends RegistryError {
   constructor(
     public readonly file: string,
@@ -101,7 +91,6 @@ export class RegistrySchemaMismatchError extends RegistryError {
   }
 }
 
-/** A workspace with the same id is already registered. */
 export class WorkspaceIdConflictError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`a workspace with id "${workspaceId}" is already registered`);
@@ -109,7 +98,6 @@ export class WorkspaceIdConflictError extends RegistryError {
   }
 }
 
-/** An explicit id that doesn't match the UUID format we accept. */
 export class WorkspaceIdInvalidError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`workspace id "${workspaceId}" is not a valid UUID`);
@@ -117,7 +105,6 @@ export class WorkspaceIdInvalidError extends RegistryError {
   }
 }
 
-/** A workspace whose path conflicts with an existing entry. */
 export class WorkspacePathConflictError extends RegistryError {
   constructor(
     public readonly path: string,
@@ -128,7 +115,6 @@ export class WorkspacePathConflictError extends RegistryError {
   }
 }
 
-/** Tried to look up / remove / open a workspace not in the registry. */
 export class WorkspaceNotRegisteredError extends RegistryError {
   constructor(public readonly workspaceId: string) {
     super(`no workspace with id "${workspaceId}" is registered`);
@@ -136,11 +122,6 @@ export class WorkspaceNotRegisteredError extends RegistryError {
   }
 }
 
-/**
- * The repository was constructed against a DB that has no `schema_meta`
- * row for the `workspace` pkg. Always a wiring bug — the
- * MigrationCoordinator must run before the repository is constructed.
- */
 export class RegistryNotBootstrappedError extends RegistryError {
   constructor(public readonly file: string) {
     super(

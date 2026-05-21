@@ -25,9 +25,8 @@ import { silentLogger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import type { WorkspaceQueries } from "@emploke/workspace";
+import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import { describe, expect, it } from "vitest";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
@@ -74,7 +73,7 @@ function buildAppForTest(): Hono {
   app.route(
     "/api/workspaces",
     workspacesRoutes({
-      mediator: stubMediator(),
+      service: stubWorkspaceService(),
       queries: stubWorkspaceQueries(),
       cache: stubPerWorkspaceContainerCache(),
       defaultWorkspaceParent: "/tmp/workspaces",
@@ -168,10 +167,10 @@ function normalizePath(path: string): string {
 // All stubs throw on use so accidentally invoking a handler in a future
 // test surfaces fast.
 
-function stubMediator(): Mediator {
-  return new Proxy({} as Mediator, {
+function stubWorkspaceService(): WorkspaceService {
+  return new Proxy({} as WorkspaceService, {
     get() {
-      throw new Error("stubMediator: not callable");
+      throw new Error("stubWorkspaceService: not callable");
     },
   });
 }

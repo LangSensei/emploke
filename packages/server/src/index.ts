@@ -7,11 +7,9 @@ import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
 import type { TaskManager } from "@emploke/task";
-import { WorkspaceQueries } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
-import { Mediator } from "mediatr-ts";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
 import { buildServerContainer } from "./bootstrap.js";
 import { accessLog } from "./middleware/access-log.js";
@@ -203,8 +201,8 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const rootContainer = composition.container;
   logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
-  const mediator = rootContainer.get(Mediator);
-  const workspaceQueries = rootContainer.get(WorkspaceQueries);
+  const workspaceService = composition.service;
+  const workspaceQueries = composition.queries;
 
   const cache = new PerWorkspaceContainerCache({
     rootContainer,
@@ -279,7 +277,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   app.route(
     "/api/workspaces",
     workspacesRoutes({
-      mediator,
+      service: workspaceService,
       queries: workspaceQueries,
       cache,
       defaultWorkspaceParent: paths.sharedWorkspacesDir,

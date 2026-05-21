@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { captureLogger } from "@emploke/logger/testing";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { RegisterWorkspaceCommand, type WorkspaceQueries } from "@emploke/workspace";
-import type { Mediator } from "mediatr-ts";
+import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildServerContainer } from "../src/bootstrap.js";
 import {
@@ -44,7 +43,7 @@ afterEach(async () => {
 interface CacheHarness {
   cap: ReturnType<typeof captureLogger>;
   cache: PerWorkspaceContainerCache;
-  mediator: Mediator;
+  service: WorkspaceService;
   queries: WorkspaceQueries;
 }
 
@@ -52,24 +51,26 @@ async function makeCache(): Promise<CacheHarness> {
   const cap = captureLogger();
   const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
   openSubsystems.push(sys);
-  return { cap, cache: sys.cache, mediator: sys.mediator, queries: sys.queries };
+  return { cap, cache: sys.cache, service: sys.service, queries: sys.queries };
 }
 
 async function registerWs(
-  mediator: Mediator,
+  service: WorkspaceService,
   args: { name: string; workspaceDir: string },
 ): Promise<{ id: string; workspaceDir: string }> {
   const id = (await import("node:crypto")).randomUUID();
-  const result = await mediator.send(
-    new RegisterWorkspaceCommand(id, args.workspaceDir, args.name),
-  );
+  const result = await service.register({
+    id,
+    workspaceDir: args.workspaceDir,
+    name: args.name,
+  });
   return { id: result.id, workspaceDir: path.resolve(args.workspaceDir) };
 }
 
 describe("PerWorkspaceContainerCache observability", () => {
   it("emits an info line on first container build, with workspaceId + workspaceDir", async () => {
-    const { cap, cache, mediator } = await makeCache();
-    const ws = await registerWs(mediator, {
+    const { cap, cache, service } = await makeCache();
+    const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
@@ -87,8 +88,8 @@ describe("PerWorkspaceContainerCache observability", () => {
   });
 
   it("does NOT re-emit the build line on a cache hit", async () => {
-    const { cap, cache, mediator } = await makeCache();
-    const ws = await registerWs(mediator, {
+    const { cap, cache, service } = await makeCache();
+    const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
@@ -104,8 +105,8 @@ describe("PerWorkspaceContainerCache observability", () => {
   });
 
   it("emits an info line on invalidate of a loaded entry", async () => {
-    const { cap, cache, mediator } = await makeCache();
-    const ws = await registerWs(mediator, {
+    const { cap, cache, service } = await makeCache();
+    const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
@@ -126,8 +127,8 @@ describe("PerWorkspaceContainerCache observability", () => {
   });
 
   it("emits an info line on successful reload", async () => {
-    const { cap, cache, mediator } = await makeCache();
-    const ws = await registerWs(mediator, {
+    const { cap, cache, service } = await makeCache();
+    const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
@@ -142,8 +143,8 @@ describe("PerWorkspaceContainerCache observability", () => {
   });
 
   it("emits a warn line on reload refusal (live tasks)", async () => {
-    const { cap, cache, mediator } = await makeCache();
-    const ws = await registerWs(mediator, {
+    const { cap, cache, service } = await makeCache();
+    const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });

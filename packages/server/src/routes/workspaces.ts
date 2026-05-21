@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
-  OpenWorkspaceCommand,
-  RegisterWorkspaceCommand,
   RegistryError,
-  RenameWorkspaceCommand,
-  UnregisterWorkspaceCommand,
   WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceIdConflictError,
@@ -15,10 +11,10 @@ import {
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
   type WorkspaceQueries,
+  type WorkspaceService,
 } from "@emploke/workspace";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import {
   type PerWorkspaceContainerCache,
   WorkspaceHasLiveTasksError,
@@ -68,13 +64,12 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  * tasks, catalog) live under `/api/workspaces/:id/...` and are mounted
  * separately so the workspace id is part of the resource URL.
  *
- * Post-Phase-1 of issue #135, this layer is a thin transport adapter:
- * write endpoints dispatch `mediator.send(new XxxCommand(...))` and
+ * Post de-DDD (this branch), this layer is a thin transport adapter:
+ * write endpoints call `service.register/open/rename/unregister(...)` and
  * read endpoints call `queries.list()` / `.getById()` / `.getLastOpened()`.
  * The wire shape (request body, response body, status codes) is
  * IDENTICAL to the pre-refactor implementation that wrapped
- * `WorkspaceManager` — `WorkspaceManager` is gone but every existing
- * client (dashboard, CLI, MCP) sees the same surface.
+ * `WorkspaceManager`.
  *
  * `defaultWorkspaceParent` is the directory under which auto-generated
  * workspace directories are created when the user creates a workspace
@@ -83,13 +78,13 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  * directory under it per such request.
  */
 export function workspacesRoutes(deps: {
-  mediator: Mediator;
+  service: WorkspaceService;
   queries: WorkspaceQueries;
   cache: PerWorkspaceContainerCache;
   defaultWorkspaceParent: string;
 }): Hono {
   const app = new Hono();
-  const { mediator, queries, cache, defaultWorkspaceParent } = deps;
+  const { service, queries, cache, defaultWorkspaceParent } = deps;
 
   // List all registered workspaces.
   app.get("/", async (c) => {
@@ -134,9 +129,11 @@ export function workspacesRoutes(deps: {
     }
 
     try {
-      const result = await mediator.send(
-        new RegisterWorkspaceCommand(preallocatedId, workspaceDir, body.name),
-      );
+      const result = await service.register({
+        id: preallocatedId,
+        workspaceDir,
+        name: body.name,
+      });
       // Re-query so the response carries the canonical view (incl.
       // server-generated `createdAt`). One extra round-trip against
       // SQLite is cheaper than threading the view back through the
@@ -178,7 +175,7 @@ export function workspacesRoutes(deps: {
       return c.json({ error: "id is required (string)" }, 400);
     }
     try {
-      await mediator.send(new OpenWorkspaceCommand(parsed.body.id));
+      await service.open({ id: parsed.body.id });
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
@@ -222,7 +219,7 @@ export function workspacesRoutes(deps: {
     }
 
     try {
-      await mediator.send(new RenameWorkspaceCommand(id, body.name));
+      await service.rename({ id, newName: body.name });
       cache.invalidate(id);
       const view = await queries.getById(id);
       if (!view) {
@@ -247,7 +244,7 @@ export function workspacesRoutes(deps: {
     const id = c.req.param("id");
     const purge = c.req.query("purge") === "1";
     try {
-      await mediator.send(new UnregisterWorkspaceCommand(id, purge));
+      await service.unregister({ id, purge });
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }

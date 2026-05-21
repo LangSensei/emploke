@@ -1,37 +1,33 @@
 /**
- * @emploke/workspace — DDD+CQRS workspace context on MikroORM.
+ * @emploke/workspace — workspace registry on MikroORM.
  *
  * A *workspace* is the user-chosen working directory that holds
  * emploke's per-workspace state (per-workspace SQLite DB at
  * `<workspaceDir>/workspace.db`, plus agent workdirs under `sessions/`
- * and `tasks/`). Catalog content (agents/skills/mcps) lives inside
- * `workspace.db` as BLOB rows, not as files on disk — the workspace
- * folder has no `catalog/` subdirectory. Each workspace is identified
- * by an opaque UUID `id` (the URL routing key) and lives at an
- * absolute filesystem `workspaceDir`. Its user-facing display name
- * and other metadata live in the global registry row (`global.db`),
- * not in the workspace folder.
+ * and `tasks/`). Each workspace is identified by an opaque UUID `id`
+ * (the URL routing key) and lives at an absolute filesystem
+ * `workspaceDir`. Its user-facing display name and other metadata
+ * live in the global registry row (`global.db`), not in the workspace
+ * folder.
  *
  * ## Public surface
  *
- * Downstream packages and the server's wire layer interact through:
+ *   - `composeWorkspaceModule(options)` — bootstrap. Returns a
+ *     `{ service, queries, close }` triple. Callers wire `service`
+ *     and `queries` into their own composition root.
+ *   - `WorkspaceService` — the four use cases
+ *     (`register / open / rename / unregister`).
+ *   - `WorkspaceQueries` — read projections (`getById`, `list`,
+ *     `getLastOpened`, `getLastOpenedId`).
+ *   - Typed errors (`WorkspaceError` + subclasses) for callers that
+ *     catch by type.
+ *   - `workspaceLayout(workspaceDir)` — pure helper for downstream
+ *     packages (`task`, `session`, `catalog`) computing their
+ *     per-entity workdirs.
  *
- *   - **Commands** (`Register/Rename/Unregister/OpenWorkspaceCommand`)
- *     dispatched via `mediator.send(...)`. Each command's handler
- *     runs inside `TransactionBehavior`'s `em.transactional` wrapper,
- *     so the persistence + event dispatch are atomic.
- *   - **Queries** (`WorkspaceQueries` abstract class) injected via
- *     `@inject(WorkspaceQueries)`. Read-side projections backed by
- *     MikroORM's QueryBuilder; cross-context consumers MUST use this
- *     surface, never the repository.
- *   - **Composition** (`composeWorkspaceModule(container)`) called
- *     once by the server / CLI bootstrap. Requires `Mediator` AND
- *     `EntityManager` to be bound first.
- *
- * Everything else (the `Workspace` aggregate, `WorkspaceRepository`,
- * concrete handlers, `MikroWorkspaceRepository`, value objects beyond
- * `WorkspaceId`) is package-private. Tests that need the aggregate or
- * infrastructure directly import from `@emploke/workspace/testing`.
+ * Everything else (the `Workspace` MikroORM entity, the repository,
+ * the validators) is package-private. Tests that need the entity
+ * directly import from `@emploke/workspace/testing`.
  *
  * ## Legacy migration framework
  *
@@ -43,58 +39,11 @@
  * them.
  */
 
-// ── DDD + CQRS public surface ─────────────────────────────────
-
-// Side-effect imports register pipeline behaviours on mediatr-ts's
-// module-level pipelineBehaviors singleton at module load. mediatr-ts
-// orders the chain LAST-pushed = outermost (`OrderedMappings.add`
-// assigns each new entry an incrementing order; `getAll()` sorts
-// descending). So we register innermost-first, outermost-last:
-//
-//   Transaction (innermost)  → opens em.transactional
-//   Validation               → runs Zod / business pre-checks
-//   Logging      (outermost) → debug-level entry/exit, warn on throw
-//
-// workspace.di.test.ts asserts the resulting execution order so a
-// future import auto-sort can't silently break it.
-import "./application/behaviors/transaction-behavior.js";
-import "./application/behaviors/validation-behavior.js";
-import "./application/behaviors/logging-behavior.js";
-
-export { LOGGER, LoggingBehavior } from "./application/behaviors/logging-behavior.js";
-export { TransactionBehavior } from "./application/behaviors/transaction-behavior.js";
-export { ValidationBehavior } from "./application/behaviors/validation-behavior.js";
-export { OpenWorkspaceCommand } from "./application/commands/open-workspace.command.js";
-export { RegisterWorkspaceCommand } from "./application/commands/register-workspace.command.js";
-export { RenameWorkspaceCommand } from "./application/commands/rename-workspace.command.js";
-export { UnregisterWorkspaceCommand } from "./application/commands/unregister-workspace.command.js";
-export type { WorkspaceSummaryView } from "./application/queries/views/workspace-summary-view.js";
-export type { WorkspaceView } from "./application/queries/views/workspace-view.js";
-export { WorkspaceQueries } from "./application/queries/workspace-queries.js";
-export type { AfterCommitCallback, AfterCommitQueue } from "./application/after-commit-queue.js";
 export {
-  enqueueAfterCommit,
-  runWithAfterCommitQueue,
-} from "./application/after-commit-queue.js";
-export { CommandValidationError } from "./application/validations/command-validator.js";
-export type {
-  WorkspaceModuleHandle,
-  WorkspaceModuleOptions,
-} from "./application/workspace.di.js";
-export { composeWorkspaceModule } from "./application/workspace.di.js";
-
-export { WorkspaceId } from "./domain/aggregates/workspace/workspace-id.js";
-
-export { DomainEventDispatcher } from "./infrastructure/domain-event-dispatcher.js";
-
-// ── Internal infrastructure ─────────────────────────────────
-//
-// Internal types historically exported here are now reachable only
-// via `@emploke/workspace/testing` for tests that drive the EM
-// directly.
-
-// ── Typed errors callers may want to catch ────────────────────
-
+  composeWorkspaceModule,
+  type WorkspaceModule,
+  type WorkspaceModuleOptions,
+} from "./compose.js";
 export {
   RegistryCorruptedError,
   RegistryError,
@@ -109,12 +58,17 @@ export {
   WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
-} from "./domain/exceptions/workspace-errors.js";
-export { type WorkspaceLayout, workspaceLayout } from "./domain/workspace-layout.js";
+} from "./errors.js";
+export { type WorkspaceLayout, workspaceLayout } from "./layout.js";
+export {
+  WorkspaceQueries,
+  type WorkspaceSummaryView,
+  type WorkspaceView,
+} from "./queries.js";
+export { WorkspaceService } from "./service.js";
+export { InputValidationError } from "./validators.js";
+
 // ── Legacy migration framework — see src/legacy/README.md ─────
-//
-// Still re-exported because session / task / catalog haven't pivoted
-// off it yet. New code in this pkg must not depend on these.
 export type { Migration, MigrationRunResult } from "./legacy/migration/index.js";
 export {
   MigrationCoordinator,

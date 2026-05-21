@@ -1,14 +1,13 @@
 import { defineConfig } from "@mikro-orm/better-sqlite";
 import { Migrator } from "@mikro-orm/migrations";
-import { Workspace } from "./src/domain/aggregates/workspace/workspace.js";
+import { Workspace } from "./src/entity.js";
 
 /**
  * MikroORM CLI / runtime config for the `workspace` pkg's global
  * registry DB (`<EMPLOKE_HOME>/global.db` in production).
  *
- * Phase 2 / ADR-3 — replaces the deleted `WORKSPACE_MIGRATIONS`
- * surface. Use `mikro-orm migration:create` / `migration:up` against
- * this config to manage schema changes from this point on.
+ * Use `mikro-orm migration:create` / `migration:up` against this config
+ * to manage schema changes.
  *
  * `EMPLOKE_GLOBAL_DB_PATH` env override lets CI / scripted
  * `mikro-orm` invocations target a sandbox DB without editing this
@@ -20,13 +19,13 @@ export default defineConfig({
   dbName: process.env.EMPLOKE_GLOBAL_DB_PATH || "./global.db",
   extensions: [Migrator],
   migrations: {
-    // Migrations live with the rest of the persistence-adapter code
-    // (driver, repositories, queries, subscribers) under
-    // `src/infrastructure/`. `pathTs` is where the MikroORM CLI
-    // writes new migration files (`migration:create`); `path` is
-    // where the runtime reads compiled migrations from.
-    path: "./dist/infrastructure/migrations",
-    pathTs: "./src/infrastructure/migrations",
+    // `pathTs` is where the MikroORM CLI writes new migration files
+    // (`migration:create`); `path` is where the runtime reads compiled
+    // migrations from. Migrations live in their own folder because
+    // they're an append-only sequence with a tool-imposed layout, not
+    // because there's a "layer" called infrastructure.
+    path: "./dist/migrations",
+    pathTs: "./src/migrations",
     // Keep the column-rename detection conservative — the diffing
     // engine guesses; we prefer explicit `migration:create --blank`
     // edits when a rename is intentional.

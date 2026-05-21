@@ -2,10 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { captureLogger } from "@emploke/logger/testing";
-import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import { RegisterWorkspaceCommand } from "@emploke/workspace";
+import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestId } from "../src/middleware/request-id.js";
 import { requestLogger } from "../src/middleware/request-logger.js";
@@ -34,12 +32,12 @@ async function makeApp() {
   openSubsystems.push(sys);
   return {
     app: workspacesRoutes({
-      mediator: sys.mediator,
+      service: sys.service,
       queries: sys.queries,
       cache: sys.cache,
       defaultWorkspaceParent: sys.defaultWorkspaceParent,
     }),
-    mediator: sys.mediator,
+    service: sys.service,
     queries: sys.queries,
     cache: sys.cache,
     defaultWorkspaceParent: sys.defaultWorkspaceParent,
@@ -47,13 +45,15 @@ async function makeApp() {
 }
 
 async function register(
-  mediator: Mediator,
+  service: WorkspaceService,
   args: { id?: string; workspaceDir: string; name: string },
 ): Promise<string> {
   const id = args.id ?? (await import("node:crypto")).randomUUID();
-  const result = await mediator.send(
-    new RegisterWorkspaceCommand(id, args.workspaceDir, args.name),
-  );
+  const result = await service.register({
+    id,
+    workspaceDir: args.workspaceDir,
+    name: args.name,
+  });
   return result.id;
 }
 
@@ -201,9 +201,9 @@ describe("workspacesRoutes — POST /", () => {
 
 describe("workspacesRoutes — list / get / current / delete", () => {
   it("GET / lists registered workspaces", async () => {
-    const { app, mediator } = await makeApp();
-    await register(mediator, { name: "A", workspaceDir: path.join(scratch, "a") });
-    await register(mediator, { name: "B", workspaceDir: path.join(scratch, "b") });
+    const { app, service } = await makeApp();
+    await register(service, { name: "A", workspaceDir: path.join(scratch, "a") });
+    await register(service, { name: "B", workspaceDir: path.join(scratch, "b") });
     const res = await app.request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { name: string }[];
@@ -211,8 +211,8 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("GET /:id returns the workspace", async () => {
-    const { app, mediator } = await makeApp();
-    const id = await register(mediator, { name: "Hello", workspaceDir: path.join(scratch, "h") });
+    const { app, service } = await makeApp();
+    const id = await register(service, { name: "Hello", workspaceDir: path.join(scratch, "h") });
     const res = await app.request(`/${id}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string; name: string };
@@ -227,8 +227,8 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("PUT /current sets the current workspace", async () => {
-    const { app, mediator, queries } = await makeApp();
-    const id = await register(mediator, { name: "Cur", workspaceDir: path.join(scratch, "cur") });
+    const { app, service, queries } = await makeApp();
+    const id = await register(service, { name: "Cur", workspaceDir: path.join(scratch, "cur") });
     const res = await app.request("/current", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -239,9 +239,9 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("DELETE /:id default removes only metadata; user files preserved", async () => {
-    const { app, mediator, queries } = await makeApp();
+    const { app, service, queries } = await makeApp();
     const workspaceDir = path.join(scratch, "del");
-    const id = await register(mediator, { name: "Del", workspaceDir });
+    const id = await register(service, { name: "Del", workspaceDir });
     const fs = await import("node:fs/promises");
     await fs.writeFile(path.join(workspaceDir, "user-file.txt"), "user", "utf8");
     const res = await app.request(`/${id}`, { method: "DELETE" });
@@ -251,9 +251,9 @@ describe("workspacesRoutes — list / get / current / delete", () => {
   });
 
   it("DELETE /:id?purge=1 also removes emploke-owned subdirs", async () => {
-    const { app, mediator } = await makeApp();
+    const { app, service } = await makeApp();
     const workspaceDir = path.join(scratch, "purge");
-    const id = await register(mediator, { name: "Purge", workspaceDir });
+    const id = await register(service, { name: "Purge", workspaceDir });
     const fs = await import("node:fs/promises");
     await fs.writeFile(path.join(workspaceDir, "user-file.txt"), "user", "utf8");
     await fs.writeFile(path.join(workspaceDir, "sessions", "drop.txt"), "agent", "utf8");
@@ -267,8 +267,8 @@ describe("workspacesRoutes — list / get / current / delete", () => {
 
 describe("workspacesRoutes — PATCH /:id", () => {
   it("renames the display name", async () => {
-    const { app, mediator, queries } = await makeApp();
-    const id = await register(mediator, { name: "Old", workspaceDir: path.join(scratch, "x") });
+    const { app, service, queries } = await makeApp();
+    const id = await register(service, { name: "Old", workspaceDir: path.join(scratch, "x") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -282,8 +282,8 @@ describe("workspacesRoutes — PATCH /:id", () => {
   });
 
   it("returns 400 when no patchable fields are present", async () => {
-    const { app, mediator } = await makeApp();
-    const id = await register(mediator, { name: "X", workspaceDir: path.join(scratch, "y") });
+    const { app, service } = await makeApp();
+    const id = await register(service, { name: "X", workspaceDir: path.join(scratch, "y") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -293,8 +293,8 @@ describe("workspacesRoutes — PATCH /:id", () => {
   });
 
   it("returns 400 on empty display name", async () => {
-    const { app, mediator } = await makeApp();
-    const id = await register(mediator, { name: "X", workspaceDir: path.join(scratch, "z") });
+    const { app, service } = await makeApp();
+    const id = await register(service, { name: "X", workspaceDir: path.join(scratch, "z") });
     const res = await app.request(`/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -329,15 +329,15 @@ describe("workspacesRoutes — PATCH /:id", () => {
 // `CatalogManager` snapshot is stale) without restarting the server.
 describe("workspacesRoutes — POST /:id/reload", () => {
   it("returns 204 on cold cache (no entry yet)", async () => {
-    const { app, mediator } = await makeApp();
-    const id = await register(mediator, { name: "Cold", workspaceDir: path.join(scratch, "cold") });
+    const { app, service } = await makeApp();
+    const id = await register(service, { name: "Cold", workspaceDir: path.join(scratch, "cold") });
     const res = await app.request(`/${id}/reload`, { method: "POST" });
     expect(res.status).toBe(204);
   });
 
   it("returns 204 and rebuilds the cached container after a warm hit", async () => {
-    const { app, mediator, cache } = await makeApp();
-    const id = await register(mediator, { name: "Warm", workspaceDir: path.join(scratch, "warm") });
+    const { app, service, cache } = await makeApp();
+    const id = await register(service, { name: "Warm", workspaceDir: path.join(scratch, "warm") });
     const before = await cache.get(id);
     expect(before).not.toBeNull();
     const res = await app.request(`/${id}/reload`, { method: "POST" });
@@ -359,8 +359,8 @@ describe("workspacesRoutes — POST /:id/reload", () => {
   });
 
   it("returns 409 with WorkspaceHasLiveTasksError when tasks are live", async () => {
-    const { app, mediator, cache } = await makeApp();
-    const id = await register(mediator, { name: "Live", workspaceDir: path.join(scratch, "live") });
+    const { app, service, cache } = await makeApp();
+    const id = await register(service, { name: "Live", workspaceDir: path.join(scratch, "live") });
     const ctx = await cache.get(id);
     expect(ctx).not.toBeNull();
     // biome-ignore lint/suspicious/noExplicitAny: test-only stub.
@@ -390,7 +390,7 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     root.route(
       "/",
       workspacesRoutes({
-        mediator: sys.mediator,
+        service: sys.service,
         queries: sys.queries,
         cache: sys.cache,
         defaultWorkspaceParent: sys.defaultWorkspaceParent,
@@ -400,7 +400,7 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     return {
       root,
       cap,
-      mediator: sys.mediator,
+      service: sys.service,
       queries: sys.queries,
       cache: sys.cache,
     };
@@ -424,8 +424,8 @@ describe("workspacesRoutes — observability (issue #58)", () => {
   });
 
   it("DELETE /:id emits a 'workspace deleted' info line", async () => {
-    const { root, cap, mediator } = await makeWiredApp();
-    const id = await register(mediator, {
+    const { root, cap, service } = await makeWiredApp();
+    const id = await register(service, {
       name: "Doomed",
       workspaceDir: path.join(scratch, "doomed"),
     });

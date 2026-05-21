@@ -2,9 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogManager, Skill } from "@emploke/catalog";
-import { RegisterWorkspaceCommand } from "@emploke/workspace";
+import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
@@ -23,13 +22,13 @@ import {
 
 let scratch: string;
 let sys: ServerTestSubsystem;
-let mediator: Mediator;
+let service: WorkspaceService;
 let cache: PerWorkspaceContainerCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-sync-"));
   sys = await setupTestSubsystem({ scratch });
-  mediator = sys.mediator;
+  service = sys.service;
   cache = sys.cache;
 });
 
@@ -41,7 +40,7 @@ afterEach(async () => {
 async function ensureWorkspace(name: string): Promise<{ id: string; workspaceDir: string }> {
   const id = (await import("node:crypto")).randomUUID();
   const workspaceDir = path.join(scratch, name);
-  const result = await mediator.send(new RegisterWorkspaceCommand(id, workspaceDir, name));
+  const result = await service.register({ id, workspaceDir, name });
   return { id: result.id, workspaceDir: path.resolve(workspaceDir) };
 }
 

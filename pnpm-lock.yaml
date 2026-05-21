@@ -412,15 +412,6 @@ importers:
       '@mikro-orm/core':
         specifier: ^6.6.0
         version: 6.6.14
-      inversify:
-        specifier: ^7.0.0
-        version: 7.11.0(reflect-metadata@0.2.2)
-      mediatr-ts:
-        specifier: ^2.2.0
-        version: 2.2.0
-      reflect-metadata:
-        specifier: ^0.2.0
-        version: 0.2.2
       zod:
         specifier: ^4.4.3
         version: 4.4.3
