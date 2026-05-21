@@ -2,9 +2,6 @@ import { mkdir, rm } from "node:fs/promises";
 import { desc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import {
   WorkspaceIdConflictError,
   WorkspaceNotRegisteredError,
@@ -22,6 +19,8 @@ import {
   RegisterWorkspaceInput,
 } from "./validate.js";
 import type { WorkspaceRepository } from "./workspace-repository.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 
 type Db = BetterSQLite3Database<typeof schema>;
 

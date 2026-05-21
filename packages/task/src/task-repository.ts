@@ -1,9 +1,6 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { and, eq, gte, inArray, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import pino, { type Logger } from "pino";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
 import type * as schema from "./schema.js";
 import { type TaskRow, tasks } from "./schema.js";
@@ -17,6 +14,8 @@ import type {
   TaskSuccess,
 } from "./types.js";
 import { TASK_ID_RE } from "./validate.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 
 type Db = BetterSQLite3Database<typeof schema>;
 

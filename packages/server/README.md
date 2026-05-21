@@ -79,13 +79,18 @@ only take effect on headless launches.
 
 ## Loopback binding
 
-`assertBindIsSafe` refuses non-loopback binds unless
-`EMPLOKE_ALLOW_NON_LOOPBACK=1` is set. There is no auth layer; the
-deployment story for remote access is SSH / reverse proxy / mesh
-VPN, NOT exposing the server publicly. The `0.0.0.0` / `::`
-wildcard binds are accepted but rewritten to `127.0.0.1` in
-`EMPLOKE_SERVER` so spawned children dial loopback (Windows refuses
-outbound `0.0.0.0`).
+`assertBindIsSafe` refuses to start the server bound to anything
+other than loopback (`127.0.0.1` / `::1` / IPv4-mapped IPv6
+loopback). There is no escape hatch and no auth layer; for remote
+access, terminate auth elsewhere and reach the server through a
+loopback-equivalent (SSH port-forward, reverse proxy with mTLS /
+OIDC, mesh VPN). Wildcard binds (`0.0.0.0` / `::`) are NOT accepted
+— set `EMPLOKE_HOST=127.0.0.1` (the default) to silence the error.
+
+For the `EMPLOKE_SERVER` env var handed to subprocesses, the
+`0.0.0.0` / `::` wildcards (if a future build allowed them) would
+be rewritten to `127.0.0.1` so spawned children dial loopback
+(Windows refuses outbound `0.0.0.0`); see `subprocess-env.ts`.
 
 ## Graceful shutdown
 

@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 
-const silentLogger: Logger = pino({ level: "silent" });
-
 import type { AgentEntity } from "../agent/agent-entity.js";
 import { AgentRepository } from "../agent/agent-repository.js";
 import { AgentService } from "../agent/agent-service.js";
@@ -33,6 +31,9 @@ import type {
   SkillResolveResult,
 } from "../types.js";
 import { HasDependentsError } from "./errors.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
+
 import type {
   CatalogInstalledEntry,
   CatalogInstallFailure,

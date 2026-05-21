@@ -1,12 +1,11 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { count, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import pino, { type Logger } from "pino";
 import type * as schema from "../schema.js";
 import { agentMcpDeps, mcps, skillMcpDeps } from "../schema.js";
 import { McpEntity } from "./mcp-entity.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 
 type Db = BetterSQLite3Database<typeof schema>;
 

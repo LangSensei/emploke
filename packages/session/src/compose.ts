@@ -31,7 +31,16 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   const db: Db = drizzle(sqlite, { schema });
-  runPendingMigrations(sqlite);
+  // Migration failure must close the SQLite handle before propagating:
+  // a leaked handle would hold the WAL lock and break a subsequent
+  // retry from the same caller (EBUSY on the lockfile / WAL files
+  // until process exit). Pattern mirrored in every entity pkg.
+  try {
+    runPendingMigrations(sqlite);
+  } catch (err) {
+    sqlite.close();
+    throw err;
+  }
 
   const service = new SessionService({
     catalog: opts.catalog,

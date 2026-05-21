@@ -1,7 +1,3 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type * as schema from "./schema.js";
@@ -16,13 +12,9 @@ type Db = BetterSQLite3Database<typeof schema>;
  */
 export class WorkspaceRepository {
   private readonly db: Db;
-  private readonly logger: Logger;
 
-  constructor(opts: { db: Db; logger?: Logger }) {
+  constructor(opts: { db: Db }) {
     this.db = opts.db;
-    this.logger = opts.logger ?? silentLogger;
-    // logger reserved for future row-rejection / migration-skew warnings
-    void this.logger;
   }
 
   async findById(id: string): Promise<Workspace | undefined> {

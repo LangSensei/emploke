@@ -1,13 +1,12 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import pino, { type Logger } from "pino";
 import type * as schema from "../schema.js";
 import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
 import { type AgentDependencies, AgentEntity } from "./agent-entity.js";
 import { AgentNotFoundError } from "./errors.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 /** One file inside an agent, as yielded by {@link AgentRepository.streamFiles}. */
 export interface AgentFile {
   readonly relPath: string;

@@ -1,13 +1,12 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { and, count, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import pino, { type Logger } from "pino";
 import type * as schema from "../schema.js";
 import { agentSkillDeps, skillFiles, skillMcpDeps, skillSkillDeps, skills } from "../schema.js";
 import { SkillNotFoundError } from "./errors.js";
 import { type SkillDependencies, SkillEntity } from "./skill-entity.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 /** One file inside a skill, as yielded by {@link SkillRepository.streamFiles}. */
 export interface SkillFile {
   readonly relPath: string;

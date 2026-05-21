@@ -31,15 +31,12 @@
     "@emploke/terminal": "workspace:*",
     "@emploke/workspace": "workspace:*",
     "@hono/node-server": "^1.14.1",
-    "better-sqlite3": "^12.10.0",
-    "drizzle-orm": "^0.45.2",
     "hono": "^4.7.11",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "pino-roll": "^3.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.17",
     "cross-env": "^7.0.3",
     "tsx": "^4.19.0",

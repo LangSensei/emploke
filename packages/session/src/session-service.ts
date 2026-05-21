@@ -105,10 +105,12 @@ export class SessionService {
       throw new SessionIdAllocationFailedError(MAX_CREATE_RETRIES);
     }
 
+    let provisionedRuntimeSessionId: string | null = null;
     try {
       const { runtimeSessionId } = await runtime.provision(workdir, resolveResult, this.catalog, {
         workspaceDir: this.workspaceDir,
       });
+      provisionedRuntimeSessionId = runtimeSessionId;
       const createdAt = this.now().toISOString();
       // Catalog is the source of truth for the canonical agent FQN —
       // `resolveResult.agent.fqn` already carries the `<scope>/<name>`
@@ -134,7 +136,27 @@ export class SessionService {
         lastLaunchMode: null,
       };
     } catch (err) {
+      // Roll back in reverse order: workdir, then runtime state.
+      // The earlier shape only removed the workdir, leaking runtime
+      // state if `repo.insert` failed after `runtime.provision`
+      // succeeded (the runtime had already minted a session id and
+      // possibly recorded state under <copilotStateDir>/<id>/). Best
+      // effort — primary error is what the caller cares about.
       await safeRm(workdir, this.logger);
+      if (provisionedRuntimeSessionId !== null) {
+        try {
+          await runtime.deleteState(provisionedRuntimeSessionId);
+        } catch (cleanupErr) {
+          this.logger.warn(
+            {
+              sessionId: id,
+              runtimeSessionId: provisionedRuntimeSessionId,
+              error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+            },
+            "session create: runtime state cleanup failed during rollback",
+          );
+        }
+      }
       throw err;
     }
   }

@@ -101,39 +101,51 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
 
   try {
     await mkdir(path.dirname(configPath), { recursive: true });
-    // proper-lockfile requires the locked file to exist; touch the
-    // config dir's lock-target if absent so lock acquisition has
-    // something to fasten onto.
-    const lockTarget = configPath;
-    // Ensure lockTarget exists (proper-lockfile needs an existing file).
+    // proper-lockfile requires the locked file to exist. Touch it
+    // only when it''s genuinely missing — any other stat failure
+    // (EACCES, EIO, EISDIR, …) must propagate. The earlier shape
+    // had a bare `catch` here which would silently overwrite the
+    // user''s real `config.json` with `{}` if (say) the file was
+    // present but unreadable for permissions reasons. Data loss.
     try {
-      await stat(lockTarget);
-    } catch {
-      await writeFileAtomic(lockTarget, "{}");
+      await stat(configPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      await writeFileAtomic(configPath, "{}");
     }
-    const release = await lockfile.lock(lockTarget, {
+    const release = await lockfile.lock(configPath, {
       retries: { retries: 100, factor: 1.1, minTimeout: 50, maxTimeout: 200 },
       stale: 30000,
     });
     try {
+      // Read + parse phase. Failure modes split into two outcomes:
+      //   - file missing / file unreadable as JSON  -> "start fresh"
+      //     (rewrite below with just `trustedFolders`, valid file).
+      //   - file present but exceeds MAX_CONFIG_BYTES -> HARD REFUSE
+      //     (do NOT clobber a 100MB user config with `{}` just
+      //     because we hit the cap). The size check therefore lives
+      //     OUTSIDE the swallow-and-start-fresh catch below.
+      const st = await statSafe(configPath);
+      if (st !== null && st.size > MAX_CONFIG_BYTES) {
+        throw new Error(
+          `refusing to touch ${configPath}: ${st.size} bytes exceeds cap of ${MAX_CONFIG_BYTES}`,
+        );
+      }
+
       let config: Record<string, unknown> = {};
-      try {
-        const st = await stat(configPath);
-        if (st.size > MAX_CONFIG_BYTES) {
-          throw new Error(
-            `refusing to read ${configPath}: ${st.size} bytes exceeds cap of ${MAX_CONFIG_BYTES}`,
-          );
+      if (st !== null) {
+        try {
+          const raw = await readFile(configPath, "utf8");
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+            config = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // Invalid JSON — start fresh. We never refuse to launch
+          // because the user''s config is corrupted; the rewrite
+          // below will produce a valid file containing just
+          // `trustedFolders`.
         }
-        const raw = await readFile(configPath, "utf8");
-        const parsed = JSON.parse(raw) as unknown;
-        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Missing or invalid JSON — start fresh. We never refuse to
-        // launch because the user's config is corrupted; the rewrite
-        // below will produce a valid file containing just
-        // `trustedFolders`.
       }
 
       const existing = readTrustedFolders(config.trustedFolders);
@@ -146,6 +158,16 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
     }
   } catch (cause) {
     throw new TrustRegistrationFailed(configPath, resolvedDir, cause as Error);
+  }
+}
+
+/** stat or null-on-ENOENT. Other stat errors propagate. */
+async function statSafe(p: string): Promise<import("node:fs").Stats | null> {
+  try {
+    return await stat(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
 }
 

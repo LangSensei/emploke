@@ -42,7 +42,16 @@ export async function compose__Entity__Module(
     sqlite.pragma("foreign_keys = ON");
     sqlite.pragma("busy_timeout = 5000");
     db = drizzle(sqlite, { schema });
-    runPendingMigrations(sqlite);
+    // Migration failure must close the SQLite handle before propagating:
+    // a leaked handle would hold the WAL lock and break a subsequent
+    // retry from the same caller (EBUSY on the lockfile / WAL files
+    // until process exit).
+    try {
+      runPendingMigrations(sqlite);
+    } catch (err) {
+      sqlite.close();
+      throw err;
+    }
   }
   const repo = new __Entity__Repository({
     db,

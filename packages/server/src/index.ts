@@ -412,10 +412,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 }
 
 /**
- * Hono middleware: pulls `:id` from the route params, asks the cache for
- * its `WorkspaceContext`, and stashes the per-workspace `SessionService`
- * and `CatalogService` on `c.var`. Sub-route families pull whichever they need
- * (sessions read `c.get("sessions")`; catalog reads `c.get("catalog")`).
+ * Hono middleware: pulls `:id` from the route params, asks the cache
+ * for its `WorkspaceRuntime`, and stashes it on `c.var.runtime` as a
+ * single field. Sub-routes pull whichever service they need off the
+ * runtime (sessions read `c.get("runtime").sessions`; catalog reads
+ * `c.get("runtime").catalog`; etc.).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
