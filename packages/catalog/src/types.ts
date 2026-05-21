@@ -1,6 +1,6 @@
 /**
  * Wire-format DTOs for the catalog: the JSON shapes returned by
- * `CatalogManager.listSkillEntries`, `getSkill`, `resolveAgent`, etc.
+ * `CatalogService.listSkillEntries`, `getSkill`, `resolveAgent`, etc.
  * and consumed by the dashboard and runtime over HTTP.
  *
  * Kept distinct from the rich entity classes (`Skill`, `Agent`, `Mcp`)
@@ -8,7 +8,7 @@
  * serialisation, and so consumers that work in pure data-transfer
  * mode don't need to import the entity layer.
  *
- * `CatalogManager` projects entities into these DTOs at the boundary
+ * `CatalogService` projects entities into these DTOs at the boundary
  * via the internal `projectSkillPojo` / `projectAgentPojo` /
  * `projectMcpMetadata` helpers.
  */
@@ -69,7 +69,7 @@ export interface BlockedReason {
 
 /**
  * Wire DTO for a skill. Returned via
- * {@link CatalogManager.listSkillEntries} and friends so consumers
+ * {@link CatalogService.listSkillEntries} and friends so consumers
  * working with HTTP-shaped data don't need to import the entity class.
  */
 export interface Skill {
@@ -173,7 +173,7 @@ export interface ResolvedMcp {
 }
 
 /**
- * Returned by {@link CatalogManager.resolveAgent}. Used by the runtime
+ * Returned by {@link CatalogService.resolveAgent}. Used by the runtime
  * to materialise a session workdir — it gets the agent + topologically
  * ordered skills + the set of mcp names whose content the runtime
  * will pull via `getMcpContent`.
@@ -191,7 +191,7 @@ export interface SkillResolveResult {
 }
 
 /**
- * Patch shape for {@link CatalogManager.updateSkillMetadata}.
+ * Patch shape for {@link CatalogService.updateSkillMetadata}.
  *
  * NOTE (issue #122): the wire shape for `dependencies` on the metadata
  * patch intentionally remains origin URI strings — the frontmatter
@@ -209,7 +209,7 @@ export interface SkillMetadataPatch {
   } | null;
 }
 
-/** Patch shape for {@link CatalogManager.updateAgentMetadata}. */
+/** Patch shape for {@link CatalogService.updateAgentMetadata}. */
 export interface AgentMetadataPatch {
   readonly description?: string;
   readonly version?: string;

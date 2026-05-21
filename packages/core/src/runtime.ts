@@ -133,7 +133,7 @@ export interface EmplokeCore {
    */
   reloadWorkspace(id: string): Promise<Workspace | null>;
 
-  /** Closes the global registry connection. Cache must be `closeAll()`'d first. */
+  /** Closes the global registry connection. Also disposes the cache. Idempotent. */
   close(): Promise<void>;
 }
 
@@ -199,6 +199,14 @@ export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<Empl
     },
 
     async close() {
+      // Close the per-workspace cache first so any open per-workspace
+      // SQLite handles / file watchers / SDK clients release before we
+      // tear down the global registry. Documented as a caller
+      // requirement on EmplokeCore.close, but enforcing it here makes
+      // the surface harder to misuse and matches Stripe-style
+      // resource ownership (the composer composes -> the composer
+      // disposes, top-down).
+      await cache.closeAll();
       await workspaceModule.close();
     },
   };
@@ -255,6 +263,19 @@ export class WorkspaceRuntimeCache {
   }
 
   async reload(id: string): Promise<WorkspaceRuntime | null> {
+    // First, drain any in-flight `get()` for this id. Without this,
+    // a concurrent caller of get() could finish loading AFTER our
+    // `entries.delete(id)` line and re-populate the cache with a
+    // stale entry that immediately leaks (our subsequent get() would
+    // mint a different one).
+    const inflight = this.inflight.get(id);
+    if (inflight) {
+      try {
+        await inflight;
+      } catch {
+        // best-effort — propagate via the eventual get() below
+      }
+    }
     const cached = this.entries.get(id);
     if (cached) {
       const live = cached.tasks.liveCount();

@@ -137,7 +137,7 @@ export class RegistryNotBootstrappedError extends RegistryError {
 
   constructor(public readonly file: string) {
     super(
-      `workspace registry at ${file} has no MikroORM schema yet — call composeWorkspaceModule({dbFile}) once before consuming the registry.`,
+      `workspace registry at ${file} has no schema yet — call composeWorkspaceModule({dbFile}) once before consuming the registry.`,
     );
   }
 }

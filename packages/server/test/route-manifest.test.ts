@@ -210,11 +210,11 @@ function stubTaskManager(): TaskService {
   });
 }
 
-function stubCatalogFacade(): CatalogManager {
-  // CatalogManager is a class with options; for route enumeration we
+function stubCatalogFacade(): CatalogService {
+  // CatalogService is a class with options; for route enumeration we
   // never call any method, but constructing one keeps types honest.
   // Use a Proxy to short-circuit any accidental method call.
-  return new Proxy({} as CatalogManager, {
+  return new Proxy({} as CatalogService, {
     get() {
       throw new Error("stubCatalogManager: not callable");
     },

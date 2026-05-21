@@ -50,12 +50,15 @@ const MAX_CONFIG_BYTES = 10 * 1024 * 1024;
  *
  * # IO mechanics
  *
- * The atomic-write + cross-process lock primitives come from
- * `@emploke/fs` (the same primitives every `Fs*Repository` uses). The
- * lock has PID-based stale recovery and the write goes through a tmp
- * file + rename, so concurrent buildInteractiveLaunch preflights from multiple
- * dashboard sessions cannot lose-update each other or partially write
- * `config.json`.
+ * The atomic-write + cross-process lock primitives come from two
+ * focused npm libraries:
+ *   - `write-file-atomic` — write-temp + rename, so concurrent
+ *     buildInteractiveLaunch preflights from multiple dashboard
+ *     sessions cannot partially write `config.json`.
+ *   - `proper-lockfile` — PID-aware advisory lock with stale
+ *     recovery, used to serialise the read-modify-write of
+ *     `trustedFolders` so two concurrent preflights cannot both
+ *     pass `isPathCovered` before either writes (lose-update).
  */
 
 /**
@@ -74,17 +77,19 @@ const MAX_CONFIG_BYTES = 10 * 1024 * 1024;
  *   - exact match on the resolved absolute path counts as trusted
  *   - any ancestor directory listed in `trustedFolders` counts as trusted
  *
- * Concurrency: the entire read-modify-write sequence runs under
- * `withFileLock(<configPath>.lock)`. Without the lock, two concurrent
- * buildInteractiveLaunch preflights could both pass `isPathCovered` before either
- * wrote, then the second `writeJsonAtomic` would clobber the first
- * writer's unrelated changes.
+ * Concurrency: the entire read-modify-write sequence runs under a
+ * `proper-lockfile` advisory lock on `<configPath>`. Without the
+ * lock, two concurrent buildInteractiveLaunch preflights could both
+ * pass `isPathCovered` before either wrote, then the second
+ * `write-file-atomic` would clobber the first writer's unrelated
+ * changes.
  *
  * Failure modes — every failure path (mkdir, lock timeout, atomic
  * write, parent permissions) is wrapped as {@link TrustRegistrationFailed}.
- * That gives `buildInteractiveLaunch` a single, typed catch surface and preserves
- * the underlying message (which for {@link FsLockTimeoutError} includes
- * the holder PID — the operator's only handle to a wedged trust write).
+ * That gives `buildInteractiveLaunch` a single, typed catch surface
+ * and preserves the underlying error message (which for a
+ * `proper-lockfile` timeout includes the holder PID — the operator's
+ * only handle to a wedged trust write).
  *
  * If `dir` (or an ancestor) is already covered, the file is left untouched.
  * A missing or unparseable config file is treated as "start fresh"; we

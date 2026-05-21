@@ -332,7 +332,7 @@ const seqRandom = (start = 1) => {
 
 const recorder = () => {
   // Matches pino's API shape: (meta, msg). Hand-rolled rather than
-  // pulled from `@emploke/logger/testing.captureLogger` because these
+  // pulled from `pino (was @emploke/logger; pkg folded into consumers)/testing.captureLogger` because these
   // tests want a synchronous in-memory record (captureLogger goes
   // through a real pino instance + Writable stream which can race
   // assertion timing in tight loops).
@@ -718,7 +718,7 @@ describe("exit watcher", () => {
 });
 
 describe("liveCount", () => {
-  // These tests pin the contract that `WorkspaceContextCache.reload`
+  // These tests pin the contract that `WorkspaceRuntimeCache.reload`
   // depends on: liveCount must report > 0 for any task whose on-disk
   // workdir exists but has not yet reached terminal status, including
   // tasks that are mid-dispatch (workdir reserved, `live.set` not yet
@@ -1399,7 +1399,7 @@ describe("dispatch — subprocess env injection", () => {
   });
 
   it.skip("two managers isolated env bags (env layering moved to runtime)", async () => {
-    // Same shared base (mimics what WorkspaceContextCache does in
+    // Same shared base (mimics what WorkspaceRuntimeCache does in
     // production: one frozen base passed by reference into every
     // per-workspace manager). Concurrency-safety means workspace A's
     // dispatch and workspace B's dispatch must NEVER cross-contaminate

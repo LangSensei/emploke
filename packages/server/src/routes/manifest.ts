@@ -257,7 +257,7 @@ export interface TaskActivityQuery {
  * POST /api/workspaces/:id/catalog/{kind}/:name/sync body. The
  * `planToken` is minted by the matching `/sync/resolve` (returned
  * inside the `ResolveManifest`) and is single-use + 5-min TTL on
- * the server. See {@link CatalogManager.cachePlan} / `takePlan`
+ * the server. See {@link CatalogService.cachePlan} / `takePlan`
  * for the rationale: the apply step replays the exact preview-time
  * plan rather than re-resolving (which would silently apply a
  * fresh, possibly-different closure).

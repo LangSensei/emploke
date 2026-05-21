@@ -115,7 +115,7 @@ Tests under a sub-folder mirror the source sub-folder:
 `packages/catalog/test/agent/agent-service.test.ts`.
 
 NEVER name a test file by an old class name (`manager.test.ts` was wrong
-after `SessionManager` was renamed to `SessionService`) or by a non-source
+after `SessionService` was renamed to `SessionService`) or by a non-source
 concept word.
 
 ## Naming conventions

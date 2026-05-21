@@ -62,10 +62,18 @@ function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   const insertApplied = sqlite.prepare(
     "INSERT INTO __drizzle_migrations (name, applied_at) VALUES (?, ?)",
   );
-  for (const name of files) {
-    if (applied.has(name)) continue;
+  // Apply each migration in a single transaction so a partial failure
+  // (a syntactically invalid statement late in the file) rolls back the
+  // whole file. Without this the schema could land half-applied with no
+  // matching journal row and the next boot would re-run the same file
+  // from the top and crash on duplicate-table.
+  const applyOne = sqlite.transaction((name: string) => {
     const sql = readFileSync(path.join(dir, name), "utf8");
     sqlite.exec(sql);
     insertApplied.run(name, new Date().toISOString());
+  });
+  for (const name of files) {
+    if (applied.has(name)) continue;
+    applyOne(name);
   }
 }

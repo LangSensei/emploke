@@ -3,7 +3,7 @@ import pino, { type Level, type Logger } from "pino";
 
 /**
  * Test-only helpers for the logging surface. Re-exported under
- * `@emploke/logger/testing` so production bundles don't pick them up.
+ * `pino (was @emploke/logger; pkg folded into consumers)/testing` so production bundles don't pick them up.
  */
 
 /**

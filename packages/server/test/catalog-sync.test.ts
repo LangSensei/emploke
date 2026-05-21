@@ -15,7 +15,7 @@ import {
 
 /**
  * End-to-end tests for the sync / acknowledge / enable / disable
- * routes added in PR #57. Drives the real CatalogManager + SQLite
+ * routes added in PR #57. Drives the real CatalogService + SQLite
  * stack via a real Hono mount so the wire shapes (`ResolveManifest`,
  * status enums, etc.) are exercised top-to-bottom.
  */

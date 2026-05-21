@@ -9,7 +9,7 @@
  * configuration. They're deliberately plain interfaces 鈥?they're
  * either exhaustive enums (`TaskStatus`), value-only payloads
  * (`TaskSuccess`, `TaskFailure`, `TaskCancellation`), or constructor-options bags
- * (`TaskManagerConfig`) where DDD adds no leverage.
+ * (`TaskServiceConfig`) where DDD adds no leverage.
  *
  * Why metadata instead of named fields on Task:
  *  - The Task type never has to change when a new runtime arrives.
@@ -157,7 +157,7 @@ import type * as schema from "./schema.js";
 type Db = BetterSQLite3Database<typeof schema>;
 
 /** Constructor options for `TaskService`. */
-export interface TaskManagerConfig {
+export interface TaskServiceConfig {
   readonly catalog: CatalogService;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly workspaceDir: string;

@@ -194,7 +194,7 @@ afterEach(async () => {
 
 // ─── resolveSkill: cross-entity walking ─────────────────
 
-describe("CatalogManager.resolveSkill", () => {
+describe("CatalogService.resolveSkill", () => {
   it("resolves a leaf skill (no deps)", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
     const plan = await mgr.resolveSkill("file:/abs/tool");
@@ -361,7 +361,7 @@ describe("CatalogManager.resolveSkill", () => {
 
 // ─── resolveAgent: cross-entity walking ─────────────────
 
-describe("CatalogManager.resolveAgent", () => {
+describe("CatalogService.resolveAgent", () => {
   it("resolves an agent with skill + mcp deps", async () => {
     fetchers.setMcp("file:/abs/mcp/azure", "azure/mcp", MCP_BODY);
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
@@ -384,7 +384,7 @@ describe("CatalogManager.resolveAgent", () => {
 
 // ─── install: cross-entity orchestration ────────────────
 
-describe("CatalogManager.install", () => {
+describe("CatalogService.install", () => {
   it("installs all three kinds in topological order", async () => {
     fetchers.setMcp("file:/abs/mcp/azure", "azure/mcp", MCP_BODY);
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
@@ -472,7 +472,7 @@ describe("CatalogManager.install", () => {
 
 // ─── delete with dep protection ─────────────────────
 
-describe("CatalogManager — delete with dep protection", () => {
+describe("CatalogService — delete with dep protection", () => {
   it("deleteAgent works unconditionally (agents are roots)", async () => {
     fetchers.setAgent("file:/abs/agent", { "AGENTS.md": AGENT_ANCHOR("agent") });
     await mgr.installAgent("file:/abs/agent");
@@ -538,7 +538,7 @@ describe("CatalogManager — delete with dep protection", () => {
 
 // ─── single-shot convenience ────────────────────────
 
-describe("CatalogManager — single-shot installers", () => {
+describe("CatalogService — single-shot installers", () => {
   it("installSkill is resolveSkill + install", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
     const result = await mgr.installSkill("file:/abs/tool");
@@ -560,7 +560,7 @@ describe("CatalogManager — single-shot installers", () => {
 
 // ─── Plan token cache (preview/apply UX backbone) ────────────
 
-describe("CatalogManager plan token cache", () => {
+describe("CatalogService plan token cache", () => {
   it("cachePlan returns a single-use token that takePlan trades for the plan", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
     const plan = await mgr.resolveSkill("file:/abs/tool");

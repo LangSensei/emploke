@@ -2,45 +2,129 @@
 
 ## Unreleased
 
-### Phase 2 of #135 / ADR-3 (#139) — MikroORM pivot
+### Phase 3 (#148) — de-DDD pivot + `@emploke/core` extraction + Drizzle migration
+
+The Phase 2 MikroORM pivot was rolled back. Every entity pkg is now a
+plain `<Entity>Service` class over a per-pkg Drizzle repository; the
+DDD/CQRS ceremony (aggregate factories, value objects, Inversify
+container, mediatr-ts pipeline behaviours, custom MigrationCoordinator,
+domain-event dispatcher) is gone. The accumulated indirection was
+costing real velocity and the Codex Rust CLI's "core crate composes
+focused leaf crates" shape turned out to be a closer analogue to
+ours than the eShop reference we'd been imitating.
 
 #### Added
 
-- `@mikro-orm/core` + `@mikro-orm/better-sqlite` deps in `@emploke/workspace`;
-  `@mikro-orm/core` + `@mikro-orm/migrations` + `@mikro-orm/better-sqlite` in
-  `@emploke/server`; `@mikro-orm/cli` + `@mikro-orm/migrations` +
-  `@mikro-orm/core` devDeps at the repo root.
-- `AggregateRoot` base class (`packages/workspace/src/domain/aggregate-root.ts`)
-  — accumulates `pullDomainEvents()`-style domain events for any aggregate
-  in workspace pkg. `instanceof AggregateRoot` is the runtime discriminator
-  the `DomainEventSubscriber` uses to walk MikroORM change-sets.
-- `DomainEventSubscriber`
-  (`packages/workspace/src/infrastructure/domain-event-subscriber.ts`) —
-  `EventSubscriber` for MikroORM's `afterFlush` hook; pulls each tracked
-  aggregate's buffered events and dispatches them through `mediator.publish`.
-  Registered with the global ORM in `buildServerContainer` so every command's
-  flush fires it automatically.
-- `TransactionBehavior`
-  (`packages/server/src/infrastructure/transaction-behavior.ts`) —
-  cross-cutting mediatr-ts pipeline behaviour that wraps every
-  `mediator.send(...)` call in `em.transactional(async () => next())`.
-  Drives `em.flush()` (and therefore `DomainEventSubscriber`) at the end of
-  every command handler with rollback semantics on throw.
-- `mikro-orm.config.ts` + `migrations/Migration00000000000000_initial.ts`
-  in `packages/workspace/` — initial schema-from-entity migration
-  (workspaces + global_state tables). `pnpm orm:migration:create` /
-  `orm:migration:up` / `orm:schema:fresh` scripts wired.
-- `WORKSPACE_ENTITIES` — exported entity list for
-  `MikroORM.init({ entities: WORKSPACE_ENTITIES })` so the composition root
-  stays agnostic of the package's internal entity layout.
-- `MikroWorkspaceRepository` + `MikroWorkspaceQueries` — new infra that
-  replaces the deleted SQLite + raw-query repositories.
-- `openTestWorkspaceOrm()` helper in `@emploke/workspace/testing` —
-  opens an in-memory MikroORM + creates schema + creates the
-  `global_state` raw-SQL table. Used by every workspace + server test
-  that needs a `global.db`-equivalent fixture.
+- **`@emploke/core`** — composition root that wires the global
+  workspace registry to per-workspace `{catalog, sessions, tasks}`
+  bundles behind a `WorkspaceRuntimeCache`. Exposes the canonical
+  cross-BC orchestration methods (`registerWorkspace`,
+  `renameWorkspace`, `unregisterWorkspace`, `reloadWorkspace`) plus
+  `WorkspaceRuntime.spawnSession` so transport layers become thin
+  adapters. Server bootstrap collapses to a 1-line wrapper.
+- **Drizzle migration toolchain** in every entity pkg
+  (`@emploke/workspace`, `@emploke/catalog`, `@emploke/session`,
+  `@emploke/task`): drizzle-kit codegen against `schema.ts`, plus a
+  small in-pkg migrator at compose time that records applied files in
+  `__drizzle_migrations`.
+- **Stripe-style hybrid param style** for every service write:
+  primary key positional, options in a bag
+  (`service.delete(id, { purge })`, `service.rename(id, { newName })`,
+  etc.). Single create-bag where there is no canonical positional key
+  (`service.register({ id, workspaceDir, name })`). See
+  `docs/architecture.md` and `docs/pkg-template.md`.
+- **Subprocess env split** (`@emploke/server/subprocess-env.ts`):
+  `buildSubprocessEnvBase` returns string-only positive declarations;
+  `SUBPROCESS_ENV_SCRUB_KEYS` is the separate negative list of
+  "delete from inherited env" keys, honoured only by the headless
+  launch path (interactive shells can't unset, so mixing the two
+  semantics in one bag was a latent crash  see Fixed below).
+- **`packages/_template/`** — scaffold for new entity pkgs codifying
+  the post-refactor conventions (bare-noun DTOs in `types.ts`,
+  single `<Entity>Service` per BC, `<entity>-<role>.ts` naming for
+  class-bearing files, vitest `forks` pool, drizzle-kit wiring).
 
 #### Changed (BREAKING)
+
+- Persistence: every entity pkg moved from MikroORM to Drizzle.
+  Schemas live in `schema.ts`; repos call drizzle directly; the
+  `__drizzle_migrations` table is the new applied-files journal.
+  Existing `workspace.db` files are incompatible with the new layout
+   production deployments must delete `<workspaceDir>/workspace.db`
+  and let the server recreate it on first request (no in-place
+  migration path; we are pre-1.0).
+- `Manager`  `Service` rename across every entity pkg:
+  `WorkspaceManager`  `WorkspaceService`,
+  `CatalogManager`  `CatalogService`,
+  `SessionManager`  `SessionService`,
+  `TaskManager`  `TaskService`. Constructors take a Drizzle handle
+  + minimal dependencies; the old DDD `compose<Entity>Module` shape
+  remains as the public composition seam but its options bag shrank
+  from 9  6 params (env layering moved into `CopilotRuntime` config).
+- DTO naming: bare nouns (`Workspace`, `Agent`, `Session`, `Task`,
+  `Skill`, `Mcp`) for the public projection; `*Row` for the Drizzle
+  internal type (never exported beyond the repo); `*Entry` for list
+  items with computed status; `*Entity` (when present) for the
+  package-private state-machine class.
+- Copilot CLI: `--resume=<id>` replaced by `--session-id=<id>` 
+  upstream broke `--resume` to no longer create the session at the
+  given id. `buildCopilotLaunchCommand` emits the new flag; pkg
+  targets Copilot CLI  1.0.45.
+- Runtime pkg layout: `registry.ts`  `runtime-registry.ts`;
+  `copilot/copilot.ts`  `copilot-runtime.ts`; `copilot/launch.ts` 
+  `copilot/interactive-launch.ts` (paired with `launch-headless.ts`);
+  `copilot/module.ts` deleted (dead).
+- Test files mirror src layout: `manager.test.ts` 
+  `<entity>-service.test.ts`, `cancel-*.test.ts` 
+  `<entity>-service.cancel-*.test.ts`, etc.
+- Workspace pkg removed `MIGRATIONS.md` and the legacy
+  `MigrationCoordinator` infra (custom topo-sort + per-pkg
+  `MIGRATIONS` arrays + `SchemaMeta*` errors). drizzle-kit owns the
+  migration story now.
+
+#### Fixed
+
+- Windows terminal spawn crash "Cannot read properties of undefined
+  (reading 'replace')" when the runtime emitted
+  `LaunchCommand.env.EMPLOKE_HOME = undefined`. Root cause was the
+  base-bag/scrub-list semantic mix above; fix split them at the
+  source. `terminal/_shared.ts` `shExportPrefix` / `pwshEnvPrefix`
+  also gained defence-in-depth filters that skip non-string values.
+- `EmplokeCore.close()` was relying on callers to `cache.closeAll()`
+  first; now it does so internally, top-down disposal style.
+- `WorkspaceRuntimeCache.reload()` now drains in-flight `get()`
+  loads before closing the cached entry, eliminating a race where a
+  concurrent load could re-populate the cache with a stale entry
+  past the close.
+- Server graceful shutdown was calling `cache.closeAll()` without
+  `await`, racing the subsequent `composition.close()` for the
+  `global.db` handle.
+- Workspace `register` now translates SQLite `SQLITE_CONSTRAINT*`
+  errors back into typed `WorkspaceIdConflictError` /
+  `WorkspacePathConflictError` instead of leaking the raw driver
+  error past the racy pre-flight checks.
+
+#### Removed
+
+- `inversify`, `mediatr-ts`, `reflect-metadata` from every pkg.
+- `@mikro-orm/*` from every pkg (workspace, session, task, catalog,
+  server, repo root).
+- `@emploke/workspace`'s legacy migration framework
+  (`MigrationCoordinator` + `runPkgMigrations` + `SchemaMeta*`
+  errors + per-pkg `MIGRATIONS` arrays + the 12-test legacy suite).
+- Per-entity `Sqlite{Agent,Skill,Mcp,Session,Task}Repository`
+  classes  replaced by Drizzle-backed equivalents kept
+  package-private.
+- The DDD aggregate root / value object / Inversify container
+  scaffolding in `@emploke/workspace`. `Workspace` is now a flat DTO
+  derived from `schema.$inferSelect`.
+- `@emploke/paths`, `@emploke/fs`, `@emploke/logger`,
+  `@emploke/catalog-fetcher`  merged into the pkgs that consumed
+  them. The atomic-IO seam consumers now reach for `write-file-atomic`
+  directly; pure path helpers live next to the schemas that use them.
+
+## Older history (pre-Phase 3)
+### Changed (BREAKING)
 
 - `@emploke/workspace` public API surface
   — `WorkspaceDb` (DI token for the `DatabaseSync` handle) **removed**; the
@@ -157,3 +241,4 @@ custom framework).
   container is built and held but no production code path resolves
   through it yet — existing managers are still constructed by hand.
   Phase 1 of #135 will start migrating individual bindings.
+

@@ -1,5 +1,5 @@
 /**
- * Error types thrown by `@emploke/catalog-fetcher`.
+ * Error types thrown by `@emploke/catalog/fetcher`.
  *
  * These are deliberately defined here (not in `@emploke/catalog`) because
  * `catalog-fetcher` has zero `@emploke/catalog` dep — it is the lower

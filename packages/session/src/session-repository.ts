@@ -1,7 +1,3 @@
-import pino, { type Logger } from "pino";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import { and, eq, gte, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";
@@ -24,12 +20,9 @@ export interface ListSessionStateOpts {
  */
 export class SessionRepository {
   private readonly db: Db;
-  private readonly logger: Logger;
 
-  constructor(opts: { db: Db; logger?: Logger }) {
+  constructor(opts: { db: Db }) {
     this.db = opts.db;
-    this.logger = opts.logger ?? silentLogger;
-    void this.logger;
   }
 
   async read(id: string): Promise<SessionRow | undefined> {

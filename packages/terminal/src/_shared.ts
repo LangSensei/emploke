@@ -110,7 +110,16 @@ export function pwshQuote(s: string): string {
  */
 export function shExportPrefix(env: Readonly<Record<string, string>> | undefined): string {
   if (env === undefined) return "";
-  const entries = Object.entries(env);
+  // Defence in depth: skip undefined / null values defensively. The
+  // typed contract (`Readonly<Record<string, string>>`) forbids them,
+  // but the JS runtime can still have one if a caller routed a
+  // `NodeJS.ProcessEnv` through an `as`-cast. A leaked undefined would
+  // throw at `shQuote(v)` (`undefined.replace`) — exactly the windows
+  // terminal-spawn class of bug that surfaced as "Cannot read
+  // properties of undefined (reading 'replace')". Filter, don't crash.
+  const entries = Object.entries(env).filter(
+    (e): e is [string, string] => typeof e[1] === "string",
+  );
   if (entries.length === 0) return "";
   const parts = entries.map(([k, v]) => `${k}=${shQuote(v)}`);
   return `export ${parts.join(" ")} && `;
@@ -134,7 +143,10 @@ export function shExportPrefix(env: Readonly<Record<string, string>> | undefined
  */
 export function pwshEnvPrefix(env: Readonly<Record<string, string>> | undefined): string {
   if (env === undefined) return "";
-  const entries = Object.entries(env);
+  // Defence in depth: see shExportPrefix above for the rationale.
+  const entries = Object.entries(env).filter(
+    (e): e is [string, string] => typeof e[1] === "string",
+  );
   if (entries.length === 0) return "";
   return `${entries.map(([k, v]) => `$env:${k} = ${pwshQuote(v)}`).join("; ")}; `;
 }

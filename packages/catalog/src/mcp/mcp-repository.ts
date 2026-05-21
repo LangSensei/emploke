@@ -59,20 +59,29 @@ export class McpRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    const skillDepCount =
-      this.db.select({ c: count() }).from(skillMcpDeps).where(eq(skillMcpDeps.targetFqn, fqn)).get()
-        ?.c ?? 0;
-    const agentDepCount =
-      this.db.select({ c: count() }).from(agentMcpDeps).where(eq(agentMcpDeps.targetFqn, fqn)).get()
-        ?.c ?? 0;
-    if (skillDepCount + agentDepCount > 0) {
-      const e = new Error(
-        `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
-      );
-      (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
-      throw e;
-    }
-    this.db.delete(mcps).where(eq(mcps.fqn, fqn)).run();
+    // Race-free: count + delete in one transaction so a concurrent
+    // `installSkill` that adds a new dep on this mcp can't slip
+    // between our count check and the row removal (the synthetic
+    // FOREIGN KEY error we throw is the only thing standing in for
+    // the FK constraint we dropped along with the migration
+    // framework). Throwing inside the transaction callback rolls
+    // back the empty delete and the synthetic error propagates.
+    this.db.transaction((tx) => {
+      const skillDepCount =
+        tx.select({ c: count() }).from(skillMcpDeps).where(eq(skillMcpDeps.targetFqn, fqn)).get()
+          ?.c ?? 0;
+      const agentDepCount =
+        tx.select({ c: count() }).from(agentMcpDeps).where(eq(agentMcpDeps.targetFqn, fqn)).get()
+          ?.c ?? 0;
+      if (skillDepCount + agentDepCount > 0) {
+        const e = new Error(
+          `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
+        );
+        (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
+        throw e;
+      }
+      tx.delete(mcps).where(eq(mcps.fqn, fqn)).run();
+    });
   }
 
   async findAll(): Promise<McpEntity[]> {

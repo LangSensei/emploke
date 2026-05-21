@@ -13,10 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
-  type SessionManagerConfig,
   SessionNotFoundError,
   SessionRepository,
   SessionService,
+  type SessionServiceConfig,
 } from "../src/index.js";
 import { openTestSessionDb } from "../src/testing.js";
 
@@ -45,10 +45,10 @@ function makeDb(): DbHandle {
  * override `opts.db` with their own.
  */
 async function buildManager(
-  opts: Omit<SessionManagerConfig, "db"> & Partial<Pick<SessionManagerConfig, "db">>,
+  opts: Omit<SessionServiceConfig, "db"> & Partial<Pick<SessionServiceConfig, "db">>,
 ): Promise<SessionService> {
   if (opts.db !== undefined) {
-    return new SessionService(opts as SessionManagerConfig);
+    return new SessionService(opts as SessionServiceConfig);
   }
   const orm = makeDb();
   return new SessionService({ ...opts, db: orm.db });
@@ -848,7 +848,7 @@ describe("buildInteractiveLaunch()", () => {
   // LaunchCommand returned by the runtime so the shell that ends up
   // running `copilot --session-id <id>` (and any nested `emploke ...`
   // calls the user makes inside it) inherits the workspace identity.
-  // See SessionManagerConfig.subprocessEnv for the rationale; same
+  // See SessionServiceConfig.subprocessEnv for the rationale; same
   // contract as TaskService.
 
   it.skip("layers EMPLOKE_* env onto LaunchCommand (env source changed  needs rewrite)", async () => {
@@ -892,7 +892,7 @@ describe("buildInteractiveLaunch()", () => {
   });
 
   it.skip("two managers produce isolated launch envs (env layering moved to runtime)", async () => {
-    // Mimics what WorkspaceContextCache does: one shared frozen base
+    // Mimics what WorkspaceRuntimeCache does: one shared frozen base
     // passed by reference into every per-workspace SessionService.
     // The base must NEVER be mutated by buildInteractiveLaunch; per-
     // session fields go on a fresh layer on top.

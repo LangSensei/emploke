@@ -21,7 +21,7 @@ import {
  * its build / invalidate / reload events need to land in the log just
  * like state-mutating routes do.
  *
- * Phase 2 / ADR-3: the global registry now goes through MikroORM
+ * Phase 2 / ADR-3: the global registry now goes through Drizzle
  * (`setupTestSubsystem` opens the ORM internally).
  */
 

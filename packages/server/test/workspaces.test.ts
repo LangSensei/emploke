@@ -320,7 +320,7 @@ describe("workspacesRoutes — PATCH /:id", () => {
 // Issue #30 (slice B): a force-rebuild endpoint for the per-workspace
 // container cache so the dashboard can recover from catalog drift
 // (user added an agent yaml from outside emploke and the cached
-// `CatalogManager` snapshot is stale) without restarting the server.
+// `CatalogService` snapshot is stale) without restarting the server.
 describe("workspacesRoutes — POST /:id/reload", () => {
   it("returns 204 on cold cache (no entry yet)", async () => {
     const { app, service } = await makeApp();

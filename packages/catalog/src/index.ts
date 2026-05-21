@@ -4,7 +4,7 @@
  * Layout:
  *   - `Mcp` / `Skill` / `Agent` rich entity classes (with methods).
  *   - Per-entity service namespaces (`mcp.*`, `skill.*`, `agent.*`)
- *     and the cross-entity `CatalogManager` facade (`facade.*`).
+ *     and the cross-entity `CatalogService` facade (`facade.*`).
  *   - DTOs are the wire shapes returned by the facade; they
  *     intentionally avoid leaking entity-class methods.
  *   - Errors are exported per-entity so HTTP status mapping in

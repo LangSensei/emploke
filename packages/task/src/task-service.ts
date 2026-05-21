@@ -33,8 +33,8 @@ import type {
   ListTaskOpts,
   TaskCancellation,
   TaskFailure,
-  TaskManagerConfig,
   TaskOrigin,
+  TaskServiceConfig,
 } from "./types.js";
 import { assertValidTaskId, generateTaskId } from "./validate.js";
 
@@ -139,7 +139,7 @@ export class TaskService {
    * `persist(running)` have already run), but the `LiveTask` entry is
    * not yet installed.
    *
-   * Surfaced via `liveCount()` so callers like `WorkspaceContextCache.reload`
+   * Surfaced via `liveCount()` so callers like `WorkspaceRuntimeCache.reload`
    * — which uses a non-zero count to refuse to evict the cached
    * `TaskService` — see in-flight dispatches as "live" too. Without
    * this, a reload landing in the window between the workdir mkdir
@@ -164,7 +164,7 @@ export class TaskService {
   /** True once `shutdown()` has been called; gates exit-watcher's status decision. */
   private shuttingDown = false;
 
-  constructor(config: TaskManagerConfig) {
+  constructor(config: TaskServiceConfig) {
     this.catalog = config.catalog;
     this.runtimeRegistry = config.runtimeRegistry;
     this.workspaceDir = path.resolve(config.workspaceDir);
@@ -252,7 +252,7 @@ export class TaskService {
 
     // From this point on the workdir exists on disk, so a freshly
     // constructed sibling `TaskService` for the same `tasksDir` —
-    // e.g. one built after `WorkspaceContextCache.reload` evicts us —
+    // e.g. one built after `WorkspaceRuntimeCache.reload` evicts us —
     // could see this row. Mark `id` as in-flight so `liveCount()`
     // refuses such evictions until the `LiveTask` entry below is
     // installed. Cleared in the `finally` regardless of which exit
@@ -971,7 +971,7 @@ export class TaskService {
    * Release the underlying repository handle. After `close()`, the
    * manager must not be used. Idempotent.
    *
-   * Servers that swap or evict a `TaskService` (e.g. `WorkspaceContextCache`
+   * Servers that swap or evict a `TaskService` (e.g. `WorkspaceRuntimeCache`
    * on workspace removal / cache reload) must call this so the SQLite
    * file handle releases — Windows requires it before the workspace
    * directory can be `rm`-ed. `shutdown()` deliberately does NOT call
@@ -1004,7 +1004,7 @@ export class TaskService {
    * blob). The `delete --purge` caller catches the propagated error
    * and falls through to the stat-based escape hatch — see `delete()`
    * above. The `list()` path does NOT go through this method; it
-   * skip+warns at the repo layer (see `SqliteTaskRepository.list`).
+   * skip+warns at the repo layer (see `TaskRepository.list`).
    */
   private async loadTask(id: string, _workdir: string): Promise<TaskEntity | null> {
     const task = await this.repository.read(id);

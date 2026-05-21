@@ -205,7 +205,7 @@ describe("statusForCatalogError", () => {
 
   it("maps FetchError name to 502", () => {
     // FetchError is exported from @emploke/catalog (originally lived in
-    // the separate @emploke/catalog-fetcher pkg; folded into catalog).
+    // the separate @emploke/catalog/fetcher pkg; folded into catalog).
     // We synthesize one to keep the test isolated from the network.
     const e = new Error("connect ECONNREFUSED");
     e.name = "FetchError";

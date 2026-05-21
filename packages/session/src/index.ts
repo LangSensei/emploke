@@ -2,7 +2,7 @@
  * @emploke/session — per-session workdir manager.
  *
  * Each session is a provisioned workdir for one agent under one runtime
- * (e.g. copilot, gemini). Persistence is backed by MikroORM via a
+ * (e.g. copilot, gemini). Persistence is backed by Drizzle via a
  * per-workspace `workspace.db`. Activity (lastActiveAt, preview) is
  * read fresh from the runtime on every list/get call.
  *
@@ -42,5 +42,5 @@ export type {
   LaunchCommand,
   ListSessionOpts,
   Session,
-  SessionManagerConfig,
+  SessionServiceConfig,
 } from "./types.js";

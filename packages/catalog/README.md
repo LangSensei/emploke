@@ -1,53 +1,86 @@
 # @emploke/catalog
 
-> Skill + MCP dependency-aware registry, file-system backed.
-
-`@emploke/catalog` is the first published package of the [emploke](https://github.com/LangSensei/emploke) TypeScript rewrite. It maintains a local catalog of [Anthropic Claude Skills](https://docs.anthropic.com/) and [Model Context Protocol](https://modelcontextprotocol.io/) servers on disk, tracks the dependency graph between them, and provides install / update / uninstall operations with graph-level safety.
+Skill + MCP + Agent registry with dependency-aware install / update /
+uninstall. SQLite-backed; the per-workspace `workspace.db` owns
+`agents`, `skills`, `mcps`, the `*_files` BLOB tables, and the
+dependency edge tables.
 
 ## Scope
 
 What this package **does**:
 
-- Read SKILL.md frontmatter and project four fields: `name`, `description`, `version`, optional `type`, optional `dependencies.{skills,mcps}`. Other frontmatter fields (`prereq`, `license`, …) are preserved on disk but **not interpreted**.
-- Track the names of MCP server JSON files (`mcps/<name>.json`). The contents of those files are **never read** by emploke.
-- Resolve transitive dependency closures (topological sort) for any skill.
-- Validate graph rules on writes: name uniqueness, kebab-case, missing-dependency, no cycles, reverse-dependency safety on uninstall.
+- Read `AGENTS.md` / `SKILL.md` frontmatter and project the four
+  required fields: `name`, `description`, `version`, optional `type`,
+  optional `dependencies.{skills,mcps}`. Other frontmatter fields
+  (`prereq`, `license`, ) are preserved on disk but **not
+  interpreted**.
+- Track the names of MCP server JSON files (`mcps/<name>.json`). The
+  contents of those files are **never read** by emploke beyond
+  recording metadata.
+- Resolve transitive dependency closures (topological sort) for any
+  skill or agent.
+- Validate graph rules on writes: name uniqueness, kebab-case,
+  missing-dependency, no cycles, reverse-dependency safety on
+  uninstall (via in-repo `count()` checks, since FK constraints were
+  dropped along with the previous per-pkg migration framework  the
+  service throws a synthetic `HasDependentsError` instead).
 
 What this package **does not** do:
 
-- Interpret business fields (`prereq`, semantic version checks, signature verification, …). That belongs in install tools layered on top.
-- Read or interpret MCP JSON contents. Substrates parse the file when they spawn the server.
-- Execute, copy or "ingest" skills into agents. That is a substrate / runtime concern.
-- Fetch capabilities from the network. The catalog only manages local files; remote sourcing is a job for separate install tools.
+- Interpret business fields (`prereq`, semantic version checks,
+  signature verification, ). That belongs in install tools layered
+  on top.
+- Read or interpret MCP JSON contents. Substrates parse the file
+  when they spawn the server.
+- Execute, copy or "ingest" skills into agents. That is a substrate /
+  runtime concern.
+- Fetch capabilities from the network. The fetcher subpackage handles
+  origin parsing + bytes-on-disk; the catalog only manages local
+  state.
 
-## File-system layout
+## Layout
 
-The catalog package stores everything inside the workspace's
-shared `workspace.db` — agents, skills, MCPs, file BLOBs, the
-dependency graph, and per-entity sync metadata are all SQLite tables
-(`agents`, `skills`, `mcps`, `agent_files`, `skill_files`, …). There is
-no `<workspace>/catalog/` directory and no per-entity files on disk;
-agent and skill source content (frontmatter + Markdown body) is read
-out of the BLOB columns by the legacy `agentEntries` /
-`getSkillContent` API, not from loose files.
+```
+packages/catalog/src/
+  schema.ts                Drizzle tables (private; only types exported)
+  types.ts                 Public DTOs (Agent / Skill / Mcp + entries + resolve results)
+  validate.ts              FQN / name / install-body validators
+  origin-mutability.ts     Helper to detect mutable origins (file:, etc.)
+  agent/                   Per-entity service + errors + entity class
+  skill/
+  mcp/
+  facade/                  Cross-entity CatalogService + DTOs
+  fetcher/                 Origin parser + remote bytes fetcher
+  compose.ts               composeCatalogModule({ dbFile|db, fetcher? })
+  testing.ts               openTestCatalogDb helper (via /testing subpath)
+  index.ts                 public barrel
+drizzle/                   generated SQL migrations (committed)
+drizzle.config.ts          drizzle-kit config
+```
 
-> Why SQLite for catalog?
-> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
-> for the project-wide decision rule. Catalog has cross-entity
-> dependency-graph queries (`resolveAgent`) and BLOB content streams,
-> which are exactly the cases the rule says SQLite owns.
+## On-disk
+
+Everything lives inside the per-workspace shared `workspace.db`:
+`agents`, `skills`, `mcps`, the `*_files` BLOB tables (agent +
+skill content), and the per-entity dep edge tables. There is no
+`<workspace>/catalog/` directory and no per-entity files on disk;
+agent and skill source content (frontmatter + Markdown body) is
+read out of the BLOB columns.
+
+> Why SQLite for catalog? See
+> [docs/architecture.md  Backend selection](../../docs/architecture.md#backend-selection-when-sqlite)
+>  catalog has cross-entity dependency-graph queries (`resolveAgent`)
+> and BLOB content streams, which are exactly the cases the rule says
+> SQLite owns.
 
 ## Quick start
 
 ```ts
-import { DatabaseSync } from "node:sqlite";
-import { CatalogManager } from "@emploke/catalog";
+import { composeCatalogModule } from "@emploke/catalog";
 
-// Catalog reads/writes the per-workspace shared `workspace.db`.
-// In production the workspace pkg owns the connection; here we open
-// one ourselves for illustration.
-const db = new DatabaseSync("/path/to/workspace/workspace.db");
-const catalog = await CatalogManager.open({ db });
+const { service: catalog, close } = await composeCatalogModule({
+  dbFile: "/abs/path/to/workspace.db",
+});
 
 // Install (origin-driven). The resolver fetches the entry + its
 // transitive deps, surfaces conflicts, and returns a CatalogPlan;
@@ -56,92 +89,40 @@ await catalog.installSkill("file:/tmp/sop-prepared");
 await catalog.installAgent("github:org/repo/tree/main/agents/code-reviewer");
 await catalog.installMcpFromOrigin("file:/tmp/mcps/playwright.json");
 
-// Resolve from the local catalog (no network — DAG walk over
-// already-installed entries; used by the runtime when materialising a
-// session workdir).
-const { agent, skills, mcps } = await catalog.resolveAgent("public/code-reviewer");
-console.log(agent.fqn);          // "public/code-reviewer"
-console.log(skills.length);      // transitive skill deps in topological order
-console.log(mcps.length);
+// Resolve from the local catalog (no network  DAG walk over
+// already-installed entries; used by the runtime when materialising
+// a workdir).
+const plan = await catalog.resolveAgent("public/code-reviewer");
 
-// Or resolve a skill from the local catalog (for tooling / dep inspection).
-const { skill, skills: deps } = await catalog.resolveSkillFromCatalog("public/squad-lint");
-console.log(skill.fqn);          // "public/squad-lint"
-console.log(deps.length);        // includes squad-lint + transitive deps
+// Read DTOs at the boundary.
+await catalog.listSkillEntries();        // SkillEntry[]
+await catalog.getSkill(fqn);             // Skill | null
+await catalog.listAgentEntries();
+await catalog.listMcps();
 
-// Update / delete
-await catalog.updateSkillContent("public/sop", newMarkdown);
-await catalog.deleteMcp("vendor/playwright");
+await close();
 ```
 
 ## Errors
 
-All errors thrown by the public API extend `CatalogError`. Per-entity
-classes are exported at the top level:
+- `AgentFrontmatterError` / `SkillFrontmatterError`  malformed YAML
+- `*NameInvalidError`  fails kebab-case / length / charset
+- `*NotFoundError`  unknown FQN
+- `*OriginConflictError`  install collision
+- `CyclicDependencyError`  `resolveAgent` walk found a cycle
+- `HasDependentsError`  uninstall blocked by reverse-deps (the FK
+  substitute mentioned above)
+- `McpInvalidJsonError`  MCP file failed JSON schema check
+- `FetchError` / `OriginParseError`  fetcher subpackage errors
 
-- `SkillNameInvalidError` / `AgentNameInvalidError` / `McpNameInvalidError`
-  — name is not kebab-case or empty
-- `SkillOriginConflictError` / `AgentOriginConflictError` /
-  `McpOriginConflictError` — install collides with an existing entry
-- `SkillNotFoundError` / `AgentNotFoundError` / `McpNotFoundError` —
-  get / update / delete a target that does not exist
-- `CyclicDependencyError` — install / update would create a dep cycle
-- `HasDependentsError` — delete blocked because something still
-  depends on the target
-- `SkillFrontmatterError` / `AgentFrontmatterError` — markdown
-  frontmatter is malformed
-- `McpInvalidJsonError` — MCP spec JSON failed validation
-- `PlanStaleError` / `AgentPlanStaleError` — applying a stored
-  preview plan after the catalog moved on under it
-
-## GitHub authentication
-
-When installing from a `https://github.com/...` origin, the catalog fetcher
-resolves a default token from a two-tier fallback chain:
-
-1. **`GITHUB_TOKEN` / `GH_TOKEN` env var** — if set, used as-is. CI
-   environments (GitHub Actions injects `GITHUB_TOKEN` automatically) and
-   advanced users who want to force a specific token hit this branch.
-2. **`gh auth token --hostname github.com`** — if the [GitHub CLI][gh] is
-   installed and authenticated, the fetcher captures its token. Cached
-   per-host for 60 seconds so a deep dependency closure doesn't spawn `gh`
-   on every fetch. emploke never persists the token.
-3. **Anonymous** — no `Authorization` header. Public repos work; private
-   repos return HTTP 404.
-
-[gh]: https://cli.github.com/
-
-### Installing from EMU / SSO-protected orgs
-
-For EMU (Enterprise Managed Users) accounts or any github.com org behind
-SAML SSO, the workflow is:
+## Testing
 
 ```sh
-# One time — adds the EMU account alongside any existing accounts.
-gh auth login --hostname github.com --web --git-protocol https
-
-# When you want emploke to install from the EMU-protected org:
-gh auth switch --user <your-emu-username>
-
-# Then start emploke. The fetcher picks up the EMU token automatically.
-pnpm dev
+pnpm --filter @emploke/catalog test
 ```
 
-Notes:
-
-- A PAT created manually on `github.com/settings/tokens` must be
-  authorised for the enterprise via the **"Configure SSO"** button on the
-  PAT row — otherwise the API returns HTTP 404 even with a valid-looking
-  token. Tokens minted by `gh auth login` get this for free.
-- Switching the active `gh` account takes up to 60 seconds to be reflected
-  by a long-running emploke process (the cache TTL). Restart emploke for
-  instant effect.
-- To force a specific token regardless of `gh` state, set
-  `GITHUB_TOKEN=…` in the environment — it always wins over the fallback.
-
-## Design
-
-See the [emploke repository](https://github.com/LangSensei/emploke) for the rationale behind the API shape, the CQRS-flavoured read/write split, and the deliberately narrow scope.
+Vitest runs in `forks` pool (better-sqlite3''s native binding
+segfaults on worker-thread teardown on Windows).
 
 ## License
 

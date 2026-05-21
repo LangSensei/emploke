@@ -34,11 +34,21 @@ type Db = BetterSQLite3Database<typeof schema>;
  * same db handle, so writes are immediately visible to subsequent
  * reads with no cache invalidation.
  *
- * Each write method: parse input → validate → run async FS work
- * outside the DB transaction → run the DB transaction last. SQLite
- * transactions are synchronous under better-sqlite3, so the FS-then-DB
- * ordering is mandatory: long-running async work inside
- * `db.transaction()` would hold the connection lock for the duration.
+ * Each write method: parse input → validate → run async FS work →
+ * write to the DB last. The FS-then-DB ordering is deliberate: FS
+ * work is the side-effect we cannot rollback, so doing it before the
+ * DB write means a crash mid-register at worst leaves an empty
+ * directory (idempotent retry-friendly) rather than a registry row
+ * pointing at a directory that doesn't exist.
+ *
+ * Concurrency: register's pre-flight `findById` / `findByPath` checks
+ * are best-effort UX. Two concurrent registers can race past them;
+ * the UNIQUE / PRIMARY KEY constraints on the `workspaces` table are
+ * the deterministic backstop, and the insert is wrapped to translate
+ * SQLite constraint errors back into typed domain errors. We do not
+ * wrap each call in a SQLite transaction because better-sqlite3
+ * transactions are synchronous — wrapping `mkdir` inside one would
+ * hold the writer lock across an IO boundary.
  */
 export class WorkspaceService {
   constructor(
@@ -109,13 +119,37 @@ export class WorkspaceService {
       ]);
 
       const now = new Date().toISOString();
-      await this.repo.insert({
-        id: input.id,
-        name: input.name,
-        workspaceDir,
-        createdAt: now,
-        lastOpenedAt: now,
-      });
+      try {
+        await this.repo.insert({
+          id: input.id,
+          name: input.name,
+          workspaceDir,
+          createdAt: now,
+          lastOpenedAt: now,
+        });
+      } catch (err) {
+        // Map UNIQUE / PRIMARY KEY violations to typed domain errors.
+        // The pre-checks above are best-effort UX; between the check
+        // and the insert two concurrent registers can race, and only
+        // the constraint catches it deterministically. better-sqlite3
+        // surfaces these as Errors with `code` like
+        // `SQLITE_CONSTRAINT_PRIMARYKEY` / `SQLITE_CONSTRAINT_UNIQUE`
+        // and a message naming the column.
+        const e = err as { code?: string; message?: string };
+        if (typeof e.code === "string" && e.code.startsWith("SQLITE_CONSTRAINT")) {
+          const msg = e.message ?? "";
+          if (msg.includes("workspaces.id") || e.code.endsWith("PRIMARYKEY")) {
+            throw new WorkspaceIdConflictError(input.id);
+          }
+          if (msg.includes("workspaces.workspace_dir")) {
+            // We don't know the conflicting id without a re-read; do
+            // one targeted lookup so the typed error carries it.
+            const existing = await this.repo.findByPath(workspaceDir);
+            throw new WorkspacePathConflictError(workspaceDir, existing?.id ?? "<unknown>");
+          }
+        }
+        throw err;
+      }
 
       this.logger.debug({ command: "register", id: input.id }, "command handled");
       return { id: input.id };

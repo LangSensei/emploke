@@ -1,190 +1,133 @@
 # @emploke/task
 
-Task value type + state machine + `TaskManager` for autonomous agent runs.
-
-## What is a task?
-
-A *task* is a one-shot autonomous agent invocation. You give it an agent
-name, a short single-line `brief`, and an optional multi-line `details`
-body; the runtime spawns the agent, the agent works unattended, and you
+`TaskService` for autonomous (headless) agent runs. A *task* is a
+one-shot autonomous agent invocation: you give it an agent name, a
+short single-line `brief`, and an optional multi-line `details` body;
+the runtime spawns the agent, the agent works unattended, and you
 read the result when it finishes. Contrast with sessions, which are
-interactive workdirs you `copilot` into yourself.
+interactive workdirs the user `copilot`s into themselves.
 
-This package ships two layers:
+The `TaskEntity` class with state-machine methods is internal to this
+package; external consumers see the `Task` DTO returned by
+`TaskService` reads/writes.
 
-- **`Task` entity** — DDD class (`Task.create()`, `Task.fromStored()`,
-  state-transition methods `start` / `complete` / `fail` / `cancel`,
-  metadata-replace `withMetadata`). Zero I/O. Useful in tests, custom
-  orchestrators, or anywhere you want to drive the entity directly.
-- **`TaskManager`** — owns a `<workspace>/tasks/` directory, persists each
-  task's metadata to the `tasks` table inside the per-workspace shared
-  `workspace.db` (one SQLite row per task), dispatches via
-  `Runtime.launchHeadless`, watches the subprocess to fold the terminal
-  exit into the task value, and forwards activity reads to
-  `Runtime.readActivity` / `Runtime.streamActivity` (the runtime owns
-  its own event log end-to-end — emploke does NOT mirror it back into
-  the workdir).
+## Layout
 
-## Quick start (entity)
+```
+packages/task/src/
+  schema.ts                Drizzle table def (private; only types exported)
+  errors.ts                Domain error classes (exported)
+  types.ts                 Public DTOs (Task, status, opts shapes)
+  validate.ts              id regex + assertValidTaskId + generators
+  task-repository.ts       Drizzle CRUD (private; never exported)
+  task-entity.ts           TaskEntity  state machine (private)
+  task-service.ts          TaskService  dispatch/get/list/cancel/delete/activity
+  task-meta.ts             readTaskRuntimeMetadata (runtime hook)
+  framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
+  paths.ts                 safeJoinUnderRoot path-traversal guard
+  compose.ts               composeTaskModule({ dbFile|db, catalog, runtimeRegistry,  })
+  testing.ts               openTestTaskDb helper (via /testing subpath)
+  index.ts                 public barrel
+drizzle/                   generated SQL migrations (committed)
+drizzle.config.ts          drizzle-kit config
+```
+
+## On-disk
+
+```
+<workspace>/
+ workspace.db           # SQLite  `tasks` table: one row per task
+ tasks/
+     <id>/              # workdir for task <id>
+         TASK.md        # `brief` + `details` written by TaskService for the agent to read
+         AGENTS.md      # baked by the runtime provisioner
+                       # plus whatever the agent produced
+```
+
+`<id>` is a short date-prefixed identifier `YYYYMMDD-xxxxxxxx`. The
+workdir contains no metadata sidecar  `runtime` / `agent` /
+`status` / `brief` etc. all come from the row in `tasks`.
+
+## Public API
 
 ```ts
-import { Task } from "@emploke/task";
+import { composeTaskModule } from "@emploke/task";
 
-const t0 = Task.create({
+const { service, close } = await composeTaskModule({
+  dbFile: "/abs/workspace.db",            // OR db: <existing Drizzle handle>
+  catalog,                                 // CatalogService
+  runtimeRegistry,                         // RuntimeRegistry
+  workspaceDir: "/abs/workspace-dir",
+  workspaceId: "<uuid>",
+});
+
+await service.recoverOrphaned();          // sweep crashed-before tasks once at boot
+const task = await service.dispatch({
   agent: "writer",
   brief: "Draft the post",
   details: "Tone: warm. Length: ~600 words.",
 });
-const t1 = t0.start({ metadata: { pid: 12345 } });
-const t2 = t1.complete("draft.md written");
-// t2.status === "success"
-```
 
-## Quick start (manager)
+await service.list();                     // Task[]
+await service.get(task.id);               // Task | null
+await service.cancel(task.id);            // best-effort SIGTERM
+await service.delete(task.id, { purge: false });
 
-```ts
-import { DatabaseSync } from "node:sqlite";
-import { SqliteTaskRepository, TaskManager } from "@emploke/task";
-
-// In production the per-workspace `workspace.db` connection comes from
-// `WorkspaceContext`; here we open one ourselves for illustration.
-const db = new DatabaseSync("/abs/path/to/workspace/workspace.db");
-const mgr = new TaskManager({
-  catalog,           // @emploke/catalog instance
-  runtimeRegistry,   // @emploke/runtime registry
-  tasksDir: "/abs/path/to/workspace/tasks",
-  workspaceDir: "/abs/path/to/workspace",
-  repository: new SqliteTaskRepository({ db }),
-});
-
-await mgr.recoverOrphaned();           // sweep crashed-before tasks once at boot
-const t = await mgr.dispatch({
-  agent: "writer",
-  brief: "Draft the post",
-  details: "Tone: warm. Length: ~600 words.", // optional
-});
-// t.status === "running" — the subprocess has been spawned; poll mgr.get(t.id)
-// for status changes, fetch the runtime-parsed activity timeline via
-// mgr.getTaskActivity(t.id, { before, after, limit }) for paginated reads
-// (omit both before/after for the latest `limit` items — tail), or
-// subscribe to mgr.getTaskActivityStream(t.id, { signal }) for a live
-// AsyncIterable<ActivityItem> while the task is still running.
-
-await mgr.shutdown();                   // kills live tasks, persists "server shutdown"
-```
-
-## Task entity
-
-Field shape (POJO projection via `task.toJSON()`):
-
-```ts
-{
-  id: string;
-  agent: string;
-  brief: string;        // short single-line title (≤ 200 chars by wire contract)
-  details?: string;     // optional long-form body (multi-line allowed)
-  status: "not_started" | "running" | "success" | "failure" | "cancelled";
-  metadata: Record<string, unknown>;
-  createdAt: string;   // ISO 8601 UTC, e.g. "2025-06-01T12:00:00.000Z"
-  startedAt?: string;
-  endedAt?: string;
-  result?: { output: string };
-  failure?: { error: string };
+// Activity streaming
+const items = await service.activity(task.id, { limit: 50 });
+for await (const item of service.streamActivity(task.id, { signal })) {
+  // SSE-style tail
 }
-```
 
-The entity knows nothing about how the task is *executed*. Session
-files, work directories, model identifiers — all of that lives in
-`metadata`. Use `readTaskRuntimeMetadata(task)` for a typed view of the
-runtime fields the manager folds in (`workdir`, `runtime`,
-`runtimeSessionId`, `exitCode`, `exitSignal`).
+await close();                            // sweeps live subprocesses + closes DB
+```
 
 ## State machine
 
-```
-not_started ──start──► running ──complete──► success
-            │                  ──fail─────► failure
-            │                  ──cancel───► cancelled
-            └──cancel─────────────────────► cancelled
-```
-
-`success` / `failure` / `cancelled` are terminal — no further transitions apply.
-
-Each transition is an instance method on `Task`; calling one against an
-illegal source status throws `InvalidTransition`:
-
-```ts
-task.start({ metadata?, now? })           // not_started → running
-task.complete(output, { metadata?, now? })  // running → success
-task.fail(error, { metadata?, now? })       // running → failure
-task.cancel({ metadata?, now? })             // not_started | running → cancelled
-```
-
-`metadata` is shallow-merged (last-wins) into the task's existing
-metadata. `now` defaults to `new Date().toISOString()` and is
-overridable for deterministic tests. `Task.withMetadata(metadata)`
-exists separately for the manager-side enrichment path that replaces
-the bag wholesale without changing status.
-
-## On-disk layout
-
-Each task has two stores: queryable metadata in a shared SQLite row
-(in the per-workspace `workspace.db`), and an on-disk workdir for
-agent artifacts.
+Statuses are persisted on the row:
 
 ```
-<workspace>/
-├── workspace.db          # SQLite — `tasks` table holds one row per task: status, runtime, agent, timings, …
-└── tasks/
-    └── <task-id>/        # workdir for task <task-id>
-        ├── stderr.log    # bug-out only — runtime CLI errors before session exists
-        └── …             # whatever the agent writes
+pending  running  success | failure | cancelled
 ```
 
-The runtime adapter owns its own per-task event log end-to-end —
-emploke does NOT mirror it inside the workdir. The runtime exposes
-the parsed timeline through `Runtime.readActivity?(opts)` (tail-first,
-paginated by `before` / `after` / `limit`, with a `truncated` marker
-for source-side caps) and an optional `Runtime.streamActivity?(opts)` (AsyncIterable
-of `ActivityItem`s for live tail). For Copilot this reads
-`<copilotStateDir>/<id>/events.jsonl` with a 4 MB cap; future
-runtimes that store their log as a single file, a SQLite row, or
-anything else fit the same contract — consumers (dashboard, CLI,
-future MCP) only see structured `ActivityItem`s, never the source
-format or path.
+`dispatch` writes `pending`, immediately starts the runtime
+subprocess, transitions to `running` after the SDK reports the agent
+started, and folds the eventual exit into a terminal status. The
+service supervises every live subprocess in-memory and reconciles to
+disk on shutdown via `recoverOrphaned`.
 
-The workdir contains **no metadata sidecar file** — the directory name
-is the only source of truth for the task ID, and every queryable field
-lives in the workspace's `tasks` table. The runtime metadata bag the
-kernel never reads
-(PID, runtime session id, etc.) is stored as JSON in a `metadata`
-column; the indexed `runtime` field is promoted to a first-class
-column for filtering.
+## Env layering
 
-> Why SQLite for task metadata (and FS for the workdir)?
-> See [docs/architecture.md → Backend selection](../../docs/architecture.md#backend-selection-when-fs-when-sqlite)
-> for the project-wide decision rule. Task metadata uses the hybrid
-> pattern: queryable fields in SQLite, agent product on FS.
+`TaskService` does NOT own the cross-cutting subprocess env
+(`EMPLOKE_SERVER`, `EMPLOKE_SHARED_DIR`). The runtime adapter owns
+it via `CopilotRuntimeConfig.subprocessEnvBase`; the task service
+layers per-task work-context env (`EMPLOKE_WORKSPACE`,
+`EMPLOKE_WORK_KIND=task`, `EMPLOKE_WORK_ID=<id>`,
+`EMPLOKE_WORK_DIR=<workdir>`) on top of whatever the runtime
+returned. Scrub-style overrides (`EMPLOKE_HOME` deleted from
+inheritance) live in `CopilotRuntimeConfig.subprocessEnvScrub` and
+are honoured on the headless launch path by `mergeEnv`.
 
-## Manager lifecycle
+## Errors
 
-- `dispatch(opts)` — reserves a task dir, persists `not_started`, calls
-  `Runtime.launchHeadless`, applies `start` with the runtime metadata, and
-  schedules the subprocess watcher. Returns the running `Task`.
-- `list()` / `get(id)` — read-only.
-- `delete(id)` — kills if live, awaits exit, then `rm -rf` the workdir.
-- `recoverOrphaned()` — call once at boot. Scans the directory; any
-  persisted `running` task gets a `fail` with reason `"orphaned (...)"`.
-- `shutdown()` — kills every live subprocess, awaits the terminal
-  persistence, then resolves. Idempotent. Uses `error: "server shutdown"`
-  for the failure reason so the dashboard can render the cause.
+- `TaskNotFoundError`  unknown id
+- `InvalidTaskIdError`  id regex failed
+- `CorruptedTaskError`  row failed validation on read
+- `AgentNotFoundError`  agent FQN not in catalog
+- `InvalidTransition`  illegal state-machine transition
+- `EntryNotReadyError`  runtime returned before agent was ready
+- `ManagerShuttingDownError`  dispatch refused during shutdown
+- `RuntimeDoesNotSupportTasksError`  runtime is interactive-only
+- `TaskIdAllocationFailedError`  id generator exhausted retries
 
-## Why no `pause` / `resume`?
+## Testing
 
-emploke runtimes spawn detached agent CLIs. There is no portable way to
-truly pause one (Windows has no `SIGSTOP`; agent CLIs may not handle
-signals). A "soft pause" UX (user clicks Pause, server stops feeding
-input) belongs in `metadata`, not in the kernel state machine.
+```sh
+pnpm --filter @emploke/task test
+```
+
+Vitest runs in `forks` pool (better-sqlite3''s native binding
+segfaults on worker-thread teardown on Windows).
 
 ## License
 

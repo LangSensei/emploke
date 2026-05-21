@@ -31,7 +31,7 @@ export interface Session {
  * persistence is supplied directly as a Drizzle handle (one per
  * workspace, owned by the @emploke/core orchestrator).
  */
-export interface SessionManagerConfig {
+export interface SessionServiceConfig {
   /** Catalog used to resolve agents at create() time. */
   readonly catalog: CatalogService;
   /** Registry of runtime adapters; must contain at least the default runtime. */
@@ -95,7 +95,7 @@ export interface DeleteSessionOpts {
    * ask the runtime to drop its own per-session state. Default `false`
    * (archive): only the row is removed; workdir contents and runtime
    * state preserved. Same default semantics as
-   * `WorkspaceManager.unregister({ purge })` and
+   * `WorkspaceService.unregister({ purge })` and
    * `TaskService.delete({ purge })`.
    */
   readonly purge?: boolean;

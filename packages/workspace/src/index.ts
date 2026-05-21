@@ -1,5 +1,5 @@
 /**
- * @emploke/workspace — workspace registry on MikroORM.
+ * @emploke/workspace — workspace registry on Drizzle.
  *
  * A *workspace* is the user-chosen working directory that holds
  * emploke's per-workspace state. Each workspace is identified by an

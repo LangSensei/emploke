@@ -121,26 +121,31 @@ export class SkillRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    const skillDepCount =
-      this.db
-        .select({ c: count() })
-        .from(skillSkillDeps)
-        .where(eq(skillSkillDeps.targetFqn, fqn))
-        .get()?.c ?? 0;
-    const agentDepCount =
-      this.db
-        .select({ c: count() })
-        .from(agentSkillDeps)
-        .where(eq(agentSkillDeps.targetFqn, fqn))
-        .get()?.c ?? 0;
-    if (skillDepCount + agentDepCount > 0) {
-      const e = new Error(
-        `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
-      );
-      (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
-      throw e;
-    }
+    // Race-free: count + delete in one transaction so a concurrent
+    // `installSkill` / `installAgent` that adds a dep on this skill
+    // can't slip between our count check and the row removal. The
+    // synthetic `SQLITE_CONSTRAINT_FOREIGNKEY` thrown inside the
+    // transaction rolls back the empty delete and propagates.
     this.db.transaction((tx) => {
+      const skillDepCount =
+        tx
+          .select({ c: count() })
+          .from(skillSkillDeps)
+          .where(eq(skillSkillDeps.targetFqn, fqn))
+          .get()?.c ?? 0;
+      const agentDepCount =
+        tx
+          .select({ c: count() })
+          .from(agentSkillDeps)
+          .where(eq(agentSkillDeps.targetFqn, fqn))
+          .get()?.c ?? 0;
+      if (skillDepCount + agentDepCount > 0) {
+        const e = new Error(
+          `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
+        );
+        (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
+        throw e;
+      }
       tx.delete(skillFiles).where(eq(skillFiles.skillFqn, fqn)).run();
       tx.delete(skillSkillDeps).where(eq(skillSkillDeps.sourceFqn, fqn)).run();
       tx.delete(skillMcpDeps).where(eq(skillMcpDeps.sourceFqn, fqn)).run();

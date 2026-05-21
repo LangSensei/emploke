@@ -23,7 +23,7 @@ import type {
   DeleteSessionOpts,
   ListSessionOpts,
   Session,
-  SessionManagerConfig,
+  SessionServiceConfig,
 } from "./types.js";
 import { assertValidSessionId, generateSessionId } from "./validate.js";
 
@@ -54,7 +54,7 @@ export class SessionService {
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
 
-  constructor(config: SessionManagerConfig) {
+  constructor(config: SessionServiceConfig) {
     this.catalog = config.catalog;
     this.runtimeRegistry = config.runtimeRegistry;
     this.workspaceDir = path.resolve(config.workspaceDir);
@@ -209,13 +209,26 @@ export class SessionService {
     }
 
     if (opts.purge === true) {
+      // Order matters: do every fallible physical step BEFORE deleting
+      // the row. If any step fails (runtime.deleteState raising
+      // RuntimeStateDeletionFailed; `rm` raising EBUSY on Windows
+      // when Copilot still owns the workdir; etc.) we surface the
+      // error AND leave the row intact so the user can see which
+      // sessions still need cleanup. Removing the row first would
+      // orphan the directory and break the "purge is recoverable"
+      // contract documented in the README.
+      //
+      // Within the physical steps, runtime state first then workdir:
+      // partial cleanup is acceptable (rm -rf is mostly idempotent
+      // on retry) and ordering this way means a runtime failure
+      // leaves the workdir intact for diagnosis.
       const runtime = this.runtimeRegistry.get(session.runtime);
       if (session.runtimeSessionId !== null) {
         await runtime.deleteState(session.runtimeSessionId);
       }
-      await this.repo.delete(id);
       const workdir = safeJoinUnderRoot(this.sessionsDir, id);
       await rm(workdir, { recursive: true, force: true });
+      await this.repo.delete(id);
       return;
     }
 

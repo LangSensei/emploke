@@ -189,9 +189,9 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 
   // Open the workspace registry (`global.db`) via the workspace pkg's
   // composer. Phase 2 / ADR-3 (#139) replaced the previous
-  // `DatabaseSync` + custom migration framework with a MikroORM-managed
+  // `DatabaseSync` + custom migration framework with a Drizzle-managed
   // entity layout; the encapsulation refactor (P1-5 follow-up) moved
-  // the MikroORM init into the workspace pkg itself, so the server
+  // the Drizzle init into the workspace pkg itself, so the server
   // only passes the DB file path. On first launch the workspace
   // composer creates the schema from its own entity list; on
   // subsequent launches `orm.schema.updateSchema()` is a no-op for
@@ -381,18 +381,21 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // handles (the CLI integration tests `rm -rf <EMPLOKE_HOME>`
       // immediately after `stop`, and an unclosed `workspace.db`
       // surfaces as `EBUSY: resource busy or locked`).
-      cache.closeAll();
+      //
+      // `closeAll()` is async (each entry's `close()` awaits its
+      // own per-pkg disposers); missing the await would race the
+      // `composition.close()` below and leak handles past `process.exit`.
+      await cache.closeAll();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing workspace contexts");
     }
     try {
-      // Close the workspace registry's underlying MikroORM instance
+      // Close the workspace registry's underlying Drizzle DB handle
       // (`global.db`) via the composition handle. Per-workspace
       // contexts have already been closed by `cache.closeAll()` above,
-      // so closing the global ORM here is safe. The handle's close()
-      // flushes any pending changes and releases the SQLite handle,
-      // which Windows needs before the CLI integration test can
-      // `rm -rf <EMPLOKE_HOME>`.
+      // so closing the global handle here is safe. The handle's close()
+      // releases the SQLite file, which Windows needs before the CLI
+      // integration test can `rm -rf <EMPLOKE_HOME>`.
       await composition.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
@@ -411,7 +414,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 /**
  * Hono middleware: pulls `:id` from the route params, asks the cache for
  * its `WorkspaceContext`, and stashes the per-workspace `SessionService`
- * and `CatalogManager` on `c.var`. Sub-route families pull whichever they need
+ * and `CatalogService` on `c.var`. Sub-route families pull whichever they need
  * (sessions read `c.get("sessions")`; catalog reads `c.get("catalog")`).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;

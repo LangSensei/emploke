@@ -144,7 +144,7 @@ export function fakeCatalog(): CatalogService {
 
 /**
  * Capture pino-shaped warn calls into an in-memory list. Hand-rolled
- * (rather than @emploke/logger's captureLogger) so assertions don't
+ * (rather than pino (was @emploke/logger; pkg folded into consumers)'s captureLogger) so assertions don't
  * race the real pino writable stream.
  */
 export function captureLogger(): {
