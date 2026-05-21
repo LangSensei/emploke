@@ -34,7 +34,7 @@ export async function composeTaskModule(opts: TaskModuleOptions): Promise<TaskMo
       dbName: opts.dbFile as string,
     }));
   if (ownsOrm) {
-    await orm.schema.updateSchema();
+    await orm.schema.updateSchema({ safe: true });
   }
 
   const manager = new TaskManager({

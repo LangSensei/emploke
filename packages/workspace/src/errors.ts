@@ -125,8 +125,7 @@ export class WorkspaceNotRegisteredError extends RegistryError {
 export class RegistryNotBootstrappedError extends RegistryError {
   constructor(public readonly file: string) {
     super(
-      `workspace registry at ${file} has no schema_meta entry for pkg 'workspace'. ` +
-        `MigrationCoordinator must run before MikroWorkspaceRepository is constructed.`,
+      `workspace registry at ${file} has no MikroORM schema yet — call composeWorkspaceModule({dbFile}) once before consuming the registry.`,
     );
     this.name = "RegistryNotBootstrappedError";
   }

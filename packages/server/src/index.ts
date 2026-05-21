@@ -197,40 +197,19 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 
   const composition = await buildServerContainer({
     workspace: { dbFile: paths.globalDbFile },
-  });
-  const rootContainer = composition.container;
-  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
-
-  const workspaceService = composition.service;
-  const workspaceQueries = composition.queries;
-
-  const cache = new PerWorkspaceContainerCache({
-    rootContainer,
     runtimeRegistry,
-    queries: workspaceQueries,
-    logger,
-    // Static env bag merged into every task subprocess. Per-run
-    // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
-    // `EMPLOKE_WORK_KIND`, `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`) are
-    // layered on inside `TaskManager.dispatch` /
-    // `SessionManager.assembleLaunchEnv`.
-    //
-    // `EMPLOKE_SERVER` resolves to a loopback URL when the server is
-    // bound to 0.0.0.0 — the spawned subprocess runs on the same host,
-    // so dialing 0.0.0.0 would be a misconfiguration on Windows
-    // (refused) and a no-op on macOS/Linux. Loopback is the only
-    // address guaranteed to work from a child.
-    // `EMPLOKE_SHARED_DIR` is the cross-workspace machine-shared
-    // state directory — same path the runtime exposes to MCP specs as
-    // `${sharedDir}`. The service-internal `<EMPLOKE_HOME>` itself
-    // (which holds `global.db`, `runtime.json`, `logs/`) is
-    // deliberately NOT exposed to subprocesses.
     subprocessEnvBase: buildSubprocessEnvBase({
       hostname,
       port,
       sharedDir: paths.sharedDir,
     }),
+    logger,
   });
+  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
+
+  const workspaceService = composition.workspaceService;
+  const workspaceQueries = composition.workspaceQueries;
+  const cache = composition.runtimes;
 
   const app = new Hono();
 

@@ -7,24 +7,19 @@ import type {
 } from "@emploke/workspace";
 import { openTestWorkspaceOrm } from "@emploke/workspace/testing";
 import type { EntityManager, MikroORM } from "@mikro-orm/core";
-import type { Container } from "inversify";
 import { buildServerContainer } from "../src/bootstrap.js";
 import { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 
 /**
- * Shared scaffolding for server-side tests that build a workspace
- * subsystem against an in-memory MikroORM-managed `global.db`.
+ * Shared scaffolding for server-side tests.
  *
- * Post de-DDD: workspaces are mutated through `service.register/.open/
- * .rename/.unregister(...)` — no mediator, no commands, no value
- * objects. The root inversify `Container` is still exposed because the
- * per-workspace container cache scaffolding (and future per-pkg
- * compose hooks) depend on it.
+ * Post de-DDD + @emploke/core extraction: workspaces are mutated
+ * through the workspace service exposed on the core composition.
+ * The per-workspace runtime cache opens its own ORMs internally.
  */
 export interface ServerTestSubsystem {
   readonly orm: MikroORM;
   readonly em: EntityManager;
-  readonly container: Container;
   readonly service: WorkspaceService;
   readonly queries: WorkspaceQueries;
   readonly runtimeRegistry: RuntimeRegistry;
@@ -37,33 +32,30 @@ export async function setupTestSubsystem(opts: {
   logger?: Logger;
 }): Promise<ServerTestSubsystem> {
   const orm = await openTestWorkspaceOrm();
-  const composition = await buildServerContainer({ workspace: { orm } });
   const runtimeRegistry = new RuntimeRegistry();
   runtimeRegistry.register(
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),
   );
-  const cache = new PerWorkspaceContainerCache({
-    rootContainer: composition.container,
+  const composition = await buildServerContainer({
+    workspace: { orm },
     runtimeRegistry,
-    queries: composition.queries,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
   const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
   return {
     orm,
     em: orm.em as EntityManager,
-    container: composition.container,
-    service: composition.service,
-    queries: composition.queries,
+    service: composition.workspaceService,
+    queries: composition.workspaceQueries,
     runtimeRegistry,
-    cache,
+    cache: composition.runtimes as PerWorkspaceContainerCache,
     defaultWorkspaceParent,
   };
 }
 
 export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<void> {
   try {
-    sys.cache.closeAll();
+    await sys.cache.closeAll();
   } catch {
     // best-effort
   }
@@ -74,10 +66,6 @@ export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<v
   }
 }
 
-/**
- * Convenience: register a workspace through the service and return its
- * canonical id. Saves callers from constructing the input shape.
- */
 export async function registerTestWorkspace(
   sys: ServerTestSubsystem,
   args: { id: string; workspaceDir: string; name: string },

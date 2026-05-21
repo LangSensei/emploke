@@ -66,7 +66,7 @@ export async function composeWorkspaceModule(
       }),
     );
     if (options.updateSchema !== false) {
-      await orm.schema.updateSchema();
+      await orm.schema.updateSchema({ safe: true });
     }
   }
 

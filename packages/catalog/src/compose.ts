@@ -27,7 +27,7 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
       dbName: opts.dbFile as string,
     }));
   if (ownsOrm) {
-    await orm.schema.updateSchema();
+    await orm.schema.updateSchema({ safe: true });
   }
   const manager = await CatalogManager.open({
     em: orm.em as EntityManager,

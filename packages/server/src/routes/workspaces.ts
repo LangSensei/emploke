@@ -220,7 +220,7 @@ export function workspacesRoutes(deps: {
 
     try {
       await service.rename({ id, newName: body.name });
-      cache.invalidate(id);
+      await cache.invalidate(id);
       const view = await queries.getById(id);
       if (!view) {
         return c.json(
@@ -248,7 +248,7 @@ export function workspacesRoutes(deps: {
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
-    cache.invalidate(id);
+    await cache.invalidate(id);
     logEvent(c, "workspace deleted", { workspaceId: id, purge });
     return c.body(null, 204);
   });

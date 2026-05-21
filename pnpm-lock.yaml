@@ -118,6 +118,43 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(tsx@4.21.0))
 
+  packages/core:
+    dependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@emploke/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@emploke/session':
+        specifier: workspace:*
+        version: link:../session
+      '@emploke/task':
+        specifier: workspace:*
+        version: link:../task
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      '@mikro-orm/better-sqlite':
+        specifier: ^6.6.0
+        version: 6.6.14(@mikro-orm/core@6.6.14)
+      '@mikro-orm/core':
+        specifier: ^6.6.0
+        version: 6.6.14
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(tsx@4.21.0))
+
   packages/dashboard:
     dependencies:
       '@codemirror/lang-markdown':
@@ -255,6 +292,9 @@ importers:
       '@emploke/catalog-fetcher':
         specifier: workspace:*
         version: link:../catalog-fetcher
+      '@emploke/core':
+        specifier: workspace:*
+        version: link:../core
       '@emploke/logger':
         specifier: workspace:*
         version: link:../logger
@@ -279,27 +319,12 @@ importers:
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.14(hono@4.12.18)
-      '@mikro-orm/better-sqlite':
-        specifier: ^6.6.0
-        version: 6.6.14(@mikro-orm/core@6.6.14)
       '@mikro-orm/core':
         specifier: ^6.6.0
         version: 6.6.14
-      '@mikro-orm/migrations':
-        specifier: ^6.6.0
-        version: 6.6.14(@mikro-orm/core@6.6.14)(@types/node@22.19.17)(better-sqlite3@12.10.0)
       hono:
         specifier: ^4.7.11
         version: 4.12.18
-      inversify:
-        specifier: ^7.0.0
-        version: 7.11.0(reflect-metadata@0.2.2)
-      mediatr-ts:
-        specifier: ^2.2.0
-        version: 2.2.0
-      reflect-metadata:
-        specifier: ^0.2.0
-        version: 0.2.2
     devDependencies:
       '@types/node':
         specifier: ^22.19.17
@@ -1832,9 +1857,6 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
-
-  mediatr-ts@2.2.0:
-    resolution: {integrity: sha512-dFYITOQxg5fSge2uZT2Lwu6tVk2pyI44WXqNBywqv6u+YIDYKO6G+gCwyuQpzFDQ8eFxpJS6YwwTZ5fzFQxeZA==}
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -3625,8 +3647,6 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  mediatr-ts@2.2.0: {}
 
   merge2@1.4.1: {}
 

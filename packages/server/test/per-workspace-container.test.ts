@@ -113,7 +113,7 @@ describe("PerWorkspaceContainerCache observability", () => {
     await cache.get(ws.id);
     cap.entries.length = 0;
 
-    cache.invalidate(ws.id);
+    await cache.invalidate(ws.id);
 
     const inv = cap.entries.find((e) => e.msg === "per-workspace container invalidated");
     expect(inv?.workspaceId).toBe(ws.id);
@@ -121,7 +121,7 @@ describe("PerWorkspaceContainerCache observability", () => {
 
   it("emits NO line when invalidate is called for an unknown id (no-op)", async () => {
     const { cap, cache } = await makeCache();
-    cache.invalidate("00000000-0000-0000-0000-000000000000");
+    await cache.invalidate("00000000-0000-0000-0000-000000000000");
     const inv = cap.entries.find((e) => e.msg === "per-workspace container invalidated");
     expect(inv).toBeUndefined();
   });

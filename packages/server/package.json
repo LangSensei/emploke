@@ -24,6 +24,7 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/catalog-fetcher": "workspace:*",
+    "@emploke/core": "workspace:*",
     "@emploke/logger": "workspace:*",
     "@emploke/paths": "workspace:*",
     "@emploke/runtime": "workspace:*",
@@ -33,12 +34,7 @@
     "@emploke/workspace": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "@mikro-orm/core": "^6.6.0",
-    "@mikro-orm/migrations": "^6.6.0",
-    "@mikro-orm/better-sqlite": "^6.6.0",
-    "hono": "^4.7.11",
-    "inversify": "^7.0.0",
-    "mediatr-ts": "^2.2.0",
-    "reflect-metadata": "^0.2.0"
+    "hono": "^4.7.11"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",

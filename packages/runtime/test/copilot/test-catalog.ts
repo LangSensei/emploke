@@ -1,31 +1,22 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import {
-  AGENT_MIGRATIONS,
   type AgentResolveResult,
   CatalogManager,
-  MCP_MIGRATIONS,
-  SKILL_MIGRATIONS,
+  composeCatalogModule,
+  type CatalogModule,
 } from "@emploke/catalog";
-import { runPkgMigrations } from "@emploke/workspace";
 
 /**
- * Build a `CatalogManager` backed by a SQLite database in a temp dir,
- * with optional fixtures pre-installed.
+ * Build a `CatalogManager` backed by an in-memory MikroORM-managed
+ * catalog DB, with optional fixtures pre-installed.
  *
  * Each fixture entry is a map of relative paths → file contents.
  * AGENTS.md / SKILL.md must be present where applicable. The helper
- * writes fixtures into a temporary "source" directory (one per
- * entry), then drives `catalog.installAgent` / `installSkill` /
- * `installMcpFromOrigin` to register them through the normal install
- * path. This keeps test fixtures honest — they exercise the real
- * install flow rather than bypassing it.
- *
- * Fixture keys MAY be either short names (auto-prefixed with
- * `public/`) or full FQNs (`scope/name`). MCP fixture keys MUST be
- * full MCP-spec FQNs (`<namespace>/<short>`).
+ * writes fixtures into a temporary "source" directory and drives
+ * `catalog.installAgent` / `installSkill` / `installMcpFromOrigin`
+ * to register them through the normal install path.
  */
 export interface TestCatalogFixtures {
   agents?: Record<string, Record<string, string>>;
@@ -59,37 +50,18 @@ export async function makeTestCatalog(
   sourceRootArg?: string,
 ): Promise<{
   catalog: CatalogManager;
-  /** Underlying SQLite connection backing the catalog. Tests can close it in cleanup. */
-  db: DatabaseSync;
+  /** Close the underlying ORM. Tests should call this in cleanup. */
+  close: () => Promise<void>;
   /**
-   * Test-only helper: write garbage bytes into the SQLite-stored
-   * content for an installed MCP, simulating an out-of-band data
-   * corruption between scan and read. Bypasses the catalog's normal
-   * mutation API (which validates) by issuing a direct SQL UPDATE.
+   * Test-only helper to inject garbage into an installed MCP's
+   * stored spec. Bypasses validation via raw connection execute.
    */
   corruptMcp: (specName: string, content: string) => Promise<void>;
 }> {
   const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
+  const module: CatalogModule = await composeCatalogModule({ dbFile: ":memory:" });
+  const catalog = module.manager;
 
-  // In-memory DB so tests don't litter tmpdir with workspace.db files
-  // and Windows EBUSY on cleanup is impossible.
-  const db = new DatabaseSync(":memory:");
-  // Post-issue-#123: the catalog repositories no longer bootstrap
-  // tables. Run the migration coordinator first so the catalog's
-  // `schema_meta` rows for `catalog_agent` / `catalog_skill` /
-  // `catalog_mcp` are present before `CatalogManager.open` constructs
-  // the repositories.
-  await runPkgMigrations(db, [
-    { pkg: "catalog_agent", migrations: AGENT_MIGRATIONS },
-    { pkg: "catalog_skill", migrations: SKILL_MIGRATIONS },
-    { pkg: "catalog_mcp", migrations: MCP_MIGRATIONS },
-  ]);
-  const catalog = await CatalogManager.open({ db });
-
-  // Materialise each fixture as a tiny on-disk source dir so the
-  // installer can fetch it via `file:` and run its full validation.
-  // Order matters: mcps first (skill/agent deps may reference them),
-  // then skills (agent deps may reference them), then agents.
   for (const [fqn, content] of Object.entries(fixtures.mcps ?? {})) {
     if (!fqn.includes("/")) {
       throw new Error(
@@ -128,38 +100,24 @@ export async function makeTestCatalog(
   }
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
-    // Catalog v2 enforces `CHECK (json_valid(spec))` on `mcps`, which
-    // would reject the deliberately-garbage bytes this fixture ships.
-    // Rebuild the table without the CHECK inside a transaction with
-    // `foreign_keys = OFF`, so the FK refs from sibling dep tables
-    // (`agent_mcp_dependencies`, `skill_mcp_dependencies`) don't fire
-    // during the swap.
-    const prevFk = (db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number })
-      .foreign_keys;
-    db.exec("PRAGMA foreign_keys = OFF");
-    try {
-      db.exec(`
-        BEGIN;
-        ALTER TABLE mcps RENAME TO _mcps_strict;
-        CREATE TABLE mcps (
-          fqn          TEXT PRIMARY KEY,
-          origin       TEXT NOT NULL,
-          spec         TEXT NOT NULL,
-          installed_at TEXT NOT NULL,
-          updated_at   TEXT NOT NULL
-        );
-        INSERT INTO mcps (fqn, origin, spec, installed_at, updated_at)
-          SELECT fqn, origin, spec, installed_at, updated_at FROM _mcps_strict;
-        DROP TABLE _mcps_strict;
-        COMMIT;
-      `);
-    } finally {
-      db.exec(`PRAGMA foreign_keys = ${prevFk === 1 ? "ON" : "OFF"}`);
-    }
-    db.prepare("UPDATE mcps SET spec = ? WHERE fqn = ?").run(content, specName);
+    // Bypass the catalog's validation pipeline by issuing a raw UPDATE
+    // through the ORM connection. The new MikroORM-backed catalog
+    // doesn't enforce json_valid at the DDL level (we dropped that
+    // constraint along with the FK constraints in the de-DDD pass),
+    // so no table swap is needed.
+    const em = (catalog as unknown as {
+      mcp: { repo: { em: { getConnection(): { execute(sql: string, args: unknown[]): Promise<unknown> } } } };
+    }).mcp.repo.em;
+    await em.getConnection().execute("UPDATE mcps SET spec = ? WHERE fqn = ?", [content, specName]);
   };
 
-  return { catalog, db, corruptMcp };
+  return {
+    catalog,
+    async close() {
+      await module.close();
+    },
+    corruptMcp,
+  };
 }
 
 /** Build an `AgentResolveResult` from a catalog plus a name. */
@@ -170,5 +128,4 @@ export function resolveTestAgent(
   return catalog.resolveAgent(name);
 }
 
-/** Re-export so callers don't need a second import. */
 export type { AgentResolveResult };
