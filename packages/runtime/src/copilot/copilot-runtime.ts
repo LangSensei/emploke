@@ -92,13 +92,21 @@ export interface CopilotRuntimeConfig {
    * Server bootstrap populates this with `EMPLOKE_SERVER` and
    * `EMPLOKE_SHARED_DIR` (see `@emploke/server`'s
    * `buildSubprocessEnvBase`); other deployments may pass an empty
-   * object or omit it entirely.
-   *
-   * Values may be `undefined` to scrub a key from the inherited
-   * parent env (e.g. `EMPLOKE_HOME: undefined` keeps the server's
-   * own state dir from leaking into agent subprocesses).
+   * object or omit it entirely. Values are strings only — to scrub
+   * a key from the inherited parent env, use {@link subprocessEnvScrub}.
    */
-  readonly subprocessEnvBase?: NodeJS.ProcessEnv;
+  readonly subprocessEnvBase?: Readonly<Record<string, string>>;
+  /**
+   * Env keys to delete from the inherited parent env on the headless
+   * launch path. Translated into `undefined` overrides for
+   * `mergeEnv` inside {@link launchCopilotHeadless}. Interactive
+   * launches deliberately do NOT honour this — a user-driven shell
+   * owns its own env and `cmd /k` / pwsh `$env:` can only SET, not
+   * UNSET. Server bootstrap populates with
+   * `SUBPROCESS_ENV_SCRUB_KEYS` (currently `["EMPLOKE_HOME"]`); other
+   * deployments may omit it.
+   */
+  readonly subprocessEnvScrub?: readonly string[];
   /**
    * Test seam for id generation. Defaults to `crypto.randomUUID`.
    */
@@ -194,7 +202,8 @@ export class CopilotRuntime implements Runtime {
   private readonly copilotStateDir: string;
   private readonly copilotConfigPath: string;
   private readonly sharedDir: string;
-  private readonly subprocessEnvBase: NodeJS.ProcessEnv;
+  private readonly subprocessEnvBase: Readonly<Record<string, string>>;
+  private readonly subprocessEnvScrub: readonly string[];
   private readonly randomUUID: () => string;
   private readonly headlessDeps: Partial<LaunchCopilotHeadlessDeps>;
 
@@ -217,6 +226,7 @@ export class CopilotRuntime implements Runtime {
     this.copilotConfigPath = config.copilotConfigPath ?? DEFAULT_COPILOT_CONFIG_PATH;
     this.sharedDir = config.sharedDir ?? DEFAULT_SHARED_DIR;
     this.subprocessEnvBase = config.subprocessEnvBase ?? {};
+    this.subprocessEnvScrub = config.subprocessEnvScrub ?? [];
     this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
     this.headlessDeps = config.headlessDeps ?? {};
   }
@@ -284,20 +294,13 @@ export class CopilotRuntime implements Runtime {
     const cmd = buildCopilotLaunchCommand(workdir, id, opts);
     // Runtime owns the cross-cutting env base (`EMPLOKE_SERVER`,
     // `EMPLOKE_SHARED_DIR`, ...). Session / Task layer their own
-    // work-context env on top of what we return here.
-    //
-    // Filter `undefined` values from the base: those are "scrub from
-    // inherited env" markers used by the headless launch's mergeEnv
-    // path (which can actually delete a key from the child's
-    // environment). The interactive path has no equivalent — `cmd /k`
-    // / pwsh `$env:` can only SET values, not unset — so undefineds
-    // would either silently leak (env-base inheritance) or break the
-    // shell quoter downstream (`pwshQuote(undefined)` crashes).
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(this.subprocessEnvBase)) {
-      if (typeof v === "string") env[k] = v;
-    }
-    return { ...cmd, env };
+    // work-context env on top of what we return here. We do NOT
+    // honour `subprocessEnvScrub` on this path: interactive launches
+    // hand off to a user shell which inherits the parent env
+    // wholesale, and `cmd /k` / pwsh `$env:` prefixes can only SET
+    // values, not unset them. The base is string-only by
+    // `CopilotRuntimeConfig` contract.
+    return { ...cmd, env: { ...this.subprocessEnvBase } };
   }
 
   async readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null> {
@@ -349,8 +352,15 @@ export class CopilotRuntime implements Runtime {
    */
   async launchHeadless(opts: LaunchHeadlessOpts): Promise<RuntimeHandle> {
     // Merge the runtime-owned env base with the caller's per-launch
-    // additions. Caller env wins on key collision.
+    // additions. Caller env wins on key collision. Then translate
+    // `subprocessEnvScrub` into `undefined` overrides for `mergeEnv`
+    // (in launch-headless.ts) — but only for keys the caller hasn't
+    // explicitly set, so a caller can still re-introduce a scrubbed
+    // key intentionally if they need to.
     const mergedEnv: NodeJS.ProcessEnv = { ...this.subprocessEnvBase, ...opts.subprocessEnv };
+    for (const key of this.subprocessEnvScrub) {
+      if (!(key in mergedEnv)) mergedEnv[key] = undefined;
+    }
     return launchCopilotHeadless(
       {
         taskDir: opts.workdir,

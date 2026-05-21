@@ -13,8 +13,10 @@
  *
  * `launchCopilotHeadless` therefore merges `subprocessEnv` on top of
  * `process.env` and honours `undefined` overrides as "delete this key
- * from the parent env" (used by `buildSubprocessEnvBase` to scrub
- * EMPLOKE_HOME from every task subprocess).
+ * from the parent env" (used by `CopilotRuntime.launchHeadless` to
+ * translate `CopilotRuntimeConfig.subprocessEnvScrub` —
+ * `["EMPLOKE_HOME"]` in production — into actual deletions before the
+ * SDK gets the env bag).
  *
  * This test pins both halves of the contract by stubbing the SDK client
  * to capture the `env` it would have been constructed with, then

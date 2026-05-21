@@ -1453,40 +1453,6 @@ describe("dispatch — subprocess env injection", () => {
     expect(env?.EMPLOKE_WORKSPACE).toBe("real-workspace");
     expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
   });
-
-  it.skip("preserves undefined scrub (EMPLOKE_HOME scrub now lives in runtime)", async () => {
-    // Middle-hop regression test for the EMPLOKE_HOME scrub. The
-    // server emits `EMPLOKE_HOME: undefined` in `buildSubprocessEnvBase`
-    // so that `mergeEnv` (in launch-headless.ts) deletes the inherited
-    // value at spawn time. That contract relies on the `undefined`
-    // surviving every intermediate hop:
-    //   buildSubprocessEnvBase  -> base bag with `EMPLOKE_HOME: undefined`
-    //   TaskService construction -> `subprocessEnvBase` field
-    //   dispatch()              -> spread `{ ...this.subprocessEnvBase, ... }`
-    //   runtime.launchHeadless  -> `opts.subprocessEnv`
-    //   mergeEnv                -> deletes from inherited base
-    //
-    // If any intermediate strips `undefined` (e.g. via
-    // `JSON.parse(JSON.stringify(...))`, `Object.assign` semantics
-    // disagreements, or an over-eager normalisation pass), the scrub
-    // silently breaks and the parent's `EMPLOKE_HOME` leaks through to
-    // every spawned task. This test pins the spread + reference path
-    // through the manager.
-    const rt = new StubRuntime();
-    const { m } = await makeManager({
-      runtime: rt,
-      workspaceId: "ws-uuid-x",
-      subprocessEnv: Object.freeze({
-        EMPLOKE_SERVER: "http://127.0.0.1:8787",
-        EMPLOKE_SHARED_DIR: "/h/shared",
-        EMPLOKE_HOME: undefined,
-      }) as NodeJS.ProcessEnv,
-    });
-    await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
-    const env = rt.dispatchCalls[0].subprocessEnv ?? {};
-    expect("EMPLOKE_HOME" in env).toBe(true);
-    expect(env.EMPLOKE_HOME).toBeUndefined();
-  });
 });
 
 // ───── runtime metadata enrichment (post-#111 cleanup) ─────

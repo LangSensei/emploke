@@ -21,7 +21,7 @@ import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
-import { buildSubprocessEnvBase } from "./subprocess-env.js";
+import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
 // Re-export the route manifest so downstream packages (@emploke/cli,
 // future @emploke/mcp) can build typed clients against the same source
@@ -173,15 +173,17 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // directory without baking host paths into JSON.
       sharedDir: sharedDir(home),
       // Runtime owns the cross-cutting env (`EMPLOKE_SERVER`,
-      // `EMPLOKE_SHARED_DIR`, `EMPLOKE_HOME` scrub) that every spawned
-      // agent process inherits. Session / Task add their own work-context
-      // env (`EMPLOKE_WORK_*`, `EMPLOKE_WORKSPACE*`) on top via the
-      // runtime's launchHeadless / buildInteractiveLaunch.
+      // `EMPLOKE_SHARED_DIR`, plus the `EMPLOKE_HOME` scrub on the
+      // headless path) that every spawned agent process inherits.
+      // Session / Task add their own work-context env (`EMPLOKE_WORK_*`,
+      // `EMPLOKE_WORKSPACE*`) on top via the runtime's launchHeadless
+      // / buildInteractiveLaunch.
       subprocessEnvBase: buildSubprocessEnvBase({
         hostname,
         port,
         sharedDir: sharedDir(home),
       }),
+      subprocessEnvScrub: SUBPROCESS_ENV_SCRUB_KEYS,
     }),
   );
 

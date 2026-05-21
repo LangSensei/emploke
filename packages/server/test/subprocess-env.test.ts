@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSubprocessEnvBase } from "../src/subprocess-env.js";
+import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "../src/subprocess-env.js";
 
 describe("buildSubprocessEnvBase", () => {
   it("emits EMPLOKE_SERVER + EMPLOKE_SHARED_DIR", () => {
@@ -60,24 +60,51 @@ describe("buildSubprocessEnvBase", () => {
     }).toThrow();
   });
 
-  it("includes EMPLOKE_HOME as `undefined` so mergeEnv strips inherited value from spawn", () => {
-    // The server reads `process.env.EMPLOKE_HOME` to find its own
-    // state directory, so the value is in the parent env by
-    // construction. If we leave it inherited, every spawned task
-    // would see the service-internal path and could reach into
-    // `global.db`, `runtime.json`, `logs/`, etc. — exactly what
-    // `EMPLOKE_SHARED_DIR` was designed to replace.
+  it("includes ONLY positive declarations — no undefined-valued keys leak in", () => {
+    // The base bag has a single semantic: "set this key to this value
+    // in every spawned subprocess." The complementary "delete this
+    // key from inherited env" semantic lives in
+    // `SUBPROCESS_ENV_SCRUB_KEYS` instead, because only the headless
+    // launch path can actually act on it (interactive shells inherit
+    // parent env wholesale and `$env:` can only SET, not unset).
     //
-    // The fix relies on `mergeEnv` (in the runtime layer) treating an
-    // `undefined` value as "delete this key from base before spawn".
-    // We therefore include the key with value `undefined` rather than
-    // omit it: omitting would leave the parent's value in place.
+    // Mixing the two in a single bag — previously `EMPLOKE_HOME:
+    // undefined` lived here — silently broke the interactive path
+    // (Windows `pwshQuote(undefined)` crashed the terminal spawner)
+    // because the type lied: `NodeJS.ProcessEnv` admits undefineds.
+    // Keep this surface string-only and the lie can't return.
     const env = buildSubprocessEnvBase({
       hostname: "127.0.0.1",
       port: 8787,
       sharedDir: "/h/shared",
     });
-    expect("EMPLOKE_HOME" in env).toBe(true);
-    expect(env.EMPLOKE_HOME).toBeUndefined();
+    for (const [k, v] of Object.entries(env)) {
+      expect(typeof v).toBe("string");
+      expect(v as string).not.toBe("");
+      // and not the literal string "undefined" from a stringify mishap
+      expect(v).not.toBe("undefined");
+      expect(k).not.toBe("EMPLOKE_HOME");
+    }
+  });
+});
+
+describe("SUBPROCESS_ENV_SCRUB_KEYS", () => {
+  it("declares EMPLOKE_HOME as scrub-on-headless so server state doesn't leak", () => {
+    // The server reads `process.env.EMPLOKE_HOME` to find its own
+    // state directory (global.db, runtime.json, logs/), so the value
+    // is in the server's env by construction. Every spawned headless
+    // task would otherwise inherit it and could reach into
+    // service-internal state — exactly what `EMPLOKE_SHARED_DIR` was
+    // designed to replace. `CopilotRuntime.launchHeadless` walks
+    // this list and emits `undefined` overrides, which `mergeEnv`
+    // (launch-headless.ts) interprets as "delete from inherited env".
+    expect(SUBPROCESS_ENV_SCRUB_KEYS).toContain("EMPLOKE_HOME");
+  });
+
+  it("is frozen so a stray mutation can't silently widen / narrow the scrub set", () => {
+    expect(Object.isFrozen(SUBPROCESS_ENV_SCRUB_KEYS)).toBe(true);
+    expect(() => {
+      (SUBPROCESS_ENV_SCRUB_KEYS as unknown as string[]).push("EVIL");
+    }).toThrow();
   });
 });

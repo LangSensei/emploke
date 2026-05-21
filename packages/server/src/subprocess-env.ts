@@ -12,7 +12,7 @@
  *   - The `0.0.0.0` → loopback rewrite has subtle platform behaviour and
  *     deserves its own dock-test surface.
  *
- * Variables emitted (all required):
+ * Variables emitted (all required, all string-typed):
  *   - EMPLOKE_SERVER     — `http://<host>:<port>`
  *   - EMPLOKE_SHARED_DIR — `<EMPLOKE_HOME>/shared`, the canonical
  *                         cross-workspace state directory. Same path
@@ -24,7 +24,9 @@
  *                         `<EMPLOKE_HOME>` itself (which holds
  *                         `global.db`, `runtime.json`, `logs/`) is
  *                         deliberately NOT exposed — agents have no
- *                         business touching it.
+ *                         business touching it. See
+ *                         {@link SUBPROCESS_ENV_SCRUB_KEYS} for the
+ *                         enforcement seam on the headless path.
  *
  * Hostname rewrite: a server bound to `0.0.0.0` accepts connections
  * on every interface, but a child dialing `0.0.0.0` is platform-
@@ -41,36 +43,46 @@ export function buildSubprocessEnvBase(input: {
   hostname: string;
   port: number;
   sharedDir: string;
-}): NodeJS.ProcessEnv {
+}): Readonly<Record<string, string>> {
   const dialableHost =
     input.hostname === "0.0.0.0" || input.hostname === "::" ? "127.0.0.1" : input.hostname;
-  const env: NodeJS.ProcessEnv = {
+  // Freeze: this object is shared by reference into every per-workspace
+  // `CopilotRuntime` (via the bootstrap-time wiring) and read on every
+  // `launchHeadless` / `buildInteractiveLaunch`. A stray mutation
+  // anywhere would silently leak across workspaces and across in-flight
+  // launches. Freezing turns that footgun into a loud TypeError.
+  // Callers always layer their per-task additions on top via spread
+  // (`{ ...base, ... }`), which creates a fresh object — that one is
+  // mutable, this base is not.
+  return Object.freeze({
     EMPLOKE_SERVER: `http://${dialableHost}:${input.port}`,
     EMPLOKE_SHARED_DIR: input.sharedDir,
-    // EXPLICIT NEGATIVE: scrub `EMPLOKE_HOME` from every spawned
-    // task subprocess. The server itself reads `process.env.EMPLOKE_HOME`
-    // to find its own state directory, so the value is in the parent
-    // env by construction. Without this `undefined` the spawn's env
-    // inheritance would leak the path through, contradicting the
-    // public contract (see docs/architecture.md "Runtime env
-    // contract"). The task path goes through `mergeEnv` in
-    // `packages/runtime/src/copilot/launch-headless.ts`, which
-    // honours `undefined` as "delete this key from the parent env".
-    //
-    // The session-interactive path (`SessionService.assembleLaunchEnv`)
-    // intentionally filters `undefined` values out before reaching
-    // the terminal-side shell-env helpers, so the parent's
-    // `EMPLOKE_HOME` leaks through ambient inheritance — that's by
-    // design, see "Deliberately not exposed" in architecture.md:
-    // user-driven terminals own their shell state.
-    EMPLOKE_HOME: undefined,
-  };
-  // Freeze: this object is shared by reference into every per-workspace
-  // `TaskService` (via `WorkspaceContextCache`) and read on every
-  // `dispatch()`. A stray mutation anywhere would silently leak
-  // across workspaces and across in-flight tasks. Freezing turns
-  // that footgun into a loud TypeError. Callers always layer their
-  // per-task additions on top via spread (`{ ...base, ... }`), which
-  // creates a fresh object — that one is mutable, this base is not.
-  return Object.freeze(env);
+  });
 }
+
+/**
+ * Env keys that the headless launch path MUST strip from the
+ * inherited parent env before handing the child to the SDK. Distinct
+ * from {@link buildSubprocessEnvBase} because "set X to Y" and
+ * "remove X" are different semantics and only one of them is
+ * actionable on every launch path.
+ *
+ * `EMPLOKE_HOME`: the server reads `process.env.EMPLOKE_HOME` to find
+ * its own state directory, so the value is in the server's env by
+ * construction. Without an explicit scrub, every spawned task would
+ * inherit it and could reach into `global.db`, `runtime.json`,
+ * `logs/`, etc. — exactly what `EMPLOKE_SHARED_DIR` was designed to
+ * replace. The headless path goes through `mergeEnv` in
+ * `packages/runtime/src/copilot/launch-headless.ts`, which honours an
+ * `undefined` override as "delete this key from the parent env";
+ * `CopilotRuntime.launchHeadless` translates this list into those
+ * overrides.
+ *
+ * Interactive (session-spawned terminal) launches deliberately do NOT
+ * apply this scrub: a user-driven shell owns its own env. `cmd /k`
+ * and pwsh `$env:` prefixes can only SET values, not unset them, so
+ * there is no way to delete an inherited key from inside the shell
+ * launcher anyway. See "Deliberately not exposed" in
+ * `docs/architecture.md` for the contract.
+ */
+export const SUBPROCESS_ENV_SCRUB_KEYS: readonly string[] = Object.freeze(["EMPLOKE_HOME"]);

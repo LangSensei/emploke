@@ -160,6 +160,107 @@ describe("CopilotRuntime", () => {
         TrustRegistrationFailed,
       );
     });
+
+    it("exposes subprocessEnvBase verbatim on the returned LaunchCommand.env", async () => {
+      // Regression: a previous shape allowed `undefined` values in the
+      // base bag, which silently broke the windows terminal spawner
+      // (`pwshQuote(undefined)` → "Cannot read properties of undefined
+      // reading 'replace'"). The base is now string-only by config
+      // contract; this test pins the round-trip so a future refactor
+      // can't reintroduce a transform that drops or mangles keys.
+      const rt = new CopilotRuntime({
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
+        subprocessEnvBase: {
+          EMPLOKE_SERVER: "http://127.0.0.1:8787",
+          EMPLOKE_SHARED_DIR: "/h/shared",
+        },
+      });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      const c = await rt.buildInteractiveLaunch(null, workdir, ws);
+      expect(c.env).toEqual({
+        EMPLOKE_SERVER: "http://127.0.0.1:8787",
+        EMPLOKE_SHARED_DIR: "/h/shared",
+      });
+    });
+  });
+
+  describe("launchHeadless — subprocessEnvScrub translation", () => {
+    // The server-side `SUBPROCESS_ENV_SCRUB_KEYS` list (currently
+    // ["EMPLOKE_HOME"]) is plumbed through
+    // `CopilotRuntimeConfig.subprocessEnvScrub` and translated by
+    // `launchHeadless` into `undefined` overrides that `mergeEnv`
+    // (launch-headless.ts) interprets as "delete from inherited
+    // parent env". The contract is what keeps the server's own state
+    // directory from leaking into every spawned task subprocess.
+    async function runCapturing(
+      scrub: readonly string[],
+      callerEnv: NodeJS.ProcessEnv | undefined,
+    ): Promise<NodeJS.ProcessEnv> {
+      let captured: NodeJS.ProcessEnv | undefined;
+      const rt = new CopilotRuntime({
+        copilotConfigPath: path.join(scratch, "copilot-config.json"),
+        subprocessEnvBase: { EMPLOKE_SERVER: "http://127.0.0.1:1" },
+        subprocessEnvScrub: scrub,
+        headlessDeps: {
+          createClient: (options) => {
+            captured = options?.env as NodeJS.ProcessEnv | undefined;
+            return {
+              start: () => Promise.reject(new Error("STUB_NO_START")),
+              stop: () => Promise.resolve(),
+              createSession: () => Promise.reject(new Error("unreached")),
+            } as unknown as ReturnType<typeof Object>;
+          },
+          registerSession: () => {},
+        },
+      });
+      const ws = path.join(scratch, "ws");
+      await mkdir(ws, { recursive: true });
+      const { catalog, agent } = await buildAgent();
+      try {
+        await rt.launchHeadless({
+          workdir: ws,
+          workspaceDir: ws,
+          agent,
+          catalog,
+          prompt: "hi",
+          ...(callerEnv ? { subprocessEnv: callerEnv } : {}),
+        });
+      } catch {
+        /* STUB throw expected */
+      }
+      if (!captured) throw new Error("createClient stub never fired");
+      return captured;
+    }
+
+    it("deletes scrub keys that are present in the inherited parent env", async () => {
+      const sentinel = "EMPLOKE_TEST_HOME_SCRUB_SENTINEL";
+      process.env[sentinel] = "should-be-deleted";
+      try {
+        const env = await runCapturing([sentinel], undefined);
+        expect(sentinel in env).toBe(false);
+        // Base bag still arrives intact.
+        expect(env.EMPLOKE_SERVER).toBe("http://127.0.0.1:1");
+      } finally {
+        delete process.env[sentinel];
+      }
+    });
+
+    it("does NOT scrub when the caller's subprocessEnv re-introduces the key", async () => {
+      const env = await runCapturing(["EMPLOKE_HOME"], { EMPLOKE_HOME: "/explicit/override" });
+      expect(env.EMPLOKE_HOME).toBe("/explicit/override");
+    });
+
+    it("is a no-op when no scrub keys are configured", async () => {
+      const sentinel = "EMPLOKE_TEST_NO_SCRUB_SENTINEL";
+      process.env[sentinel] = "should-survive";
+      try {
+        const env = await runCapturing([], undefined);
+        expect(env[sentinel]).toBe("should-survive");
+      } finally {
+        delete process.env[sentinel];
+      }
+    });
   });
 
   describe("refresh", () => {
