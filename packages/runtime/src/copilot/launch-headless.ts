@@ -21,7 +21,7 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import {
   approveAll,
   CopilotClient,
@@ -64,7 +64,7 @@ export interface EventBuffer {
 export interface LaunchCopilotHeadlessOpts {
   readonly taskDir: string;
   readonly agent: AgentResolveResult;
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogQueries;
   readonly prompt: string;
   /**
    * Absolute path of the workspace this task lives under. Forwarded to

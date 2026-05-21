@@ -33,15 +33,6 @@ export {
 export type { AgentFetcher } from "./agent/index.js";
 export * as agent from "./agent/index.js";
 export { Agent } from "./agent/index.js";
-// ─── Domain seedwork (catalog phase-2 foundation) ───
-export type { AggregateRoot } from "./domain/seedwork/aggregate-root.js";
-export { Entity } from "./domain/seedwork/entity.js";
-export { ValueObject } from "./domain/seedwork/value-object.js";
-// ─── Domain value objects (catalog phase-2 foundation) ─
-export { AgentFqn } from "./domain/value-objects/agent-fqn.js";
-export { McpName } from "./domain/value-objects/mcp-name.js";
-export { Origin } from "./domain/value-objects/origin.js";
-export { SkillFqn } from "./domain/value-objects/skill-fqn.js";
 // ─── Drizzle schema (low-level row access for tests/migrations) ─
 export * as schema from "./schema.js";
 // ─── Wire DTOs (HTTP-shaped projections) ────────────
@@ -73,10 +64,11 @@ export {
   type CatalogInstallFailure,
   type CatalogInstallResult,
   type CatalogInstallSkip,
-  CatalogManager,
   type CatalogOptions,
   type CatalogPlan,
   type CatalogPlanNode,
+  CatalogQueries,
+  CatalogService,
   type CatalogSyncResult,
   HasDependentsError,
   type McpResolvedNode,

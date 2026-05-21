@@ -19,7 +19,7 @@
  *    archive 鈥?emploke "stores but never reads" runtime metadata.
  */
 
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 
 /**
@@ -134,7 +134,7 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 /** Constructor options for `TaskManager`. */
 export interface TaskManagerConfig {
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogQueries;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly tasksDir: string;
   readonly workspaceDir: string;

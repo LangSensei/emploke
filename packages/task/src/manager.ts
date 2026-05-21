@@ -1,7 +1,7 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
@@ -116,7 +116,7 @@ interface LiveTask {
  * persistence + side effects around it.
  */
 export class TaskManager {
-  private readonly catalog: CatalogManager;
+  private readonly catalog: CatalogQueries;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly tasksDir: string;

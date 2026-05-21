@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   type AgentResolveResult,
   applyFrontmatterPatch,
-  type CatalogManager,
+  type CatalogQueries,
   stripMcpMeta,
 } from "@emploke/catalog";
 import {
@@ -98,8 +98,8 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  * need cleanup on session/task purge.
  *
  * Source data is pulled from the catalog as `AsyncIterable<{relPath, content}>`
- * streams (see {@link CatalogManager.skillEntries} /
- * {@link CatalogManager.agentEntries}). The runtime never resolves on-disk
+ * streams (see {@link CatalogQueries.skillEntries} /
+ * {@link CatalogQueries.agentEntries}). The runtime never resolves on-disk
  * catalog paths; a future SQLite-backed catalog implementation works the same
  * way.
  *
@@ -123,7 +123,7 @@ const DEFAULT_SCOPE_PREFIX = "public/";
 export async function provisionCopilotWorkdir(
   workdir: string,
   agent: AgentResolveResult,
-  catalog: CatalogManager,
+  catalog: CatalogQueries,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
@@ -146,7 +146,7 @@ export async function provisionCopilotWorkdir(
 async function materializeAgent(
   workdir: string,
   agentName: string,
-  catalog: CatalogManager,
+  catalog: CatalogQueries,
 ): Promise<void> {
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");
   let hooksDestReady = false;
@@ -195,7 +195,7 @@ async function materializeAgent(
 async function writeMcpConfig(
   workdir: string,
   mcps: readonly { readonly fqn: string }[],
-  catalog: CatalogManager,
+  catalog: CatalogQueries,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   if (mcps.length === 0) return;
@@ -240,7 +240,7 @@ async function writeMcpConfig(
 async function materializeSkills(
   workdir: string,
   skills: readonly { readonly skill: { readonly fqn: string } }[],
-  catalog: CatalogManager,
+  catalog: CatalogQueries,
 ): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");

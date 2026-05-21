@@ -1,23 +1,19 @@
-import type { CatalogManager } from "@emploke/catalog";
 import { Hono } from "hono";
 import { agentsRoutes } from "./agents.js";
 import { mcpsRoutes } from "./mcps.js";
-import { type CatalogResolver, resolveCatalog } from "./resolver.js";
+import { type CatalogFacade, type CatalogResolver, resolveCatalog } from "./resolver.js";
 import { skillsRoutes } from "./skills.js";
 
 /**
- * Workspace-scoped catalog routes. Mounted at
- * `/api/workspaces/:name/catalog/*` in `index.ts`. The routes pull a
- * per-workspace `CatalogManager` instance off the Hono context (set up
- * by the workspace middleware), so handler logic doesn't need to know
- * which workspace is in play.
+ * Workspace-scoped catalog routes. The routes pull a per-workspace
+ * `CatalogFacade` ({@link CatalogService} writes + {@link CatalogQueries}
+ * reads) off the Hono context, set up by the workspace middleware.
  *
- * Tests can pass a `CatalogManager` instance directly instead of a
- * resolver. The catalog brings its own `FetcherRegistry` via
- * `CatalogOptions.fetchers` (defaults to `defaultFetcherRegistry`);
- * routes don't need to thread fetchers through.
+ * Tests can pass a `CatalogFacade` directly. The catalog brings its
+ * own `FetcherRegistry` via `CatalogOptions.fetchers`; routes don't
+ * thread fetchers through.
  */
-export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function catalogRoutes(arg: CatalogResolver | CatalogFacade): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -26,11 +22,11 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   app.route("/mcps", mcpsRoutes(getCatalog));
 
   app.get("/overview", async (c) => {
-    const catalog = getCatalog(c);
+    const { queries } = getCatalog(c);
     const [skills, agents, mcps] = await Promise.all([
-      catalog.listSkillEntries(),
-      catalog.listAgentEntries(),
-      catalog.listMcps(),
+      queries.listSkillEntries(),
+      queries.listAgentEntries(),
+      queries.listMcps(),
     ]);
     return c.json({
       counts: {
@@ -49,4 +45,4 @@ export function catalogRoutes(arg: CatalogResolver | CatalogManager): Hono {
   return app;
 }
 
-export type { CatalogResolver } from "./resolver.js";
+export type { CatalogFacade, CatalogResolver } from "./resolver.js";

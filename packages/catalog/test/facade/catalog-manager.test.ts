@@ -3,11 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
 import { DrizzleAgentRepository } from "../../src/agent/drizzle-agent-repository.js";
 import {
-  type CatalogConflict,
-  CatalogManager,
-  type McpResolveAdapter,
-  type McpResolvedNode,
-} from "../../src/facade/catalog-manager.js";
+  buildCatalogRuntime,
+  CatalogQueries,
+} from "../../src/facade/catalog-queries.js";
+import { CatalogService } from "../../src/facade/catalog-service.js";
+import type {
+  CatalogConflict,
+  McpResolveAdapter,
+  McpResolvedNode,
+} from "../../src/facade/plan-types.js";
 import { HasDependentsError } from "../../src/facade/errors.js";
 import { Mcp } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
@@ -148,7 +152,7 @@ let mcpRepo: DrizzleMcpRepository;
 let skillRepo: DrizzleSkillRepository;
 let agentRepo: DrizzleAgentRepository;
 let fetchers: ReturnType<typeof makeFakeFetchers>;
-let mgr: CatalogManager;
+let mgr: { service: CatalogService; queries: CatalogQueries };
 
 beforeEach(async () => {
   // All three catalog repos share one in-memory connection — same as
@@ -168,7 +172,18 @@ beforeEach(async () => {
     skills: skillRepo,
     mcps: mcpRepo,
   });
-  mgr = new CatalogManager(mcpSvc, skillSvc, agentSvc, fetchers.mcpResolveAdapter);
+  // Build runtime against pre-wired services using buildCatalogRuntime requires db only;
+  // tests inject the per-entity services directly, so we construct CatalogQueries/Service
+  // against a manual runtime object that conforms to CatalogRuntime.
+  const rt = {
+    mcp: mcpSvc, skill: skillSvc, agent: agentSvc,
+    mcpRepo, skillRepo, agentRepo,
+    resolveMcpAdapter: fetchers.mcpResolveAdapter,
+    logger: (await import("@emploke/logger")).silentLogger,
+  };
+  const queries = new CatalogQueries(rt);
+  const service = new CatalogService(rt, queries);
+  mgr = { service, queries };
 });
 
 afterEach(async () => {
@@ -184,7 +199,7 @@ afterEach(async () => {
 describe("CatalogManager.resolveSkill", () => {
   it("resolves a leaf skill (no deps)", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const plan = await mgr.queries.resolveSkill("file:/abs/tool");
     expect(plan.toInstall).toHaveLength(1);
     expect(plan.toInstall[0]?.kind).toBe("skill");
     expect(plan.toInstall[0]?.node.fqn).toBe("public/tool");
@@ -200,7 +215,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/a", {
       "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/b"`),
     });
-    const plan = await mgr.resolveSkill("file:/abs/a");
+    const plan = await mgr.queries.resolveSkill("file:/abs/a");
     const fqns = plan.toInstall.map((n) => n.node.fqn);
     expect(fqns).toEqual(["public/c", "public/b", "public/a"]);
   });
@@ -210,7 +225,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", `dependencies:\n  mcps:\n    - "file:/abs/mcp/azure"`),
     });
-    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const plan = await mgr.queries.resolveSkill("file:/abs/tool");
     expect(plan.toInstall.map((n) => `${n.kind}:${n.node.fqn}`)).toEqual([
       "mcp:azure/mcp",
       "skill:public/tool",
@@ -231,7 +246,7 @@ describe("CatalogManager.resolveSkill", () => {
         `dependencies:\n  skills:\n    - "file:/abs/a"\n    - "file:/abs/b"`,
       ),
     });
-    const plan = await mgr.resolveSkill("file:/abs/root");
+    const plan = await mgr.queries.resolveSkill("file:/abs/root");
     const mcpNodes = plan.toInstall.filter((n) => n.kind === "mcp");
     expect(mcpNodes).toHaveLength(1);
     expect(mcpNodes[0]?.node.fqn).toBe("vendor/x");
@@ -242,7 +257,7 @@ describe("CatalogManager.resolveSkill", () => {
       "SKILL.md": SKILL_ANCHOR("parent", `dependencies:\n  skills:\n    - "file:/abs/missing"`),
     });
     // file:./missing is never registered — fetch fails.
-    const plan = await mgr.resolveSkill("file:/abs/parent");
+    const plan = await mgr.queries.resolveSkill("file:/abs/parent");
     expect(plan.conflicts.length).toBeGreaterThan(0);
     expect(plan.conflicts[0]?.kind).toBe("skill");
     expect(plan.conflicts[0]?.reason.kind).toBe("fetch-failed");
@@ -255,7 +270,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/a", {
       "SKILL.md": SKILL_ANCHOR("a", `dependencies:\n  skills:\n    - "file:/abs/a"`),
     });
-    await expect(mgr.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
+    await expect(mgr.queries.resolveSkill("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
   });
 
   it("rejects a two-skill cycle (A → B → A)", async () => {
@@ -265,7 +280,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/b", {
       "SKILL.md": SKILL_ANCHOR("b", `dependencies:\n  skills:\n    - "file:/abs/a"`),
     });
-    const err = await mgr.resolveSkill("file:/abs/a").then(
+    const err = await mgr.queries.resolveSkill("file:/abs/a").then(
       () => null,
       (e) => e,
     );
@@ -289,7 +304,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setSkill("file:/abs/c", {
       "SKILL.md": SKILL_ANCHOR("c", `dependencies:\n  skills:\n    - "file:/abs/a"`),
     });
-    const err = await mgr.resolveSkill("file:/abs/a").then(
+    const err = await mgr.queries.resolveSkill("file:/abs/a").then(
       () => null,
       (e) => e,
     );
@@ -319,7 +334,7 @@ describe("CatalogManager.resolveSkill", () => {
         `dependencies:\n  skills:\n    - "file:/abs/b"\n    - "file:/abs/c"`,
       ),
     });
-    const plan = await mgr.resolveSkill("file:/abs/a");
+    const plan = await mgr.queries.resolveSkill("file:/abs/a");
     // C, B, A — dep-first, C deduped to a single entry.
     expect(plan.toInstall.map((n) => n.node.fqn)).toEqual(["public/c", "public/b", "public/a"]);
     expect(plan.conflicts).toEqual([]);
@@ -340,7 +355,7 @@ describe("CatalogManager.resolveSkill", () => {
     fetchers.setAgent("file:/abs/agent", {
       "AGENTS.md": AGENT_ANCHOR("agent", `dependencies:\n  skills:\n    - "file:/abs/a"`),
     });
-    await expect(mgr.resolveAgentFromOrigin("file:/abs/agent")).rejects.toBeInstanceOf(
+    await expect(mgr.queries.resolveAgentFromOrigin("file:/abs/agent")).rejects.toBeInstanceOf(
       CyclicDependencyError,
     );
   });
@@ -362,7 +377,7 @@ describe("CatalogManager.resolveAgent", () => {
     - "file:/abs/mcp/azure"`,
       ),
     });
-    const plan = await mgr.resolveAgentFromOrigin("file:/abs/researcher");
+    const plan = await mgr.queries.resolveAgentFromOrigin("file:/abs/researcher");
     const ordered = plan.toInstall.map((n) => `${n.kind}:${n.node.fqn}`);
     // mcps first, skills middle, agent last
     expect(ordered).toEqual(["mcp:azure/mcp", "skill:public/tool", "agent:public/researcher"]);
@@ -385,7 +400,7 @@ describe("CatalogManager.install", () => {
     - "file:/abs/mcp/azure"`,
       ),
     });
-    const result = await mgr.installAgent("file:/abs/researcher");
+    const result = await mgr.service.installAgent("file:/abs/researcher");
     expect(result.failed).toEqual([]);
     expect(result.installed.map((n) => `${n.kind}:${n.fqn}`)).toEqual([
       "mcp:azure/mcp",
@@ -393,9 +408,9 @@ describe("CatalogManager.install", () => {
       "agent:public/researcher",
     ]);
     // All three are queryable
-    expect(await mgr.getMcp("azure/mcp")).not.toBeNull();
-    expect(await mgr.getSkill("public/tool")).not.toBeNull();
-    expect(await mgr.getAgent("public/researcher")).not.toBeNull();
+    expect(await mgr.queries.getMcp("azure/mcp")).not.toBeNull();
+    expect(await mgr.queries.getSkill("public/tool")).not.toBeNull();
+    expect(await mgr.queries.getAgent("public/researcher")).not.toBeNull();
   });
 
   it("a failed dep poisons its dependents (failure propagation)", async () => {
@@ -405,7 +420,7 @@ describe("CatalogManager.install", () => {
     fetchers.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    const plan = await mgr.resolveSkill("file:/abs/tool");
+    const plan = await mgr.queries.resolveSkill("file:/abs/tool");
     expect(plan.toInstall.length).toBe(2);
 
     // Sabotage MCP install: clobber the tree fixture so the install-
@@ -423,7 +438,7 @@ describe("CatalogManager.install", () => {
         n.kind === "mcp" ? { ...n, node: { ...n.node, content: "{{not valid json" } } : n,
       ),
     };
-    const result = await mgr.install(mutated);
+    const result = await mgr.service.install(mutated);
     expect(result.failed.some((f) => f.kind === "mcp")).toBe(true);
     expect(result.skipped.some((s) => s.kind === "skill" && s.reason === "dep-failed")).toBe(true);
     // Wire-safety: the failure entry's `error` is a plain `{ name, message }`
@@ -443,12 +458,12 @@ describe("CatalogManager.install", () => {
   it("already-installed deps are skipped, not re-installed", async () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
     // Pre-install the mcp
-    await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
+    await mgr.service.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
 
     fetchers.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    const result = await mgr.installSkill("file:/abs/tool");
+    const result = await mgr.service.installSkill("file:/abs/tool");
     expect(result.installed.map((n) => n.fqn)).toContain("public/tool");
     expect(result.installed.map((n) => n.fqn)).not.toContain("vendor/x");
     expect(
@@ -462,9 +477,9 @@ describe("CatalogManager.install", () => {
 describe("CatalogManager — delete with dep protection", () => {
   it("deleteAgent works unconditionally (agents are roots)", async () => {
     fetchers.setAgent("file:/abs/agent", { "AGENTS.md": AGENT_ANCHOR("agent") });
-    await mgr.installAgent("file:/abs/agent");
-    await mgr.deleteAgent("public/agent");
-    expect(await mgr.getAgent("public/agent")).toBeNull();
+    await mgr.service.installAgent("file:/abs/agent");
+    await mgr.service.deleteAgent("public/agent");
+    expect(await mgr.queries.getAgent("public/agent")).toBeNull();
   });
 
   it("deleteSkill refuses if another skill depends on it", async () => {
@@ -472,8 +487,8 @@ describe("CatalogManager — delete with dep protection", () => {
     fetchers.setSkill("file:/abs/parent", {
       "SKILL.md": SKILL_ANCHOR("parent", `dependencies:\n  skills:\n    - "file:/abs/child"`),
     });
-    await mgr.installSkill("file:/abs/parent");
-    await expect(mgr.deleteSkill("public/child")).rejects.toThrow(HasDependentsError);
+    await mgr.service.installSkill("file:/abs/parent");
+    await expect(mgr.service.deleteSkill("public/child")).rejects.toThrow(HasDependentsError);
   });
 
   it("deleteSkill works after the dependent is removed", async () => {
@@ -481,10 +496,10 @@ describe("CatalogManager — delete with dep protection", () => {
     fetchers.setSkill("file:/abs/parent", {
       "SKILL.md": SKILL_ANCHOR("parent", `dependencies:\n  skills:\n    - "file:/abs/child"`),
     });
-    await mgr.installSkill("file:/abs/parent");
-    await mgr.deleteSkill("public/parent");
-    await mgr.deleteSkill("public/child");
-    expect(await mgr.getSkill("public/child")).toBeNull();
+    await mgr.service.installSkill("file:/abs/parent");
+    await mgr.service.deleteSkill("public/parent");
+    await mgr.service.deleteSkill("public/child");
+    expect(await mgr.queries.getSkill("public/child")).toBeNull();
   });
 
   it("deleteMcp refuses if a skill depends on it", async () => {
@@ -492,8 +507,8 @@ describe("CatalogManager — delete with dep protection", () => {
     fetchers.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    await mgr.installSkill("file:/abs/tool");
-    await expect(mgr.deleteMcp("vendor/x")).rejects.toThrow(HasDependentsError);
+    await mgr.service.installSkill("file:/abs/tool");
+    await expect(mgr.service.deleteMcp("vendor/x")).rejects.toThrow(HasDependentsError);
   });
 
   it("deleteMcp refuses if an agent depends on it", async () => {
@@ -501,8 +516,8 @@ describe("CatalogManager — delete with dep protection", () => {
     fetchers.setAgent("file:/abs/agent", {
       "AGENTS.md": AGENT_ANCHOR("agent", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    await mgr.installAgent("file:/abs/agent");
-    await expect(mgr.deleteMcp("vendor/x")).rejects.toThrow(HasDependentsError);
+    await mgr.service.installAgent("file:/abs/agent");
+    await expect(mgr.service.deleteMcp("vendor/x")).rejects.toThrow(HasDependentsError);
   });
 
   it("findDependents lists all referrers", async () => {
@@ -513,9 +528,9 @@ describe("CatalogManager — delete with dep protection", () => {
     fetchers.setAgent("file:/abs/agent", {
       "AGENTS.md": AGENT_ANCHOR("agent", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
     });
-    await mgr.installSkill("file:/abs/tool");
-    await mgr.installAgent("file:/abs/agent");
-    const deps = await mgr.findDependents("vendor/x");
+    await mgr.service.installSkill("file:/abs/tool");
+    await mgr.service.installAgent("file:/abs/agent");
+    const deps = await mgr.queries.findDependents("vendor/x");
     expect(deps.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
       { kind: "agent", name: "public/agent" },
       { kind: "skill", name: "public/tool" },
@@ -528,19 +543,19 @@ describe("CatalogManager — delete with dep protection", () => {
 describe("CatalogManager — single-shot installers", () => {
   it("installSkill is resolveSkill + install", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    const result = await mgr.installSkill("file:/abs/tool");
+    const result = await mgr.service.installSkill("file:/abs/tool");
     expect(result.installed[0]?.fqn).toBe("public/tool");
   });
 
   it("installAgent is resolveAgent + install", async () => {
     fetchers.setAgent("file:/abs/agent", { "AGENTS.md": AGENT_ANCHOR("agent") });
-    const result = await mgr.installAgent("file:/abs/agent");
+    const result = await mgr.service.installAgent("file:/abs/agent");
     expect(result.installed[0]?.fqn).toBe("public/agent");
   });
 
   it("installMcp is resolveMcp + install", async () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
-    const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
+    const result = await mgr.service.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
     expect(result.installed[0]?.fqn).toBe("vendor/x");
   });
 });
@@ -550,30 +565,30 @@ describe("CatalogManager — single-shot installers", () => {
 describe("CatalogManager plan token cache", () => {
   it("cachePlan returns a single-use token that takePlan trades for the plan", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    const plan = await mgr.resolveSkill("file:/abs/tool");
-    const token = mgr.cachePlan(plan);
+    const plan = await mgr.queries.resolveSkill("file:/abs/tool");
+    const token = mgr.queries.cachePlan(plan);
     expect(typeof token).toBe("string");
     expect(token.length).toBeGreaterThan(0);
     // First take returns the same plan instance.
-    expect(mgr.takePlan(token)).toBe(plan);
+    expect(mgr.queries.takePlan(token)).toBe(plan);
     // Single-use: second take returns null even though the call shape
     // is identical. Defends against UI double-click re-running install.
-    expect(mgr.takePlan(token)).toBeNull();
+    expect(mgr.queries.takePlan(token)).toBeNull();
   });
 
   it("takePlan returns null for an unknown token (no false-positive on similar UUID)", () => {
-    expect(mgr.takePlan("00000000-0000-0000-0000-000000000000")).toBeNull();
+    expect(mgr.queries.takePlan("00000000-0000-0000-0000-000000000000")).toBeNull();
   });
 
   it("each cachePlan call mints a fresh token (no aliasing on identical plans)", async () => {
     fetchers.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool") });
-    const plan = await mgr.resolveSkill("file:/abs/tool");
-    const token1 = mgr.cachePlan(plan);
-    const token2 = mgr.cachePlan(plan);
+    const plan = await mgr.queries.resolveSkill("file:/abs/tool");
+    const token1 = mgr.queries.cachePlan(plan);
+    const token2 = mgr.queries.cachePlan(plan);
     expect(token1).not.toBe(token2);
     // Both tokens are independently consumable.
-    expect(mgr.takePlan(token1)).toBe(plan);
-    expect(mgr.takePlan(token2)).toBe(plan);
+    expect(mgr.queries.takePlan(token1)).toBe(plan);
+    expect(mgr.queries.takePlan(token2)).toBe(plan);
   });
 });
 

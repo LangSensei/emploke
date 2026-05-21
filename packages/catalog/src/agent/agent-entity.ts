@@ -1,16 +1,12 @@
-import type { AggregateRoot } from "../domain/seedwork/aggregate-root.js";
-import { Entity } from "../domain/seedwork/entity.js";
-import { AgentFqn } from "../domain/value-objects/agent-fqn.js";
 import * as AgentFormat from "./agent-frontmatter.js";
-import { splitFqn } from "./validate.js";
+import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
  * Rich domain entity representing a single installed agent.
  *
- * Identity = `fqn`; `origin` is provenance, not identity. Schema v2
- * (issue #122):
+ * Identity = `fqn`; `origin` is provenance, not identity.
  *   - `scope` / `shortName` are derived getters off `fqn.split('/')`.
- *   - Anchor bytes (AGENTS.md) are no longer held on the entity; the
+ *   - Anchor bytes (AGENTS.md) are NOT held on the entity; the
  *     repository's `getAnchor(fqn)` is the canonical fetch path.
  *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface on
  *     the entity so DTO projections can include them.
@@ -19,16 +15,8 @@ import { splitFqn } from "./validate.js";
  *     `dependencies` because the install pipeline hasn't resolved
  *     origins to fqns yet. The frontmatter-declared origins live on
  *     {@link depsRefs} and drive that resolution.
- *
- * ## Aggregate root + seedwork integration
- *
- * `Agent` extends `Entity` (catalog seedwork) and implements
- * `AggregateRoot`. {@link AgentFqn} is the single construction-time
- * invariant gate; see the matching note on {@link Skill} for the
- * "VO is invariant boundary, internal storage is string for now"
- * rationale and PR-2+ follow-up.
  */
-export class Agent extends Entity implements AggregateRoot {
+export class Agent {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -41,16 +29,14 @@ export class Agent extends Entity implements AggregateRoot {
     private readonly _disabledByUser: boolean,
     private readonly _installedAt: string,
     private readonly _updatedAt: string,
-  ) {
-    super();
-  }
+  ) {}
 
   static create(rawAgentMd: string, origin: string, sourceLabel: string): Agent {
     if (typeof origin !== "string" || origin.length === 0) {
       throw new TypeError("Agent.create requires a non-empty origin string");
     }
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
-    const fqn = AgentFqn.create(meta.scope, meta.shortName).toCanonical();
+    const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     const now = new Date().toISOString();
     return new Agent(
@@ -80,8 +66,9 @@ export class Agent extends Entity implements AggregateRoot {
     installedAt: string;
     updatedAt: string;
   }): Agent {
+    validateFqn(args.fqn);
     return new Agent(
-      AgentFqn.parse(args.fqn).toCanonical(),
+      args.fqn,
       args.origin,
       args.description,
       args.version,
@@ -95,12 +82,9 @@ export class Agent extends Entity implements AggregateRoot {
     );
   }
 
-  /** Inherited `Entity.id` → canonical FQN string. */
-  override get id(): string {
+  /** Canonical FQN — the entity's identity. */
+  get id(): string {
     return this._fqn;
-  }
-  override set id(_value: string) {
-    throw new TypeError("Agent.id is derived from the AgentFqn and is immutable");
   }
   get fqn(): string {
     return this._fqn;
@@ -189,7 +173,7 @@ export class Agent extends Entity implements AggregateRoot {
    */
   withAnchor(rawAgentMd: string, sourceLabel: string): Agent {
     const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
-    const newFqn = AgentFqn.create(meta.scope, meta.shortName).toCanonical();
+    const newFqn = makeFqn(meta.scope, meta.shortName);
     if (newFqn !== this._fqn) {
       throw new TypeError(
         `Agent.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +

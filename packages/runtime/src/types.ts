@@ -1,4 +1,4 @@
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
@@ -77,7 +77,7 @@ export interface Runtime {
   provision(
     workdir: string,
     agent: AgentResolveResult,
-    catalog: CatalogManager,
+    catalog: CatalogQueries,
     ctx: ProvisionContext,
   ): Promise<{
     runtimeSessionId: string | null;
@@ -266,7 +266,7 @@ export interface RuntimeCapabilities {
 export interface LaunchHeadlessOpts {
   readonly workdir: string;
   readonly agent: AgentResolveResult;
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogQueries;
   readonly prompt: string;
   readonly workspaceDir: string;
   /**

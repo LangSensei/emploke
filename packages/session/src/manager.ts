@@ -1,7 +1,7 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import { silentLogger } from "@emploke/logger";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
@@ -42,7 +42,7 @@ const MAX_CREATE_RETRIES = 5;
  * runtime adapter, and on-disk workdir operations directly.
  */
 export class SessionManager {
-  private readonly catalog: CatalogManager;
+  private readonly catalog: CatalogQueries;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly defaultRuntime: string;
   private readonly sessionsDir: string;
@@ -76,7 +76,7 @@ export class SessionManager {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    let resolveResult: Awaited<ReturnType<CatalogManager["resolveAgent"]>>;
+    let resolveResult: Awaited<ReturnType<CatalogQueries["resolveAgent"]>>;
     try {
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {

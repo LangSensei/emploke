@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -70,7 +70,7 @@ interface StubCatalogOpts {
   blockedAgents?: Record<string, import("@emploke/catalog").BlockedReason>;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
+function stubCatalog(opts: StubCatalogOpts = {}): CatalogQueries {
   const agents = opts.agents ?? {};
   const blocked = opts.blockedAgents ?? {};
   return {
@@ -93,17 +93,17 @@ function stubCatalog(opts: StubCatalogOpts = {}): CatalogManager {
           agent: { fqn: name } as unknown,
           status: "blocked" as const,
           blockedReason: reason,
-        } as unknown as ReturnType<CatalogManager["getAgentEntry"]> extends Promise<infer T>
+        } as unknown as ReturnType<CatalogQueries["getAgentEntry"]> extends Promise<infer T>
           ? T
           : never;
       }
       return { agent: { fqn: name } as unknown, status: "ready" as const } as unknown as ReturnType<
-        CatalogManager["getAgentEntry"]
+        CatalogQueries["getAgentEntry"]
       > extends Promise<infer T>
         ? T
         : never;
     },
-  } as unknown as CatalogManager;
+  } as unknown as CatalogQueries;
 }
 
 const fakeAgentResolve = (name: string): AgentResolveResult =>
@@ -355,7 +355,7 @@ const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
 
 const makeManager = async (
   overrides: {
-    catalog?: CatalogManager;
+    catalog?: CatalogQueries;
     runtime?: Runtime;
     registry?: RuntimeRegistry;
     now?: () => Date;

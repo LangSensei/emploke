@@ -12,7 +12,7 @@ import type {
   CatalogPlanNode,
   McpResolvedNode,
   OrphanedEntry,
-} from "./catalog-manager.js";
+} from "./plan-types.js";
 
 /**
  * Sync resolve, broken into three independently-testable phases.

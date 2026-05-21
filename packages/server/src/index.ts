@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries, CatalogService } from "@emploke/catalog";
 import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
 import { resolveEmplokePaths } from "@emploke/paths";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
@@ -72,7 +72,7 @@ export {
 type WorkspaceVars = {
   sessionManager: SessionManager;
   taskManager: TaskManager;
-  catalog: CatalogManager;
+  catalog: { service: CatalogService; queries: CatalogQueries };
 };
 
 /**
@@ -446,7 +446,7 @@ function workspaceContextMiddleware(
     }
     c.set("sessionManager", ctx.sessions);
     c.set("taskManager", ctx.tasks);
-    c.set("catalog", ctx.catalog);
+    c.set("catalog", { service: ctx.catalog, queries: ctx.catalogQueries });
     await next();
   };
 }

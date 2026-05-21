@@ -1,9 +1,9 @@
-import type { CatalogManager } from "@emploke/catalog";
+
 import { Hono } from "hono";
 import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody, readPlanTokenBody } from "./helpers.js";
 import { planToManifest } from "./plan-to-manifest.js";
-import { type CatalogResolver, resolveCatalog } from "./resolver.js";
+import { type CatalogFacade, type CatalogResolver, resolveCatalog } from "./resolver.js";
 
 /**
  * Routes for /mcps/* relative to the parent mount. Mounted by
@@ -13,7 +13,7 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`). MCPs
  * have no deps, so the install is a single fetch + write.
  */
-export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function mcpsRoutes(arg: CatalogResolver | CatalogFacade): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
@@ -26,16 +26,16 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     // the new metadata shape it produced `{ name: { name, origin, mutable } }`
     // and crashed the dashboard's React render with "Objects are not
     // valid as a React child".
-    return c.json(await catalog.listMcps());
+    return c.json(await catalog.queries.listMcps());
   });
 
   app.get("/:name{.+}", async (c) => {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      const meta = await catalog.getMcp(name);
+      const meta = await catalog.queries.getMcp(name);
       if (meta === null) return c.json({ error: "not found", code: "NotFound" }, 404);
-      const content = await catalog.getMcpContent(name);
+      const content = await catalog.queries.getMcpContent(name);
       return c.json({ ...meta, content });
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -48,7 +48,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const parsed = await readMcpInstallBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      const result = await catalog.installMcpFromOrigin(parsed.origin);
+      const result = await catalog.service.installMcpFromOrigin(parsed.origin);
       const status = result.failed.length > 0 ? 207 : 201;
       logEvent(c, "catalog: mcp install completed", {
         kind: "mcp",
@@ -71,8 +71,8 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     try {
       // resolveSyncMcp stamps the local origin onto plan.rootOrigin —
       // no second catalog round-trip needed.
-      const plan = await catalog.resolveSyncMcp(name);
-      const planToken = catalog.cachePlan(plan);
+      const plan = await catalog.queries.resolveSyncMcp(name);
+      const planToken = catalog.queries.cachePlan(plan);
       return c.json(planToManifest(plan, planToken));
     } catch (e: unknown) {
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
@@ -84,7 +84,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const parsed = await readPlanTokenBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
-    const plan = catalog.takePlan(parsed.planToken);
+    const plan = catalog.queries.takePlan(parsed.planToken);
     if (plan === null) {
       return c.json(
         {
@@ -95,7 +95,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
       );
     }
     try {
-      const result = await catalog.applySync(plan);
+      const result = await catalog.service.applySync(plan);
       const status = result.failed.length > 0 ? 207 : 200;
       logEvent(c, "catalog: mcp sync applied", {
         kind: "mcp",
@@ -117,7 +117,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const parsed = await readContentBody(c);
     if ("error" in parsed) return c.json(parsed, 400);
     try {
-      await catalog.updateMcpContent(name, parsed.content);
+      await catalog.service.updateMcpContent(name, parsed.content);
       logEvent(c, "catalog: mcp content updated", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {
@@ -130,7 +130,7 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
     const catalog = getCatalog(c);
     const name = c.req.param("name");
     try {
-      await catalog.deleteMcp(name);
+      await catalog.service.deleteMcp(name);
       logEvent(c, "catalog: mcp removed", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
     } catch (e: unknown) {

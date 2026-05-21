@@ -20,7 +20,7 @@
  *    runtime contract test); tracked as future work in the plan.
  */
 
-import { CatalogManager, type CatalogOptions, defaultFetcherRegistry } from "@emploke/catalog";
+import { CatalogQueries, CatalogService, type CatalogOptions, defaultFetcherRegistry } from "@emploke/catalog";
 import { silentLogger } from "@emploke/logger";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionManager } from "@emploke/session";
@@ -100,7 +100,7 @@ function buildAppForTest(): Hono {
   const catalogApp = new Hono();
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes(() => stubCatalogManager()),
+    catalogRoutes(() => stubCatalogFacade()),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -207,7 +207,7 @@ function stubTaskManager(): TaskManager {
   });
 }
 
-function stubCatalogManager(): CatalogManager {
+function stubCatalogFacade(): CatalogManager {
   // CatalogManager is a class with options; for route enumeration we
   // never call any method, but constructing one keeps types honest.
   // Use a Proxy to short-circuit any accidental method call.
@@ -220,10 +220,10 @@ function stubCatalogManager(): CatalogManager {
 
 // Reference compile-time helpers so unused-import lint stays quiet
 // without a `_unused` prefix that hides the contract.
-const _typeChecks: { spec: RouteSpec; method: HttpMethod; mgr?: typeof CatalogManager } = {
+const _typeChecks: { spec: RouteSpec; method: HttpMethod; mgr?: typeof CatalogService } = {
   spec: { method: "GET", path: "/", _req: {}, _res: undefined },
   method: "GET",
-  mgr: CatalogManager,
+  mgr: CatalogService,
 };
 void _typeChecks;
 void defaultFetcherRegistry;

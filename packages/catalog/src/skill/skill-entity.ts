@@ -1,39 +1,20 @@
-import type { AggregateRoot } from "../domain/seedwork/aggregate-root.js";
-import { Entity } from "../domain/seedwork/entity.js";
-import { SkillFqn } from "../domain/value-objects/skill-fqn.js";
 import * as SkillFormat from "./skill-frontmatter.js";
-import { splitFqn } from "./validate.js";
+import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
  * Rich domain entity representing a single installed skill.
  *
- * Identity = `fqn`; `origin` is provenance, not identity. Schema v2
- * (issue #122):
+ * Identity = `fqn`; `origin` is provenance, not identity.
  *   - `scope` / `shortName` are derived getters off `fqn.split('/')`.
- *   - Anchor bytes (SKILL.md) are no longer held on the entity; the
+ *   - Anchor bytes (SKILL.md) are NOT held on the entity; the
  *     repository's `getAnchor(fqn)` is the canonical fetch path.
  *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface on
  *     the entity so DTO projections can include them.
  *   - `dependencies` is the fqn-form view (populated by `fromStored`
  *     from the dep-tables join); `depsRefs` carries the frontmatter
  *     origins for the install pipeline's lookup.
- *
- * ## Aggregate root + seedwork integration
- *
- * `Skill` extends `Entity` (catalog seedwork) and implements
- * `AggregateRoot` so the type system answers "may this type have a
- * repository?" with a yes. {@link SkillFqn} is the single
- * construction-time invariant gate: every factory call routes
- * identity through `SkillFqn.create(...)` / `SkillFqn.parse(...)`
- * before the entity sees it. The internal storage stays a string for
- * minimal churn and unchanged repo wire-compat; PR-2+ will lift the
- * VO to be the entity's stored identity once repos and mappers are
- * ready to round-trip it.
- *
- * Domain events are NOT raised from this aggregate yet — see the
- * matching note on {@link Mcp}.
  */
-export class Skill extends Entity implements AggregateRoot {
+export class Skill {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -45,16 +26,14 @@ export class Skill extends Entity implements AggregateRoot {
     private readonly _prereqsAck: boolean,
     private readonly _installedAt: string,
     private readonly _updatedAt: string,
-  ) {
-    super();
-  }
+  ) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
     if (typeof origin !== "string" || origin.length === 0) {
       throw new TypeError("Skill.create requires a non-empty origin string");
     }
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
-    const fqn = SkillFqn.create(meta.scope, meta.shortName).toCanonical();
+    const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     const now = new Date().toISOString();
     return new Skill(
@@ -82,8 +61,9 @@ export class Skill extends Entity implements AggregateRoot {
     installedAt: string;
     updatedAt: string;
   }): Skill {
+    validateFqn(args.fqn);
     return new Skill(
-      SkillFqn.parse(args.fqn).toCanonical(),
+      args.fqn,
       args.origin,
       args.description,
       args.version,
@@ -96,12 +76,9 @@ export class Skill extends Entity implements AggregateRoot {
     );
   }
 
-  /** Inherited `Entity.id` → canonical FQN string. */
-  override get id(): string {
+  /** Canonical FQN — the entity's identity. */
+  get id(): string {
     return this._fqn;
-  }
-  override set id(_value: string) {
-    throw new TypeError("Skill.id is derived from the SkillFqn and is immutable");
   }
   get fqn(): string {
     return this._fqn;
@@ -169,7 +146,7 @@ export class Skill extends Entity implements AggregateRoot {
 
   withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
-    const newFqn = SkillFqn.create(meta.scope, meta.shortName).toCanonical();
+    const newFqn = makeFqn(meta.scope, meta.shortName);
     if (newFqn !== this._fqn) {
       throw new TypeError(
         `Skill.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +

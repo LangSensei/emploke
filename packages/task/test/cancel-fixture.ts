@@ -11,7 +11,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { TaskManager, TaskRepository } from "../src/index.js";
@@ -117,7 +117,7 @@ export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   await rm(fx.tasksDir, { recursive: true, force: true });
 }
 
-export function fakeCatalog(): CatalogManager {
+export function fakeCatalog(): CatalogQueries {
   return {
     catalogDir: "/tmp/catalog",
     async resolveAgent(_name: string): Promise<AgentResolveResult> {
@@ -132,11 +132,11 @@ export function fakeCatalog(): CatalogManager {
       return {
         agent: { fqn: "demo" } as unknown,
         status: "ready" as const,
-      } as unknown as ReturnType<CatalogManager["getAgentEntry"]> extends Promise<infer T>
+      } as unknown as ReturnType<CatalogQueries["getAgentEntry"]> extends Promise<infer T>
         ? T
         : never;
     },
-  } as unknown as CatalogManager;
+  } as unknown as CatalogQueries;
 }
 
 /**

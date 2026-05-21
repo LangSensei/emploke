@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
-  type CatalogManager,
+  type CatalogQueries,
+  type CatalogService,
   composeCatalogModule,
 } from "@emploke/catalog";
 import { type Logger, silentLogger } from "@emploke/logger";
@@ -44,7 +45,8 @@ export class WorkspaceHasLiveTasksError extends Error {
  */
 export interface WorkspaceRuntime {
   readonly workspace: WorkspaceView;
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogService;
+  readonly catalogQueries: CatalogQueries;
   readonly sessions: SessionManager;
   readonly tasks: TaskManager;
   /** Closes all three ORMs. Idempotent. */
@@ -197,7 +199,7 @@ export class WorkspaceRuntimeCache {
     });
     const sessionModule = await composeSessionModule({
       dbFile,
-      catalog: catalogModule.manager,
+      catalog: catalogModule.queries,
       runtimeRegistry: this.runtimeRegistry,
       sessionsDir: layout.sessions,
       workspaceDir: workspace.workspaceDir,
@@ -207,7 +209,7 @@ export class WorkspaceRuntimeCache {
     });
     const taskModule = await composeTaskModule({
       dbFile,
-      catalog: catalogModule.manager,
+      catalog: catalogModule.queries,
       runtimeRegistry: this.runtimeRegistry,
       tasksDir: layout.tasks,
       workspaceDir: workspace.workspaceDir,
@@ -220,7 +222,8 @@ export class WorkspaceRuntimeCache {
 
     const runtime: WorkspaceRuntime = {
       workspace,
-      catalog: catalogModule.manager,
+      catalog: catalogModule.service,
+      catalogQueries: catalogModule.queries,
       sessions: sessionModule.manager,
       tasks: taskModule.manager,
       async close() {

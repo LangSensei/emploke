@@ -13,7 +13,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries } from "@emploke/catalog";
 import { type Runtime, RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -52,13 +52,13 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-function fakeCatalog(): CatalogManager {
+function fakeCatalog(): CatalogQueries {
   return {
     catalogDir: "/tmp",
     async resolveAgent() {
       return {} as never;
     },
-  } as unknown as CatalogManager;
+  } as unknown as CatalogQueries;
 }
 
 function stubRuntime(): Runtime {

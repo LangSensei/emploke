@@ -24,7 +24,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { CopilotClient } from "@github/copilot-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchCopilotHeadless } from "../../src/copilot/launch-headless.js";
@@ -48,7 +48,7 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogManager }> {
+async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogQueries }> {
   const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
   const { catalog } = await makeTestCatalog({
     agents: { demo: { "AGENTS.md": agentBody } },

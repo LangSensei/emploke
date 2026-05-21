@@ -3,14 +3,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   type AgentResolveResult,
-  CatalogManager,
-  composeCatalogModule,
   type CatalogModule,
+  type CatalogQueries,
+  type CatalogService,
+  composeCatalogModule,
 } from "@emploke/catalog";
 
 /**
- * Build a `CatalogManager` backed by an in-memory MikroORM-managed
- * catalog DB, with optional fixtures pre-installed.
+ * Build a `CatalogService` + `CatalogQueries` pair backed by an in-memory
+ * Drizzle catalog DB, with optional fixtures pre-installed.
  *
  * Each fixture entry is a map of relative paths → file contents.
  * AGENTS.md / SKILL.md must be present where applicable. The helper
@@ -49,7 +50,12 @@ export async function makeTestCatalog(
   fixtures: TestCatalogFixtures = {},
   sourceRootArg?: string,
 ): Promise<{
-  catalog: CatalogManager;
+  /** Read handle (CatalogQueries) — typical test access via `catalog.resolveAgent(...)`. */
+  catalog: CatalogQueries;
+  /** Write handle (CatalogService) for tests that need to install/delete/update. */
+  service: CatalogService;
+  /** Same as `catalog`; kept for clarity when both halves are destructured. */
+  queries: CatalogQueries;
   /** Close the underlying ORM. Tests should call this in cleanup. */
   close: () => Promise<void>;
   /**
@@ -60,7 +66,8 @@ export async function makeTestCatalog(
 }> {
   const sourceRoot = sourceRootArg ?? (await mkdtemp(path.join(tmpdir(), "test-catalog-src-")));
   const module: CatalogModule = await composeCatalogModule({ dbFile: ":memory:" });
-  const catalog = module.manager;
+  const service = module.service;
+  const queries = module.queries;
 
   for (const [fqn, content] of Object.entries(fixtures.mcps ?? {})) {
     if (!fqn.includes("/")) {
@@ -72,7 +79,7 @@ export async function makeTestCatalog(
     await mkdir(path.dirname(filePath), { recursive: true });
     const origin = `file:${filePath}`;
     await writeFile(filePath, ensureMcpMeta(content, fqn), "utf8");
-    await catalog.installMcpFromOrigin(origin);
+    await service.installMcpFromOrigin(origin);
   }
   for (const [shortOrFqn, files] of Object.entries(fixtures.skills ?? {})) {
     const fqn = toFqn(shortOrFqn);
@@ -84,7 +91,7 @@ export async function makeTestCatalog(
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
     }
-    await catalog.installSkill(`file:${dir}`);
+    await service.installSkill(`file:${dir}`);
   }
   for (const [shortOrFqn, files] of Object.entries(fixtures.agents ?? {})) {
     const fqn = toFqn(shortOrFqn);
@@ -96,25 +103,27 @@ export async function makeTestCatalog(
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, content, "utf8");
     }
-    await catalog.installAgent(`file:${dir}`);
+    await service.installAgent(`file:${dir}`);
   }
 
   const corruptMcp = async (specName: string, content: string): Promise<void> => {
     // Bypass the catalog's validation pipeline by issuing a raw UPDATE
-    // through the underlying better-sqlite3 connection. The Drizzle
-    // wrapper exposes it on `.$client` for drizzle 0.45+.
-    const db = (catalog as unknown as {
-      mcp: {
-        repo: {
+    // through the underlying better-sqlite3 connection. The CatalogService
+    // exposes the underlying repos via the runtime injected at construction.
+    const db = (service as unknown as {
+      rt: {
+        mcpRepo: {
           db: { $client: { prepare(sql: string): { run(...args: unknown[]): unknown } } };
         };
       };
-    }).mcp.repo.db;
+    }).rt.mcpRepo.db;
     db.$client.prepare("UPDATE mcps SET spec = ? WHERE fqn = ?").run(content, specName);
   };
 
   return {
-    catalog,
+    catalog: queries,
+    service,
+    queries,
     async close() {
       await module.close();
     },
@@ -122,12 +131,12 @@ export async function makeTestCatalog(
   };
 }
 
-/** Build an `AgentResolveResult` from a catalog plus a name. */
+/** Build an `AgentResolveResult` from a catalog queries handle plus a name. */
 export function resolveTestAgent(
-  catalog: CatalogManager,
+  queries: CatalogQueries,
   name: string,
 ): Promise<AgentResolveResult> {
-  return catalog.resolveAgent(name);
+  return queries.resolveAgent(name);
 }
 
 export type { AgentResolveResult };

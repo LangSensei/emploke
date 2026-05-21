@@ -23,7 +23,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogQueries } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -112,7 +112,7 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
     mcps: [],
   }) as unknown as AgentResolveResult;
 
-const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
+const stubCatalog = (agentNames: readonly string[]): CatalogQueries =>
   ({
     catalogDir: "/tmp/catalog",
     async resolveAgent(name: string): Promise<AgentResolveResult> {
@@ -123,7 +123,7 @@ const stubCatalog = (agentNames: readonly string[]): CatalogManager =>
       if (!agentNames.includes(name)) return null;
       return { agent: { fqn: name } as unknown, status: "ready" } as unknown;
     },
-  }) as unknown as CatalogManager;
+  }) as unknown as CatalogQueries;
 
 // ───────── helpers ────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ async function awaitTerminal(m: TaskManager, id: string, timeoutMs = 10_000): Pr
 }
 
 const makeManager = async (
-  catalog: CatalogManager,
+  catalog: CatalogQueries,
   runtime: Runtime,
 ): Promise<{ m: TaskManager; repo: TaskRepository }> => {
   const reg = new RuntimeRegistry();

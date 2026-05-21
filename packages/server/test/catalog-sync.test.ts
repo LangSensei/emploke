@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogManager, Skill } from "@emploke/catalog";
+import type { CatalogQueries, CatalogService, Skill } from "@emploke/catalog";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,13 +45,13 @@ async function ensureWorkspace(name: string): Promise<{ id: string; workspaceDir
 }
 
 function mountApp() {
-  const app = new Hono<{ Variables: { catalog: CatalogManager } }>();
+  const app = new Hono<{ Variables: { catalog: { service: CatalogService; queries: CatalogQueries } } }>();
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
     const ctx = await cache.get(id);
     if (!ctx) return c.json({ error: "not registered", code: "WorkspaceNotRegisteredError" }, 404);
-    c.set("catalog", ctx.catalog);
+    c.set("catalog", { service: ctx.catalog, queries: ctx.catalogQueries });
     await next();
   });
   app.route(

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import { TaskManager } from "./manager.js";
@@ -14,7 +14,7 @@ export type TaskModuleOptions = (
   | { readonly db: Db; readonly dbFile?: never }
   | { readonly dbFile: string; readonly db?: never }
 ) & {
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogQueries;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly tasksDir: string;
   readonly workspaceDir: string;

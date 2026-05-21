@@ -1,4 +1,4 @@
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogQueries } from "@emploke/catalog";
 import type { Logger } from "@emploke/logger";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
@@ -34,7 +34,7 @@ export interface SessionView {
  */
 export interface SessionManagerConfig {
   /** Catalog used to resolve agents at create() time. */
-  readonly catalog: CatalogManager;
+  readonly catalog: CatalogQueries;
   /** Registry of runtime adapters; must contain at least the default runtime. */
   readonly runtimeRegistry: RuntimeRegistry;
   /** Runtime kind used by `create()` when none is supplied. Defaults to `"copilot"`. */

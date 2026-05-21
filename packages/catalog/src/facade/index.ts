@@ -1,16 +1,22 @@
 export {
-  type CatalogConflict,
-  type CatalogInstalledEntry,
-  type CatalogInstallFailure,
-  type CatalogInstallResult,
-  type CatalogInstallSkip,
-  CatalogManager,
+  buildCatalogRuntime,
   type CatalogOptions,
-  type CatalogPlan,
-  type CatalogPlanNode,
-  type CatalogSyncResult,
-  type McpResolveAdapter,
-  type McpResolvedNode,
-  type OrphanedEntry,
-} from "./catalog-manager.js";
+  CatalogQueries,
+  type CatalogRuntime,
+} from "./catalog-queries.js";
+export { CatalogService } from "./catalog-service.js";
 export { HasDependentsError } from "./errors.js";
+export type {
+  CatalogConflict,
+  CatalogInstalledEntry,
+  CatalogInstallFailure,
+  CatalogInstallResult,
+  CatalogInstallSkip,
+  CatalogPlan,
+  CatalogPlanNode,
+  CatalogSyncResult,
+  McpResolveAdapter,
+  McpResolvedNode,
+  OrphanedEntry,
+  PlanNodeDisposition,
+} from "./plan-types.js";
