@@ -15,6 +15,8 @@ packages/server/dist/
 .commit-msg*.txt
 
 
-scripts/inspect-db.cjs
-scripts/migrate-local-dbs.cjs
+
+
+# Local-only dev scripts (db migrations, ad-hoc probes)  not part of the published toolchain.
+scripts/local/
 
