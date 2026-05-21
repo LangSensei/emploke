@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InvalidSessionIdError } from "../src/errors.js";
-import { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "../src/ids.js";
+import { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "../src/validate.js";
 
 describe("session id", () => {
   it("matches the canonical format", () => {

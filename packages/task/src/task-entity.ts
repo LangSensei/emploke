@@ -1,5 +1,5 @@
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
-import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
+import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 import type {
   TaskCancellation,
   TaskFailure,

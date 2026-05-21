@@ -9,7 +9,7 @@ import {
   isValidWorkspaceId,
   isValidWorkspaceName,
   normalizeWorkspaceDir,
-} from "../src/testing.js";
+} from "../src/validate.js";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 

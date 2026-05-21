@@ -13,6 +13,8 @@ abstract class AgentError extends Error {
 
 /** Thrown when an agent name (FQN, scope, or short name) violates format rules. */
 export class AgentNameInvalidError extends AgentError {
+  override readonly name = "AgentNameInvalidError";
+
   constructor(
     public readonly agentName: string,
     reason: string,
@@ -23,6 +25,8 @@ export class AgentNameInvalidError extends AgentError {
 
 /** Thrown when looking up an agent that doesn't exist. */
 export class AgentNotFoundError extends AgentError {
+  override readonly name = "AgentNotFoundError";
+
   constructor(public readonly agentName: string) {
     super(`agent not found: ${agentName}`);
   }
@@ -34,6 +38,8 @@ export class AgentNotFoundError extends AgentError {
  * origins, the caller must explicitly delete then reinstall.
  */
 export class AgentOriginConflictError extends AgentError {
+  override readonly name = "AgentOriginConflictError";
+
   constructor(
     public readonly agentName: string,
     public readonly existingOrigin: string,
@@ -52,6 +58,8 @@ export class AgentOriginConflictError extends AgentError {
  * schema (missing required fields, wrong types, malformed deps, ...).
  */
 export class AgentFrontmatterError extends AgentError {
+  override readonly name = "AgentFrontmatterError";
+
   constructor(
     public readonly sourceLabel: string,
     reason: string,
@@ -69,6 +77,8 @@ export class AgentFrontmatterError extends AgentError {
  * rationale.
  */
 export class AgentPlanStaleError extends AgentError {
+  override readonly name = "AgentPlanStaleError";
+
   constructor(
     public readonly agentName: string,
     public readonly origin: string,

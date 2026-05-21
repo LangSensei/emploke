@@ -46,7 +46,7 @@ export async function composeWorkspaceModule(
     runPendingMigrations(sqlite);
   }
 
-  const repo = new WorkspaceRepository(db);
+  const repo = new WorkspaceRepository({ db: db });
   const queries = new WorkspaceQueries(db);
   const service = new WorkspaceService(repo, options.logger);
 

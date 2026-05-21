@@ -26,7 +26,7 @@ export {
   SessionCorruptedError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,
-  SessionsError,
+  SessionError,
 } from "./errors.js";
 
 export { type Session, type NewSession, sessions } from "./schema.js";

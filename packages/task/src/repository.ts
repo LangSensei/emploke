@@ -2,7 +2,7 @@ import { type SQL, and, eq, gte, inArray } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { type Logger, silentLogger } from "@emploke/logger";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
-import { TASK_ID_RE } from "./ids.js";
+import { TASK_ID_RE } from "./validate.js";
 import { type TaskRow, tasks } from "./schema.js";
 import type * as schema from "./schema.js";
 import { Task } from "./task-entity.js";
@@ -24,10 +24,6 @@ export class TaskRepository {
   constructor(opts: { db: Db; logger?: Logger }) {
     this.db = opts.db;
     this.logger = opts.logger ?? silentLogger;
-  }
-
-  close(): void {
-    // intentionally empty — db lifecycle owned by the composer
   }
 
   async read(id: string): Promise<Task | null> {

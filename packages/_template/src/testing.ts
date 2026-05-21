@@ -4,14 +4,17 @@ import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-
 type Db = BetterSQLite3Database<typeof schema>;
 
 /**
  * Open an in-memory Drizzle-wrapped better-sqlite3 instance for tests
- * with the session schema pre-applied.
+ * with the __PKG__ schema pre-applied. Caller closes via `.close()`.
+ *
+ * Mirrors the migrator in `compose.ts` so test DBs see the exact same
+ * schema production code creates. NOTHING else is re-exported from this
+ * module — production callers use the package's `index.ts` barrel.
  */
-export function openTestSessionDb(): {
+export function openTest__Entity__Db(): {
   db: Db;
   sqlite: BetterSqliteDatabase;
   close(): void;

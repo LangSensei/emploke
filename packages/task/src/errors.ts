@@ -10,7 +10,7 @@ import type { BlockedReason } from "@emploke/catalog";
 export class TaskError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = new.target.name;
+    this.name = "TaskError";
   }
 }
 
@@ -22,6 +22,8 @@ export class TaskError extends Error {
  * terminal task).
  */
 export class InvalidTransition extends TaskError {
+  override readonly name = "InvalidTransition";
+
   constructor(
     public readonly from: string,
     public readonly eventType: string,
@@ -36,6 +38,8 @@ export class InvalidTransition extends TaskError {
  * to construct file system paths.
  */
 export class InvalidTaskIdError extends TaskError {
+  override readonly name = "InvalidTaskIdError";
+
   constructor(public readonly id: unknown) {
     super(`invalid task id: ${JSON.stringify(id)}`);
   }
@@ -47,6 +51,8 @@ export class InvalidTaskIdError extends TaskError {
  * attached as `this.cause`.
  */
 export class AgentNotFoundError extends TaskError {
+  override readonly name = "AgentNotFoundError";
+
   constructor(
     public readonly agent: string,
     cause?: Error,
@@ -62,6 +68,8 @@ export class AgentNotFoundError extends TaskError {
  * the workdir is absent too).
  */
 export class TaskNotFoundError extends TaskError {
+  override readonly name = "TaskNotFoundError";
+
   constructor(public readonly id: string) {
     super(`task not found: ${JSON.stringify(id)}`);
   }
@@ -74,6 +82,8 @@ export class TaskNotFoundError extends TaskError {
  * `TypeError: dispatchTask is not a function`.
  */
 export class RuntimeDoesNotSupportTasksError extends TaskError {
+  override readonly name = "RuntimeDoesNotSupportTasksError";
+
   constructor(public readonly runtime: string) {
     super(`runtime ${JSON.stringify(runtime)} does not support task dispatch`);
   }
@@ -90,6 +100,8 @@ export class RuntimeDoesNotSupportTasksError extends TaskError {
  * CLI) can render a useful "here's what to fix" message.
  */
 export class EntryNotReadyError extends TaskError {
+  override readonly name = "EntryNotReadyError";
+
   constructor(
     public readonly agent: string,
     public readonly reason: BlockedReason | undefined,
@@ -119,6 +131,8 @@ function summariseReason(r: BlockedReason | undefined): string {
  * — a 4-byte random suffix gives 2^32 ids per day).
  */
 export class TaskIdAllocationFailedError extends TaskError {
+  override readonly name = "TaskIdAllocationFailedError";
+
   constructor(public readonly attempts: number) {
     super(`failed to allocate a unique task id after ${attempts} attempts`);
   }
@@ -131,6 +145,8 @@ export class TaskIdAllocationFailedError extends TaskError {
  * (e.g. the dashboard's "open task" path) propagate it as a 5xx.
  */
 export class CorruptedTaskError extends TaskError {
+  override readonly name = "CorruptedTaskError";
+
   constructor(
     public readonly id: string,
     public readonly reason: string,
@@ -151,6 +167,8 @@ export class CorruptedTaskError extends TaskError {
  * promoted this to a typed error so both verbs map cleanly to 503.
  */
 export class ManagerShuttingDownError extends TaskError {
+  override readonly name = "ManagerShuttingDownError";
+
   constructor() {
     super("task manager is shutting down");
   }

@@ -74,7 +74,7 @@ function stubRuntime(): Runtime {
 }
 
 async function seedSession(id: string, agent: string): Promise<void> {
-  const repo = new SessionRepository(dbHandle.db);
+  const repo = new SessionRepository({ db: dbHandle.db });
   await repo.insert({
     id,
     runtime: "copilot",

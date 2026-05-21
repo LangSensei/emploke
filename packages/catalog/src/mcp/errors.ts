@@ -13,6 +13,8 @@ abstract class McpError extends Error {
 
 /** Thrown when an MCP spec name violates the format rules. */
 export class McpNameInvalidError extends McpError {
+  override readonly name = "McpNameInvalidError";
+
   constructor(
     public readonly mcpName: string,
     reason: string,
@@ -23,6 +25,8 @@ export class McpNameInvalidError extends McpError {
 
 /** Thrown when looking up an MCP that doesn't exist. */
 export class McpNotFoundError extends McpError {
+  override readonly name = "McpNotFoundError";
+
   constructor(public readonly mcpName: string) {
     super(`MCP not found: ${mcpName}`);
   }
@@ -34,6 +38,8 @@ export class McpNotFoundError extends McpError {
  * origins, the caller must explicitly delete then reinstall.
  */
 export class McpOriginConflictError extends McpError {
+  override readonly name = "McpOriginConflictError";
+
   constructor(
     public readonly mcpName: string,
     public readonly existingOrigin: string,
@@ -49,6 +55,8 @@ export class McpOriginConflictError extends McpError {
 
 /** Thrown when raw bytes can't be parsed as a valid MCP JSON file. */
 export class McpInvalidJsonError extends McpError {
+  override readonly name = "McpInvalidJsonError";
+
   constructor(
     public readonly sourceLabel: string,
     reason: string,

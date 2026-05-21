@@ -74,7 +74,7 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "SessionCorruptedError",
   "SessionIdAllocationFailedError",
   "SessionNotFoundError",
-  "SessionsError",
+  "SessionError",
   // @emploke/runtime
   "InvalidMcpJson",
   "RuntimeHeadlessLaunchFailed",

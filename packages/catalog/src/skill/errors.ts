@@ -13,6 +13,8 @@ abstract class SkillError extends Error {
 
 /** Thrown when a skill name (FQN, scope, or short name) violates format rules. */
 export class SkillNameInvalidError extends SkillError {
+  override readonly name = "SkillNameInvalidError";
+
   constructor(
     public readonly skillName: string,
     reason: string,
@@ -23,6 +25,8 @@ export class SkillNameInvalidError extends SkillError {
 
 /** Thrown when looking up a skill that doesn't exist. */
 export class SkillNotFoundError extends SkillError {
+  override readonly name = "SkillNotFoundError";
+
   constructor(public readonly skillName: string) {
     super(`skill not found: ${skillName}`);
   }
@@ -34,6 +38,8 @@ export class SkillNotFoundError extends SkillError {
  * origins, the caller must explicitly delete then reinstall.
  */
 export class SkillOriginConflictError extends SkillError {
+  override readonly name = "SkillOriginConflictError";
+
   constructor(
     public readonly skillName: string,
     public readonly existingOrigin: string,
@@ -52,6 +58,8 @@ export class SkillOriginConflictError extends SkillError {
  * schema (missing required fields, wrong types, malformed deps, ...).
  */
 export class SkillFrontmatterError extends SkillError {
+  override readonly name = "SkillFrontmatterError";
+
   constructor(
     public readonly sourceLabel: string,
     reason: string,
@@ -84,6 +92,8 @@ export class SkillFrontmatterError extends SkillError {
  * parsed (so its fqn isn't known at throw time).
  */
 export class CyclicDependencyError extends SkillError {
+  override readonly name = "CyclicDependencyError";
+
   constructor(public readonly cycle: readonly string[]) {
     super(
       `circular skill dependency detected: ${cycle.join(" → ")}. ` +
@@ -106,6 +116,8 @@ export class CyclicDependencyError extends SkillError {
  * change emploke needs to react to.
  */
 export class PlanStaleError extends SkillError {
+  override readonly name = "PlanStaleError";
+
   constructor(
     public readonly skillName: string,
     public readonly origin: string,

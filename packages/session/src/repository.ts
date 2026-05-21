@@ -1,7 +1,8 @@
 import { type SQL, and, eq, gte } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { InvalidSessionIdError } from "./errors.js";
-import { SESSION_ID_RE } from "./ids.js";
+import { SESSION_ID_RE } from "./validate.js";
 import { type Session, sessions } from "./schema.js";
 import type * as schema from "./schema.js";
 
@@ -19,7 +20,14 @@ export interface ListSessionStateOpts {
  * keys" contract explicit.
  */
 export class SessionRepository {
-  constructor(private readonly db: Db) {}
+  private readonly db: Db;
+  private readonly logger: Logger;
+
+  constructor(opts: { db: Db; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    void this.logger;
+  }
 
   async read(id: string): Promise<Session | undefined> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);

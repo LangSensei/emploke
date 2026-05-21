@@ -13,7 +13,7 @@ import {
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-import { assertValidSessionId, generateSessionId } from "./ids.js";
+import { assertValidSessionId, generateSessionId } from "./validate.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import { SessionRepository } from "./repository.js";
 import type {
@@ -63,7 +63,7 @@ export class SessionManager {
     this.workspaceId = config.workspaceId;
     this.subprocessEnvBase = config.subprocessEnv ?? {};
     this.logger = config.logger ?? silentLogger;
-    this.repo = new SessionRepository(config.db);
+    this.repo = new SessionRepository({ db: config.db });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
   }
@@ -414,5 +414,5 @@ function defaultRandomBytes(n: number): Buffer {
 
 // Re-export public sub-utilities for callers that want them.
 export { readAgentName } from "./agent-file.js";
-export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./ids.js";
+export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./validate.js";
 export { safeJoinUnderRoot } from "./paths.js";

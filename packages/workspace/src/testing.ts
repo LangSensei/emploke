@@ -4,17 +4,6 @@ import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-export { workspaces, type Workspace, type NewWorkspace } from "./schema.js";
-export { WorkspaceQueries } from "./queries.js";
-export { WorkspaceRepository } from "./repository.js";
-export { WorkspaceService } from "./service.js";
-export {
-  assertValidWorkspaceId,
-  assertValidWorkspaceName,
-  isValidWorkspaceId,
-  isValidWorkspaceName,
-  normalizeWorkspaceDir,
-} from "./validators.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 

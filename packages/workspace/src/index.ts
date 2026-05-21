@@ -35,4 +35,4 @@ export {
   type WorkspaceView,
 } from "./queries.js";
 export { WorkspaceService } from "./service.js";
-export { InputValidationError } from "./validators.js";
+export { InputValidationError } from "./validate.js";

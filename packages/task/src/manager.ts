@@ -21,7 +21,7 @@ import {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-import { assertValidTaskId, generateTaskId } from "./ids.js";
+import { assertValidTaskId, generateTaskId } from "./validate.js";
 import { safeJoinUnderRoot } from "./paths.js";
 import { TaskRepository } from "./repository.js";
 import { Task } from "./task-entity.js";
@@ -992,16 +992,14 @@ export class TaskManager {
    * completed; closing the DB out from under those reads would defeat
    * the inspection. Call `close()` separately when you're truly done
    * with the manager.
+   *
+   * Currently a no-op: the DB handle is owned by the composer
+   * (`composeTaskModule`), which closes it from its own `close()`.
+   * Kept on the public surface so future callers don't break if we
+   * ever add manager-owned resources.
    */
   close(): void {
-    const repo = this.repository as { close?: () => void };
-    if (typeof repo.close === "function") {
-      try {
-        repo.close();
-      } catch {
-        // best-effort
-      }
-    }
+    // no-op — db lifecycle owned by composeTaskModule
   }
 
   // ─── internals ───────────────────────────────────────────

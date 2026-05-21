@@ -16,7 +16,7 @@ import {
   RegisterWorkspaceInput,
   RenameWorkspaceInput,
   UnregisterWorkspaceInput,
-} from "./validators.js";
+} from "./validate.js";
 
 /**
  * Workspace use-case API.

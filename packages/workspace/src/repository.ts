@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { type Logger, silentLogger } from "@emploke/logger";
 import { type NewWorkspace, type Workspace, workspaces } from "./schema.js";
 import type * as schema from "./schema.js";
 
@@ -11,7 +12,15 @@ type Db = BetterSQLite3Database<typeof schema>;
  * `Promise<...>` so async service signatures stay unchanged.
  */
 export class WorkspaceRepository {
-  constructor(private readonly db: Db) {}
+  private readonly db: Db;
+  private readonly logger: Logger;
+
+  constructor(opts: { db: Db; logger?: Logger }) {
+    this.db = opts.db;
+    this.logger = opts.logger ?? silentLogger;
+    // logger reserved for future row-rejection / migration-skew warnings
+    void this.logger;
+  }
 
   async findById(id: string): Promise<Workspace | undefined> {
     return this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();

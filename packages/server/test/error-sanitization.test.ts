@@ -86,7 +86,7 @@ describe("errorBody", () => {
       "SessionCorruptedError",
       "SessionIdAllocationFailedError",
       "SessionNotFoundError",
-      "SessionsError",
+      "SessionError",
       // runtime
       "InvalidMcpJson",
       "RuntimeHeadlessLaunchFailed",

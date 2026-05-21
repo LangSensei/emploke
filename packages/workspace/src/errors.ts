@@ -12,21 +12,23 @@ export class WorkspaceError extends Error {
 
 /** Lookup against the registry could not find the workspace. */
 export class WorkspaceNotFoundError extends WorkspaceError {
+  override readonly name = "WorkspaceNotFoundError";
+
   constructor(public readonly dir: string) {
     super(`workspace not found at ${dir}`);
-    this.name = "WorkspaceNotFoundError";
   }
 }
 
 /** A row in `global.db.workspaces` failed validation. */
 export class WorkspaceCorruptedError extends WorkspaceError {
+  override readonly name = "WorkspaceCorruptedError";
+
   constructor(
     public readonly dir: string,
     public readonly reason: string,
     options?: { cause?: unknown },
   ) {
     super(`workspace row at ${dir} is corrupted: ${reason}`, options);
-    this.name = "WorkspaceCorruptedError";
   }
 }
 
@@ -42,20 +44,22 @@ function schemaDirectionHint(fromVersion: number, toVersion: number): string {
 
 /** `register` refused to overwrite an existing workspace. */
 export class WorkspaceAlreadyExistsError extends WorkspaceError {
+  override readonly name = "WorkspaceAlreadyExistsError";
+
   constructor(public readonly dir: string) {
     super(`workspace already initialised at ${dir}`);
-    this.name = "WorkspaceAlreadyExistsError";
   }
 }
 
 /** Display name is empty, too long, or contains control chars. */
 export class WorkspaceNameInvalidError extends WorkspaceError {
+  override readonly name = "WorkspaceNameInvalidError";
+
   constructor(
     public readonly displayName: string,
     public readonly reason: string,
   ) {
     super(`invalid workspace display name "${displayName}": ${reason}`);
-    this.name = "WorkspaceNameInvalidError";
   }
 }
 
@@ -68,17 +72,20 @@ export class RegistryError extends WorkspaceError {
 }
 
 export class RegistryCorruptedError extends RegistryError {
+  override readonly name = "RegistryCorruptedError";
+
   constructor(
     public readonly file: string,
     public readonly reason: string,
     options?: { cause?: unknown },
   ) {
     super(`workspace registry at ${file} is corrupted: ${reason}`, options);
-    this.name = "RegistryCorruptedError";
   }
 }
 
 export class RegistrySchemaMismatchError extends RegistryError {
+  override readonly name = "RegistrySchemaMismatchError";
+
   constructor(
     public readonly file: string,
     public readonly fromVersion: number,
@@ -87,46 +94,50 @@ export class RegistrySchemaMismatchError extends RegistryError {
     super(
       `workspace registry at ${file} has schemaVersion ${fromVersion}; this server supports ${toVersion}. ${schemaDirectionHint(fromVersion, toVersion)}`,
     );
-    this.name = "RegistrySchemaMismatchError";
   }
 }
 
 export class WorkspaceIdConflictError extends RegistryError {
+  override readonly name = "WorkspaceIdConflictError";
+
   constructor(public readonly workspaceId: string) {
     super(`a workspace with id "${workspaceId}" is already registered`);
-    this.name = "WorkspaceIdConflictError";
   }
 }
 
 export class WorkspaceIdInvalidError extends RegistryError {
+  override readonly name = "WorkspaceIdInvalidError";
+
   constructor(public readonly workspaceId: string) {
     super(`workspace id "${workspaceId}" is not a valid UUID`);
-    this.name = "WorkspaceIdInvalidError";
   }
 }
 
 export class WorkspacePathConflictError extends RegistryError {
+  override readonly name = "WorkspacePathConflictError";
+
   constructor(
     public readonly path: string,
     public readonly existingId: string,
   ) {
     super(`path ${path} is already registered as workspace id "${existingId}"`);
-    this.name = "WorkspacePathConflictError";
   }
 }
 
 export class WorkspaceNotRegisteredError extends RegistryError {
+  override readonly name = "WorkspaceNotRegisteredError";
+
   constructor(public readonly workspaceId: string) {
     super(`no workspace with id "${workspaceId}" is registered`);
-    this.name = "WorkspaceNotRegisteredError";
   }
 }
 
 export class RegistryNotBootstrappedError extends RegistryError {
+  override readonly name = "RegistryNotBootstrappedError";
+
   constructor(public readonly file: string) {
     super(
       `workspace registry at ${file} has no MikroORM schema yet — call composeWorkspaceModule({dbFile}) once before consuming the registry.`,
     );
-    this.name = "RegistryNotBootstrappedError";
   }
 }
