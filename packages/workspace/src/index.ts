@@ -86,6 +86,8 @@ export { composeWorkspaceModule } from "./application/workspace.di.js";
 
 export { WorkspaceId } from "./domain/aggregates/workspace/workspace-id.js";
 
+export { DomainEventDispatcher } from "./infrastructure/domain-event-dispatcher.js";
+
 // ── Internal infrastructure ─────────────────────────────────
 //
 // Internal types historically exported here are now reachable only
