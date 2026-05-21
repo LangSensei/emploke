@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "1.0.0-beta.4",
-    "cross-spawn": "^7.0.6",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0",
     "proper-lockfile": "^4.1.2",
@@ -36,7 +35,6 @@
   },
   "devDependencies": {
     "@emploke/catalog": "workspace:*",
-    "@types/cross-spawn": "^6.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/proper-lockfile": "^4.1.4",

@@ -39,7 +39,7 @@ export async function compose__Entity__Module(
     sqlite = new Database(opts.dbFile as string);
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("synchronous = NORMAL");
-    sqlite.pragma("foreign_keys = ON");
+    // No `foreign_keys = ON`  adjust if your schema actually declares FKs.
     sqlite.pragma("busy_timeout = 5000");
     db = drizzle(sqlite, { schema });
     // Migration failure must close the SQLite handle before propagating:

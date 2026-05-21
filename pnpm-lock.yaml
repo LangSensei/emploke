@@ -202,9 +202,6 @@ importers:
       '@github/copilot-sdk':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4
-      cross-spawn:
-        specifier: ^7.0.6
-        version: 7.0.6
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -221,9 +218,6 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
-      '@types/cross-spawn':
-        specifier: ^6.0.6
-        version: 6.0.6
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -1273,9 +1267,6 @@ packages:
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
-
-  '@types/cross-spawn@6.0.6':
-    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
@@ -3323,10 +3314,6 @@ snapshots:
     dependencies:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
-
-  '@types/cross-spawn@6.0.6':
-    dependencies:
-      '@types/node': 22.19.17
 
   '@types/deep-eql@4.0.2': {}
 

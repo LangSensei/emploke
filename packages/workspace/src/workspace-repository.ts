@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type * as schema from "./schema.js";
-import { type NewWorkspace, type Workspace, workspaces } from "./schema.js";
+import { type NewWorkspaceRow, type WorkspaceRow, workspaces } from "./schema.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -17,21 +17,21 @@ export class WorkspaceRepository {
     this.db = opts.db;
   }
 
-  async findById(id: string): Promise<Workspace | undefined> {
+  async findById(id: string): Promise<WorkspaceRow | undefined> {
     return this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
   }
 
-  async findByPath(workspaceDir: string): Promise<Workspace | undefined> {
+  async findByPath(workspaceDir: string): Promise<WorkspaceRow | undefined> {
     return this.db.select().from(workspaces).where(eq(workspaces.workspaceDir, workspaceDir)).get();
   }
 
-  async insert(row: NewWorkspace): Promise<void> {
+  async insert(row: NewWorkspaceRow): Promise<void> {
     this.db.insert(workspaces).values(row).run();
   }
 
   async update(
     id: string,
-    patch: Partial<Pick<Workspace, "name" | "lastOpenedAt">>,
+    patch: Partial<Pick<WorkspaceRow, "name" | "lastOpenedAt">>,
   ): Promise<void> {
     this.db.update(workspaces).set(patch).where(eq(workspaces.id, id)).run();
   }

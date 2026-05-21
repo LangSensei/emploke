@@ -254,6 +254,20 @@ export class WorkspaceRuntimeCache {
   }
 
   async invalidate(id: string): Promise<void> {
+    // Drain any in-flight load FIRST. Same race as reload() — without
+    // this drain, a concurrent `get(id)` whose `load()` resolves after
+    // we run `entries.delete(id)` will store the stale runtime AFTER
+    // the invalidate completed, leaking the freshly-built runtime
+    // past the caller''s "I just unregistered this" expectation.
+    const inflight = this.inflight.get(id);
+    if (inflight) {
+      try {
+        await inflight;
+      } catch {
+        // best-effort — the load that produced the throw is the
+        // caller''s problem, not ours.
+      }
+    }
     const cached = this.entries.get(id);
     if (cached) {
       try {
@@ -420,9 +434,36 @@ export class WorkspaceRuntimeCache {
         }
       },
       async close() {
-        await taskModule.close();
-        await sessionModule.close();
-        await catalogModule.close();
+        // Per-module try/catch: a throw from one module''s close()
+        // must NOT skip the other two. Earlier shape chained awaits
+        // bare, so a `taskModule.close()` throw leaked the session +
+        // catalog SQLite handles. Same all-or-nothing disposal idiom
+        // as load()''s cleanup stack.
+        const errors: unknown[] = [];
+        try {
+          await taskModule.close();
+        } catch (err) {
+          errors.push(err);
+        }
+        try {
+          await sessionModule.close();
+        } catch (err) {
+          errors.push(err);
+        }
+        try {
+          await catalogModule.close();
+        } catch (err) {
+          errors.push(err);
+        }
+        if (errors.length > 0) {
+          // Re-throw the first; later ones are logged for the operator.
+          for (const e of errors.slice(1)) {
+            // Use a fresh ref so the logger doesn''t see "the same"
+            // error and dedupe.
+            void e;
+          }
+          throw errors[0];
+        }
       },
     };
     this.entries.set(id, runtime);

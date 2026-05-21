@@ -31,9 +31,6 @@ import type {
   SkillResolveResult,
 } from "../types.js";
 import { HasDependentsError } from "./errors.js";
-
-const silentLogger: Logger = pino({ level: "silent" });
-
 import type {
   CatalogInstalledEntry,
   CatalogInstallFailure,
@@ -59,6 +56,8 @@ import {
   diffClosures,
   type PipelineServices,
 } from "./resolve-pipeline.js";
+
+const silentLogger: Logger = pino({ level: "silent" });
 
 const PLAN_CACHE_TTL_MS = 5 * 60 * 1000;
 

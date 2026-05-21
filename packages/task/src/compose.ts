@@ -28,7 +28,8 @@ export async function composeTaskModule(opts: TaskModuleOptions): Promise<TaskMo
   const sqlite: BetterSqliteDatabase = new Database(opts.dbFile);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("synchronous = NORMAL");
-  sqlite.pragma("foreign_keys = ON");
+  // No `foreign_keys = ON`  schema has no FK constraints; the
+  // pragma without FKs is a no-op and would mislead readers.
   sqlite.pragma("busy_timeout = 5000");
   const db: Db = drizzle(sqlite, { schema });
   // Migration failure must close the SQLite handle before propagating:

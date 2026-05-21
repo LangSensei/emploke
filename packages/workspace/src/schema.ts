@@ -2,8 +2,12 @@ import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
  * Workspace registry row. Pure Drizzle schema — no class, no
- * decorators, no entity ceremony. Type is derived from this schema
- * via `$inferSelect` / `$inferInsert`.
+ * decorators, no entity ceremony. Row types are derived via
+ * `$inferSelect` / `$inferInsert` and named `WorkspaceRow` /
+ * `NewWorkspaceRow` to mirror `SessionRow` / `TaskRow` in sibling
+ * pkgs (per `docs/pkg-template.md` Section 11: `<Entity>Row` is the
+ * internal Drizzle type, never exported beyond the repository; the
+ * public DTO is `Workspace` in `types.ts`).
  */
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
@@ -13,5 +17,5 @@ export const workspaces = sqliteTable("workspaces", {
   lastOpenedAt: text("last_opened_at"),
 });
 
-export type Workspace = typeof workspaces.$inferSelect;
-export type NewWorkspace = typeof workspaces.$inferInsert;
+export type WorkspaceRow = typeof workspaces.$inferSelect;
+export type NewWorkspaceRow = typeof workspaces.$inferInsert;
