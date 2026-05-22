@@ -47,7 +47,7 @@ export async function composeWorkspaceModule(
   }
 
   const repo = new WorkspaceRepository({ db });
-  const service = new WorkspaceService(repo, db, options.logger);
+  const service = new WorkspaceService(repo, options.logger);
 
   return {
     service,

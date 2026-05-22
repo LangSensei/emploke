@@ -75,10 +75,12 @@ convention uniform across the monorepo.
 
 Other files must NOT `export interface` or `export type` consumer-facing
 types. The exceptions are:
-- `schema.ts` can export `<Entity>Row` (Drizzle `$inferSelect` alias —
-  internal, used by repository only)
+- `schema.ts` MAY define `<Entity>Row` (Drizzle `$inferSelect` alias)
+  but the type is **package-private** — never re-exported from
+  `index.ts` even via `export * as schema`. See "Repository contract"
+  below.
 - `errors.ts` exports Error subclasses (classes are values, not pure types)
-- `<entity>-entity.ts` exports the class (a value)
+- `<entity>-entity.ts` exports the class (a value) for rich-domain BCs
 - Multi-entity BCs' `facade/plan-types.ts` may export facade-internal types
 
 This rule prevents the "where do I find the `Workspace` interface" drift
@@ -148,31 +150,72 @@ NEVER use these suffixes:
 - `Queries` — merged into `Service`
 - `View` / `Pojo` / `Dto` — replaced by bare-noun DTO
 
-## DTO vs entity class
+## Repository contract
 
-Every BC exports a **bare-noun DTO** (`Workspace`, `Session`, `Agent`).
-Inside the package, that DTO is what `<Entity>Service` returns to its
-callers. Drizzle rows (`<Entity>Row`) are private to the repository
-layer.
+> Industry research: Codex (Rust) `ThreadStore` returns plain `Stored*`
+> structs; Trigger.dev services consume Prisma types directly via
+> `Prisma.X.GetPayload<...>`; Cal.com server functions return Prisma
+> types; Drizzle's official guidance is "reserve classes for truly
+> complex domain logic." NestJS / Spring textbook "repo returns Entity,
+> service returns DTO" is real but is dominated in TS by the simpler
+> "repo returns DTO" shape — which is what Codex (our reference) does.
 
-An **entity class** (`<Entity>Entity`) is added ONLY when the BC has
-non-trivial domain logic to encapsulate:
+The pkg-template enforces ONE rule on the repository's public surface:
 
-| Has entity class? | When |
-|---|---|
-| Yes | Non-trivial state transitions (`pending → running → succeeded`), invariant validation on every mutation, immutable functional updates |
-| No  | Pure CRUD: change a name, set a timestamp |
+> **`<Entity>Repository`'s public methods MUST return the pkg-owned
+> DTO type (`<Entity>`, defined in `types.ts`). They MUST NOT return
+> the Drizzle-inferred `<Entity>Row` type.**
 
-Existing examples:
+The row-to-DTO projection (`rowToDto`) lives at the **end of**
+`<entity>-repository.ts` as a module-private helper. Schema change →
+repo change → projection update → DTO unchanged. All three live in
+the same file so a `string | null` ↔ `string` mismatch can't sneak
+through.
 
-- `catalog`: `AgentEntity`, `SkillEntity`, `McpEntity` — encapsulate
-  frontmatter validation, `acknowledgePrereqs()`, immutable updates.
-- `task`: `TaskEntity` — owns the status-state-machine.
-- `workspace`, `session`: no entity class.
+### Exception: composite DTOs
 
-The template ships WITHOUT an entity class (most BCs don't need one).
-Add one when state transitions show up; place it in `src/<entity>-entity.ts`
-and keep it un-exported from `index.ts`.
+If the DTO requires cross-pkg context that the repository does not
+hold (e.g. a runtime metadata fetch, a workdir computed from a
+layout helper), the repository MAY return an internal row type
+(`<Entity>Row`) for the service to combine with that context. In
+that case:
+
+- `<Entity>Row` is consumed only by `<entity>-service.ts` in the
+  same package
+- `<Entity>Row` is NOT re-exported from `index.ts` (no `export *
+  as schema from "./schema.js"`)
+- The composite projection lives in `<entity>-service.ts` as a
+  module-private helper, with comments explaining which fields
+  come from the row vs the runtime
+
+In-tree examples:
+
+- `workspace` — DTO is a 1:1 row projection. Repository returns
+  `Workspace`; `rowToDto` lives in `workspace-repository.ts`.
+- `session` — DTO is a composite (row + workdir from `paths.ts` +
+  live `lastActiveAt` / `preview` from the runtime). Repository
+  returns `SessionRow` to the service; `SessionRow` is NOT
+  exported from `index.ts`; the service's `draftFromRow` does the
+  composite assembly.
+
+### Why DTO at the boundary
+
+Three concrete benefits:
+
+1. **No type lies.** Drizzle's `lastOpenedAt: string | null` cannot
+   accidentally become the DTO's `lastOpenedAt: string` without the
+   projection function explicitly coercing — the coercion lives at
+   the same boundary as the lie.
+2. **ORM swap is local.** If we ever migrate off Drizzle, only
+   `schema.ts` + `<entity>-repository.ts` change. The DTO and every
+   downstream consumer are untouched.
+3. **No anemic-entity ceremony.** Anemic CRUD pkgs (workspace,
+   session) don't need an empty `<Entity>Entity` class; the DTO IS
+   their domain type. Industry consensus (Drizzle community,
+   `Anemic Domain Model` literature) calls anemic entities
+   anti-pattern noise.
+
+
 
 ## Single service per BC
 

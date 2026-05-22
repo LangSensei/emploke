@@ -1,6 +1,4 @@
 import { mkdir, rm } from "node:fs/promises";
-import { desc, eq } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import {
   WorkspaceIdConflictError,
@@ -8,8 +6,6 @@ import {
   WorkspacePathConflictError,
 } from "./errors.js";
 import { workspaceLayout } from "./layout.js";
-import type * as schema from "./schema.js";
-import { workspaces } from "./schema.js";
 import type { Workspace } from "./types.js";
 import {
   assertValidWorkspaceId,
@@ -22,16 +18,15 @@ import type { WorkspaceRepository } from "./workspace-repository.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
-type Db = BetterSQLite3Database<typeof schema>;
-
 /**
  * Workspace use-case API.
  *
  * Exposes the full workspace surface: write commands (`register`,
  * `open`, `rename`, `unregister`) and read projections (`getById`,
- * `list`, `getLastOpened`, `getLastOpenedId`). Both halves share the
- * same db handle, so writes are immediately visible to subsequent
- * reads with no cache invalidation.
+ * `list`, `getLastOpened`, `getLastOpenedId`). All read + write paths
+ * go through the repository so the DTO contract / row contract
+ * boundary stays in one place; the service never touches Drizzle
+ * directly.
  *
  * Each write method: parse input → validate → run async FS work →
  * write to the DB last. The FS-then-DB ordering is deliberate: FS
@@ -52,40 +47,25 @@ type Db = BetterSQLite3Database<typeof schema>;
 export class WorkspaceService {
   constructor(
     private readonly repo: WorkspaceRepository,
-    private readonly db: Db,
     private readonly logger: Logger = silentLogger,
   ) {}
 
   // ─── Reads ─────────────────────────────────────────────
 
   async getById(id: string): Promise<Workspace | null> {
-    const row = this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
-    return row ? toView(row) : null;
+    return (await this.repo.findById(id)) ?? null;
   }
 
   async list(): Promise<Workspace[]> {
-    const rows = this.db.select().from(workspaces).orderBy(desc(workspaces.lastOpenedAt)).all();
-    return rows.map(toView);
+    return this.repo.findAllByLastOpened();
   }
 
   async getLastOpened(): Promise<Workspace | null> {
-    const row = this.db
-      .select()
-      .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt))
-      .limit(1)
-      .get();
-    return row ? toView(row) : null;
+    return (await this.repo.findLastOpened()) ?? null;
   }
 
   async getLastOpenedId(): Promise<string | null> {
-    const row = this.db
-      .select({ id: workspaces.id })
-      .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt))
-      .limit(1)
-      .get();
-    return row?.id ?? null;
+    return (await this.repo.findLastOpenedId()) ?? null;
   }
 
   // ─── Writes ────────────────────────────────────────────
@@ -213,14 +193,4 @@ export class WorkspaceService {
       throw err;
     }
   }
-}
-
-function toView(row: typeof workspaces.$inferSelect): Workspace {
-  return {
-    id: row.id,
-    name: row.name,
-    workspaceDir: row.workspaceDir,
-    createdAt: row.createdAt,
-    lastOpenedAt: row.lastOpenedAt ?? row.createdAt,
-  };
 }

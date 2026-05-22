@@ -32,7 +32,13 @@ export {
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-export { type NewSessionRow, type SessionRow, sessions } from "./schema.js";
+// `SessionRow` (Drizzle `$inferSelect` alias) is intentionally NOT
+// re-exported. It is an implementation detail of the persistence
+// layer; external callers should consume the `Session` DTO below
+// (built by `SessionService` from a row plus runtime metadata).
+// `SessionRepository` is exported for tests that need to assert on
+// the persisted slice directly — production callers go through the
+// service.
 export { type ListSessionStateOpts, SessionRepository } from "./session-repository.js";
 export { SessionService } from "./session-service.js";
 export type {

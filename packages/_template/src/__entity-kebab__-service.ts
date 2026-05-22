@@ -7,12 +7,18 @@ import type { __Entity__, Create__Entity__Args, List__Entity__Opts } from "./typ
 /**
  * Public surface for `@emploke/__PKG__`. Holds both reads (list / get /
  * lookup) and writes (create / update / delete). All methods return
- * wire-shape DTOs (`__Entity__`), never internal row types.
+ * wire-shape DTOs (`__Entity__`).
  *
  * One class per BC — there is no Queries/Service split. Industry
  * convention (NestJS, tRPC, codex, Plane) shows a single service is
  * sufficient at this scale; the split adds indirection without a
  * payoff.
+ *
+ * The service is a thin orchestrator on top of `__Entity__Repository`.
+ * The repository owns the persistence ↔ DTO projection (`rowToDto`
+ * inside `__entity-kebab__-repository.ts`); the service contributes
+ * write-side validation, id minting, and any cross-pkg coordination
+ * (e.g. a runtime hook, a layout helper).
  */
 export class __Entity__Service {
   constructor(
@@ -23,13 +29,11 @@ export class __Entity__Service {
   // ─── Reads ─────────────────────────────────────────────
 
   async get(id: string): Promise<__Entity__ | null> {
-    const row = await this.repo.read(id);
-    return row !== undefined ? rowTo__Entity__(row) : null;
+    return (await this.repo.findById(id)) ?? null;
   }
 
   async list(opts: List__Entity__Opts = {}): Promise<__Entity__[]> {
-    const rows = await this.repo.list(opts);
-    return rows.map(rowTo__Entity__);
+    return this.repo.list(opts);
   }
 
   // ─── Writes ────────────────────────────────────────────
@@ -37,18 +41,17 @@ export class __Entity__Service {
   async create(args: Create__Entity__Args): Promise<__Entity__> {
     const now = (this.opts.now ?? (() => new Date()))().toISOString();
     const id = randomBytes(8).toString("hex");
+    // `insert` takes a row-shaped value because we already know every
+    // column; the repository is the only legitimate place a `*Row`
+    // value is mentioned outside the schema module.
     const row: __Entity__Row = { id, name: args.name, createdAt: now };
     await this.repo.insert(row);
     return { id, name: args.name, createdAt: now };
   }
 
   async delete(id: string): Promise<void> {
-    const existing = await this.repo.read(id);
+    const existing = await this.repo.findById(id);
     if (existing === undefined) throw new __Entity__NotFoundError(id);
     await this.repo.delete(id);
   }
-}
-
-function rowTo__Entity__(row: __Entity__Row): __Entity__ {
-  return { id: row.id, name: row.name, createdAt: row.createdAt };
 }
