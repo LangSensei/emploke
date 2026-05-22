@@ -27,7 +27,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "./_helpers/run-cli.js";
 
 // One shared tmpdir for every case — none of these tests need an
@@ -185,5 +185,108 @@ describe("argv validation (workspace selection + `use` stub)", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("was removed");
     expect(r.stderr).toContain("EMPLOKE_WORKSPACE");
+  });
+});
+
+// ─── lifecycle-adjacent argv / file-read cases (no subprocess needed) ─
+//
+// The seven cases below moved out of `lifecycle.test.ts` per issue #130
+// Tier 2: they only inspect argv parsing or read the absence of
+// `runtime.json` — no `spawn`, no signals, no live server. Going
+// in-process drops each from ~2.5 s (cold `node bin.js`) to a handful
+// of milliseconds. The genuinely-subprocess-bound lifecycle cases
+// (start/restart/stop happy paths, idempotency, stale-pid cleanup)
+// live in `spawn-smoke.test.ts`.
+
+describe("argv validation (status / stop without a server)", () => {
+  // Each case needs its own EMPLOKE_HOME so an absent `runtime.json` is
+  // a hard guarantee and not a leak from a prior case.
+  let lcHome: string;
+
+  beforeEach(async () => {
+    lcHome = await mkdtemp(path.join(tmpdir(), "emploke-cli-lc-argv-"));
+  });
+  afterEach(async () => {
+    await rm(lcHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  function lcEnv(): Record<string, string | undefined> {
+    return {
+      EMPLOKE_HOME: lcHome,
+      EMPLOKE_WORKSPACE: undefined,
+      EMPLOKE_SERVER: undefined,
+    };
+  }
+
+  it("status reports not_running when there is no runtime.json (exit 3)", async () => {
+    const r = await runCli(["status"], lcEnv());
+    expect(r.exitCode).toBe(3);
+    expect(r.stdout).toMatch(/not running/);
+  });
+
+  it("status --json emits machine-readable payload", async () => {
+    const r = await runCli(["status", "--json"], lcEnv());
+    expect(r.exitCode).toBe(3);
+    const body = JSON.parse(r.stdout);
+    expect(body.state).toBe("not_running");
+  });
+
+  it("stop is idempotent when nothing is running", async () => {
+    const r = await runCli(["stop"], lcEnv());
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/not running/);
+  });
+});
+
+describe("argv validation (help / no-args / unknown subcommand)", () => {
+  // These cases never read state from EMPLOKE_HOME, but commander still
+  // resolves the env chain during help formatting — point it at a real
+  // tmpdir so we don't trip on a missing path on stricter filesystems.
+  let helpHome: string;
+
+  beforeAll(async () => {
+    helpHome = await mkdtemp(path.join(tmpdir(), "emploke-cli-help-"));
+  });
+  afterAll(async () => {
+    await rm(helpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  function helpEnv(): Record<string, string | undefined> {
+    return {
+      EMPLOKE_HOME: helpHome,
+      EMPLOKE_WORKSPACE: undefined,
+      EMPLOKE_SERVER: undefined,
+    };
+  }
+
+  it("no-args prints help on exit 0", async () => {
+    const r = await runCli([], helpEnv());
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/Usage:/);
+    expect(r.stdout).toContain("emploke");
+  });
+
+  it("`emploke help` prints top-level help on exit 0", async () => {
+    const r = await runCli(["help"], helpEnv());
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/Commands:/);
+    expect(r.stdout).toContain("start");
+    expect(r.stdout).toContain("stop");
+  });
+
+  it("`emploke help <subcommand>` prints the subcommand help", async () => {
+    const r = await runCli(["help", "start"], helpEnv());
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/Usage:[\s\S]*emploke start/);
+    expect(r.stdout).toContain("--port");
+  });
+
+  it("unknown subcommand exits 2", async () => {
+    const r = await runCli(["zzznotacommand"], helpEnv());
+    expect(r.exitCode).toBe(2);
+    // commander phrases this as `error: unknown command '<name>'`. Don't
+    // pin the exact wording — just assert we got a usage-style stderr
+    // that mentions the offending token.
+    expect(r.stderr.toLowerCase()).toContain("unknown command");
   });
 });

@@ -13,27 +13,22 @@ export default defineConfig({
     // every other emploke pkg.
     pool: "forks",
     testTimeout: 30000,
-    // Match testTimeout + healthTimeoutMs so beforeEach hooks that
-    // boot a real server (commands.test.ts: `emploke start` + 60s
-    // waitForHealth budget) don't trip the 10s default on slow
-    // Windows runners. Observed hook timeouts at exactly 10000ms in
-    // CI under load.
-    //
-    // Bumped 30s → 120s alongside `emploke start`'s healthTimeoutMs
-    // bumps (30s → 60s → 90s). The hook timeout has to be > the
-    // server's own internal budget plus a margin for spawn + the rest
-    // of beforeEach (mkdtemp + run() overhead) — 120s gives ~30s of
+    // Hook timeout has to clear `emploke start`'s internal
+    // `waitForHealth` budget (90s) plus a margin for spawn + the rest
+    // of `beforeAll` (mkdtemp + run() overhead). 120s gives ~30s of
     // headroom on top of the 90s wait-for-health.
     hookTimeout: 120000,
-    // The two server-booting integration files in this package
-    // (`commands.test.ts` and `lifecycle.test.ts`) used to race for
-    // the same 4 vCPU + disk I/O + AV scan budget on Windows runners
-    // when vitest scheduled them in parallel, doubling the apparent
-    // cold-boot wall time. Same-package files now run sequentially.
-    // Cross-package parallelism is unaffected (the workspace runner
-    // still kicks off catalog/server/cli concurrently). This trades
-    // ~15s wall time on `pnpm --filter @emploke/cli test` for
-    // measurable stability on Windows.
-    fileParallelism: false,
+    // File-level parallelism IS safe now. The historical concern was
+    // `commands.test.ts` + `lifecycle.test.ts` doing 18 + 11 per-test
+    // server boots and contending for the same 4 vCPU + disk I/O + AV
+    // scan budget on Windows runners. Both files have since been
+    // split (issue #163, issue #130 Tier 2): `commands.test.ts` →
+    // argv-validation + api-contract + integration-smoke;
+    // `lifecycle.test.ts` → argv-validation + spawn-smoke. The
+    // remaining spawn-bound files are `integration-smoke.test.ts`
+    // (1 boot) and `spawn-smoke.test.ts` (2 boots) — small enough
+    // that parallelism wins back the cold-import overhead a
+    // serialised run pays per file.
+    fileParallelism: true,
   },
 });
