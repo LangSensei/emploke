@@ -300,7 +300,13 @@ export class CopilotRuntime implements Runtime {
     // wholesale, and `cmd /k` / pwsh `$env:` prefixes can only SET
     // values, not unset them. The base is string-only by
     // `CopilotRuntimeConfig` contract.
-    return { ...cmd, env: { ...this.subprocessEnvBase } };
+    //
+    // Spread `cmd.env` first so any env contributed by the inner
+    // launch builder (today `buildCopilotLaunchCommand` returns
+    // nothing here, but a future flag might) is preserved. Base
+    // overrides on key collision because the runtime is the
+    // canonical owner of the cross-cutting keys.
+    return { ...cmd, env: { ...cmd.env, ...this.subprocessEnvBase } };
   }
 
   async readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null> {

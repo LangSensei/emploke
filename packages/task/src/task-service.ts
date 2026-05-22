@@ -2,12 +2,8 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
-import type { Logger } from "pino";
-import pino from "pino";
-
-const silentLogger = pino({ level: "silent" });
-
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
+import pino, { type Logger } from "pino";
 import {
   AgentNotFoundError,
   EntryNotReadyError,
@@ -37,6 +33,8 @@ import type {
   TaskServiceConfig,
 } from "./types.js";
 import { assertValidTaskId, generateTaskId } from "./validate.js";
+
+const silentLogger = pino({ level: "silent" });
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;

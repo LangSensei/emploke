@@ -2,13 +2,8 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CatalogService } from "@emploke/catalog";
-import type { Logger } from "pino";
-import pino from "pino";
-
-const silentLogger = pino({ level: "silent" });
-
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
-
+import pino, { type Logger } from "pino";
 import {
   AgentNotFoundError,
   SessionIdAllocationFailedError,
@@ -26,6 +21,8 @@ import type {
   SessionServiceConfig,
 } from "./types.js";
 import { assertValidSessionId, generateSessionId } from "./validate.js";
+
+const silentLogger = pino({ level: "silent" });
 
 const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
@@ -118,7 +115,7 @@ export class SessionService {
       // `"demo"`). No need to re-read AGENTS.md off disk.
       const canonicalAgent = resolveResult.agent.fqn;
       await this.repo.insert({
-        id: id as string,
+        id,
         agent: canonicalAgent,
         runtime: runtime.kind,
         createdAt,

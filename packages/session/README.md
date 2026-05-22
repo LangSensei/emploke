@@ -81,7 +81,7 @@ session id**.
 import { composeSessionModule } from "@emploke/session";
 
 const { service, close } = await composeSessionModule({
-  dbFile: "/abs/path/to/workspace.db",     // OR db: <existing Drizzle handle>
+  dbFile: "/abs/path/to/workspace.db",
   catalog,                                  // CatalogService
   runtimeRegistry,                          // RuntimeRegistry from @emploke/runtime
   workspaceDir: "/abs/workspace-dir",
