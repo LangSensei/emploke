@@ -1,5 +1,28 @@
 ## Unreleased
 
+## 0.5.3  2026-05-22
+
+### Changed (BREAKING  schema)
+
+- **Per-pkg `migrationsTable`** following drizzle's official multi-module
+  pattern. Each entity pkg now uses `__drizzle_migrations_<pkg>`
+  (`__drizzle_migrations_workspace` in `global.db`;
+  `__drizzle_migrations_catalog` / `_session` / `_task` in each
+  `workspace.db`). The previous shared `__drizzle_migrations` table
+  ran into drizzle's global `folderMillis` watermark check  pkg A
+  applying migration #2 would silently block pkg B's #2 with the same
+  ordinal. Per-pkg tables eliminate the cross-pkg interference.
+- Naming convention locked: every emploke pkg's `migrationsTable` is
+  `__drizzle_migrations_<kebab-pkg-name>`, no exceptions. Documented
+  in `docs/pkg-template.md` Migrations section.
+
+### Migration impact
+
+Existing users on 0.5.2 need a one-time local DB rename (one row of SQL
+per affected DB). Customer upgrade guide at
+[#150](https://github.com/LangSensei/emploke/issues/150) updated with
+the rename step. From 0.5.3 onward, all future schema changes are
+fully automatic.
 ## 0.5.2  2026-05-22
 
 ### Changed (BREAKING  schema)

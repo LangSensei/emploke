@@ -23,18 +23,23 @@ import { fileURLToPath } from "node:url";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const PKGS = [
-  { dir: "workspace", entity: "Workspace" },
-  { dir: "session", entity: "Session" },
-  { dir: "task", entity: "Task" },
-  { dir: "catalog", entity: "Catalog" },
-  { dir: "_template", entity: "__Entity__" },
+  { dir: "workspace", entity: "Workspace", tableSuffix: "workspace" },
+  { dir: "session", entity: "Session", tableSuffix: "session" },
+  { dir: "task", entity: "Task", tableSuffix: "task" },
+  { dir: "catalog", entity: "Catalog", tableSuffix: "catalog" },
+  // Template uses placeholder tokens substituted by scripts/new-pkg.mjs.
+  // `__PKG__` resolves to the kebab-case pkg name (e.g. "event-bus") at
+  // scaffold time, giving e.g. `__drizzle_migrations_event-bus`. SQLite
+  // identifiers with hyphens are valid when quoted; drizzle's
+  // `sql.identifier()` quotes automatically.
+  { dir: "_template", entity: "__Entity__", tableSuffix: "__PKG__" },
 ];
 
 function escapeForTemplateLiteral(s) {
   return s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 }
 
-for (const { dir, entity } of PKGS) {
+for (const { dir, entity, tableSuffix } of PKGS) {
   const drizzleDir = join(repoRoot, "packages", dir, "drizzle");
   const outFile = join(repoRoot, "packages", dir, "src", "migrations.ts");
 
@@ -80,6 +85,13 @@ import type { MigrationMeta } from "drizzle-orm/migrator";
  * shim over drizzle's \`@internal\` \`dialect\` + \`session\` props (same
  * props drizzle's own \`migrate()\` from \`drizzle-orm/better-sqlite3/migrator\`
  * touches) so consumers don't repeat the cast.
+ *
+ * **Per-pkg \`migrationsTable\`**: \`__drizzle_migrations_${tableSuffix}\`.
+ * Each entity pkg owns its own journal table so multiple pkgs sharing
+ * the same \`workspace.db\` file don't trip drizzle's global
+ * \`folderMillis\` watermark check. Naming convention locked: every
+ * emploke pkg uses \`__drizzle_migrations_<pkg>\`, no exceptions. See
+ * \`docs/architecture.md\` Migrations section.
  */
 export function apply${entity}Migrations<T extends Record<string, unknown>>(
   db: BetterSQLite3Database<T>,
@@ -89,7 +101,7 @@ export function apply${entity}Migrations<T extends Record<string, unknown>>(
     session: unknown;
   };
   internals.dialect.migrate(MIGRATIONS, internals.session, {
-    migrationsTable: "__drizzle_migrations",
+    migrationsTable: "__drizzle_migrations_${tableSuffix}",
   });
 }
 `;
