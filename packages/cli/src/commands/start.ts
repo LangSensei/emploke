@@ -71,7 +71,7 @@ export async function start(opts: StartOpts = {}): Promise<CommandResult> {
   );
   const port = opts.port ?? Number(env.PORT || 8787);
   const host = opts.host ?? env.EMPLOKE_HOST ?? "127.0.0.1";
-  const healthTimeoutMs = opts.healthTimeoutMs ?? 60_000;
+  const healthTimeoutMs = opts.healthTimeoutMs ?? 90_000;
 
   // Step 1 — idempotency check.
   const existing = await readRuntimeFile(home);

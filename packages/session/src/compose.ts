@@ -3,7 +3,7 @@ import type { RuntimeRegistry } from "@emploke/runtime";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { MIGRATIONS } from "./migrations.generated.js";
+import { applySessionMigrations } from "./migrations.js";
 import * as schema from "./schema.js";
 import { SessionService } from "./session-service.js";
 
@@ -36,7 +36,7 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   // retry from the same caller (EBUSY on the lockfile / WAL files
   // until process exit). Pattern mirrored in every entity pkg.
   try {
-    runPendingMigrations(sqlite);
+    applySessionMigrations(db);
   } catch (err) {
     sqlite.close();
     throw err;
@@ -57,44 +57,4 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
       sqlite.close();
     },
   };
-}
-
-/**
- * Minimal in-house migration runner: applies any `*.sql` files in
- * `drizzle/` that haven't been recorded in `__drizzle_migrations` yet.
- *
- * We hand-roll this instead of using `drizzle-orm/better-sqlite3/migrator`
- * because that helper expects to read a sibling `meta/_journal.json` plus
- * per-migration snapshot files relative to a packaged path that breaks
- * when the pkg is installed under `node_modules/.pnpm/...`. Re-implementing
- * the "apply unseen files in lexical order" loop directly keeps the
- * runtime path dependency-free (only `better-sqlite3` + `fs`) and matches
- * the same pattern used by every other emploke pkg's `compose.ts`.
- */
-function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
-  sqlite.exec(
-    "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",
-  );
-  const applied = new Set(
-    sqlite
-      .prepare("SELECT name FROM __drizzle_migrations")
-      .all()
-      .map((r) => (r as { name: string }).name),
-  );
-  const insertApplied = sqlite.prepare(
-    "INSERT INTO __drizzle_migrations (name, applied_at) VALUES (?, ?)",
-  );
-  // Apply each migration in a single transaction so a partial failure
-  // (a syntactically invalid statement late in the file) rolls back the
-  // whole file. Without this the schema could land half-applied with no
-  // matching journal row and the next boot would re-run the same file
-  // from the top and crash on duplicate-table.
-  const applyOne = sqlite.transaction((name: string, sql: string) => {
-    sqlite.exec(sql);
-    insertApplied.run(name, new Date().toISOString());
-  });
-  for (const m of MIGRATIONS) {
-    if (applied.has(m.name)) continue;
-    applyOne(m.name, m.sql);
-  }
 }

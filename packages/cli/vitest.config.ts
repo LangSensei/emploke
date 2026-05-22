@@ -19,12 +19,12 @@ export default defineConfig({
     // Windows runners. Observed hook timeouts at exactly 10000ms in
     // CI under load.
     //
-    // Bumped 30s → 90s alongside `emploke start`'s healthTimeoutMs
-    // bump (30s → 60s). The hook timeout has to be > the server's
-    // own internal budget plus a small margin for spawn + the rest
-    // of beforeEach (mkdtemp + run() overhead) — 90s gives ~30s of
-    // headroom on top of the 60s wait-for-health.
-    hookTimeout: 90000,
+    // Bumped 30s → 120s alongside `emploke start`'s healthTimeoutMs
+    // bumps (30s → 60s → 90s). The hook timeout has to be > the
+    // server's own internal budget plus a margin for spawn + the rest
+    // of beforeEach (mkdtemp + run() overhead) — 120s gives ~30s of
+    // headroom on top of the 90s wait-for-health.
+    hookTimeout: 120000,
     // The two server-booting integration files in this package
     // (`commands.test.ts` and `lifecycle.test.ts`) used to race for
     // the same 4 vCPU + disk I/O + AV scan budget on Windows runners

@@ -1,3 +1,46 @@
+## Unreleased
+
+## 0.5.2  2026-05-22
+
+### Changed (BREAKING  schema)
+
+- `__drizzle_migrations` bookkeeping table now uses drizzle's
+  **official schema** (`id SERIAL, hash TEXT, created_at NUMERIC`)
+  instead of the previous home-rolled `id INTEGER, name TEXT, applied_at TEXT`.
+  Migration application now goes through drizzle's official
+  `SQLiteSyncDialect.migrate` applier (hash-keyed, statement-breakpoint
+  splitting, monotonic `folderMillis` ordering). Customer-facing
+  upgrade guide at [#150](https://github.com/LangSensei/emploke/issues/150) 
+  TL;DR: `emploke stop`; wipe `global.db` + every `workspace.db`;
+  `emploke start`; re-register workspaces.
+
+### Added
+
+- `apply<Entity>Migrations(db)` helper per entity pkg 
+  thin typed shim over drizzle's `@internal` `dialect.migrate`,
+  encapsulates the cast in one place.
+- `migrations-inventory` test in every entity pkg + `_template`,
+  fails immediately when `drizzle/*.sql` and `src/migrations.ts`
+  drift apart.
+- CI **Schema/migration drift** step  runs `pnpm db:generate` against
+  `schema.ts` and fails the build if the working tree becomes dirty
+  (catches forgotten regeneration).
+
+### Removed
+
+- `scripts/inline-migrations.mjs` (codegen step)  replaced by
+  hand-written `src/migrations.ts` per pkg using Vite's `?raw`
+  imports + a small esbuild plugin (`rawSuffixPlugin`) that mirrors
+  Vite's behaviour at bundle time.
+- Per-pkg `runPendingMigrations` hand-rolled migrator (~100 lines
+  total). All four pkgs now delegate to drizzle's official applier.
+
+### Internal
+
+- `esbuild.config.js` gains a tiny `rawSuffixPlugin` (~15 lines)
+  that resolves `import x from "./foo.sql?raw"` to inlined file
+  contents. Standard Vite `?raw` syntax, so the same source works
+  unchanged in vitest (which uses Vite natively).
 # Changelog
 
 ## Unreleased

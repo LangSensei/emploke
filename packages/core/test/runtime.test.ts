@@ -24,12 +24,7 @@ import path from "node:path";
 import type { Runtime, RuntimeCapabilities } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  composeEmplokeCore,
-  type EmplokeCore,
-  WorkspaceHasLiveTasksError,
-  WorkspaceRuntimeCache,
-} from "../src/index.js";
+import { composeEmplokeCore, type EmplokeCore, WorkspaceHasLiveTasksError } from "../src/index.js";
 
 // Minimal Runtime stub: the cache's load() path constructs session +
 // task modules whose composers require a runtime to be registered, but

@@ -1,7 +1,7 @@
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import { MIGRATIONS } from "./migrations.generated.js";
+import { applyWorkspaceMigrations } from "./migrations.js";
 import * as schema from "./schema.js";
 import { WorkspaceRepository } from "./workspace-repository.js";
 import { WorkspaceService } from "./workspace-service.js";
@@ -39,7 +39,7 @@ export async function composeWorkspaceModule(
   // retry from the same caller (EBUSY on the lockfile / WAL files
   // until process exit). Pattern mirrored in every entity pkg.
   try {
-    runPendingMigrations(sqlite);
+    applyWorkspaceMigrations(db);
   } catch (err) {
     sqlite.close();
     throw err;
@@ -54,43 +54,4 @@ export async function composeWorkspaceModule(
       sqlite.close();
     },
   };
-}
-
-/**
- * Tiny built-in migrator. drizzle-kit generates SQL files under
- * `drizzle/`; we apply each one once, recording applied filenames in
- * `__drizzle_migrations`. Avoids a runtime dep on
- * `drizzle-orm/better-sqlite3/migrator` and its esbuild-unfriendly
- * `import.meta.url` resolution.
- *
- * Statement splitting: drizzle-kit inserts `--> statement-breakpoint`
- * comments between independent statements. better-sqlite3's `exec()`
- * accepts multi-statement SQL, so we pass the file contents verbatim.
- */
-function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
-  sqlite.exec(
-    "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",
-  );
-  const applied = new Set(
-    sqlite
-      .prepare("SELECT name FROM __drizzle_migrations")
-      .all()
-      .map((r) => (r as { name: string }).name),
-  );
-  const insertApplied = sqlite.prepare(
-    "INSERT INTO __drizzle_migrations (name, applied_at) VALUES (?, ?)",
-  );
-  // Apply each migration in a single transaction so a partial failure
-  // (a syntactically invalid statement late in the file) rolls back the
-  // whole file. Without this the schema could land half-applied with no
-  // matching journal row and the next boot would re-run the same file
-  // from the top and crash on duplicate-table.
-  const applyOne = sqlite.transaction((name: string, sql: string) => {
-    sqlite.exec(sql);
-    insertApplied.run(name, new Date().toISOString());
-  });
-  for (const m of MIGRATIONS) {
-    if (applied.has(m.name)) continue;
-    applyOne(m.name, m.sql);
-  }
 }
