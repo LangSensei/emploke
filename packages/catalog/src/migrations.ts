@@ -51,6 +51,13 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
  * shim over drizzle's `@internal` `dialect` + `session` props (same
  * props drizzle's own `migrate()` from `drizzle-orm/better-sqlite3/migrator`
  * touches) so consumers don't repeat the cast.
+ *
+ * **Per-pkg `migrationsTable`**: `__drizzle_migrations_catalog`.
+ * Each entity pkg owns its own journal table so multiple pkgs sharing
+ * the same `workspace.db` file don't trip drizzle's global
+ * `folderMillis` watermark check. Naming convention locked: every
+ * emploke pkg uses `__drizzle_migrations_<pkg>`, no exceptions. See
+ * `docs/architecture.md` Migrations section.
  */
 export function applyCatalogMigrations<T extends Record<string, unknown>>(
   db: BetterSQLite3Database<T>,
@@ -60,6 +67,6 @@ export function applyCatalogMigrations<T extends Record<string, unknown>>(
     session: unknown;
   };
   internals.dialect.migrate(MIGRATIONS, internals.session, {
-    migrationsTable: "__drizzle_migrations",
+    migrationsTable: "__drizzle_migrations_catalog",
   });
 }
