@@ -102,10 +102,10 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
   try {
     await mkdir(path.dirname(configPath), { recursive: true });
     // proper-lockfile requires the locked file to exist. Touch it
-    // only when it''s genuinely missing — any other stat failure
+    // only when it's genuinely missing — any other stat failure
     // (EACCES, EIO, EISDIR, …) must propagate. The earlier shape
     // had a bare `catch` here which would silently overwrite the
-    // user''s real `config.json` with `{}` if (say) the file was
+    // user's real `config.json` with `{}` if (say) the file was
     // present but unreadable for permissions reasons. Data loss.
     try {
       await stat(configPath);
@@ -142,7 +142,7 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
           }
         } catch {
           // Invalid JSON — start fresh. We never refuse to launch
-          // because the user''s config is corrupted; the rewrite
+          // because the user's config is corrupted; the rewrite
           // below will produce a valid file containing just
           // `trustedFolders`.
         }

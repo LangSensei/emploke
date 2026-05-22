@@ -33,7 +33,7 @@ packages/session/src/
   session-repository.ts    Drizzle CRUD (exported as type for advanced reads)
   session-service.ts       SessionService  create/get/list/delete/buildInteractiveLaunch
   paths.ts                 Pure path builders for per-session workdirs
-  compose.ts               composeSessionModule({ dbFile|db, catalog, runtimeRegistry,  })
+  compose.ts               composeSessionModule({ dbFile, catalog, runtimeRegistry, … })
   testing.ts               openTestSessionDb helper (via /testing subpath)
   index.ts                 public barrel
 drizzle/                   generated SQL migrations (committed)

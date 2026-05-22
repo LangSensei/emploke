@@ -258,14 +258,14 @@ export class WorkspaceRuntimeCache {
     // this drain, a concurrent `get(id)` whose `load()` resolves after
     // we run `entries.delete(id)` will store the stale runtime AFTER
     // the invalidate completed, leaking the freshly-built runtime
-    // past the caller''s "I just unregistered this" expectation.
+    // past the caller's "I just unregistered this" expectation.
     const inflight = this.inflight.get(id);
     if (inflight) {
       try {
         await inflight;
       } catch {
         // best-effort — the load that produced the throw is the
-        // caller''s problem, not ours.
+        // caller's problem, not ours.
       }
     }
     const cached = this.entries.get(id);
@@ -408,15 +408,33 @@ export class WorkspaceRuntimeCache {
 
     const sessions = sessionModule.service;
     const spawnFn = this.spawnFn;
+    const outerLogger = this.logger;
     const runtime: WorkspaceRuntime = {
       workspace,
       catalog: catalogModule.service,
       sessions,
       tasks: taskModule.service,
       async spawnSession(sid, opts) {
-        const cmd = await sessions.buildInteractiveLaunch(sid, {
-          ...(opts?.remote === true ? { remote: true } : {}),
-        });
+        // buildInteractiveLaunch can throw (e.g.
+        // RuntimeDoesNotSupportRemoteError, TrustRegistrationFailed,
+        // ENOENT on a stale runtimeSessionId). The SpawnSessionResult
+        // contract documents that `display` is ALWAYS present so the
+        // dashboard can show a copy-paste fallback even on failure —
+        // wrapping only the spawn step would let a build-side throw
+        // skip past the result-shape entirely.
+        let cmd: LaunchCommand;
+        try {
+          cmd = await sessions.buildInteractiveLaunch(sid, {
+            ...(opts?.remote === true ? { remote: true } : {}),
+          });
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+            code: err instanceof Error && err.name ? err.name : "BuildLaunchError",
+            display: "",
+          };
+        }
         try {
           const result = await spawnFn(cmd);
           return {
@@ -434,11 +452,18 @@ export class WorkspaceRuntimeCache {
         }
       },
       async close() {
-        // Per-module try/catch: a throw from one module''s close()
+        // Per-module try/catch: a throw from one module's close()
         // must NOT skip the other two. Earlier shape chained awaits
         // bare, so a `taskModule.close()` throw leaked the session +
         // catalog SQLite handles. Same all-or-nothing disposal idiom
-        // as load()''s cleanup stack.
+        // as load()'s cleanup stack.
+        //
+        // Multi-error handling: the FIRST error is re-thrown so the
+        // caller sees something; LATER errors are logged via the
+        // pkg's `silentLogger`-or-injected logger so a wedged 2nd
+        // module isn't lost. Previously this loop iterated but
+        // discarded later errors via `void e`, contradicting the
+        // comment that promised operator logging.
         const errors: unknown[] = [];
         try {
           await taskModule.close();
@@ -456,11 +481,11 @@ export class WorkspaceRuntimeCache {
           errors.push(err);
         }
         if (errors.length > 0) {
-          // Re-throw the first; later ones are logged for the operator.
           for (const e of errors.slice(1)) {
-            // Use a fresh ref so the logger doesn''t see "the same"
-            // error and dedupe.
-            void e;
+            outerLogger.error(
+              { workspaceId: id, err: e instanceof Error ? e.message : String(e) },
+              "per-workspace container close: secondary module failed during disposal",
+            );
           }
           throw errors[0];
         }
