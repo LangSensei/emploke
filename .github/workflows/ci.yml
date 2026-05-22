@@ -33,6 +33,19 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Schema/migration drift
+        # Catches: dev edited schema.ts but forgot to run db:generate.
+        # We regenerate everything; if any drizzle/ tree changes, the
+        # working copy is dirty and we fail with a pointer to the fix.
+        run: |
+          for pkg in workspace session task catalog; do
+            pnpm -F "@emploke/$pkg" db:generate
+          done
+          if ! git diff --exit-code packages/*/drizzle/; then
+            echo "::error::schema.ts changed without a regenerated migration. Run 'pnpm -F @emploke/<pkg> db:generate' and commit drizzle/ + src/migrations.ts."
+            exit 1
+          fi
+
   ts:
     name: TypeScript (${{ matrix.os }} / Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}

@@ -314,14 +314,33 @@ chunks and `instanceof` will silently fail across package boundaries.
 Drizzle migrations live under `drizzle/` and are committed. To
 regenerate after a schema change:
 
-```bash
-pnpm --filter @emploke/<pkg> db:generate
+```sh
+pnpm -F @emploke/<pkg> db:generate
 ```
 
-The in-process migrator in `compose.ts` replays every `.sql` file in
-lexicographic order, tracking applied names in a `__drizzle_migrations`
-bookkeeping table. The same logic is duplicated in `testing.ts` so
-in-memory test DBs see the same schema.
+After drizzle-kit writes a new `drizzle/NNNN_*.sql`, **add a one-line
+import + array entry to `src/migrations.ts`** so the new file is
+embedded into the runtime bundle. The `migrations-inventory` test (per
+pkg) fails immediately if `migrations.ts` drifts from `drizzle/`. CI
+also runs `db:generate` against `schema.ts` and fails if it produces a
+diff (catches forgotten regeneration).
+
+```ts
+// src/migrations.ts — hand-maintained
+// @ts-expect-error  "?raw" is Vite syntax, resolved by esbuild plugin
+import sql_0001 from "../drizzle/0001_new_thing.sql?raw";
+
+export const MIGRATIONS = [
+  // existing entries...
+  { name: "0001_new_thing.sql", sql: sql_0001 },
+];
+```
+
+At runtime, `compose.ts`'s `runPendingMigrations()` walks `MIGRATIONS`
+in order, skipping anything already recorded in `__drizzle_migrations`.
+SQL is embedded as a string in the JS bundle (via Vite's `?raw` /
+esbuild's `rawSuffixPlugin`) — no filesystem reads at runtime. Same
+applies in `testing.ts` so in-memory test DBs see the same schema.
 
 ## Optional patterns
 

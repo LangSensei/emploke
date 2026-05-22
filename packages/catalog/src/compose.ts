@@ -2,7 +2,7 @@ import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import { buildCatalogRuntime, CatalogService } from "./facade/catalog-service.js";
-import { MIGRATIONS } from "./migrations.generated.js";
+import { applyCatalogMigrations } from "./migrations.js";
 import * as schema from "./schema.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
@@ -35,7 +35,7 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
   // retry from the same caller (EBUSY on the lockfile / WAL files
   // until process exit). Pattern mirrored in every entity pkg.
   try {
-    runPendingMigrations(sqlite);
+    applyCatalogMigrations(db);
   } catch (err) {
     sqlite.close();
     throw err;
@@ -52,39 +52,4 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
       sqlite.close();
     },
   };
-}
-
-/**
- * In-house migration walker — same rationale as
- * `@emploke/session`'s `compose.ts`. drizzle-kit's bundled migrator
- * cannot resolve its sibling `meta/_journal.json` once the pkg is
- * installed under `node_modules/.pnpm/...`, so each pkg ships its
- * own dependency-free `*.sql` lexical apply loop.
- */
-function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
-  sqlite.exec(
-    "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",
-  );
-  const applied = new Set(
-    sqlite
-      .prepare("SELECT name FROM __drizzle_migrations")
-      .all()
-      .map((r) => (r as { name: string }).name),
-  );
-  const insertApplied = sqlite.prepare(
-    "INSERT INTO __drizzle_migrations (name, applied_at) VALUES (?, ?)",
-  );
-  // Apply each migration in a single transaction so a partial failure
-  // (a syntactically invalid statement late in the file) rolls back the
-  // whole file. Without this the schema could land half-applied with no
-  // matching journal row and the next boot would re-run the same file
-  // from the top and crash on duplicate-table.
-  const applyOne = sqlite.transaction((name: string, sql: string) => {
-    sqlite.exec(sql);
-    insertApplied.run(name, new Date().toISOString());
-  });
-  for (const m of MIGRATIONS) {
-    if (applied.has(m.name)) continue;
-    applyOne(m.name, m.sql);
-  }
 }
