@@ -760,14 +760,22 @@ export class TaskService {
    * after the fact.
    *
    * `{ purge: true }` is the hard-delete path:
-   *   1. Ask the runtime to wipe its per-task state (e.g. Copilot's
-   *      `<copilotStateDir>/<runtimeSessionId>/`) via
-   *      `runtime.deleteState`. Runtime first so a permission-denied
-   *      or network failure aborts BEFORE any local removal — same
-   *      ordering as `SessionService.delete`. Runtimes without
-   *      per-task state simply omit the method and we skip this step.
-   *   2. Remove the metadata row from the repository.
-   *   3. `rm -rf` the workdir.
+   *   1. Remove the metadata row from the repository — synchronous,
+   *      awaited; this is the user-facing "task is gone" semantic.
+   *   2. Schedule a background job (via `setImmediate`) that:
+   *      a. Calls `runtime.deleteState(<runtimeSessionId>)` to wipe
+   *         the runtime's per-task state (e.g. Copilot's
+   *         `<copilotStateDir>/<runtimeSessionId>/`). Runtimes without
+   *         per-task state simply omit the method and we skip this.
+   *      b. `rm -rf` the workdir.
+   *
+   * Filesystem cleanup is fire-and-forget: failures are logged at
+   * warn level and otherwise swallowed. On Windows the per-task state
+   * dir can be hundreds of MB and an in-line `rm` can take tens of
+   * seconds (Defender + per-file unlink), which would freeze the
+   * dashboard's DELETE response. Orphan dirs left behind by a failed
+   * background rm are recoverable via the manual cleanup channel
+   * (sqlite3 CLI / `rm -rf` on disk) per ADR-001 §3.5.
    *
    * Throws `TaskNotFoundError` when no task with `id` exists.
    * Throws `InvalidTransition(currentStatus, 'delete')` when the task
@@ -792,38 +800,96 @@ export class TaskService {
       throw new InvalidTransition(existing.status, "delete");
     }
 
+    // DB row removal IS the "task is deleted" semantic; the user-facing
+    // 204 hinges on this. Done synchronously and in-process so the
+    // caller can rely on a successful resolve meaning "this task no
+    // longer exists from the API's POV".
+    await this.repository.delete(id);
+
     if (opts.purge === true) {
-      // Wipe the runtime's per-task state BEFORE we touch local rows
-      // / workdir, so a runtime failure leaves a recoverable state
-      // (row + workdir intact, user can retry). No-op when the
-      // runtime doesn't implement the optional hook, or when the
-      // metadata doesn't carry the keys it needs.
-      const runtimeName = existing.metadata.runtime;
-      const runtimeKey = typeof runtimeName === "string" ? runtimeName : DEFAULT_RUNTIME;
-      let runtime: Runtime;
-      try {
-        runtime = this.runtimeRegistry.get(runtimeKey);
-      } catch {
-        // Unknown runtime (e.g. dropped from registry between dispatch
-        // and delete): nothing to call into. Skip and proceed with the
-        // local cleanup so the user can still get rid of the task.
-        runtime = undefined as unknown as Runtime;
-      }
-      if (runtime !== undefined && typeof runtime.deleteState === "function") {
-        const runtimeSessionId = pickRuntimeSessionId(existing.metadata);
-        if (runtimeSessionId !== null) {
+      // Filesystem cleanup is fire-and-forget. On Windows the per-task
+      // copilot state dir can be hundreds of MB and rm can take tens of
+      // seconds (Defender + per-file unlink). We refuse to stall the
+      // HTTP response for that. Failures here are logged at warn level
+      // — the resulting orphan dirs are recoverable manually per
+      // ADR-001 §3.5 (sqlite3 CLI / manual cleanup).
+      this.scheduleBackgroundPurge(id, existing, workdir);
+    }
+  }
+
+  /**
+   * Test seam: in-flight background purges scheduled by
+   * `scheduleBackgroundPurge`. Production code MUST NOT read this —
+   * tests use `_drainPendingPurgesForTest()` to await completion.
+   */
+  private readonly pendingPurges = new Set<Promise<void>>();
+
+  private scheduleBackgroundPurge(id: string, existing: TaskEntity, workdir: string): void {
+    // The tracking promise is added to `pendingPurges` SYNCHRONOUSLY
+    // so that `_drainPendingPurgesForTest()` invoked immediately after
+    // `delete(...)` observes the in-flight work. The `setImmediate`
+    // still defers the actual rm so the awaiting HTTP handler runs to
+    // completion (and the 204 is queued onto the socket) first.
+    const p = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        void this.runBackgroundPurge(id, existing, workdir).finally(resolve);
+      });
+    });
+    this.pendingPurges.add(p);
+    void p.finally(() => {
+      this.pendingPurges.delete(p);
+    });
+  }
+
+  private async runBackgroundPurge(
+    id: string,
+    existing: TaskEntity,
+    workdir: string,
+  ): Promise<void> {
+    const runtimeName = existing.metadata.runtime;
+    const runtimeKey = typeof runtimeName === "string" ? runtimeName : DEFAULT_RUNTIME;
+    let runtime: Runtime | undefined;
+    try {
+      runtime = this.runtimeRegistry.get(runtimeKey);
+    } catch {
+      // Unknown runtime (e.g. dropped from registry between dispatch
+      // and delete): nothing to call into. Skip and proceed with the
+      // workdir rm so the user still loses the local copy.
+      runtime = undefined;
+    }
+
+    if (runtime !== undefined && typeof runtime.deleteState === "function") {
+      const runtimeSessionId = pickRuntimeSessionId(existing.metadata);
+      if (runtimeSessionId !== null) {
+        try {
           await runtime.deleteState(runtimeSessionId);
+        } catch (err) {
+          this.logger.warn(
+            { err, taskId: id, runtimeSessionId },
+            "task.purge: runtime.deleteState failed; orphan runtime state dir may remain",
+          );
         }
       }
     }
 
-    // Always remove metadata via the repository (otherwise a SQLite
-    // backend would leave a ghost row). For purge=true, ALSO rm the
-    // entire workdir; for default, agent-produced files under
-    // <tasksDir>/<id>/ are preserved for archival.
-    await this.repository.delete(id);
-    if (opts.purge === true) {
+    try {
       await rm(workdir, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(
+        { err, taskId: id, workdir },
+        "task.purge: workdir rm failed; orphan task workdir may remain",
+      );
+    }
+  }
+
+  /**
+   * @internal Test-only: await all in-flight background purges
+   * scheduled by `delete({ purge: true })`. Not part of the public
+   * API; the underscore prefix marks this as a test seam.
+   */
+  async _drainPendingPurgesForTest(): Promise<void> {
+    while (this.pendingPurges.size > 0) {
+      await Promise.allSettled(Array.from(this.pendingPurges));
     }
   }
 

@@ -1,5 +1,13 @@
 ## Unreleased
 
+### Fixed
+
+- task: `delete({ purge: true })` filesystem cleanup is now
+  fire-and-forget; HTTP `DELETE` returns as soon as the DB row is
+  removed. Orphan runtime-state or workdir dirs (e.g. when Windows
+  Defender or a large `events.jsonl` slow the `rm`) are warned to the
+  server log instead of stalling the response.
+
 ## 0.5.3  2026-05-22
 
 ### Changed (BREAKING  schema)

@@ -4,7 +4,30 @@ import path from "node:path";
 import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Controllable rm-failure switch, shared with the node:fs/promises mock
+// below. Off by default (delegates to the real rm); a test flips it on
+// to exercise the `workdir rm failed` warn path in task-service.
+// Hoisted because vi.mock factories run before module-scope code.
+const rmFail = vi.hoisted(() => ({ enabled: false, error: null as Error | null }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: (async (...args: Parameters<typeof actual.rm>) => {
+      if (rmFail.enabled && rmFail.error !== null) {
+        const e = rmFail.error;
+        rmFail.enabled = false;
+        rmFail.error = null;
+        throw e;
+      }
+      return actual.rm(...args);
+    }) as typeof actual.rm,
+  };
+});
+
 import {
   AgentNotFoundError,
   assertFramingPromptIsSafe,
@@ -1007,6 +1030,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id, { purge: true });
+    await m._drainPendingPurgesForTest();
 
     expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
   });
@@ -1067,6 +1091,7 @@ describe("delete (terminal-only post ADR-001)", () => {
 
     expect(rt.deleteStateCalls).toEqual([]);
     await m.delete(t.id, { purge: true });
+    await m._drainPendingPurgesForTest();
 
     expect(rt.deleteStateCalls).toHaveLength(1);
     expect(rt.deleteStateCalls[0].runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
@@ -1087,24 +1112,133 @@ describe("delete (terminal-only post ADR-001)", () => {
     expect(rt.deleteStateCalls).toEqual([]);
   });
 
-  // Order matters: a runtime that fails to clean up its state must leave
-  // the local row + workdir intact so the user can retry rather than
-  // ending up with a half-deleted task whose state dir leaks.
-  it("aborts BEFORE removing the row + workdir when runtime.deleteState throws", async () => {
+  // Fire-and-forget contract: delete() returns BEFORE runtime.deleteState
+  // resolves. We stall deleteState on a pending promise so the test can
+  // observe the gap; if delete() awaited the cleanup, this test would
+  // never reach the post-delete assertions.
+  it("purge: true returns before runtime.deleteState resolves", async () => {
     const rt = new StubRuntime();
-    rt.deleteStateError = new Error("permission denied wiping state dir");
+    let releaseDeleteState: () => void = () => {};
+    const deleteStateGate = new Promise<void>((resolve) => {
+      releaseDeleteState = resolve;
+    });
+    const origDeleteState = rt.deleteState.bind(rt);
+    rt.deleteState = async (rsid: string): Promise<void> => {
+      rt.deleteStateCalls.push({ runtimeSessionId: rsid });
+      await deleteStateGate;
+    };
+
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
     void rt.handles[0].exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
-    await expect(m.delete(t.id, { purge: true })).rejects.toThrow(
-      /permission denied wiping state dir/,
-    );
+    await m.delete(t.id, { purge: true });
 
-    // Row still there, workdir still there.
-    expect(await m.get(t.id)).not.toBeNull();
+    // DB row is gone (synchronous semantic).
+    expect(await m.get(t.id)).toBeNull();
+
+    // setImmediate has had a chance to fire; the background job is
+    // suspended inside runtime.deleteState. The caller did NOT await it.
+    await flushMicrotasks(3);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(rt.deleteStateCalls).toHaveLength(1);
+    // Workdir still on disk — the rm sits after the deleteState gate.
     expect(await safeStat(path.join(tasksDir, t.id))).not.toBeNull();
+
+    // Releasing the gate lets _drainPendingPurgesForTest() see completion.
+    releaseDeleteState();
+    await m._drainPendingPurgesForTest();
+    expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
+    // Restore so any teardown using the original behavior still works.
+    rt.deleteState = origDeleteState;
+  });
+
+  // After _drainPendingPurgesForTest both the runtime.deleteState and
+  // the workdir rm have completed.
+  it("_drainPendingPurgesForTest awaits both runtime.deleteState and workdir rm", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await m.delete(t.id, { purge: true });
+    await m._drainPendingPurgesForTest();
+
+    expect(rt.deleteStateCalls).toHaveLength(1);
+    expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
+  });
+
+  // Fire-and-forget swallows runtime.deleteState failures. Pre-fix this
+  // surfaced to the caller; now it goes to the logger only.
+  it("purge: true swallows runtime.deleteState errors and logs warn", async () => {
+    const rt = new StubRuntime();
+    rt.deleteStateError = new Error("permission denied wiping state dir");
+    const r = recorder();
+    const { m } = await makeManager({ runtime: rt, logger: r.logger });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await expect(m.delete(t.id, { purge: true })).resolves.toBeUndefined();
+    await m._drainPendingPurgesForTest();
+
+    // Row gone (sync semantic).
+    expect(await m.get(t.id)).toBeNull();
+    // Workdir still got rm'd because the runtime failure doesn't abort
+    // the background job anymore.
+    expect(await safeStat(path.join(tasksDir, t.id))).toBeNull();
+
+    const warn = r.calls.find(
+      (c) => typeof c.msg === "string" && c.msg.includes("runtime.deleteState failed"),
+    );
+    expect(warn).toBeDefined();
+    const meta = warn?.meta as { taskId?: string; runtimeSessionId?: string; err?: unknown };
+    expect(meta?.taskId).toBe(t.id);
+    expect(meta?.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
+    expect(meta?.err).toBeInstanceOf(Error);
+  });
+
+  // Fire-and-forget swallows workdir rm failures.
+  it("purge: true swallows workdir rm errors and logs warn", async () => {
+    const rt = new StubRuntime();
+    const r = recorder();
+    const { m } = await makeManager({ runtime: rt, logger: r.logger });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    const rmError = new Error("simulated EBUSY on workdir rm");
+    rmFail.enabled = true;
+    rmFail.error = rmError;
+
+    await expect(m.delete(t.id, { purge: true })).resolves.toBeUndefined();
+    await m._drainPendingPurgesForTest();
+
+    const warn = r.calls.find(
+      (c) => typeof c.msg === "string" && c.msg.includes("workdir rm failed"),
+    );
+    expect(warn).toBeDefined();
+    const meta = warn?.meta as { taskId?: string; workdir?: string; err?: unknown };
+    expect(meta?.taskId).toBe(t.id);
+    expect(typeof meta?.workdir).toBe("string");
+    expect(meta?.err).toBe(rmError);
+  });
+
+  // Default mode never schedules a background purge — the drain is a
+  // no-op and runtime.deleteState is never called.
+  it("default delete does NOT schedule a background purge", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    await m.delete(t.id);
+    // Nothing pending — drain returns immediately.
+    await m._drainPendingPurgesForTest();
+    expect(rt.deleteStateCalls).toEqual([]);
   });
 });
 
