@@ -30,56 +30,12 @@
  * have to preserve.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CLI_BIN = path.join(HERE, "..", "dist", "bin.js");
-
-interface Run {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * Spawn the bundled CLI in a child process. Identical shape to the
- * helper in `lifecycle.test.ts` so anyone reading both files sees the
- * same primitive; kept private to this file because the smoke layer
- * is the only consumer left (argv + api-contract layers don't spawn).
- */
-function run(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Run> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI_BIN, ...args], {
-      env: { ...process.env, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (d: string) => {
-      stdout += d;
-    });
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (d: string) => {
-      stderr += d;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ exitCode: code ?? -1, stdout, stderr });
-    });
-  });
-}
-
-function pickPort(): number {
-  return 30000 + Math.floor(Math.random() * 20000);
-}
+import { CLI_BIN, pickPort, runBin as run } from "../_helpers/cli-bundle.js";
 
 // Module-scoped because every test shares the boot. Set in
 // `beforeAll`, read by every `it(...)`.
