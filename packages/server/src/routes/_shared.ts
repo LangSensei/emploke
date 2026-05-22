@@ -35,7 +35,7 @@ export async function parseJsonBody<T = unknown>(
  *     third-party stack lines)
  *   - no caller-controlled string echoed back without validation
  * Keep the diagnostic on the instance (public fields + `cause`) so the
- * route can `c.get("logger").error({ err: errorMeta(err), ... })` it;
+ * route can `c.get("logger").error({ err, ... })` it;
  * just don't bake it into `.message`.
  */
 const SAFE_ERROR_NAMES = new Set<string>([
@@ -109,47 +109,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
 ]);
 
 /**
- * Extract the diagnostic-rich subset of an error suitable for the `err`
- * key in a structured log line. Companion to {@link errorBody}: the
- * latter sanitises for the HTTP body, this one captures everything we
- * want server-side. Pino picks `err` up via its standard error
- * serializer and renders it as a structured object (name, message,
- * stack, plus our well-known public fields and `cause`).
- *
- * Reads the same well-known public fields as the previous
- * `logServerError` did (`kind`, `workdir`, `sessionId`, `taskDir`,
- * `configPath`) so the per-runtime spawn-failure diagnostics that
- * issue #24 standardised on still surface in the rotated log file.
- *
- * Returns a plain object; callers spread it into the meta record:
- *
- *     c.get("logger").error(
- *       { err: errorMeta(err), workspaceId },
- *       "5xx fault in workspaces.list",
- *     );
- */
-export function errorMeta(err: unknown): Record<string, unknown> {
-  if (!(err instanceof Error)) {
-    return { type: "non-error", value: String(err) };
-  }
-  const meta: Record<string, unknown> = {
-    name: err.name,
-    message: err.message,
-  };
-  if (err.stack) meta.stack = err.stack;
-  if (err.cause instanceof Error) {
-    meta.cause = { name: err.cause.name, message: err.cause.message };
-  } else if (err.cause !== undefined) {
-    meta.cause = String(err.cause);
-  }
-  for (const key of ["kind", "workdir", "sessionId", "taskDir", "configPath"] as const) {
-    const val = (err as unknown as Record<string, unknown>)[key];
-    if (val !== undefined) meta[key] = val;
-  }
-  return meta;
-}
-
-/**
  * Log a server-side fault via the request-scoped logger. Drop-in
  * replacement for the previous `logServerError` helper, except now the
  * line lands in the rotated JSON file (`<emplokeHome>/logs/server-*.log`)
@@ -180,7 +139,7 @@ export function logFault(
   // below returns silently when the logger isn't present.
   const logger = (c.get as unknown as (k: string) => unknown)("logger") as Logger | undefined;
   if (logger === undefined) return;
-  logger.error({ err: errorMeta(err), ...(extra ?? {}) }, msg);
+  logger.error({ err, ...(extra ?? {}) }, msg);
 }
 
 /**

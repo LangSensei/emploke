@@ -94,9 +94,10 @@ describe("logFault helper", () => {
     expect(fault).toBeDefined();
     expect(fault?.level).toBe(50); // error
     expect(fault?.entityId).toBe("x-1");
-    // errorMeta packs the error into an `err` field.
-    const errMeta = fault?.err as { name: string; message: string };
-    expect(errMeta.name).toBe("TypeError");
+    // Pino's stdSerializers.err packs the error into an `err` field
+    // with `type` carrying the class name, `message`, and `stack`.
+    const errMeta = fault?.err as { type: string; message: string };
+    expect(errMeta.type).toBe("TypeError");
     expect(errMeta.message).toBe("nope");
   });
 

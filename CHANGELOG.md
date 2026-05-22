@@ -1,5 +1,19 @@
 ## Unreleased
 
+### Changed
+
+- logging: standardized error attachment to `{ err }` with pino's
+  `stdSerializers.err` so server logs now carry full `type` / `message`
+  / `stack`. Previously several packages used ad-hoc field names
+  (`error`, `reason`, `cause`) carrying only a stringified message;
+  the new shape is a strict superset. Operators / log scrapers
+  filtering on the old field names need to grep for `err.message`
+  going forward. Resolves #159.
+- docs: fixed three broken citations in `docs/pkg-template.md` that
+  pointed at a nonexistent `files/architecture-design.md`. Resolves #156.
+- docs: per-package READMEs audited against current `src/` exports;
+  stale signatures / layout blocks / error lists reconciled. Resolves #157.
+
 ### Fixed
 
 - task: `delete({ purge: true })` filesystem cleanup is now

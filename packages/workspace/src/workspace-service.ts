@@ -80,7 +80,7 @@ export class WorkspaceService {
         this.logger.warn(
           {
             workspaceId: entity.id,
-            error: err instanceof Error ? err.message : String(err),
+            err,
           },
           "workspace list: dropping malformed row",
         );

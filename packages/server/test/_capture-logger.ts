@@ -71,6 +71,12 @@ export function captureLogger(opts: { level?: Level } = {}): {
       cb();
     },
   });
-  const logger = pino({ level: opts.level ?? "trace" }, stream);
+  const logger = pino(
+    {
+      level: opts.level ?? "trace",
+      serializers: { err: pino.stdSerializers.err },
+    },
+    stream,
+  );
   return { logger, entries };
 }

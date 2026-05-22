@@ -62,7 +62,7 @@ function statusForError(err: unknown): number | null {
   // operators need to see a 5xx, not a misleading 404 that the
   // dashboard would render as "task gone". The instance carries
   // `taskId` + `reason` for triage; the route's `logFault` companion
-  // captures both via `errorMeta`.
+  // captures both via pino's `err` serializer.
   if (err instanceof CorruptedTaskError) return 500;
   return null;
 }

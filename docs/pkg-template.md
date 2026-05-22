@@ -44,7 +44,7 @@ packages/<pkg>/
 
 ## File naming convention
 
-> See `files/architecture-design.md` Section 10 for the full rationale.
+> See [docs/architecture.md § Per-package src layout](./architecture.md#per-package-src-layout) for the full rationale.
 
 **Files exposing a class get an `<entity>-<role>.ts` prefix**:
 
@@ -68,7 +68,7 @@ convention uniform across the monorepo.
 
 ## Where DTOs live
 
-> See `files/architecture-design.md` Section 11.
+> See [docs/architecture.md § The three layers](./architecture.md#the-three-layers) for the Row / Entity / DTO split that motivates the single `types.ts` rule.
 
 **ALL public types — DTOs, option shapes, enums, union types — live in
 `types.ts`.** Every package has one, regardless of size.
@@ -122,7 +122,7 @@ concept word.
 
 ## Naming conventions
 
-> See `files/architecture-design.md` Section 9 for the full rationale.
+> See [docs/architecture.md § Coding conventions](./architecture.md#coding-conventions) for the full rationale.
 
 ### Public types (exported from `index.ts`)
 

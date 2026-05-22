@@ -148,7 +148,7 @@ export class SessionService {
             {
               sessionId: id,
               runtimeSessionId: provisionedRuntimeSessionId,
-              error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+              err: cleanupErr,
             },
             "session create: runtime state cleanup failed during rollback",
           );
@@ -168,10 +168,7 @@ export class SessionService {
     try {
       entries = await this.repo.list(repoOpts);
     } catch (err) {
-      this.logger.warn(
-        { error: err instanceof Error ? err.message : String(err) },
-        "sessions: repository.list failed",
-      );
+      this.logger.warn({ err }, "sessions: repository.list failed");
       return [];
     }
 
@@ -291,7 +288,7 @@ export class SessionService {
         this.logger.warn(
           {
             sessionId: id,
-            error: err instanceof Error ? err.message : String(err),
+            err,
           },
           "sessions: failed to persist lastLaunchMode",
         );
@@ -353,7 +350,7 @@ export class SessionService {
         {
           sessionId: entity.id,
           runtime: entity.runtime,
-          error: err instanceof Error ? err.message : String(err),
+          err,
         },
         "sessions: skipping session with unregistered runtime",
       );
@@ -387,7 +384,7 @@ export class SessionService {
         {
           sessionId: draft.id,
           runtime: draft.runtime,
-          error: err instanceof Error ? err.message : String(err),
+          err,
         },
         "sessions: runtime readMetadata failed",
       );
@@ -412,7 +409,7 @@ export class SessionService {
       this.logger.warn(
         {
           sessionId: id,
-          error: err instanceof Error ? err.message : String(err),
+          err,
         },
         "sessions: repository.read failed",
       );
@@ -432,7 +429,7 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
     logger.warn(
       {
         path: p,
-        error: err instanceof Error ? err.message : String(err),
+        err,
       },
       "sessions: failed to remove workdir during cleanup",
     );

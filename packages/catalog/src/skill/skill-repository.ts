@@ -111,7 +111,7 @@ export class SkillRepository {
         out.push(rowToSkill(row, deps));
       } catch (cause) {
         this.logger.warn(
-          { fqn: row.fqn ?? null, cause: (cause as Error).message },
+          { fqn: row.fqn ?? null, err: cause },
           "catalog/skill: skipping row that failed validation",
         );
       }

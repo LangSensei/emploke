@@ -366,13 +366,13 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
         });
       });
     } catch (err) {
-      logger.error({ err: errorToMeta(err) }, "error closing http server");
+      logger.error({ err }, "error closing http server");
     }
     try {
       const ctxs = cache.loaded();
       await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
     } catch (err) {
-      logger.error({ err: errorToMeta(err) }, "error during tasks shutdown");
+      logger.error({ err }, "error during tasks shutdown");
     }
     try {
       // Close every per-workspace `DatabaseSync` connection so the OS
@@ -387,7 +387,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // `composition.close()` below and leak handles past `process.exit`.
       await cache.closeAll();
     } catch (err) {
-      logger.error({ err: errorToMeta(err) }, "error closing workspace contexts");
+      logger.error({ err }, "error closing workspace contexts");
     }
     try {
       // Close the workspace registry's underlying Drizzle DB handle
@@ -398,7 +398,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // integration test can `rm -rf <EMPLOKE_HOME>`.
       await composition.close();
     } catch (err) {
-      logger.error({ err: errorToMeta(err) }, "error closing global.db");
+      logger.error({ err }, "error closing global.db");
     }
     clearTimeout(deadline);
     process.exit(0);
@@ -465,19 +465,6 @@ function parseLogLevel(raw: string | undefined): LogLevel {
     default:
       return "info";
   }
-}
-
-/**
- * Reduce an unknown thrown value to a small structured record suitable
- * for the logger's `meta`. Avoids the noise of pino auto-serialising a
- * full Error (stack lines blow up a JSON line) while keeping the bits
- * that actually help diagnosis.
- */
-function errorToMeta(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { name: err.name, message: err.message };
-  }
-  return { value: String(err) };
 }
 
 /**

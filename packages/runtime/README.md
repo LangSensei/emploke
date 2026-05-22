@@ -31,11 +31,16 @@ packages/runtime/src/
   types.ts                       Public contract (Runtime, LaunchCommand, ActivityItem, )
   errors.ts                      Cross-runtime error classes
   runtime-registry.ts            RuntimeRegistry (kind  Runtime lookup)
+  placeholders.ts                ${workspaceDir} / ${sharedDir} expansion helpers
+  shared-dir.ts                  Shared-state dir helper (cross-runtime)
   copilot/
     copilot-runtime.ts           CopilotRuntime  the canonical adapter
+    activity.ts                  ActivityItem translation from Copilot event log
+    ids.ts                       Copilot session-id allocators + parsers
     interactive-launch.ts        buildCopilotLaunchCommand (--session-id, --yolo)
     launch-headless.ts           launchCopilotHeadless + mergeEnv
     provision.ts                 Bake AGENTS.md + .mcp.json into workdir
+    state.ts                     On-disk runtime-state paths + delete helper
     trust.ts                     Copilot trustedFolders preflight
     errors.ts                    Copilot-specific subclasses
     validate.ts                  safeCopilotId guard
@@ -65,12 +70,12 @@ interface Runtime {
   ): Promise<LaunchCommand>;
 
   // Headless
-  launchHeadless(opts: LaunchHeadlessOpts): Promise<RuntimeHandle>;
+  launchHeadless?(opts: LaunchHeadlessOpts): Promise<RuntimeHandle>;
 
   // Observability
-  readMetadata(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null>;
-  readActivity(runtimeSessionId: string, opts?: ReadActivityOpts): Promise<ActivityPage>;
-  streamActivity(runtimeSessionId: string, opts: StreamActivityOpts): AsyncIterable<ActivityItem>;
+  readMetadata?(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null>;
+  readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
+  streamActivity?(opts: StreamActivityOpts): AsyncIterable<ActivityItem>;
 
   // Maintenance
   deleteState(runtimeSessionId: string): Promise<void>;
