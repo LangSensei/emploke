@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
 import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
@@ -46,10 +46,19 @@ export function TaskDetail({
     pollIntervalMs,
   );
   const [tab, setTab] = useState<DetailTab>("overview");
+  // F7: header title is clamped to 2 lines; clicking expands to the
+  // full brief. Re-clamp whenever the visible task changes so a long
+  // brief from a previous selection doesn't leak into the next one.
+  const [titleExpanded, setTitleExpanded] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: collapse on task swap; effect re-runs when taskId changes
+  useEffect(() => {
+    setTitleExpanded(false);
+  }, [taskId]);
 
   const runtime = task ? readRuntime(task) : null;
   const isRunning = task?.status === "running";
   const artifactCount = countArtifacts(task);
+  const title = task?.brief ?? taskId;
 
   return (
     <aside className="tasks-pane__detail">
@@ -61,7 +70,25 @@ export function TaskDetail({
         </button>
 
         <div className="task-detail__title-row">
-          <h2 className="task-detail__title">{task?.brief ?? taskId}</h2>
+          <button
+            type="button"
+            className={`task-detail__title-btn${titleExpanded ? " task-detail__title-btn--expanded" : ""}`}
+            onClick={() => setTitleExpanded((v) => !v)}
+            aria-expanded={titleExpanded}
+            aria-label={titleExpanded ? "Collapse title" : "Expand title"}
+            title={titleExpanded ? "Collapse" : title}
+          >
+            <h2
+              className={`task-detail__title${
+                titleExpanded ? " task-detail__title--expanded" : " task-detail__title--clamp"
+              }`}
+            >
+              {title}
+            </h2>
+            <span className="task-detail__title-caret" aria-hidden="true">
+              {titleExpanded ? "▾" : "▸"}
+            </span>
+          </button>
           <div className="task-detail__title-actions">
             <button
               type="button"
@@ -169,7 +196,13 @@ export function TaskDetail({
         </div>
       )}
 
-      {task && tab === "overview" && <OverviewTab task={task} />}
+      {task && tab === "overview" && (
+        <OverviewTab
+          task={task}
+          activity={activity}
+          onSwitchTab={(t) => setTab(t === "logs" ? "logs" : "raw")}
+        />
+      )}
       {task && tab === "logs" && (
         <LogsTab
           taskId={taskId}

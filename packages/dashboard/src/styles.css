@@ -839,8 +839,21 @@ button {
 }
 
 .badge--ok {
-  background: rgba(37, 99, 235, 0.1);
-  color: var(--color-accent);
+  background: rgba(21, 128, 61, 0.1);
+  color: var(--color-success);
+}
+
+/* Bug-bash iter-1 F3: succeeded tasks now use a dedicated success
+   tone (green) so the four status colours are visually distinct:
+   running → blue, succeeded → green, failed → red, cancelled → grey. */
+.badge--success {
+  background: rgba(21, 128, 61, 0.1);
+  color: var(--color-success);
+}
+
+.badge--danger {
+  background: var(--color-danger-bg, rgba(220, 38, 38, 0.1));
+  color: var(--color-danger);
 }
 
 .badge--muted {
@@ -3423,7 +3436,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
 .task-filters__row {
@@ -3432,6 +3445,9 @@ button {
   align-items: center;
   gap: var(--space-2);
 }
+.task-filters__row--compact {
+  gap: var(--space-1);
+}
 .task-filters__label {
   font-size: 11px;
   font-weight: 600;
@@ -3439,9 +3455,46 @@ button {
   letter-spacing: 0.04em;
   color: var(--color-text-subtle);
 }
+/* Bug-bash iter-1 F1: the search input previously had `flex: 1 1 160px`
+   inside a `flex-direction: column` parent, which made flex-grow stretch
+   it vertically into a ~250px tall card. Anchor it to a fixed compact
+   height and wrap with a relative-positioned label so we can render a
+   search-icon prefix without a separate input style. */
+.task-filters__search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.task-filters__search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-subtle);
+  pointer-events: none;
+}
 .task-filters__search {
-  flex: 1 1 160px;
-  min-width: 120px;
+  width: 100%;
+  height: 32px;
+  padding-left: 30px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  box-sizing: border-box;
+}
+/* Compact selects in the filter row keep the panel under ~100px. */
+.task-filters__select {
+  height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  font-size: 12px;
+  flex: 0 1 auto;
+  min-width: 92px;
+}
+.task-filters__pills {
+  flex: 0 1 auto;
 }
 
 .task-list-groups {
@@ -3492,6 +3545,18 @@ button {
   padding: 0 var(--space-2);
   border-radius: 999px;
   border: 1px solid var(--color-border);
+}
+
+/* Bug-bash iter-1 F6: empty groups still render so users can see the
+   data shape transition (Running ↔ Not started ↔ Completed). The
+   header is dimmed and the disabled toggle keeps clicks from doing
+   nothing visible. */
+.task-list-group--empty .task-list-group__header {
+  opacity: 0.55;
+  cursor: default;
+}
+.task-list-group--empty .task-list-group__header:hover {
+  background: none;
 }
 
 .task-detail__back {
@@ -3620,6 +3685,20 @@ button {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
+/* Bug-bash iter-1 F4: keep monospace task IDs from breaking mid-string.
+   `word-break: break-all` was applied to every detail value, which is
+   right for prose but wrong for a fixed-width token. Specialise the
+   id cell to `nowrap` + ellipsis; the copy button always carries the
+   full id and the cell's title= attribute surfaces it on hover. */
+.task-details__id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .task-details__id-row {
   display: flex;
   align-items: center;
@@ -3711,6 +3790,156 @@ button {
   display: flex;
   justify-content: flex-end;
   padding: var(--space-2) var(--space-4) 0;
+}
+
+/* ─── Bug-bash iter-1 additions ──────────────────────────────────── */
+
+/* F7: clamp the list-row brief to 2 lines so a multi-line task title
+   doesn't blow out the row height. The tooltip on the row preserves
+   the full brief for accessibility/hover discoverability. */
+.task-list__item-headline--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* F11: demote the task-id row to text-xs, mute the colour, and right-
+   align so the row's brief reads cleanly flush-left. */
+.task-list__id--muted {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  text-align: right;
+  align-self: flex-end;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* F7 (right pane): the detail header title is a button so it can
+   toggle between clamped and full. Drop the default button chrome. */
+.task-detail__title-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  text-align: left;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.task-detail__title-caret {
+  flex: 0 0 auto;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.task-detail__title--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.task-detail__title--expanded {
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* F5 / F10: the failed-task Overview body. Stack the structured
+   failure callout, the "jump to logs/raw" link row, and the read-only
+   brief panel so the operator never sees a giant empty white space. */
+.overview-tab__failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.overview-tab__failure-callout {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.overview-tab__failure-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+.overview-tab__failure-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.06);
+}
+.overview-tab__failure-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.overview-tab__failure-meta {
+  margin: 0;
+  font-size: 12px;
+}
+.overview-tab__failure-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.overview-tab__brief {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+.overview-tab__brief-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.overview-tab__brief-details {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.overview-tab__running-hint {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Inline link-styled <button> for jumping between tabs from prose
+   without pulling in a real anchor. */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-button:hover {
+  text-decoration: none;
 }
 
 .md {
