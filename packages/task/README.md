@@ -25,7 +25,7 @@ packages/task/src/
   task-meta.ts             readTaskRuntimeMetadata (runtime hook)
   framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
   paths.ts                 safeJoinUnderRoot path-traversal guard
-  compose.ts               composeTaskModule({ dbFile|db, catalog, runtimeRegistry,  })
+  compose.ts               composeTaskModule({ dbFile, catalog, runtimeRegistry, … })
   testing.ts               openTestTaskDb helper (via /testing subpath)
   index.ts                 public barrel
 drizzle/                   generated SQL migrations (committed)
@@ -54,7 +54,7 @@ workdir contains no metadata sidecar  `runtime` / `agent` /
 import { composeTaskModule } from "@emploke/task";
 
 const { service, close } = await composeTaskModule({
-  dbFile: "/abs/workspace.db",            // OR db: <existing Drizzle handle>
+  dbFile: "/abs/workspace.db",
   catalog,                                 // CatalogService
   runtimeRegistry,                         // RuntimeRegistry
   workspaceDir: "/abs/workspace-dir",

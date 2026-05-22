@@ -38,20 +38,25 @@ export class TaskRepository {
   async save(task: TaskEntity): Promise<void> {
     if (!TASK_ID_RE.test(task.id)) throw new InvalidTaskIdError(task.id);
     const fields = taskToRowFields(task);
-    const existing = this.db
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.id, task.id))
-      .get();
-    if (existing !== undefined) {
-      this.db.update(tasks).set(fields).where(eq(tasks.id, task.id)).run();
-    } else {
-      this.db.insert(tasks).values(fields).run();
-    }
+    // Upsert in one statement via SQLite's `ON CONFLICT DO UPDATE`.
+    // Previous shape was `select-then-update-or-insert`, two
+    // round-trips with a TOCTOU window: a concurrent `delete(id)`
+    // between the SELECT and the UPDATE landed the wrong branch
+    // (would UPDATE 0 rows silently). better-sqlite3 is synchronous
+    // in-process so a real race needed a concurrent SQL connection,
+    // but the upsert is both simpler and removes the window.
+    this.db
+      .insert(tasks)
+      .values(fields)
+      .onConflictDoUpdate({ target: tasks.id, set: fields })
+      .run();
   }
 
   async delete(id: string): Promise<void> {
-    if (!TASK_ID_RE.test(id)) return;
+    // Fail-loud on invalid id, matching `read()` / `save()` —
+    // silently returning meant a `DELETE /tasks/:tid` with a typo
+    // would 204 to the dashboard instead of surfacing the error.
+    if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
     this.db.delete(tasks).where(eq(tasks.id, id)).run();
   }
 

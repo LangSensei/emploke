@@ -1,4 +1,4 @@
-import { blob, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // ─── Main entities ──────────────────────────────────────────
 
@@ -81,6 +81,7 @@ export const agentSkillDeps = sqliteTable(
   (t) => [
     index("agent_skill_deps_src_idx").on(t.sourceFqn),
     index("agent_skill_deps_tgt_idx").on(t.targetFqn),
+    uniqueIndex("agent_skill_deps_uniq").on(t.sourceFqn, t.targetFqn),
   ],
 );
 
@@ -94,6 +95,7 @@ export const agentMcpDeps = sqliteTable(
   (t) => [
     index("agent_mcp_deps_src_idx").on(t.sourceFqn),
     index("agent_mcp_deps_tgt_idx").on(t.targetFqn),
+    uniqueIndex("agent_mcp_deps_uniq").on(t.sourceFqn, t.targetFqn),
   ],
 );
 
@@ -107,6 +109,7 @@ export const skillSkillDeps = sqliteTable(
   (t) => [
     index("skill_skill_deps_src_idx").on(t.sourceFqn),
     index("skill_skill_deps_tgt_idx").on(t.targetFqn),
+    uniqueIndex("skill_skill_deps_uniq").on(t.sourceFqn, t.targetFqn),
   ],
 );
 
@@ -120,5 +123,6 @@ export const skillMcpDeps = sqliteTable(
   (t) => [
     index("skill_mcp_deps_src_idx").on(t.sourceFqn),
     index("skill_mcp_deps_tgt_idx").on(t.targetFqn),
+    uniqueIndex("skill_mcp_deps_uniq").on(t.sourceFqn, t.targetFqn),
   ],
 );

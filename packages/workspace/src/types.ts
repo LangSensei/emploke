@@ -11,5 +11,12 @@ export interface Workspace {
   readonly name: string;
   readonly workspaceDir: string;
   readonly createdAt: string;
+  /**
+   * Always populated on the DTO. The underlying schema column is
+   * nullable (a freshly-registered workspace may not have been
+   * opened yet), but `WorkspaceService.get*` calls coalesce
+   * `lastOpenedAt ?? createdAt` so consumers never see `null`.
+   * Format: ISO-8601 UTC string (e.g. `2026-05-22T08:14:00.000Z`).
+   */
   readonly lastOpenedAt: string;
 }

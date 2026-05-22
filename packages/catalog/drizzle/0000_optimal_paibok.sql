@@ -14,6 +14,7 @@ CREATE TABLE `agent_mcp_dependencies` (
 --> statement-breakpoint
 CREATE INDEX `agent_mcp_deps_src_idx` ON `agent_mcp_dependencies` (`source_fqn`);--> statement-breakpoint
 CREATE INDEX `agent_mcp_deps_tgt_idx` ON `agent_mcp_dependencies` (`target_fqn`);--> statement-breakpoint
+CREATE UNIQUE INDEX `agent_mcp_deps_uniq` ON `agent_mcp_dependencies` (`source_fqn`,`target_fqn`);--> statement-breakpoint
 CREATE TABLE `agent_skill_dependencies` (
 	`row_id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`source_fqn` text NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE `agent_skill_dependencies` (
 --> statement-breakpoint
 CREATE INDEX `agent_skill_deps_src_idx` ON `agent_skill_dependencies` (`source_fqn`);--> statement-breakpoint
 CREATE INDEX `agent_skill_deps_tgt_idx` ON `agent_skill_dependencies` (`target_fqn`);--> statement-breakpoint
+CREATE UNIQUE INDEX `agent_skill_deps_uniq` ON `agent_skill_dependencies` (`source_fqn`,`target_fqn`);--> statement-breakpoint
 CREATE TABLE `agents` (
 	`fqn` text PRIMARY KEY NOT NULL,
 	`origin` text NOT NULL,
@@ -62,6 +64,7 @@ CREATE TABLE `skill_mcp_dependencies` (
 --> statement-breakpoint
 CREATE INDEX `skill_mcp_deps_src_idx` ON `skill_mcp_dependencies` (`source_fqn`);--> statement-breakpoint
 CREATE INDEX `skill_mcp_deps_tgt_idx` ON `skill_mcp_dependencies` (`target_fqn`);--> statement-breakpoint
+CREATE UNIQUE INDEX `skill_mcp_deps_uniq` ON `skill_mcp_dependencies` (`source_fqn`,`target_fqn`);--> statement-breakpoint
 CREATE TABLE `skill_skill_dependencies` (
 	`row_id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`source_fqn` text NOT NULL,
@@ -70,6 +73,7 @@ CREATE TABLE `skill_skill_dependencies` (
 --> statement-breakpoint
 CREATE INDEX `skill_skill_deps_src_idx` ON `skill_skill_dependencies` (`source_fqn`);--> statement-breakpoint
 CREATE INDEX `skill_skill_deps_tgt_idx` ON `skill_skill_dependencies` (`target_fqn`);--> statement-breakpoint
+CREATE UNIQUE INDEX `skill_skill_deps_uniq` ON `skill_skill_dependencies` (`source_fqn`,`target_fqn`);--> statement-breakpoint
 CREATE TABLE `skills` (
 	`fqn` text PRIMARY KEY NOT NULL,
 	`origin` text NOT NULL,

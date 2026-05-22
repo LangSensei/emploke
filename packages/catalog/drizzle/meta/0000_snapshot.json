@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4eb8a42c-9218-4950-a4ff-65773ae5094b",
+  "id": "e66250d4-deee-491b-944b-d9ba02bf598e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agent_files": {
@@ -83,6 +83,11 @@
           "name": "agent_mcp_deps_tgt_idx",
           "columns": ["target_fqn"],
           "isUnique": false
+        },
+        "agent_mcp_deps_uniq": {
+          "name": "agent_mcp_deps_uniq",
+          "columns": ["source_fqn", "target_fqn"],
+          "isUnique": true
         }
       },
       "foreignKeys": {},
@@ -125,6 +130,11 @@
           "name": "agent_skill_deps_tgt_idx",
           "columns": ["target_fqn"],
           "isUnique": false
+        },
+        "agent_skill_deps_uniq": {
+          "name": "agent_skill_deps_uniq",
+          "columns": ["source_fqn", "target_fqn"],
+          "isUnique": true
         }
       },
       "foreignKeys": {},
@@ -353,6 +363,11 @@
           "name": "skill_mcp_deps_tgt_idx",
           "columns": ["target_fqn"],
           "isUnique": false
+        },
+        "skill_mcp_deps_uniq": {
+          "name": "skill_mcp_deps_uniq",
+          "columns": ["source_fqn", "target_fqn"],
+          "isUnique": true
         }
       },
       "foreignKeys": {},
@@ -395,6 +410,11 @@
           "name": "skill_skill_deps_tgt_idx",
           "columns": ["target_fqn"],
           "isUnique": false
+        },
+        "skill_skill_deps_uniq": {
+          "name": "skill_skill_deps_uniq",
+          "columns": ["source_fqn", "target_fqn"],
+          "isUnique": true
         }
       },
       "foreignKeys": {},

@@ -71,7 +71,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/session
   "AgentNotFoundError",
   "InvalidSessionIdError",
-  "SessionCorruptedError",
   "SessionIdAllocationFailedError",
   "SessionNotFoundError",
   "SessionError",
@@ -100,15 +99,11 @@ const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/server (cache-eviction conflicts)
   "WorkspaceHasLiveTasksError",
   // @emploke/workspace
-  "RegistryCorruptedError",
   "RegistryError",
-  "WorkspaceAlreadyExistsError",
-  "WorkspaceCorruptedError",
   "WorkspaceError",
   "WorkspaceIdConflictError",
   "WorkspaceIdInvalidError",
   "WorkspaceNameInvalidError",
-  "WorkspaceNotFoundError",
   "WorkspaceNotRegisteredError",
   "WorkspacePathConflictError",
 ]);

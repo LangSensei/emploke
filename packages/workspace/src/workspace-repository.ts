@@ -44,18 +44,34 @@ export class WorkspaceRepository {
   }
 
   async findAllByLastOpened(): Promise<WorkspaceEntity[]> {
-    return this.db.select().from(workspaces).orderBy(desc(workspaces.lastOpenedAt)).all();
+    return this.db
+      .select()
+      .from(workspaces)
+      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
+      .all();
   }
 
   async findLastOpened(): Promise<WorkspaceEntity | undefined> {
-    return this.db.select().from(workspaces).orderBy(desc(workspaces.lastOpenedAt)).limit(1).get();
+    return this.db
+      .select()
+      .from(workspaces)
+      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
+      .limit(1)
+      .get();
   }
 
   async findLastOpenedId(): Promise<string | undefined> {
+    // ORDER BY chain — `lastOpenedAt DESC` is the primary sort
+    // (matches what `getLastOpened` exposes); `createdAt DESC` is
+    // the secondary tiebreaker for ISO-8601 ms collisions; `id ASC`
+    // is the final deterministic fallback. Without the tiebreakers
+    // SQLite's order is implementation-defined for equal keys,
+    // which surfaced in earlier reads tests as flaky ordering
+    // requiring `setTimeout(r, 5)` between back-to-back registers.
     const row = this.db
       .select({ id: workspaces.id })
       .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt))
+      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
       .limit(1)
       .get();
     return row?.id;

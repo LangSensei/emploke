@@ -27,7 +27,6 @@ export {
 export {
   AgentNotFoundError,
   InvalidSessionIdError,
-  SessionCorruptedError,
   SessionError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,

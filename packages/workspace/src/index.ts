@@ -14,17 +14,11 @@ export {
   type WorkspaceModuleOptions,
 } from "./compose.js";
 export {
-  RegistryCorruptedError,
   RegistryError,
-  RegistryNotBootstrappedError,
-  RegistrySchemaMismatchError,
-  WorkspaceAlreadyExistsError,
-  WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNameInvalidError,
-  WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "./errors.js";

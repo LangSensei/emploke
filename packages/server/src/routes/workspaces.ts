@@ -1,12 +1,10 @@
 import { type EmplokeCore, WorkspaceHasLiveTasksError } from "@emploke/core";
 import {
   RegistryError,
-  WorkspaceCorruptedError,
   WorkspaceError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNameInvalidError,
-  WorkspaceNotFoundError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
 } from "@emploke/workspace";
@@ -206,10 +204,8 @@ function workspaceErrorStatus(err: unknown): number | null {
   if (err instanceof WorkspaceNameInvalidError) return 400;
   if (err instanceof WorkspaceIdInvalidError) return 400;
   if (err instanceof WorkspaceNotRegisteredError) return 404;
-  if (err instanceof WorkspaceNotFoundError) return 404;
   if (err instanceof WorkspaceIdConflictError) return 409;
   if (err instanceof WorkspacePathConflictError) return 409;
-  if (err instanceof WorkspaceCorruptedError) return 500;
   if (err instanceof RegistryError) return 500;
   if (err instanceof WorkspaceError) return 500;
   return null;

@@ -86,12 +86,9 @@ WorkspaceError
 ├── WorkspaceNameInvalidError      400 — name failed validation
 ├── WorkspaceIdInvalidError        400 — id is not a valid UUID
 ├── WorkspaceNotRegisteredError    404 — id has no entry in the registry
-├── WorkspaceNotFoundError         404 — workspaceDir gone from disk
 ├── WorkspaceIdConflictError       409 — register({id}) collision
 ├── WorkspacePathConflictError     409 — workspaceDir already registered
-├── WorkspaceCorruptedError        500 — workspaces row is unreadable
-└── RegistryError (+ RegistryCorruptedError, RegistrySchemaMismatchError,
-                     RegistryNotBootstrappedError)
+└── RegistryError                  500 — registry-level failure (base)
 ```
 
 `list()` is resilient to per-row corruption: a single unreadable

@@ -125,6 +125,12 @@ export class AgentRepository {
   }
 
   async delete(fqn: string): Promise<void> {
+    // No dep-count check: nothing in the catalog model depends on an
+    // agent (agents are top-of-graph). Compare with
+    // `SkillRepository.delete` / `McpRepository.delete` which guard
+    // against dependent skills / mcps via in-repo `count()` checks
+    // (FK substitute for the constraints we dropped). For agents
+    // there's no FK-substitute guard to apply.
     this.db.transaction((tx) => {
       tx.delete(agentFiles).where(eq(agentFiles.agentFqn, fqn)).run();
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, fqn)).run();

@@ -14,11 +14,19 @@
  */
 
 import { mkdir, readFile, unlink } from "node:fs/promises";
-import { type RuntimeFile, runtimeFilePath } from "@emploke/api-types";
+import * as apiTypes from "@emploke/api-types";
 import writeFileAtomic from "write-file-atomic";
 
-export type { RuntimeFile } from "@emploke/api-types";
-export { runtimeFilePath } from "@emploke/api-types";
+// Single source of truth for the api-types path: any rename of the
+// upstream package only needs touching this import. The two re-exports
+// (`type RuntimeFile`, `runtimeFilePath`) pass the public types
+// through this module so cli consumers keep their existing import
+// paths without depending on @emploke/api-types directly.
+type RuntimeFile = apiTypes.RuntimeFile;
+const runtimeFilePath = apiTypes.runtimeFilePath;
+
+export type { RuntimeFile };
+export { runtimeFilePath };
 
 /**
  * Read the runtime file. Returns `null` if the file is absent (the

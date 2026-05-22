@@ -55,6 +55,13 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
   };
 }
 
+/**
+ * In-house migration walker — same rationale as
+ * `@emploke/session`'s `compose.ts`. drizzle-kit's bundled migrator
+ * cannot resolve its sibling `meta/_journal.json` once the pkg is
+ * installed under `node_modules/.pnpm/...`, so each pkg ships its
+ * own dependency-free `*.sql` lexical apply loop.
+ */
 function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   sqlite.exec(
     "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",

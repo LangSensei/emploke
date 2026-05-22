@@ -65,11 +65,28 @@ export class WorkspaceService {
   }
 
   async list(): Promise<Workspace[]> {
+    // Per README contract: "a single unreadable workspace is silently
+    // dropped rather than failing the whole list" — wrap each entity
+    // projection so a malformed row (future stricter view, schema
+    // skew, NULL-where-not-expected) doesn't blow up the whole call.
+    // `getById` keeps fail-loud behaviour because the caller asked for
+    // that specific id.
     const entities = await this.repo.findAllByLastOpened();
-    return entities.map((entity) => ({
-      ...entity,
-      lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt,
-    }));
+    const out: Workspace[] = [];
+    for (const entity of entities) {
+      try {
+        out.push({ ...entity, lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt });
+      } catch (err) {
+        this.logger.warn(
+          {
+            workspaceId: entity.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          "workspace list: dropping malformed row",
+        );
+      }
+    }
+    return out;
   }
 
   async getLastOpened(): Promise<Workspace | null> {
@@ -103,6 +120,15 @@ export class WorkspaceService {
       const byPath = await this.repo.findByPath(workspaceDir);
       if (byPath) throw new WorkspacePathConflictError(workspaceDir, byPath.id);
 
+      // FS-then-DB ordering: we mkdir() before the row insert so
+      // the workspace skeleton exists by the time any caller observes
+      // the new registry row. The trade-off is that an insert failure
+      // (constraint race, disk full, etc.) leaves the skeleton on disk;
+      // this is benign because subsequent `register()` of the same dir
+      // either succeeds (idempotent mkdir + fresh insert) or hits the
+      // dup-path check above, and an unused empty skeleton costs ~0
+      // bytes and never gets seen by listings (registry is the source
+      // of truth).
       await mkdir(workspaceDir, { recursive: true });
       const layout = workspaceLayout(workspaceDir);
       await Promise.all([
@@ -136,8 +162,20 @@ export class WorkspaceService {
           if (msg.includes("workspaces.workspace_dir")) {
             // We don't know the conflicting id without a re-read; do
             // one targeted lookup so the typed error carries it.
-            const existing = await this.repo.findByPath(workspaceDir);
-            throw new WorkspacePathConflictError(workspaceDir, existing?.id ?? "<unknown>");
+            // Guard against the re-read itself throwing (db closed,
+            // lock timeout) — losing the original SQLITE_CONSTRAINT
+            // diagnostic to a follow-up error would mask the real
+            // cause. On lookup failure, throw the typed error with
+            // a sentinel id and re-emit the original constraint
+            // error as `cause` so logs can still find it.
+            let conflictingId = "<unknown>";
+            try {
+              const existing = await this.repo.findByPath(workspaceDir);
+              if (existing) conflictingId = existing.id;
+            } catch {
+              // Best-effort lookup; sentinel id stands in.
+            }
+            throw new WorkspacePathConflictError(workspaceDir, conflictingId);
           }
         }
         throw err;
@@ -173,7 +211,10 @@ export class WorkspaceService {
 
       const ws = await this.repo.findById(id);
       if (!ws) throw new WorkspaceNotRegisteredError(id);
-      if (ws.name === opts.newName) return;
+      if (ws.name === opts.newName) {
+        this.logger.debug({ command: "rename", id, reason: "noop" }, "command handled");
+        return;
+      }
       await this.repo.update(id, { name: opts.newName });
       this.logger.debug({ command: "rename", id }, "command handled");
     } catch (err) {

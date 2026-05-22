@@ -11,11 +11,12 @@
  * `TerminateProcess` regardless of the signal name — there is no
  * graceful equivalent of POSIX SIGTERM. The server's
  * `gracefulShutdown` handler therefore will NOT run on Windows. The
- * server's persistence layer is atomic-write (`write-file-atomic`), so this
- * forces no corruption; in-flight task subprocesses can still be
- * orphaned and are cleaned up on the next server boot via the
- * `recoverOrphaned` sweep. A future graceful-shutdown HTTP endpoint
- * can fix this — tracked separately.
+ * server's persistence is SQLite (WAL + transactions), which means
+ * mid-write torn writes don't corrupt the DB even on hard kill;
+ * in-flight task subprocesses can still be orphaned and are cleaned
+ * up on the next server boot via the `recoverOrphaned` sweep. A
+ * future graceful-shutdown HTTP endpoint can fix this — tracked
+ * separately.
  */
 
 import { setTimeout as delay } from "node:timers/promises";

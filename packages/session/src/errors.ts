@@ -58,24 +58,3 @@ export class AgentNotFoundError extends SessionError {
     if (cause) this.cause = cause;
   }
 }
-
-/**
- * The persisted session row is missing required fields, holds an
- * invalid value, or has a column shape the current build cannot
- * decode. Surfaced by `list()` / `get()` — they skip and warn — and
- * by `delete()` — which throws so the user can investigate.
- *
- * Carries the offending session `id` plus a human-readable `reason`
- * so operators can find the bad row in the workspace's `sessions`
- * table without re-running the failing query.
- */
-export class SessionCorruptedError extends SessionError {
-  override readonly name = "SessionCorruptedError";
-
-  constructor(
-    public readonly id: string,
-    public readonly reason: string,
-  ) {
-    super(`session ${id} is corrupted: ${reason}`);
-  }
-}

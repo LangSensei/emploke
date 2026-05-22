@@ -60,6 +60,18 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   };
 }
 
+/**
+ * Minimal in-house migration runner: applies any `*.sql` files in
+ * `drizzle/` that haven't been recorded in `__drizzle_migrations` yet.
+ *
+ * We hand-roll this instead of using `drizzle-orm/better-sqlite3/migrator`
+ * because that helper expects to read a sibling `meta/_journal.json` plus
+ * per-migration snapshot files relative to a packaged path that breaks
+ * when the pkg is installed under `node_modules/.pnpm/...`. Re-implementing
+ * the "apply unseen files in lexical order" loop directly keeps the
+ * runtime path dependency-free (only `better-sqlite3` + `fs`) and matches
+ * the same pattern used by every other emploke pkg's `compose.ts`.
+ */
 function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   sqlite.exec(
     "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",

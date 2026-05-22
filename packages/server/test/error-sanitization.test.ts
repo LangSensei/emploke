@@ -83,7 +83,6 @@ describe("errorBody", () => {
       // session
       "AgentNotFoundError",
       "InvalidSessionIdError",
-      "SessionCorruptedError",
       "SessionIdAllocationFailedError",
       "SessionNotFoundError",
       "SessionError",
@@ -128,15 +127,11 @@ describe("errorBody", () => {
       // task
       "CorruptedTaskError",
       // workspace
-      "RegistryCorruptedError",
       "RegistryError",
-      "WorkspaceAlreadyExistsError",
-      "WorkspaceCorruptedError",
       "WorkspaceError",
       "WorkspaceIdConflictError",
       "WorkspaceIdInvalidError",
       "WorkspaceNameInvalidError",
-      "WorkspaceNotFoundError",
       "WorkspaceNotRegisteredError",
       "WorkspacePathConflictError",
       // server

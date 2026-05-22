@@ -39,6 +39,14 @@ export class SessionRepository {
     this.db = opts.db;
   }
 
+  /**
+   * `async` even though the underlying drizzle better-sqlite3 driver
+   * is synchronous: the repository contract is async across all pkgs
+   * (so services can `await` uniformly) and to leave room for swapping
+   * the driver later without a breaking signature change. Microbench
+   * cost of `async` over sync return is negligible at the
+   * 10s-of-queries/sec scale this repo handles.
+   */
   async findById(id: string): Promise<SessionEntity | undefined> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
