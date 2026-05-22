@@ -264,7 +264,7 @@ describe("create()", () => {
     // workdir sidecar. Inspect via the same handle the manager wrote
     // through. `persisted` is a Session entity — compare its
     // POJO projection so the assertion stays shape-only.
-    const persisted = await new SessionRepository({ db: orm.db }).read(s.id);
+    const persisted = await new SessionRepository({ db: orm.db }).findById(s.id);
     expect(persisted).not.toBeNull();
     expect(persisted?.runtime).toBe("copilot");
     expect(persisted?.agent).toBe("public/demo");
@@ -516,7 +516,7 @@ describe("list()", () => {
     const s = await m.create({ agent: "demo" });
     const [out] = await m.list();
     expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-    const persisted = await new SessionRepository({ db: orm.db }).read(s.id);
+    const persisted = await new SessionRepository({ db: orm.db }).findById(s.id);
     expect(persisted?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
   });
 
@@ -797,9 +797,9 @@ describe("buildInteractiveLaunch()", () => {
     });
     const s = await m.create({ agent: "demo" });
     await m.buildInteractiveLaunch(s.id, { remote: true });
-    expect((await new SessionRepository({ db: orm.db }).read(s.id))?.lastLaunchMode).toBe("remote");
+    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe("remote");
     await m.buildInteractiveLaunch(s.id, { remote: false });
-    expect((await new SessionRepository({ db: orm.db }).read(s.id))?.lastLaunchMode).toBe("local");
+    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe("local");
   });
 
   it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {
@@ -820,7 +820,7 @@ describe("buildInteractiveLaunch()", () => {
       db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
-    const before = await new SessionRepository({ db: orm.db }).read(s.id);
+    const before = await new SessionRepository({ db: orm.db }).findById(s.id);
     if (before === undefined) throw new Error("session row missing after create");
     // Fire both writes concurrently. The "parallel writer" path uses a
     // direct drizzle update on runtime_session_id only — matches what a
@@ -837,7 +837,7 @@ describe("buildInteractiveLaunch()", () => {
           .run();
       })(),
     ]);
-    const after = await new SessionRepository({ db: orm.db }).read(s.id);
+    const after = await new SessionRepository({ db: orm.db }).findById(s.id);
     expect(after?.runtimeSessionId).toBe("from-parallel-writer");
     expect(after?.lastLaunchMode).toBe("remote");
   });

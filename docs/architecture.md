@@ -52,23 +52,61 @@ spawn agents.
 
 ## Service + repository pattern
 
-Every entity package follows the same shape: a single **`<Entity>Service`**
-class that owns reads + writes, backed by a package-private
-**Drizzle repository** that the service constructs. Tests open the
-service against `dbFile: ":memory:"` via the package's `composeXxxModule`
-helper, so the schema goes through the real drizzle-kit migrator on
-every test boot.
+Every entity package follows the same shape: a single
+**`<Entity>Service`** class that owns reads + writes, backed by a
+package-private **Drizzle repository** that the service constructs.
+Tests open the service against `dbFile: ":memory:"` via the package's
+`composeXxxModule` helper, so the schema goes through the real
+drizzle-kit migrator on every test boot.
+
+### Per-package src layout
+
+```
+packages/<pkg>/src/
+  schema.ts                 Drizzle table def + `*Row` / `New*Row` types (package-private)
+  <entity>-entity.ts        `<Entity>Entity` — pkg-owned domain shape; interface or class
+  <entity>-repository.ts    `<Entity>Repository` — Drizzle CRUD; returns Entity
+  <entity>-service.ts       `<Entity>Service` — orchestration; returns DTO
+  types.ts                  bare-noun DTO (`Workspace`, `Session`, ...) + opts shapes
+  errors.ts                 typed error classes
+  validate.ts               id regex + zod input schemas
+  compose.ts                `compose<Entity>Module({ dbFile })` composition root
+  testing.ts                in-memory test fixture (via `/testing` subpath)
+  index.ts                  public barrel
+drizzle/                    generated SQL migrations (committed)
+drizzle.config.ts           drizzle-kit codegen config
+```
+
+### The three layers
+
+emploke uses an **explicit 3-layer split** (Row / Entity / DTO) across
+every entity pkg. The pkg-template enforces it; see
+[`docs/pkg-template.md`](./pkg-template.md) for the full rationale.
+
+| Layer | Where | Suffix | Visibility | Role |
+|---|---|---|---|---|
+| **Row** | `schema.ts` | `*Row` | pkg-private | Drizzle `$inferSelect` shape; tracks the SQLite table |
+| **Entity** | `<entity>-entity.ts` | `*Entity` | pkg-private (NOT re-exported from `index.ts`) | Pkg-owned domain shape; `interface` for anemic BCs, `class` for rich (state machine / invariants) |
+| **DTO** | `types.ts` | bare noun (no suffix) | exported from `index.ts` | Wire shape; what `<Entity>Service` returns; stable contract for HTTP / CLI / other pkgs |
+
+Repository public methods return **Entity**. Service public methods
+return **DTO**. The row → entity boundary lives inside the repository
+file; the entity → DTO boundary lives inside the service file. When
+either projection is structurally trivial it's an inline TypeScript
+assignment (no helper function); when it's non-trivial — composite
+sources, normalisation, async fetches — it grows into a module-private
+helper at the same boundary.
 
 ```ts
 // e.g. packages/workspace/src/workspace-service.ts
 export class WorkspaceService {
-  // Reads
+  // Reads — service projects Entity → DTO inline (1-line normalisation).
   getById(id: string): Promise<Workspace | null>;
   list(): Promise<Workspace[]>;
   getLastOpened(): Promise<Workspace | null>;
   getLastOpenedId(): Promise<string | null>;
 
-  // Writes (Stripe-style hybrid: primary key positional, options in bag)
+  // Writes — Stripe-style hybrid: primary key positional, options in bag.
   register(input: { id, workspaceDir, name }): Promise<{ id: string }>;
   open(id: string): Promise<void>;
   rename(id: string, opts: { newName: string }): Promise<void>;
@@ -76,25 +114,23 @@ export class WorkspaceService {
 }
 ```
 
-Three properties matter:
+### Three properties of the pattern
 
-1. **Domain types are flat DTOs.** `Workspace`, `Task`, `Session`,
-   `Skill`, `Agent` are derived from the Drizzle schema's
-   `$inferSelect` (with light projection where needed). No
-   `schemaVersion`, no `metadata` wrapper, no aggregate factories,
-   no value object wrappers around primitives.
-2. **Repositories are bytes in / bytes out.** They never parse
-   frontmatter, build dependency graphs, or maintain caches — those
-   are service concerns. The repository's job is "given an id, return
-   the stored value (or undefined)."
-3. **`<Entity>Entity` classes are package-private.** Pkgs with a
-   state machine (`task`, the catalog entities) keep their FSM class
-   internal; the public projection is the bare-noun DTO. The service
-   maps between them at the repository boundary.
+1. **Repositories are persistence-only.** They never parse
+   frontmatter, build dependency graphs, mkdir, spawn subprocesses,
+   or call other pkgs. The repository's job is "given an id, return
+   the stored `Entity` (or undefined)." Side effects, validation,
+   cross-pkg coordination, FSM transitions all live in the service.
+2. **`*Row` never leaves the repository.** No `export * as schema`
+   from `index.ts`; the Drizzle inferred type is implementation
+   detail. Swapping ORMs only touches `schema.ts` +
+   `<entity>-repository.ts`.
+3. **`*Entity` classes are pkg-private.** Rich BCs (catalog/task)
+   keep their FSM class internal; the public projection is the
+   bare-noun DTO. Anemic BCs (workspace/session) use a plain
+   `interface` for Entity instead of a class.
 
-DTO / file naming conventions are codified in
-[`docs/pkg-template.md`](./pkg-template.md) and the
-[`packages/_template/`](../packages/_template) scaffold.
+
 
 ## Atomic IO seam
 
@@ -532,13 +568,19 @@ file and break it, that's a `git restore` away (if you're lucky) or a
 - Integration tests live in `packages/<pkg>/test/integration/` and
   use real subprocess spawning where applicable. They run on the same
   CI matrix (Linux / macOS / Windows / Node 22).
-- The **InMemory repository per entity** is the preferred test seam.
-  Reach for `mkdtemp` + the FS repo only when the test must observe
-  on-disk behavior (atomicity, lock recovery, scan order).
-- Vitest's `vi.mock` pattern is used to spy on module imports —
-  see `packages/catalog/test/fs-repositories.test.ts` for the
-  canonical example (regression-test that production code goes through
-  the atomic-write seam).
+- The preferred test seam is **`compose<Entity>Module({ dbFile:
+  ":memory:" })`**: opens an in-memory SQLite, runs the real
+  drizzle-kit migrations, returns the real service. No mocks of
+  the persistence layer; tests assert against actual database
+  behaviour (constraint violations, ordering, joins).
+- Vitest's `vi.mock` pattern is used to spy on module imports
+  when a side-effect needs verification (e.g. confirming the
+  service routes a write through the atomic-write helper rather
+  than `fs.writeFile` directly).
+- Vitest runs in `forks` pool across every pkg. better-sqlite3's
+  native binding segfaults on worker-thread teardown on Windows;
+  forks isolate per-file with a separate process so the segfault
+  becomes a localised failure instead of a workspace-wide outage.
 
 ## Coding conventions
 

@@ -15,7 +15,7 @@ import {
   SessionNotFoundError,
 } from "./errors.js";
 import { safeJoinUnderRoot, sessionsRoot } from "./paths.js";
-import type { SessionRow } from "./schema.js";
+import type { SessionEntity } from "./session-entity.js";
 import { SessionRepository } from "./session-repository.js";
 import type {
   BuildInteractiveLaunchSessionOpts,
@@ -167,7 +167,7 @@ export class SessionService {
     const repoOpts: { createdSince?: string; agent?: string } = {};
     if (opts.createdSince !== undefined) repoOpts.createdSince = opts.createdSince;
     if (opts.agent !== undefined) repoOpts.agent = opts.agent;
-    let entries: SessionRow[];
+    let entries: SessionEntity[];
     try {
       entries = await this.repo.list(repoOpts);
     } catch (err) {
@@ -178,7 +178,7 @@ export class SessionService {
       return [];
     }
 
-    const drafts = await Promise.all(entries.map((row) => this.draftFromRow(row)));
+    const drafts = await Promise.all(entries.map((row) => this.draftFromEntity(row)));
     const survivors: Session[] = [];
     for (const draft of drafts) {
       if (draft === null) continue;
@@ -346,16 +346,16 @@ export class SessionService {
 
   // ─── internals ───────────────────────────────────────────
 
-  private async draftFromRow(row: SessionRow): Promise<Session | null> {
-    const workdir = safeJoinUnderRoot(this.sessionsDir, row.id);
+  private async draftFromEntity(entity: SessionEntity): Promise<Session | null> {
+    const workdir = safeJoinUnderRoot(this.sessionsDir, entity.id);
 
     try {
-      this.runtimeRegistry.get(row.runtime);
+      this.runtimeRegistry.get(entity.runtime);
     } catch (err) {
       this.logger.warn(
         {
-          sessionId: row.id,
-          runtime: row.runtime,
+          sessionId: entity.id,
+          runtime: entity.runtime,
           error: err instanceof Error ? err.message : String(err),
         },
         "sessions: skipping session with unregistered runtime",
@@ -364,15 +364,15 @@ export class SessionService {
     }
 
     return {
-      id: row.id,
+      id: entity.id,
       workdir,
-      agent: row.agent,
-      runtime: row.runtime,
-      runtimeSessionId: row.runtimeSessionId,
-      createdAt: row.createdAt,
+      agent: entity.agent,
+      runtime: entity.runtime,
+      runtimeSessionId: entity.runtimeSessionId,
+      createdAt: entity.createdAt,
       lastActiveAt: null,
       preview: null,
-      lastLaunchMode: row.lastLaunchMode,
+      lastLaunchMode: entity.lastLaunchMode,
     };
   }
 
@@ -408,9 +408,9 @@ export class SessionService {
   }
 
   private async loadSession(id: string): Promise<Session | null> {
-    let row: SessionRow | undefined;
+    let row: SessionEntity | undefined;
     try {
-      row = await this.repo.read(id);
+      row = await this.repo.findById(id);
     } catch (err) {
       this.logger.warn(
         {
@@ -422,7 +422,7 @@ export class SessionService {
       return null;
     }
     if (row === undefined) return null;
-    const draft = await this.draftFromRow(row);
+    const draft = await this.draftFromEntity(row);
     if (draft === null) return null;
     return this.refreshSession(draft);
   }

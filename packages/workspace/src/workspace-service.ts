@@ -23,10 +23,17 @@ const silentLogger: Logger = pino({ level: "silent" });
  *
  * Exposes the full workspace surface: write commands (`register`,
  * `open`, `rename`, `unregister`) and read projections (`getById`,
- * `list`, `getLastOpened`, `getLastOpenedId`). All read + write paths
- * go through the repository so the DTO contract / row contract
- * boundary stays in one place; the service never touches Drizzle
- * directly.
+ * `list`, `getLastOpened`, `getLastOpenedId`). All read paths go
+ * through the repository to the {@link WorkspaceEntity} layer and
+ * the service projects to the wire {@link Workspace} DTO via
+ * {@link entityToDto}. Three-layer split per
+ * `docs/pkg-template.md` "Repository contract":
+ *
+ *   Drizzle Row → WorkspaceEntity (repo boundary) → Workspace (wire)
+ *
+ * The repository hides ORM specifics; the service hides nullability
+ * normalisation and any cross-pkg composition (none for workspace,
+ * but session adds workdir + runtime metadata at this same layer).
  *
  * Each write method: parse input → validate → run async FS work →
  * write to the DB last. The FS-then-DB ordering is deliberate: FS
@@ -53,15 +60,21 @@ export class WorkspaceService {
   // ─── Reads ─────────────────────────────────────────────
 
   async getById(id: string): Promise<Workspace | null> {
-    return (await this.repo.findById(id)) ?? null;
+    const entity = await this.repo.findById(id);
+    return entity ? { ...entity, lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt } : null;
   }
 
   async list(): Promise<Workspace[]> {
-    return this.repo.findAllByLastOpened();
+    const entities = await this.repo.findAllByLastOpened();
+    return entities.map((entity) => ({
+      ...entity,
+      lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt,
+    }));
   }
 
   async getLastOpened(): Promise<Workspace | null> {
-    return (await this.repo.findLastOpened()) ?? null;
+    const entity = await this.repo.findLastOpened();
+    return entity ? { ...entity, lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt } : null;
   }
 
   async getLastOpenedId(): Promise<string | null> {

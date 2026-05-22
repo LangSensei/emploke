@@ -15,10 +15,13 @@ import type { __Entity__, Create__Entity__Args, List__Entity__Opts } from "./typ
  * payoff.
  *
  * The service is a thin orchestrator on top of `__Entity__Repository`.
- * The repository owns the persistence ↔ DTO projection (`rowToDto`
- * inside `__entity-kebab__-repository.ts`); the service contributes
- * write-side validation, id minting, and any cross-pkg coordination
- * (e.g. a runtime hook, a layout helper).
+ * Reads delegate to the repository (which returns `__Entity__Entity`
+ * — the pkg-owned domain shape) and the service projects to the wire
+ * `__Entity__` DTO inline; for trivial 1:1 projections inlining is
+ * lighter than a helper, and for non-trivial projections (composite
+ * sources, async normalisation) you grow this method's body
+ * naturally. Writes contribute id minting, validation, and any
+ * cross-pkg coordination (a runtime hook, a layout helper, …).
  */
 export class __Entity__Service {
   constructor(
@@ -29,6 +32,9 @@ export class __Entity__Service {
   // ─── Reads ─────────────────────────────────────────────
 
   async get(id: string): Promise<__Entity__ | null> {
+    // Entity → DTO is structural identity for this template — replace
+    // with `{ ...entity, /* normalisation */ }` if a field needs
+    // coercion at the wire boundary.
     return (await this.repo.findById(id)) ?? null;
   }
 

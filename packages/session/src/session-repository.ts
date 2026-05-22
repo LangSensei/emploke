@@ -2,7 +2,8 @@ import { and, eq, gte, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { InvalidSessionIdError } from "./errors.js";
 import type * as schema from "./schema.js";
-import { type SessionRow, sessions } from "./schema.js";
+import { sessions } from "./schema.js";
+import type { SessionEntity } from "./session-entity.js";
 import { SESSION_ID_RE } from "./validate.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
@@ -17,6 +18,19 @@ export interface ListSessionStateOpts {
  * public method validates `id` against `SESSION_ID_RE` before reaching
  * the DB. The validation keeps the "sessions namespace, not arbitrary
  * keys" contract explicit.
+ *
+ * **Entity at the boundary:** read methods return the pkg-owned
+ * {@link SessionEntity} (persisted slice). Today the entity is
+ * structurally identical to the Drizzle row, so the row assigns
+ * directly via TypeScript structural typing — no explicit projection
+ * helper. The naming separation is contractual; reintroduce a
+ * `rowToEntity` projection if Row ever gains a column we don't
+ * want in Entity.
+ *
+ * The service composes the wire-shape
+ * {@link import("./types.js").Session} DTO by adding `workdir`
+ * (computed from layout) and live `lastActiveAt` / `preview` (read
+ * from the runtime). See `docs/pkg-template.md` "Repository contract".
  */
 export class SessionRepository {
   private readonly db: Db;
@@ -25,7 +39,7 @@ export class SessionRepository {
     this.db = opts.db;
   }
 
-  async read(id: string): Promise<SessionRow | undefined> {
+  async findById(id: string): Promise<SessionEntity | undefined> {
     if (!SESSION_ID_RE.test(id)) throw new InvalidSessionIdError(id);
     return this.db.select().from(sessions).where(eq(sessions.id, id)).get();
   }
@@ -64,7 +78,7 @@ export class SessionRepository {
     this.db.delete(sessions).where(eq(sessions.id, id)).run();
   }
 
-  async list(opts: ListSessionStateOpts = {}): Promise<SessionRow[]> {
+  async list(opts: ListSessionStateOpts = {}): Promise<SessionEntity[]> {
     const filters: SQL[] = [];
     if (opts.createdSince !== undefined) filters.push(gte(sessions.createdAt, opts.createdSince));
     if (opts.agent !== undefined) filters.push(eq(sessions.agent, opts.agent));
