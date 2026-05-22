@@ -17,9 +17,15 @@ layers; never the reverse.
                 │ @emploke/dashboard     │  React + Vite SPA
                 └───────────▲────────────┘
                             │ HTTP /api/*
-                ┌───────────┴────────────┐
-                │ @emploke/server        │  Hono routes + middleware
-                └───────────▲────────────┘
+                ┌───────────┴────────────┐       ┌─────────────┐
+                │ @emploke/cli           │       │ @emploke/   │
+                │ (lifecycle commands)   │──────▶│  api-types  │
+                └───────────┬────────────┘       └──────▲──────┘
+                            │ HTTP /api/*               │
+                ┌───────────┴────────────┐              │
+                │ @emploke/server        │  Hono ──────┘
+                │ (routes + middleware)  │  routes; reads RuntimeFile
+                └───────────▲────────────┘  shape from api-types
                             │
                 ┌───────────┴────────────┐
                 │ @emploke/core          │  composition root +
@@ -30,16 +36,20 @@ layers; never the reverse.
    │           │            │            │               │
 ┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌──────┴──────┐
 │task │  │ session   │ │ catalog │ │ workspace │  │   runtime   │
-└──▲──┘  └─────▲─────┘ └────▲────┘ └─────▲─────┘  └──────▲──────┘
-   │           │            │            │               │
-   └───────────┴────────────┘            │       ┌───────┴───────┐
-                                         │       │ @emploke/terminal │
-                                         │       └───────────────┘
-                                  ┌──────┴──────┐
-                                  │ @emploke/   │
-                                  │  api-types  │
-                                  └─────────────┘
+└──▲──┘  └─────▲─────┘ └─────────┘ └───────────┘  └──────▲──────┘
+   │           │                                          │
+   └───────────┴──────────────────────────────────┬───────┘
+                                                  │
+                                          ┌───────┴───────┐
+                                          │  @emploke/    │
+                                          │   terminal    │
+                                          └───────────────┘
 ```
+
+`@emploke/api-types` is the **out-of-band IPC contract** between
+`@emploke/cli` and `@emploke/server` (today: the `runtime.json` file
+shape + `EMPLOKE_HOME` resolution). Entity packages do NOT depend on
+it — they expose pkg-owned DTOs through their own `index.ts`.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition
