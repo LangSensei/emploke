@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.5.1 — 2026-05-22
+
+### Fixed
+
+- **`emploke start` failed on 0.5.0 with `Could not locate the bindings file`** for `better-sqlite3`. The single-file CLI bundle inlined the JS shim of the native module, breaking its filesystem-walk for the `.node` binding. `better-sqlite3` + its `bindings` resolver are now marked `external` in `esbuild.config.js` and declared as runtime `dependencies` of `@langsensei/emploke` so `npm install -g` materialises the prebuilt binary into the user's `node_modules` tree where the loader can find it. No code change — repackaging only. ([#152](https://github.com/LangSensei/emploke/issues/152))
+
 ## 0.5.0 — 2026-05-22
 
 ### Phase 3 (#148) — de-DDD pivot + `@emploke/core` extraction + Drizzle migration

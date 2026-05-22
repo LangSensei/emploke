@@ -25,7 +25,23 @@ import esbuild from "esbuild";
 // node_modules. `thread-stream` is pino's worker entry point and is
 // pulled transitively, but listing it explicitly avoids esbuild walking
 // into it accidentally if the dep graph shifts.
-const external = ["pino", "pino-pretty", "pino-roll", "thread-stream"];
+const external = [
+  "pino",
+  "pino-pretty",
+  "pino-roll",
+  "thread-stream",
+  // better-sqlite3 is a native module with a `.node` binding loaded
+  // via `bindings` at runtime by walking the filesystem from the
+  // module location. Inlining the JS shim into our single-file
+  // bundle breaks the bindings search (it looks under the bundle
+  // path, not under node_modules/better-sqlite3/build/). Keep it as
+  // a real `require()` and declare it as a runtime `dependency` of
+  // `@langsensei/emploke` so `npm install` materialises the prebuilt
+  // binary into the user's node_modules tree. `bindings` is the
+  // tiny resolver better-sqlite3 uses; same treatment.
+  "better-sqlite3",
+  "bindings",
+];
 
 const result = await esbuild.build({
   entryPoints: { emploke: "packages/cli/src/bin.ts" },

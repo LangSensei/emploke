@@ -30,7 +30,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts && node ../../scripts/inline-migrations.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

@@ -1,8 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
+import { MIGRATIONS } from "./migrations.generated.js";
 import * as schema from "./schema.js";
 import { WorkspaceRepository } from "./workspace-repository.js";
 import { WorkspaceService } from "./workspace-service.js";
@@ -72,15 +71,6 @@ function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   sqlite.exec(
     "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL)",
   );
-  const dir = migrationsDir();
-  let files: string[];
-  try {
-    files = readdirSync(dir)
-      .filter((f) => f.endsWith(".sql"))
-      .sort();
-  } catch {
-    return; // no migrations dir yet
-  }
   const applied = new Set(
     sqlite
       .prepare("SELECT name FROM __drizzle_migrations")
@@ -95,17 +85,12 @@ function runPendingMigrations(sqlite: BetterSqliteDatabase): void {
   // whole file. Without this the schema could land half-applied with no
   // matching journal row and the next boot would re-run the same file
   // from the top and crash on duplicate-table.
-  const applyOne = sqlite.transaction((name: string) => {
-    const sql = readFileSync(path.join(dir, name), "utf8");
+  const applyOne = sqlite.transaction((name: string, sql: string) => {
     sqlite.exec(sql);
     insertApplied.run(name, new Date().toISOString());
   });
-  for (const name of files) {
-    if (applied.has(name)) continue;
-    applyOne(name);
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.name)) continue;
+    applyOne(m.name, m.sql);
   }
-}
-
-function migrationsDir(): string {
-  return path.join(import.meta.dirname, "..", "drizzle");
 }
