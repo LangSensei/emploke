@@ -48,7 +48,7 @@ Walk through:
    (one-line goal) and optional details, click *Dispatch*. The agent runs
    unattended in a new sandbox under
    `tasks/<id>/`; the dashboard shows the live event stream and folds the
-   exit into a final `success` / `failure` / `cancelled` status.
+   exit into a final `succeeded` / `failed` / `cancelled` status.
 4. **Or open a session** in the Sessions tab — interactive workdir; emploke
    bakes the agent into it and gives you the exact `copilot` invocation to
    run yourself.
@@ -105,7 +105,7 @@ two layers of commands:
 
 ### API client (talk to a running server)
 
-41 commands wrap the server's HTTP routes 1:1; the typed manifest in
+55 commands wrap the server's HTTP routes 1:1; the typed manifest in
 `packages/server/src/routes/manifest.ts` is the single source of truth
 that both the server registers handlers against and the CLI builds
 typed calls from. Adding a route on either side without updating the
@@ -129,7 +129,7 @@ emploke workspace rm <id> --purge
 emploke session new --agent writer
 emploke session list --agent writer --json
 emploke task dispatch --agent triage --brief "Scan recent issues"
-emploke task list --status running,success
+emploke task list --status running,succeeded
 emploke task events <tid>     # one-shot dump of the runtime's NDJSON log
 emploke task activity <tid>   # runtime-parsed activity timeline (JSON)
 
@@ -166,12 +166,12 @@ blobs. What emploke adds:
   [GitHub Copilot CLI](https://github.com/github/gh-copilot) today; the same
   surface lets future runtimes (Gemini, Claude Code, …) drop in.
 - **Autonomous tasks alongside interactive sessions** — one-shot dispatch
-  with a structured `not_started → running → success/failure/cancelled`
+  with a structured `running → succeeded/failed/cancelled`
   lifecycle, persisted across server restarts.
 
 ## Architecture
 
-The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 13 small
+The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 11 small
 TypeScript packages with a strict layering: pure value types at the bottom,
 file-system primitives next, entity managers above (workspace / catalog /
 session / task), then the runtime adapter, then the HTTP server, then the

@@ -117,7 +117,7 @@ Tests under a sub-folder mirror the source sub-folder:
 `packages/catalog/test/agent/agent-service.test.ts`.
 
 NEVER name a test file by an old class name (`manager.test.ts` was wrong
-after `SessionService` was renamed to `SessionService`) or by a non-source
+after `SessionManager` was renamed to `SessionService`) or by a non-source
 concept word.
 
 ## Naming conventions
@@ -213,7 +213,7 @@ Extract a `rowToEntity` / `entityToDto` helper when:
 
 Add `<entity>-entity.ts` as a `class` instead of an `interface`
 when the BC needs:
-- Non-trivial state transitions (`pending → running → success`)
+- Non-trivial state transitions (`running → succeeded`)
 - Invariant validation on every mutation
 - Immutable functional updates (`entity.withMetadata(...)`)
 

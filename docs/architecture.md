@@ -639,8 +639,8 @@ To add e.g. a Gemini adapter:
    cleanup. Implement `readMetadata` if the CLI surfaces a session-
    level display title. The dashboard / CLI / future MCP renders
    `ActivityItem`s without ever seeing your log format or path.
-4. Register the runtime in the `RuntimeRegistry` at
-   `packages/server/src/runtime-registry.ts`.
+4. Register the runtime in the `RuntimeRegistry` instantiated at
+   `packages/server/src/index.ts`.
 
 The dashboard adapts automatically — runtimes are listed via
 `/api/runtimes` and the create-session / dispatch-task forms pick

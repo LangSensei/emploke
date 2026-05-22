@@ -87,14 +87,14 @@ await close();                            // sweeps live subprocesses + closes D
 Statuses are persisted on the row:
 
 ```
-pending  running  success | failure | cancelled
+running → succeeded | failed | cancelled
 ```
 
-`dispatch` writes `pending`, immediately starts the runtime
-subprocess, transitions to `running` after the SDK reports the agent
-started, and folds the eventual exit into a terminal status. The
-service supervises every live subprocess in-memory and reconciles to
-disk on shutdown via `recoverOrphaned`.
+`dispatch` creates the task directly in `running` and immediately starts
+the runtime subprocess; the eventual exit folds into a terminal status
+(`succeeded`, `failed`, or `cancelled` — the latter only via
+`TaskService.cancel(id)`). The service supervises every live subprocess
+in-memory and reconciles to disk on shutdown via `recoverOrphaned`.
 
 ## Env layering
 
