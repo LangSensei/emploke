@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import type { TaskRecord } from "../../../api";
-import { formatAbsolute, formatDuration } from "../../../utils/time";
-import { readRuntime, STATUS_LABEL } from "../shared";
+import { formatAbsolute, formatDuration, formatRelative } from "../../../utils/time";
 
 export interface DetailsSidebarProps {
   task: TaskRecord;
@@ -14,9 +13,17 @@ export interface DetailsSidebarProps {
  * `TaskRecord` shape. The mockup's `Workspace`, `Branch`, `Commit`,
  * and `PR` rows are deliberately omitted — those need mission B
  * (schema enrichment). Their absence is intentional, not an oversight.
+ *
+ * Bug-bash iter-1:
+ *   - F8: drop `Status` / `Agent` / `Runtime` rows — the right-pane
+ *     header already shows pills for those.
+ *   - F9: `Started` uses the absolute timestamp as the primary value,
+ *     relative time on hover (less ambiguous for ops/debug).
+ *   - F4: `Task ID` renders monospace + nowrap with horizontal
+ *     ellipsis; the copy button sits beside it (never breaking the
+ *     id mid-string).
  */
 export function DetailsSidebar({ task }: DetailsSidebarProps) {
-  const runtime = readRuntime(task);
   const duration =
     task.endedAt && task.startedAt
       ? formatDuration(task.startedAt, task.endedAt)
@@ -27,18 +34,21 @@ export function DetailsSidebar({ task }: DetailsSidebarProps) {
     <aside className="task-details">
       <h3 className="task-details__title">Details</h3>
       <dl className="task-details__list">
-        <Row label="Agent" value={task.agent} mono />
-        {runtime && <Row label="Runtime" value={runtime} mono />}
         {task.startedAt && (
-          <Row label="Started" value={formatAbsolute(task.startedAt)} title={task.startedAt} />
+          <Row
+            label="Started"
+            value={formatAbsolute(task.startedAt)}
+            title={`${formatRelative(task.startedAt)} — ${task.startedAt}`}
+          />
         )}
         {duration !== null && <Row label="Duration" value={duration} />}
-        <Row label="Status" value={STATUS_LABEL[task.status]} />
         <Row
           label="Task ID"
           value={
             <span className="task-details__id-row">
-              <code>{task.id}</code>
+              <code className="task-details__id" title={task.id}>
+                {task.id}
+              </code>
               <CopyButton text={task.id} label="Copy task id" />
             </span>
           }
