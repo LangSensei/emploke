@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-05-22
+
 ### Phase 3 (#148) — de-DDD pivot + `@emploke/core` extraction + Drizzle migration
 
 The Phase 2 MikroORM pivot was rolled back. Every entity pkg is now a

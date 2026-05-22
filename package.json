@@ -1,6 +1,6 @@
 {
   "name": "@langsensei/emploke",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "emploke — orchestrate agentic systems built on the MetaAgents format spec",
   "license": "MIT",
   "repository": {
