@@ -122,9 +122,21 @@ export function buildLogger(opts: BuildLoggerOpts = {}): Logger {
       level,
     };
     const transport = pino.transport({ targets: [stdoutTarget, fileTarget] });
-    return pino({ level } satisfies LoggerOptions, transport as DestinationStream);
+    return pino(
+      {
+        level,
+        serializers: { err: pino.stdSerializers.err },
+      } satisfies LoggerOptions,
+      transport as DestinationStream,
+    );
   }
 
   const transport = pino.transport({ targets: [stdoutTarget] });
-  return pino({ level } satisfies LoggerOptions, transport as DestinationStream);
+  return pino(
+    {
+      level,
+      serializers: { err: pino.stdSerializers.err },
+    } satisfies LoggerOptions,
+    transport as DestinationStream,
+  );
 }

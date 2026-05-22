@@ -508,12 +508,7 @@ export class TaskService {
     try {
       tasks = await this.repository.list(opts);
     } catch (err) {
-      this.logger.warn(
-        {
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "tasks: repository.list failed",
-      );
+      this.logger.warn({ err }, "tasks: repository.list failed");
       return [];
     }
 
@@ -928,12 +923,7 @@ export class TaskService {
     try {
       candidates = await this.repository.list({ statuses: ["running"] });
     } catch (err) {
-      this.logger.warn(
-        {
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "tasks: recoverOrphaned repository.list failed",
-      );
+      this.logger.warn({ err }, "tasks: recoverOrphaned repository.list failed");
       return;
     }
 
@@ -957,7 +947,7 @@ export class TaskService {
           this.logger.warn(
             {
               taskId: id,
-              error: err instanceof Error ? err.message : String(err),
+              err,
             },
             "tasks: failed to mark orphaned task as failure",
           );
@@ -1136,7 +1126,7 @@ export class TaskService {
         {
           taskId: task.id,
           runtime: runtimeName,
-          error: err instanceof Error ? err.message : String(err),
+          err,
         },
         "tasks: readMetadata failed",
       );
@@ -1205,7 +1195,7 @@ export class TaskService {
       this.logger.warn(
         {
           taskId: running.id,
-          error: err instanceof Error ? err.message : String(err),
+          err,
         },
         "tasks: failed to persist terminal status",
       );
@@ -1284,7 +1274,7 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
     logger.warn(
       {
         path: p,
-        error: err instanceof Error ? err.message : String(err),
+        err,
       },
       "tasks: failed to remove workdir during cleanup",
     );

@@ -81,10 +81,7 @@ export class TaskRepository {
       try {
         out.push(rowToTask(row));
       } catch (err) {
-        this.logger.warn(
-          { taskId: row.id ?? null, reason: err instanceof Error ? err.message : String(err) },
-          "tasks: skipping corrupted task row",
-        );
+        this.logger.warn({ taskId: row.id ?? null, err }, "tasks: skipping corrupted task row");
       }
     }
     return out;

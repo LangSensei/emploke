@@ -116,7 +116,7 @@ export class AgentRepository {
         out.push(rowToAgent(row, deps));
       } catch (cause) {
         this.logger.warn(
-          { fqn: row.fqn ?? null, cause: (cause as Error).message },
+          { fqn: row.fqn ?? null, err: cause },
           "catalog/agent: skipping row that failed validation",
         );
       }
