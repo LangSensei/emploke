@@ -18,12 +18,17 @@ interface Group {
 }
 
 /**
- * Left-column task list, grouped by status (Running vs Completed —
- * the TaskStatus enum has no `queued`/`not_started`, so the mockup's
- * "Not started" group is intentionally omitted per the mission brief).
+ * Left-column task list, grouped by status. Headers are always
+ * rendered (Running / Not started / Completed) even when empty so
+ * the data shape stays predictable while a task moves between
+ * buckets (bug-bash iter-1 F6). The TaskStatus enum has no
+ * `queued`/`not_started` row, so the middle group is a deliberately
+ * empty placeholder collapsed by default.
  *
- * Each group is collapsible with a count badge. Within a group, rows
- * keep the page-supplied ordering (newest-first from `listTasks`).
+ * Each group is collapsible with a count badge. Empty groups
+ * auto-collapse so the list above the fold stays compact. Within a
+ * group, rows keep the page-supplied ordering (newest-first from
+ * `listTasks`).
  */
 export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: TaskListProps) {
   const groups = useMemo<Group[]>(() => {
@@ -35,13 +40,16 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
     }
     return [
       { key: "running", label: "Running", tasks: running },
+      { key: "not_started", label: "Not started", tasks: [] },
       { key: "completed", label: "Completed", tasks: completed },
     ];
   }, [tasks]);
 
-  // Default both groups open; toggle via the section header.
+  // Empty groups start collapsed (header + count visible only) so the
+  // list above the fold stays tight; populated groups start expanded.
   const [collapsed, setCollapsed] = useState<Record<StatusGroup, boolean>>({
     running: false,
+    not_started: true,
     completed: false,
   });
   const toggle = (k: StatusGroup) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
@@ -49,15 +57,19 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
   return (
     <div className="task-list-groups">
       {groups.map((g) => {
-        if (g.tasks.length === 0) return null;
-        const isCollapsed = collapsed[g.key];
+        const isEmpty = g.tasks.length === 0;
+        const isCollapsed = collapsed[g.key] || isEmpty;
         return (
-          <section key={g.key} className="task-list-group">
+          <section
+            key={g.key}
+            className={`task-list-group${isEmpty ? " task-list-group--empty" : ""}`}
+          >
             <button
               type="button"
               className="task-list-group__header"
               aria-expanded={!isCollapsed}
-              onClick={() => toggle(g.key)}
+              onClick={() => !isEmpty && toggle(g.key)}
+              disabled={isEmpty}
             >
               <span className={`task-list-group__caret${isCollapsed ? " is-collapsed" : ""}`}>
                 {isCollapsed ? "▸" : "▾"}

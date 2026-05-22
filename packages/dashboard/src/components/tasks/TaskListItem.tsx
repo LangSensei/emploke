@@ -24,9 +24,10 @@ export interface TaskListItemProps {
  *
  * Two-row visual hierarchy:
  *   row 1: status pill · — spacer — · delete/cancel
- *   row 2: brief (title-prominent)
+ *   row 2: brief (title-prominent, clamped to 2 lines — bug-bash F7)
  *   row 3: agent · runtime · relative time (muted)
- *   row 4: full id (mono, muted)
+ *   row 4: full id (mono, muted, demoted text-xs, right-aligned —
+ *          bug-bash F11; the row title aligns flush-left independently).
  */
 export function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
@@ -91,7 +92,7 @@ export function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: T
           </button>
         )}
       </div>
-      <div className="task-list__item-headline" title={tooltip}>
+      <div className="task-list__item-headline task-list__item-headline--clamp" title={tooltip}>
         {headline}
       </div>
       <div className="task-list__item-meta muted">
@@ -105,7 +106,7 @@ export function TaskListItem({ task, selected, onSelect, onDelete, onCancel }: T
         <span className="task-list__sep">·</span>
         <TaskRelativeTime task={task} />
       </div>
-      <code className="task-list__id" title={task.id}>
+      <code className="task-list__id task-list__id--muted" title={task.id}>
         {task.id}
       </code>
     </li>

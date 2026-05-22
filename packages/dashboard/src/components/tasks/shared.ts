@@ -21,10 +21,14 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   cancelled: "Cancelled",
 };
 
+// Bug-bash iter-1: succeeded was previously mapped to the `ok` tone which
+// re-used the accent-blue colour ramp (same as running). Switched to a
+// dedicated `success` tone (green) so the four states are visually distinct:
+// succeeded → green, running → blue, failed → red, cancelled/queued → grey.
 export const STATUS_TONE: Record<TaskStatus, string> = {
   running: "info",
-  succeeded: "ok",
-  failed: "warn",
+  succeeded: "success",
+  failed: "danger",
   cancelled: "muted",
 };
 
@@ -80,13 +84,17 @@ export function readRuntime(task: TaskRecord): string | null {
 }
 
 /**
- * Status group used by the master-detail list. The TaskStatus enum
- * is `running | succeeded | failed | cancelled`; the mockup groups
- * the three terminal statuses together as "Completed". No `queued`
- * status exists in the enum, so the mockup's "Not started" group is
- * intentionally dropped (TASK.md spec).
+ * Status group used by the master-detail list.
+ *
+ * The TaskStatus enum is `running | succeeded | failed | cancelled` —
+ * no `queued`/`not_started`. Per the bug-bash iter-1 brief we still
+ * render the `not_started` header (always count 0) so the data shape
+ * is predictable across refreshes: users see Running → Not started →
+ * Completed and never wonder "where did my task go?" while a row is
+ * in flight. No real status ever maps to `not_started`; it exists
+ * purely as a visual placeholder bucket.
  */
-export type StatusGroup = "running" | "completed";
+export type StatusGroup = "running" | "not_started" | "completed";
 
 export function statusGroup(status: TaskStatus): StatusGroup {
   return status === "running" ? "running" : "completed";
