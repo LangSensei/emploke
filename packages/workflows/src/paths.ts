@@ -18,6 +18,20 @@ export function workflowsRoot(workspaceDir: string): string {
  * it is a proper child of root. Throws on escape or aliasing-equality.
  */
 export function safeJoinUnderRoot(root: string, id: string): string {
+  // Defense in depth: even though callers should have already run
+  // `assertValidWorkflowId` / `assertValidWorkflowNodeId`, reject
+  // components that would collapse `path.resolve` back onto the root
+  // (empty / "." / "..") or smuggle separators / null bytes.
+  if (
+    !id ||
+    id === "." ||
+    id === ".." ||
+    id.includes("/") ||
+    id.includes("\\") ||
+    id.includes("\0")
+  ) {
+    throw new Error(`invalid workflow path component: ${JSON.stringify(id)}`);
+  }
   const normalizedRoot = path.resolve(root);
   const candidate = path.resolve(normalizedRoot, id);
   const rootWithSep = normalizedRoot.endsWith(path.sep)

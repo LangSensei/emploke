@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { Workflow, WorkflowNodeValue } from "./entity.js";
-import { CorruptedWorkflowError } from "./errors.js";
+import { CorruptedWorkflowError, WorkflowNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
 import {
   type WorkflowEdgeRow,
@@ -128,6 +128,80 @@ export class WorkflowsRepository {
         tx.insert(workflowEdges).values(edgeRows).run();
       }
     });
+  }
+
+  /**
+   * Atomic read-mutate-write inside a single better-sqlite3
+   * transaction. The transaction body is synchronous — better-sqlite3
+   * transactions cannot suspend on a Promise — so `fn` must be a pure
+   * (sync) state transition; any side-effects that need to be ordered
+   * around the write (e.g. dispatching a subprocess) must happen
+   * outside, in separate `mutateAtomic` calls.
+   *
+   * Used by `WorkflowsService.launchNode` to close the
+   * check-then-act race between the FSM guard and the persisted
+   * status flip: concurrent `launchNode(nodeId)` calls cannot both
+   * pass `not_started → running` because the second one re-reads
+   * fresh state inside its own transaction body and sees `running`.
+   *
+   * `fn` returns the next aggregate plus a derived `result` value to
+   * project back to the caller (e.g. the WorkflowNodeDTO). Throws
+   * {@link WorkflowNotFoundError} if `id` is missing.
+   */
+  mutateAtomic<T>(
+    id: string,
+    fn: (wf: Workflow) => { readonly next: Workflow; readonly result: T },
+  ): T {
+    assertValidWorkflowId(id);
+    const txn = (
+      this.db as unknown as {
+        transaction: (fn: (tx: Db) => void) => void;
+      }
+    ).transaction;
+    let captured: { value: T } | undefined;
+    txn.call(this.db, (tx: Db) => {
+      const wfRow = tx.select().from(workflows).where(eq(workflows.id, id)).get();
+      if (wfRow === undefined) throw new WorkflowNotFoundError(id);
+      const nodeRows = tx
+        .select()
+        .from(workflowNodes)
+        .where(eq(workflowNodes.workflowId, id))
+        .all();
+      const edgeRows = tx
+        .select()
+        .from(workflowEdges)
+        .where(eq(workflowEdges.workflowId, id))
+        .all();
+      const wf = rowsToWorkflow(wfRow, nodeRows, edgeRows);
+      const { next, result } = fn(wf);
+      next.assertInvariants();
+      const nextWfRow = workflowToRow(next);
+      const nextNodeRows = next.nodes.map((n) => nodeToRow(n));
+      const nextEdgeRows = next.edges.map((e) => ({
+        workflowId: next.id,
+        fromNodeId: e.from,
+        toNodeId: e.to,
+      }));
+      tx.delete(workflowEdges).where(eq(workflowEdges.workflowId, next.id)).run();
+      tx.delete(workflowNodes).where(eq(workflowNodes.workflowId, next.id)).run();
+      tx.insert(workflows)
+        .values(nextWfRow)
+        .onConflictDoUpdate({ target: workflows.id, set: nextWfRow })
+        .run();
+      if (nextNodeRows.length > 0) {
+        tx.insert(workflowNodes).values(nextNodeRows).run();
+      }
+      if (nextEdgeRows.length > 0) {
+        tx.insert(workflowEdges).values(nextEdgeRows).run();
+      }
+      captured = { value: result };
+    });
+    if (captured === undefined) {
+      // Unreachable — better-sqlite3 rethrows synchronously on failure,
+      // so we only get here if the txn body never assigned `captured`.
+      throw new Error("workflows: mutateAtomic transaction body did not produce a result");
+    }
+    return captured.value;
   }
 }
 

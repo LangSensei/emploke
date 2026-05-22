@@ -128,46 +128,96 @@ export class WorkflowsService {
    * stamped into `node.data.task_id` so the orchestrator can correlate
    * later `markDone`/`markFailed` calls back to a real task row.
    *
-   * Order matters: persist the `running` transition BEFORE dispatch.
-   * If dispatch crashes the substrate stays consistent (the node is
-   * `running` with no `task_id`; the orchestrator can `markFailed`
-   * to record the dispatch error). If we dispatched first and the
-   * save crashed, we'd have a live subprocess with no record.
+   * Concurrency: the FSM guard check (`not_started/ready → running`)
+   * and the persisted status flip MUST happen atomically, otherwise
+   * two concurrent `launchNode(workflowId, nodeId)` calls would both
+   * pass the in-memory guard and both call `dispatch()`, stranding
+   * one of the two tasks. We use `repo.mutateAtomic` to fold the
+   * read + check + write into a single better-sqlite3 transaction.
+   *
+   * Better-sqlite3 transactions are synchronous, so we cannot put the
+   * `await taskDispatcher.dispatch(...)` inside the transaction. The
+   * two-phase pattern is:
+   *
+   *   Phase 1 (atomic): reload, run FSM guard, flip status=running
+   *                     with placeholder `task_id='pending'`.
+   *   Phase 2:          await dispatch — outside any transaction.
+   *   Phase 3 (atomic): reload, patch `task_id` to the real value.
+   *
+   * If Phase 2 throws (network error, validation failure, spawn
+   * failure), we transition the node to `failed` in a separate atomic
+   * mutation so the workflow doesn't strand on a `running` node with
+   * no `task_id` — the substrate owns the FSM, so an operator (or
+   * future iteration) can observe the failure and decide whether to
+   * add a retry node. The original dispatch error is rethrown so the
+   * caller sees the underlying cause.
    */
   async launchNode(workflowId: string, nodeId: string): Promise<WorkflowNodeDTO> {
     assertValidWorkflowId(workflowId);
     assertValidWorkflowNodeId(nodeId);
-    const wf = await this.requireWorkflow(workflowId);
-    const node = wf.node(nodeId);
-    if (node === undefined) throw new WorkflowNodeNotFoundError(workflowId, nodeId);
 
     const launchedAt = this.now().toISOString();
-    const next = wf.launchNode(nodeId, launchedAt);
-    await this.repo.save(next);
 
-    // Dispatch outside the persisted-state-change boundary.
-    const spec = node.spec as {
-      readonly agent: string;
-      readonly brief: string;
-      readonly details?: string;
-      readonly runtime?: string;
-    };
-    const task = await this.taskDispatcher.dispatch({
-      agent: spec.agent,
-      brief: spec.brief,
-      ...(spec.details !== undefined ? { details: spec.details } : {}),
-      ...(spec.runtime !== undefined ? { runtime: spec.runtime } : {}),
-      origin: "workflow",
+    // Phase 1: atomic FSM guard + status flip. Two concurrent calls
+    // race here — the second one re-reads inside its own transaction,
+    // sees `running`, and `Workflow.launchNode` throws
+    // InvalidWorkflowTransitionError.
+    const spec = this.repo.mutateAtomic(workflowId, (wf) => {
+      const existing = wf.node(nodeId);
+      if (existing === undefined) {
+        throw new WorkflowNodeNotFoundError(workflowId, nodeId);
+      }
+      const launched = wf.launchNode(nodeId, launchedAt);
+      const withPlaceholder = launched.patchNodeData(nodeId, { task_id: "pending" });
+      const nodeSpec = existing.spec as {
+        readonly agent: string;
+        readonly brief: string;
+        readonly details?: string;
+        readonly runtime?: string;
+      };
+      return { next: withPlaceholder, result: nodeSpec };
     });
 
-    // Re-load and patch data.task_id (preserves the running status
-    // we just set above).
-    const loaded = await this.requireWorkflow(workflowId);
-    const withTaskId = loaded.patchNodeData(nodeId, { task_id: task.id });
-    await this.repo.save(withTaskId);
-    const finalNode = withTaskId.node(nodeId);
-    if (finalNode === undefined) throw new WorkflowNodeNotFoundError(workflowId, nodeId);
-    return toNodeDto(finalNode);
+    // Phase 2: dispatch outside any transaction. Wrap in try/catch so
+    // a dispatcher throw doesn't strand the node as `running` forever.
+    let task: { id: string };
+    try {
+      task = await this.taskDispatcher.dispatch({
+        agent: spec.agent,
+        brief: spec.brief,
+        ...(spec.details !== undefined ? { details: spec.details } : {}),
+        ...(spec.runtime !== undefined ? { runtime: spec.runtime } : {}),
+        origin: "workflow",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        this.repo.mutateAtomic(workflowId, (wf) => {
+          const failedAt = this.now().toISOString();
+          const next = wf.markNodeFailed(nodeId, { error: "dispatch_failed", message }, failedAt);
+          return { next, result: undefined };
+        });
+      } catch {
+        // Best-effort: if recording the failure itself blows up
+        // (workflow concurrently archived, etc.), still rethrow the
+        // original dispatch error — that's the more actionable one.
+      }
+      throw err;
+    }
+
+    // Phase 3: atomic patch of the real task_id. We never re-run the
+    // FSM guard here; the node should still be `running` (only
+    // markDone / markFailed could move it forward, and the
+    // orchestrator wouldn't call those until after this method
+    // returns).
+    return this.repo.mutateAtomic(workflowId, (wf) => {
+      const next = wf.patchNodeData(nodeId, { task_id: task.id });
+      const finalNode = next.node(nodeId);
+      if (finalNode === undefined) {
+        throw new WorkflowNodeNotFoundError(workflowId, nodeId);
+      }
+      return { next, result: toNodeDto(finalNode) };
+    });
   }
 
   async markDone(

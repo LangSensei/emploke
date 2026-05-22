@@ -150,6 +150,106 @@ describe("WorkflowsService — guards", () => {
   });
 });
 
+describe("WorkflowsService — launchNode concurrency & dispatch failures", () => {
+  it("two concurrent launchNode calls on the same node — exactly one wins, the other throws InvalidWorkflowTransitionError", async () => {
+    const wf = await service.createWorkflow({ brief: "race" });
+    const a = await service.createNode(wf.id, {
+      type: "task",
+      spec: { agent: "agent-a", brief: "node a" },
+    });
+
+    const results = await Promise.allSettled([
+      service.launchNode(wf.id, a.id),
+      service.launchNode(wf.id, a.id),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const rej = rejected[0] as PromiseRejectedResult;
+    expect(rej.reason).toBeInstanceOf(InvalidWorkflowTransitionError);
+
+    // Dispatcher was only called once — the loser never made it past
+    // the FSM guard.
+    expect(dispatcher.calls).toHaveLength(1);
+
+    const state = await service.getState(wf.id);
+    const node = state?.nodes.find((n) => n.id === a.id);
+    expect(node?.status).toBe("running");
+    expect(node?.data.task_id).toBe("20260522-cccc0001");
+  });
+
+  it("parallel launches of two DIFFERENT ready nodes both succeed (fan-out is not over-serialized)", async () => {
+    const wf = await service.createWorkflow({ brief: "fanout" });
+    const a = await service.createNode(wf.id, {
+      type: "task",
+      spec: { agent: "agent-a", brief: "node a" },
+    });
+    const b = await service.createNode(wf.id, {
+      type: "task",
+      spec: { agent: "agent-b", brief: "node b" },
+    });
+    // No edge between them — both start ready.
+
+    const results = await Promise.allSettled([
+      service.launchNode(wf.id, a.id),
+      service.launchNode(wf.id, b.id),
+    ]);
+
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    expect(dispatcher.calls).toHaveLength(2);
+
+    const state = await service.getState(wf.id);
+    const nodeA = state?.nodes.find((n) => n.id === a.id);
+    const nodeB = state?.nodes.find((n) => n.id === b.id);
+    expect(nodeA?.status).toBe("running");
+    expect(nodeB?.status).toBe("running");
+    expect(nodeA?.data.task_id).toMatch(/^20260522-cccc/);
+    expect(nodeB?.data.task_id).toMatch(/^20260522-cccc/);
+    expect(nodeA?.data.task_id).not.toBe(nodeB?.data.task_id);
+  });
+
+  it("dispatcher throw transitions the node to failed and rethrows the original error", async () => {
+    // Build a dedicated service with a throwing dispatcher so we can
+    // assert the failure path in isolation.
+    const localHandle = openTestWorkflowsDb();
+    try {
+      const repo = new WorkflowsRepository({ db: localHandle.db });
+      const dispatchError = new Error("dispatcher boom");
+      const throwingDispatcher: TaskDispatcher = {
+        async dispatch() {
+          throw dispatchError;
+        },
+      };
+      const local = new WorkflowsService({
+        repo,
+        taskDispatcher: throwingDispatcher,
+        now: makeNow(),
+      });
+
+      const wf = await local.createWorkflow({ brief: "boom" });
+      const a = await local.createNode(wf.id, {
+        type: "task",
+        spec: { agent: "agent-a", brief: "node a" },
+      });
+
+      await expect(local.launchNode(wf.id, a.id)).rejects.toBe(dispatchError);
+
+      const state = await local.getState(wf.id);
+      const node = state?.nodes.find((n) => n.id === a.id);
+      expect(node?.status).toBe("failed");
+      expect(node?.data.error).toBe("dispatch_failed");
+      expect(node?.data.message).toBe("dispatcher boom");
+      // The placeholder is still observable — the substrate records
+      // exactly what it knew at each FSM transition.
+      expect(node?.data.task_id).toBe("pending");
+    } finally {
+      localHandle.close();
+    }
+  });
+});
+
 describe("WorkflowsService — persistence round-trip", () => {
   it("save then read reconstitutes the full graph", async () => {
     const wf = await service.createWorkflow({ brief: "demo", details: "with detail" });
