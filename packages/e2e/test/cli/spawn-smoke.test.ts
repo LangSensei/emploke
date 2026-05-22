@@ -33,55 +33,12 @@
  * see the `BIN_AVAILABLE` guard below.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-// Resolve <repo>/packages/cli/dist/bin.js — `import.meta.url` lives at
-// packages/cli/test/spawn-smoke.test.ts, so back out two dirs.
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CLI_BIN = path.join(HERE, "..", "dist", "bin.js");
-const BIN_AVAILABLE = existsSync(CLI_BIN);
-
-interface Run {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runBin(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Run> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI_BIN, ...args], {
-      env: { ...process.env, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (d: string) => {
-      stdout += d;
-    });
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (d: string) => {
-      stderr += d;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ exitCode: code ?? -1, stdout, stderr });
-    });
-  });
-}
-
-function pickPort(): number {
-  // High random ephemeral-ish range; collisions are vanishingly rare and
-  // the test surface (one server per file) tolerates the rare retry.
-  return 30000 + Math.floor(Math.random() * 20000);
-}
+import { BIN_AVAILABLE, CLI_BIN, pickPort, runBin } from "../_helpers/cli-bundle.js";
 
 // ─── lifecycle (shared boot) ──────────────────────────────────────────
 

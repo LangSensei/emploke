@@ -73,6 +73,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # `pnpm test` is `pnpm -r --filter ./packages/** run test`, which
+      # picks up every workspace package automatically — including the
+      # `@emploke/e2e` cross-package smoke pkg (CLI subprocess + real
+      # server boot). Total e2e runtime is well under 20s on Windows so
+      # we keep it in this job rather than splitting it out.
       - name: Test
         run: pnpm test
 
