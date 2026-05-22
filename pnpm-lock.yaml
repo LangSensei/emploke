@@ -257,9 +257,6 @@ importers:
       '@emploke/task':
         specifier: workspace:*
         version: link:../task
-      '@emploke/terminal':
-        specifier: workspace:*
-        version: link:../terminal
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -279,6 +276,9 @@ importers:
         specifier: ^3.0.0
         version: 3.1.0
     devDependencies:
+      '@emploke/terminal':
+        specifier: workspace:*
+        version: link:../terminal
       '@types/node':
         specifier: ^22.19.17
         version: 22.19.17

@@ -797,9 +797,13 @@ describe("buildInteractiveLaunch()", () => {
     });
     const s = await m.create({ agent: "demo" });
     await m.buildInteractiveLaunch(s.id, { remote: true });
-    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe("remote");
+    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe(
+      "remote",
+    );
     await m.buildInteractiveLaunch(s.id, { remote: false });
-    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe("local");
+    expect((await new SessionRepository({ db: orm.db }).findById(s.id))?.lastLaunchMode).toBe(
+      "local",
+    );
   });
 
   it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {

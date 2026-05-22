@@ -23,33 +23,38 @@ layers; never the reverse.
                 └───────────┬────────────┘       └──────▲──────┘
                             │ HTTP /api/*               │
                 ┌───────────┴────────────┐              │
-                │ @emploke/server        │  Hono ──────┘
-                │ (routes + middleware)  │  routes; reads RuntimeFile
-                └───────────▲────────────┘  shape from api-types
-                            │
-                ┌───────────┴────────────┐
-                │ @emploke/core          │  composition root +
-                │                        │  WorkspaceRuntimeCache
+                │ @emploke/server        │──────────────┘
+                │ (routes + middleware)  │  reads RuntimeFile shape
                 └───────────▲────────────┘
                             │
-   ┌───────────┬────────────┼────────────┬───────────────┐
-   │           │            │            │               │
-┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌──────┴──────┐
-│task │  │ session   │ │ catalog │ │ workspace │  │   runtime   │
-└──▲──┘  └─────▲─────┘ └─────────┘ └───────────┘  └──────▲──────┘
-   │           │                                          │
-   └───────────┴──────────────────────────────────┬───────┘
-                                                  │
-                                          ┌───────┴───────┐
-                                          │  @emploke/    │
-                                          │   terminal    │
-                                          └───────────────┘
+                ┌───────────┴────────────┐    ┌──────────────────┐
+                │ @emploke/core          │───▶│ @emploke/        │
+                │ composition root +     │    │  terminal        │
+                │ WorkspaceRuntimeCache  │    │ (spawn launcher) │
+                │ + WorkspaceRuntime     │    └──────────────────┘
+                │   .spawnSession()      │
+                └───────────▲────────────┘
+                            │
+   ┌───────────┬────────────┼────────────┬────────────────┐
+   │           │            │            │                │
+┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌───────┴────┐
+│task │  │ session   │ │ catalog │ │ workspace │  │  runtime   │
+└──▲──┘  └─────▲─────┘ └─────────┘ └───────────┘  └────────────┘
+   │           │
+   └───────────┴── runtime adapters consumed by task + session
 ```
 
 `@emploke/api-types` is the **out-of-band IPC contract** between
 `@emploke/cli` and `@emploke/server` (today: the `runtime.json` file
 shape + `EMPLOKE_HOME` resolution). Entity packages do NOT depend on
 it — they expose pkg-owned DTOs through their own `index.ts`.
+
+`@emploke/terminal` is consumed **only by `@emploke/core`** at
+runtime — specifically by `WorkspaceRuntime.spawnSession()` which
+takes the `LaunchCommand` from `SessionService.buildInteractiveLaunch`
+and hands it to `spawnTerminal()`. Entity packages don't see it.
+`@emploke/runtime` produces `LaunchCommand` values but does not
+spawn terminals — the spawn step lives one layer up.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition
