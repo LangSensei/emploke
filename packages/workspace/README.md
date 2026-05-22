@@ -20,9 +20,12 @@ packages/workspace/src/
   types.ts                   Public DTOs (Workspace) (exported)
   validate.ts                Input schemas + assertValid* helpers
   workspace-repository.ts    Drizzle CRUD (private; never exported)
+  workspace-entity.ts        WorkspaceEntity (private; service projects to DTO)
   workspace-service.ts       WorkspaceService — register/open/rename/unregister + reads
   layout.ts                  Pure path helpers (workspaceLayout, globalDbPath, ...)
+  migrations.ts              applyWorkspaceMigrations (drizzle migration applier)
   compose.ts                 composeWorkspaceModule({ dbFile, logger? })
+  testing.ts                 openTestWorkspaceDb helper (via /testing subpath)
   index.ts                   public barrel
 drizzle/                     generated SQL migrations (committed)
 drizzle.config.ts            drizzle-kit config

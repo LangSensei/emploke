@@ -31,8 +31,10 @@ packages/session/src/
   types.ts                 Public DTOs (Session, LaunchCommand, opts shapes)
   validate.ts              id regex + assertValidSessionId + generators
   session-repository.ts    Drizzle CRUD (exported as type for advanced reads)
+  session-entity.ts        SessionEntity (private; service projects to DTO)
   session-service.ts       SessionService  create/get/list/delete/buildInteractiveLaunch
   paths.ts                 Pure path builders for per-session workdirs
+  migrations.ts            applySessionMigrations (drizzle migration applier)
   compose.ts               composeSessionModule({ dbFile, catalog, runtimeRegistry, … })
   testing.ts               openTestSessionDb helper (via /testing subpath)
   index.ts                 public barrel

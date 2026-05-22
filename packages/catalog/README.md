@@ -51,6 +51,7 @@ packages/catalog/src/
   mcp/
   facade/                  Cross-entity CatalogService + DTOs
   fetcher/                 Origin parser + remote bytes fetcher
+  migrations.ts            applyCatalogMigrations (drizzle migration applier)
   compose.ts               composeCatalogModule({ dbFile|db, fetcher? })
   testing.ts               openTestCatalogDb helper (via /testing subpath)
   index.ts                 public barrel

@@ -21,10 +21,11 @@ packages/task/src/
   validate.ts              id regex + assertValidTaskId + generators
   task-repository.ts       Drizzle CRUD (private; never exported)
   task-entity.ts           TaskEntity  state machine (private)
-  task-service.ts          TaskService  dispatch/get/list/cancel/delete/activity
+  task-service.ts          TaskService  dispatch/get/list/cancel/delete/getTaskActivity
   task-meta.ts             readTaskRuntimeMetadata (runtime hook)
   framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
   paths.ts                 safeJoinUnderRoot path-traversal guard
+  migrations.ts            applyTaskMigrations (drizzle migration applier)
   compose.ts               composeTaskModule({ dbFile, catalog, runtimeRegistry, … })
   testing.ts               openTestTaskDb helper (via /testing subpath)
   index.ts                 public barrel
@@ -74,9 +75,12 @@ await service.cancel(task.id);            // best-effort SIGTERM
 await service.delete(task.id, { purge: false });
 
 // Activity streaming
-const items = await service.activity(task.id, { limit: 50 });
-for await (const item of service.streamActivity(task.id, { signal })) {
-  // SSE-style tail
+const items = await service.getTaskActivity(task.id, { limit: 50 });
+const stream = await service.getTaskActivityStream(task.id, { signal });
+if (stream !== null) {
+  for await (const item of stream) {
+    // SSE-style tail
+  }
 }
 
 await close();                            // sweeps live subprocesses + closes DB
