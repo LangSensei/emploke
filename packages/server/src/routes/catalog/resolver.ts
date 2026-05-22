@@ -1,5 +1,5 @@
 import type { CatalogService } from "@emploke/catalog";
-import type { Context, Hono as HonoType } from "hono";
+import type { Context } from "hono";
 
 /**
  * Pulls the per-workspace `CatalogService` off the Hono request context.
@@ -15,5 +15,3 @@ export type CatalogResolver = (c: Context) => CatalogService;
 export function resolveCatalog(arg: CatalogResolver | CatalogService): CatalogResolver {
   return typeof arg === "function" ? (arg as CatalogResolver) : () => arg;
 }
-
-export type CatalogHonoFactory = (arg: CatalogResolver | CatalogService) => HonoType;

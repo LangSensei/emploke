@@ -24,15 +24,6 @@ export type Logger = pino.Logger;
  */
 export type LogLevel = pino.Level;
 
-/**
- * Drop-every-call sink. Backed by `pino({ level: "silent" })` — pino
- * short-circuits at the level check so silent logging incurs no
- * serialization or stream cost. Use as the default in any `logger?`
- * constructor parameter, and in unit tests that don't care about log
- * output.
- */
-export const silentLogger: Logger = pino({ level: "silent" });
-
 /** Configuration for `buildLogger`. All fields are optional. */
 export interface BuildLoggerOpts {
   /**
