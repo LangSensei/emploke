@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workspace",
   "version": "0.0.1",
-  "description": "Workspace abstraction for emploke \u2014 per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
+  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -26,7 +26,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts && node ../../scripts/inline-migrations.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

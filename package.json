@@ -1,6 +1,6 @@
 {
   "name": "@langsensei/emploke",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "emploke — orchestrate agentic systems built on the MetaAgents format spec",
   "license": "MIT",
   "repository": {
@@ -39,20 +39,19 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "dev": "pnpm -r --parallel --filter \"./packages/**\" run dev",
-    "bundle": "pnpm build && pnpm --filter @emploke/dashboard build && node esbuild.config.js && node scripts/copy-dashboard.mjs",
+    "bundle": "pnpm build && pnpm --filter @emploke/dashboard build && node scripts/inline-migrations.mjs && node esbuild.config.js && node scripts/copy-dashboard.mjs",
     "prepublishOnly": "pnpm bundle",
     "new-pkg": "node scripts/new-pkg.mjs"
   },
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "bindings": "^1.5.0",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "pino-roll": "^3.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
-    "@mikro-orm/cli": "^6.6.0",
-    "@mikro-orm/core": "^6.6.0",
-    "@mikro-orm/migrations": "^6.6.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
   },
