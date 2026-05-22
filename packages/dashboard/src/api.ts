@@ -1,4 +1,4 @@
-import type { AgentEntry, McpMetadata, MissingDep, SkillEntry } from "@emploke/catalog";
+import type { AgentEntry, Mcp, MissingDep, SkillEntry } from "@emploke/catalog";
 
 export interface OverviewData {
   counts: {
@@ -11,11 +11,11 @@ export interface OverviewData {
 }
 
 /**
- * Wire shape for an installed MCP — mirrors @emploke/catalog `McpMetadata`.
+ * Wire shape for an installed MCP — mirrors @emploke/catalog `Mcp`.
  * `mutable` controls whether the dashboard offers Edit (file: origin) vs
  * Sync (re-install from upstream for github: etc.).
  */
-export type McpItem = McpMetadata;
+export type McpItem = Mcp;
 
 export interface CatalogData {
   overview: OverviewData | null;
@@ -447,7 +447,7 @@ export interface MarkdownDetail {
 }
 
 export interface SkillDetail {
-  skill: import("@emploke/catalog").SkillPojo;
+  skill: import("@emploke/catalog").Skill;
   status: "ready" | "blocked";
   blockedReason?: import("@emploke/catalog").BlockedReason;
   missingDeps?: MissingDep[];
@@ -478,7 +478,7 @@ export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
   mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
 export interface AgentDetail {
-  agent: import("@emploke/catalog").AgentPojo;
+  agent: import("@emploke/catalog").Agent;
   status: "ready" | "blocked";
   blockedReason?: import("@emploke/catalog").BlockedReason;
   missingDeps?: MissingDep[];
@@ -764,7 +764,7 @@ export type TaskOrigin = "standalone" | "workflow";
  *
  *   - exited   → subprocess exited non-zero (carries `exit_code`)
  *   - signal   → terminated by OS signal (carries `signal`)
- *   - shutdown → TaskManager.shutdown() killed it
+ *   - shutdown → TaskService.shutdown() killed it
  *   - orphan   → recoverOrphaned marked a row whose owner crashed
  *   - internal → kernel-side fault
  *
@@ -782,7 +782,7 @@ export type TaskFailure =
 /**
  * Why a task ended in `cancelled` (issue #119).
  *
- *   - user    → TaskManager.cancel(id) (operator request)
+ *   - user    → TaskService.cancel(id) (operator request)
  *   - cascade → reconciliation / parent-side cancellation (v4 folded
  *               the pre-v4 'orphan' variant in here)
  */

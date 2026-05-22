@@ -19,7 +19,7 @@
  * `resolveWorkspace` below for the full rationale).
  */
 
-import { resolveEmplokePaths } from "@emploke/paths";
+import { resolveEmplokeHome } from "@emploke/api-types";
 import { ApiClient } from "./api-client.js";
 import { readRuntimeFile } from "./runtime-file.js";
 
@@ -47,12 +47,12 @@ export async function resolveConnection(flags: ConnectFlags = {}): Promise<Conne
   let baseUrl = nonEmpty(flags.server) ?? nonEmpty(env.EMPLOKE_SERVER);
 
   if (!baseUrl) {
-    const paths = resolveEmplokePaths(
+    const home = resolveEmplokeHome(
       flags.home !== undefined ? { ...env, EMPLOKE_HOME: flags.home } : env,
     );
     let rt: Awaited<ReturnType<typeof readRuntimeFile>> = null;
     try {
-      rt = await readRuntimeFile(paths.home);
+      rt = await readRuntimeFile(home);
     } catch {
       // Corrupt runtime.json — treat as absent. The user's flags / env
       // are still honoured; absent both, we fall through to defaults.

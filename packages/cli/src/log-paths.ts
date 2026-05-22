@@ -1,7 +1,7 @@
 /**
  * Resolve the latest server log file under `<EMPLOKE_HOME>/logs/`.
  *
- * `@emploke/logger` is backed by `pino-roll`, which writes to
+ * Server logs are written via `pino-roll`, which writes to
  * `<basename>` and rotates daily into `<basename>.YYYY-MM-DD` (and
  * `<basename>.YYYY-MM-DD.N` once the size cap kicks in). The current
  * file might be the bare basename (just-rotated, no suffix yet) or any

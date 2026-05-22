@@ -1,7 +1,11 @@
+import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { FsLockTimeoutError } from "@emploke/fs";
-import { mkdirP, readJson, withFileLock, writeJsonAtomic } from "@emploke/fs";
+import lockfile from "proper-lockfile";
+import writeFileAtomic from "write-file-atomic";
 import { TrustRegistrationFailed } from "./errors.js";
+
+/** Max size (10MB) for the trust config file. Anything bigger is rejected. */
+const MAX_CONFIG_BYTES = 10 * 1024 * 1024;
 
 /**
  * Persistence + concurrency for `~/.copilot/config.json.trustedFolders`.
@@ -46,12 +50,15 @@ import { TrustRegistrationFailed } from "./errors.js";
  *
  * # IO mechanics
  *
- * The atomic-write + cross-process lock primitives come from
- * `@emploke/fs` (the same primitives every `Fs*Repository` uses). The
- * lock has PID-based stale recovery and the write goes through a tmp
- * file + rename, so concurrent buildInteractiveLaunch preflights from multiple
- * dashboard sessions cannot lose-update each other or partially write
- * `config.json`.
+ * The atomic-write + cross-process lock primitives come from two
+ * focused npm libraries:
+ *   - `write-file-atomic` — write-temp + rename, so concurrent
+ *     buildInteractiveLaunch preflights from multiple dashboard
+ *     sessions cannot partially write `config.json`.
+ *   - `proper-lockfile` — PID-aware advisory lock with stale
+ *     recovery, used to serialise the read-modify-write of
+ *     `trustedFolders` so two concurrent preflights cannot both
+ *     pass `isPathCovered` before either writes (lose-update).
  */
 
 /**
@@ -70,17 +77,19 @@ import { TrustRegistrationFailed } from "./errors.js";
  *   - exact match on the resolved absolute path counts as trusted
  *   - any ancestor directory listed in `trustedFolders` counts as trusted
  *
- * Concurrency: the entire read-modify-write sequence runs under
- * `withFileLock(<configPath>.lock)`. Without the lock, two concurrent
- * buildInteractiveLaunch preflights could both pass `isPathCovered` before either
- * wrote, then the second `writeJsonAtomic` would clobber the first
- * writer's unrelated changes.
+ * Concurrency: the entire read-modify-write sequence runs under a
+ * `proper-lockfile` advisory lock on `<configPath>`. Without the
+ * lock, two concurrent buildInteractiveLaunch preflights could both
+ * pass `isPathCovered` before either wrote, then the second
+ * `write-file-atomic` would clobber the first writer's unrelated
+ * changes.
  *
  * Failure modes — every failure path (mkdir, lock timeout, atomic
  * write, parent permissions) is wrapped as {@link TrustRegistrationFailed}.
- * That gives `buildInteractiveLaunch` a single, typed catch surface and preserves
- * the underlying message (which for {@link FsLockTimeoutError} includes
- * the holder PID — the operator's only handle to a wedged trust write).
+ * That gives `buildInteractiveLaunch` a single, typed catch surface
+ * and preserves the underlying error message (which for a
+ * `proper-lockfile` timeout includes the holder PID — the operator's
+ * only handle to a wedged trust write).
  *
  * If `dir` (or an ancestor) is already covered, the file is left untouched.
  * A missing or unparseable config file is treated as "start fresh"; we
@@ -91,28 +100,74 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
   const resolvedDir = path.resolve(dir);
 
   try {
-    await mkdirP(path.dirname(configPath));
-    await withFileLock(`${configPath}.lock`, async () => {
+    await mkdir(path.dirname(configPath), { recursive: true });
+    // proper-lockfile requires the locked file to exist. Touch it
+    // only when it's genuinely missing — any other stat failure
+    // (EACCES, EIO, EISDIR, …) must propagate. The earlier shape
+    // had a bare `catch` here which would silently overwrite the
+    // user's real `config.json` with `{}` if (say) the file was
+    // present but unreadable for permissions reasons. Data loss.
+    try {
+      await stat(configPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      await writeFileAtomic(configPath, "{}");
+    }
+    const release = await lockfile.lock(configPath, {
+      retries: { retries: 100, factor: 1.1, minTimeout: 50, maxTimeout: 200 },
+      stale: 30000,
+    });
+    try {
+      // Read + parse phase. Failure modes split into two outcomes:
+      //   - file missing / file unreadable as JSON  -> "start fresh"
+      //     (rewrite below with just `trustedFolders`, valid file).
+      //   - file present but exceeds MAX_CONFIG_BYTES -> HARD REFUSE
+      //     (do NOT clobber a 100MB user config with `{}` just
+      //     because we hit the cap). The size check therefore lives
+      //     OUTSIDE the swallow-and-start-fresh catch below.
+      const st = await statSafe(configPath);
+      if (st !== null && st.size > MAX_CONFIG_BYTES) {
+        throw new Error(
+          `refusing to touch ${configPath}: ${st.size} bytes exceeds cap of ${MAX_CONFIG_BYTES}`,
+        );
+      }
+
       let config: Record<string, unknown> = {};
-      try {
-        const parsed = await readJson<unknown>(configPath);
-        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = parsed as Record<string, unknown>;
+      if (st !== null) {
+        try {
+          const raw = await readFile(configPath, "utf8");
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+            config = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // Invalid JSON — start fresh. We never refuse to launch
+          // because the user's config is corrupted; the rewrite
+          // below will produce a valid file containing just
+          // `trustedFolders`.
         }
-      } catch {
-        // Invalid JSON — start fresh. We never refuse to launch because
-        // the user's config is corrupted; the rewrite below will produce
-        // a valid file containing just `trustedFolders`.
       }
 
       const existing = readTrustedFolders(config.trustedFolders);
       if (isPathCovered(resolvedDir, existing)) return;
 
       config.trustedFolders = [...existing, resolvedDir];
-      await writeJsonAtomic(configPath, config);
-    });
+      await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    } finally {
+      await release();
+    }
   } catch (cause) {
     throw new TrustRegistrationFailed(configPath, resolvedDir, cause as Error);
+  }
+}
+
+/** stat or null-on-ENOENT. Other stat errors propagate. */
+async function statSafe(p: string): Promise<import("node:fs").Stats | null> {
+  try {
+    return await stat(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
 }
 

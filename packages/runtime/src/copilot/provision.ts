@@ -1,17 +1,28 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  type AgentResolveResult,
-  applyFrontmatterPatch,
-  type CatalogManager,
-  stripMcpMeta,
-} from "@emploke/catalog";
+import matter from "gray-matter";
 import {
   type PlaceholderContext,
   substitutePlaceholdersDeep,
   UnknownPlaceholderError,
 } from "../placeholders.js";
+import type { AgentContentSource, ResolvedAgent } from "../types.js";
 import { InvalidMcpJson } from "./errors.js";
+
+/**
+ * Apply a partial patch to the YAML frontmatter of a markdown document.
+ * `null` / `undefined` patch values DELETE the key. Body bytes preserved
+ * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
+ * original key order are NOT preserved (gray-matter / js-yaml limitation).
+ */
+function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
+  const file = matter(raw);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) delete file.data[k];
+    else file.data[k] = v;
+  }
+  return matter.stringify(file.content, file.data);
+}
 
 const DOT_DIR = ".github";
 /**
@@ -98,8 +109,8 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  * need cleanup on session/task purge.
  *
  * Source data is pulled from the catalog as `AsyncIterable<{relPath, content}>`
- * streams (see {@link CatalogManager.skillEntries} /
- * {@link CatalogManager.agentEntries}). The runtime never resolves on-disk
+ * streams (see {@link AgentContentSource.skillEntries} /
+ * {@link AgentContentSource.agentEntries}). The runtime never resolves on-disk
  * catalog paths; a future SQLite-backed catalog implementation works the same
  * way.
  *
@@ -122,8 +133,8 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  */
 export async function provisionCopilotWorkdir(
   workdir: string,
-  agent: AgentResolveResult,
-  catalog: CatalogManager,
+  agent: ResolvedAgent,
+  catalog: AgentContentSource,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
@@ -146,7 +157,7 @@ export async function provisionCopilotWorkdir(
 async function materializeAgent(
   workdir: string,
   agentName: string,
-  catalog: CatalogManager,
+  catalog: AgentContentSource,
 ): Promise<void> {
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");
   let hooksDestReady = false;
@@ -195,17 +206,16 @@ async function materializeAgent(
 async function writeMcpConfig(
   workdir: string,
   mcps: readonly { readonly fqn: string }[],
-  catalog: CatalogManager,
+  catalog: AgentContentSource,
   placeholders: PlaceholderContext,
 ): Promise<void> {
   if (mcps.length === 0) return;
 
   const mcpServers: Record<string, unknown> = {};
   for (const mcp of mcps) {
-    const raw = await catalog.getMcpContent(mcp.fqn);
-    let stripped: unknown;
+    let stripped: Record<string, unknown>;
     try {
-      stripped = stripMcpMeta(raw, `mcps:${mcp.fqn}`);
+      stripped = await catalog.getMcpRuntimeConfig(mcp.fqn);
     } catch (cause) {
       throw new InvalidMcpJson(mcp.fqn, cause as Error);
     }
@@ -240,7 +250,7 @@ async function writeMcpConfig(
 async function materializeSkills(
   workdir: string,
   skills: readonly { readonly skill: { readonly fqn: string } }[],
-  catalog: CatalogManager,
+  catalog: AgentContentSource,
 ): Promise<void> {
   const skillsRoot = path.join(workdir, DOT_DIR, "skills");
   const hooksDest = path.join(workdir, DOT_DIR, "hooks");

@@ -11,7 +11,7 @@
  * structured payload suitable for piping to `jq`.
  */
 
-import { resolveEmplokePaths } from "@emploke/paths";
+import { resolveEmplokeHome } from "@emploke/api-types";
 import { probeHealth } from "../health-probe.js";
 import type { CommandResult } from "../result.js";
 import { deleteRuntimeFile, isPidAlive, readRuntimeFile } from "../runtime-file.js";
@@ -34,10 +34,9 @@ interface StatusPayload {
 
 export async function status(opts: StatusOpts = {}): Promise<CommandResult> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
-  const home = paths.home;
   const existing = await readRuntimeFile(home);
   if (!existing) {
     return { exitCode: 3, stdout: render({ state: "not_running" }, opts.json) };

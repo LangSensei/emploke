@@ -1,0 +1,36 @@
+{
+  "name": "@emploke/api-types",
+  "version": "0.0.1",
+  "description": "Out-of-band IPC contracts shared by emploke server + CLI. Today: EMPLOKE_HOME resolution + runtime.json shape. Future: HTTP route manifest types.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LangSensei/emploke.git",
+    "directory": "packages/api-types"
+  }
+}

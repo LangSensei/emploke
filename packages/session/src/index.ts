@@ -2,18 +2,15 @@
  * @emploke/session — per-session workdir manager.
  *
  * Each session is a provisioned workdir for one agent under one runtime
- * (e.g. copilot, gemini). The agent name is read from the provisioned
- * `AGENTS.md` frontmatter; runtime + createdAt + runtimeSessionId are
- * persisted via the configured `SessionRepository` (defaults to
- * `SqliteSessionRepository`, which writes to the per-workspace shared
- * `workspace.db`'s `sessions` table).
- * Activity (lastActiveAt, preview) is read fresh from the runtime on
- * every list/get call. The package never spawns processes —
- * `buildInteractiveLaunch()` returns a shell-runnable `LaunchCommand`.
+ * (e.g. copilot, gemini). Persistence is backed by Drizzle via a
+ * per-workspace `workspace.db`. Activity (lastActiveAt, preview) is
+ * read fresh from the runtime on every list/get call.
+ *
+ * The package never spawns processes — `buildInteractiveLaunch()`
+ * returns a shell-runnable `LaunchCommand`.
  */
 
-// Re-export runtime errors that callers commonly want to catch alongside
-// session errors.
+// Re-export runtime errors callers commonly want to catch alongside session errors.
 export {
   RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
@@ -23,33 +20,32 @@ export {
   UnknownRuntimeError,
 } from "@emploke/runtime";
 export {
+  composeSessionModule,
+  type SessionModule,
+  type SessionModuleOptions,
+} from "./compose.js";
+export {
   AgentNotFoundError,
   InvalidSessionIdError,
-  SessionCorruptedError,
+  SessionError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,
-  SessionsError,
 } from "./errors.js";
-export { SessionManager } from "./manager.js";
-export { SESSION_MIGRATIONS } from "./migrations/index.js";
-export { composeSessionModule } from "./module.js";
-export type {
-  ListSessionStateOpts,
-  SessionRepository,
-} from "./repositories/repository.js";
-export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
-export {
-  Session,
-  type SessionCreateArgs,
-  type SessionFromStoredArgs,
-  type SessionLaunchMode,
-} from "./session-entity.js";
+// `SessionRow` (Drizzle `$inferSelect` alias) is intentionally NOT
+// re-exported. It is an implementation detail of the persistence
+// layer; external callers should consume the `Session` DTO below
+// (built by `SessionService` from a row plus runtime metadata).
+// `SessionRepository` is exported for tests that need to assert on
+// the persisted slice directly — production callers go through the
+// service.
+export { type ListSessionStateOpts, SessionRepository } from "./session-repository.js";
+export { SessionService } from "./session-service.js";
 export type {
   BuildInteractiveLaunchSessionOpts,
   CreateSessionOpts,
   DeleteSessionOpts,
   LaunchCommand,
   ListSessionOpts,
-  SessionManagerConfig,
-  SessionView,
+  Session,
+  SessionServiceConfig,
 } from "./types.js";

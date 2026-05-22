@@ -1,6 +1,6 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
-import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
-import { applyFrontmatterPatch } from "../frontmatter/patch.js";
+import matter from "gray-matter";
+import type { EntryFile } from "../fetcher/index.js";
+import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import {
@@ -9,8 +9,23 @@ import {
   SkillNotFoundError,
   SkillOriginConflictError,
 } from "./errors.js";
-import { Skill } from "./skill-entity.js";
+import { SkillEntity } from "./skill-entity.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
+
+/**
+ * Apply a partial patch to the YAML frontmatter of a markdown document.
+ * `null` / `undefined` patch values DELETE the key. Body bytes preserved
+ * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
+ * original key order are NOT preserved (gray-matter / js-yaml limitation).
+ */
+function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
+  const file = matter(raw);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) delete file.data[k];
+    else file.data[k] = v;
+  }
+  return matter.stringify(file.content, file.data);
+}
 
 export interface SkillFetcher {
   fetchAnchor(origin: string): Promise<string>;
@@ -77,9 +92,9 @@ export class SkillService {
       };
     }
 
-    let entity: Skill;
+    let entity: SkillEntity;
     try {
-      entity = Skill.create(anchorBytes, origin, `resolve:${origin}`);
+      entity = SkillEntity.create(anchorBytes, origin, `resolve:${origin}`);
     } catch (cause) {
       onProgress({ type: "failed", origin, error: cause });
       return {
@@ -114,7 +129,7 @@ export class SkillService {
     return { node, conflict: null };
   }
 
-  async install(planOrOrigin: SkillResolvedNode | string): Promise<Skill> {
+  async install(planOrOrigin: SkillResolvedNode | string): Promise<SkillEntity> {
     let node: SkillResolvedNode;
     if (typeof planOrOrigin === "string") {
       const plan = await this.resolve(planOrOrigin);
@@ -142,7 +157,7 @@ export class SkillService {
       );
     }
 
-    let entity = Skill.create(anchorContent, node.origin, `install:${node.origin}`);
+    let entity = SkillEntity.create(anchorContent, node.origin, `install:${node.origin}`);
 
     if (entity.version !== node.version) {
       throw new PlanStaleError(node.fqn, node.origin, node.version, entity.version);
@@ -166,11 +181,11 @@ export class SkillService {
     return (await this.repo.findByFqn(entity.fqn)) ?? entity;
   }
 
-  async get(fqn: string): Promise<Skill | null> {
+  async get(fqn: string): Promise<SkillEntity | null> {
     return this.repo.findByFqn(fqn);
   }
 
-  async list(): Promise<Skill[]> {
+  async list(): Promise<SkillEntity[]> {
     return this.repo.findAll();
   }
 
@@ -178,7 +193,7 @@ export class SkillService {
     return (await this.repo.findByFqn(fqn)) !== null;
   }
 
-  async getByOrigin(origin: string): Promise<Skill | null> {
+  async getByOrigin(origin: string): Promise<SkillEntity | null> {
     return this.repo.findByOrigin(origin);
   }
 
@@ -190,7 +205,7 @@ export class SkillService {
     return this.repo.getAnchor(fqn);
   }
 
-  async updateAnchor(fqn: string, newSkillMd: string): Promise<Skill> {
+  async updateAnchor(fqn: string, newSkillMd: string): Promise<SkillEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
     if (!isOriginMutable(existing.origin)) {
@@ -207,7 +222,7 @@ export class SkillService {
     return (await this.repo.findByFqn(fqn)) ?? updated;
   }
 
-  async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<Skill> {
+  async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<SkillEntity> {
     for (const k of Object.keys(patch)) {
       if (FORBIDDEN_METADATA_PATCH_KEYS.has(k)) {
         throw new SkillFrontmatterError(
@@ -233,7 +248,7 @@ export class SkillService {
     await this.repo.delete(fqn);
   }
 
-  async acknowledgePrereqs(fqn: string): Promise<Skill> {
+  async acknowledgePrereqs(fqn: string): Promise<SkillEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
     if (!existing.prereqsAck) {

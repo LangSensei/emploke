@@ -1,26 +1,19 @@
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import type { Context, Hono as HonoType } from "hono";
 
 /**
- * Pulls the per-workspace `CatalogManager` off the Hono request context. Set up
- * by the workspace middleware (see `workspaceCatalogContextMiddleware`
+ * Pulls the per-workspace `CatalogService` off the Hono request context.
+ * Set up by the workspace middleware (see `workspaceContextMiddleware`
  * in server `index.ts`).
  *
- * Tests can pass a `CatalogManager` directly instead of going through the
- * middleware chain — every `*Routes` factory accepts either form via
- * `resolveCatalog`.
+ * Tests can pass a `CatalogService` directly instead of going through
+ * the middleware chain — every `*Routes` factory accepts either form
+ * via `resolveCatalog`.
  */
-export type CatalogResolver = (c: Context) => CatalogManager;
+export type CatalogResolver = (c: Context) => CatalogService;
 
-/**
- * Normalise the two accepted argument shapes (`CatalogManager` instance or
- * `CatalogResolver`) into a single resolver function. Tests typically
- * pass a `CatalogManager` directly; production wires up a function that reads
- * `c.get("catalog")`.
- */
-export function resolveCatalog(arg: CatalogResolver | CatalogManager): CatalogResolver {
+export function resolveCatalog(arg: CatalogResolver | CatalogService): CatalogResolver {
   return typeof arg === "function" ? (arg as CatalogResolver) : () => arg;
 }
 
-/** Convenience: chain a catalog resolver into a route mount. */
-export type CatalogHonoFactory = (arg: CatalogResolver | CatalogManager) => HonoType;
+export type CatalogHonoFactory = (arg: CatalogResolver | CatalogService) => HonoType;

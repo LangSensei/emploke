@@ -4,9 +4,9 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 /**
  * Rich domain entity representing a single installed skill.
  *
- * Identity = (fqn, origin), both immutable. Schema v2 (issue #122):
+ * Identity = `fqn`; `origin` is provenance, not identity.
  *   - `scope` / `shortName` are derived getters off `fqn.split('/')`.
- *   - Anchor bytes (SKILL.md) are no longer held on the entity; the
+ *   - Anchor bytes (SKILL.md) are NOT held on the entity; the
  *     repository's `getAnchor(fqn)` is the canonical fetch path.
  *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface on
  *     the entity so DTO projections can include them.
@@ -14,7 +14,7 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     from the dep-tables join); `depsRefs` carries the frontmatter
  *     origins for the install pipeline's lookup.
  */
-export class Skill {
+export class SkillEntity {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -28,15 +28,15 @@ export class Skill {
     private readonly _updatedAt: string,
   ) {}
 
-  static create(rawSkillMd: string, origin: string, sourceLabel: string): Skill {
+  static create(rawSkillMd: string, origin: string, sourceLabel: string): SkillEntity {
     if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("Skill.create requires a non-empty origin string");
+      throw new TypeError("SkillEntity.create requires a non-empty origin string");
     }
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const fqn = makeFqn(meta.scope, meta.shortName);
     const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
     const now = new Date().toISOString();
-    return new Skill(
+    return new SkillEntity(
       fqn,
       origin,
       meta.description,
@@ -60,9 +60,9 @@ export class Skill {
     prereqsAck: boolean;
     installedAt: string;
     updatedAt: string;
-  }): Skill {
+  }): SkillEntity {
     validateFqn(args.fqn);
-    return new Skill(
+    return new SkillEntity(
       args.fqn,
       args.origin,
       args.description,
@@ -76,6 +76,10 @@ export class Skill {
     );
   }
 
+  /** Canonical FQN — the entity's identity. */
+  get id(): string {
+    return this._fqn;
+  }
   get fqn(): string {
     return this._fqn;
   }
@@ -140,16 +144,16 @@ export class Skill {
     };
   }
 
-  withAnchor(rawSkillMd: string, sourceLabel: string): Skill {
+  withAnchor(rawSkillMd: string, sourceLabel: string): SkillEntity {
     const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
     const newFqn = makeFqn(meta.scope, meta.shortName);
     if (newFqn !== this._fqn) {
       throw new TypeError(
-        `Skill.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
+        `SkillEntity.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
           "Delete and reinstall to rename.",
       );
     }
-    return new Skill(
+    return new SkillEntity(
       this._fqn,
       this._origin,
       meta.description,
@@ -163,8 +167,8 @@ export class Skill {
     );
   }
 
-  withState(state: { prereqsAck?: boolean }): Skill {
-    return new Skill(
+  withState(state: { prereqsAck?: boolean }): SkillEntity {
+    return new SkillEntity(
       this._fqn,
       this._origin,
       this._description,
@@ -178,8 +182,8 @@ export class Skill {
     );
   }
 
-  withDependencies(deps: SkillDependencies): Skill {
-    return new Skill(
+  withDependencies(deps: SkillDependencies): SkillEntity {
+    return new SkillEntity(
       this._fqn,
       this._origin,
       this._description,

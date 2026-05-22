@@ -83,10 +83,9 @@ describe("errorBody", () => {
       // session
       "AgentNotFoundError",
       "InvalidSessionIdError",
-      "SessionCorruptedError",
       "SessionIdAllocationFailedError",
       "SessionNotFoundError",
-      "SessionsError",
+      "SessionError",
       // runtime
       "InvalidMcpJson",
       "RuntimeHeadlessLaunchFailed",
@@ -128,15 +127,11 @@ describe("errorBody", () => {
       // task
       "CorruptedTaskError",
       // workspace
-      "RegistryCorruptedError",
       "RegistryError",
-      "WorkspaceAlreadyExistsError",
-      "WorkspaceCorruptedError",
       "WorkspaceError",
       "WorkspaceIdConflictError",
       "WorkspaceIdInvalidError",
       "WorkspaceNameInvalidError",
-      "WorkspaceNotFoundError",
       "WorkspaceNotRegisteredError",
       "WorkspacePathConflictError",
       // server
@@ -204,9 +199,9 @@ describe("statusForCatalogError", () => {
   });
 
   it("maps FetchError name to 502", () => {
-    // FetchError is exported from @emploke/catalog-fetcher (via the
-    // catalog re-export); we synthesize one to keep the test isolated
-    // from the network.
+    // FetchError is exported from @emploke/catalog (originally lived in
+    // the separate @emploke/catalog/fetcher pkg; folded into catalog).
+    // We synthesize one to keep the test isolated from the network.
     const e = new Error("connect ECONNREFUSED");
     e.name = "FetchError";
     expect(statusForCatalogError(e)).toBe(502);

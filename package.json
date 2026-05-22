@@ -40,7 +40,8 @@
     "format": "biome format --write .",
     "dev": "pnpm -r --parallel --filter \"./packages/**\" run dev",
     "bundle": "pnpm build && pnpm --filter @emploke/dashboard build && node esbuild.config.js && node scripts/copy-dashboard.mjs",
-    "prepublishOnly": "pnpm bundle"
+    "prepublishOnly": "pnpm bundle",
+    "new-pkg": "node scripts/new-pkg.mjs"
   },
   "dependencies": {
     "pino": "^9.5.0",

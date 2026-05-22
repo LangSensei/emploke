@@ -27,13 +27,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/fs": "workspace:*",
-    "@emploke/paths": "workspace:*",
+    "@emploke/api-types": "workspace:*",
     "@emploke/server": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "write-file-atomic": "^5.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/write-file-atomic": "^4.0.3",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"
   },

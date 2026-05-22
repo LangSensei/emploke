@@ -1,4 +1,4 @@
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import { readContentBody, readMcpInstallBody, readPlanTokenBody } from "./helpers.js";
@@ -13,13 +13,13 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`). MCPs
  * have no deps, so the install is a single fetch + write.
  */
-export function mcpsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 
   app.get("/", async (c) => {
     const catalog = getCatalog(c);
-    // listMcps() already returns McpMetadata[] (`{ name, origin, mutable }`)
+    // listMcps() already returns Mcp[] (`{ name, origin, mutable }`)
     // — return as-is. The dashboard's `McpItem` is the same shape. The
     // previous `.map((name) => ({ name }))` was a leftover from the
     // pre-PR-#52 catalog where `listMcps()` returned `string[]`; against

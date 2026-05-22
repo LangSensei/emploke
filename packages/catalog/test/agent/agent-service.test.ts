@@ -1,7 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Agent } from "../../src/agent/agent-entity.js";
+import { AgentEntity } from "../../src/agent/agent-entity.js";
+import { AgentRepository } from "../../src/agent/agent-repository.js";
 import { type AgentFetcher, AgentService } from "../../src/agent/agent-service.js";
 import {
   AgentFrontmatterError,
@@ -9,7 +8,7 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "../../src/agent/errors.js";
-import { SqliteAgentRepository } from "../../src/agent/sqlite-agent-repository.js";
+import type { EntryFile } from "../../src/fetcher/index.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
@@ -52,22 +51,22 @@ ${deps}
 # Body
 `;
 
-let db: DatabaseSync;
-let repo: SqliteAgentRepository;
+let orm: ReturnType<typeof openTestCatalogDb>;
+let repo: AgentRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: AgentService;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  repo = new SqliteAgentRepository({ db });
+  orm = bootstrapCatalogDb();
+
+  repo = new AgentRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new AgentService(repo, fetcher.fetcher);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    orm.close();
   } catch {
     // already closed
   }
@@ -203,9 +202,9 @@ describe("AgentService — single-entity API", () => {
     await svc.install("file:/abs/agent");
   });
 
-  it("get returns Agent entity", async () => {
+  it("get returns AgentEntity entity", async () => {
     const a = await svc.get("public/agent");
-    expect(a).toBeInstanceOf(Agent);
+    expect(a).toBeInstanceOf(AgentEntity);
     expect(a!.fqn).toBe("public/agent");
   });
 

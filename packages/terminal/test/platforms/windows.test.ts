@@ -74,11 +74,13 @@ describe("spawnTerminalWith > windows", () => {
     });
     const cmd: LaunchCommand = {
       ...sample,
-      args: ["--resume=12345678-1234-1234-1234-1234567890ab", "--yolo"],
+      args: ["--session-id=12345678-1234-1234-1234-1234567890ab", "--yolo"],
     };
     await spawnTerminalWith(cmd, deps);
     const payload = calls[0]?.args.at(-1);
-    expect(payload).toBe("& 'copilot' '--resume=12345678-1234-1234-1234-1234567890ab' '--yolo'");
+    expect(payload).toBe(
+      "& 'copilot' '--session-id=12345678-1234-1234-1234-1234567890ab' '--yolo'",
+    );
   });
 
   it("escapes embedded single quotes in args via the pwsh '' double rule", async () => {

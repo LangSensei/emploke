@@ -17,6 +17,8 @@ abstract class CatalogError extends Error {
  * the target name.
  */
 export class HasDependentsError extends CatalogError {
+  override readonly name = "HasDependentsError";
+
   constructor(
     public readonly targetName: string,
     public readonly dependents: readonly { kind: "skill" | "agent"; name: string }[],

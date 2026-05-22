@@ -30,20 +30,20 @@
  */
 
 import type {
+  Agent,
   AgentEntry,
   AgentInstallBody,
   AgentMetadataPatch,
-  Agent as AgentPojo,
   CatalogInstallResult,
   CatalogSyncResult,
-  McpMetadata,
+  Mcp,
+  Skill,
   SkillEntry,
   SkillInstallBody,
   SkillMetadataPatch,
-  Skill as SkillPojo,
 } from "@emploke/catalog";
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
-import type { SessionView } from "@emploke/session";
+import type { Session } from "@emploke/session";
 import type { Task, TaskOrigin, TaskStatus } from "@emploke/task";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
 import type { ServerConfig } from "./config.js";
@@ -125,6 +125,7 @@ export interface WorkspaceSummary {
   readonly name: string;
   readonly createdAt: string;
   readonly workspaceDir: string;
+  readonly lastOpenedAt: string;
 }
 
 /** POST /api/workspaces body. */
@@ -256,7 +257,7 @@ export interface TaskActivityQuery {
  * POST /api/workspaces/:id/catalog/{kind}/:name/sync body. The
  * `planToken` is minted by the matching `/sync/resolve` (returned
  * inside the `ResolveManifest`) and is single-use + 5-min TTL on
- * the server. See {@link CatalogManager.cachePlan} / `takePlan`
+ * the server. See {@link CatalogService.cachePlan} / `takePlan`
  * for the rationale: the apply step replays the exact preview-time
  * plan rather than re-resolving (which would silently apply a
  * fresh, possibly-different closure).
@@ -296,7 +297,7 @@ export interface AnchorResponse {
 }
 
 /** GET /api/workspaces/:id/catalog/mcps/:name response. */
-export type McpWithContent = McpMetadata & { readonly content: string };
+export type McpWithContent = Mcp & { readonly content: string };
 
 /** Generic `{ ok: true }` response shape for delete / put-content endpoints. */
 export interface OkResponse {
@@ -390,13 +391,13 @@ export const ROUTES = {
   // ── sessions (workspace-scoped) ────────────────────────────────────
   "sessions.list": defineRoute<
     { params: WorkspacePathParams; query: SessionListQuery },
-    readonly SessionView[]
+    readonly Session[]
   >("GET", "/api/workspaces/:id/sessions"),
-  "sessions.create": defineRoute<
-    { params: WorkspacePathParams; body: SessionCreateBody },
-    SessionView
-  >("POST", "/api/workspaces/:id/sessions"),
-  "sessions.get": defineRoute<{ params: SessionPathParams }, SessionView>(
+  "sessions.create": defineRoute<{ params: WorkspacePathParams; body: SessionCreateBody }, Session>(
+    "POST",
+    "/api/workspaces/:id/sessions",
+  ),
+  "sessions.get": defineRoute<{ params: SessionPathParams }, Session>(
     "GET",
     "/api/workspaces/:id/sessions/:sid",
   ),
@@ -545,10 +546,10 @@ export const ROUTES = {
     { params: CatalogResourcePathParams; body: CatalogSyncBody },
     CatalogSyncResult
   >("POST", "/api/workspaces/:id/catalog/skills/:name/sync"),
-  "catalog.skills.acknowledgePrereqs": defineRoute<
-    { params: CatalogResourcePathParams },
-    SkillPojo
-  >("POST", "/api/workspaces/:id/catalog/skills/:name/acknowledge-prereqs"),
+  "catalog.skills.acknowledgePrereqs": defineRoute<{ params: CatalogResourcePathParams }, Skill>(
+    "POST",
+    "/api/workspaces/:id/catalog/skills/:name/acknowledge-prereqs",
+  ),
 
   // ── catalog agents ─────────────────────────────────────────────────
   "catalog.agents.list": defineRoute<{ params: WorkspacePathParams }, readonly AgentEntry[]>(
@@ -591,21 +592,21 @@ export const ROUTES = {
     { params: CatalogResourcePathParams; body: CatalogSyncBody },
     CatalogSyncResult
   >("POST", "/api/workspaces/:id/catalog/agents/:name/sync"),
-  "catalog.agents.acknowledgePrereqs": defineRoute<
-    { params: CatalogResourcePathParams },
-    AgentPojo
-  >("POST", "/api/workspaces/:id/catalog/agents/:name/acknowledge-prereqs"),
-  "catalog.agents.disable": defineRoute<{ params: CatalogResourcePathParams }, AgentPojo>(
+  "catalog.agents.acknowledgePrereqs": defineRoute<{ params: CatalogResourcePathParams }, Agent>(
+    "POST",
+    "/api/workspaces/:id/catalog/agents/:name/acknowledge-prereqs",
+  ),
+  "catalog.agents.disable": defineRoute<{ params: CatalogResourcePathParams }, Agent>(
     "POST",
     "/api/workspaces/:id/catalog/agents/:name/disable",
   ),
-  "catalog.agents.enable": defineRoute<{ params: CatalogResourcePathParams }, AgentPojo>(
+  "catalog.agents.enable": defineRoute<{ params: CatalogResourcePathParams }, Agent>(
     "POST",
     "/api/workspaces/:id/catalog/agents/:name/enable",
   ),
 
   // ── catalog mcps (no resolve, no metadata patch) ───────────────────
-  "catalog.mcps.list": defineRoute<{ params: WorkspacePathParams }, readonly McpMetadata[]>(
+  "catalog.mcps.list": defineRoute<{ params: WorkspacePathParams }, readonly Mcp[]>(
     "GET",
     "/api/workspaces/:id/catalog/mcps",
   ),

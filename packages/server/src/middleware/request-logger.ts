@@ -1,5 +1,5 @@
-import type { Logger } from "@emploke/logger";
 import type { MiddlewareHandler } from "hono";
+import type { Logger } from "pino";
 
 /**
  * Per-request child logger middleware.

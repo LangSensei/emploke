@@ -1,10 +1,10 @@
-import type { EntryFile } from "@emploke/catalog-fetcher";
-import { normalizeOrigin, parseOrigin } from "@emploke/catalog-fetcher";
-import { applyFrontmatterPatch } from "../frontmatter/patch.js";
+import matter from "gray-matter";
+import type { EntryFile } from "../fetcher/index.js";
+import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import type { SkillRepository } from "../skill/skill-repository.js";
-import { Agent } from "./agent-entity.js";
+import { AgentEntity } from "./agent-entity.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 import {
   AgentFrontmatterError,
@@ -12,6 +12,21 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
+
+/**
+ * Apply a partial patch to the YAML frontmatter of a markdown document.
+ * `null` / `undefined` patch values DELETE the key. Body bytes preserved
+ * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
+ * original key order are NOT preserved (gray-matter / js-yaml limitation).
+ */
+function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
+  const file = matter(raw);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) delete file.data[k];
+    else file.data[k] = v;
+  }
+  return matter.stringify(file.content, file.data);
+}
 
 export interface AgentFetcher {
   fetchAnchor(origin: string): Promise<string>;
@@ -87,9 +102,9 @@ export class AgentService {
       };
     }
 
-    let entity: Agent;
+    let entity: AgentEntity;
     try {
-      entity = Agent.create(anchorBytes, origin, `resolve:${origin}`);
+      entity = AgentEntity.create(anchorBytes, origin, `resolve:${origin}`);
     } catch (cause) {
       onProgress({ type: "failed", origin, error: cause });
       return {
@@ -124,7 +139,7 @@ export class AgentService {
     return { node, conflict: null };
   }
 
-  async install(planOrOrigin: AgentResolvedNode | string): Promise<Agent> {
+  async install(planOrOrigin: AgentResolvedNode | string): Promise<AgentEntity> {
     let node: AgentResolvedNode;
     if (typeof planOrOrigin === "string") {
       const plan = await this.resolve(planOrOrigin);
@@ -152,7 +167,7 @@ export class AgentService {
       );
     }
 
-    let entity = Agent.create(anchorContent, node.origin, `install:${node.origin}`);
+    let entity = AgentEntity.create(anchorContent, node.origin, `install:${node.origin}`);
 
     if (entity.version !== node.version) {
       throw new AgentPlanStaleError(node.fqn, node.origin, node.version, entity.version);
@@ -176,11 +191,11 @@ export class AgentService {
     return (await this.repo.findByFqn(entity.fqn)) ?? entity;
   }
 
-  async get(fqn: string): Promise<Agent | null> {
+  async get(fqn: string): Promise<AgentEntity | null> {
     return this.repo.findByFqn(fqn);
   }
 
-  async list(): Promise<Agent[]> {
+  async list(): Promise<AgentEntity[]> {
     return this.repo.findAll();
   }
 
@@ -188,7 +203,7 @@ export class AgentService {
     return (await this.repo.findByFqn(fqn)) !== null;
   }
 
-  async getByOrigin(origin: string): Promise<Agent | null> {
+  async getByOrigin(origin: string): Promise<AgentEntity | null> {
     return this.repo.findByOrigin(origin);
   }
 
@@ -200,7 +215,7 @@ export class AgentService {
     return this.repo.getAnchor(fqn);
   }
 
-  async updateAnchor(fqn: string, newAgentMd: string): Promise<Agent> {
+  async updateAnchor(fqn: string, newAgentMd: string): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
     if (!isOriginMutable(existing.origin)) {
@@ -217,7 +232,7 @@ export class AgentService {
     return (await this.repo.findByFqn(fqn)) ?? updated;
   }
 
-  async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<Agent> {
+  async updateMetadata(fqn: string, patch: Record<string, unknown>): Promise<AgentEntity> {
     for (const k of Object.keys(patch)) {
       if (FORBIDDEN_METADATA_PATCH_KEYS.has(k)) {
         throw new AgentFrontmatterError(
@@ -243,7 +258,7 @@ export class AgentService {
     await this.repo.delete(fqn);
   }
 
-  async acknowledgePrereqs(fqn: string): Promise<Agent> {
+  async acknowledgePrereqs(fqn: string): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
     if (!existing.prereqsAck) {
@@ -254,15 +269,15 @@ export class AgentService {
     return updated;
   }
 
-  async disableByUser(fqn: string): Promise<Agent> {
+  async disableByUser(fqn: string): Promise<AgentEntity> {
     return this.setUserDisabled(fqn, true);
   }
 
-  async enableByUser(fqn: string): Promise<Agent> {
+  async enableByUser(fqn: string): Promise<AgentEntity> {
     return this.setUserDisabled(fqn, false);
   }
 
-  private async setUserDisabled(fqn: string, value: boolean): Promise<Agent> {
+  private async setUserDisabled(fqn: string, value: boolean): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
     if (existing.disabledByUser !== value) {

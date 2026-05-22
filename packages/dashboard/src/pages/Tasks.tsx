@@ -49,7 +49,7 @@ interface TasksProps {
  */
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 
-// ADR-001 made `cancelled` first-class: TaskManager.cancel(id) +
+// ADR-001 made `cancelled` first-class: TaskService.cancel(id) +
 // POST /tasks/:id/cancel + `emploke task cancel` all produce this
 // status. STATUS_LABEL / STATUS_TONE entries are unchanged from the
 // reserved-for-future scaffolding; the dashboard now renders the

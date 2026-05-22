@@ -9,9 +9,9 @@ import {
   ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
-  type TaskManager,
   TaskNotFoundError,
   type TaskOrigin,
+  type TaskService,
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
@@ -27,10 +27,10 @@ type TaskDispatchBodyRaw = { [K in keyof TaskDispatchBody]?: unknown };
 
 /**
  * Resolver passed in by the mount point so route handlers pull the
- * workspace-scoped TaskManager out of Hono's per-request context. Mirrors
- * the SessionManager pattern exactly.
+ * workspace-scoped TaskService out of Hono's per-request context. Mirrors
+ * the SessionService pattern exactly.
  */
-export type TaskManagerResolver = (c: import("hono").Context) => TaskManager;
+export type TaskServiceResolver = (c: import("hono").Context) => TaskService;
 
 function statusForError(err: unknown): number | null {
   // Client-side / input errors → 4xx.
@@ -101,9 +101,9 @@ function invalidTransitionBody(
  * Mounted at the parent in `index.ts`; paths here are relative to that
  * mount.
  */
-export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
+export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
   const app = new Hono();
-  const getManager = resolveManager;
+  const getManager = resolveTaskService;
 
   // List tasks in this workspace, newest-first per the manager.
   // Optional server-side filters (mirroring the sessions route):
@@ -234,7 +234,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
       // EntryNotReadyError carries a structured `BlockedReason` on
       // the instance; surface it on the wire so the dashboard can
       // render typed UI (the catalog list already uses the same
-      // `blockedReason` shape — see CatalogManager.getAgentEntry).
+      // `blockedReason` shape — see CatalogService.getAgentEntry).
       // Without this branch the body collapses to `{error, code}`
       // and the dashboard would be stuck parsing a human string to
       // figure out which CTA (Acknowledge prereqs / Enable agent /
@@ -417,7 +417,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
       limit = parsed;
     }
 
-    let payload: Awaited<ReturnType<TaskManager["getTaskActivity"]>>;
+    let payload: Awaited<ReturnType<TaskService["getTaskActivity"]>>;
     try {
       payload = await getManager(c).getTaskActivity(id, {
         ...(before !== undefined ? { before } : {}),
@@ -442,7 +442,7 @@ export function tasksRoutes(resolveManager: TaskManagerResolver): Hono {
   // consume (curl -N, EventSource, eventsource-parser).
   //
   // The SSE iterator is cancelled when the HTTP client disconnects
-  // (request `signal` propagates to the runtime via TaskManager).
+  // (request `signal` propagates to the runtime via TaskService).
   // This route is HUMAN-only: not exposed via MCP because LLM tool
   // surfaces require bounded responses, not streams.
   //

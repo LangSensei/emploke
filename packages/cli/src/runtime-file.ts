@@ -4,49 +4,29 @@
  * so a later CLI invocation can find the running server, talk to it, and
  * clean up after it.
  *
- * Atomic writes use `@emploke/fs.writeJsonAtomic` so a second `emploke
- * status` invocation racing the writer never sees a half-written JSON
- * payload.
+ * Atomic writes use the `write-file-atomic` library (write-temp + rename)
+ * so a second `emploke status` invocation racing the writer never sees a
+ * half-written JSON payload.
+ *
+ * The on-disk shape (`RuntimeFile`) is owned by `@emploke/api-types`
+ * because the server writes it and the CLI reads it; this module
+ * provides the CLI-side IO around that shared shape.
  */
 
 import { mkdir, readFile, unlink } from "node:fs/promises";
-import path from "node:path";
-import { writeJsonAtomic } from "@emploke/fs";
-import { RUNTIME_FILE_NAME } from "@emploke/paths";
+import * as apiTypes from "@emploke/api-types";
+import writeFileAtomic from "write-file-atomic";
 
-/**
- * Shape persisted to disk. Bumped together with any breaking change so
- * stale files from a previous emploke version surface as "stale" rather
- * than silently misparsing.
- */
-export interface RuntimeFile {
-  /** Schema version — bump on breaking changes. */
-  readonly schema: 1;
-  /** Pid of the detached server process. */
-  readonly pid: number;
-  /** Bind host (mirrors `EMPLOKE_HOST` passed to `start`). */
-  readonly host: string;
-  /** Listening port (mirrors `PORT` passed to `start`). */
-  readonly port: number;
-  /** ISO 8601 timestamp captured at `start` time. */
-  readonly startedAt: string;
-  /**
-   * Argv the spawned child saw, captured for diagnostics — useful when
-   * `status` wants to show why the file is stale (different bundle path,
-   * different flags, ...).
-   */
-  readonly serverArgs: readonly string[];
-}
+// Single source of truth for the api-types path: any rename of the
+// upstream package only needs touching this import. The two re-exports
+// (`type RuntimeFile`, `runtimeFilePath`) pass the public types
+// through this module so cli consumers keep their existing import
+// paths without depending on @emploke/api-types directly.
+type RuntimeFile = apiTypes.RuntimeFile;
+const runtimeFilePath = apiTypes.runtimeFilePath;
 
-/**
- * Resolve `<home>/runtime.json`. Pure: no fs access. The literal filename
- * lives in `@emploke/paths` (`RUNTIME_FILE_NAME`) so it stays
- * single-sourced — callers that already have a resolved `EmplokePaths`
- * record should prefer `paths.runtimeFile` directly.
- */
-export function runtimeFilePath(home: string): string {
-  return path.join(home, RUNTIME_FILE_NAME);
-}
+export type { RuntimeFile };
+export { runtimeFilePath };
 
 /**
  * Read the runtime file. Returns `null` if the file is absent (the
@@ -75,7 +55,7 @@ export async function readRuntimeFile(home: string): Promise<RuntimeFile | null>
 export async function writeRuntimeFile(home: string, value: RuntimeFile): Promise<void> {
   await mkdir(home, { recursive: true });
   const p = runtimeFilePath(home);
-  await writeJsonAtomic(p, value);
+  await writeFileAtomic(p, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /** Idempotent delete. Tolerates a missing file (already cleaned up). */

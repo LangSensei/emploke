@@ -4,19 +4,17 @@ import { validateMcpName } from "./validate.js";
 /**
  * Rich domain entity representing a single installed MCP.
  *
- * Identity = (fqn, origin), both immutable. Schema v2 (issue #122):
- * the storage column was renamed `name` → `fqn` and `content` → `spec`
- * for catalog-wide terminology consistency. The MCP spec's `_meta.name`
- * wire field is unaffected — only the storage/API surface uses `fqn`.
- *
+ * Identity = `fqn` (the MCP-spec name); `origin` is provenance, not
+ * identity.
  *   - `fqn` is the MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`).
  *     MCP spec names ARE globally unique-by-convention; emploke does not
- *     add a separate `scope:` segment for them.
- *   - `spec` carries the raw JSON spec bytes (renamed from `content`).
+ *     add a separate `scope:` segment for them. Renames are modelled as
+ *     delete + reinstall, never as identity mutation.
+ *   - `spec` carries the raw JSON spec bytes.
  *   - `installedAt` / `updatedAt` ISO 8601 UTC timestamps surface here so
  *     DTO projections can include them.
  */
-export class Mcp {
+export class McpEntity {
   private constructor(
     private readonly _fqn: string,
     private readonly _origin: string,
@@ -25,16 +23,16 @@ export class Mcp {
     private readonly _updatedAt: string,
   ) {}
 
-  static create(name: string, origin: string, rawContent: string): Mcp {
-    validateMcpName(name);
+  static create(name: string, origin: string, rawContent: string): McpEntity {
     if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("Mcp.create requires a non-empty origin string");
+      throw new TypeError("McpEntity.create requires a non-empty origin string");
     }
+    validateMcpName(name);
     const sourceLabel = `mcps:${name}`;
     const merged = McpFormat.writeMeta(rawContent, { name }, sourceLabel);
     McpFormat.parse(merged, sourceLabel);
     const now = new Date().toISOString();
-    return new Mcp(name, origin, merged, now, now);
+    return new McpEntity(name, origin, merged, now, now);
   }
 
   static fromStored(
@@ -43,11 +41,15 @@ export class Mcp {
     spec: string,
     installedAt: string,
     updatedAt: string,
-  ): Mcp {
+  ): McpEntity {
     validateMcpName(fqn);
-    return new Mcp(fqn, origin, spec, installedAt, updatedAt);
+    return new McpEntity(fqn, origin, spec, installedAt, updatedAt);
   }
 
+  /** Canonical FQN — the entity's identity. */
+  get id(): string {
+    return this._fqn;
+  }
   get fqn(): string {
     return this._fqn;
   }
@@ -78,10 +80,16 @@ export class Mcp {
    * Return a new entity with replaced spec bytes; identity preserved,
    * `updatedAt` bumped. Callers cannot change identity via this method.
    */
-  withContent(rawContent: string): Mcp {
+  withContent(rawContent: string): McpEntity {
     const sourceLabel = `mcps:${this._fqn}`;
     const merged = McpFormat.writeMeta(rawContent, { name: this._fqn }, sourceLabel);
     McpFormat.parse(merged, sourceLabel);
-    return new Mcp(this._fqn, this._origin, merged, this._installedAt, new Date().toISOString());
+    return new McpEntity(
+      this._fqn,
+      this._origin,
+      merged,
+      this._installedAt,
+      new Date().toISOString(),
+    );
   }
 }

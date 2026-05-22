@@ -8,15 +8,15 @@
  * `.test.ts` so vitest won't run it as a suite.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
-import { runPkgMigrations } from "@emploke/workspace";
-import { SqliteTaskRepository, TASK_MIGRATIONS, TaskManager } from "../src/index.js";
+import { TaskService } from "../src/index.js";
+import { TaskRepository } from "../src/task-repository.js";
+import { openTestTaskDb } from "../src/testing.js";
 
 /**
  * Records every kill + lets the test drive the exit timing. By
@@ -78,10 +78,10 @@ export class TestRuntime implements Runtime {
 
 export interface CancelFixture {
   readonly tasksDir: string;
-  readonly db: DatabaseSync;
-  readonly repo: SqliteTaskRepository;
+  readonly orm: ReturnType<typeof openTestTaskDb>;
+  readonly repo: TaskRepository;
   readonly rt: TestRuntime;
-  readonly m: TaskManager;
+  readonly m: TaskService;
 }
 
 export async function setupCancelFixture(
@@ -90,36 +90,37 @@ export async function setupCancelFixture(
     logger?: { warn: (m: object | string, s?: string) => void };
   } = {},
 ): Promise<CancelFixture> {
-  const tasksDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
-  const db = new DatabaseSync(":memory:");
-  await runPkgMigrations(db, [{ pkg: "task", migrations: TASK_MIGRATIONS }]);
+  const workspaceDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
+  const tasksDir = path.join(workspaceDir, "tasks");
+  await mkdir(tasksDir, { recursive: true });
+  const orm = openTestTaskDb();
   const rt = new TestRuntime();
   if (opts.autoExitOnKill) rt.autoExitOnKill = true;
   const reg = new RuntimeRegistry();
   reg.register(rt);
-  const repo = new SqliteTaskRepository({ db });
-  const m = new TaskManager({
+  const repo = new TaskRepository({ db: orm.db });
+  const m = new TaskService({
     catalog: fakeCatalog(),
     runtimeRegistry: reg,
-    tasksDir,
-    workspaceDir: tasksDir,
-    repository: repo,
+    workspaceDir,
+    workspaceId: "cancel-fx-ws",
+    db: orm.db,
     now: () => new Date("2026-05-18T01:00:00.000Z"),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
-  return { tasksDir, db, repo, rt, m };
+  return { tasksDir, orm, repo, rt, m };
 }
 
 export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   try {
-    fx.db.close();
+    fx.orm.close();
   } catch {
     // already closed
   }
   await rm(fx.tasksDir, { recursive: true, force: true });
 }
 
-export function fakeCatalog(): CatalogManager {
+export function fakeCatalog(): CatalogService {
   return {
     catalogDir: "/tmp/catalog",
     async resolveAgent(_name: string): Promise<AgentResolveResult> {
@@ -134,16 +135,16 @@ export function fakeCatalog(): CatalogManager {
       return {
         agent: { fqn: "demo" } as unknown,
         status: "ready" as const,
-      } as unknown as ReturnType<CatalogManager["getAgentEntry"]> extends Promise<infer T>
+      } as unknown as ReturnType<CatalogService["getAgentEntry"]> extends Promise<infer T>
         ? T
         : never;
     },
-  } as unknown as CatalogManager;
+  } as unknown as CatalogService;
 }
 
 /**
  * Capture pino-shaped warn calls into an in-memory list. Hand-rolled
- * (rather than @emploke/logger's captureLogger) so assertions don't
+ * (rather than pino (was @emploke/logger; pkg folded into consumers)'s captureLogger) so assertions don't
  * race the real pino writable stream.
  */
 export function captureLogger(): {
@@ -163,7 +164,7 @@ export function captureLogger(): {
 }
 
 /** Poll the manager until the task has reached a terminal status. */
-export async function awaitTerminal(m: TaskManager, id: string): Promise<void> {
+export async function awaitTerminal(m: TaskService, id: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     const t = await m.get(id);
     if (t !== null && t.status !== "running" && t.status !== "not_started") return;

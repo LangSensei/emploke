@@ -11,15 +11,16 @@
  * `TerminateProcess` regardless of the signal name — there is no
  * graceful equivalent of POSIX SIGTERM. The server's
  * `gracefulShutdown` handler therefore will NOT run on Windows. The
- * server's persistence layer is atomic-write (`@emploke/fs`), so this
- * forces no corruption; in-flight task subprocesses can still be
- * orphaned and are cleaned up on the next server boot via the
- * `recoverOrphaned` sweep. A future graceful-shutdown HTTP endpoint
- * can fix this — tracked separately.
+ * server's persistence is SQLite (WAL + transactions), which means
+ * mid-write torn writes don't corrupt the DB even on hard kill;
+ * in-flight task subprocesses can still be orphaned and are cleaned
+ * up on the next server boot via the `recoverOrphaned` sweep. A
+ * future graceful-shutdown HTTP endpoint can fix this — tracked
+ * separately.
  */
 
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveEmplokePaths } from "@emploke/paths";
+import { resolveEmplokeHome } from "@emploke/api-types";
 import type { CommandResult } from "../result.js";
 import { deleteRuntimeFile, isPidAlive, readRuntimeFile } from "../runtime-file.js";
 
@@ -33,10 +34,9 @@ export interface StopOpts {
 
 export async function stop(opts: StopOpts = {}): Promise<CommandResult> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
-  const home = paths.home;
   const existing = await readRuntimeFile(home);
   if (!existing) {
     return { exitCode: 0, stdout: "emploke is not running\n" };

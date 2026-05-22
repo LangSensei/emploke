@@ -1,5 +1,4 @@
 import { CorruptedTaskError, InvalidTaskIdError, InvalidTransition } from "./errors.js";
-import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./ids.js";
 import type {
   TaskCancellation,
   TaskFailure,
@@ -7,6 +6,7 @@ import type {
   TaskStatus,
   TaskSuccess,
 } from "./types.js";
+import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 
 const VALID_STATUSES = new Set<TaskStatus>(["running", "succeeded", "failed", "cancelled"]);
 const VALID_ORIGINS = new Set<TaskOrigin>(["standalone", "workflow"]);
@@ -110,7 +110,7 @@ export interface TaskTransitionOpts {
  * further transitions. Each method throws {@link InvalidTransition}
  * when called against an illegal source status.
  */
-export class Task {
+export class TaskEntity {
   private constructor(
     private readonly _id: string,
     private readonly _agent: string,
@@ -134,7 +134,7 @@ export class Task {
    * actually starting). Pure factory aside from the deterministic-
    * seamed `generateTaskId` and `new Date().toISOString()`.
    */
-  static create(args: TaskCreateArgs): Task {
+  static create(args: TaskCreateArgs): TaskEntity {
     const id = args.id ?? generateTaskId();
     if (args.id !== undefined) assertValidTaskId(id);
     if (typeof args.brief !== "string" || args.brief.length === 0) {
@@ -142,7 +142,7 @@ export class Task {
     }
     const createdAt = args.createdAt ?? new Date().toISOString();
     const origin = args.origin ?? "standalone";
-    return new Task(
+    return new TaskEntity(
       id,
       args.agent,
       args.brief,
@@ -165,7 +165,7 @@ export class Task {
    * throws {@link InvalidTaskIdError} (id syntax) or
    * {@link CorruptedTaskError} (everything else).
    */
-  static fromStored(args: TaskFromStoredArgs): Task {
+  static fromStored(args: TaskFromStoredArgs): TaskEntity {
     if (!TASK_ID_RE.test(args.id)) throw new InvalidTaskIdError(args.id);
     if (typeof args.agent !== "string") {
       throw new CorruptedTaskError(args.id, "task.agent must be a string");
@@ -224,7 +224,7 @@ export class Task {
         "task.cancellation is required when status is 'cancelled'",
       );
     }
-    return new Task(
+    return new TaskEntity(
       args.id,
       args.agent,
       args.brief,
@@ -287,7 +287,7 @@ export class Task {
    * Transition `running → succeeded`, attaching the typed success
    * payload. Throws {@link InvalidTransition} from any other status.
    */
-  complete(success: TaskSuccess, opts: TaskTransitionOpts = {}): Task {
+  complete(success: TaskSuccess, opts: TaskTransitionOpts = {}): TaskEntity {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "complete");
     }
@@ -303,7 +303,7 @@ export class Task {
    * Transition `running → failed`, attaching `failure` for operator
    * visibility. Throws {@link InvalidTransition} from any other status.
    */
-  fail(failure: TaskFailure, opts: TaskTransitionOpts = {}): Task {
+  fail(failure: TaskFailure, opts: TaskTransitionOpts = {}): TaskEntity {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "fail");
     }
@@ -319,7 +319,7 @@ export class Task {
    * Transition `running → cancelled`. Throws {@link InvalidTransition}
    * from any other status.
    */
-  cancel(cancellation: TaskCancellation, opts: TaskTransitionOpts = {}): Task {
+  cancel(cancellation: TaskCancellation, opts: TaskTransitionOpts = {}): TaskEntity {
     if (this._status !== "running") {
       throw new InvalidTransition(this._status, "cancel");
     }
@@ -335,8 +335,8 @@ export class Task {
    * Replace the metadata bag wholesale, preserving status + timing +
    * success / failure / cancellation payloads.
    */
-  withMetadata(metadata: Readonly<Record<string, unknown>>): Task {
-    return new Task(
+  withMetadata(metadata: Readonly<Record<string, unknown>>): TaskEntity {
+    return new TaskEntity(
       this._id,
       this._agent,
       this._brief,
@@ -393,8 +393,8 @@ export class Task {
     readonly success?: TaskSuccess;
     readonly failure?: TaskFailure;
     readonly cancellation?: TaskCancellation;
-  }): Task {
-    return new Task(
+  }): TaskEntity {
+    return new TaskEntity(
       this._id,
       this._agent,
       this._brief,

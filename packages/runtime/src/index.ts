@@ -1,8 +1,8 @@
 // Public surface for @emploke/runtime.
 
-export type { CopilotRuntimeConfig } from "./copilot/copilot.js";
+export type { CopilotRuntimeConfig } from "./copilot/copilot-runtime.js";
 // Copilot runtime
-export { CopilotRuntime } from "./copilot/copilot.js";
+export { CopilotRuntime } from "./copilot/copilot-runtime.js";
 export {
   InvalidMcpJson,
   TrustRegistrationFailed,
@@ -30,7 +30,6 @@ export {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "./errors.js";
-export { composeRuntimeModule } from "./module.js";
 export {
   PLACEHOLDER_NAMES,
   type PlaceholderContext,
@@ -39,7 +38,8 @@ export {
   substitutePlaceholdersDeep,
   UnknownPlaceholderError,
 } from "./placeholders.js";
-export { RuntimeRegistry } from "./registry.js";
+export { RuntimeRegistry } from "./runtime-registry.js";
+export { SHARED_SUBDIR, sharedDir } from "./shared-dir.js";
 export type {
   ActivityItem,
   ActivityResult,

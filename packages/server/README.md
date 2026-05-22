@@ -1,14 +1,20 @@
 # @emploke/server
 
-The HTTP API surface — a [Hono](https://hono.dev) app that mounts
+The HTTP API surface  a [Hono](https://hono.dev) app that mounts
 workspace-scoped catalog / session / task routes plus the workspace
 registry. Bundled into the published `emploke` binary; also runs
 standalone for development.
 
+Post de-DDD: the server is a **pure transport adapter** over
+[`@emploke/core`](../core). Every route is parse  dispatch to core
+or to the per-workspace runtime  format. Business logic lives in
+the entity services; orchestration (cache, spawn, register/rename)
+lives in core.
+
 ## URL scheme
 
 Workspace-scoped resources live under `/api/workspaces/<wsid>/...`
-where `<wsid>` is the workspace's opaque UUID — stable for the
+where `<wsid>` is the workspace''s opaque UUID  stable for the
 lifetime of the registry entry, so dashboard URLs survive workspace
 renames.
 
@@ -16,139 +22,89 @@ renames.
 /api/workspaces                                 list / create
 /api/workspaces/current                         get / set the most-recently-selected
 /api/workspaces/:id                             get / patch / delete (?purge=1)
+/api/workspaces/:id/reload                      POST: force-rebuild per-workspace cache
 /api/workspaces/:id/catalog/{agents,skills,mcps,overview}
                                                 per-workspace catalog
-/api/workspaces/:id/sessions                    list (filters: agent / activeSince) / create
-/api/workspaces/:id/sessions/:sid               get / delete (?purge=1 = wipe row + workdir + runtime state; default = archive, row only)
+/api/workspaces/:id/sessions                    list (filters) / create
+/api/workspaces/:id/sessions/:sid               get / delete (?purge=1)
 /api/workspaces/:id/sessions/:sid/spawn         hand-off to user terminal
-/api/workspaces/:id/tasks                       list (filters: agent / runtime / status / createdSince)
-/api/workspaces/:id/tasks                       POST: dispatch
+/api/workspaces/:id/tasks                       list (filters) / POST dispatch
 /api/workspaces/:id/tasks/:tid                  get / delete (?purge=1)
-/api/workspaces/:id/tasks/:tid/activity         runtime-parsed ActivityItem[] timeline + headline (tail-first paginated: ?before=N or ?after=N + ?limit=50, max 500; mutex 400; default = latest `limit`; surfaces `truncated` when source-side cap fires)
-/api/workspaces/:id/tasks/:tid/activity/stream  Server-Sent Events live tail — emits `activity` events while the task runs, terminates with `event: end` on exit / abort
+/api/workspaces/:id/tasks/:tid/activity         runtime-parsed timeline (tail-paginated)
+/api/workspaces/:id/tasks/:tid/activity/stream  Server-Sent Events live tail
 /api/runtimes                                   list registered runtime kinds
 /api/config                                     server-side config snapshot for the dashboard
 ```
 
-There is no global catalog mount — switching workspace switches the
+There is no global catalog mount  switching workspace switches the
 catalog the dashboard sees.
 
 ## Verb conventions
 
 - **`?purge=1`** on every DELETE. Default (no flag) removes only
-  emploke metadata; `purge=1` also wipes the entity's sandbox dir.
-  See [`docs/architecture.md`](../../docs/architecture.md#unified-verb-conventions).
-- **Time filters canonicalise** any `Date.parse`-able input into ISO 8601
-  with a `Z` suffix before forwarding to managers; the manager's
-  lexicographic compare relies on canonical form. Garbage input
-  → 400 with a descriptive error.
+  emploke metadata; `purge=1` also wipes the entity''s sandbox dir.
+  See [`docs/architecture.md`](../../docs/architecture.md).
+- **Time filters canonicalise** any `Date.parse`-able input into ISO
+  8601 with a `Z` suffix before forwarding to services; the
+  service''s lexicographic compare relies on canonical form. Garbage
+  input  400 with a descriptive error.
 
 ## Per-workspace context cache
 
-The server holds one `WorkspaceManager` process-wide and lazily mints
-per-workspace `CatalogManager` / `SessionManager` / `TaskManager`
-instances behind a `WorkspaceContextCache`. Implicit invalidation
-happens on workspace deletion or metadata update; an explicit
-`POST /api/workspaces/:id/reload` is also available for operator-driven
-reload (e.g. recovering after the persisted state on disk has been
-edited externally). Reload is refused with HTTP 409 +
-`code=WorkspaceHasLiveTasksError` when the workspace still has live
-task subprocesses, since dropping the cached `TaskManager` would
-orphan the in-flight `live` map's exit watchers.
+The server holds one `WorkspaceService` process-wide (via
+`@emploke/core`) and lazily mints per-workspace
+`{catalog, sessions, tasks}` bundles behind a `WorkspaceRuntimeCache`.
+Implicit invalidation happens on workspace deletion or
+rename; an explicit `POST /api/workspaces/:id/reload` is also
+available for operator-driven reload (e.g. recovering after the
+persisted state on disk has been edited externally). Reload is
+refused with HTTP 409 + `code=WorkspaceHasLiveTasksError` when the
+workspace still has live task subprocesses, since dropping the
+cached `TaskService` would orphan the in-flight subprocesses.
 
-```text
-                          ┌─── catalog ───┐
-GET /workspaces/<id>/...  │                │
-                          ├─── sessions ──┤  (one of these
-WorkspaceContextCache ────┼─── tasks  ────┤   per workspace,
-                          │                │   constructed lazily)
-                          └─── catalog ───┘
-```
+## Subprocess env contract
 
-This means the cost of "switch workspace" in the dashboard is one
-cache lookup; the manager instances are stateless beyond their
-backing repositories so the cache can be flushed on demand without
-losing in-flight work (modulo the live-task refuse rule above).
+The server populates two env-shaping inputs that the runtime layer
+consumes:
 
-## Boot
+| Helper                          | Semantics                                          | Honoured by              |
+| ------------------------------- | -------------------------------------------------- | ------------------------ |
+| `buildSubprocessEnvBase(...)`   | Positive: set these in every spawned subprocess   | interactive + headless   |
+| `SUBPROCESS_ENV_SCRUB_KEYS`     | Negative: delete these from inherited parent env  | headless only (mergeEnv) |
 
-Production bundle (`pnpm bundle` produces `bundle/emploke.js`) is the
-default. For development:
+Both are passed to the `CopilotRuntime` constructor at bootstrap.
+The interactive path (`buildInteractiveLaunch`  terminal spawner)
+inherits the parent env wholesale and cannot unset, so scrub keys
+only take effect on headless launches.
 
-```ts
-import { createServer } from "@emploke/server";
-import { CopilotRuntime } from "@emploke/runtime";
+## Loopback binding
 
-const server = await createServer({
-  emplokeHome: "/Users/me/.emploke",     // EMPLOKE_HOME
-  port: 8787,
-  host: "127.0.0.1",
-  runtimes: [new CopilotRuntime()],
-  serveStatic: false,                    // dev: Vite serves dashboard separately
-});
-await server.listen();
-```
+`assertBindIsSafe` refuses to start the server bound to anything
+other than loopback (`127.0.0.1` / `::1` / IPv4-mapped IPv6
+loopback). There is no escape hatch and no auth layer; for remote
+access, terminate auth elsewhere and reach the server through a
+loopback-equivalent (SSH port-forward, reverse proxy with mTLS /
+OIDC, mesh VPN). Wildcard binds (`0.0.0.0` / `::`) are NOT accepted
+— set `EMPLOKE_HOST=127.0.0.1` (the default) to silence the error.
 
-Or use the bundled binary:
+For the `EMPLOKE_SERVER` env var handed to subprocesses, the
+`0.0.0.0` / `::` wildcards (if a future build allowed them) would
+be rewritten to `127.0.0.1` so spawned children dial loopback
+(Windows refuses outbound `0.0.0.0`); see `subprocess-env.ts`.
 
-```sh
-PORT=8787 EMPLOKE_HOME=~/.emploke node bundle/emploke.js
-```
+## Graceful shutdown
 
-See the [root README](../../README.md#configuration) for the full env
-var table.
+`SIGTERM` / `SIGINT` triggers:
 
-## Security defaults
+1. Hono server stops accepting new connections (drains inflight).
+2. Tasks: every live subprocess receives `SIGTERM`; manager waits
+   for terminal status.
+3. `cache.closeAll()` (await  releases every per-workspace SQLite
+   handle).
+4. `composition.close()` (releases `global.db`).
+5. `process.exit(0)`.
 
-- **Loopback-only.** `EMPLOKE_HOST` defaults to `127.0.0.1`. Setting it
-  to anything else (e.g. `0.0.0.0`) causes startup to refuse with a
-  clear error — emploke does not ship its own auth layer, on the
-  principle that "rolling our own" is rarely the right answer for a
-  single-user local-first dashboard.
-- **For remote access**, expose the loopback socket through a layer
-  designed for auth: SSH port-forward
-  (`ssh -L 8787:127.0.0.1:8787 user@host`), a reverse proxy with
-  mTLS / OIDC (nginx, Caddy, Traefik), or a mesh VPN with peer auth
-  (Tailscale, Nebula, WireGuard). All three preserve the loopback bind
-  on the emploke side.
-
-## Error mapping
-
-Every entity package defines its own typed error hierarchy
-(`WorkspaceError`, `CatalogError`, `RuntimeError`, …). The server
-maps them to HTTP status codes via `instanceof` checks; the
-`packages/server/src/routes/_shared.ts` `errorBody()` helper
-serialises them with a `code` (the error class name) and a sanitised
-`error` (the message; never includes stack or fs paths).
-
-```ts
-WorkspaceIdInvalidError       → 400
-WorkspaceNotRegisteredError   → 404
-WorkspaceIdConflictError      → 409
-WorkspacePathConflictError    → 409
-WorkspaceCorruptedError       → 500
-RegistryError                 → 500
-WorkspaceError (catch-all)    → 500
-```
-
-Error codes are stable; the dashboard branches on them for
-user-friendly messaging (e.g. `WorkspaceIdConflictError` →
-"This workspace id is already in use" rather than the raw error).
-
-## Shutdown handling
-
-The server installs SIGTERM / SIGINT handlers at boot. On shutdown:
-
-1. `httpServer.close()` — refuse new connections, drain in-flight.
-2. `taskManager.shutdown()` for every workspace — kills every live
-   subprocess, awaits the "server shutdown" terminal persistence,
-   then resolves. The `error: "server shutdown"` reason lets the
-   dashboard render the cause correctly when the user reconnects.
-3. `process.exit(0)`.
-
-Step 2 is the slowest in practice (a hung Copilot subprocess can
-take a couple of seconds to die on Windows). The handler is
-idempotent — repeated SIGINT gets the same result.
+A 30s deadline backstops every step in case a downstream hangs.
 
 ## Testing
 
@@ -156,9 +112,7 @@ idempotent — repeated SIGINT gets the same result.
 pnpm --filter @emploke/server test
 ```
 
-132 tests cover route shape, error mapping, query-param
-canonicalisation, the `?purge=1` semantics, the workspace context
-cache, and end-to-end shutdown behavior.
+Vitest runs in `forks` pool.
 
 ## License
 

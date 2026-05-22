@@ -20,16 +20,18 @@
  *    runtime contract test); tracked as future work in the plan.
  */
 
-import { CatalogManager, type CatalogOptions, defaultFetcherRegistry } from "@emploke/catalog";
-import { silentLogger } from "@emploke/logger";
+import { type CatalogOptions, CatalogService, defaultFetcherRegistry } from "@emploke/catalog";
+import pino from "pino";
+
+const silentLogger = pino({ level: "silent" });
+
+import type { WorkspaceRuntimeCache } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import type { SessionManager } from "@emploke/session";
-import type { TaskManager } from "@emploke/task";
-import type { WorkspaceQueries } from "@emploke/workspace";
+import type { SessionService } from "@emploke/session";
+import type { TaskService } from "@emploke/task";
+import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import { describe, expect, it } from "vitest";
-import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import { configRoutes } from "../src/routes/config.js";
 import { healthRoutes } from "../src/routes/health.js";
@@ -74,7 +76,7 @@ function buildAppForTest(): Hono {
   app.route(
     "/api/workspaces",
     workspacesRoutes({
-      mediator: stubMediator(),
+      service: stubWorkspaceService(),
       queries: stubWorkspaceQueries(),
       cache: stubPerWorkspaceContainerCache(),
       defaultWorkspaceParent: "/tmp/workspaces",
@@ -101,7 +103,7 @@ function buildAppForTest(): Hono {
   const catalogApp = new Hono();
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes(() => stubCatalogManager()),
+    catalogRoutes(() => stubCatalogFacade()),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -168,10 +170,10 @@ function normalizePath(path: string): string {
 // All stubs throw on use so accidentally invoking a handler in a future
 // test surfaces fast.
 
-function stubMediator(): Mediator {
-  return new Proxy({} as Mediator, {
+function stubWorkspaceService(): WorkspaceService {
+  return new Proxy({} as WorkspaceService, {
     get() {
-      throw new Error("stubMediator: not callable");
+      throw new Error("stubWorkspaceService: not callable");
     },
   });
 }
@@ -184,35 +186,35 @@ function stubWorkspaceQueries(): WorkspaceQueries {
   });
 }
 
-function stubPerWorkspaceContainerCache(): PerWorkspaceContainerCache {
-  return new Proxy({} as PerWorkspaceContainerCache, {
+function stubPerWorkspaceContainerCache(): WorkspaceRuntimeCache {
+  return new Proxy({} as WorkspaceRuntimeCache, {
     get() {
       throw new Error("stubPerWorkspaceContainerCache: not callable");
     },
   });
 }
 
-function stubSessionManager(): SessionManager {
-  return new Proxy({} as SessionManager, {
+function stubSessionManager(): SessionService {
+  return new Proxy({} as SessionService, {
     get() {
       throw new Error("stubSessionManager: not callable");
     },
   });
 }
 
-function stubTaskManager(): TaskManager {
-  return new Proxy({} as TaskManager, {
+function stubTaskManager(): TaskService {
+  return new Proxy({} as TaskService, {
     get() {
       throw new Error("stubTaskManager: not callable");
     },
   });
 }
 
-function stubCatalogManager(): CatalogManager {
-  // CatalogManager is a class with options; for route enumeration we
+function stubCatalogFacade(): CatalogService {
+  // CatalogService is a class with options; for route enumeration we
   // never call any method, but constructing one keeps types honest.
   // Use a Proxy to short-circuit any accidental method call.
-  return new Proxy({} as CatalogManager, {
+  return new Proxy({} as CatalogService, {
     get() {
       throw new Error("stubCatalogManager: not callable");
     },
@@ -221,10 +223,10 @@ function stubCatalogManager(): CatalogManager {
 
 // Reference compile-time helpers so unused-import lint stays quiet
 // without a `_unused` prefix that hides the contract.
-const _typeChecks: { spec: RouteSpec; method: HttpMethod; mgr?: typeof CatalogManager } = {
+const _typeChecks: { spec: RouteSpec; method: HttpMethod; mgr?: typeof CatalogService } = {
   spec: { method: "GET", path: "/", _req: {}, _res: undefined },
   method: "GET",
-  mgr: CatalogManager,
+  mgr: CatalogService,
 };
 void _typeChecks;
 void defaultFetcherRegistry;

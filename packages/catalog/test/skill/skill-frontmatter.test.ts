@@ -204,6 +204,6 @@ Some content.
     );
     expect(out).toContain("---");
     expect(out).toContain("# Body only");
-    const { meta } = SkillFormat.parse(out, LABEL);
+    const { meta: _meta } = SkillFormat.parse(out, LABEL);
   });
 });

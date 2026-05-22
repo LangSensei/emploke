@@ -1,12 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogManager, Skill } from "@emploke/catalog";
-import { RegisterWorkspaceCommand } from "@emploke/workspace";
+import type { CatalogService, Skill } from "@emploke/catalog";
+import type { WorkspaceRuntimeCache } from "@emploke/core";
+import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
-import type { Mediator } from "mediatr-ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PerWorkspaceContainerCache } from "../src/per-workspace-container.js";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import {
   type ServerTestSubsystem,
@@ -16,20 +15,20 @@ import {
 
 /**
  * End-to-end tests for the sync / acknowledge / enable / disable
- * routes added in PR #57. Drives the real CatalogManager + SQLite
+ * routes added in PR #57. Drives the real CatalogService + SQLite
  * stack via a real Hono mount so the wire shapes (`ResolveManifest`,
  * status enums, etc.) are exercised top-to-bottom.
  */
 
 let scratch: string;
 let sys: ServerTestSubsystem;
-let mediator: Mediator;
-let cache: PerWorkspaceContainerCache;
+let service: WorkspaceService;
+let cache: WorkspaceRuntimeCache;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-sync-"));
   sys = await setupTestSubsystem({ scratch });
-  mediator = sys.mediator;
+  service = sys.service;
   cache = sys.cache;
 });
 
@@ -41,12 +40,14 @@ afterEach(async () => {
 async function ensureWorkspace(name: string): Promise<{ id: string; workspaceDir: string }> {
   const id = (await import("node:crypto")).randomUUID();
   const workspaceDir = path.join(scratch, name);
-  const result = await mediator.send(new RegisterWorkspaceCommand(id, workspaceDir, name));
+  const result = await service.register({ id, workspaceDir, name });
   return { id: result.id, workspaceDir: path.resolve(workspaceDir) };
 }
 
 function mountApp() {
-  const app = new Hono<{ Variables: { catalog: CatalogManager } }>();
+  const app = new Hono<{
+    Variables: { catalog: CatalogService };
+  }>();
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);

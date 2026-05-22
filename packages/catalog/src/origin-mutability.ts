@@ -1,4 +1,4 @@
-import { parseOrigin } from "@emploke/catalog-fetcher";
+import { parseOrigin } from "./fetcher/index.js";
 
 /**
  * Origin mutability — single rule for "can the catalog mutate this entry's

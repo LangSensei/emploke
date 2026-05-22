@@ -1,4 +1,37 @@
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+/**
+ * Minimal resolved-agent shape consumed by runtime adapters during
+ * {@link Runtime.provision}. Defined here (not imported from
+ * `@emploke/catalog`) so this package depends on the catalog only by
+ * structural typing — any object satisfying this shape works.
+ *
+ * `@emploke/catalog`'s `ResolvedAgent` is a superset of this
+ * type; passing it through as-is type-checks via structural
+ * compatibility.
+ */
+export interface ResolvedAgent {
+  readonly agent: { readonly fqn: string };
+  readonly skills: readonly { readonly skill: { readonly fqn: string } }[];
+  readonly mcps: readonly { readonly fqn: string }[];
+}
+
+/**
+ * Minimal capability surface a content provider must implement for
+ * runtime adapters to materialise a workdir. `AgentContentSource` from
+ * `@emploke/catalog` satisfies this interface; runtime never imports
+ * from catalog.
+ */
+export interface AgentContentSource {
+  resolveAgent(fqn: string): Promise<ResolvedAgent>;
+  agentEntries(fqn: string): AsyncIterable<{ relPath: string; content: Buffer }>;
+  skillEntries(fqn: string): AsyncIterable<{ relPath: string; content: Buffer }>;
+  /**
+   * MCP spec as a parsed JSON object, ready to embed under
+   * `mcpServers` in the target CLI's config. Emploke's internal
+   * `_meta` block is stripped by the content source — runtime does
+   * NOT need to know catalog's storage format.
+   */
+  getMcpRuntimeConfig(fqn: string): Promise<Record<string, unknown>>;
+}
 
 /**
  * A Runtime adapts a third-party CLI (Copilot, Gemini, Claude Code, …) for use
@@ -62,9 +95,9 @@ export interface Runtime {
    * conversation and the CLI's notion of a session:
    *
    *  - **Pre-allocating runtimes** (e.g. Copilot, which accepts
-   *    `--resume=<arbitrary-uuid>` and creates the session if missing)
+   *    `--session-id=<arbitrary-uuid>` and creates the session if missing)
    *    return a freshly-minted id here. Subsequent {@link buildInteractiveLaunch}
-   *    calls always pass `--resume=<that-id>`.
+   *    calls always pass `--session-id=<that-id>`.
    *  - **Discovery-only runtimes** (e.g. Gemini, where the id is minted
    *    by the CLI at first launch and must be scraped from logs / fs /
    *    stdout afterwards) return `null`. The id will be filled in later
@@ -76,8 +109,8 @@ export interface Runtime {
    */
   provision(
     workdir: string,
-    agent: AgentResolveResult,
-    catalog: CatalogManager,
+    agent: ResolvedAgent,
+    catalog: AgentContentSource,
     ctx: ProvisionContext,
   ): Promise<{
     runtimeSessionId: string | null;
@@ -91,7 +124,7 @@ export interface Runtime {
    * `runtimeSessionId` is `null` when no resume is desired (fresh launch
    * for a discovery-only runtime, or a session that's never been
    * provisioned with a pre-allocated id). Otherwise the runtime SHOULD
-   * include `--resume=<id>` (or its CLI's equivalent).
+   * include `--session-id=<id>` (or its CLI's equivalent).
    *
    * `workdir` is the directory the CLI should be launched in (becomes
    * the returned {@link LaunchCommand.cwd}). Distinct from
@@ -197,8 +230,8 @@ export interface Runtime {
    *
    * Throws on partial failure (e.g. permission denied removing some
    * files); the caller is responsible for surfacing this to the user.
-   * Both `SessionManager.delete({purge:true})` and
-   * `TaskManager.delete({purge:true})` call this — runtime first, so
+   * Both `SessionService.delete({purge:true})` and
+   * `TaskService.delete({purge:true})` call this — runtime first, so
    * a runtime failure aborts before any local removal.
    */
   deleteState(runtimeSessionId: string): Promise<void>;
@@ -265,8 +298,8 @@ export interface RuntimeCapabilities {
  */
 export interface LaunchHeadlessOpts {
   readonly workdir: string;
-  readonly agent: AgentResolveResult;
-  readonly catalog: CatalogManager;
+  readonly agent: ResolvedAgent;
+  readonly catalog: AgentContentSource;
   readonly prompt: string;
   readonly workspaceDir: string;
   /**
@@ -311,10 +344,10 @@ export interface RuntimeHandle {
    * Optional because only pre-allocating runtimes (Copilot) know it
    * up front; discovery-only runtimes leave it undefined.
    *
-   * Persisted by callers (TaskManager / SessionManager) so observability
+   * Persisted by callers (TaskService / SessionService) so observability
    * methods (`readActivity`, `readMetadata`, etc.) can reference it
    * later, plus drive the underlying CLI directly
-   * (e.g. `copilot --resume=<id>`).
+   * (e.g. `copilot --session-id=<id>`).
    */
   readonly runtimeSessionId?: string;
 
@@ -503,7 +536,7 @@ export interface LaunchCommand {
    * the shell command itself (`export K='v' && exec foo args` on
    * POSIX, `$env:K='v'; & foo args` for pwsh). The terminal package
    * does that work; this field carries the bag from
-   * `SessionManager.buildInteractiveLaunch` to `spawnTerminal`.
+   * `SessionService.buildInteractiveLaunch` to `spawnTerminal`.
    *
    * Values must be plain strings — no `undefined` (semantically
    * meaningless when inlining), no `null`, no arrays. `undefined`

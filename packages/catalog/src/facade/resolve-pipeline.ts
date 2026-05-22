@@ -1,10 +1,10 @@
-import type { Agent } from "../agent/agent-entity.js";
+import type { AgentEntity } from "../agent/agent-entity.js";
 import type { AgentResolvedNode, AgentService } from "../agent/agent-service.js";
-import type { Mcp } from "../mcp/mcp-entity.js";
+import type { McpEntity } from "../mcp/mcp-entity.js";
 import * as McpFormat from "../mcp/mcp-format.js";
 import type { McpService } from "../mcp/mcp-service.js";
 import { CyclicDependencyError } from "../skill/errors.js";
-import type { Skill } from "../skill/skill-entity.js";
+import type { SkillEntity } from "../skill/skill-entity.js";
 import type { SkillResolvedNode, SkillService } from "../skill/skill-service.js";
 import type {
   CatalogConflict,
@@ -12,7 +12,7 @@ import type {
   CatalogPlanNode,
   McpResolvedNode,
   OrphanedEntry,
-} from "./catalog-manager.js";
+} from "./plan-types.js";
 
 /**
  * Sync resolve, broken into three independently-testable phases.
@@ -551,7 +551,7 @@ function nodesAreUpToDate(a: ClosureNode, b: ClosureNode): boolean {
 }
 
 function skillEntityToResolvedNode(
-  s: Skill,
+  s: SkillEntity,
   anchorContent: string,
   skillOriginByFqn: ReadonlyMap<string, string>,
   mcpOriginByFqn: ReadonlyMap<string, string>,
@@ -569,7 +569,7 @@ function skillEntityToResolvedNode(
 }
 
 function agentEntityToResolvedNode(
-  a: Agent,
+  a: AgentEntity,
   anchorContent: string,
   skillOriginByFqn: ReadonlyMap<string, string>,
   mcpOriginByFqn: ReadonlyMap<string, string>,
@@ -586,7 +586,7 @@ function agentEntityToResolvedNode(
   };
 }
 
-function mcpEntityToResolvedNode(m: Mcp): McpResolvedNode {
+function mcpEntityToResolvedNode(m: McpEntity): McpResolvedNode {
   return {
     fqn: m.fqn,
     origin: m.origin,

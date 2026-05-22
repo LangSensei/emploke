@@ -1,5 +1,13 @@
 import path from "node:path";
 
+/** Subdirectory under `<workspaceDir>/` where per-task workdirs live. */
+export const TASKS_SUBDIR = "tasks";
+
+/** Resolve the absolute root directory for this workspace's task workdirs. */
+export function tasksRoot(workspaceDir: string): string {
+  return path.join(workspaceDir, TASKS_SUBDIR);
+}
+
 /**
  * Path-traversal defense. Given a validated id (caller has already run
  * `assertValidTaskId`), construct the workdir path and assert it is a

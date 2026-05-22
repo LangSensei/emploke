@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
 import { flattenSkillName, InvalidMcpJson } from "../../src/index.js";
@@ -51,7 +51,7 @@ async function setup(opts: {
     }
   >;
   mcps?: Record<string, string>;
-}): Promise<{ catalog: CatalogManager; agentName: string }> {
+}): Promise<{ catalog: CatalogService; agentName: string }> {
   const agentShortName = opts.agent?.name ?? "demo-agent";
   // Pre-create the source root so we know absolute origin URIs in
   // advance â€” they're embedded in frontmatter dep refs as bare URI
@@ -140,7 +140,7 @@ async function setup(opts: {
  * scenario.
  */
 async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
-  catalog: CatalogManager;
+  catalog: CatalogService;
   agentName: string;
   mcpName: string;
 }> {
@@ -307,7 +307,7 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
         t,
         // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentResolveResult surface
         (await malicious.resolveAgent("x")) as any,
-        // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogManager surface
+        // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogService surface
         malicious as any,
         TEST_PLACEHOLDERS,
       ),

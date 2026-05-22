@@ -1,23 +1,19 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import type { CatalogManager } from "@emploke/catalog";
-import { buildLogger, type Logger, type LogLevel } from "@emploke/logger";
-import { resolveEmplokePaths } from "@emploke/paths";
-import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
-import type { SessionManager } from "@emploke/session";
-import type { TaskManager } from "@emploke/task";
-import { WorkspaceQueries } from "@emploke/workspace";
+import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
+import type { WorkspaceRuntimeCache } from "@emploke/core";
+import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
+import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
-import { Mediator } from "mediatr-ts";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
 import { buildServerContainer } from "./bootstrap.js";
+import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
-import { PerWorkspaceContainerCache } from "./per-workspace-container.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
@@ -25,7 +21,7 @@ import { runtimesRoutes } from "./routes/runtimes.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
-import { buildSubprocessEnvBase } from "./subprocess-env.js";
+import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
 // Re-export the route manifest so downstream packages (@emploke/cli,
 // future @emploke/mcp) can build typed clients against the same source
@@ -72,9 +68,7 @@ export {
  * Both managers point at the same workspace; routes pull whichever they need.
  */
 type WorkspaceVars = {
-  sessionManager: SessionManager;
-  taskManager: TaskManager;
-  catalog: CatalogManager;
+  runtime: import("@emploke/core").WorkspaceRuntime;
 };
 
 /**
@@ -137,7 +131,7 @@ function resolveStaticDir(serverDir: string): string {
  */
 export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   const env = process.env;
-  const paths = resolveEmplokePaths(
+  const home = resolveEmplokeHome(
     opts.home !== undefined ? { ...env, EMPLOKE_HOME: opts.home } : env,
   );
 
@@ -166,7 +160,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // for the operator. Level + format honour env so dev can stay pretty
   // and prod can pin JSON-only without code changes.
   const logger: Logger = buildLogger({
-    dir: paths.logsDir,
+    dir: logsDir(home),
     level: opts.logLevel ?? parseLogLevel(env.EMPLOKE_LOG_LEVEL),
     format: opts.logFormat ?? (env.EMPLOKE_LOG_FORMAT === "json" ? "json" : "pretty"),
   });
@@ -177,15 +171,27 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // Resolve `${sharedDir}` placeholders in MCP specs against
       // `<EMPLOKE_HOME>/shared` so spec authors get a stable per-machine
       // directory without baking host paths into JSON.
-      sharedDir: paths.sharedDir,
+      sharedDir: sharedDir(home),
+      // Runtime owns the cross-cutting env (`EMPLOKE_SERVER`,
+      // `EMPLOKE_SHARED_DIR`, plus the `EMPLOKE_HOME` scrub on the
+      // headless path) that every spawned agent process inherits.
+      // Session / Task add their own work-context env (`EMPLOKE_WORK_*`,
+      // `EMPLOKE_WORKSPACE*`) on top via the runtime's launchHeadless
+      // / buildInteractiveLaunch.
+      subprocessEnvBase: buildSubprocessEnvBase({
+        hostname,
+        port,
+        sharedDir: sharedDir(home),
+      }),
+      subprocessEnvScrub: SUBPROCESS_ENV_SCRUB_KEYS,
     }),
   );
 
   // Open the workspace registry (`global.db`) via the workspace pkg's
   // composer. Phase 2 / ADR-3 (#139) replaced the previous
-  // `DatabaseSync` + custom migration framework with a MikroORM-managed
+  // `DatabaseSync` + custom migration framework with a Drizzle-managed
   // entity layout; the encapsulation refactor (P1-5 follow-up) moved
-  // the MikroORM init into the workspace pkg itself, so the server
+  // the Drizzle init into the workspace pkg itself, so the server
   // only passes the DB file path. On first launch the workspace
   // composer creates the schema from its own entity list; on
   // subsequent launches `orm.schema.updateSchema()` is a no-op for
@@ -195,44 +201,18 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   //
   // We do NOT auto-create a default workspace — the dashboard's
   // landing page prompts the user to create one explicitly.
-  await mkdir(paths.home, { recursive: true });
+  await mkdir(home, { recursive: true });
 
   const composition = await buildServerContainer({
-    workspace: { dbFile: paths.globalDbFile },
-  });
-  const rootContainer = composition.container;
-  logger.info({ file: paths.globalDbFile }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
-
-  const mediator = rootContainer.get(Mediator);
-  const workspaceQueries = rootContainer.get(WorkspaceQueries);
-
-  const cache = new PerWorkspaceContainerCache({
-    rootContainer,
+    workspace: { dbFile: globalDbPath(home) },
     runtimeRegistry,
-    queries: workspaceQueries,
+    defaultWorkspaceParent: workspacesParentDir(home),
     logger,
-    // Static env bag merged into every task subprocess. Per-run
-    // additions (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
-    // `EMPLOKE_WORK_KIND`, `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`) are
-    // layered on inside `TaskManager.dispatch` /
-    // `SessionManager.assembleLaunchEnv`.
-    //
-    // `EMPLOKE_SERVER` resolves to a loopback URL when the server is
-    // bound to 0.0.0.0 — the spawned subprocess runs on the same host,
-    // so dialing 0.0.0.0 would be a misconfiguration on Windows
-    // (refused) and a no-op on macOS/Linux. Loopback is the only
-    // address guaranteed to work from a child.
-    // `EMPLOKE_SHARED_DIR` is the cross-workspace machine-shared
-    // state directory — same path the runtime exposes to MCP specs as
-    // `${sharedDir}`. The service-internal `<EMPLOKE_HOME>` itself
-    // (which holds `global.db`, `runtime.json`, `logs/`) is
-    // deliberately NOT exposed to subprocesses.
-    subprocessEnvBase: buildSubprocessEnvBase({
-      hostname,
-      port,
-      sharedDir: paths.sharedDir,
-    }),
   });
+  logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
+
+  const workspaceService = composition.workspaceService;
+  const cache = composition.runtimes;
 
   const app = new Hono();
 
@@ -268,42 +248,33 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   app.route(
     "/api/config",
     configRoutes({
-      emplokeHome: paths.home,
+      emplokeHome: home,
       host: hostname,
       port,
       pathSeparator: pathSep,
-      currentWorkspace: () => workspaceQueries.getLastOpenedId(),
+      currentWorkspace: () => workspaceService.getLastOpenedId(),
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
-  app.route(
-    "/api/workspaces",
-    workspacesRoutes({
-      mediator,
-      queries: workspaceQueries,
-      cache,
-      defaultWorkspaceParent: paths.sharedWorkspacesDir,
-    }),
-  );
+  app.route("/api/workspaces", workspacesRoutes(composition));
 
-  // Workspace-scoped sessions and catalog. The middleware resolves :id
-  // context and stashes both `sessionManager` and `catalog` on c.var; each
-  // route family reads back the one it needs via the resolver. 404 if id
-  // unknown; 5xx if the workspace row is corrupted or workspace.db cannot be opened.
+  // Workspace-scoped sessions / tasks / catalog. Middleware resolves the
+  // `:id` workspace once and stashes the whole `WorkspaceRuntime` on
+  // c.var; each route family reads the bits it needs. 404 if id is not
+  // registered; 5xx if workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
   sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
   sessionsApp.route(
     "/:id/sessions",
-    sessionsRoutes((c) => c.get("sessionManager")),
+    sessionsRoutes((c) => c.get("runtime")),
   );
   app.route("/api/workspaces", sessionsApp);
 
-  // Workspace-scoped tasks. Same middleware shape as sessions.
   const tasksApp = new Hono<{ Variables: WorkspaceVars }>();
   tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
   tasksApp.route(
     "/:id/tasks",
-    tasksRoutes((c) => c.get("taskManager")),
+    tasksRoutes((c) => c.get("runtime").tasks),
   );
   app.route("/api/workspaces", tasksApp);
 
@@ -311,7 +282,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes((c) => c.get("catalog")),
+    catalogRoutes((c) => c.get("runtime").catalog),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -339,12 +310,12 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   logger.info(
     {
       listen: `http://${displayHost}:${port}`,
-      home: paths.home,
-      globalDb: paths.globalDbFile,
-      workspaces: (await workspaceQueries.list()).length,
+      home: home,
+      globalDb: globalDbPath(home),
+      workspaces: (await workspaceService.list()).length,
       runtimes: runtimeRegistry.kinds(),
       static: serveStaticFiles ? staticDir : null,
-      logsDir: paths.logsDir,
+      logsDir: logsDir(home),
     },
     "emploke server starting",
   );
@@ -367,7 +338,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   //      (a) a `POST /tasks` arriving mid-shutdown spawning a new
   //      subprocess after we've already taken the snapshot, and (b) the
   //      first request to a workspace whose context wasn't loaded yet
-  //      lazy-instantiating a fresh TaskManager that wasn't in
+  //      lazy-instantiating a fresh TaskService that wasn't in
   //      `cache.loaded()` and would never get drained.
   //   2. `tasks.shutdown()` second — by now no new dispatches can land,
   //      so the snapshot of cached contexts is authoritative.
@@ -410,18 +381,21 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       // handles (the CLI integration tests `rm -rf <EMPLOKE_HOME>`
       // immediately after `stop`, and an unclosed `workspace.db`
       // surfaces as `EBUSY: resource busy or locked`).
-      cache.closeAll();
+      //
+      // `closeAll()` is async (each entry's `close()` awaits its
+      // own per-pkg disposers); missing the await would race the
+      // `composition.close()` below and leak handles past `process.exit`.
+      await cache.closeAll();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing workspace contexts");
     }
     try {
-      // Close the workspace registry's underlying MikroORM instance
+      // Close the workspace registry's underlying Drizzle DB handle
       // (`global.db`) via the composition handle. Per-workspace
       // contexts have already been closed by `cache.closeAll()` above,
-      // so closing the global ORM here is safe. The handle's close()
-      // flushes any pending changes and releases the SQLite handle,
-      // which Windows needs before the CLI integration test can
-      // `rm -rf <EMPLOKE_HOME>`.
+      // so closing the global handle here is safe. The handle's close()
+      // releases the SQLite file, which Windows needs before the CLI
+      // integration test can `rm -rf <EMPLOKE_HOME>`.
       await composition.close();
     } catch (err) {
       logger.error({ err: errorToMeta(err) }, "error closing global.db");
@@ -438,10 +412,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 }
 
 /**
- * Hono middleware: pulls `:id` from the route params, asks the cache for
- * its `WorkspaceContext`, and stashes the per-workspace `SessionManager`
- * and `CatalogManager` on `c.var`. Sub-route families pull whichever they need
- * (sessions read `c.get("sessionManager")`; catalog reads `c.get("catalog")`).
+ * Hono middleware: pulls `:id` from the route params, asks the cache
+ * for its `WorkspaceRuntime`, and stashes it on `c.var.runtime` as a
+ * single field. Sub-routes pull whichever service they need off the
+ * runtime (sessions read `c.get("runtime").sessions`; catalog reads
+ * `c.get("runtime").catalog`; etc.).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
@@ -449,27 +424,25 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
  *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
  */
 function workspaceContextMiddleware(
-  cache: PerWorkspaceContainerCache,
+  cache: WorkspaceRuntimeCache,
 ): MiddlewareHandler<{ Variables: WorkspaceVars }> {
   return async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    let ctx: Awaited<ReturnType<PerWorkspaceContainerCache["get"]>>;
+    let runtime: Awaited<ReturnType<WorkspaceRuntimeCache["get"]>>;
     try {
-      ctx = await cache.get(id);
+      runtime = await cache.get(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message, code: (err as Error)?.name }, 500);
     }
-    if (!ctx) {
+    if (!runtime) {
       return c.json(
         { error: `workspace "${id}" is not registered`, code: "WorkspaceNotRegisteredError" },
         404,
       );
     }
-    c.set("sessionManager", ctx.sessions);
-    c.set("taskManager", ctx.tasks);
-    c.set("catalog", ctx.catalog);
+    c.set("runtime", runtime);
     await next();
   };
 }

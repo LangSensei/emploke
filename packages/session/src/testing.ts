@@ -1,35 +1,43 @@
-/**
- * Test-only entry point. The `SessionRepository` is now backed by
- * SQLite in production; for tests, construct a `SqliteSessionRepository`
- * with a `new DatabaseSync(":memory:")` connection to get an isolated
- * in-memory database that lives only for the lifetime of the connection.
- *
- * Post-issue-#123: the repository no longer bootstraps tables itself.
- * Tests must call `bootstrapSessionDb(db)` first to run the coordinator
- * with `SESSION_MIGRATIONS`.
- *
- * ```ts
- * import { DatabaseSync } from "node:sqlite";
- * import { bootstrapSessionDb, SqliteSessionRepository } from "@emploke/session/testing";
- *
- * const db = new DatabaseSync(":memory:");
- * await bootstrapSessionDb(db);
- * const repo = new SqliteSessionRepository({ db });
- * await repo.save("20260101-aaaaaaaa", { runtime: "copilot", ... });
- * ```
- */
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
+import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema.js";
 
-import type { DatabaseSync } from "node:sqlite";
-import { runPkgMigrations } from "@emploke/workspace";
-import { SESSION_MIGRATIONS } from "./migrations/index.js";
-
-export { SqliteSessionRepository } from "./repositories/sqlite-session-repository.js";
+type Db = BetterSQLite3Database<typeof schema>;
 
 /**
- * Run the migration coordinator against a fresh `workspace.db` (or
- * `:memory:` test DB) so the `SqliteSessionRepository` constructor
- * sees the `schema_meta` row it now requires. Idempotent.
+ * Open an in-memory Drizzle-wrapped better-sqlite3 instance for tests
+ * with the session schema pre-applied.
  */
-export async function bootstrapSessionDb(db: DatabaseSync): Promise<void> {
-  await runPkgMigrations(db, [{ pkg: "session", migrations: SESSION_MIGRATIONS }]);
+export function openTestSessionDb(): {
+  db: Db;
+  sqlite: BetterSqliteDatabase;
+  close(): void;
+} {
+  const sqlite = new Database(":memory:");
+  sqlite.pragma("journal_mode = WAL");
+  // No `foreign_keys = ON`  schema has no FK constraints; the
+  // pragma without FKs is a no-op and would mislead readers.
+  const db = drizzle(sqlite, { schema });
+  // Apply migrations the same transactional way `compose.ts` does
+  // so a partial failure leaves a clean rollback (matters for the
+  // rare test that intentionally feeds a malformed migration; on
+  // the happy path the transaction wrapper is free).
+  const dir = path.join(import.meta.dirname, "..", "drizzle");
+  const applyOne = sqlite.transaction((name: string) => {
+    sqlite.exec(readFileSync(path.join(dir, name), "utf8"));
+  });
+  for (const name of readdirSync(dir)
+    .filter((x) => x.endsWith(".sql"))
+    .sort()) {
+    applyOne(name);
+  }
+  return {
+    db,
+    sqlite,
+    close() {
+      sqlite.close();
+    },
+  };
 }

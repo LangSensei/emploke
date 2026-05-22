@@ -1,15 +1,14 @@
-import { DatabaseSync } from "node:sqlite";
-import type { EntryFile } from "@emploke/catalog-fetcher";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { EntryFile } from "../../src/fetcher/index.js";
 import {
   PlanStaleError,
   SkillFrontmatterError,
   SkillNotFoundError,
   SkillOriginConflictError,
 } from "../../src/skill/errors.js";
-import { Skill } from "../../src/skill/skill-entity.js";
+import { SkillEntity } from "../../src/skill/skill-entity.js";
+import { SkillRepository } from "../../src/skill/skill-repository.js";
 import { type SkillFetcher, SkillService } from "../../src/skill/skill-service.js";
-import { SqliteSkillRepository } from "../../src/skill/sqlite-skill-repository.js";
 import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
 
 function makeFetcher(): {
@@ -52,22 +51,22 @@ ${deps}
 # Body
 `;
 
-let db: DatabaseSync;
-let repo: SqliteSkillRepository;
+let orm: ReturnType<typeof openTestCatalogDb>;
+let repo: SkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;
 
 beforeEach(async () => {
-  db = new DatabaseSync(":memory:");
-  await bootstrapCatalogDb(db);
-  repo = new SqliteSkillRepository({ db });
+  orm = bootstrapCatalogDb();
+
+  repo = new SkillRepository({ db: orm.db });
   fetcher = makeFetcher();
   svc = new SkillService(repo, fetcher.fetcher);
 });
 
-afterEach(() => {
+afterEach(async () => {
   try {
-    db.close();
+    orm.close();
   } catch {
     // already closed
   }
@@ -239,9 +238,9 @@ describe("SkillService — single-entity API", () => {
     await svc.install("file:/abs/tool");
   });
 
-  it("get returns Skill entity", async () => {
+  it("get returns SkillEntity entity", async () => {
     const s = await svc.get("public/tool");
-    expect(s).toBeInstanceOf(Skill);
+    expect(s).toBeInstanceOf(SkillEntity);
     expect(s!.fqn).toBe("public/tool");
   });
 

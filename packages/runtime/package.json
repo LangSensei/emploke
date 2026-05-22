@@ -1,7 +1,7 @@
 {
   "name": "@emploke/runtime",
   "version": "0.0.1",
-  "description": "Runtime — per-CLI adapters (provision, refresh, launch, deleteState) used by sessions and tasks",
+  "description": "Runtime \u2014 per-CLI adapters (provision, refresh, launch, deleteState) used by sessions and tasks",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -27,18 +27,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/catalog": "workspace:*",
-    "@emploke/fs": "workspace:*",
-    "@emploke/workspace": "workspace:*",
     "@github/copilot-sdk": "1.0.0-beta.4",
-    "cross-spawn": "^7.0.6",
-    "inversify": "^7.0.0",
-    "js-yaml": "^4.1.0"
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0",
+    "proper-lockfile": "^4.1.2",
+    "write-file-atomic": "^5.0.1"
   },
   "devDependencies": {
-    "@types/cross-spawn": "^6.0.6",
+    "@emploke/catalog": "workspace:*",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/write-file-atomic": "^4.0.3",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"
   },

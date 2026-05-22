@@ -1,4 +1,4 @@
-import type { CatalogManager } from "@emploke/catalog";
+import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
 import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
 import {
@@ -21,7 +21,7 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * Dashboard's two-phase flow uses `/resolve` to show the user what
  * will happen, then `/` to commit.
  */
-export function skillsRoutes(arg: CatalogResolver | CatalogManager): Hono {
+export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
   const getCatalog = resolveCatalog(arg);
 

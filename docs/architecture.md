@@ -17,97 +17,150 @@ layers; never the reverse.
                 │ @emploke/dashboard     │  React + Vite SPA
                 └───────────▲────────────┘
                             │ HTTP /api/*
-                ┌───────────┴────────────┐
-                │ @emploke/server        │  Hono routes + middleware
+                ┌───────────┴────────────┐       ┌─────────────┐
+                │ @emploke/cli           │       │ @emploke/   │
+                │ (lifecycle commands)   │──────▶│  api-types  │
+                └───────────┬────────────┘       └──────▲──────┘
+                            │ HTTP /api/*               │
+                ┌───────────┴────────────┐              │
+                │ @emploke/server        │──────────────┘
+                │ (routes + middleware)  │  reads RuntimeFile shape
                 └───────────▲────────────┘
                             │
-   ┌───────────┬────────────┼────────────┬───────────────┐
-   │           │            │            │               │
-┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌──────┴──────┐
-│task │  │ session   │ │ catalog │ │ workspace │  │   runtime   │
-└──▲──┘  └─────▲─────┘ └────▲────┘ └─────▲─────┘  └──────▲──────┘
-   │           │            │            │               │
-   └───────────┴────────────┼────────────┘               │
-                            │                            │
-                   ┌────────┴───────┐         ┌──────────┴─────────┐
-                   │   @emploke/fs   │        │ @emploke/terminal  │
-                   │  atomic IO + locks       └────────────────────┘
-                   └────────▲────────┘
+                ┌───────────┴────────────┐    ┌──────────────────┐
+                │ @emploke/core          │───▶│ @emploke/        │
+                │ composition root +     │    │  terminal        │
+                │ WorkspaceRuntimeCache  │    │ (spawn launcher) │
+                │ + WorkspaceRuntime     │    └──────────────────┘
+                │   .spawnSession()      │
+                └───────────▲────────────┘
                             │
-                   ┌────────┴────────┐    ┌─────────────────┐
-                   │ @emploke/paths  │    │ @emploke/logger │
-                   │  env → fs paths │    │  pino + roll    │
-                   └─────────────────┘    └─────────────────┘
+   ┌───────────┬────────────┼────────────┬────────────────┐
+   │           │            │            │                │
+┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌───────┴────┐
+│task │  │ session   │ │ catalog │ │ workspace │  │  runtime   │
+└──▲──┘  └─────▲─────┘ └─────────┘ └───────────┘  └────────────┘
+   │           │
+   └───────────┴── runtime adapters consumed by task + session
 ```
+
+`@emploke/api-types` is the **out-of-band IPC contract** between
+`@emploke/cli` and `@emploke/server` (today: the `runtime.json` file
+shape + `EMPLOKE_HOME` resolution). Entity packages do NOT depend on
+it — they expose pkg-owned DTOs through their own `index.ts`.
+
+`@emploke/terminal` is consumed **only by `@emploke/core`** at
+runtime — specifically by `WorkspaceRuntime.spawnSession()` which
+takes the `LaunchCommand` from `SessionService.buildInteractiveLaunch`
+and hands it to `spawnTerminal()`. Entity packages don't see it.
+`@emploke/runtime` produces `LaunchCommand` values but does not
+spawn terminals — the spawn step lives one layer up.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition
-happens at the server layer: the server holds one `WorkspaceManager`
-process-wide and lazily mints per-workspace `CatalogManager` /
-`SessionManager` / `TaskManager` instances behind a context cache.
-`runtime` is consumed by `session` + `task` to spawn agents.
+happens at the [`@emploke/core`](../packages/core) layer: core holds
+one `WorkspaceService` process-wide and lazily mints per-workspace
+`{catalog, sessions, tasks}` bundles behind a
+`WorkspaceRuntimeCache`. The server depends on core, not on the
+entity pkgs directly. `runtime` is consumed by `session` + `task` to
+spawn agents.
 
-## Repository pattern
+## Service + repository pattern
 
-Every entity package follows the same shape: a **Manager** facade plus a
-**Repository** abstraction, with file-system implementations supplied by
-default and in-memory implementations exposed on the package's
-`testing` subpath.
+Every entity package follows the same shape: a single
+**`<Entity>Service`** class that owns reads + writes, backed by a
+package-private **Drizzle repository** that the service constructs.
+Tests open the service against `dbFile: ":memory:"` via the package's
+`composeXxxModule` helper, so the schema goes through the real
+drizzle-kit migrator on every test boot.
+
+### Per-package src layout
+
+```
+packages/<pkg>/src/
+  schema.ts                 Drizzle table def + `*Row` / `New*Row` types (package-private)
+  <entity>-entity.ts        `<Entity>Entity` — pkg-owned domain shape; interface or class
+  <entity>-repository.ts    `<Entity>Repository` — Drizzle CRUD; returns Entity
+  <entity>-service.ts       `<Entity>Service` — orchestration; returns DTO
+  types.ts                  bare-noun DTO (`Workspace`, `Session`, ...) + opts shapes
+  errors.ts                 typed error classes
+  validate.ts               id regex + zod input schemas
+  compose.ts                `compose<Entity>Module({ dbFile })` composition root
+  testing.ts                in-memory test fixture (via `/testing` subpath)
+  index.ts                  public barrel
+drizzle/                    generated SQL migrations (committed)
+drizzle.config.ts           drizzle-kit codegen config
+```
+
+### The three layers
+
+emploke uses an **explicit 3-layer split** (Row / Entity / DTO) across
+every entity pkg. The pkg-template enforces it; see
+[`docs/pkg-template.md`](./pkg-template.md) for the full rationale.
+
+| Layer | Where | Suffix | Visibility | Role |
+|---|---|---|---|---|
+| **Row** | `schema.ts` | `*Row` | pkg-private | Drizzle `$inferSelect` shape; tracks the SQLite table |
+| **Entity** | `<entity>-entity.ts` | `*Entity` | pkg-private (NOT re-exported from `index.ts`) | Pkg-owned domain shape; `interface` for anemic BCs, `class` for rich (state machine / invariants) |
+| **DTO** | `types.ts` | bare noun (no suffix) | exported from `index.ts` | Wire shape; what `<Entity>Service` returns; stable contract for HTTP / CLI / other pkgs |
+
+Repository public methods return **Entity**. Service public methods
+return **DTO**. The row → entity boundary lives inside the repository
+file; the entity → DTO boundary lives inside the service file. When
+either projection is structurally trivial it's an inline TypeScript
+assignment (no helper function); when it's non-trivial — composite
+sources, normalisation, async fetches — it grows into a module-private
+helper at the same boundary.
 
 ```ts
-// e.g. packages/workspace/src/repositories/repository.ts
-export interface WorkspaceRepository {
+// e.g. packages/workspace/src/workspace-service.ts
+export class WorkspaceService {
+  // Reads — service projects Entity → DTO inline (1-line normalisation).
+  getById(id: string): Promise<Workspace | null>;
   list(): Promise<Workspace[]>;
-  read(id: string): Promise<Workspace | null>;
-  save(workspace: Workspace): Promise<void>;        // upsert
-  create(workspace: Workspace): Promise<void>;      // atomic create-or-fail
-  delete(id: string): Promise<void>;
-  getCurrent(): Promise<string | null>;
-  setCurrent(id: string): Promise<void>;
+  getLastOpened(): Promise<Workspace | null>;
+  getLastOpenedId(): Promise<string | null>;
+
+  // Writes — Stripe-style hybrid: primary key positional, options in bag.
+  register(input: { id, workspaceDir, name }): Promise<{ id: string }>;
+  open(id: string): Promise<void>;
+  rename(id: string, opts: { newName: string }): Promise<void>;
+  unregister(id: string, opts?: { purge?: boolean }): Promise<void>;
 }
 ```
 
-Three properties matter:
+### Three properties of the pattern
 
-1. **Domain types are clean.** `Workspace`, `Task`, `Session`, `Skill`,
-   `Agent` are flat value types with no `schemaVersion`, no `metadata`
-   wrapper, no fs-shaped fields beyond a single `workdir` on `Workspace`.
-   The `schemaVersion` lives only inside the repository's wire format
-   (FS-backed entities wrap the value in `{schemaVersion: N, ...fields}`
-   on disk; SQLite-backed entities track it in a `schema_meta` row);
-   the manager strips it on read.
-2. **Repositories are bytes in / bytes out.** They never parse
-   frontmatter, build dependency graphs, or maintain caches — those are
-   manager concerns. The repository's job is "given an id, return the
-   stored value (or null)."
-3. **InMemory implementations exist for FS-backed entity tests.** Every
-   FS-backed entity package (today: `workspace`) exports one at
-   `@emploke/<pkg>/testing`. SQLite-backed entities (catalog, session,
-   task) instead expose their `Sqlite*Repository` constructed with
-   `":memory:"` for the same role — isolated, lifetime-of-the-test,
-   validates ids the same way the on-disk DB does.
+1. **Repositories are persistence-only.** They never parse
+   frontmatter, build dependency graphs, mkdir, spawn subprocesses,
+   or call other pkgs. The repository's job is "given an id, return
+   the stored `Entity` (or undefined)." Side effects, validation,
+   cross-pkg coordination, FSM transitions all live in the service.
+2. **`*Row` never leaves the repository.** No `export * as schema`
+   from `index.ts`; the Drizzle inferred type is implementation
+   detail. Swapping ORMs only touches `schema.ts` +
+   `<entity>-repository.ts`.
+3. **`*Entity` classes are pkg-private.** Rich BCs (catalog/task)
+   keep their FSM class internal; the public projection is the
+   bare-noun DTO. Anemic BCs (workspace/session) use a plain
+   `interface` for Entity instead of a class.
 
-## `@emploke/fs`: the atomic IO seam
 
-Every FS-touching operation in the repo goes through one of four
-primitives in [`packages/fs`](../packages/fs):
 
-| Primitive               | What it guarantees                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `writeFileAtomic`       | Write-temp + rename. Survives mid-write crashes; readers see old or new bytes, never partial. EPERM/EACCES retry on Windows.  |
-| `writeJsonAtomic`       | `writeFileAtomic` + `JSON.stringify` with trailing newline.                                                                   |
-| `readJson`              | `readFile` + `JSON.parse` with a 10 MB cap (DoS guard); double-checked post-read to defeat stat/read TOCTOU races.            |
-| `withFileLock`          | Advisory lock backed by an `O_EXCL` lockfile, with PID-aware stale recovery (stuck PID → wait; dead PID → steal).             |
+## Atomic IO seam
 
-These are the **only** allowed paths to durable state in the FS-backed
-repo. A catalog `write()`, a workspace registry mutation, a runtime
-breadcrumb save — all flow through these. CI failures and production
-incidents disappear when an entity rewrite forgets to use them; the
-parameterised regression test in
-`packages/catalog/test/fs-repositories.test.ts` spies on
-`writeFileAtomic` to keep that from happening again. SQLite-backed
-entities (catalog, session, task) get the equivalent guarantees from
-WAL mode + transactions and don't go through this layer.
+Out-of-band JSON files (the CLI lifecycle `runtime.json`, agent-baked
+`AGENTS.md` / `.mcp.json`) are written via
+[`write-file-atomic`](https://github.com/npm/write-file-atomic) —
+write-temp + rename, so readers see old or new bytes, never partial.
+Use it for any long-lived JSON / Markdown file consumed by an
+external reader. `proper-lockfile` covers the cases that need a
+PID-aware advisory lock (the runtime adapter's per-session state
+preflight).
+
+Long-lived structured state lives in SQLite (`global.db`,
+`workspace.db`) and gets the equivalent guarantees from WAL mode +
+transactions — no separate atomic-write layer needed there.
 
 ## Backend selection: when SQLite
 
@@ -120,12 +173,16 @@ entity:
   state (current-workspace pointer, future audit logs, etc).
 - **`<workspace>/workspace.db`** — every per-workspace entity (catalog,
   session, task, future workflow). One connection serves them all,
-  shared via DI from `WorkspaceContext`.
+  shared via DI from `WorkspaceRuntime` (in `@emploke/core`).
 
-Each pkg owns its own tables inside the shared DB and registers its
-schema version in a multi-row `schema_meta(pkg TEXT PK, version INT)`
-table so pkgs can evolve independently. The manager holds no
-in-memory snapshot — SQLite is the source of truth and reads run in
+Each pkg owns its own tables inside the shared DB. Schema evolution
+goes through **drizzle-kit** — `pnpm --filter @emploke/<pkg>
+db:generate` produces an SQL file under `<pkg>/drizzle/`; the
+in-pkg migrator at compose time applies them and records the
+applied filename in `__drizzle_migrations`. There is no
+cross-package coordinator any more — each pkg's table set is
+managed by its own drizzle-kit setup. The service holds no
+in-memory snapshot; SQLite is the source of truth and reads run in
 autocommit so external writes are observable on the next request.
 
 Why one DB per scope rather than one DB per entity:
@@ -175,46 +232,48 @@ to thousands of rows under filtering / sorting queries.
 #32 explored a generic `PersistenceService` (Phase 2 of the proposed
 `@emploke/storage`). It was deliberately not built. Each entity's
 repository surface is shaped by its own queries:
-`WorkspaceRepository.getCurrent()`,
-`TaskRepository.list({ statuses, runtime, ... })`,
-`CatalogManager.resolveAgent()` (graph). A unified interface would
+`WorkspaceService.getLastOpened()`,
+`TaskService.list({ statuses, runtime, ... })`,
+`CatalogService.resolveAgent()` (graph). A unified interface would
 force these into either an `unknown`-typed lowest common denominator
 or a parade of entity-specific extension methods that re-introduce
 the per-entity shape it was meant to remove.
 
 The pattern that works: **shared SQLite connection per scope (global
-+ per-workspace), per-entity repositories with their own table
-ownership and `schema_meta` row.**
++ per-workspace), per-entity drizzle-managed tables.**
 
 ## Unified verb conventions
 
-Two verbs are deliberately consistent across every entity:
-
-- **`delete(id, { purge?: boolean })`** — every Manager. Default is
+- **`delete(id, { purge?: boolean })`** — every Service. Default is
   metadata-only (the repository row is removed; agent-produced files
   under `<workdir>/<entity>/<id>/` are preserved for archival).
   `purge: true` additionally removes the entity's sandbox directory.
   The workspace's `workdir` itself is **never** removed by emploke;
   it's user-owned. REST mirrors: `DELETE
   /api/workspaces/:id/tasks/:tid?purge=1`.
-- **`create(...)`** vs **`save(...)`** on repositories — `create` is
-  atomic create-or-fail (throws `*IdConflictError` if the id is taken);
-  `save` is upsert (last-writer-wins). Managers' `init` paths use
-  `create` to close concurrency races; `update` paths use `save`.
+- **Stripe-style hybrid params** — primary key (id) positional;
+  flags / options in a single trailing options bag
+  (`service.rename(id, { newName })`,
+  `service.unregister(id, { purge })`). `register`-style creates
+  that have no canonical positional key take a single options bag
+  (`service.register({ id, workspaceDir, name })`). The shape
+  matches Stripe's published API style; see
+  [`docs/pkg-template.md`](./pkg-template.md) for the rationale.
 
-When in doubt, copy the pattern from `WorkspaceManager`.
+When in doubt, copy the pattern from `WorkspaceService`.
 
 ## Wire formats
 
-JSON files on disk are **A1 flat**: `{schemaVersion: N, ...fields}` at
-the top level. The FS repository wraps on save and unwraps on read; the
-domain type sees no `schemaVersion`. Any future migration adds a new
-`schemaVersion` and a per-version branch in the repository's parse
-function — domain types and managers stay untouched.
+Persisted state lives in SQLite — the schema is the wire format. Add
+a column or backfill via `pnpm --filter @emploke/<pkg> db:generate`
++ the generated migration; drizzle-kit produces forward-only SQL
+that the in-pkg migrator applies once at compose time.
 
-`schemaVersion` mismatches throw a typed `*CorruptedError` with an
-upgrade-or-migration hint string; the server maps these to HTTP 500 so
-the dashboard can surface the cause without crashing.
+Out-of-band JSON files (the CLI's `runtime.json`, the agent-baked
+`AGENTS.md` / `.mcp.json`) are written `{schema: N, ...fields}` at
+the top level. Bump `schema` on breaking changes; reject mismatches
+at read time with a typed `*CorruptedError` so the dashboard can
+surface the cause without crashing.
 
 ## HTTP API URL scheme
 
@@ -225,9 +284,13 @@ entry, so dashboard URLs survive workspace renames. There is no global
 catalog mount; switching workspace switches the catalog the dashboard
 sees.
 
-A `WorkspaceContextCache` lazily mints + retains per-workspace
-manager instances behind that URL prefix; cache invalidation happens
-on workspace deletion or metadata update.
+A `WorkspaceRuntimeCache` (in `@emploke/core`) lazily mints + retains
+per-workspace `{catalog, sessions, tasks}` bundles behind that URL
+prefix; cache invalidation happens on workspace deletion or rename.
+An explicit `POST /api/workspaces/:id/reload` is also available for
+operator-driven reload (refused with HTTP 409 +
+`code=WorkspaceHasLiveTasksError` when the workspace still has live
+task subprocesses).
 
 The server is **loopback-only**: it refuses to bind to anything other
 than `127.0.0.1` / `::1`. emploke ships no built-in auth, on the
@@ -249,7 +312,7 @@ Tailscale). A misconfigured non-loopback bind fails fast at startup.
 └── tasks/<id>/                  one-shot autonomous dispatch — workdir for agent artifacts
     ├── AGENTS.md                materialised from catalog at create time (runtime.provision)
     ├── .mcp.json                merged from agent's MCP deps (runtime.provision)
-    ├── TASK.md                  user-supplied brief + optional details (TaskManager.dispatch writes `# <brief>\n` or `# <brief>\n\n<details>\n`)
+    ├── TASK.md                  user-supplied brief + optional details (TaskService.dispatch writes `# <brief>\n` or `# <brief>\n\n<details>\n`)
     ├── temp/                    agent scratch (created empty; not surfaced to the user)
     ├── artifact/                user-visible task output (created empty; agent-managed)
     ├── stderr.log               CLI errors (the runtime owns its event log via readActivity, NOT mirrored here)
@@ -363,18 +426,25 @@ rely on; everything else in the env is "best effort, host-dependent".
 
 ### Deliberately not exposed
 
-- **`EMPLOKE_HOME`** in the **task** path: agents that run inside
-  `emploke task dispatch` see `process.env.EMPLOKE_HOME === undefined`
-  even though the server itself uses it to find `global.db` /
-  `runtime.json` / `logs/`. The base subprocess env explicitly sets
-  `EMPLOKE_HOME: undefined` so `mergeEnv` strips the inherited value
-  before spawn. Rationale: AI-agent tasks should never touch the
-  service-internal directory tree; the only piece they legitimately
-  need is `EMPLOKE_SHARED_DIR` and that's exposed separately.
+- **`EMPLOKE_HOME`** in the **task / headless** path: agents that
+  run inside `emploke task dispatch` see
+  `process.env.EMPLOKE_HOME === undefined` even though the server
+  itself uses it to find `global.db` / `runtime.json` / `logs/`.
+  Server bootstrap passes `SUBPROCESS_ENV_SCRUB_KEYS = ["EMPLOKE_HOME"]`
+  to `CopilotRuntime`; the runtime's `launchHeadless` translates the
+  list into `undefined` overrides that `mergeEnv` (in
+  `launch-headless.ts`) interprets as "delete this key from the
+  inherited parent env." Rationale: AI-agent tasks should never touch
+  the service-internal directory tree; the only piece they
+  legitimately need is `EMPLOKE_SHARED_DIR` and that's exposed
+  separately.
 - **`EMPLOKE_HOME`** in **interactive session launches**: the user is
   driving a terminal they own, the shell already has `EMPLOKE_HOME`
   set if they care, and the launch command path doesn't override it.
-  Treat `EMPLOKE_HOME` as ambient host state, not a session contract.
+  Scrub keys are NOT honoured on this path — interactive shells
+  inherit the parent env wholesale and `cmd /k` / pwsh `$env:`
+  prefixes can only SET values, not unset them. Treat
+  `EMPLOKE_HOME` as ambient host state, not a session contract.
 - **Other shell state**: `cwd`, `PATH`, terminal env, and so on are
   inherited from the server process verbatim. Agents and skills
   that need any of these should declare them in their own
@@ -492,19 +562,20 @@ file and break it, that's a `git restore` away (if you're lucky) or a
 - **[esbuild](https://esbuild.github.io)** for the production bundle
   (`pnpm bundle` → `bundle/emploke.js` + `bundle/static/`).
 - **[pino](https://getpino.io)** for structured logging — committed
-  to as the API surface, not just a transport choice. `Logger` in
-  `@emploke/logger` is `pino.Logger`; call sites use pino's native
-  `(meta, msg)` form (`logger.info({ userId }, "user logged in")`)
-  and reach for pino features (`child(bindings)` for per-request /
+  to as the API surface, not just a transport choice. Every pkg
+  takes an optional `logger?: pino.Logger` constructor parameter
+  and reaches for pino features (`child(bindings)` for per-request /
   per-component scoping, `redact` for token sanitisation,
   `serializers` for error rendering) directly. Pretty-printed in
   dev, JSON in prod (file destination is always JSON regardless).
   - `silentLogger` is `pino({ level: "silent" })` — the default for
     any optional `logger?` constructor parameter; pino short-circuits
     at the level check so it incurs no allocation cost.
-  - Test seam: `import { captureLogger } from "@emploke/logger/testing"`
-    returns `{ logger, entries }` for tests that need to assert on
-    structured log output.
+  - Test seam: tests that need to assert on structured log output
+    construct a per-test `captureLogger` via pino's
+    [`destination`](https://getpino.io/#/docs/api?id=destination)
+    API (canonical impl at `packages/server/test/_capture-logger.ts`
+    is the simplest example).
 
 ## Testing posture
 
@@ -512,13 +583,19 @@ file and break it, that's a `git restore` away (if you're lucky) or a
 - Integration tests live in `packages/<pkg>/test/integration/` and
   use real subprocess spawning where applicable. They run on the same
   CI matrix (Linux / macOS / Windows / Node 22).
-- The **InMemory repository per entity** is the preferred test seam.
-  Reach for `mkdtemp` + the FS repo only when the test must observe
-  on-disk behavior (atomicity, lock recovery, scan order).
-- Vitest's `vi.mock` pattern is used to spy on module imports —
-  see `packages/catalog/test/fs-repositories.test.ts` for the
-  canonical example (regression-test that production code goes through
-  the atomic-write seam).
+- The preferred test seam is **`compose<Entity>Module({ dbFile:
+  ":memory:" })`**: opens an in-memory SQLite, runs the real
+  drizzle-kit migrations, returns the real service. No mocks of
+  the persistence layer; tests assert against actual database
+  behaviour (constraint violations, ordering, joins).
+- Vitest's `vi.mock` pattern is used to spy on module imports
+  when a side-effect needs verification (e.g. confirming the
+  service routes a write through the atomic-write helper rather
+  than `fs.writeFile` directly).
+- Vitest runs in `forks` pool across every pkg. better-sqlite3's
+  native binding segfaults on worker-thread teardown on Windows;
+  forks isolate per-file with a separate process so the segfault
+  becomes a localised failure instead of a workspace-wide outage.
 
 ## Coding conventions
 
@@ -534,8 +611,9 @@ file and break it, that's a `git restore` away (if you're lucky) or a
   the choice to use `Number.parseInt` over `+` because the input might
   be `"0x10"` is not. Lean toward more comments at decision points,
   fewer at mechanical steps.
-- **Atomic writes go through `@emploke/fs`.** Plain `writeFile`
-  to a long-lived file is a code-review red flag.
+- **Atomic writes** for out-of-band JSON files go through
+  [`write-file-atomic`](https://github.com/npm/write-file-atomic).
+  Plain `writeFile` to a long-lived file is a code-review red flag.
 
 ## Adding a new runtime
 
@@ -543,9 +621,10 @@ To add e.g. a Gemini adapter:
 
 1. Implement the `Runtime` interface in `packages/runtime/src/gemini/`
    following the Copilot impl as a reference. Pre-allocating runtimes
-   (CLI accepts `--resume=<arbitrary-uuid>`) return a fresh UUID from
-   `provision`; discovery-only runtimes return `null` and rely on a
-   per-runtime discovery hook to learn the id later.
+   (CLI accepts `--session-id=<arbitrary-uuid>` or equivalent) return
+   a fresh UUID from `provision`; discovery-only runtimes return
+   `null` and rely on a per-runtime discovery hook to learn the id
+   later.
 2. Implement `dispatch` if the CLI supports unattended scripting.
    Pull agent + skill content from the supplied `catalog` argument
    via `agentEntries` / `skillEntries`; write into the supplied
@@ -580,5 +659,6 @@ them up.
   - [`@emploke/session`](../packages/session/README.md)
   - [`@emploke/task`](../packages/task/README.md)
   - [`@emploke/runtime`](../packages/runtime/README.md)
+  - [`@emploke/core`](../packages/core/README.md)
   - [`@emploke/server`](../packages/server/README.md)
 - [`docs/RELEASING.md`](./RELEASING.md) — maintainer release procedure.

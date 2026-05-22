@@ -1,7 +1,7 @@
-import type { Task } from "./task-entity.js";
+import type { Task } from "./types.js";
 
 /**
- * Typed reader for the runtime metadata `TaskManager` deposits on
+ * Typed reader for the runtime metadata `TaskService` deposits on
  * every task. All fields are `undefined` until the relevant lifecycle
  * event has been applied (e.g. `runtimeSessionId` is undefined before
  * the start event, `exitCode`/`exitSignal` before the exit watcher
@@ -19,7 +19,7 @@ export interface TaskRuntimeMetadata {
   readonly exitSignal?: NodeJS.Signals | null;
 }
 
-export function readTaskRuntimeMetadata(task: Task): TaskRuntimeMetadata {
+export function readTaskRuntimeMetadata(task: Pick<Task, "metadata">): TaskRuntimeMetadata {
   const m = task.metadata;
   if (!m || typeof m !== "object") return {};
   const out: TaskRuntimeMetadata = {};

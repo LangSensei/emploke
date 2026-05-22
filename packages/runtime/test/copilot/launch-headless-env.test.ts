@@ -13,8 +13,10 @@
  *
  * `launchCopilotHeadless` therefore merges `subprocessEnv` on top of
  * `process.env` and honours `undefined` overrides as "delete this key
- * from the parent env" (used by `buildSubprocessEnvBase` to scrub
- * EMPLOKE_HOME from every task subprocess).
+ * from the parent env" (used by `CopilotRuntime.launchHeadless` to
+ * translate `CopilotRuntimeConfig.subprocessEnvScrub` —
+ * `["EMPLOKE_HOME"]` in production — into actual deletions before the
+ * SDK gets the env bag).
  *
  * This test pins both halves of the contract by stubbing the SDK client
  * to capture the `env` it would have been constructed with, then
@@ -24,7 +26,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogManager } from "@emploke/catalog";
+import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { CopilotClient } from "@github/copilot-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchCopilotHeadless } from "../../src/copilot/launch-headless.js";
@@ -48,7 +50,7 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogManager }> {
+async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogService }> {
   const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
   const { catalog } = await makeTestCatalog({
     agents: { demo: { "AGENTS.md": agentBody } },

@@ -8,69 +8,53 @@
  * distinguish "runtime adapter failed" from "session-layer logic failed".
  */
 
-export class SessionsError extends Error {
+export class SessionError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "SessionsError";
+    this.name = "SessionError";
   }
 }
 
 /** A session ID supplied by a caller did not match the canonical format. */
-export class InvalidSessionIdError extends SessionsError {
+export class InvalidSessionIdError extends SessionError {
+  override readonly name = "InvalidSessionIdError";
+
   constructor(public readonly id: string) {
     super(`invalid session id: ${JSON.stringify(id)} (expected YYYYMMDD-xxxxxxxx)`);
-    this.name = "InvalidSessionIdError";
   }
 }
 
 /** No session exists with the given id. */
-export class SessionNotFoundError extends SessionsError {
+export class SessionNotFoundError extends SessionError {
+  override readonly name = "SessionNotFoundError";
+
   constructor(public readonly id: string) {
     super(`session not found: ${id}`);
-    this.name = "SessionNotFoundError";
   }
 }
 
 /** Repeated id-allocation collisions during create() (vanishingly unlikely
  * under normal use; usually indicates a stuck clock or broken RNG). */
-export class SessionIdAllocationFailedError extends SessionsError {
+export class SessionIdAllocationFailedError extends SessionError {
+  override readonly name = "SessionIdAllocationFailedError";
+
   constructor(public readonly attempts: number) {
     super(
       `failed to allocate a unique session id after ${attempts} attempts ` +
         `(check the system clock and randomness source)`,
     );
-    this.name = "SessionIdAllocationFailedError";
   }
 }
 
 /** create() called with an agent name not present in the catalog. */
-export class AgentNotFoundError extends SessionsError {
+export class AgentNotFoundError extends SessionError {
+  override readonly name = "AgentNotFoundError";
+
   constructor(
     public readonly agent: string,
     cause?: Error,
   ) {
     super(`agent not found in catalog: ${agent}${cause ? ` (${cause.message})` : ""}`);
-    this.name = "AgentNotFoundError";
     if (cause) this.cause = cause;
-  }
-}
-
-/**
- * The persisted session row is missing required fields, holds an
- * invalid value, or has a column shape the current build cannot
- * decode. Surfaced by `list()` / `get()` — they skip and warn — and
- * by `delete()` — which throws so the user can investigate.
- *
- * Carries the offending session `id` plus a human-readable `reason`
- * so operators can find the bad row in the workspace's `sessions`
- * table without re-running the failing query.
- */
-export class SessionCorruptedError extends SessionsError {
-  constructor(
-    public readonly id: string,
-    public readonly reason: string,
-  ) {
-    super(`session ${id} is corrupted: ${reason}`);
-    this.name = "SessionCorruptedError";
   }
 }

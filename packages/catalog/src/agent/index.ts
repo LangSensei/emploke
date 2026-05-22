@@ -1,11 +1,12 @@
 export {
-  Agent,
   type AgentDependencies,
   type AgentDependencyRef,
+  AgentEntity,
 } from "./agent-entity.js";
 export type { AgentFrontmatter, ParsedAgentMd } from "./agent-frontmatter.js";
 export * as AgentFormat from "./agent-frontmatter.js";
-export type { AgentFile, AgentRepository } from "./agent-repository.js";
+export type { AgentFile, AgentRepoAddDeps } from "./agent-repository.js";
+export { AgentRepository } from "./agent-repository.js";
 export {
   type AgentFetcher,
   type AgentResolveConflict,
@@ -22,7 +23,6 @@ export {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
-export { SqliteAgentRepository } from "./sqlite-agent-repository.js";
 export {
   DEFAULT_SCOPE,
   makeFqn,

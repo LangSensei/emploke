@@ -44,7 +44,7 @@ describe("runtime-file", () => {
     // readers but well under the underlying writeJsonAtomic rename
     // retry budget (8 attempts × backoff caps at ~127 ms; large
     // bursts here overshoot that and end up stress-testing
-    // @emploke/fs rather than this module's contract). What we
+    // write-file-atomic rather than this module's contract). What we
     // actually care about: every read either sees the previous
     // payload or the new one, never half-written JSON.
     await writeRuntimeFile(home, makePayload({ pid: 100 }));
