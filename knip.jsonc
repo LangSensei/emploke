@@ -1,0 +1,86 @@
+// knip configuration — surfaces unused deps / files / exports across the
+// pnpm monorepo. Run with `pnpm knip`.
+//
+// Every ignore entry below carries a one-line reason. The baseline is
+// deliberately conservative: knip is a linting aid, not a code generator,
+// so silencing a false positive is preferable to deleting a documented
+// seam or a bundle-required dependency.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Many `*-service.ts` / `*-entity.ts` files export helpers that are
+  // only consumed inside the same file (legacy re-exports, internal
+  // utility wrappers). Skip those — they're not removable without
+  // breaking deep-import call sites that may exist outside the monorepo.
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/*.mjs"],
+      "ignoreDependencies": [
+        // Root deps consumed by sub-packages but pinned at the root so
+        // `prepublishOnly: pnpm bundle` finds them in the deduped node_modules,
+        // and because `pnpm.overrides.better-sqlite3` only applies when
+        // declared as a direct dependency.
+        "better-sqlite3",
+        // Transitive native-binding loader pulled by better-sqlite3.
+        "bindings",
+        // Pino + transports are intentionally NOT bundled (see RELEASING.md
+        // "Bundle layout") — they live at the root so `npm install -g`
+        // resolves them at runtime.
+        "pino",
+        "pino-pretty",
+        "pino-roll"
+      ]
+    },
+    "packages/cli": {
+      // bin.ts is the CLI entry point invoked from `bundle/emploke.js`
+      // (the root package.json's `bin` field). The CLI package itself has
+      // no `bin` field — esbuild bundles bin.ts into the root output —
+      // so knip needs the entry declared explicitly.
+      "entry": ["src/bin.ts"]
+    },
+    "packages/server": {
+      "ignoreDependencies": [
+        // Pino transport packages — pino loads them via worker_threads with
+        // runtime-resolved paths, so static analysis can't see the import.
+        "pino-pretty",
+        "pino-roll"
+      ],
+      "ignore": [
+        // Test-support seams (PINO_LEVEL pretty-printer, registerTestWorkspace
+        // shorthand) kept exported for sibling test files that may land later.
+        "test/_capture-logger.ts",
+        "test/_test-support.ts"
+      ]
+    },
+    "packages/dashboard": {
+      // The dashboard's typed API client mirrors `packages/server/src/routes/manifest.ts`
+      // route-for-route; many request/response interfaces are kept exported so
+      // future components can pick them up without round-tripping through a PR
+      // to add the type. Ignoring the whole file rather than tagging each
+      // export keeps the noise out of code review.
+      "ignore": [
+        "src/api.ts",
+        // Diagnostic + test seams (debugClockState, __resetServerClockForTests).
+        // Dashboard has no test suite yet; the seams are kept for when one lands.
+        "src/serverClock.ts",
+        // KIND_PLURAL: pluralisation table reserved for upcoming list-empty
+        // copy ("no agents installed", "{N} skills"); leave exported.
+        "src/kindMeta.ts"
+      ]
+    },
+    "packages/workspace": {
+      // Drizzle-kit migration overhaul (#153) regenerated this seam on
+      // 2026-05-22; the brief's "≥14 days untouched" rule for file deletion
+      // does not apply yet, and the file is the standard `openTestXxxDb`
+      // helper every other entity pkg exposes.
+      "ignore": ["src/testing.ts"]
+    },
+    "packages/runtime": {
+      // resolveTestAgent is a one-liner Promise wrapper kept for symmetry
+      // with the catalog-shaped helpers in this fixture file; no current
+      // consumer but cheap to retain.
+      "ignore": ["test/copilot/test-catalog.ts"]
+    }
+  }
+}
