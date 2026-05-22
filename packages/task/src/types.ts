@@ -3,10 +3,10 @@
  *
  * The `Task` entity itself lives in {@link ./task-entity.ts} (DDD class
  * with `static fromStored()` / `static create()` plus state-transition
- * methods `start` / `complete` / `fail` / `cancel` 鈥?mirrors the
+ * methods `start` / `complete` / `fail` / `cancel` — mirrors the
  * `@emploke/catalog` Agent pattern). This file holds the supporting
  * value types: status enum, result / failure shapes, and `TaskService`
- * configuration. They're deliberately plain interfaces 鈥?they're
+ * configuration. They're deliberately plain interfaces — they're
  * either exhaustive enums (`TaskStatus`), value-only payloads
  * (`TaskSuccess`, `TaskFailure`, `TaskCancellation`), or constructor-options bags
  * (`TaskServiceConfig`) where DDD adds no leverage.
@@ -16,24 +16,24 @@
  *  - SDK runtimes (no PID), serverless runtimes (no work dir), and
  *    classic CLI runtimes can all coexist.
  *  - Mirrors the kernel `Capability.Metadata` convention from the Go
- *    archive 鈥?emploke "stores but never reads" runtime metadata.
+ *    archive — emploke "stores but never reads" runtime metadata.
  */
 
 import type { CatalogService } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 
 /**
- * Status lifecycle: `running 鈫?succeeded | failed | cancelled` (issue #119).
+ * Status lifecycle: `running → succeeded | failed | cancelled` (issue #119).
  *
  * v4 normalized the enum to all-adjective form so the wire shape lines
  * up with `workflow_nodes.status` in #118. Tasks are created directly
- * in `running` (the historical `not_started` placeholder is gone 鈥?the
+ * in `running` (the historical `not_started` placeholder is gone — the
  * manager's exit watcher / cancel path is the only producer of a
  * terminal transition; nothing ever queued a `not_started` row to disk).
  *
  * `cancelled` is produced by `TaskService.cancel(id)` (the user-initiated
  * verb introduced in ADR-001). `failed` covers everything else the
- * subprocess might do 鈥?crashing, exiting non-zero, getting SIGTERM'd
+ * subprocess might do — crashing, exiting non-zero, getting SIGTERM'd
  * by `shutdown()`, or being marked orphan by `recoverOrphaned`.
  *
  * `delete(id)` no longer touches subprocesses after ADR-001; it requires
@@ -45,12 +45,12 @@ export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 export type TerminalStatus = "succeeded" | "failed" | "cancelled";
 
 /**
- * Who launched this task. v4 first-class column (issue #119) 鈥?pre-
+ * Who launched this task. v4 first-class column (issue #119) — pre-
  * positioned for #118 (workflow-launched tasks) and future schedule /
  * agent-launched tasks. New dispatches default to `'standalone'` (a
  * direct CLI / dashboard / MCP call).
  *
- * String union (not enum) so future additions are additive 鈥?adding
+ * String union (not enum) so future additions are additive — adding
  * `'schedule'` later does not break consumers that only branch on
  * existing values.
  */
@@ -62,7 +62,7 @@ export type TaskOrigin = "standalone" | "workflow";
  * `output` semantics under the current **runtime-driven completion model**:
  * the kernel does not interpret what an autonomous agent produced. The
  * substantive output of an agent run lives on the filesystem under
- * `Task.metadata.workdir/` 鈥?agent-written files and the captured
+ * `Task.metadata.workdir/` — agent-written files and the captured
  * `stderr.log`. The runtime's per-task event stream lives on the
  * runtime's own state directory (e.g.
  * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`) and is read
@@ -72,7 +72,7 @@ export type TaskOrigin = "standalone" | "workflow";
  *
  * `deliverable` / `artifacts` are pre-positioned for issue #26
  * (agent-driven completion model). They're optional today so the wire
- * shape can extend without DDL 鈥?the JSON column inside which `success`
+ * shape can extend without DDL — the JSON column inside which `success`
  * lives accepts arbitrary additional keys without a v5 bump.
  */
 export interface TaskSuccess {
@@ -87,13 +87,13 @@ export interface TaskSuccess {
  * `message` is the human-readable summary the dashboard renders.
  *
  * Variants:
- *  - `exited`   鈥?subprocess exited with a non-zero code; carries `exitCode`.
- *  - `signal`   鈥?subprocess was terminated by an OS signal; carries `signal`.
- *  - `shutdown` 鈥?`TaskService.shutdown()` killed the subprocess (server stop).
- *  - `orphan`   鈥?`recoverOrphaned` marked a row whose owning process is gone.
- *  - `internal` 鈥?kernel-side fault (e.g. exit watcher rejected); covers
+ *  - `exited`   — subprocess exited with a non-zero code; carries `exitCode`.
+ *  - `signal`   — subprocess was terminated by an OS signal; carries `signal`.
+ *  - `shutdown` — `TaskService.shutdown()` killed the subprocess (server stop).
+ *  - `orphan`   — `recoverOrphaned` marked a row whose owning process is gone.
+ *  - `internal` — kernel-side fault (e.g. exit watcher rejected); covers
  *                 the legacy-row read path (rows written before this ADR
- *                 had only a free-string `failure_error` column 鈥?those
+ *                 had only a free-string `failure_error` column — those
  *                 surface as `{ kind: 'internal', message }`).
  */
 export type TaskFailure =
@@ -107,9 +107,9 @@ export type TaskFailure =
  * Why a task ended in `cancelled` status. Discriminated by `kind`.
  *
  * Variants:
- *  - `user`    鈥?`TaskService.cancel(id)` killed a live subprocess at
+ *  - `user`    — `TaskService.cancel(id)` killed a live subprocess at
  *                the operator's request (today the only normal source).
- *  - `cascade` 鈥?cancelled as a side-effect of another manager-side
+ *  - `cascade` — cancelled as a side-effect of another manager-side
  *                event (e.g. orphan-row reconciliation, future parent-
  *                workflow cancellation). Pre-v4 the orphan-recovery
  *                path produced `{ kind: 'orphan' }`; folded into
@@ -148,7 +148,7 @@ export interface Task {
   readonly cancellation?: TaskCancellation;
 }
 
-// 鈹€鈹€鈹€ TaskService-side types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── TaskService-side types ───────────────────────────────────
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
@@ -176,9 +176,9 @@ export interface DispatchOpts {
   /** Catalog name of the agent to run. Required. */
   readonly agent: string;
   /**
-   * Short, single-line task title (鈮?200 chars by contract; the
+   * Short, single-line task title (≤ 200 chars by contract; the
    * server validates the wire shape). Doubles as the displayed label
-   * everywhere 鈥?task list rows, detail panel header, CLI table.
+   * everywhere — task list rows, detail panel header, CLI table.
    * Materialized as the `# <brief>` header in `<workdir>/TASK.md`.
    */
   readonly brief: string;
