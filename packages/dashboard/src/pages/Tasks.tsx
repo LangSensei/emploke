@@ -52,7 +52,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     tasks,
     runtimes,
     loaded,
-    refreshing,
     error,
     setError,
     agentFilter,
@@ -209,8 +208,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     <>
       <HeaderActions>
         <TasksToolbar
-          refreshing={refreshing}
-          onRefresh={refresh}
           dispatchDisabled={readyAgents.length === 0}
           dispatchDisabledTitle={
             readyAgents.length === 0
@@ -221,53 +218,55 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
         />
       </HeaderActions>
 
-      {error && <div className="alert alert--error">⚠️ {error}</div>}
+      <div className="tasks-page">
+        {error && <div className="alert alert--error">⚠️ {error}</div>}
 
-      <div className="tasks-pane tasks-pane--with-detail">
-        <div className="tasks-pane__list">
-          <TaskFilters
-            idQuery={idQuery}
-            onIdQueryChange={setIdQuery}
-            agentFilter={agentFilter}
-            onAgentFilterChange={setAgentFilter}
-            runtimeFilter={runtimeFilter}
-            onRuntimeFilterChange={setRuntimeFilter}
-            timeFilter={timeFilter}
-            onTimeFilterChange={setTimeFilter}
-            agents={agents}
-            filterAgentNames={filterAgentNames}
-            runtimes={runtimes}
-          />
-          <div className="tasks-pane__list-scroll">
-            {!loaded ? (
-              <TasksEmptyState loading />
-            ) : visibleTasks.length === 0 ? (
-              <TasksEmptyState
-                title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-                hint={
-                  tasks.length === 0
-                    ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                    : "Adjust the filters above to see more tasks."
-                }
-              />
-            ) : (
-              <TaskList
-                tasks={visibleTasks}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onDelete={setDeleteTarget}
-                onCancel={requestCancel}
-                onRerun={requestRerun}
-              />
-            )}
+        <div className="tasks-pane tasks-pane--with-detail">
+          <div className="tasks-pane__list">
+            <TaskFilters
+              idQuery={idQuery}
+              onIdQueryChange={setIdQuery}
+              agentFilter={agentFilter}
+              onAgentFilterChange={setAgentFilter}
+              runtimeFilter={runtimeFilter}
+              onRuntimeFilterChange={setRuntimeFilter}
+              timeFilter={timeFilter}
+              onTimeFilterChange={setTimeFilter}
+              agents={agents}
+              filterAgentNames={filterAgentNames}
+              runtimes={runtimes}
+            />
+            <div className="tasks-pane__list-scroll">
+              {!loaded ? (
+                <TasksEmptyState loading />
+              ) : visibleTasks.length === 0 ? (
+                <TasksEmptyState
+                  title={tasks.length === 0 ? "No tasks yet" : "No matches"}
+                  hint={
+                    tasks.length === 0
+                      ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
+                      : "Adjust the filters above to see more tasks."
+                  }
+                />
+              ) : (
+                <TaskList
+                  tasks={visibleTasks}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onDelete={setDeleteTarget}
+                  onCancel={requestCancel}
+                  onRerun={requestRerun}
+                />
+              )}
+            </div>
           </div>
-        </div>
 
-        {selectedId ? (
-          <TaskDetail taskId={selectedId} pollIntervalMs={pollIntervalMs} />
-        ) : (
-          <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
-        )}
+          {selectedId ? (
+            <TaskDetail taskId={selectedId} pollIntervalMs={pollIntervalMs} />
+          ) : (
+            <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
+          )}
+        </div>
       </div>
 
       <DispatchModal

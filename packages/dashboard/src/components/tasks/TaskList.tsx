@@ -82,6 +82,10 @@ export function TaskList({
               <span className={`task-list-group__caret${isCollapsed ? " is-collapsed" : ""}`}>
                 {isCollapsed ? "▸" : "▾"}
               </span>
+              <span
+                className={`task-list-group__dot task-list-group__dot--${g.key}`}
+                aria-hidden="true"
+              />
               <span className="task-list-group__label">{g.label}</span>
               <span className="task-list-group__count">{g.tasks.length}</span>
             </button>
