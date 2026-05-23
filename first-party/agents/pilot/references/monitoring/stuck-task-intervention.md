@@ -1,32 +1,8 @@
 # Stuck task intervention
 
-A task is **stuck** when:
-
-- Status is `running`
-- No new activity in the activity log for ≥ 30 minutes (calibrate per mission tempo)
-- AND the task is not in a known long-blocking state (e.g. waiting on user-side input, large download, etc.)
-
-## Detection
-
-Per tick (step 3 of the operating loop):
-
-```sh
-for tid in $(echo "$running" | jq -r '.[].id'); do
-  # Use task.metadata.lastActiveAtRuntime — runtime-supplied "when did
-  # I last see activity from this subprocess". Fall back to startedAt
-  # then createdAt for tasks the runtime hasn't reported on yet.
-  #
-  # We use `task show` (single metadata read) rather than
-  # `task activity --limit 1` (parses the log) because `task show` is
-  # strictly cheaper — both report the same "most recent activity"
-  # timestamp now that activity is tail-first.
-  RECENT=$(emploke task show "$tid" --json | jq -r '.metadata.lastActiveAtRuntime // .startedAt // .createdAt')
-  AGE_MIN=$(( ($(date +%s) - $(date -d "$RECENT" +%s)) / 60 ))
-  if [ "$AGE_MIN" -ge 30 ]; then
-    handle_stuck_task "$tid" "$AGE_MIN"
-  fi
-done
-```
+Detection lives in `references/operating-loop.md` step 3. This page
+covers what to do once a task has already been flagged stuck (no active
+watchdog, no progress past the threshold).
 
 ## Triage
 

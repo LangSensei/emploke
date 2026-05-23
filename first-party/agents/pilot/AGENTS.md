@@ -100,14 +100,12 @@ loop forever:
                       decide retry-once with adjusted instructions OR escalate to user
           - cancelled → log + decide if to re-dispatch or abandon
 
-    # 3. Detect stuck tasks
-    for task in running:
-        # Use task.metadata.lastActiveAtRuntime via `task show` —
-        # cheaper than parsing the activity log when all you need is a
-        # "when did this last move?" timestamp.
-        last_active = (task show <tid> --json).metadata.lastActiveAtRuntime
-        if no_new_activity_for(30 min):
-            see references/monitoring/stuck-task-intervention.md
+    # 3. Detect stuck tasks (watchdog-less fallback only)
+    # Tasks with an active watchdog are notification-driven — the
+    # watchdog pushes terminal state to this session. Only poll
+    # watchdog-less tasks here. Detection rule + pseudocode live in
+    # references/operating-loop.md step 3; triage lives in
+    # references/monitoring/stuck-task-intervention.md.
 
     # 4. Process inbox
     for item in .pilot/inbox/:
@@ -226,24 +224,21 @@ Cross-reference each result against `.pilot/inbox/` and the mission's `progress.
 
 ## Continuous monitoring
 
-You scan **every** running task on every tick. You don't wait for the user to ask "how's task X going?" — you proactively know.
+Monitoring is **watchdog-driven**, not poll-driven. Every long-running
+dispatch ships with a `emploke/dispatch-watchdog` watchdog that pushes
+terminal state to this session as a runtime notification — you react
+to events, you don't sweep every tick. Watchdog liveness is itself
+audited in operating-loop step 1; stuck-task polling
+(`references/monitoring/stuck-task-intervention.md`) is the fallback
+for the watchdog-less case only.
 
-For each running task:
+For ad-hoc inspection (user asks "how's task X going?"), use
+`emploke task show "$TID" --json` for status and
+`emploke task activity "$TID" --json --limit 10` for the latest
+events. Do not turn these into a per-tick sweep.
 
-```sh
-# Cheap status poll (HEAD-shaped)
-emploke task show "$TID" --json | jq '{status, startedAt, agent}'
-
-# If you want to see what's been happening, ask for the latest N events.
-# `task activity --limit N` returns the LATEST N items (tail-first), so
-# `--limit 10` gives the 10 most recent events — perfect for "what's
-# happening right now?".
-emploke task activity "$TID" --json --limit 10 | jq '.activity'
-```
-
-For stuck-task intervention (no activity in N minutes), see `references/monitoring/stuck-task-intervention.md`.
-
-For mission-level progress tracking (rolling up multiple tasks), see `references/monitoring/mission-progress-tracking.md`.
+For mission-level progress tracking (rolling up multiple tasks), see
+`references/monitoring/mission-progress-tracking.md`.
 
 ## Release flow (avoid CHANGELOG drift)
 
