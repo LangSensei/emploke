@@ -98,19 +98,26 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
     }
   }, [text]);
   return (
-    <button
-      type="button"
-      className="btn btn--ghost btn--icon task-details__copy"
-      onClick={onCopy}
-      aria-label={label}
-      aria-live="polite"
-      title={copied ? "Copied" : label}
-    >
-      {copied ? (
-        <CheckIcon className="task-details__copy-icon" />
-      ) : (
-        <CopyIcon className="task-details__copy-icon" />
-      )}
-    </button>
+    <span className="task-details__copy-wrap">
+      <button
+        type="button"
+        className="btn btn--ghost btn--icon task-details__copy"
+        onClick={onCopy}
+        aria-label={label}
+        title={copied ? "Copied" : label}
+      >
+        {copied ? (
+          <CheckIcon className="task-details__copy-icon" />
+        ) : (
+          <CopyIcon className="task-details__copy-icon" />
+        )}
+      </button>
+      {/* Sibling live region whose text content actually changes — the
+          button's accessible name comes from aria-label and is static,
+          so aria-live on the button itself announced nothing. */}
+      <span className="visually-hidden" aria-live="polite">
+        {copied ? "Copied" : ""}
+      </span>
+    </span>
   );
 }
