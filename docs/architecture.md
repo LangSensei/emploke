@@ -6,6 +6,15 @@ or adding a new runtime adapter. End-user docs live in the root
 shaped the way it is — lives in the paper
 [*What we believe about agentic systems*](https://langsensei.github.io/emploke/).
 
+Alongside the TypeScript packages, the repo ships a
+[`first-party/`](../first-party/) subtree of bundled agents and skills
+under `scope: emploke`. These entries depend on internals defined here
+(catalog schema, CLI surface, runtime contracts) tightly enough that
+they version-bump and PR in lock-step with the packages. They are
+distinct from the community catalog at
+[emploke-marketplace](https://github.com/LangSensei/emploke-marketplace),
+which uses `scope: langsensei`.
+
 ## Layering
 
 The repo is one [pnpm workspace](https://pnpm.io/workspaces) of 11

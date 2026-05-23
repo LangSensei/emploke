@@ -194,6 +194,16 @@ important ones for downstream consumers are
 [`@emploke/runtime`](./packages/runtime), and
 [`@emploke/server`](./packages/server).
 
+## First-party catalog
+
+The repo ships a [`first-party/`](./first-party/) subtree of agents and
+skills (scope `emploke`) that the project maintains in lock-step with the
+code — they depend on internals (catalog schema, CLI surface) tightly
+enough to version-bump and PR together with the packages that define
+those internals. See [`first-party/README.md`](./first-party/README.md)
+for the full list and install URLs; community-maintained entries continue
+to live in [emploke-marketplace](https://github.com/LangSensei/emploke-marketplace).
+
 ## Development
 
 Requires Node ≥ 22, pnpm ≥ 10.
