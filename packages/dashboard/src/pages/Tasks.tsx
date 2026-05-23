@@ -238,27 +238,29 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
             filterAgentNames={filterAgentNames}
             runtimes={runtimes}
           />
-          {!loaded ? (
-            <TasksEmptyState loading />
-          ) : visibleTasks.length === 0 ? (
-            <TasksEmptyState
-              title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-              hint={
-                tasks.length === 0
-                  ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                  : "Adjust the filters above to see more tasks."
-              }
-            />
-          ) : (
-            <TaskList
-              tasks={visibleTasks}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onDelete={setDeleteTarget}
-              onCancel={requestCancel}
-              onRerun={requestRerun}
-            />
-          )}
+          <div className="tasks-pane__list-scroll">
+            {!loaded ? (
+              <TasksEmptyState loading />
+            ) : visibleTasks.length === 0 ? (
+              <TasksEmptyState
+                title={tasks.length === 0 ? "No tasks yet" : "No matches"}
+                hint={
+                  tasks.length === 0
+                    ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
+                    : "Adjust the filters above to see more tasks."
+                }
+              />
+            ) : (
+              <TaskList
+                tasks={visibleTasks}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onDelete={setDeleteTarget}
+                onCancel={requestCancel}
+                onRerun={requestRerun}
+              />
+            )}
+          </div>
         </div>
 
         {selectedId ? (

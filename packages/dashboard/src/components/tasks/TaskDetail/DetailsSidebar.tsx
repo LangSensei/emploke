@@ -32,7 +32,7 @@ export function DetailsSidebar({ task }: DetailsSidebarProps) {
         : null;
   return (
     <aside className="task-details">
-      <h3 className="task-details__title">Details</h3>
+      <h3 className="task-details__title">Metadata</h3>
       <dl className="task-details__list">
         {task.startedAt && (
           <Row

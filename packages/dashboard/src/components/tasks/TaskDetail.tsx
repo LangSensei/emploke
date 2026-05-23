@@ -3,19 +3,17 @@ import { useTaskDetail } from "../../hooks/useTaskDetail";
 import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import { StatusBadge } from "./StatusBadge";
 import { readRuntime, STATUS_TONE } from "./shared";
+import { ActivityTab } from "./TaskDetail/ActivityTab";
 import { ArtifactsTab, countArtifacts } from "./TaskDetail/ArtifactsTab";
 import { CopyButton } from "./TaskDetail/DetailsSidebar";
-import { LogsTab } from "./TaskDetail/LogsTab";
 import { OverviewTab } from "./TaskDetail/OverviewTab";
-import { RawJsonTab } from "./TaskDetail/RawJsonTab";
-import { TimelineTab } from "./TaskDetail/TimelineTab";
 
 export interface TaskDetailProps {
   taskId: string;
   pollIntervalMs: number;
 }
 
-type DetailTab = "overview" | "logs" | "timeline" | "artifacts" | "raw";
+type DetailTab = "overview" | "activity" | "artifacts";
 
 /**
  * Right-column task detail panel for the master-detail Tasks page.
@@ -23,7 +21,8 @@ type DetailTab = "overview" | "logs" | "timeline" | "artifacts" | "raw";
  * Responsibilities:
  *   - Drive per-task data loading via {@link useTaskDetail} (poll +
  *     SSE + paginated activity merge).
- *   - Render the title + meta strip and switch between the five tabs.
+ *   - Render the title + meta strip and switch between the three tabs
+ *     (Overview / Activity / Artifacts).
  *
  * Phase A: the header is read-only — Refresh / Cancel / Delete / Close
  * were moved out. The list-level per-row `⋯` menu (Cancel / Re-dispatch
@@ -115,15 +114,13 @@ export function TaskDetail({ taskId, pollIntervalMs }: TaskDetailProps) {
 
       <nav className="task-tabs" aria-label="Task detail sections">
         <TabButton current={tab} value="overview" onSelect={setTab} label="Overview" />
-        <TabButton current={tab} value="logs" onSelect={setTab} label="Logs" />
-        <TabButton current={tab} value="timeline" onSelect={setTab} label="Timeline" />
+        <TabButton current={tab} value="activity" onSelect={setTab} label="Activity" />
         <TabButton
           current={tab}
           value="artifacts"
           onSelect={setTab}
           label={`Artifacts (${artifactCount})`}
         />
-        <TabButton current={tab} value="raw" onSelect={setTab} label="Raw JSON" />
       </nav>
 
       {!task && (
@@ -133,23 +130,17 @@ export function TaskDetail({ taskId, pollIntervalMs }: TaskDetailProps) {
       )}
 
       {task && tab === "overview" && (
-        <OverviewTab
-          task={task}
-          activity={activity}
-          onSwitchTab={(t) => setTab(t === "logs" ? "logs" : "raw")}
-        />
+        <OverviewTab task={task} activity={activity} onSwitchTab={setTab} />
       )}
-      {task && tab === "logs" && (
-        <LogsTab
+      {task && tab === "activity" && (
+        <ActivityTab
           taskId={taskId}
           activity={activity}
           activityError={activityError}
           onLoadOlder={loadOlder}
         />
       )}
-      {task && tab === "timeline" && <TimelineTab task={task} activity={activity} />}
       {task && tab === "artifacts" && <ArtifactsTab task={task} />}
-      {task && tab === "raw" && <RawJsonTab task={task} />}
     </aside>
   );
 }
