@@ -1233,44 +1233,42 @@ export class TaskService {
 
   /**
    * Best-effort assembly of {@link TaskSuccess} payload at terminal
-   * time (issue #181). Reads the runtime's activity tail for the
-   * `output` summary; lists `<workdir>/artifact/` for the artifact
-   * paths. Tolerant of all failures: returns `["", []]` on any
-   * sub-failure and logs a warn. Never blocks the terminal transition.
+   * time (issue #181). Asks the runtime for its last agent-produced
+   * activity (via {@link Runtime.getLastAgentActivity}) and caps it
+   * for `output`; lists `<workdir>/artifact/` for the artifact paths.
+   * Tolerant of all failures: returns `[null, []]` on any sub-failure
+   * and logs a warn. Never blocks the terminal transition.
+   *
+   * The split of concerns: the runtime knows what "agent-produced"
+   * means in its own event stream (so picking-the-right-event is
+   * runtime-domain); TaskService owns the persistence cap and the
+   * artifact directory layout (both task-domain). Runtime never sees
+   * "success" or "final" framing — success/failure is a TaskService
+   * concept layered on top of a neutral activity stream.
    *
    * The two sub-collectors are kicked off in parallel so the wall-clock
-   * cost is the slower of (one runtime.readActivity call, one
-   * `<workdir>/artifact/` readdir) rather than their sum.
+   * cost is the slower of (one runtime call, one `<workdir>/artifact/`
+   * readdir) rather than their sum.
    */
   private async collectSuccessPayload(
     workdir: string,
     task: TaskEntity,
-  ): Promise<[string, readonly string[]]> {
+  ): Promise<[string | null, readonly string[]]> {
     const runtimeName = task.metadata.runtime;
     const runtimeSessionId = pickRuntimeSessionId(task.metadata);
 
-    const outputP: Promise<string> = (async () => {
-      if (typeof runtimeName !== "string" || runtimeSessionId === null) return "";
+    const outputP: Promise<string | null> = (async () => {
+      if (typeof runtimeName !== "string" || runtimeSessionId === null) return null;
       let runtime: Runtime;
       try {
         runtime = this.runtimeRegistry.get(runtimeName);
       } catch {
-        return "";
+        return null;
       }
-      if (typeof runtime.readActivity !== "function") return "";
+      if (typeof runtime.getLastAgentActivity !== "function") return null;
       try {
-        const result = await runtime.readActivity({ runtimeSessionId, limit: 10 });
-        if (result === null) return "";
-        // findLast: last assistant event in the tail.
-        let last: import("@emploke/runtime").ActivityItem | undefined;
-        for (let i = result.activity.length - 1; i >= 0; i--) {
-          const item = result.activity[i];
-          if (item !== undefined && item.kind === "assistant") {
-            last = item;
-            break;
-          }
-        }
-        if (last === undefined || last.kind !== "assistant") return "";
+        const last = await runtime.getLastAgentActivity(runtimeSessionId);
+        if (last === null) return null;
         // Preserve the head of the agent's final message; only cap the
         // tail. Earlier code used `slice(-MAX)` which silently dropped
         // the opening characters when the final reply exceeded MAX —
@@ -1282,9 +1280,9 @@ export class TaskService {
       } catch (err) {
         this.logger.warn(
           { taskId: task.id, err },
-          "tasks: applyTerminal readActivity failed; output left empty",
+          "tasks: applyTerminal getLastAgentActivity failed; output left null",
         );
-        return "";
+        return null;
       }
     })();
 

@@ -43,6 +43,7 @@ export { SHARED_SUBDIR, sharedDir } from "./shared-dir.js";
 export type {
   ActivityItem,
   ActivityResult,
+  AgentActivity,
   AssistantItem,
   Attachment,
   BuildInteractiveLaunchOpts,

@@ -791,7 +791,12 @@ export type TaskCancellation =
   | { kind: "cascade"; message: string };
 
 export interface TaskSuccess {
-  output: string;
+  /**
+   * Head of the agent's last assistant utterance, capped server-side.
+   * `null` when the agent finished without producing an assistant
+   * turn or the runtime had no agent activity to report.
+   */
+  output: string | null;
   artifacts?: readonly string[];
 }
 

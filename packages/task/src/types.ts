@@ -64,12 +64,15 @@ export type TaskOrigin = "standalone" | "workflow";
  */
 export interface TaskSuccess {
   /**
-   * Tail of the agent's last assistant utterance, sliced to 500 chars.
-   * Empty string if the agent finished without producing an assistant
-   * turn (rare) or if the runtime's activity log was unavailable at
-   * terminal time. Persisted; never re-derived on read.
+   * Head of the agent's last assistant utterance, capped to
+   * `TASK_OUTPUT_MAX_CHARS` chars. `null` when the agent finished
+   * without producing an assistant turn (rare) or when the runtime's
+   * structured activity surface was unavailable at terminal time.
+   * Persisted; never re-derived on read. Treat `null` semantically as
+   * "no summary available" — distinct from `""` which would mean "the
+   * agent explicitly produced an empty turn".
    */
-  readonly output: string;
+  readonly output: string | null;
   /**
    * Absolute paths of files found under `<workdir>/artifact/` at
    * terminal time. Populated by `applyTerminal`. Empty array (or

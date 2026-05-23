@@ -14,6 +14,7 @@ import type { PlaceholderContext } from "../placeholders.js";
 import type {
   ActivityItem,
   ActivityResult,
+  AgentActivity,
   AgentContentSource,
   BuildInteractiveLaunchOpts,
   LaunchCommand,
@@ -546,6 +547,28 @@ export class CopilotRuntime implements Runtime {
           ? { truncated: pageTruncated }
           : {}),
     };
+  }
+
+  /**
+   * The latest agent-produced utterance for this session. For Copilot
+   * the "agent" is its assistant messages — tool calls, thinking
+   * traces, system events, and user prompts are all skipped. Reuses
+   * {@link readActivity} so the in-memory buffer vs disk fallback,
+   * size-cap handling, and parser logic stay in one place. Returns
+   * `null` when there is no recorded session for the id, or when the
+   * recorded session has no assistant items yet (task just started,
+   * agent only emitted tool calls so far, …).
+   */
+  async getLastAgentActivity(runtimeSessionId: string): Promise<AgentActivity | null> {
+    const result = await this.readActivity({ runtimeSessionId });
+    if (result === null) return null;
+    for (let i = result.activity.length - 1; i >= 0; i--) {
+      const item = result.activity[i];
+      if (item !== undefined && item.kind === "assistant") {
+        return { text: item.text, timestamp: item.timestamp };
+      }
+    }
+    return null;
   }
 
   /**

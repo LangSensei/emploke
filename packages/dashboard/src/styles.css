@@ -2908,16 +2908,18 @@ button {
   overflow-y: auto;
 }
 
-/* iter-3 C4: the right detail pane sizes to its content within
-   [min 240px, max grid-row]. Previously this was unconditionally
-   `height: 100%`, which produced large empty whitespace below short
-   summaries (e.g. the "no summary was produced" placeholder + a
-   short activity stream). `align-self: start` opts the card out of
-   the grid's stretch on the cross axis; `max-height: 100%` keeps
-   long-content cases from spilling past the page row while letting
-   the existing inner `overflow: auto` regions (overview/activity/
-   artifacts) scroll as before. The left list column keeps the grid's
-   default stretch and remains full-viewport. */
+/* iter-3 ext-1: the right detail pane fills the grid row's height so
+   the inner `.overview-tab` flex chain has a known parent height to
+   resolve `flex: 1 + min-height: 0` against. Iter-3 C4 had the pane
+   sized as `align-self: start; height: auto; max-height: 100%` because
+   the old Overview body sized to content; with the iter-2 B1 redesign
+   the body itself is a flex column whose Summary / Details cards want
+   to fill the panel (50/50 or 100%), and `height: auto` here was the
+   broken link in the flex chain that left both cards collapsed to
+   their `min-height: 200px` with whitespace below. Fill the row
+   instead; the inner `overflow: auto` on `.overview-card__body`,
+   `.activity-view`, and `.artifacts` already prevents the long-content
+   case from spilling. */
 .tasks-pane__detail {
   display: flex;
   flex-direction: column;
@@ -2926,10 +2928,8 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  align-self: start;
-  height: auto;
+  height: 100%;
   min-height: 240px;
-  max-height: 100%;
   min-width: 0;
   overflow: hidden;
 }
@@ -4248,11 +4248,19 @@ button {
 /* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
    CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
    it reads as inline metadata rather than a primary action. The
-   chip's own background/border/padding is now declared once above. */
+   chip's own background/border/padding is now declared once above.
+   iter-3 ext-1: nudge the icon down 1px. The button's bounding box
+   is centered with `align-items: center`, but the icon's optical
+   center (no descender region in a 12px square) sits ~1px above the
+   x-height of the surrounding 11px monospace digits — the geometric
+   center isn't the visual center. A 1px translateY brings the icon's
+   optical center flush with the Task ID text. Stays correct at zoom
+   levels because it's measured in CSS px, not relative units. */
 .task-details__copy-icon {
   width: 12px;
   height: 12px;
   stroke-width: 1.5;
+  transform: translateY(1px);
 }
 
 /* Visually hidden but still announced by AT. Used as a live region

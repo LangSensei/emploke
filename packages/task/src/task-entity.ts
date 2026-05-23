@@ -429,8 +429,8 @@ function assertTaskSuccessShape(id: string, value: TaskSuccess): void {
     throw new CorruptedTaskError(id, "task.success must be an object");
   }
   const v = value as { output?: unknown };
-  if (typeof v.output !== "string") {
-    throw new CorruptedTaskError(id, "task.success.output must be a string");
+  if (v.output !== null && typeof v.output !== "string") {
+    throw new CorruptedTaskError(id, "task.success.output must be a string or null");
   }
 }
 
