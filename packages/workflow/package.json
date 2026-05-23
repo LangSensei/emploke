@@ -1,5 +1,5 @@
 {
-  "name": "@emploke/workflows",
+  "name": "@emploke/workflow",
   "version": "0.0.1",
   "description": "Workflows — append-only DAG substrate for emploke (workflows / workflow_nodes / workflow_edges)",
   "license": "MIT",
@@ -48,6 +48,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/workflows"
+    "directory": "packages/workflow"
   }
 }

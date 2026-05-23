@@ -1,5 +1,5 @@
 /**
- * Public types for `@emploke/workflows`. Wire DTOs, option shapes,
+ * Public types for `@emploke/workflow`. Wire DTOs, option shapes,
  * and the enums callers branch on.
  *
  * Append-only-only substrate (CEO O5): every `Update*` shape here
@@ -82,7 +82,7 @@ export interface WorkflowEdge {
   readonly to: string;
 }
 
-/** Result of `WorkflowsService.getState` — workflow + all nodes + all edges. */
+/** Result of `WorkflowService.getState` — workflow + all nodes + all edges. */
 export interface WorkflowState {
   readonly workflow: Workflow;
   readonly nodes: readonly WorkflowNode[];

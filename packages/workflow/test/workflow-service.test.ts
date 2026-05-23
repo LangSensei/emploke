@@ -5,13 +5,13 @@ import {
   WorkflowNodeNotReadyError,
   WorkflowNotFoundError,
 } from "../src/errors.js";
-import { WorkflowsRepository } from "../src/repository.js";
-import { WorkflowsService } from "../src/service.js";
-import { openTestWorkflowsDb } from "../src/testing.js";
+import { openTestWorkflowDb } from "../src/testing.js";
 import type { TaskDispatcher } from "../src/types.js";
+import { WorkflowRepository } from "../src/workflow-repository.js";
+import { WorkflowService } from "../src/workflow-service.js";
 
-let handle: ReturnType<typeof openTestWorkflowsDb>;
-let service: WorkflowsService;
+let handle: ReturnType<typeof openTestWorkflowDb>;
+let service: WorkflowService;
 let dispatcher: TaskDispatcher & { calls: { agent: string; brief: string }[] };
 
 /**
@@ -27,8 +27,8 @@ function makeNow(): () => Date {
 }
 
 beforeEach(() => {
-  handle = openTestWorkflowsDb();
-  const repo = new WorkflowsRepository({ db: handle.db });
+  handle = openTestWorkflowDb();
+  const repo = new WorkflowRepository({ db: handle.db });
   let nextTaskId = 0;
   dispatcher = {
     calls: [],
@@ -38,14 +38,14 @@ beforeEach(() => {
       return { id: `20260522-cccc000${nextTaskId}` };
     },
   };
-  service = new WorkflowsService({ repo, taskDispatcher: dispatcher, now: makeNow() });
+  service = new WorkflowService({ repo, taskDispatcher: dispatcher, now: makeNow() });
 });
 
 afterEach(() => {
   handle.close();
 });
 
-describe("WorkflowsService — happy-path lifecycle", () => {
+describe("WorkflowService — happy-path lifecycle", () => {
   it("creates a workflow, attaches a graph, launches a node, and finishes", async () => {
     const wf = await service.createWorkflow({ brief: "demo" });
     expect(wf.status).toBe("not_started");
@@ -85,7 +85,7 @@ describe("WorkflowsService — happy-path lifecycle", () => {
   });
 });
 
-describe("WorkflowsService — guards", () => {
+describe("WorkflowService — guards", () => {
   it("throws WorkflowNotFoundError when accessing an unknown workflow", async () => {
     await expect(
       service.createNode("20260522-deadbeef", {
@@ -150,7 +150,7 @@ describe("WorkflowsService — guards", () => {
   });
 });
 
-describe("WorkflowsService — launchNode concurrency & dispatch failures", () => {
+describe("WorkflowService — launchNode concurrency & dispatch failures", () => {
   it("two concurrent launchNode calls on the same node — exactly one wins, the other throws InvalidWorkflowTransitionError", async () => {
     const wf = await service.createWorkflow({ brief: "race" });
     const a = await service.createNode(wf.id, {
@@ -213,16 +213,16 @@ describe("WorkflowsService — launchNode concurrency & dispatch failures", () =
   it("dispatcher throw transitions the node to failed and rethrows the original error", async () => {
     // Build a dedicated service with a throwing dispatcher so we can
     // assert the failure path in isolation.
-    const localHandle = openTestWorkflowsDb();
+    const localHandle = openTestWorkflowDb();
     try {
-      const repo = new WorkflowsRepository({ db: localHandle.db });
+      const repo = new WorkflowRepository({ db: localHandle.db });
       const dispatchError = new Error("dispatcher boom");
       const throwingDispatcher: TaskDispatcher = {
         async dispatch() {
           throw dispatchError;
         },
       };
-      const local = new WorkflowsService({
+      const local = new WorkflowService({
         repo,
         taskDispatcher: throwingDispatcher,
         now: makeNow(),
@@ -250,7 +250,7 @@ describe("WorkflowsService — launchNode concurrency & dispatch failures", () =
   });
 });
 
-describe("WorkflowsService — persistence round-trip", () => {
+describe("WorkflowService — persistence round-trip", () => {
   it("save then read reconstitutes the full graph", async () => {
     const wf = await service.createWorkflow({ brief: "demo", details: "with detail" });
     const a = await service.createNode(wf.id, { type: "task", spec: { agent: "x", brief: "a" } });

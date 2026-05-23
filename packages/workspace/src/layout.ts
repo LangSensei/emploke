@@ -10,7 +10,7 @@ import path from "node:path";
 export interface WorkspaceLayout {
   readonly sessions: string;
   readonly tasks: string;
-  readonly workflows: string;
+  readonly workflow: string;
 }
 
 export function workspaceLayout(workspaceDir: string): WorkspaceLayout {
@@ -18,7 +18,7 @@ export function workspaceLayout(workspaceDir: string): WorkspaceLayout {
   return {
     sessions: path.join(root, "sessions"),
     tasks: path.join(root, "tasks"),
-    workflows: path.join(root, "workflows"),
+    workflow: path.join(root, "workflows"),
   };
 }
 

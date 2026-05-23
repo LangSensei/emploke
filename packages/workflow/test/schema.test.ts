@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { openTestWorkflowsDb } from "../src/testing.js";
+import { openTestWorkflowDb } from "../src/testing.js";
 
-let handle: ReturnType<typeof openTestWorkflowsDb>;
+let handle: ReturnType<typeof openTestWorkflowDb>;
 
 beforeEach(() => {
-  handle = openTestWorkflowsDb();
+  handle = openTestWorkflowDb();
 });
 
 afterEach(() => {
@@ -91,10 +91,10 @@ describe("workflows schema", () => {
     expect(names).toContain("workflow_edges_to_idx");
   });
 
-  it("writes the journal table __drizzle_migrations_workflows", () => {
+  it("writes the journal table __drizzle_migrations_workflow", () => {
     const rows = handle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__drizzle%'")
       .all() as { name: string }[];
-    expect(rows.map((r) => r.name)).toContain("__drizzle_migrations_workflows");
+    expect(rows.map((r) => r.name)).toContain("__drizzle_migrations_workflow");
   });
 });

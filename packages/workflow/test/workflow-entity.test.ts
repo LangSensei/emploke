@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { Workflow } from "../src/entity.js";
 import {
   CorruptedWorkflowError,
   InvalidWorkflowTransitionError,
   WorkflowCycleError,
   WorkflowNodeNotReadyError,
 } from "../src/errors.js";
+import { Workflow } from "../src/workflow-entity.js";
 
 const T0 = "2026-05-22T00:00:00.000Z";
 const T1 = "2026-05-22T00:00:01.000Z";

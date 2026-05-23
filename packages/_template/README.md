@@ -49,6 +49,13 @@ need it.
 
 NEVER use `Manager`, `Queries`, `View`, `Pojo`, or `Dto` suffixes.
 
+## Naming check (enforced)
+
+1. **Package folder + npm name are singular** (`task`, `session`, `workspace` — NOT `tasks`, `sessions`). Matches the BC noun.
+2. **File names use the `<entity-kebab>-<kind>.ts` prefix** for entity / repository / service / aggregate files (see `packages/task/src/` for the canonical example).
+3. **Container identifiers (service / repository / module / compose / journal) are singular**: `TaskService`, `composeTaskModule`, `__drizzle_migrations_task`. Plural is reserved for **collections-as-data** like `WORKFLOW_NODES_SUBDIR` (a directory holding many nodes) or `MIGRATIONS` (array of migrations).
+4. PR review must mechanically diff new pkg's file tree against `packages/_template` + sibling pkgs' naming. Any divergence requires a written justification in the PR body.
+
 ## Boundary
 
 Downstream packages depend on `__Entity__Service` directly, OR on a

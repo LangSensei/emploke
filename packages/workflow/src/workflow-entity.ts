@@ -483,7 +483,7 @@ export class Workflow {
   /**
    * Merge `patch` into `nodeId`'s `data` JSON without touching the
    * node's status or any timestamp. The only legal use today is the
-   * dispatch correlation in `WorkflowsService.launchNode` — patching
+   * dispatch correlation in `WorkflowService.launchNode` — patching
    * `data.task_id` after dispatch returns. Stays a single named
    * surface so future audit can find every place that mutates a
    * node's data outside the FSM.
