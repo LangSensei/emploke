@@ -643,8 +643,9 @@ function contentTypeFor(name: string): string {
   switch (ext) {
     case "txt":
     case "log":
-    case "md":
       return "text/plain; charset=utf-8";
+    case "md":
+      return "text/markdown; charset=utf-8";
     case "html":
     case "htm":
       return "text/html; charset=utf-8";
