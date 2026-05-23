@@ -5,7 +5,7 @@ import { StatusBadge } from "./StatusBadge";
 import { readRuntime, STATUS_TONE } from "./shared";
 import { ActivityTab } from "./TaskDetail/ActivityTab";
 import { ArtifactsTab, countArtifacts } from "./TaskDetail/ArtifactsTab";
-import { CopyButton } from "./TaskDetail/DetailsSidebar";
+import { CopyButton } from "./TaskDetail/CopyButton";
 import { OverviewTab } from "./TaskDetail/OverviewTab";
 
 export interface TaskDetailProps {

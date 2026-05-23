@@ -1782,9 +1782,14 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     expect(after.success?.artifacts).toEqual([]);
   });
 
-  it("output is the tail 500 chars when assistant text exceeds the cap", async () => {
+  it("output is capped from the tail when assistant text exceeds the cap (head is preserved — regression for iter-2 B2)", async () => {
     const rt = new StubRuntime();
-    const long = "H".repeat(500) + "T".repeat(500);
+    // Build a long message whose head is the most informative part —
+    // mirroring real summaries like "Done. PR opened at <url>". The
+    // earlier `slice(-500)` bug would drop this head. The fix's head
+    // cap must preserve it.
+    const HEAD = "Done. PR opened at **https://github.com/LangSensei/emploke/pull/186**.\n";
+    const long = HEAD + "X".repeat(10_000);
     rt.readActivityResponse = mkActivity([
       { kind: "assistant", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: long },
     ]);
@@ -1793,8 +1798,27 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
 
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
-    expect(after.success?.output).toHaveLength(500);
-    expect(after.success?.output).toBe("T".repeat(500));
+    const out = after.success?.output ?? "";
+    // 1. Head is intact (the original bug's fingerprint).
+    expect(out.startsWith(HEAD)).toBe(true);
+    // 2. Output is bounded (cap defined by TASK_OUTPUT_MAX_CHARS = 8000).
+    expect(out.length).toBe(8000);
+    // 3. Truncation removed only from the tail.
+    expect(out).toBe(long.slice(0, 8000));
+  });
+
+  it("short outputs (≤ cap) pass through verbatim", async () => {
+    const rt = new StubRuntime();
+    const msg = "Done. PR opened at **https://github.com/x/y/pull/1**.\n\nSummary: ok.";
+    rt.readActivityResponse = mkActivity([
+      { kind: "assistant", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: msg },
+    ]);
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.success?.output).toBe(msg);
   });
 });
 

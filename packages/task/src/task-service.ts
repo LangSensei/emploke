@@ -41,6 +41,22 @@ const DEFAULT_RUNTIME = "copilot";
 const MAX_CREATE_RETRIES = 5;
 
 /**
+ * Maximum number of characters retained from the agent's final
+ * assistant utterance into {@link TaskSuccess.output}. The full text is
+ * already preserved in the runtime's activity log; this cap exists only
+ * to keep the persisted task row a sensible size for list / detail
+ * reads.
+ *
+ * Truncation is applied to the **tail** (`slice(0, MAX)`) so the
+ * opening of the summary — typically the most informative part, often
+ * containing the URL of the PR the agent opened or a one-line headline
+ * — is always preserved. An earlier revision used `slice(-MAX)` and
+ * silently dropped the leading characters when the reply exceeded the
+ * cap (see iter-2 B2 fix).
+ */
+const TASK_OUTPUT_MAX_CHARS = 8000;
+
+/**
  * In-memory record for a task whose subprocess we still own. Once the
  * subprocess exits and the post-exit fs writes complete, the entry is
  * dropped from the map.
@@ -1255,7 +1271,14 @@ export class TaskService {
           }
         }
         if (last === undefined || last.kind !== "assistant") return "";
-        return last.text.slice(-500);
+        // Preserve the head of the agent's final message; only cap the
+        // tail. Earlier code used `slice(-MAX)` which silently dropped
+        // the opening characters when the final reply exceeded MAX —
+        // breaking links and sentences that conventionally open the
+        // summary (e.g. "Done. PR opened at …"). A head cap loses
+        // trailing detail (typically less critical) and never produces
+        // a body that looks subtly corrupt.
+        return last.text.slice(0, TASK_OUTPUT_MAX_CHARS);
       } catch (err) {
         this.logger.warn(
           { taskId: task.id, err },

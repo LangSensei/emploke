@@ -30,7 +30,8 @@ export interface TaskListItemProps {
  * detail panel on the right never stretches it.
  *
  * Two-row visual hierarchy:
- *   row 1: status pill · — spacer — · `⋯` menu (Cancel / Re-dispatch /
+ *   row 1: status pill (with inline status-tone dot, pulsing only when
+ *          running) · — spacer — · `⋯` menu (Cancel / Re-dispatch /
  *          Copy ID / Delete, status-aware)
  *   row 2: brief (title-prominent, clamped to 2 lines — bug-bash F7)
  *   row 3: agent · runtime · relative time (muted)
@@ -233,7 +234,6 @@ export function TaskListItem({
       aria-selected={selected}
     >
       <div className="task-list__item-head">
-        <span className={`task-list__item-dot task-list__item-dot--${tone}`} aria-hidden="true" />
         <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
         <div className="task-list__item-menu">
           <button
