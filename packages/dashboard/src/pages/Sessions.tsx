@@ -10,6 +10,7 @@ import {
   spawnSession,
   type WorkspaceListItem,
 } from "../api";
+import { HeaderActions } from "../components/HeaderActions";
 import {
   ChevronDownIcon,
   CopyIcon,
@@ -108,7 +109,6 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   const [idQuery, setIdQuery] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   // Distinguishes "haven't loaded yet" from "loaded with zero results" so the
   // initial mount shows a spinner instead of the misleading "No sessions yet"
   // empty state for however long the first GET takes.
@@ -138,7 +138,6 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
       setLoaded(true);
       return;
     }
-    setRefreshing(true);
     try {
       const next = await listSessions({
         agent: filter === ALL_AGENTS ? undefined : filter,
@@ -152,7 +151,6 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
       setError((e as Error).message);
     } finally {
       if (mountedRef.current) {
-        setRefreshing(false);
         setLoaded(true);
       }
     }
@@ -162,6 +160,21 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   useEffect(() => {
     refresh();
   }, [filter, timeFilter, currentWorkspaceId]);
+
+  // Refresh when the tab becomes visible after being hidden. Sessions don't
+  // auto-poll (unlike Tasks), so this is the single auto-refresh path that
+  // covers "I came back to the dashboard after a while" without spamming the
+  // server with periodic polls.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is a stable closure for this purpose
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        void refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   // Fetch the registered runtimes once at mount; the registry is static
   // for a given server process so we don't need to re-poll.
@@ -275,6 +288,23 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
 
   return (
     <>
+      <HeaderActions>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => setCreateOpen(true)}
+          disabled={readyAgents.length === 0}
+          title={
+            readyAgents.length === 0
+              ? "Install at least one ready agent in the Catalog first"
+              : "Create a new session"
+          }
+        >
+          <PlusIcon />
+          <span>New session</span>
+        </button>
+      </HeaderActions>
+
       <div className="page-toolbar">
         <div
           className="page-toolbar__actions"
@@ -345,33 +375,6 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
               </button>
             ))}
           </div>
-        </div>
-        <div className="page-toolbar__actions">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={refresh}
-            disabled={refreshing}
-            aria-label="Refresh"
-            title="Refresh"
-          >
-            <RefreshIcon className={refreshing ? "spin" : undefined} />
-            <span>Refresh</span>
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => setCreateOpen(true)}
-            disabled={readyAgents.length === 0}
-            title={
-              readyAgents.length === 0
-                ? "Install at least one ready agent in the Catalog first"
-                : "Create a new session"
-            }
-          >
-            <PlusIcon />
-            <span>New session</span>
-          </button>
         </div>
       </div>
 
