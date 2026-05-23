@@ -2843,7 +2843,7 @@ button {
   opacity: 0.5;
 }
 
-/*  Pulsing dot for running / not_started badges.
+/*  Pulsing dot for the running badge.
     Pure CSS keyframe animation — no JS tick. The dot rides inside the
     badge so the pulse animates without affecting the badge's own
     layout. */
@@ -3620,9 +3620,8 @@ button {
 }
 
 /* Bug-bash iter-1 F6: empty groups still render so users can see the
-   data shape transition (Running ↔ Not started ↔ Completed). The
-   header is dimmed and the disabled toggle keeps clicks from doing
-   nothing visible. */
+   data shape transition (Running ↔ Completed). The header is dimmed
+   and the disabled toggle keeps clicks from doing nothing visible. */
 .task-list-group--empty .task-list-group__header {
   opacity: 0.55;
   cursor: default;
@@ -4206,11 +4205,9 @@ button {
   overflow: auto;
 }
 
-/* F5: status dot in the left-column group headers. Same colour ramp
-   as the StatusBadge tones used by .badge--info / .badge--success so
-   the visual language stays consistent: running -> blue, completed ->
-   green, not_started -> grey. */
-.task-list-group__dot {
+/* Per-item status dot, leading the row head. Tones match StatusBadge so
+   colour scanning matches the pill colour. */
+.task-list__item-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
@@ -4218,15 +4215,10 @@ button {
   background: var(--color-text-subtle);
   flex-shrink: 0;
 }
-.task-list-group__dot--running {
-  background: var(--color-accent);
-}
-.task-list-group__dot--completed {
-  background: var(--color-success);
-}
-.task-list-group__dot--not_started {
-  background: var(--color-text-subtle);
-}
+.task-list__item-dot--info { background: var(--color-accent); }
+.task-list__item-dot--success { background: var(--color-success); }
+.task-list__item-dot--danger { background: var(--color-danger); }
+.task-list__item-dot--muted { background: var(--color-text-subtle); }
 
 /* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
    CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
