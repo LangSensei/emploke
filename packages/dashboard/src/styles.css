@@ -2843,22 +2843,27 @@ button {
   opacity: 0.5;
 }
 
-/*  Pulsing dot for the running badge.
-    Pure CSS keyframe animation — no JS tick. The dot rides inside the
-    badge so the pulse animates without affecting the badge's own
-    layout. */
+/*  Leading dot inside every status badge.
+    The dot uses `currentColor` so it picks up the badge's text color
+    automatically — running stays accent-blue, succeeded green, danger
+    red, muted grey. `.badge--with-dot` gives the badge the inline-flex
+    layout that aligns the dot with the label; `.badge__dot--pulse`
+    adds the keyframe animation, applied only on the running badge. */
 
-.badge--with-pulse {
+.badge--with-dot {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.badge__pulse-dot {
+.badge__dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+.badge__dot--pulse {
   animation: badge-pulse 1.4s ease-in-out infinite;
 }
 
@@ -4204,21 +4209,6 @@ button {
   min-height: 0;
   overflow: auto;
 }
-
-/* Per-item status dot, leading the row head. Tones match StatusBadge so
-   colour scanning matches the pill colour. */
-.task-list__item-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--color-text-subtle);
-  flex-shrink: 0;
-}
-.task-list__item-dot--info { background: var(--color-accent); }
-.task-list__item-dot--success { background: var(--color-success); }
-.task-list__item-dot--danger { background: var(--color-danger); }
-.task-list__item-dot--muted { background: var(--color-text-subtle); }
 
 /* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
    CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
