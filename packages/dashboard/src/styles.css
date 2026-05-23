@@ -2800,13 +2800,6 @@ button {
   gap: var(--space-2);
 }
 
-.task-list__item-remove {
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-
-/* Footer metadata: plain muted text, not chips. Wraps as a sentence
-   when the column is narrow, looks intentional rather than broken. */
 .task-list__item-meta {
   display: flex;
   flex-wrap: wrap;
@@ -2890,20 +2883,36 @@ button {
   display: grid;
   grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: var(--space-3);
-  align-items: start;
-}
-
-.tasks-pane--list-only {
-  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 0;
 }
 
 .tasks-pane__list {
-  max-height: calc(100vh - 220px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
+.tasks-pane__list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* iter-3 C4: the right detail pane sizes to its content within
+   [min 240px, max grid-row]. Previously this was unconditionally
+   `height: 100%`, which produced large empty whitespace below short
+   summaries (e.g. the "no summary was produced" placeholder + a
+   short activity stream). `align-self: start` opts the card out of
+   the grid's stretch on the cross axis; `max-height: 100%` keeps
+   long-content cases from spilling past the page row while letting
+   the existing inner `overflow: auto` regions (overview/activity/
+   artifacts) scroll as before. The left list column keeps the grid's
+   default stretch and remains full-viewport. */
 .tasks-pane__detail {
   display: flex;
   flex-direction: column;
@@ -2912,7 +2921,11 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  max-height: calc(100vh - 220px);
+  align-self: start;
+  height: auto;
+  min-height: 240px;
+  max-height: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -3413,14 +3426,80 @@ button {
    continue to drive the underlying layout.
    ========================================================================== */
 
-.tasks-pane--with-detail {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) 1fr;
-  gap: var(--space-4);
+/* Per-row `⋯` menu — iter-3 controlled popover.
+   The previous iter-1/iter-2 used native <details>/<summary> with a
+   comment claiming it gave close-on-outside-click + ESC for free.
+   That was wrong: browsers don't run a global handler on <details>,
+   and Esc only closes when focus is already inside the panel. The
+   current implementation is a state-driven popover (TaskListItem
+   owns `menuOpen`, TaskList holds the single openMenuId so opening
+   one row closes another, useClickOutside + a keydown listener
+   handle dismissal). The panel is `position: absolute` and a high
+   z-index so it floats above sibling rows and the detail pane
+   without altering row height when open. */
+.task-list__item-menu {
+  position: relative;
+  margin-left: auto;
+  display: inline-flex;
 }
-.tasks-pane--list-only {
-  display: block;
+.task-list__item-menu-trigger {
+  padding: 4px;
 }
+.task-list__item-menu-panel {
+  position: absolute;
+  right: 0;
+  min-width: 160px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  max-height: var(--menu-max-height, none);
+  overflow-y: auto;
+  transform-origin: top right;
+}
+.task-list__item-menu-panel--below {
+  top: calc(100% + 4px);
+  bottom: auto;
+  transform-origin: top right;
+}
+.task-list__item-menu-panel--above {
+  bottom: calc(100% + 4px);
+  top: auto;
+  transform-origin: bottom right;
+}
+.task-list__item-menu-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.task-list__item-menu-option:hover {
+  background: var(--color-surface-hover);
+}
+.task-list__item-menu-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.task-list__item-menu-option--danger {
+  color: var(--color-danger, #c0392b);
+}
+.task-list__item-menu-option--danger:hover {
+  background: var(--color-danger-bg, rgba(192, 57, 43, 0.08));
+}
+
 
 .task-filters {
   display: flex;
@@ -3428,6 +3507,8 @@ button {
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+  background: var(--color-bg);
 }
 .task-filters__row {
   display: flex;
@@ -3436,7 +3517,7 @@ button {
   gap: var(--space-2);
 }
 .task-filters__row--compact {
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 .task-filters__label {
   font-size: 11px;
@@ -3445,16 +3526,17 @@ button {
   letter-spacing: 0.04em;
   color: var(--color-text-subtle);
 }
-/* Bug-bash iter-1 F1: the search input previously had `flex: 1 1 160px`
-   inside a `flex-direction: column` parent, which made flex-grow stretch
-   it vertically into a ~250px tall card. Anchor it to a fixed compact
-   height and wrap with a relative-positioned label so we can render a
-   search-icon prefix without a separate input style. */
+/* Phase A: search collapses inline with the dropdowns + time pills.
+   `flex: 1 1 200px` lets it grow to fill the row at desktop widths
+   and wrap onto its own line at narrow widths without stretching
+   vertically (the relative-positioned wrap + fixed input height keep
+   the icon prefix glued to the field). */
 .task-filters__search-wrap {
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%;
+  flex: 1 1 200px;
+  min-width: 200px;
 }
 .task-filters__search-icon {
   position: absolute;
@@ -3549,15 +3631,12 @@ button {
   background: none;
 }
 
-.task-detail__back {
-  display: none;
-}
 .task-detail__title-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-4) var(--space-2);
+  padding: 0 0 var(--space-2);
 }
 .task-detail__title-actions {
   display: flex;
@@ -3582,7 +3661,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding: 0 var(--space-4) var(--space-3);
+  padding: 0 0 var(--space-3);
 }
 .task-detail__meta-chip {
   display: inline-flex;
@@ -3596,9 +3675,16 @@ button {
   border-radius: 999px;
 }
 .task-detail__statbar-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--color-text-subtle);
+}
+.task-detail__statbar-id > code {
+  font: inherit;
+  color: inherit;
 }
 
 .task-tabs {
@@ -3630,6 +3716,9 @@ button {
   grid-template-columns: 1fr minmax(220px, 280px);
   gap: var(--space-4);
   padding: var(--space-4);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .overview-tab__summary {
   min-width: 0;
@@ -3694,57 +3783,26 @@ button {
   align-items: center;
   gap: var(--space-2);
 }
-.task-details__copy,
-.raw-json__copy {
+.task-details__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: var(--radius-sm);
-  padding: 1px 6px;
+  padding: 2px;
   font-size: 11px;
   cursor: pointer;
-  color: var(--color-text-muted);
+  color: var(--color-text-subtle);
+  line-height: 0;
 }
-.task-details__copy:hover,
-.raw-json__copy:hover {
+.task-details__copy:hover {
   background: var(--color-surface-hover);
-}
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.timeline__row {
-  display: grid;
-  grid-template-columns: 12px 1fr auto auto;
-  gap: var(--space-3);
-  align-items: center;
-}
-.timeline__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-border-strong);
-}
-.timeline__dot--running { background: var(--color-accent); }
-.timeline__dot--succeeded { background: var(--color-success); }
-.timeline__dot--failed { background: var(--color-danger); }
-.timeline__dot--cancelled { background: var(--color-warn); }
-.timeline__kind {
-  font-size: 13px;
   color: var(--color-text);
 }
-.timeline__seq {
-  font-size: 11px;
-  color: var(--color-text-subtle);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.timeline__time {
-  font-size: 11px;
-  color: var(--color-text-muted);
+.task-details__copy-wrap {
+  display: inline-flex;
+  align-items: center;
 }
 
 .artifact-list {
@@ -3774,12 +3832,6 @@ button {
 .artifact-list__size {
   font-size: 11px;
   color: var(--color-text-subtle);
-}
-
-.raw-json__head {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-2) var(--space-4) 0;
 }
 
 /* ─── Bug-bash iter-1 additions ──────────────────────────────────── */
@@ -3890,15 +3942,8 @@ button {
   border-radius: var(--radius-md);
   padding: var(--space-3);
 }
-.overview-tab__brief-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 .overview-tab__brief-details {
-  margin: var(--space-2) 0 0;
+  margin: 0;
   padding: var(--space-2);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -3970,13 +4015,106 @@ button {
   .tasks-pane--with-detail {
     grid-template-columns: 1fr;
   }
-  .tasks-pane--with-detail .tasks-pane__list {
-    display: none;
-  }
-  .task-detail__back {
-    display: inline-flex;
-  }
   .overview-tab {
     grid-template-columns: 1fr;
   }
+}
+
+/* ==========================================================================
+   Tasks page (iter-2 polish): viewport-fill + group status dot + copy icon.
+   ========================================================================== */
+
+/* F2: column flex wrapper so the tasks-pane stretches to fill the
+   viewport. The parent .content is flex: 1; overflow-y: auto inside
+   .main (a column flex parent at height: 100vh), so height: 100% here
+   resolves against the content area's definite height. Inner panes
+   get min-height: 0 + overflow: auto so they scroll internally rather
+   than letting the entire page grow. The page-top toolbar is portaled
+   into the workspace chrome header via <HeaderActions>, so .tasks-page
+   itself only contains the (optional) error alert + .tasks-pane. */
+.tasks-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.tasks-page > .alert {
+  flex: 0 0 auto;
+}
+.tasks-page > .tasks-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The detail panel's last child (the active tab body  OverviewTab,
+   ActivityTab, ArtifactsTab, or the loading placeholder) takes the
+   remaining vertical space and scrolls internally so the head + tabs
+   strip stay put. */
+.tasks-pane__detail > .task-detail__head,
+.tasks-pane__detail > .task-tabs {
+  flex: 0 0 auto;
+}
+.tasks-pane__detail > .overview-tab,
+.tasks-pane__detail > .task-detail__body,
+.tasks-pane__detail > .activity-view,
+.tasks-pane__detail > .artifacts {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* F5: status dot in the left-column group headers. Same colour ramp
+   as the StatusBadge tones used by .badge--info / .badge--success so
+   the visual language stays consistent: running -> blue, completed ->
+   green, not_started -> grey. */
+.task-list-group__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-subtle);
+  flex-shrink: 0;
+}
+.task-list-group__dot--running {
+  background: var(--color-accent);
+}
+.task-list-group__dot--completed {
+  background: var(--color-success);
+}
+.task-list-group__dot--not_started {
+  background: var(--color-text-subtle);
+}
+
+/* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
+   CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
+   it reads as inline metadata rather than a primary action. The
+   chip's own background/border/padding is now declared once above. */
+.task-details__copy-icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.5;
+}
+
+/* Visually hidden but still announced by AT. Used as a live region
+   sibling on CopyButton so the "Copied" announcement has a node
+   whose text content actually changes. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* F6: succeeded-with-empty-output placeholder  muted, unobtrusive,
+   no "Switch to Logs" call-to-action (the run already ended). */
+.overview-tab__no-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }

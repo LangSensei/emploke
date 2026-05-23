@@ -1,12 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import {
-  ALL_AGENTS,
-  ALL_RUNTIMES,
-  ORIGIN_PRESETS,
-  type OriginPreset,
-  TIME_PRESETS,
-  type TimePreset,
-} from "./shared";
+import { ALL_AGENTS, ALL_RUNTIMES, TIME_PRESETS, type TimePreset } from "./shared";
 
 export interface TaskFiltersProps {
   idQuery: string;
@@ -17,8 +10,6 @@ export interface TaskFiltersProps {
   onRuntimeFilterChange: (v: string) => void;
   timeFilter: TimePreset;
   onTimeFilterChange: (v: TimePreset) => void;
-  originFilter: OriginPreset;
-  onOriginFilterChange: (v: OriginPreset) => void;
   agents: AgentEntry[];
   filterAgentNames: string[];
   runtimes: string[];
@@ -27,16 +18,10 @@ export interface TaskFiltersProps {
 /**
  * Filter strip rendered above the task list in the master-detail view.
  *
- * Bug-bash iter-1 (F1/F2): compacted to two rows max so the task list
- * is always visible above the fold.
- *   row 1: search input (single line, search-icon prefix)
- *   row 2: Agent ▾ · Runtime ▾ · Origin pills · Time pills (wraps to
- *          row 3 only on narrow widths)
- *
- * Previously each filter group sat on its own row and the search was
- * a flex-grow item inside a `flex-direction: column` container — which
- * caused the input to stretch vertically and the panel to consume
- * ~480px of the sidebar.
+ * Phase A: single horizontal row (search grows, dropdowns + time pills
+ * trail right). Wraps naturally at narrower widths. The Origin pills
+ * were removed — the Tasks page is standalone-only; workflow-origin
+ * tasks surface on a separate (future) page.
  */
 export function TaskFilters(props: TaskFiltersProps) {
   const {
@@ -48,26 +33,24 @@ export function TaskFilters(props: TaskFiltersProps) {
     onRuntimeFilterChange,
     timeFilter,
     onTimeFilterChange,
-    originFilter,
-    onOriginFilterChange,
     filterAgentNames,
     runtimes,
   } = props;
   return (
     <div className="task-filters">
-      <div className="task-filters__search-wrap">
-        <SearchIcon />
-        <input
-          id="task-id-filter"
-          type="search"
-          value={idQuery}
-          onChange={(e) => onIdQueryChange(e.target.value)}
-          placeholder="Search task id…"
-          className="input task-filters__search"
-          aria-label="Search by task id"
-        />
-      </div>
       <div className="task-filters__row task-filters__row--compact">
+        <div className="task-filters__search-wrap">
+          <SearchIcon />
+          <input
+            id="task-id-filter"
+            type="search"
+            value={idQuery}
+            onChange={(e) => onIdQueryChange(e.target.value)}
+            placeholder="Search task id…"
+            className="input task-filters__search"
+            aria-label="Search by task id"
+          />
+        </div>
         <select
           id="task-agent-filter"
           aria-label="Filter by agent"
@@ -97,19 +80,6 @@ export function TaskFilters(props: TaskFiltersProps) {
             </option>
           ))}
         </select>
-        <div className="pills task-filters__pills">
-          {ORIGIN_PRESETS.map((p) => (
-            <button
-              key={p.value}
-              type="button"
-              className={`pills__btn${originFilter === p.value ? " pills__btn--active" : ""}`}
-              onClick={() => onOriginFilterChange(p.value)}
-              aria-pressed={originFilter === p.value}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
         <div className="pills task-filters__pills">
           {TIME_PRESETS.map((p) => (
             <button

@@ -7,9 +7,7 @@ import { formatAbsolute, formatRelative } from "../../utils/time";
  * the original `pages/Tasks.tsx`. Runtime-neutral timeline of user /
  * assistant / summary / thinking / tool_call / system entries.
  *
- * Used both as the Logs tab (full live-tailing activity stream) and,
- * via {@link ActivityRow}, by the Timeline tab (which renders a much
- * sparser kind+seq+timestamp summary).
+ * Used by the Activity tab (full live-tailing activity stream).
  */
 export function ActivityView({
   activity,

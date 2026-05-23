@@ -25,8 +25,7 @@ import type { JSX } from "react";
  *
  * Inline values are emitted as React nodes (never `dangerouslySetInnerHTML`),
  * so user text can never become an HTML injection. Tables, blockquotes,
- * images, and HTML passthrough are intentionally NOT supported — agent
- * outputs that need them can read the Raw JSON tab instead.
+ * images, and HTML passthrough are intentionally NOT supported.
  */
 
 type Block =

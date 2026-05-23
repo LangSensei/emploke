@@ -2,7 +2,7 @@ import type { TaskActivity } from "../../../api";
 import { ActivityView } from "../ActivityView";
 import { StickToBottomScroll } from "../StickToBottomScroll";
 
-export interface LogsTabProps {
+export interface ActivityTabProps {
   taskId: string;
   activity: TaskActivity | null;
   activityError: string | null;
@@ -10,11 +10,11 @@ export interface LogsTabProps {
 }
 
 /**
- * Logs tab — the full live-tailing activity stream. Preserves the
- * stick-to-bottom + load-older-on-scroll-up behaviour of the original
- * Activity tab; only the parent shell is different.
+ * Activity tab — the full live-tailing activity stream. Preserves the
+ * stick-to-bottom + load-older-on-scroll-up behaviour. Was previously
+ * exposed as "Logs"; the underlying data and behaviour are unchanged.
  */
-export function LogsTab({ taskId, activity, activityError, onLoadOlder }: LogsTabProps) {
+export function ActivityTab({ taskId, activity, activityError, onLoadOlder }: ActivityTabProps) {
   return (
     <StickToBottomScroll
       className="task-detail__body"

@@ -8,7 +8,7 @@
  * pre-split Tasks.tsx.
  */
 
-import type { TaskOrigin, TaskRecord, TaskStatus } from "../../api";
+import type { TaskRecord, TaskStatus } from "../../api";
 import { serverNow } from "../../serverClock";
 
 // ADR-001 made `cancelled` first-class: TaskService.cancel(id) +
@@ -37,13 +37,6 @@ export const STATUS_TONE: Record<TaskStatus, string> = {
 // round-trip through DOM string serialization).
 export const ALL_AGENTS = "__all__";
 export const ALL_RUNTIMES = "__all__";
-
-export type OriginPreset = TaskOrigin | "all";
-export const ORIGIN_PRESETS: { value: OriginPreset; label: string }[] = [
-  { value: "standalone", label: "Mine" },
-  { value: "workflow", label: "Workflow" },
-  { value: "all", label: "All" },
-];
 
 export type TimePreset = "today" | "7d" | "30d" | "all";
 export const TIME_PRESETS: { value: TimePreset; label: string }[] = [

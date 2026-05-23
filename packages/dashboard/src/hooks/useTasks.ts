@@ -3,7 +3,6 @@ import { listRuntimes, listTasks, type TaskRecord } from "../api";
 import {
   ALL_AGENTS,
   ALL_RUNTIMES,
-  type OriginPreset,
   presetToSinceMs,
   type TimePreset,
 } from "../components/tasks/shared";
@@ -18,7 +17,6 @@ export interface UseTasksResult {
   tasks: TaskRecord[];
   runtimes: string[];
   loaded: boolean;
-  refreshing: boolean;
   error: string | null;
   setError: (e: string | null) => void;
   // Filter state.
@@ -28,8 +26,6 @@ export interface UseTasksResult {
   setRuntimeFilter: (v: string) => void;
   timeFilter: TimePreset;
   setTimeFilter: (v: TimePreset) => void;
-  originFilter: OriginPreset;
-  setOriginFilter: (v: OriginPreset) => void;
   idQuery: string;
   setIdQuery: (v: string) => void;
   // Actions.
@@ -48,13 +44,11 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
-  const [originFilter, setOriginFilter] = useState<OriginPreset>("standalone");
   const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
@@ -78,14 +72,16 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     inFlightRef.current = true;
     const token = currentWorkspaceId;
     wsTokenRef.current = token;
-    setRefreshing(true);
     try {
       const sinceMs = presetToSinceMs(timeFilter);
       const opts: Parameters<typeof listTasks>[0] = {};
       if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
-      opts.origin = originFilter;
+      // Phase A: Tasks page is standalone-only. Workflow-origin tasks
+      // will surface on a separate (future) page; we never want them
+      // mixed into the master list here.
+      opts.origin = "standalone";
       const next = await listTasks(opts);
       if (!mountedRef.current) return;
       if (token !== currentWorkspaceId) return;
@@ -99,11 +95,10 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current && token === currentWorkspaceId) {
-        setRefreshing(false);
         setLoaded(true);
       }
     }
-  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter, originFilter]);
+  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter]);
 
   useEffect(() => {
     void refresh();
@@ -126,11 +121,22 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
   const anyRunning = useMemo(() => tasks.some((t) => t.status === "running"), [tasks]);
   usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
+  // Iter-2 F1: refresh immediately when the tab becomes visible again
+  // after being hidden, so users coming back to a tab after hours
+  // don't see stale data while they wait for the next poll tick.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [refresh]);
+
   return {
     tasks,
     runtimes,
     loaded,
-    refreshing,
     error,
     setError,
     agentFilter,
@@ -139,8 +145,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     setRuntimeFilter,
     timeFilter,
     setTimeFilter,
-    originFilter,
-    setOriginFilter,
     idQuery,
     setIdQuery,
     refresh,

@@ -117,3 +117,9 @@ export const GlobeIcon = (p: IconProps) =>
   );
 
 export const ChevronDownIcon = (p: IconProps) => SVG(<path d="m19.5 8.25-7.5 7.5-7.5-7.5" />, p);
+
+export const MoreHorizontalIcon = (p: IconProps) =>
+  SVG(
+    <path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />,
+    p,
+  );

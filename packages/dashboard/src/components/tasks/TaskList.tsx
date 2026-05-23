@@ -9,6 +9,7 @@ export interface TaskListProps {
   onSelect: (id: string) => void;
   onDelete: (task: TaskRecord) => void;
   onCancel: (task: TaskRecord) => Promise<void> | void;
+  onRerun: (task: TaskRecord) => void;
 }
 
 interface Group {
@@ -30,7 +31,14 @@ interface Group {
  * group, rows keep the page-supplied ordering (newest-first from
  * `listTasks`).
  */
-export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: TaskListProps) {
+export function TaskList({
+  tasks,
+  selectedId,
+  onSelect,
+  onDelete,
+  onCancel,
+  onRerun,
+}: TaskListProps) {
   const groups = useMemo<Group[]>(() => {
     const running: TaskRecord[] = [];
     const completed: TaskRecord[] = [];
@@ -54,6 +62,11 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
   });
   const toggle = (k: StatusGroup) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
+  // Page-level coordination: at most one per-row `⋯` menu is open at a
+  // time. Opening row B's menu auto-closes A's. The popover itself
+  // handles click-outside + Esc inside TaskListItem.
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
   return (
     <div className="task-list-groups">
       {groups.map((g) => {
@@ -74,6 +87,10 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
               <span className={`task-list-group__caret${isCollapsed ? " is-collapsed" : ""}`}>
                 {isCollapsed ? "▸" : "▾"}
               </span>
+              <span
+                className={`task-list-group__dot task-list-group__dot--${g.key}`}
+                aria-hidden="true"
+              />
               <span className="task-list-group__label">{g.label}</span>
               <span className="task-list-group__count">{g.tasks.length}</span>
             </button>
@@ -92,6 +109,9 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
                     onSelect={() => onSelect(t.id)}
                     onDelete={() => onDelete(t)}
                     onCancel={() => onCancel(t)}
+                    onRerun={() => onRerun(t)}
+                    menuOpen={openMenuId === t.id}
+                    onMenuOpenChange={(open) => setOpenMenuId(open ? t.id : null)}
                   />
                 ))}
               </ul>

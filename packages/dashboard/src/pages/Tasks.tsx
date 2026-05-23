@@ -1,12 +1,17 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecord } from "../api";
+import { HeaderActions } from "../components/HeaderActions";
 import { DispatchModal } from "../components/tasks/DispatchModal";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
 import { TaskDetail } from "../components/tasks/TaskDetail";
 import { TaskFilters } from "../components/tasks/TaskFilters";
 import { TaskList } from "../components/tasks/TaskList";
-import { TasksEmptyState, TasksToolbar } from "../components/tasks/TasksChrome";
+import {
+  TaskDetailPlaceholder,
+  TasksEmptyState,
+  TasksToolbar,
+} from "../components/tasks/TasksChrome";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
 
@@ -25,11 +30,18 @@ const DEFAULT_POLL_INTERVAL_MS = 4000;
  * polling detail view. Master-detail layout: a filtered + grouped
  * task list on the left, a tabbed detail panel on the right.
  *
+ * Phase A redesign:
+ *   - Refresh / Dispatch live in the workspace chrome header (via
+ *     `<HeaderActions>`); no separate `.page-toolbar--tasks` strip.
+ *   - The detail pane is always 2-column. The right column shows
+ *     either `<TaskDetail>` for the selected task, or a calm
+ *     placeholder when the list is empty.
+ *   - Origin filter is dropped — the Tasks page is standalone-only;
+ *     workflow-origin tasks surface on a separate (future) page.
+ *
  * This file is a thin shell — page-level data loading lives in
  * {@link useTasks}, per-task detail loading in `useTaskDetail`,
- * URL selection in {@link useSelectedTask}. Presentational pieces
- * live under `../components/tasks/`. The pre-mission-A version of
- * this file was 2377 lines.
+ * URL selection in {@link useSelectedTask}.
  */
 export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -40,7 +52,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     tasks,
     runtimes,
     loaded,
-    refreshing,
     error,
     setError,
     agentFilter,
@@ -49,8 +60,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     setRuntimeFilter,
     timeFilter,
     setTimeFilter,
-    originFilter,
-    setOriginFilter,
     idQuery,
     setIdQuery,
     refresh,
@@ -120,6 +129,11 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     setCancelTarget(target);
   }, []);
 
+  const requestRerun = useCallback((target: TaskRecord) => {
+    setRerunFrom(target);
+    setDispatchOpen(true);
+  }, []);
+
   const closeCancelModal = useCallback(() => {
     if (cancelBusy) return;
     setCancelTarget(null);
@@ -159,14 +173,21 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     return tasks.filter((t) => t.id.toLowerCase().includes(q));
   }, [tasks, idQuery]);
 
-  // Drop URL-bound selection if the task is truly gone (deleted
-  // server-side, or never existed when navigating to a stale link).
+  // Phase A default-selection rule: as soon as the list loads (or
+  // filters change such that the current selection is no longer
+  // visible), auto-bind to the top-most task. When the visible list
+  // is empty, clear the selection so the right column falls back to
+  // the placeholder.
   useEffect(() => {
     if (!loaded) return;
-    if (selectedId !== null && !tasks.some((t) => t.id === selectedId)) {
-      setSelectedId(null);
+    if (visibleTasks.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
     }
-  }, [loaded, selectedId, tasks, setSelectedId]);
+    if (selectedId === null || !visibleTasks.some((t) => t.id === selectedId)) {
+      setSelectedId(visibleTasks[0].id);
+    }
+  }, [loaded, visibleTasks, selectedId, setSelectedId]);
 
   const filterAgentNames = useMemo(() => {
     const set = new Set<string>(agents.map((a) => a.agent.fqn));
@@ -185,74 +206,67 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
 
   return (
     <>
-      <div className="page-toolbar page-toolbar--tasks">
-        <div className="page-toolbar__actions">
-          <TasksToolbar
-            refreshing={refreshing}
-            onRefresh={refresh}
-            dispatchDisabled={readyAgents.length === 0}
-            dispatchDisabledTitle={
-              readyAgents.length === 0
-                ? "Install at least one ready agent in the Catalog first"
-                : "Dispatch a new task"
-            }
-            onDispatch={() => setDispatchOpen(true)}
-          />
-        </div>
-      </div>
+      <HeaderActions>
+        <TasksToolbar
+          dispatchDisabled={readyAgents.length === 0}
+          dispatchDisabledTitle={
+            readyAgents.length === 0
+              ? "Install at least one ready agent in the Catalog first"
+              : "Dispatch a new task"
+          }
+          onDispatch={() => setDispatchOpen(true)}
+        />
+      </HeaderActions>
 
-      {error && <div className="alert alert--error">⚠️ {error}</div>}
+      <div className="tasks-page">
+        {error && <div className="alert alert--error">⚠️ {error}</div>}
 
-      <div
-        className={`tasks-pane${selectedId ? " tasks-pane--with-detail" : " tasks-pane--list-only"}`}
-      >
-        <div className="tasks-pane__list">
-          <TaskFilters
-            idQuery={idQuery}
-            onIdQueryChange={setIdQuery}
-            agentFilter={agentFilter}
-            onAgentFilterChange={setAgentFilter}
-            runtimeFilter={runtimeFilter}
-            onRuntimeFilterChange={setRuntimeFilter}
-            timeFilter={timeFilter}
-            onTimeFilterChange={setTimeFilter}
-            originFilter={originFilter}
-            onOriginFilterChange={setOriginFilter}
-            agents={agents}
-            filterAgentNames={filterAgentNames}
-            runtimes={runtimes}
-          />
-          {!loaded ? (
-            <TasksEmptyState loading />
-          ) : visibleTasks.length === 0 ? (
-            <TasksEmptyState
-              title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-              hint={
-                tasks.length === 0
-                  ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                  : "Adjust the filters above to see more tasks."
-              }
+        <div className="tasks-pane tasks-pane--with-detail">
+          <div className="tasks-pane__list">
+            <TaskFilters
+              idQuery={idQuery}
+              onIdQueryChange={setIdQuery}
+              agentFilter={agentFilter}
+              onAgentFilterChange={setAgentFilter}
+              runtimeFilter={runtimeFilter}
+              onRuntimeFilterChange={setRuntimeFilter}
+              timeFilter={timeFilter}
+              onTimeFilterChange={setTimeFilter}
+              agents={agents}
+              filterAgentNames={filterAgentNames}
+              runtimes={runtimes}
             />
+            <div className="tasks-pane__list-scroll">
+              {!loaded ? (
+                <TasksEmptyState loading />
+              ) : visibleTasks.length === 0 ? (
+                <TasksEmptyState
+                  title={tasks.length === 0 ? "No tasks yet" : "No matches"}
+                  hint={
+                    tasks.length === 0
+                      ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
+                      : "Adjust the filters above to see more tasks."
+                  }
+                />
+              ) : (
+                <TaskList
+                  tasks={visibleTasks}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onDelete={setDeleteTarget}
+                  onCancel={requestCancel}
+                  onRerun={requestRerun}
+                />
+              )}
+            </div>
+          </div>
+
+          {selectedId ? (
+            <TaskDetail taskId={selectedId} pollIntervalMs={pollIntervalMs} />
           ) : (
-            <TaskList
-              tasks={visibleTasks}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onDelete={setDeleteTarget}
-              onCancel={requestCancel}
-            />
+            <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
           )}
         </div>
-
-        {selectedId && (
-          <TaskDetail
-            taskId={selectedId}
-            onClose={() => setSelectedId(null)}
-            onCancel={requestCancel}
-            onRequestDelete={setDeleteTarget}
-            pollIntervalMs={pollIntervalMs}
-          />
-        )}
       </div>
 
       <DispatchModal

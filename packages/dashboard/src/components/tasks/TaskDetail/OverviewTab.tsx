@@ -11,9 +11,8 @@ export interface OverviewTabProps {
    *  the server died. */
   activity: TaskActivity | null;
   /** Switch the parent detail panel to another tab. Used by the
-   *  "Jump to Logs" / "View raw JSON" links on the enriched failure
-   *  callout. */
-  onSwitchTab: (tab: "logs" | "raw") => void;
+   *  "Jump to Activity" link on the enriched failure callout. */
+  onSwitchTab: (tab: "activity") => void;
 }
 
 /**
@@ -46,7 +45,7 @@ function SummaryBody({
 }: {
   task: TaskRecord;
   activity: TaskActivity | null;
-  onSwitchTab: (tab: "logs" | "raw") => void;
+  onSwitchTab: (tab: "activity") => void;
 }) {
   const output = typeof task.success?.output === "string" ? task.success.output.trim() : "";
   if (output.length > 0) {
@@ -71,16 +70,31 @@ function SummaryBody({
       </div>
     );
   }
+  // Iter-2 F6: terminal-success with empty `success.output` is the
+  // default state today (backend doesn't populate `output` yet). The
+  // previous fallback wrongly told the user to "Switch to the Logs tab
+  // to follow activity" — but the run has already ended, so there's
+  // nothing to follow. Show a neutral placeholder + the brief.
+  if (task.status === "succeeded") {
+    return (
+      <div className="overview-tab__failure">
+        <p className="overview-tab__no-summary">
+          No summary was produced. View the Activity tab for the full agent run.
+        </p>
+        <BriefPanel task={task} />
+      </div>
+    );
+  }
   // Running / not-yet-completed tasks: avoid the giant empty card —
-  // show a minimal placeholder that points to the live Logs tab and
+  // show a minimal placeholder that points to the live Activity tab and
   // surface the brief below so the reader has something to anchor on
   // (bug-bash iter-1 F10).
   return (
     <div className="overview-tab__failure">
       <div className="alert alert--info overview-tab__running-hint" style={{ margin: 0 }}>
         Task is {task.status}. Switch to the{" "}
-        <button type="button" className="link-button" onClick={() => onSwitchTab("logs")}>
-          Logs tab
+        <button type="button" className="link-button" onClick={() => onSwitchTab("activity")}>
+          Activity tab
         </button>{" "}
         to follow activity.
       </div>
@@ -140,31 +154,25 @@ function FailureContextPanel({
   onSwitchTab,
 }: {
   task: TaskRecord;
-  onSwitchTab: (tab: "logs" | "raw") => void;
+  onSwitchTab: (tab: "activity") => void;
 }) {
   if (!task.failure) return null;
   return (
     <div className="overview-tab__failure-actions">
-      <button type="button" className="link-button" onClick={() => onSwitchTab("logs")}>
-        Jump to Logs ↗
-      </button>
-      <button type="button" className="link-button" onClick={() => onSwitchTab("raw")}>
-        View raw JSON ↗
+      <button type="button" className="link-button" onClick={() => onSwitchTab("activity")}>
+        Jump to Activity ↗
       </button>
     </div>
   );
 }
 
 function BriefPanel({ task }: { task: TaskRecord }) {
-  const brief = task.brief?.trim() ?? "";
-  if (brief.length === 0) return null;
+  const details = task.details?.trim() ?? "";
+  if (details.length === 0) return null;
   return (
     <section className="overview-tab__brief">
-      <h4 className="overview-tab__section-title">Brief</h4>
-      <p className="overview-tab__brief-text">{brief}</p>
-      {task.details && task.details.trim().length > 0 && (
-        <pre className="overview-tab__brief-details">{task.details}</pre>
-      )}
+      <h4 className="overview-tab__section-title">Details</h4>
+      <pre className="overview-tab__brief-details">{details}</pre>
     </section>
   );
 }
