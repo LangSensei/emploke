@@ -1255,7 +1255,7 @@ export class TaskService {
           }
         }
         if (last === undefined || last.kind !== "assistant") return "";
-        return last.text.slice(0, 500);
+        return last.text.slice(-500);
       } catch (err) {
         this.logger.warn(
           { taskId: task.id, err },

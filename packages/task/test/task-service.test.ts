@@ -1782,9 +1782,9 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     expect(after.success?.artifacts).toEqual([]);
   });
 
-  it("output is sliced to 500 chars when assistant text exceeds the cap", async () => {
+  it("output is the tail 500 chars when assistant text exceeds the cap", async () => {
     const rt = new StubRuntime();
-    const long = "x".repeat(1234);
+    const long = "H".repeat(500) + "T".repeat(500);
     rt.readActivityResponse = mkActivity([
       { kind: "assistant", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: long },
     ]);
@@ -1794,7 +1794,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.success?.output).toHaveLength(500);
-    expect(after.success?.output).toBe("x".repeat(500));
+    expect(after.success?.output).toBe("T".repeat(500));
   });
 });
 
