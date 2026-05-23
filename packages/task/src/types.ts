@@ -57,27 +57,26 @@ export type TerminalStatus = "succeeded" | "failed" | "cancelled";
 export type TaskOrigin = "standalone" | "workflow";
 
 /**
- * Payload attached when a Task transitions to `succeeded`.
- *
- * `output` semantics under the current **runtime-driven completion model**:
- * the kernel does not interpret what an autonomous agent produced. The
- * substantive output of an agent run lives on the filesystem under
- * `Task.metadata.workdir/` — agent-written files and the captured
- * `stderr.log`. The runtime's per-task event stream lives on the
- * runtime's own state directory (e.g.
- * `<copilotStateDir>/<runtimeSessionId>/events.jsonl`) and is read
- * via `Runtime.readActivity` rather than mirrored into the workdir.
- * The `output` string is intentionally minimal and may be empty:
- * today `TaskService` always writes `""` here.
- *
- * `deliverable` / `artifacts` are pre-positioned for issue #26
- * (agent-driven completion model). They're optional today so the wire
- * shape can extend without DDL — the JSON column inside which `success`
- * lives accepts arbitrary additional keys without a v5 bump.
+ * Payload attached when a Task transitions to `succeeded`. Both fields
+ * are populated at terminal time by `TaskService.applyTerminal` and
+ * are persisted verbatim into the `success` JSON column — they are
+ * never re-derived on read (issue #181).
  */
 export interface TaskSuccess {
+  /**
+   * Tail of the agent's last assistant utterance, sliced to 500 chars.
+   * Empty string if the agent finished without producing an assistant
+   * turn (rare) or if the runtime's activity log was unavailable at
+   * terminal time. Persisted; never re-derived on read.
+   */
   readonly output: string;
-  readonly deliverable?: unknown;
+  /**
+   * Absolute paths of files found under `<workdir>/artifact/` at
+   * terminal time. Populated by `applyTerminal`. Empty array (or
+   * absent on legacy rows) if the agent wrote no artifacts. Order is
+   * lexicographic by basename for determinism. Persisted; never
+   * re-derived on read.
+   */
   readonly artifacts?: readonly string[];
 }
 
