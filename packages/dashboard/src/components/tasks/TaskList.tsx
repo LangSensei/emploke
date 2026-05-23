@@ -9,6 +9,7 @@ export interface TaskListProps {
   onSelect: (id: string) => void;
   onDelete: (task: TaskRecord) => void;
   onCancel: (task: TaskRecord) => Promise<void> | void;
+  onRerun: (task: TaskRecord) => void;
 }
 
 interface Group {
@@ -30,7 +31,14 @@ interface Group {
  * group, rows keep the page-supplied ordering (newest-first from
  * `listTasks`).
  */
-export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: TaskListProps) {
+export function TaskList({
+  tasks,
+  selectedId,
+  onSelect,
+  onDelete,
+  onCancel,
+  onRerun,
+}: TaskListProps) {
   const groups = useMemo<Group[]>(() => {
     const running: TaskRecord[] = [];
     const completed: TaskRecord[] = [];
@@ -92,6 +100,7 @@ export function TaskList({ tasks, selectedId, onSelect, onDelete, onCancel }: Ta
                     onSelect={() => onSelect(t.id)}
                     onDelete={() => onDelete(t)}
                     onCancel={() => onCancel(t)}
+                    onRerun={() => onRerun(t)}
                   />
                 ))}
               </ul>

@@ -2810,13 +2810,6 @@ button {
   gap: var(--space-2);
 }
 
-.task-list__item-remove {
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-
-/* Footer metadata: plain muted text, not chips. Wraps as a sentence
-   when the column is narrow, looks intentional rather than broken. */
 .task-list__item-meta {
   display: flex;
   flex-wrap: wrap;
@@ -2901,10 +2894,6 @@ button {
   grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
-}
-
-.tasks-pane--list-only {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .tasks-pane__list {
@@ -3428,8 +3417,25 @@ button {
   grid-template-columns: minmax(280px, 360px) 1fr;
   gap: var(--space-4);
 }
-.tasks-pane--list-only {
-  display: block;
+/* Per-row `⋯` menu — reuses the .filter-menu primitive (native
+   <details>/<summary>) so close-on-outside-click + ESC come for free.
+   The trigger is icon-only; the panel anchors to the right edge so it
+   doesn't push the row taller. */
+.task-list__item-menu {
+  margin-left: auto;
+}
+.task-list__item-menu-trigger {
+  padding: 4px;
+}
+.filter-menu__option--danger {
+  color: var(--color-danger, #c0392b);
+}
+.filter-menu__option--danger:hover {
+  background: var(--color-danger-bg, rgba(192, 57, 43, 0.08));
+}
+.filter-menu__option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .task-filters {
@@ -3446,7 +3452,7 @@ button {
   gap: var(--space-2);
 }
 .task-filters__row--compact {
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 .task-filters__label {
   font-size: 11px;
@@ -3455,16 +3461,17 @@ button {
   letter-spacing: 0.04em;
   color: var(--color-text-subtle);
 }
-/* Bug-bash iter-1 F1: the search input previously had `flex: 1 1 160px`
-   inside a `flex-direction: column` parent, which made flex-grow stretch
-   it vertically into a ~250px tall card. Anchor it to a fixed compact
-   height and wrap with a relative-positioned label so we can render a
-   search-icon prefix without a separate input style. */
+/* Phase A: search collapses inline with the dropdowns + time pills.
+   `flex: 1 1 200px` lets it grow to fill the row at desktop widths
+   and wrap onto its own line at narrow widths without stretching
+   vertically (the relative-positioned wrap + fixed input height keep
+   the icon prefix glued to the field). */
 .task-filters__search-wrap {
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%;
+  flex: 1 1 200px;
+  min-width: 200px;
 }
 .task-filters__search-icon {
   position: absolute;
@@ -3559,9 +3566,6 @@ button {
   background: none;
 }
 
-.task-detail__back {
-  display: none;
-}
 .task-detail__title-row {
   display: flex;
   align-items: flex-start;
@@ -3979,12 +3983,6 @@ button {
 @media (max-width: 768px) {
   .tasks-pane--with-detail {
     grid-template-columns: 1fr;
-  }
-  .tasks-pane--with-detail .tasks-pane__list {
-    display: none;
-  }
-  .task-detail__back {
-    display: inline-flex;
   }
   .overview-tab {
     grid-template-columns: 1fr;
