@@ -165,11 +165,21 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   // auto-poll (unlike Tasks), so this is the single auto-refresh path that
   // covers "I came back to the dashboard after a while" without spamming the
   // server with periodic polls.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is a stable closure for this purpose
+  //
+  // `refresh` is declared inline every render and closes over `filter`,
+  // `timeFilter`, and `currentWorkspaceId`. To avoid resubscribing the
+  // visibilitychange listener on every render — while still always invoking
+  // the *latest* closure (with current filters/workspace) — we stash it in a
+  // ref and read `refreshRef.current` from the stable listener.
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listener reads latest refresh via refreshRef; effect intentionally subscribes once
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible") {
-        void refresh();
+        void refreshRef.current();
       }
     };
     document.addEventListener("visibilitychange", onVis);
