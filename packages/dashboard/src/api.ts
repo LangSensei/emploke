@@ -792,7 +792,6 @@ export type TaskCancellation =
 
 export interface TaskSuccess {
   output: string;
-  deliverable?: unknown;
   artifacts?: readonly string[];
 }
 
@@ -860,6 +859,14 @@ export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
 
 export const getTask = (id: string): Promise<TaskRecord> =>
   fetchJson<TaskRecord>(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}`, "task");
+
+/**
+ * Build the URL the browser should hit to download a task artifact by
+ * name. Issue #181: artifacts are served from the workspace-scoped
+ * task route, gated by a whitelist on `success.artifacts`.
+ */
+export const taskArtifactUrl = (taskId: string, name: string): string =>
+  `${workspacePrefix()}/tasks/${encodeURIComponent(taskId)}/artifact/${encodeURIComponent(name)}`;
 
 export const dispatchTask = async (
   agent: string,
