@@ -115,10 +115,9 @@ export function TaskListItem({
 
     const measure = () => {
       const triggerRect = trigger.getBoundingClientRect();
-      const viewportTop = container ? container.getBoundingClientRect().top : 0;
-      const viewportBottom = container
-        ? container.getBoundingClientRect().bottom
-        : window.innerHeight;
+      const containerRect = container?.getBoundingClientRect();
+      const viewportTop = containerRect?.top ?? 0;
+      const viewportBottom = containerRect?.bottom ?? window.innerHeight;
 
       if (cachedPanelHeight == null) {
         // Natural panel height: temporarily clear any cap so we measure
