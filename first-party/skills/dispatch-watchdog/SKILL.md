@@ -2,7 +2,7 @@
 name: dispatch-watchdog
 scope: emploke
 description: "Spawns a properly-detached cross-platform watchdog over a running emploke task — polls status, exits on terminal state, and reliably surfaces runtime completion notifications to the orchestrator session"
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Dispatch Watchdog Skill
@@ -72,6 +72,7 @@ $logPath    = Join-Path $missionDir "watchdog.log"
 
 $body = @"
 `$ErrorActionPreference = 'Continue'
+"`$(Get-Date -Format o) watchdog started for $tid" | Add-Content '$logPath'
 while (`$true) {
     `$raw = & emploke task show '$tid' --json 2>`$null
     # Regex-extract status to avoid host-shell JSON parser quirks.
@@ -111,6 +112,7 @@ log_path="${mission_dir}/watchdog.log"
 cat > "${mission_dir}/watchdog.sh" <<EOF
 #!/usr/bin/env bash
 set +e
+printf '%s watchdog started for %s\n' "\$(date -Iseconds)" "${tid}" >> "${log_path}"
 while :; do
   raw=\$(emploke task show "${tid}" --json 2>/dev/null)
   status=\$(printf '%s' "\$raw" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
@@ -140,10 +142,12 @@ Windows.)
 
 ## Watchdog log format
 
-One line per poll, monotonic-timestamp-prefixed, for debugging stuck
+First line is the start marker (see Caller contract item 4). One line
+per poll thereafter, monotonic-timestamp-prefixed, for debugging stuck
 or runaway watchdogs:
 
 ```
+2026-05-22T08:30:00+00:00 watchdog started for tsk_abc123
 2026-05-22T08:31:00+00:00 status=running
 2026-05-22T08:32:00+00:00 status=running
 2026-05-22T08:33:00+00:00 status=succeeded
@@ -165,11 +169,16 @@ or runaway watchdogs:
 The caller (orchestrator) MUST:
 1. Persist the task id (`task-id.txt` in the mission folder is the
    convention).
-2. Invoke the watchdog once per task and not re-spawn it on session
-   resume if one is already running (check `watchdog.log` mtime as a
-   liveness signal).
+2. Invoke the watchdog once per task. Do not re-spawn if one is
+   already alive. **Liveness = `watchdog.log` mtime within 2× the
+   configured poll interval.** Older = dead; respawn.
 3. On notification, read `watchdog.log`'s last line for the final
    status and proceed.
+4. **Verify start within 5s of spawning.** Read the first line of
+   `watchdog.log`; it MUST contain `watchdog started for <tid>`. If
+   the marker is absent, the watchdog is dead (bad args, missing tid,
+   exec failure) — fix the invocation and respawn. Do not proceed
+   assuming monitoring is active.
 
 ## CHANGELOG
 

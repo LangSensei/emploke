@@ -8,25 +8,19 @@ A task is **stuck** when:
 
 ## Detection
 
-Per tick (step 3 of the operating loop):
+Only invoked from operating-loop step 3 (tasks without an active
+watchdog). Tasks with a watchdog reach you via runtime notification,
+not polling.
 
-```sh
-for tid in $(echo "$running" | jq -r '.[].id'); do
-  # Use task.metadata.lastActiveAtRuntime — runtime-supplied "when did
-  # I last see activity from this subprocess". Fall back to startedAt
-  # then createdAt for tasks the runtime hasn't reported on yet.
-  #
-  # We use `task show` (single metadata read) rather than
-  # `task activity --limit 1` (parses the log) because `task show` is
-  # strictly cheaper — both report the same "most recent activity"
-  # timestamp now that activity is tail-first.
-  RECENT=$(emploke task show "$tid" --json | jq -r '.metadata.lastActiveAtRuntime // .startedAt // .createdAt')
-  AGE_MIN=$(( ($(date +%s) - $(date -d "$RECENT" +%s)) / 60 ))
-  if [ "$AGE_MIN" -ge 30 ]; then
-    handle_stuck_task "$tid" "$AGE_MIN"
-  fi
-done
 ```
+recent  = task.metadata.lastActiveAtRuntime ?? task.startedAt ?? task.createdAt
+age_min = minutes_since(recent)
+if age_min >= 30: handle_stuck(task, age_min)
+```
+
+Use `task show --json` (single metadata read) — not
+`task activity --limit 1` (parses the log) — both expose the same
+"most recent activity" timestamp and `task show` is strictly cheaper.
 
 ## Triage
 

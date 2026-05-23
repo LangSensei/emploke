@@ -24,6 +24,15 @@ emploke task list --status success,failure,cancelled --created-since "$LAST_TICK
 # Update LAST_TICK after we've processed completions (see step 2 end).
 ```
 
+Audit watchdog liveness while you're already enumerating active
+missions (a dead watchdog masquerades as a healthy long-running task
+otherwise):
+
+```
+for each .pilot/active-missions/*/watchdog.log:
+  if not alive (per dispatch-watchdog SKILL): respawn watchdog
+```
+
 ## Step 2: Process completions
 
 For each task in `/tmp/completed.json`:
@@ -79,22 +88,23 @@ After processing all completions:
 echo '{"last_tick":"'"$NOW"'"}' > .pilot/state.json
 ```
 
-## Step 3: Detect stuck tasks
+## Step 3: Detect stuck tasks (watchdog-less fallback only)
 
-```sh
-# Detect stuck tasks
-for tid in $(echo "$running" | jq -r '.[].id'); do
-  # See references/monitoring/stuck-task-intervention.md for the
-  # rationale. We use `task show .metadata.lastActiveAtRuntime` (not
-  # `task activity --limit 1`) because it's cheaper — `task show` is
-  # a single metadata read, while `task activity` parses the log.
-  RECENT=$(emploke task show "$tid" --json | jq -r '.metadata.lastActiveAtRuntime // .startedAt // .createdAt')
-  if [ "$(date -d "$RECENT" +%s)" -lt "$(date -d '30 minutes ago' +%s)" ]; then
-    # Task hasn't emitted any activity in 30+ minutes.
-    echo "$tid stuck"
-  fi
-done
+Tasks with an active watchdog are monitored via runtime notification —
+the watchdog pushes terminal state to the session. You do NOT poll
+them here. This step exists only for tasks WITHOUT a watchdog (rare;
+e.g. legacy in-flight tasks from before watchdog adoption).
+
 ```
+for task in running:
+  if task has active watchdog: skip   # notification-driven
+  recent  = task.metadata.lastActiveAtRuntime ?? task.startedAt ?? task.createdAt
+  age_min = minutes_since(recent)
+  if age_min >= 30: handle_stuck(task, age_min)   # see references/monitoring/stuck-task-intervention.md
+```
+
+`minutes_since` is host-shell dependent — implement it in your shell
+(bash: `date -d`; PowerShell: `[datetime]::Parse` + `New-TimeSpan`).
 
 ## Step 4: Process inbox
 
