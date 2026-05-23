@@ -267,6 +267,52 @@ class StubRuntime implements Runtime {
     };
   }
 
+  /**
+   * Optional canned response for `getLastAgentActivity`. Mirrors the
+   * shape of {@link readActivityResponse}: undefined → method absent
+   * (runtime doesn't implement the surface), null → method present
+   * but no agent activity yet, value → returned as-is.
+   *
+   * When `getLastAgentActivityResponse` is undefined but
+   * `readActivityResponse` is set, this stub auto-derives the agent
+   * activity from the canned activity stream so existing tests that
+   * only configure `readActivityResponse` keep exercising the
+   * `collectSuccessPayload` path.
+   */
+  getLastAgentActivityResponse: import("@emploke/runtime").AgentActivity | null | undefined =
+    undefined;
+  getLastAgentActivityError: Error | null = null;
+  getLastAgentActivityCallCount = 0;
+  get getLastAgentActivity(): Runtime["getLastAgentActivity"] | undefined {
+    const hasExplicit =
+      this.getLastAgentActivityResponse !== undefined || this.getLastAgentActivityError !== null;
+    const hasDerived = this.readActivityResponse !== undefined || this.readActivityError !== null;
+    if (!hasExplicit && !hasDerived) return undefined;
+    return async () => {
+      this.getLastAgentActivityCallCount++;
+      if (this.getLastAgentActivityError !== null) {
+        const e = this.getLastAgentActivityError;
+        throw e;
+      }
+      if (hasExplicit) return this.getLastAgentActivityResponse ?? null;
+      // Auto-derive from the readActivity stream — same predicate the
+      // copilot runtime applies (last assistant item wins).
+      if (this.readActivityError !== null) {
+        const e = this.readActivityError;
+        throw e;
+      }
+      const result = this.readActivityResponse ?? null;
+      if (result === null) return null;
+      for (let i = result.activity.length - 1; i >= 0; i--) {
+        const item = result.activity[i];
+        if (item !== undefined && item.kind === "assistant") {
+          return { text: item.text, timestamp: item.timestamp };
+        }
+      }
+      return null;
+    };
+  }
+
   /** Per-call invocation counter for #180 assertions. */
   readMetadataCallCount = 0;
 
@@ -721,7 +767,7 @@ describe("dispatch — error paths", () => {
 });
 
 describe("exit watcher", () => {
-  it("exit code 0 → status=success, output empty, exitCode=0", async () => {
+  it("exit code 0 → status=success, output null, exitCode=0", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
@@ -729,7 +775,7 @@ describe("exit watcher", () => {
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
-    expect(after.success?.output).toBe("");
+    expect(after.success?.output).toBeNull();
     // v4 (issue #119) stopped mirroring exitCode/exitSignal into
     // metadata; the success path has no per-exit telemetry to record.
     const meta = readTaskRuntimeMetadata(after);
@@ -1731,7 +1777,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     ]);
   });
 
-  it("output='' when activity has no assistant item (only user/tool)", async () => {
+  it("output=null when activity has no assistant item (only user/tool)", async () => {
     const rt = new StubRuntime();
     rt.readActivityResponse = mkActivity([
       { kind: "user", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: "do it" },
@@ -1746,13 +1792,29 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
 
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
-    expect(after.success?.output).toBe("");
+    expect(after.success?.output).toBeNull();
     expect(after.success?.artifacts).toHaveLength(1);
   });
 
-  it("readActivity throws → succeeded transition still completes, warn logged, output=''", async () => {
+  it("output=null when runtime.getLastAgentActivity returns null", async () => {
     const rt = new StubRuntime();
-    rt.readActivityError = new Error("runtime activity log corrupt");
+    rt.getLastAgentActivityResponse = null;
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.status).toBe("succeeded");
+    // Distinct from "" (which would mean "the agent explicitly emitted
+    // an empty turn") and undefined (which would mean "the field was
+    // never written"). Null is the canonical "no summary".
+    expect(after.success?.output).toBeNull();
+    expect(rt.getLastAgentActivityCallCount).toBeGreaterThan(0);
+  });
+
+  it("getLastAgentActivity throws → succeeded transition still completes, warn logged, output=null", async () => {
+    const rt = new StubRuntime();
+    rt.getLastAgentActivityError = new Error("runtime activity log corrupt");
     const r = recorder();
     const { m } = await makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
@@ -1760,8 +1822,8 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     void rt.handles[0].exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
-    expect(after.success?.output).toBe("");
-    const warn = r.calls.find((c) => c.msg.includes("readActivity failed"));
+    expect(after.success?.output).toBeNull();
+    const warn = r.calls.find((c) => c.msg.includes("getLastAgentActivity failed"));
     expect(warn).toBeDefined();
   });
 

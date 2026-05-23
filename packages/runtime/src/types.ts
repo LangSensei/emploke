@@ -210,6 +210,25 @@ export interface Runtime {
   readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
 
   /**
+   * Optional. The most recent activity event produced by the agent
+   * itself (excluding tool output, system events, harness messages,
+   * etc.).
+   *
+   * Each runtime decides what "agent-produced" means in its own event
+   * stream — e.g. Copilot picks the last {@link AssistantItem}, ignoring
+   * trailing tool calls or system messages. Returns `null` when the
+   * runtime has no agent activity to report (task just started, no
+   * matching event yet, or the runtime has no notion of distinct
+   * agent vs system events).
+   *
+   * Callable at any time; not a terminal-only API. Implementations
+   * MUST NOT carry any "task succeeded / failed" framing — success and
+   * failure are task-domain concepts owned by the task layer. This
+   * method just reports the latest agent utterance.
+   */
+  getLastAgentActivity?(runtimeSessionId: string): Promise<AgentActivity | null>;
+
+  /**
    * Optional. Live-tail variant of {@link readActivity}. Returns an
    * AsyncIterable that yields {@link ActivityItem}s as they're
    * written to the runtime's native log, until the iterator is closed.
@@ -491,6 +510,28 @@ export interface ActivityResult {
    */
   readonly totalItems: number;
   readonly truncated?: TruncationInfo;
+}
+
+/**
+ * A single agent-produced utterance, returned by
+ * {@link Runtime.getLastAgentActivity}.
+ *
+ * The shape is deliberately minimal: just the natural-language text the
+ * agent emitted and the timestamp the runtime recorded for that event.
+ * Runtimes that have richer per-message metadata (model, tokens,
+ * stopReason, …) report it through {@link ActivityItem} instead — this
+ * type is the headline-only view.
+ *
+ * Open for extension: future runtime-specific metadata may live in a
+ * sibling field. No index signature here on purpose — adding one would
+ * push the contract from "headline" to "anything", which is what
+ * {@link ActivityItem} is for.
+ */
+export interface AgentActivity {
+  /** Natural-language content produced by the agent. */
+  readonly text: string;
+  /** ISO 8601 UTC timestamp the agent produced this activity. */
+  readonly timestamp: string;
 }
 
 /**

@@ -577,6 +577,98 @@ describe("CopilotRuntime", () => {
     });
   });
 
+  describe("getLastAgentActivity", () => {
+    it("returns null when runtimeSessionId is missing or invalid", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      expect(await rt.getLastAgentActivity("")).toBeNull();
+      expect(await rt.getLastAgentActivity("not-a-uuid")).toBeNull();
+    });
+
+    it("returns null when events.jsonl is missing on disk", async () => {
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      expect(await rt.getLastAgentActivity(FIXED_UUID)).toBeNull();
+    });
+
+    it("returns null when the stream has no assistant items", async () => {
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const line = JSON.stringify({
+        type: "user.message",
+        id: "u0",
+        parentId: null,
+        timestamp: "2026-05-12T03:54:11.016Z",
+        data: { content: "hello" },
+      });
+      await writeFile(path.join(dir, "events.jsonl"), line);
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      expect(await rt.getLastAgentActivity(FIXED_UUID)).toBeNull();
+    });
+
+    it("returns the last assistant utterance, skipping trailing tool/system events", async () => {
+      // Stream: user → assistant("first") → user → assistant("second") →
+      // tool_call(success) → system. The "second" assistant message
+      // must win — earlier code that picked the literal last event
+      // would have surfaced the tool call's display text or the
+      // system note instead.
+      const dir = path.join(stateDir, FIXED_UUID);
+      await mkdir(dir, { recursive: true });
+      const lines = [
+        {
+          type: "user.message",
+          id: "u0",
+          parentId: null,
+          timestamp: "2026-05-12T03:54:11.000Z",
+          data: { content: "first ask" },
+        },
+        {
+          type: "assistant.message",
+          id: "a0",
+          parentId: "u0",
+          timestamp: "2026-05-12T03:54:12.000Z",
+          data: { content: "first" },
+        },
+        {
+          type: "user.message",
+          id: "u1",
+          parentId: "a0",
+          timestamp: "2026-05-12T03:54:13.000Z",
+          data: { content: "second ask" },
+        },
+        {
+          type: "assistant.message",
+          id: "a1",
+          parentId: "u1",
+          timestamp: "2026-05-12T03:54:14.500Z",
+          data: {
+            content: "second",
+            toolRequests: [{ name: "read_file", toolCallId: "tc-1", input: {} }],
+          },
+        },
+        {
+          type: "tool.response",
+          id: "tr-1",
+          parentId: "a1",
+          timestamp: "2026-05-12T03:54:15.000Z",
+          data: { toolCallId: "tc-1", status: "success", content: "file body" },
+        },
+        {
+          type: "system.notification",
+          id: "s0",
+          parentId: null,
+          timestamp: "2026-05-12T03:54:16.000Z",
+          data: { content: "session paused" },
+        },
+      ].map((e) => JSON.stringify(e));
+      await writeFile(path.join(dir, "events.jsonl"), lines.join("\n"));
+
+      const rt = new CopilotRuntime({ copilotStateDir: stateDir });
+      const last = await rt.getLastAgentActivity(FIXED_UUID);
+      expect(last).not.toBeNull();
+      expect(last?.text).toBe("second");
+      expect(last?.timestamp).toBe("2026-05-12T03:54:14.500Z");
+    });
+  });
+
   describe("streamActivity", () => {
     it("returns nothing when runtimeSessionId is missing", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
