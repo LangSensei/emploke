@@ -1,76 +1,116 @@
-import type { TaskRecord } from "../../../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { type TaskRecord, taskArtifactUrl } from "../../../api";
+import { FileViewer } from "../../viewers/FileViewer";
+import { pickViewer, viewerNeedsBlob } from "../../viewers/index";
 
 export interface ArtifactsTabProps {
   task: TaskRecord;
 }
 
-/**
- * Lift `(success?.deliverable as { artifacts?: ... } | undefined)?.artifacts`
- * into a typed array we can render. The Mission-A spec is explicit:
- *
- *   "Artifacts tab count matches `success.deliverable.artifacts?.length ?? 0`"
- *
- * `success.deliverable` is declared `unknown` on TaskRecord (it's an
- * extension point for the agent-driven completion model), so we
- * carefully narrow without trusting its shape. Items can be either
- * plain strings (path / URL) or richer objects with `{ name, size,
- * url, path }` — both shapes are normalised here.
- */
 interface NormalArtifact {
   name: string;
-  url: string | null;
-  size: number | null;
+  url: string;
 }
 
+/**
+ * Issue #181: `success.artifacts` is now the only artifact source.
+ * Entries are absolute fs paths captured by `applyTerminal` at
+ * terminal time; the basename is what we display + what the server
+ * accepts as the URL segment.
+ */
 function extractArtifacts(task: TaskRecord): NormalArtifact[] {
-  const deliverable = task.success?.deliverable as { artifacts?: unknown } | undefined;
-  const raw = deliverable?.artifacts;
-  if (!Array.isArray(raw)) {
-    // Fall back to the legacy top-level `success.artifacts: string[]`
-    // so we don't drop artifacts written by older runtimes.
-    const legacy = task.success?.artifacts;
-    if (!Array.isArray(legacy)) return [];
-    return legacy.map((s) => normaliseString(String(s)));
-  }
-  return raw.map((entry) => {
-    if (typeof entry === "string") return normaliseString(entry);
-    if (entry && typeof entry === "object") {
-      const obj = entry as Record<string, unknown>;
-      const name =
-        typeof obj.name === "string"
-          ? obj.name
-          : typeof obj.path === "string"
-            ? basename(obj.path)
-            : "(unnamed)";
-      const url =
-        typeof obj.url === "string" ? obj.url : typeof obj.path === "string" ? obj.path : null;
-      const size = typeof obj.size === "number" ? obj.size : null;
-      return { name, url, size };
-    }
-    return { name: "(unknown)", url: null, size: null };
+  const list = task.success?.artifacts ?? [];
+  return list.map((absPath) => {
+    const name = basename(absPath);
+    return {
+      name,
+      url: taskArtifactUrl(task.id, name),
+    };
   });
 }
 
-function normaliseString(s: string): NormalArtifact {
-  return { name: basename(s) || s, url: s, size: null };
-}
-
 function basename(p: string): string {
-  const cleaned = p.split(/[?#]/, 1)[0] ?? p;
-  const parts = cleaned.split(/[\\/]/);
-  return parts[parts.length - 1] ?? p;
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
 }
 
-function formatBytes(n: number | null): string | null {
-  if (n === null) return null;
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+type FetchState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; content: string | Blob; size: number }
+  | { status: "error"; message: string };
 
 export function ArtifactsTab({ task }: ArtifactsTabProps) {
-  const artifacts = extractArtifacts(task);
+  const artifacts = useMemo(() => extractArtifacts(task), [task]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [fetchState, setFetchState] = useState<FetchState>({ status: "idle" });
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Auto-select when there's exactly one artifact so the common case
+  // (a single report) renders immediately without a manual click.
+  useEffect(() => {
+    if (artifacts.length === 1 && selected === null) {
+      setSelected(artifacts[0]!.name);
+    }
+  }, [artifacts, selected]);
+
+  // Reset selection if it points at a name that no longer exists in the
+  // (now-updated) artifact list. This can happen if the task record is
+  // refreshed with a different success.artifacts payload.
+  useEffect(() => {
+    if (selected && !artifacts.some((a) => a.name === selected)) {
+      setSelected(null);
+    }
+  }, [artifacts, selected]);
+
+  // Fetch the selected artifact, aborting any in-flight request when
+  // the selection (or task id) changes.
+  useEffect(() => {
+    if (!selected) {
+      setFetchState({ status: "idle" });
+      return;
+    }
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setFetchState({ status: "loading" });
+
+    const url = taskArtifactUrl(task.id, selected);
+    const asBlob = viewerNeedsBlob(selected);
+    (async () => {
+      try {
+        const res = await fetch(url, { signal: ctrl.signal });
+        if (!res.ok) {
+          setFetchState({
+            status: "error",
+            message: `Failed to load artifact (${res.status})`,
+          });
+          return;
+        }
+        if (asBlob) {
+          const blob = await res.blob();
+          setFetchState({ status: "loaded", content: blob, size: blob.size });
+        } else {
+          const text = await res.text();
+          setFetchState({ status: "loaded", content: text, size: text.length });
+        }
+      } catch (err) {
+        if ((err as { name?: string } | null)?.name === "AbortError") return;
+        setFetchState({
+          status: "error",
+          message: err instanceof Error ? err.message : "Failed to load artifact",
+        });
+      }
+    })();
+
+    return () => ctrl.abort();
+  }, [selected, task.id]);
+
+  const handleSelect = useCallback((name: string) => {
+    setSelected(name);
+  }, []);
+
   if (artifacts.length === 0) {
     return (
       <div className="task-detail__body">
@@ -79,37 +119,95 @@ export function ArtifactsTab({ task }: ArtifactsTabProps) {
     );
   }
   return (
-    <div className="task-detail__body">
-      <ul className="artifact-list">
-        {artifacts.map((a, idx) => {
-          const sizeLabel = formatBytes(a.size);
-          return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: artifact list is render-only; ordering is server-stable and items are not reordered.
-            <li key={`${a.url ?? a.name}-${idx}`} className="artifact-list__item">
-              <span className="artifact-list__icon" aria-hidden="true">
-                📄
-              </span>
-              <div className="artifact-list__main">
-                {a.url ? (
-                  <a
-                    href={a.url}
-                    className="artifact-list__name"
-                    target="_blank"
-                    rel="noreferrer noopener"
+    <div className="task-detail__body artifacts-split">
+      <div className="artifacts-split__list">
+        <ul className="artifact-list">
+          {artifacts.map((a, idx) => {
+            const isActive = a.name === selected;
+            return (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: artifact list is render-only; ordering is server-stable and items are not reordered.
+                key={`${a.url}-${idx}`}
+                className={`artifact-list__item${isActive ? " artifact-list__item--active" : ""}`}
+              >
+                <span className="artifact-list__icon" aria-hidden="true">
+                  📄
+                </span>
+                <div className="artifact-list__main">
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(a.name)}
+                    className="artifact-list__name artifact-list__name--button"
+                    aria-pressed={isActive}
                   >
                     {a.name}
-                  </a>
-                ) : (
-                  <span className="artifact-list__name">{a.name}</span>
-                )}
-                {sizeLabel && <span className="artifact-list__size muted">{sizeLabel}</span>}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                  </button>
+                </div>
+                <a
+                  href={a.url}
+                  className="artifact-list__download"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  download={a.name}
+                  title={`Download ${a.name}`}
+                >
+                  Download
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <div className="artifacts-split__preview">
+        <ArtifactPreview
+          selected={selected}
+          state={fetchState}
+          downloadUrl={selected ? taskArtifactUrl(task.id, selected) : undefined}
+        />
+      </div>
     </div>
   );
+}
+
+interface ArtifactPreviewProps {
+  selected: string | null;
+  state: FetchState;
+  downloadUrl: string | undefined;
+}
+
+function ArtifactPreview({ selected, state, downloadUrl }: ArtifactPreviewProps) {
+  if (!selected) {
+    return (
+      <div className="artifact-viewer artifact-viewer--empty">Select an artifact to preview.</div>
+    );
+  }
+  if (state.status === "loading") {
+    return (
+      <div className="artifact-viewer artifact-viewer--empty">
+        <span className="artifact-viewer__spinner" aria-hidden="true" />
+        Loading…
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return <div className="artifact-viewer artifact-viewer--error">{state.message}</div>;
+  }
+  if (state.status === "loaded") {
+    // Force-remount the viewer on selection change so internal state
+    // (object URLs, JSON parsing memo, iframe doc) does not leak across
+    // artifacts even if the dispatcher resolves to the same component.
+    const kind = pickViewer(selected);
+    return (
+      <FileViewer
+        key={`${selected}:${kind}`}
+        filename={selected}
+        content={state.content}
+        size={state.size}
+        downloadUrl={downloadUrl}
+      />
+    );
+  }
+  return null;
 }
 
 /** Public helper so the parent can render the tab badge count. */

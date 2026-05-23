@@ -1,3 +1,6 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import path from "node:path";
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
@@ -342,6 +345,92 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
     }
   });
 
+  // GET /:tid/artifact/:name (issue #181)
+  //
+  // Serve a single artifact file for a terminal task. The artifact
+  // must be on the task's `success.artifacts` whitelist — there is
+  // no general filesystem-serving fallback. This is the read endpoint
+  // that pairs with `applyTerminal`'s artifact capture.
+  //
+  // Defence in depth:
+  //   - `name` is rejected outright if it contains a path separator
+  //     or `..` (no directory traversal). The whitelist check below
+  //     is the actual security boundary; this is the belt-and-braces.
+  //   - The manager normalises with `path.basename` before comparing
+  //     against the whitelist, so a sneaky encoded separator slipping
+  //     past the route check still can't walk out.
+  //
+  // Errors:
+  //   - 404 — task missing, task still running, or `name` not on
+  //     the success.artifacts whitelist
+  //   - 400 — `name` contains an obviously-malicious separator
+  app.get("/:tid/artifact/:name", async (c) => {
+    const id = c.req.param("tid");
+    const rawName = c.req.param("name");
+    if (
+      rawName.includes("/") ||
+      rawName.includes("\\") ||
+      rawName === "." ||
+      rawName === ".." ||
+      rawName.split("/").includes("..") ||
+      rawName.split("\\").includes("..")
+    ) {
+      return c.json({ error: "artifact name must be a bare filename", code: "BadRequest" }, 400);
+    }
+    let absPath: string | null;
+    try {
+      absPath = await getManager(c).resolveArtifactPath(id, rawName);
+    } catch (err) {
+      const status = statusForError(err) ?? 400;
+      if (status >= 500) {
+        logFault(c, err, "tasks.artifact: 5xx fault", { taskId: id, artifact: rawName });
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: see other handlers in this file.
+      return c.json(errorBody(err), status as any);
+    }
+    if (absPath === null) {
+      return c.json({ error: "artifact not found", code: "NotFound" }, 404);
+    }
+    // Final fs check — the file may have been removed by an out-of-band
+    // operator action between terminal time and this request.
+    try {
+      const st = await stat(absPath);
+      if (!st.isFile()) {
+        return c.json({ error: "artifact not found", code: "NotFound" }, 404);
+      }
+    } catch {
+      return c.json({ error: "artifact not found", code: "NotFound" }, 404);
+    }
+
+    const basename = path.basename(absPath);
+    const contentType = contentTypeFor(basename);
+    // Hono's ReadableStream body adapter accepts any web ReadableStream;
+    // wrap the Node stream so we get back-pressure on slow clients.
+    const node = createReadStream(absPath);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        node.on("data", (chunk) => {
+          const buf =
+            typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
+          controller.enqueue(buf);
+        });
+        node.on("end", () => controller.close());
+        node.on("error", (err) => controller.error(err));
+      },
+      cancel() {
+        node.destroy();
+      },
+    });
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `inline; filename="${encodeURIComponent(basename)}"`,
+        "Cache-Control": "private, max-age=60",
+      },
+    });
+  });
+
   // Runtime-neutral activity timeline for a task. The runtime
   // end-to-end owns reading + parsing its own event log into the
   // {ActivityItem, TaskActivityResult} vocabulary; this route just
@@ -540,3 +629,44 @@ const TASK_ACTIVITY_MAX_LIMIT = 500;
  * displayed task title across CLI / dashboard / future MCP tools.
  */
 const BRIEF_MAX_LENGTH = 200;
+
+/**
+ * Best-effort Content-Type for an artifact filename. Whitelisted text
+ * formats get their canonical mime type (so the browser renders them
+ * inline); everything else falls back to `application/octet-stream`,
+ * which the browser will treat as a download. Charset is included on
+ * the text variants because the agent's output is always UTF-8 (it's
+ * what node writes by default and what `framing.ts` expects).
+ */
+function contentTypeFor(name: string): string {
+  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  switch (ext) {
+    case "txt":
+    case "log":
+      return "text/plain; charset=utf-8";
+    case "md":
+      return "text/markdown; charset=utf-8";
+    case "html":
+    case "htm":
+      return "text/html; charset=utf-8";
+    case "json":
+      return "application/json; charset=utf-8";
+    case "csv":
+      return "text/csv; charset=utf-8";
+    case "svg":
+      return "image/svg+xml";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "pdf":
+      return "application/pdf";
+    default:
+      return "application/octet-stream";
+  }
+}

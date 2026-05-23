@@ -237,8 +237,38 @@ class StubRuntime implements Runtime {
   // simply don't implement the optional surface.
   get readMetadata(): Runtime["readMetadata"] | undefined {
     if (this.readMetadataResponse === undefined) return undefined;
-    return async () => this.readMetadataResponse ?? null;
+    return async () => {
+      this.readMetadataCallCount++;
+      return this.readMetadataResponse ?? null;
+    };
   }
+
+  /**
+   * Optional canned response for `readActivity`. When undefined the
+   * stub omits `readActivity` (mirroring runtimes that don't expose
+   * structured activity). Set to an `ActivityResult` literal to
+   * exercise the manager's #181 `applyTerminal` payload assembly.
+   * Per-call invocation counter so #180 tests can assert
+   * "list() never called readActivity".
+   */
+  readActivityResponse: import("@emploke/runtime").ActivityResult | null | undefined = undefined;
+  readActivityError: Error | null = null;
+  readActivityCallCount = 0;
+  get readActivity(): Runtime["readActivity"] | undefined {
+    if (this.readActivityResponse === undefined && this.readActivityError === null)
+      return undefined;
+    return async () => {
+      this.readActivityCallCount++;
+      if (this.readActivityError !== null) {
+        const e = this.readActivityError;
+        throw e;
+      }
+      return this.readActivityResponse ?? null;
+    };
+  }
+
+  /** Per-call invocation counter for #180 assertions. */
+  readMetadataCallCount = 0;
 
   private async spawnHandle(opts: {
     taskDir: string;
@@ -1658,5 +1688,254 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
 
     const refreshed = await m.get(t.id);
     expect("lastActiveAtRuntime" in (refreshed?.metadata ?? {})).toBe(false);
+  });
+});
+
+// ───── issue #181 — TaskSuccess output + artifacts at terminal time ────
+
+describe("applyTerminal succeeded — output + artifacts capture (#181)", () => {
+  // Helper: build an ActivityResult with N items, the last `assistant`
+  // text controllable. Mirrors the runtime contract.
+  const mkActivity = (items: import("@emploke/runtime").ActivityItem[]) => ({
+    activity: items,
+    result: null,
+    totalItems: items.length,
+  });
+
+  it("captures the last assistant utterance + lists workdir/artifact/ files", async () => {
+    const rt = new StubRuntime();
+    rt.readActivityResponse = mkActivity([
+      { kind: "user", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: "do it" },
+      { kind: "assistant", seq: 1, timestamp: "2026-05-08T00:00:01Z", text: "hello world" },
+    ]);
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    // Drop two artifact files into the workdir before exit fires.
+    const meta = readTaskRuntimeMetadata(t);
+    const artDir = path.join(meta.workdir as string, TASK_ARTIFACT_SUBDIR);
+    await import("node:fs/promises").then((fs) =>
+      Promise.all([
+        fs.writeFile(path.join(artDir, "a.txt"), "alpha"),
+        fs.writeFile(path.join(artDir, "b.html"), "<html/>"),
+      ]),
+    );
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.status).toBe("succeeded");
+    expect(after.success?.output).toBe("hello world");
+    expect(after.success?.artifacts).toEqual([
+      path.join(artDir, "a.txt"),
+      path.join(artDir, "b.html"),
+    ]);
+  });
+
+  it("output='' when activity has no assistant item (only user/tool)", async () => {
+    const rt = new StubRuntime();
+    rt.readActivityResponse = mkActivity([
+      { kind: "user", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: "do it" },
+    ]);
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    const meta = readTaskRuntimeMetadata(t);
+    await import("node:fs/promises").then((fs) =>
+      fs.writeFile(path.join(meta.workdir as string, TASK_ARTIFACT_SUBDIR, "x.txt"), "x"),
+    );
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.success?.output).toBe("");
+    expect(after.success?.artifacts).toHaveLength(1);
+  });
+
+  it("readActivity throws → succeeded transition still completes, warn logged, output=''", async () => {
+    const rt = new StubRuntime();
+    rt.readActivityError = new Error("runtime activity log corrupt");
+    const r = recorder();
+    const { m } = await makeManager({ runtime: rt, logger: r.logger });
+    const t = await m.dispatch(dispatchOf());
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.status).toBe("succeeded");
+    expect(after.success?.output).toBe("");
+    const warn = r.calls.find((c) => c.msg.includes("readActivity failed"));
+    expect(warn).toBeDefined();
+  });
+
+  it("no artifact/ dir (ENOENT) → artifacts=[], no error", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    // Remove the artifact/ dir the dispatch path created so we hit ENOENT.
+    const meta = readTaskRuntimeMetadata(t);
+    await rm(path.join(meta.workdir as string, TASK_ARTIFACT_SUBDIR), {
+      recursive: true,
+      force: true,
+    });
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.status).toBe("succeeded");
+    expect(after.success?.artifacts).toEqual([]);
+  });
+
+  it("output is the tail 500 chars when assistant text exceeds the cap", async () => {
+    const rt = new StubRuntime();
+    const long = "H".repeat(500) + "T".repeat(500);
+    rt.readActivityResponse = mkActivity([
+      { kind: "assistant", seq: 0, timestamp: "2026-05-08T00:00:00Z", text: long },
+    ]);
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+
+    void rt.handles[0].exit({ code: 0, signal: null });
+    const after = await awaitTerminal(m, t.id);
+    expect(after.success?.output).toHaveLength(500);
+    expect(after.success?.output).toBe("T".repeat(500));
+  });
+});
+
+// ───── issue #180 / ADR-002 — list / get enrichment scoping ────────────
+
+describe("list() does NOT call runtime.readMetadata (ADR-002)", () => {
+  it("returns rows verbatim even when readMetadata would throw", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: null,
+      userTitled: false,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = await makeManager({ runtime: rt });
+    for (let i = 0; i < 3; i++) {
+      await m.dispatch(dispatchOf({ brief: `Task ${i}` }));
+    }
+    rt.readMetadataCallCount = 0;
+    const rows = await m.list();
+    expect(rows).toHaveLength(3);
+    expect(rt.readMetadataCallCount).toBe(0);
+    for (const r of rows) {
+      expect("lastActiveAtRuntime" in r.metadata).toBe(false);
+    }
+  });
+});
+
+describe("get() enrichment is scoped to running tasks (ADR-002)", () => {
+  it("running task → enrich (readMetadata is called)", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: null,
+      userTitled: false,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    rt.readMetadataCallCount = 0;
+    const refreshed = await m.get(t.id);
+    expect(refreshed?.status).toBe("running");
+    expect(rt.readMetadataCallCount).toBe(1);
+    expect(refreshed?.metadata.lastActiveAtRuntime).toBe("2026-05-08T01:30:00.000Z");
+  });
+
+  it("terminal task → no enrichment (readMetadata is NOT called)", async () => {
+    const rt = new StubRuntime();
+    rt.readMetadataResponse = {
+      title: null,
+      userTitled: false,
+      lastActiveAt: "2026-05-08T01:30:00.000Z",
+    };
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+    rt.readMetadataCallCount = 0;
+    const refreshed = await m.get(t.id);
+    expect(refreshed?.status).toBe("succeeded");
+    expect(rt.readMetadataCallCount).toBe(0);
+    expect("lastActiveAtRuntime" in (refreshed?.metadata ?? {})).toBe(false);
+  });
+});
+
+describe("background purges run serially (ADR-002)", () => {
+  it("N concurrent deletes pin at most one runtime.deleteState in flight", async () => {
+    const rt = new StubRuntime();
+    // Track in-flight deleteState invocations to assert serial execution.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const origDelete = rt.deleteState.bind(rt);
+    rt.deleteState = async (rsid: string) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((r) => setTimeout(r, 5));
+        await origDelete(rsid);
+      } finally {
+        inFlight--;
+      }
+    };
+
+    const { m } = await makeManager({ runtime: rt });
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const t = await m.dispatch(dispatchOf({ brief: `Task ${i}` }));
+      void rt.handles[i].exit({ code: 0, signal: null });
+      await awaitTerminal(m, t.id);
+      ids.push(t.id);
+    }
+    // Schedule purges back-to-back. The chained queue serialises them.
+    await Promise.all(ids.map((id) => m.delete(id, { purge: true })));
+    await m._drainPendingPurgesForTest();
+
+    expect(rt.deleteStateCalls).toHaveLength(4);
+    expect(maxInFlight).toBe(1);
+  });
+});
+
+// ───── issue #181 — TaskService.resolveArtifactPath ────────────────────
+
+describe("resolveArtifactPath (#181)", () => {
+  it("running task → null", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    expect(await m.resolveArtifactPath(t.id, "anything")).toBeNull();
+  });
+
+  it("terminal task with matching artifact → returns absolute path", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    const meta = readTaskRuntimeMetadata(t);
+    const artDir = path.join(meta.workdir as string, TASK_ARTIFACT_SUBDIR);
+    await import("node:fs/promises").then((fs) =>
+      fs.writeFile(path.join(artDir, "report.html"), "<h1/>"),
+    );
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+
+    const resolved = await m.resolveArtifactPath(t.id, "report.html");
+    expect(resolved).toBe(path.join(artDir, "report.html"));
+  });
+
+  it("terminal task missing artifact in whitelist → null (whitelist enforced)", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+    expect(await m.resolveArtifactPath(t.id, "not-listed.txt")).toBeNull();
+  });
+
+  it("rejects '..' name even if a literal '..' somehow made the whitelist", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+    const t = await m.dispatch(dispatchOf());
+    void rt.handles[0].exit({ code: 0, signal: null });
+    await awaitTerminal(m, t.id);
+    expect(await m.resolveArtifactPath(t.id, "..")).toBeNull();
+    expect(await m.resolveArtifactPath(t.id, ".")).toBeNull();
+    expect(await m.resolveArtifactPath(t.id, "")).toBeNull();
   });
 });

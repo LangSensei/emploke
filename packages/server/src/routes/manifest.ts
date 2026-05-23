@@ -499,6 +499,27 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid/activity/stream",
   ),
 
+  /**
+   * Issue #181 — serve a single artifact file produced by a terminal
+   * task. The `:name` segment must appear (by basename) in the task's
+   * `success.artifacts` array; anything else is 404. The route
+   * additionally rejects names containing path separators or `..` as
+   * a 400 defence-in-depth (the whitelist check is the actual
+   * security boundary).
+   *
+   * Response is the file's bytes with a best-effort `Content-Type`
+   * (text/* and well-known image types get the canonical mime;
+   * everything else is `application/octet-stream`).
+   *
+   * Not exposed via MCP — agents already write the files; downloading
+   * them back through HTTP would just round-trip bytes the agent
+   * already has.
+   */
+  "tasks.artifact": defineRoute<{ params: TaskPathParams & { name: string } }, never>(
+    "GET",
+    "/api/workspaces/:id/tasks/:tid/artifact/:name",
+  ),
+
   // ── catalog overview (workspace-scoped) ────────────────────────────
   "catalog.overview": defineRoute<{ params: WorkspacePathParams }, CatalogOverview>(
     "GET",

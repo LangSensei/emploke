@@ -131,7 +131,8 @@ describe("route manifest", () => {
     // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
     // Bumped 53 → 55 for issue #122's `catalog.{agents,skills}.anchor`
     // dedicated endpoints (split-out anchor fetch from entry GET).
-    expect(listRoutes()).toHaveLength(55);
+    // Bumped 55 → 56 for issue #181's `tasks.artifact` download route.
+    expect(listRoutes()).toHaveLength(56);
   });
 });
 

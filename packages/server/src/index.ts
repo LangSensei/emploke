@@ -1,3 +1,9 @@
+// ADR-002: bump libuv default thread pool from 4 → 16 to give purge
+// fs.rm and concurrent dashboard polls headroom. Set BEFORE any other
+// import that uses fs / zlib / crypto worker threads (better-sqlite3,
+// pino-roll, hono/node-server). `??=` lets operators override via env.
+process.env.UV_THREADPOOL_SIZE ??= "16";
+
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";

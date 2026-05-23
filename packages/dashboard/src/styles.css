@@ -3834,6 +3834,149 @@ button {
   color: var(--color-text-subtle);
 }
 
+/* ─── Artifact preview split-pane + viewers ──────────────────────── */
+
+/* Split layout: 30% file list / 70% preview pane. Fixed ratio
+   (resizable split is explicit non-goal for this commit). */
+.artifacts-split {
+  display: grid;
+  grid-template-columns: minmax(220px, 30%) 1fr;
+  gap: var(--space-3);
+  align-items: start;
+}
+.artifacts-split__list {
+  min-width: 0;
+  max-height: 600px;
+  overflow: auto;
+}
+.artifacts-split__preview {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: var(--space-3);
+  max-height: 600px;
+  overflow: auto;
+}
+
+.artifact-list__item--active {
+  border-color: var(--color-accent, var(--color-border));
+  background: var(--color-surface-elevated, var(--color-surface));
+}
+.artifact-list__name--button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+.artifact-list__name--button:hover { text-decoration: underline; }
+.artifact-list__download {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  text-decoration: none;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+.artifact-list__download:hover { color: var(--color-text); }
+
+.artifact-viewer {
+  font-size: 13px;
+  color: var(--color-text);
+  min-height: 60px;
+}
+.artifact-viewer--empty,
+.artifact-viewer--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6, 24px);
+  color: var(--color-text-subtle);
+  gap: var(--space-2);
+}
+.artifact-viewer--error { color: var(--color-danger, #c92a2a); }
+.artifact-viewer__spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: artifact-spinner 0.8s linear infinite;
+}
+@keyframes artifact-spinner {
+  to { transform: rotate(360deg); }
+}
+
+.artifact-viewer--code,
+.artifact-viewer--text {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--color-surface-elevated, var(--color-surface));
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  max-height: 560px;
+}
+.artifact-viewer--code code {
+  font: inherit;
+  background: none;
+  padding: 0;
+}
+
+.artifact-viewer--html { padding: 0; }
+.artifact-viewer__iframe {
+  width: 100%;
+  height: 560px;
+  max-height: 560px;
+  border: 0;
+  background: #fff;
+  border-radius: var(--radius-sm, 4px);
+  overflow: auto;
+}
+
+.artifact-viewer--image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+}
+.artifact-viewer__img {
+  max-width: 100%;
+  max-height: 560px;
+  height: auto;
+  object-fit: contain;
+}
+
+.artifact-viewer--binary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  align-items: center;
+  text-align: center;
+}
+.artifact-viewer__download {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  text-decoration: none;
+}
+.artifact-viewer__download:hover {
+  background: var(--color-surface-elevated, var(--color-surface));
+}
+
 /* ─── Bug-bash iter-1 additions ──────────────────────────────────── */
 
 /* F7: clamp the list-row brief to 2 lines so a multi-line task title

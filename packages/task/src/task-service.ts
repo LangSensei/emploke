@@ -33,6 +33,7 @@ import type {
   TaskServiceConfig,
 } from "./types.js";
 import { assertValidTaskId, generateTaskId } from "./validate.js";
+import { listWorkdirFiles } from "./workdir.js";
 
 const silentLogger = pino({ level: "silent" });
 
@@ -522,13 +523,16 @@ export class TaskService {
       return d !== 0 ? d : b.id.localeCompare(a.id);
     });
 
-    // Enrich with runtime-supplied display metadata
-    // (lastActiveAtRuntime). Each call is one small file read on
-    // the runtime's own state dir; we Promise.all so a list of N
-    // tasks pays O(1) wall-clock instead of O(N). Failures are
-    // silent — lastActiveAtRuntime is a nice-to-have, the
-    // dashboard renders fine without it.
-    return Promise.all(tasks.map((t) => this.enrichWithRuntimeMetadata(t)));
+    // Per ADR-002: list() no longer fans out one runtime.readMetadata
+    // call per row. The runtime read is a per-task fs.stat behind a
+    // libuv worker; at workspace scale (dozens of tasks polled every
+    // few seconds) this saturated the default 4-thread pool and
+    // serialised the purge fs.rm path. `lastActiveAtRuntime` is only
+    // meaningful for live tasks anyway, so enrichment now lives on
+    // `get()` and only fires when status==='running'. Callers that
+    // need the runtime-recency field for a list row must call
+    // `get(id)` per task they want to enrich.
+    return tasks;
   }
 
   // ─── get ─────────────────────────────────────────────────
@@ -538,6 +542,11 @@ export class TaskService {
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
     const task = await this.loadTask(id, workdir);
     if (task === null) return null;
+    // ADR-002: only running tasks have a meaningful
+    // `lastActiveAtRuntime`. For terminal tasks the runtime state
+    // dir may already be gone (purge runs in background) and the
+    // field has no consumer.
+    if (task.status !== "running") return task;
     return this.enrichWithRuntimeMetadata(task);
   }
 
@@ -813,27 +822,30 @@ export class TaskService {
   }
 
   /**
-   * Test seam: in-flight background purges scheduled by
+   * Test seam: serialised chain of background purges scheduled by
    * `scheduleBackgroundPurge`. Production code MUST NOT read this —
    * tests use `_drainPendingPurgesForTest()` to await completion.
+   *
+   * Per ADR-002 we replaced the original `Set<Promise> + setImmediate`
+   * fan-out with a single chained promise. fs.rm of a copilot state
+   * dir on Windows holds a libuv worker for tens of seconds; running
+   * N purges in parallel starved the (4-thread default) pool and
+   * starved every other fs-bound call on the server (dashboard polls,
+   * config reads). Serial purge keeps at most one libuv worker pinned
+   * regardless of how many deletes the user fired.
    */
-  private readonly pendingPurges = new Set<Promise<void>>();
+  private purgeQueue: Promise<void> = Promise.resolve();
 
   private scheduleBackgroundPurge(id: string, existing: TaskEntity, workdir: string): void {
-    // The tracking promise is added to `pendingPurges` SYNCHRONOUSLY
-    // so that `_drainPendingPurgesForTest()` invoked immediately after
-    // `delete(...)` observes the in-flight work. The `setImmediate`
-    // still defers the actual rm so the awaiting HTTP handler runs to
-    // completion (and the 204 is queued onto the socket) first.
-    const p = new Promise<void>((resolve) => {
-      setImmediate(() => {
-        void this.runBackgroundPurge(id, existing, workdir).finally(resolve);
-      });
-    });
-    this.pendingPurges.add(p);
-    void p.finally(() => {
-      this.pendingPurges.delete(p);
-    });
+    // Chain serially through `purgeQueue`. The assignment is synchronous
+    // so `_drainPendingPurgesForTest()` invoked immediately after
+    // `delete(...)` observes the in-flight chain. We supply BOTH the
+    // resolved and rejected continuations so a prior purge failure
+    // never stalls the queue — every subsequent purge gets to run.
+    this.purgeQueue = this.purgeQueue.then(
+      () => this.runBackgroundPurge(id, existing, workdir),
+      () => this.runBackgroundPurge(id, existing, workdir),
+    );
   }
 
   private async runBackgroundPurge(
@@ -880,12 +892,11 @@ export class TaskService {
   /**
    * @internal Test-only: await all in-flight background purges
    * scheduled by `delete({ purge: true })`. Not part of the public
-   * API; the underscore prefix marks this as a test seam.
+   * API; the underscore prefix marks this as a test seam. Awaits the
+   * tail of `purgeQueue`, which serialises every scheduled purge.
    */
   async _drainPendingPurgesForTest(): Promise<void> {
-    while (this.pendingPurges.size > 0) {
-      await Promise.allSettled(Array.from(this.pendingPurges));
-    }
+    await this.purgeQueue;
   }
 
   // ─── recoverOrphaned ─────────────────────────────────────
@@ -1165,20 +1176,22 @@ export class TaskService {
     let next: TaskEntity;
     try {
       switch (decision.kind) {
-        case "succeeded":
-          // `output: ""` is intentional under the runtime-driven completion
-          // model: the kernel records that the agent finished cleanly, but
-          // does not synthesise a "what did it produce" string. The agent's
-          // real artifacts live on disk under `<workdir>/` and the runtime
-          // owns its per-task event stream. See the JSDoc on `TaskSuccess`
-          // in ./types.ts.
+        case "succeeded": {
+          // Per issue #181: collect a 500-char tail of the agent's
+          // last assistant utterance plus the absolute paths of every
+          // file under `<workdir>/artifact/` and persist them as part
+          // of the terminal write. Both sub-collectors are
+          // best-effort — any failure degrades to ("", []) and warns,
+          // never blocks the transition.
+          const [output, artifacts] = await this.collectSuccessPayload(workdir, running);
           next = running.complete(
-            { output: "" },
+            { output, artifacts },
             {
               now: this.now().toISOString(),
             },
           );
           break;
+        }
         case "failed":
           next = running.fail(decision.failure, {
             now: this.now().toISOString(),
@@ -1200,6 +1213,103 @@ export class TaskService {
         "tasks: failed to persist terminal status",
       );
     }
+  }
+
+  /**
+   * Best-effort assembly of {@link TaskSuccess} payload at terminal
+   * time (issue #181). Reads the runtime's activity tail for the
+   * `output` summary; lists `<workdir>/artifact/` for the artifact
+   * paths. Tolerant of all failures: returns `["", []]` on any
+   * sub-failure and logs a warn. Never blocks the terminal transition.
+   *
+   * The two sub-collectors are kicked off in parallel so the wall-clock
+   * cost is the slower of (one runtime.readActivity call, one
+   * `<workdir>/artifact/` readdir) rather than their sum.
+   */
+  private async collectSuccessPayload(
+    workdir: string,
+    task: TaskEntity,
+  ): Promise<[string, readonly string[]]> {
+    const runtimeName = task.metadata.runtime;
+    const runtimeSessionId = pickRuntimeSessionId(task.metadata);
+
+    const outputP: Promise<string> = (async () => {
+      if (typeof runtimeName !== "string" || runtimeSessionId === null) return "";
+      let runtime: Runtime;
+      try {
+        runtime = this.runtimeRegistry.get(runtimeName);
+      } catch {
+        return "";
+      }
+      if (typeof runtime.readActivity !== "function") return "";
+      try {
+        const result = await runtime.readActivity({ runtimeSessionId, limit: 10 });
+        if (result === null) return "";
+        // findLast: last assistant event in the tail.
+        let last: import("@emploke/runtime").ActivityItem | undefined;
+        for (let i = result.activity.length - 1; i >= 0; i--) {
+          const item = result.activity[i];
+          if (item !== undefined && item.kind === "assistant") {
+            last = item;
+            break;
+          }
+        }
+        if (last === undefined || last.kind !== "assistant") return "";
+        return last.text.slice(-500);
+      } catch (err) {
+        this.logger.warn(
+          { taskId: task.id, err },
+          "tasks: applyTerminal readActivity failed; output left empty",
+        );
+        return "";
+      }
+    })();
+
+    const artifactsP: Promise<readonly string[]> = (async () => {
+      try {
+        return await listWorkdirFiles(workdir, TASK_ARTIFACT_SUBDIR);
+      } catch (err) {
+        this.logger.warn(
+          { taskId: task.id, err },
+          "tasks: applyTerminal listWorkdirFiles failed; artifacts left empty",
+        );
+        return [];
+      }
+    })();
+
+    return Promise.all([outputP, artifactsP]);
+  }
+
+  /**
+   * Resolve a downloadable artifact for a terminal task. Returns the
+   * absolute fs path when the named artifact is on the task's
+   * whitelist (`task.success.artifacts`), or `null` when the task is
+   * unknown / non-terminal / missing the artifact entirely. The
+   * caller (server route) maps `null` to 404 and streams the path.
+   *
+   * The whitelist check is the actual security boundary: only
+   * artifacts emitted by the agent at terminal time can be served.
+   * Path traversal in the request name is defensively rejected at the
+   * route layer; the manager additionally normalises with
+   * `path.basename` here so any sneaky separator pasted from the
+   * route never participates in the join.
+   */
+  async resolveArtifactPath(id: string, name: string): Promise<string | null> {
+    assertValidTaskId(id);
+    const task = await this.get(id);
+    if (task === null) return null;
+    if (task.status === "running") return null;
+    const allowed = task.success?.artifacts ?? [];
+    // Match by basename — the persisted entries are absolute paths
+    // under `<workdir>/artifact/`; HTTP callers only ever know the
+    // leaf filename. `path.basename` normalises both unix and
+    // windows separators so cross-platform persisted rows resolve
+    // identically.
+    const requested = path.basename(name);
+    if (requested === "" || requested === "." || requested === "..") return null;
+    const match = allowed.find((abs) => path.basename(abs) === requested);
+    if (match === undefined) return null;
+    return match;
   }
 }
 

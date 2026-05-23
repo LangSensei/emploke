@@ -44,3 +44,4 @@ export type {
   TerminalStatus,
 } from "./types.js";
 export { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
+export { listWorkdirFiles } from "./workdir.js";
