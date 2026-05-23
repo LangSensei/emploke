@@ -90,33 +90,48 @@ export function TaskListItem({
 
     const MARGIN = 8;
 
-    const findScrollContainer = (el: HTMLElement | null): HTMLElement => {
+    // Return the nearest ancestor that actually scrolls vertically. Only
+    // `auto`/`scroll` qualify — `hidden` clips without scrolling, and
+    // treating it as a scroll container mismeasures inside e.g. border-
+    // radius cards. Returns null when no scrollable ancestor exists, in
+    // which case the viewport (window.innerHeight) is the bounding box.
+    const findScrollContainer = (el: HTMLElement | null): HTMLElement | null => {
       let node: HTMLElement | null = el?.parentElement ?? null;
       while (node && node !== document.body) {
-        const style = window.getComputedStyle(node);
-        const overflowY = style.overflowY;
-        if (overflowY === "auto" || overflowY === "scroll" || overflowY === "hidden") {
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if (overflowY === "auto" || overflowY === "scroll") {
           return node;
         }
         node = node.parentElement;
       }
-      return document.documentElement;
+      return null;
     };
 
     const container = findScrollContainer(trigger);
 
+    // Cache the panel's intrinsic height on first measurement so scroll-
+    // tick recomputes don't pay another forced-layout read per frame.
+    let cachedPanelHeight: number | null = null;
+
     const measure = () => {
       const triggerRect = trigger.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      // Natural panel height: temporarily clear any cap so we measure
-      // intrinsic height, then re-apply our decision below.
-      const prevMaxHeight = panel.style.maxHeight;
-      panel.style.maxHeight = "";
-      const panelHeight = panel.getBoundingClientRect().height;
-      panel.style.maxHeight = prevMaxHeight;
+      const viewportTop = container ? container.getBoundingClientRect().top : 0;
+      const viewportBottom = container
+        ? container.getBoundingClientRect().bottom
+        : window.innerHeight;
 
-      const spaceBelow = containerRect.bottom - triggerRect.bottom;
-      const spaceAbove = triggerRect.top - containerRect.top;
+      if (cachedPanelHeight == null) {
+        // Natural panel height: temporarily clear any cap so we measure
+        // intrinsic height, then restore.
+        const prevMaxHeight = panel.style.maxHeight;
+        panel.style.maxHeight = "";
+        cachedPanelHeight = panel.getBoundingClientRect().height;
+        panel.style.maxHeight = prevMaxHeight;
+      }
+      const panelHeight = cachedPanelHeight;
+
+      const spaceBelow = viewportBottom - triggerRect.bottom;
+      const spaceAbove = triggerRect.top - viewportTop;
 
       if (spaceBelow >= panelHeight + MARGIN) {
         setPlacement("below");
@@ -135,22 +150,25 @@ export function TaskListItem({
 
     measure();
 
-    const onScrollOrResize = () => measure();
-    container.addEventListener("scroll", onScrollOrResize, { passive: true });
+    // rAF-throttle: scroll fires many times per frame; coalesce into one
+    // recompute per animation frame so we don't force synchronous layout
+    // on every tick.
+    let raf = 0;
+    const onScrollOrResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measure();
+      });
+    };
+    const scrollTarget: EventTarget = container ?? window;
+    scrollTarget.addEventListener("scroll", onScrollOrResize, { passive: true });
     window.addEventListener("resize", onScrollOrResize);
     return () => {
-      container.removeEventListener("scroll", onScrollOrResize);
+      if (raf) cancelAnimationFrame(raf);
+      scrollTarget.removeEventListener("scroll", onScrollOrResize);
       window.removeEventListener("resize", onScrollOrResize);
     };
-  }, [menuOpen]);
-
-  // Reset placement when the menu closes so the next open starts from
-  // the natural "below" position before measurement runs.
-  useEffect(() => {
-    if (!menuOpen) {
-      setPlacement("below");
-      setMaxHeightPx(null);
-    }
   }, [menuOpen]);
 
   useEffect(() => {
