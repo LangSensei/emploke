@@ -2900,7 +2900,7 @@ button {
   display: grid;
   grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
   gap: var(--space-3);
-  align-items: start;
+  align-items: stretch;
 }
 
 .tasks-pane--list-only {
@@ -2908,7 +2908,7 @@ button {
 }
 
 .tasks-pane__list {
-  max-height: calc(100vh - 220px);
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -2922,7 +2922,7 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  max-height: calc(100vh - 220px);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -3427,9 +3427,12 @@ button {
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
   gap: var(--space-4);
+  align-items: stretch;
+  min-height: 0;
 }
 .tasks-pane--list-only {
   display: block;
+  min-height: 0;
 }
 
 .task-filters {
@@ -3989,4 +3992,98 @@ button {
   .overview-tab {
     grid-template-columns: 1fr;
   }
+}
+
+/* ==========================================================================
+   Tasks page (iter-2 polish): viewport-fill + group status dot + copy icon.
+   ========================================================================== */
+
+/* F2: column flex wrapper so the page-toolbar stays at the top and the
+   tasks-pane stretches to fill the rest of the viewport. The parent
+   .content is lex: 1; overflow-y: auto inside .main (a column
+   flex parent at height: 100vh), so height: 100% here resolves
+   against the content area's definite height. Inner panes get
+   min-height: 0 + overflow: auto so they scroll internally rather
+   than letting the entire page grow. */
+.tasks-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.tasks-page > .page-toolbar {
+  flex: 0 0 auto;
+}
+.tasks-page > .alert {
+  flex: 0 0 auto;
+}
+.tasks-page > .tasks-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The detail panel's last child (the active tab body  OverviewTab,
+   LogsTab, TimelineTab, ArtifactsTab, RawJsonTab, or the loading
+   placeholder) takes the remaining vertical space and scrolls
+   internally so the head + tabs strip stay put. */
+.tasks-pane__detail > .task-detail__head,
+.tasks-pane__detail > .task-tabs {
+  flex: 0 0 auto;
+}
+.tasks-pane__detail > .overview-tab,
+.tasks-pane__detail > .task-detail__body,
+.tasks-pane__detail > .activity-view,
+.tasks-pane__detail > .timeline,
+.tasks-pane__detail > .artifacts,
+.tasks-pane__detail > .raw-json {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* F5: status dot in the left-column group headers. Same colour ramp
+   as the StatusBadge tones used by .badge--info / .badge--success so
+   the visual language stays consistent: running  blue, completed 
+   green, not_started  grey. */
+.task-list-group__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-subtle);
+  flex-shrink: 0;
+}
+.task-list-group__dot--running {
+  background: var(--color-accent);
+}
+.task-list-group__dot--completed {
+  background: var(--color-success);
+}
+.task-list-group__dot--not_started {
+  background: var(--color-text-subtle);
+}
+
+/* F4: the SVG copy/check icon inside the title-strip CopyButton.
+   The .task-details__copy chip is sized for 16px square content; the
+   inline SVG defaults to currentColor + stroke-width 1.5 so it
+   tracks the surrounding text colour. */
+.task-details__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  line-height: 0;
+}
+.task-details__copy-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* F6: succeeded-with-empty-output placeholder  muted, unobtrusive,
+   no "Switch to Logs" call-to-action (the run already ended). */
+.overview-tab__no-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }

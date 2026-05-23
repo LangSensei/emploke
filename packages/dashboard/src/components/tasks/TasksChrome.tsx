@@ -1,49 +1,38 @@
 import { PlusIcon, RefreshIcon } from "../Icons";
 
 export interface TasksToolbarProps {
-  refreshing: boolean;
-  onRefresh: () => void;
   dispatchDisabled: boolean;
   dispatchDisabledTitle: string;
   onDispatch: () => void;
 }
 
 /**
- * Page-top action strip for the Tasks view: Refresh + Dispatch task.
+ * Page-top action strip for the Tasks view: Dispatch task.
  * Extracted from `pages/Tasks.tsx` so the shell stays under its
- * 300-line budget; no behaviour changes.
+ * 300-line budget.
+ *
+ * Iter-2 F1: the page already auto-polls every `pollIntervalMs`
+ * (default 4s) and now also refreshes on `visibilitychange`. A
+ * manual Refresh button signalled "the page is stale" which is
+ * false; Linear / GitHub Actions / Vercel-style live dashboards
+ * don't have one either. Dispatch is the only page-top action.
  */
 export function TasksToolbar({
-  refreshing,
-  onRefresh,
   dispatchDisabled,
   dispatchDisabledTitle,
   onDispatch,
 }: TasksToolbarProps) {
   return (
-    <>
-      <button
-        type="button"
-        className="btn btn--ghost"
-        onClick={onRefresh}
-        disabled={refreshing}
-        aria-label="Refresh"
-        title="Refresh task list"
-      >
-        <RefreshIcon className={refreshing ? "spin" : undefined} />
-        <span>Refresh</span>
-      </button>
-      <button
-        type="button"
-        className="btn btn--primary"
-        onClick={onDispatch}
-        disabled={dispatchDisabled}
-        title={dispatchDisabledTitle}
-      >
-        <PlusIcon />
-        <span>Dispatch task</span>
-      </button>
-    </>
+    <button
+      type="button"
+      className="btn btn--primary"
+      onClick={onDispatch}
+      disabled={dispatchDisabled}
+      title={dispatchDisabledTitle}
+    >
+      <PlusIcon />
+      <span>Dispatch task</span>
+    </button>
   );
 }
 

@@ -71,6 +71,21 @@ function SummaryBody({
       </div>
     );
   }
+  // Iter-2 F6: terminal-success with empty `success.output` is the
+  // default state today (backend doesn't populate `output` yet). The
+  // previous fallback wrongly told the user to "Switch to the Logs tab
+  // to follow activity" — but the run has already ended, so there's
+  // nothing to follow. Show a neutral placeholder + the brief.
+  if (task.status === "succeeded") {
+    return (
+      <div className="overview-tab__failure">
+        <p className="overview-tab__no-summary">
+          No summary was produced. View the Activity tab for the full agent run.
+        </p>
+        <BriefPanel task={task} />
+      </div>
+    );
+  }
   // Running / not-yet-completed tasks: avoid the giant empty card —
   // show a minimal placeholder that points to the live Logs tab and
   // surface the brief below so the reader has something to anchor on

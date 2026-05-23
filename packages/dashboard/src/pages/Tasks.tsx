@@ -40,7 +40,6 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     tasks,
     runtimes,
     loaded,
-    refreshing,
     error,
     setError,
     agentFilter,
@@ -185,74 +184,74 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
 
   return (
     <>
-      <div className="page-toolbar page-toolbar--tasks">
-        <div className="page-toolbar__actions">
-          <TasksToolbar
-            refreshing={refreshing}
-            onRefresh={refresh}
-            dispatchDisabled={readyAgents.length === 0}
-            dispatchDisabledTitle={
-              readyAgents.length === 0
-                ? "Install at least one ready agent in the Catalog first"
-                : "Dispatch a new task"
-            }
-            onDispatch={() => setDispatchOpen(true)}
-          />
-        </div>
-      </div>
-
-      {error && <div className="alert alert--error">⚠️ {error}</div>}
-
-      <div
-        className={`tasks-pane${selectedId ? " tasks-pane--with-detail" : " tasks-pane--list-only"}`}
-      >
-        <div className="tasks-pane__list">
-          <TaskFilters
-            idQuery={idQuery}
-            onIdQueryChange={setIdQuery}
-            agentFilter={agentFilter}
-            onAgentFilterChange={setAgentFilter}
-            runtimeFilter={runtimeFilter}
-            onRuntimeFilterChange={setRuntimeFilter}
-            timeFilter={timeFilter}
-            onTimeFilterChange={setTimeFilter}
-            originFilter={originFilter}
-            onOriginFilterChange={setOriginFilter}
-            agents={agents}
-            filterAgentNames={filterAgentNames}
-            runtimes={runtimes}
-          />
-          {!loaded ? (
-            <TasksEmptyState loading />
-          ) : visibleTasks.length === 0 ? (
-            <TasksEmptyState
-              title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-              hint={
-                tasks.length === 0
-                  ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                  : "Adjust the filters above to see more tasks."
+      <div className="tasks-page">
+        <div className="page-toolbar page-toolbar--tasks">
+          <div className="page-toolbar__actions">
+            <TasksToolbar
+              dispatchDisabled={readyAgents.length === 0}
+              dispatchDisabledTitle={
+                readyAgents.length === 0
+                  ? "Install at least one ready agent in the Catalog first"
+                  : "Dispatch a new task"
               }
+              onDispatch={() => setDispatchOpen(true)}
             />
-          ) : (
-            <TaskList
-              tasks={visibleTasks}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onDelete={setDeleteTarget}
+          </div>
+        </div>
+
+        {error && <div className="alert alert--error">⚠️ {error}</div>}
+
+        <div
+          className={`tasks-pane${selectedId ? " tasks-pane--with-detail" : " tasks-pane--list-only"}`}
+        >
+          <div className="tasks-pane__list">
+            <TaskFilters
+              idQuery={idQuery}
+              onIdQueryChange={setIdQuery}
+              agentFilter={agentFilter}
+              onAgentFilterChange={setAgentFilter}
+              runtimeFilter={runtimeFilter}
+              onRuntimeFilterChange={setRuntimeFilter}
+              timeFilter={timeFilter}
+              onTimeFilterChange={setTimeFilter}
+              originFilter={originFilter}
+              onOriginFilterChange={setOriginFilter}
+              agents={agents}
+              filterAgentNames={filterAgentNames}
+              runtimes={runtimes}
+            />
+            {!loaded ? (
+              <TasksEmptyState loading />
+            ) : visibleTasks.length === 0 ? (
+              <TasksEmptyState
+                title={tasks.length === 0 ? "No tasks yet" : "No matches"}
+                hint={
+                  tasks.length === 0
+                    ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
+                    : "Adjust the filters above to see more tasks."
+                }
+              />
+            ) : (
+              <TaskList
+                tasks={visibleTasks}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onDelete={setDeleteTarget}
+                onCancel={requestCancel}
+              />
+            )}
+          </div>
+
+          {selectedId && (
+            <TaskDetail
+              taskId={selectedId}
+              onClose={() => setSelectedId(null)}
               onCancel={requestCancel}
+              onRequestDelete={setDeleteTarget}
+              pollIntervalMs={pollIntervalMs}
             />
           )}
         </div>
-
-        {selectedId && (
-          <TaskDetail
-            taskId={selectedId}
-            onClose={() => setSelectedId(null)}
-            onCancel={requestCancel}
-            onRequestDelete={setDeleteTarget}
-            pollIntervalMs={pollIntervalMs}
-          />
-        )}
       </div>
 
       <DispatchModal

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { TaskRecord } from "../../../api";
 import { formatAbsolute, formatDuration, formatRelative } from "../../../utils/time";
+import { CheckIcon, CopyIcon } from "../../Icons";
 
 export interface DetailsSidebarProps {
   task: TaskRecord;
@@ -19,9 +20,11 @@ export interface DetailsSidebarProps {
  *     header already shows pills for those.
  *   - F9: `Started` uses the absolute timestamp as the primary value,
  *     relative time on hover (less ambiguous for ops/debug).
- *   - F4: `Task ID` renders monospace + nowrap with horizontal
- *     ellipsis; the copy button sits beside it (never breaking the
- *     id mid-string).
+ *
+ * Bug-bash iter-2:
+ *   - F3: drop the `Task ID` row — the header strip in `TaskDetail`
+ *     already shows the id with a copy button; the duplicate row in
+ *     the metadata sidebar was redundant UI + a second copy path.
  */
 export function DetailsSidebar({ task }: DetailsSidebarProps) {
   const duration =
@@ -42,17 +45,6 @@ export function DetailsSidebar({ task }: DetailsSidebarProps) {
           />
         )}
         {duration !== null && <Row label="Duration" value={duration} />}
-        <Row
-          label="Task ID"
-          value={
-            <span className="task-details__id-row">
-              <code className="task-details__id" title={task.id}>
-                {task.id}
-              </code>
-              <CopyButton text={task.id} label="Copy task id" />
-            </span>
-          }
-        />
         <Row label="Origin" value={task.origin} />
       </dl>
     </aside>
@@ -86,6 +78,11 @@ function Row({
  * falls back to a soft no-op when not (e.g. `file://`-served preview).
  * The visual "Copied" state lives in local component state and self-
  * clears after 1.5s.
+ *
+ * Iter-2 F4: render the action with SVG icons (`CopyIcon` / `CheckIcon`)
+ * instead of the text glyphs `⧉` / `✓` — those did not render
+ * consistently across fonts/platforms (wrong glyph, missing, or too
+ * wide).
  */
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -106,9 +103,14 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
       className="btn btn--ghost btn--icon task-details__copy"
       onClick={onCopy}
       aria-label={label}
+      aria-live="polite"
       title={copied ? "Copied" : label}
     >
-      {copied ? "✓" : "⧉"}
+      {copied ? (
+        <CheckIcon className="task-details__copy-icon" />
+      ) : (
+        <CopyIcon className="task-details__copy-icon" />
+      )}
     </button>
   );
 }

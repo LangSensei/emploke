@@ -18,7 +18,6 @@ export interface UseTasksResult {
   tasks: TaskRecord[];
   runtimes: string[];
   loaded: boolean;
-  refreshing: boolean;
   error: string | null;
   setError: (e: string | null) => void;
   // Filter state.
@@ -48,7 +47,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
@@ -78,7 +76,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     inFlightRef.current = true;
     const token = currentWorkspaceId;
     wsTokenRef.current = token;
-    setRefreshing(true);
     try {
       const sinceMs = presetToSinceMs(timeFilter);
       const opts: Parameters<typeof listTasks>[0] = {};
@@ -99,7 +96,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current && token === currentWorkspaceId) {
-        setRefreshing(false);
         setLoaded(true);
       }
     }
@@ -126,11 +122,22 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
   const anyRunning = useMemo(() => tasks.some((t) => t.status === "running"), [tasks]);
   usePollWithBackoff(refresh, pollIntervalMs, anyRunning && !!currentWorkspaceId);
 
+  // Iter-2 F1: refresh immediately when the tab becomes visible again
+  // after being hidden, so users coming back to a tab after hours
+  // don't see stale data while they wait for the next poll tick.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [refresh]);
+
   return {
     tasks,
     runtimes,
     loaded,
-    refreshing,
     error,
     setError,
     agentFilter,
