@@ -3,7 +3,6 @@ import { listRuntimes, listTasks, type TaskRecord } from "../api";
 import {
   ALL_AGENTS,
   ALL_RUNTIMES,
-  type OriginPreset,
   presetToSinceMs,
   type TimePreset,
 } from "../components/tasks/shared";
@@ -28,8 +27,6 @@ export interface UseTasksResult {
   setRuntimeFilter: (v: string) => void;
   timeFilter: TimePreset;
   setTimeFilter: (v: TimePreset) => void;
-  originFilter: OriginPreset;
-  setOriginFilter: (v: OriginPreset) => void;
   idQuery: string;
   setIdQuery: (v: string) => void;
   // Actions.
@@ -54,7 +51,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
-  const [originFilter, setOriginFilter] = useState<OriginPreset>("standalone");
   const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
@@ -85,7 +81,10 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
       if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
-      opts.origin = originFilter;
+      // Phase A: Tasks page is standalone-only. Workflow-origin tasks
+      // will surface on a separate (future) page; we never want them
+      // mixed into the master list here.
+      opts.origin = "standalone";
       const next = await listTasks(opts);
       if (!mountedRef.current) return;
       if (token !== currentWorkspaceId) return;
@@ -103,7 +102,7 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
         setLoaded(true);
       }
     }
-  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter, originFilter]);
+  }, [currentWorkspaceId, agentFilter, runtimeFilter, timeFilter]);
 
   useEffect(() => {
     void refresh();
@@ -139,8 +138,6 @@ export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): 
     setRuntimeFilter,
     timeFilter,
     setTimeFilter,
-    originFilter,
-    setOriginFilter,
     idQuery,
     setIdQuery,
     refresh,
