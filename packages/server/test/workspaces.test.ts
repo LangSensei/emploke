@@ -31,9 +31,9 @@ async function makeApp() {
   const sys = await setupTestSubsystem({ scratch });
   openSubsystems.push(sys);
   return {
-    app: workspacesRoutes(sys.core),
+    app: workspacesRoutes(sys.application),
     service: sys.service,
-    cache: sys.cache,
+    application: sys.application,
     defaultWorkspaceParent: sys.defaultWorkspaceParent,
   };
 }
@@ -330,15 +330,15 @@ describe("workspacesRoutes — POST /:id/reload", () => {
   });
 
   it("returns 204 and rebuilds the cached container after a warm hit", async () => {
-    const { app, service, cache } = await makeApp();
+    const { app, service, application } = await makeApp();
     const id = await register(service, { name: "Warm", workspaceDir: path.join(scratch, "warm") });
-    const before = await cache.get(id);
+    const before = await application.getContext(id);
     expect(before).not.toBeNull();
     const res = await app.request(`/${id}/reload`, { method: "POST" });
     expect(res.status).toBe(204);
-    const after = await cache.get(id);
+    const after = await application.getContext(id);
     expect(after).not.toBeNull();
-    // Identity check: the cache entry must have been replaced.
+    // Identity check: the cached context must have been replaced.
     expect(after).not.toBe(before);
   });
 
@@ -353,9 +353,9 @@ describe("workspacesRoutes — POST /:id/reload", () => {
   });
 
   it("returns 409 with WorkspaceHasLiveTasksError when tasks are live", async () => {
-    const { app, service, cache } = await makeApp();
+    const { app, service, application } = await makeApp();
     const id = await register(service, { name: "Live", workspaceDir: path.join(scratch, "live") });
-    const ctx = await cache.get(id);
+    const ctx = await application.getContext(id);
     expect(ctx).not.toBeNull();
     // biome-ignore lint/suspicious/noExplicitAny: test-only stub.
     (ctx as any).tasks.liveCount = () => 3;
@@ -365,7 +365,7 @@ describe("workspacesRoutes — POST /:id/reload", () => {
     const body = (await res.json()) as { error: string; code: string };
     expect(body.code).toBe("WorkspaceHasLiveTasksError");
     expect(body.error).toContain("3 live task");
-    const stillCached = await cache.get(id);
+    const stillCached = await application.getContext(id);
     expect(stillCached).toBe(ctx);
   });
 });
@@ -381,13 +381,13 @@ describe("workspacesRoutes — observability (issue #58)", () => {
     const root = new Hono();
     root.use("*", requestId());
     root.use("*", requestLogger(cap.logger));
-    root.route("/", workspacesRoutes(sys.core));
+    root.route("/", workspacesRoutes(sys.application));
 
     return {
       root,
       cap,
       service: sys.service,
-      cache: sys.cache,
+      application: sys.application,
     };
   }
 

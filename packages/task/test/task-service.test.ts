@@ -741,7 +741,7 @@ describe("exit watcher", () => {
 });
 
 describe("liveCount", () => {
-  // These tests pin the contract that `WorkspaceRuntimeCache.reload`
+  // These tests pin the contract that `WorkspaceContextRegistry.reload`
   // depends on: liveCount must report > 0 for any task whose on-disk
   // workdir exists but has not yet reached terminal status, including
   // tasks that are mid-dispatch (workdir reserved, `live.set` not yet
@@ -1533,7 +1533,7 @@ describe("dispatch — subprocess env injection", () => {
   });
 
   it.skip("two managers isolated env bags (env layering moved to runtime)", async () => {
-    // Same shared base (mimics what WorkspaceRuntimeCache does in
+    // Same shared base (mimics what WorkspaceContextRegistry does in
     // production: one frozen base passed by reference into every
     // per-workspace manager). Concurrency-safety means workspace A's
     // dispatch and workspace B's dispatch must NEVER cross-contaminate

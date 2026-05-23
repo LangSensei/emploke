@@ -49,13 +49,15 @@ catalog the dashboard sees.
   service''s lexicographic compare relies on canonical form. Garbage
   input  400 with a descriptive error.
 
-## Per-workspace context cache
+## Per-workspace context
 
 The server holds one `WorkspaceService` process-wide (via
 `@emploke/core`) and lazily mints per-workspace
-`{catalog, sessions, tasks}` bundles behind a `WorkspaceRuntimeCache`.
-Implicit invalidation happens on workspace deletion or
-rename; an explicit `POST /api/workspaces/:id/reload` is also
+`{catalog, sessions, tasks}` bundles. Each bundle is a
+`WorkspaceContext`, resolved through `application.getContext(id)` and
+held by an internal `WorkspaceContextRegistry` private to
+`@emploke/core`. Implicit invalidation happens on workspace deletion
+or rename; an explicit `POST /api/workspaces/:id/reload` is also
 available for operator-driven reload (e.g. recovering after the
 persisted state on disk has been edited externally). Reload is
 refused with HTTP 409 + `code=WorkspaceHasLiveTasksError` when the
@@ -99,10 +101,9 @@ be rewritten to `127.0.0.1` so spawned children dial loopback
 1. Hono server stops accepting new connections (drains inflight).
 2. Tasks: every live subprocess receives `SIGTERM`; manager waits
    for terminal status.
-3. `cache.closeAll()` (await  releases every per-workspace SQLite
-   handle).
-4. `composition.close()` (releases `global.db`).
-5. `process.exit(0)`.
+3. `application.close()` (await — closes every per-workspace
+   context's SQLite handles, then releases `global.db`).
+4. `process.exit(0)`.
 
 A 30s deadline backstops every step in case a downstream hangs.
 

@@ -25,11 +25,10 @@ import pino from "pino";
 
 const silentLogger = pino({ level: "silent" });
 
-import type { WorkspaceRuntimeCache } from "@emploke/core";
+import type { Application } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { SessionService } from "@emploke/session";
 import type { TaskService } from "@emploke/task";
-import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
@@ -73,15 +72,7 @@ function buildAppForTest(): Hono {
   runtimeRegistry.register(new CopilotRuntime({ sharedDir: "/tmp/shared" }));
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
 
-  app.route(
-    "/api/workspaces",
-    workspacesRoutes({
-      service: stubWorkspaceService(),
-      queries: stubWorkspaceQueries(),
-      cache: stubPerWorkspaceContainerCache(),
-      defaultWorkspaceParent: "/tmp/workspaces",
-    }),
-  );
+  app.route("/api/workspaces", workspacesRoutes(stubApplication()));
 
   // Workspace-scoped families. We pass resolvers that throw if invoked,
   // since the test never makes real requests — only enumerates the
@@ -170,26 +161,21 @@ function normalizePath(path: string): string {
 // All stubs throw on use so accidentally invoking a handler in a future
 // test surfaces fast.
 
-function stubWorkspaceService(): WorkspaceService {
-  return new Proxy({} as WorkspaceService, {
-    get() {
-      throw new Error("stubWorkspaceService: not callable");
+function stubApplication(): Application {
+  // `workspacesRoutes` destructures `application.workspaceService` at
+  // construction. Return a nested Proxy so the destructure succeeds but
+  // any actual method call surfaces fast.
+  const propStub = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("stubApplication: not callable");
+      },
     },
-  });
-}
-
-function stubWorkspaceQueries(): WorkspaceQueries {
-  return new Proxy({} as WorkspaceQueries, {
+  );
+  return new Proxy({} as Application, {
     get() {
-      throw new Error("stubWorkspaceQueries: not callable");
-    },
-  });
-}
-
-function stubPerWorkspaceContainerCache(): WorkspaceRuntimeCache {
-  return new Proxy({} as WorkspaceRuntimeCache, {
-    get() {
-      throw new Error("stubPerWorkspaceContainerCache: not callable");
+      return propStub;
     },
   });
 }

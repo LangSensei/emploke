@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
@@ -9,29 +8,23 @@ import {
   type Launcher,
   NoTerminalFoundError,
   type SpawnTerminalResult,
-  spawnTerminal,
   TerminalSpawnFailedError,
   UnsupportedPlatformError,
 } from "@emploke/terminal";
-import {
-  composeWorkspaceModule,
-  type Workspace,
-  type WorkspaceModuleOptions,
-  type WorkspaceService,
-} from "@emploke/workspace";
+import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 
-const silentLogger: Logger = pino({ level: "silent" });
+export const silentLogger: Logger = pino({ level: "silent" });
 
 /**
  * Inject a fake terminal spawner. Tests pass a stub to avoid touching
  * the real host; production callers omit it to get the default
- * {@link spawnTerminal} from `@emploke/terminal`.
+ * {@link import("@emploke/terminal").spawnTerminal} from `@emploke/terminal`.
  */
 export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
 
 /**
- * Result of {@link WorkspaceRuntime.spawnSession}. The `display` field
+ * Result of {@link WorkspaceContext.spawnSession}. The `display` field
  * is always present so the dashboard can show a copy-paste fallback
  * even when the terminal launch itself failed.
  */
@@ -45,7 +38,7 @@ export type SpawnSessionResult =
     };
 
 /**
- * Thrown by `WorkspaceRuntimeCache.reload` when the cached runtime
+ * Thrown by `WorkspaceContextRegistry.reload` when the cached context
  * still has live task subprocesses being supervised by its
  * `TaskService`. Reload would orphan them.
  */
@@ -64,7 +57,7 @@ export class WorkspaceHasLiveTasksError extends Error {
  * services (one per BC, sharing one `workspace.db` via WAL) plus the
  * cross-BC orchestration methods for this workspace.
  */
-export interface WorkspaceRuntime {
+export interface WorkspaceContext {
   readonly workspace: Workspace;
   readonly catalog: CatalogService;
   readonly sessions: SessionService;
@@ -72,9 +65,10 @@ export interface WorkspaceRuntime {
   /**
    * Build the session's interactive launch command via
    * {@link SessionService.buildInteractiveLaunch} and immediately hand
-   * it to {@link spawnTerminal} (or the injected `spawnFn`). The
-   * returned `display` field is always populated so callers can show a
-   * copy-paste command even on spawn failure.
+   * it to {@link import("@emploke/terminal").spawnTerminal} (or the
+   * injected `spawnFn`). The returned `display` field is always
+   * populated so callers can show a copy-paste command even on spawn
+   * failure.
    */
   spawnSession(sid: string, opts?: { remote?: boolean }): Promise<SpawnSessionResult>;
   /** Closes all backing connections. Idempotent. */
@@ -82,152 +76,27 @@ export interface WorkspaceRuntime {
 }
 
 /**
- * Composition root for the global registry plus on-demand
- * per-workspace runtimes. The server (and future CLI / MCP / SDK
- * consumers) call `composeEmplokeCore({...})` once and route every
- * per-workspace request through the returned cache.
- *
- * Beyond the cache, this surface exposes the canonical cross-BC
- * orchestration methods (`registerWorkspace`, `renameWorkspace`,
- * `unregisterWorkspace`, `reloadWorkspace`) so transport layers
- * (HTTP routes, CLI commands) become thin adapters.
- */
-export interface EmplokeCore {
-  readonly workspaceService: WorkspaceService;
-  readonly runtimes: WorkspaceRuntimeCache;
-
-  /**
-   * Register a workspace. When `workspaceDir` is omitted the core mints
-   * a fresh UUID and uses `<defaultWorkspaceParent>/<uuid>` so the
-   * registry id and the directory basename stay coupled.
-   *
-   * Returns the canonical {@link Workspace} after register completes
-   * (so callers don't have to issue a follow-up read for the
-   * server-generated `createdAt`).
-   */
-  registerWorkspace(opts: {
-    readonly name: string;
-    readonly workspaceDir?: string;
-  }): Promise<Workspace>;
-
-  /**
-   * Rename a workspace. Invalidates the per-workspace cache so the
-   * next request rebuilds with the fresh metadata. Returns the
-   * canonical post-rename {@link Workspace}, or `null` if the id
-   * is no longer registered (rare; concurrent unregister).
-   */
-  renameWorkspace(id: string, opts: { readonly newName: string }): Promise<Workspace | null>;
-
-  /**
-   * Unregister a workspace. Idempotent (no error if the id is unknown).
-   * Invalidates the per-workspace cache afterwards.
-   */
-  unregisterWorkspace(id: string, opts?: { readonly purge?: boolean }): Promise<void>;
-
-  /**
-   * Force-rebuild the cached per-workspace container. Throws
-   * {@link WorkspaceHasLiveTasksError} when reload would orphan live
-   * task subprocesses; returns `null` when the workspace id is no
-   * longer registered.
-   */
-  reloadWorkspace(id: string): Promise<Workspace | null>;
-
-  /** Closes the global registry connection. Also disposes the cache. Idempotent. */
-  close(): Promise<void>;
-}
-
-export interface EmplokeCoreOptions {
-  readonly workspace: WorkspaceModuleOptions;
-  readonly runtimeRegistry: RuntimeRegistry;
-  /**
-   * Directory under which `registerWorkspace({ workspaceDir: undefined })`
-   * mints `<defaultWorkspaceParent>/<uuid>/`. Required because the
-   * default-dir policy is part of the registration contract; without a
-   * parent dir the caller MUST supply an explicit `workspaceDir`.
-   */
-  readonly defaultWorkspaceParent: string;
-  /** Test seam for the terminal spawner; defaults to `@emploke/terminal`'s `spawnTerminal`. */
-  readonly spawnFn?: SpawnFn;
-  readonly logger?: Logger;
-}
-
-export async function composeEmplokeCore(opts: EmplokeCoreOptions): Promise<EmplokeCore> {
-  if (!path.isAbsolute(opts.defaultWorkspaceParent)) {
-    throw new Error(
-      `composeEmplokeCore: defaultWorkspaceParent must be an absolute path; got ${JSON.stringify(opts.defaultWorkspaceParent)}`,
-    );
-  }
-  const workspaceModule = await composeWorkspaceModule(opts.workspace);
-  const cache = new WorkspaceRuntimeCache({
-    workspaceService: workspaceModule.service,
-    runtimeRegistry: opts.runtimeRegistry,
-    spawnFn: opts.spawnFn ?? spawnTerminal,
-    ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-  });
-  const workspaceService = workspaceModule.service;
-  const defaultWorkspaceParent = opts.defaultWorkspaceParent;
-
-  return {
-    workspaceService,
-    runtimes: cache,
-
-    async registerWorkspace({ name, workspaceDir }) {
-      const id = randomUUID();
-      const dir =
-        workspaceDir === undefined || workspaceDir.trim() === ""
-          ? path.join(defaultWorkspaceParent, id)
-          : path.resolve(workspaceDir);
-      await workspaceService.register({ id, workspaceDir: dir, name });
-      const view = await workspaceService.getById(id);
-      if (view === null) {
-        // Should be impossible — we just inserted it. Surface as a fault.
-        throw new Error(`workspace registered but not readable back: ${id}`);
-      }
-      return view;
-    },
-
-    async renameWorkspace(id, { newName }) {
-      await workspaceService.rename(id, { newName });
-      await cache.invalidate(id);
-      return workspaceService.getById(id);
-    },
-
-    async unregisterWorkspace(id, opts = {}) {
-      await workspaceService.unregister(id, opts);
-      await cache.invalidate(id);
-    },
-
-    async reloadWorkspace(id) {
-      const rt = await cache.reload(id);
-      return rt === null ? null : rt.workspace;
-    },
-
-    async close() {
-      // Close the per-workspace cache first so any open per-workspace
-      // SQLite handles / file watchers / SDK clients release before we
-      // tear down the global registry. Documented as a caller
-      // requirement on EmplokeCore.close, but enforcing it here makes
-      // the surface harder to misuse and matches Stripe-style
-      // resource ownership (the composer composes -> the composer
-      // disposes, top-down).
-      await cache.closeAll();
-      await workspaceModule.close();
-    },
-  };
-}
-
-/**
  * Lazy, memoised resolver from URL workspace id (UUID) to a
- * `WorkspaceRuntime`. Builds per-workspace SQLite handles + services on
+ * `WorkspaceContext`. Builds per-workspace SQLite handles + services on
  * first touch, caches them for subsequent requests.
+ *
+ * This class is the source-of-truth registry of live per-workspace
+ * bundles (SQLite handles, task supervisors, SSE event buses). It is
+ * NOT an optimisation cache that can be silently dropped — dropping
+ * entries without `close()` leaks live resources.
+ *
+ * Internal to `@emploke/core`. Consumers go through `Application`
+ * methods (`getContext`, `loadedContexts`, `reloadWorkspace`,
+ * `unregisterWorkspace`, `close`); the registry is not exported from
+ * the package surface.
  */
-export class WorkspaceRuntimeCache {
+export class WorkspaceContextRegistry {
   private readonly workspaceService: WorkspaceService;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly spawnFn: SpawnFn;
   private readonly logger: Logger;
-  private readonly entries = new Map<string, WorkspaceRuntime>();
-  private readonly inflight = new Map<string, Promise<WorkspaceRuntime | null>>();
+  private readonly entries = new Map<string, WorkspaceContext>();
+  private readonly inflight = new Map<string, Promise<WorkspaceContext | null>>();
 
   constructor(deps: {
     workspaceService: WorkspaceService;
@@ -241,7 +110,7 @@ export class WorkspaceRuntimeCache {
     this.logger = deps.logger ?? silentLogger;
   }
 
-  async get(id: string): Promise<WorkspaceRuntime | null> {
+  async get(id: string): Promise<WorkspaceContext | null> {
     const cached = this.entries.get(id);
     if (cached) return cached;
     const inflight = this.inflight.get(id);
@@ -256,8 +125,8 @@ export class WorkspaceRuntimeCache {
   async invalidate(id: string): Promise<void> {
     // Drain any in-flight load FIRST. Same race as reload() — without
     // this drain, a concurrent `get(id)` whose `load()` resolves after
-    // we run `entries.delete(id)` will store the stale runtime AFTER
-    // the invalidate completed, leaking the freshly-built runtime
+    // we run `entries.delete(id)` will store the stale context AFTER
+    // the invalidate completed, leaking the freshly-built context
     // past the caller's "I just unregistered this" expectation.
     const inflight = this.inflight.get(id);
     if (inflight) {
@@ -280,7 +149,7 @@ export class WorkspaceRuntimeCache {
     this.entries.delete(id);
   }
 
-  async reload(id: string): Promise<WorkspaceRuntime | null> {
+  async reload(id: string): Promise<WorkspaceContext | null> {
     // First, drain any in-flight `get()` for this id. Without this,
     // a concurrent caller of get() could finish loading AFTER our
     // `entries.delete(id)` line and re-populate the cache with a
@@ -318,7 +187,7 @@ export class WorkspaceRuntimeCache {
     return fresh;
   }
 
-  loaded(): WorkspaceRuntime[] {
+  loaded(): WorkspaceContext[] {
     return [...this.entries.values()];
   }
 
@@ -326,7 +195,7 @@ export class WorkspaceRuntimeCache {
     // Drain in-flight loads first. Without this, a concurrent
     // `get(id)` whose promise resolves AFTER our iteration over
     // `entries` would re-populate the map post-close and leak the
-    // newly-built runtime past process exit. Same drain-then-act
+    // newly-built context past process exit. Same drain-then-act
     // pattern used by `reload(id)`.
     const inflight = [...this.inflight.values()];
     for (const p of inflight) {
@@ -336,9 +205,9 @@ export class WorkspaceRuntimeCache {
         // best-effort
       }
     }
-    for (const rt of this.entries.values()) {
+    for (const ctx of this.entries.values()) {
       try {
-        await rt.close();
+        await ctx.close();
       } catch {
         // best-effort
       }
@@ -346,7 +215,7 @@ export class WorkspaceRuntimeCache {
     this.entries.clear();
   }
 
-  private async load(id: string): Promise<WorkspaceRuntime | null> {
+  private async load(id: string): Promise<WorkspaceContext | null> {
     const workspace = await this.workspaceService.getById(id);
     if (!workspace) return null;
 
@@ -409,7 +278,7 @@ export class WorkspaceRuntimeCache {
     const sessions = sessionModule.service;
     const spawnFn = this.spawnFn;
     const outerLogger = this.logger;
-    const runtime: WorkspaceRuntime = {
+    const context: WorkspaceContext = {
       workspace,
       catalog: catalogModule.service,
       sessions,
@@ -491,12 +360,12 @@ export class WorkspaceRuntimeCache {
         }
       },
     };
-    this.entries.set(id, runtime);
+    this.entries.set(id, context);
     this.logger.info(
       { workspaceId: id, workspaceDir: workspace.workspaceDir, dbPath: dbFile },
       "per-workspace container built (first request)",
     );
-    return runtime;
+    return context;
   }
 }
 

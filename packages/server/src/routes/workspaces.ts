@@ -1,4 +1,4 @@
-import { type EmplokeCore, WorkspaceHasLiveTasksError } from "@emploke/core";
+import { type Application, WorkspaceHasLiveTasksError } from "@emploke/core";
 import {
   RegistryError,
   WorkspaceError,
@@ -40,9 +40,9 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  * (UUID minting, default workspaceDir, cache invalidation) lives in
  * core so CLI / MCP / SDK consumers get it for free.
  */
-export function workspacesRoutes(core: EmplokeCore): Hono {
+export function workspacesRoutes(application: Application): Hono {
   const app = new Hono();
-  const { workspaceService: service } = core;
+  const { workspaceService: service } = application;
 
   // List all registered workspaces.
   app.get("/", async (c) => {
@@ -70,7 +70,7 @@ export function workspacesRoutes(core: EmplokeCore): Hono {
       return c.json({ error: "workspaceDir, when present, must be a non-empty string" }, 400);
     }
     try {
-      const view = await core.registerWorkspace({
+      const view = await application.registerWorkspace({
         name: body.name,
         ...(typeof body.workspaceDir === "string" ? { workspaceDir: body.workspaceDir } : {}),
       });
@@ -141,7 +141,7 @@ export function workspacesRoutes(core: EmplokeCore): Hono {
       return c.json({ error: "name, when present, must be a string" }, 400);
     }
     try {
-      const view = await core.renameWorkspace(id, { newName: body.name });
+      const view = await application.renameWorkspace(id, { newName: body.name });
       if (!view) {
         return c.json(
           { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
@@ -161,7 +161,7 @@ export function workspacesRoutes(core: EmplokeCore): Hono {
     const id = c.req.param("id");
     const purge = c.req.query("purge") === "1";
     try {
-      await core.unregisterWorkspace(id, { purge });
+      await application.unregisterWorkspace(id, { purge });
     } catch (err) {
       return wsErrorJson(c, err, 400);
     }
@@ -179,7 +179,7 @@ export function workspacesRoutes(core: EmplokeCore): Hono {
   app.post("/:id/reload", async (c) => {
     const id = c.req.param("id");
     try {
-      const view = await core.reloadWorkspace(id);
+      const view = await application.reloadWorkspace(id);
       if (view === null) {
         return c.json(
           { error: "workspace not registered", code: "WorkspaceNotRegisteredError" },
