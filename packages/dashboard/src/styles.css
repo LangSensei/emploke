@@ -3715,17 +3715,19 @@ button {
   border-bottom-color: var(--color-accent);
 }
 
+/* Iter-2 B1: Overview tab — vertical flex column of (optional) state
+   strip + Summary card + Details card. Cards share chrome and split
+   the available height 50/50 when both are present; otherwise the
+   present card fills the remaining height. The standard
+   `flex: 1 + min-height: 0` recipe lets the inner body scroll
+   independently per card rather than the whole tab scrolling. */
 .overview-tab {
-  display: grid;
-  grid-template-columns: 1fr minmax(220px, 280px);
-  gap: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   padding: var(--space-4);
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-}
-.overview-tab__summary {
-  min-width: 0;
 }
 .overview-tab__section-title {
   font-size: 11px;
@@ -4041,19 +4043,20 @@ button {
   word-break: break-word;
 }
 
-/* F5 / F10: the failed-task Overview body. Stack the structured
-   failure callout, the "jump to logs/raw" link row, and the read-only
-   brief panel so the operator never sees a giant empty white space. */
-.overview-tab__failure {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
+/* Iter-2 B1: Overview tab — removed the `.overview-tab__failure` flex
+   wrapper (state strip and Details card are now top-level children of
+   `.overview-tab`) and the `__brief*` rules (replaced by the shared
+   `.overview-card` chrome below). */
 .overview-tab__failure-callout {
   margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  flex: 0 0 auto;
+}
+.overview-tab__strip {
+  margin: 0;
+  flex: 0 0 auto;
 }
 .overview-tab__failure-head {
   display: flex;
@@ -4083,25 +4086,54 @@ button {
   gap: var(--space-3);
   flex-wrap: wrap;
 }
-.overview-tab__brief {
+
+/* Shared Summary / Details card chrome. The pinned title bar
+   (`__head`) stays put while the body (`__body`) scrolls — this is
+   the standard `flex column + min-height: 0` recipe. `min-height` of
+   200px keeps each card readable; when the viewport is too short
+   for two 200px cards plus the strip, the outer `.tasks-pane__detail`
+   scroll container takes over (no internal scroll is lost — it just
+   joins the page scroll). */
+.overview-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  flex: 1 1 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.overview-card__head {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.overview-card__title {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle);
+}
+.overview-card__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: var(--space-3);
 }
-.overview-tab__brief-details {
+.overview-card__pre {
   margin: 0;
-  padding: var(--space-2);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 240px;
-  overflow: auto;
+}
+.overview-tab__no-details {
+  margin: 0;
+  font-size: 13px;
 }
 .overview-tab__running-hint {
   font-size: 13px;
@@ -4162,9 +4194,8 @@ button {
   .tasks-pane--with-detail {
     grid-template-columns: 1fr;
   }
-  .overview-tab {
-    grid-template-columns: 1fr;
-  }
+  /* Iter-2 B1: .overview-tab is already a single-column flex stack —
+     no narrow-viewport override is needed. */
 }
 
 /* ==========================================================================
@@ -4207,6 +4238,10 @@ button {
 .tasks-pane__detail > .artifacts {
   flex: 1 1 auto;
   min-height: 0;
+  /* Overview manages its own internal per-card scrolling; the others
+     scroll as a single body. Keeping `overflow: auto` here lets the
+     short-viewport fallback (cards below their min-height) spill into
+     the parent's scroll without losing content. */
   overflow: auto;
 }
 
