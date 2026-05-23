@@ -103,8 +103,12 @@ for task in running:
   if age_min >= 30: handle_stuck(task, age_min)   # see references/monitoring/stuck-task-intervention.md
 ```
 
-`minutes_since` is host-shell dependent — implement it in your shell
-(bash: `date -d`; PowerShell: `[datetime]::Parse` + `New-TimeSpan`).
+`minutes_since` is host-shell dependent — implement it in your shell.
+
+Read `task.metadata.lastActiveAtRuntime` from `task show --json` (single
+metadata read) rather than `task activity --limit 1` (which parses the
+activity log); both expose the same "most recent activity" timestamp and
+`task show` is strictly cheaper.
 
 ## Step 4: Process inbox
 

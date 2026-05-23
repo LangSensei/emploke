@@ -1,26 +1,8 @@
 # Stuck task intervention
 
-A task is **stuck** when:
-
-- Status is `running`
-- No new activity in the activity log for ≥ 30 minutes (calibrate per mission tempo)
-- AND the task is not in a known long-blocking state (e.g. waiting on user-side input, large download, etc.)
-
-## Detection
-
-Only invoked from operating-loop step 3 (tasks without an active
-watchdog). Tasks with a watchdog reach you via runtime notification,
-not polling.
-
-```
-recent  = task.metadata.lastActiveAtRuntime ?? task.startedAt ?? task.createdAt
-age_min = minutes_since(recent)
-if age_min >= 30: handle_stuck(task, age_min)
-```
-
-Use `task show --json` (single metadata read) — not
-`task activity --limit 1` (parses the log) — both expose the same
-"most recent activity" timestamp and `task show` is strictly cheaper.
+Detection lives in `references/operating-loop.md` step 3. This page
+covers what to do once a task has already been flagged stuck (no active
+watchdog, no progress past the threshold).
 
 ## Triage
 

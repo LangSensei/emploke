@@ -103,12 +103,9 @@ loop forever:
     # 3. Detect stuck tasks (watchdog-less fallback only)
     # Tasks with an active watchdog are notification-driven — the
     # watchdog pushes terminal state to this session. Only poll
-    # watchdog-less tasks here.
-    for task in running where no_active_watchdog(task):
-        if minutes_since(task.metadata.lastActiveAtRuntime
-                         ?? task.startedAt
-                         ?? task.createdAt) >= 30:
-            see references/monitoring/stuck-task-intervention.md
+    # watchdog-less tasks here. Detection rule + pseudocode live in
+    # references/operating-loop.md step 3; triage lives in
+    # references/monitoring/stuck-task-intervention.md.
 
     # 4. Process inbox
     for item in .pilot/inbox/:
