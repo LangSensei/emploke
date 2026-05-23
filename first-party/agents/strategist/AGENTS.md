@@ -5,7 +5,7 @@ description: "Strategic analysis and improvement proposals for emploke — resea
 version: 1.0.0
 dependencies:
   skills:
-    - "https://github.com/LangSensei/emploke-marketplace/tree/main/skills/git-pr"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
 ---
 
 # Emploke Strategist Agent

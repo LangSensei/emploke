@@ -5,7 +5,7 @@ description: "Code review agent for emploke — reviews PRs for style, correctne
 version: 1.0.0
 dependencies:
   skills:
-    - "https://github.com/LangSensei/emploke-marketplace/tree/main/skills/git-pr"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
 ---
 
 # Emploke Review Agent

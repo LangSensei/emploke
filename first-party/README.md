@@ -36,6 +36,7 @@ The emploke dashboard's "Install from URL" field also accepts these.
 - `emploke/cli`  emploke CLI command reference (workspace, agent, task, session, catalog subcommands)
 - `emploke/dispatch-watchdog`  script + pattern for blocking on a long-running task
 - `emploke/dispatch-with-details`  pattern for dispatching tasks with structured detail bodies
+- `emploke/git-pr`  git branch management and GitHub PR workflow using worktrees
 - `emploke/meta-agent-schema`  authoritative frontmatter/layout schema for catalog entries
 
 ## Schema

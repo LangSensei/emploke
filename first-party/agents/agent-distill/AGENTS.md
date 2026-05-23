@@ -5,7 +5,7 @@ description: "Analyzes any emploke-compatible agent's run history to optimize it
 version: 1.0.0
 dependencies:
   skills:
-    - "https://github.com/LangSensei/emploke-marketplace/tree/main/skills/git-pr"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/meta-agent-schema"
 ---
 
