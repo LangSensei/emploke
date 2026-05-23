@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TaskRecord } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
 import { MoreHorizontalIcon } from "../Icons";
@@ -72,6 +72,86 @@ export function TaskListItem({
   }, [onMenuOpenChange]);
 
   useClickOutside(refs, closeMenu, menuOpen);
+
+  // Iter-4 (C5): flip + size for the row menu so the last visible row's
+  // panel isn't clipped by `.tasks-pane__list-scroll` (overflow: auto).
+  // Hand-rolled: measure trigger + nearest scrollable ancestor on open,
+  // pick "below" if there's room, otherwise "above"; if neither side
+  // fits, pick the larger side and cap height so the panel scrolls
+  // internally. Re-measure on scroll/resize while open.
+  const [placement, setPlacement] = useState<"below" | "above">("below");
+  const [maxHeightPx, setMaxHeightPx] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) return;
+
+    const MARGIN = 8;
+
+    const findScrollContainer = (el: HTMLElement | null): HTMLElement => {
+      let node: HTMLElement | null = el?.parentElement ?? null;
+      while (node && node !== document.body) {
+        const style = window.getComputedStyle(node);
+        const overflowY = style.overflowY;
+        if (overflowY === "auto" || overflowY === "scroll" || overflowY === "hidden") {
+          return node;
+        }
+        node = node.parentElement;
+      }
+      return document.documentElement;
+    };
+
+    const container = findScrollContainer(trigger);
+
+    const measure = () => {
+      const triggerRect = trigger.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      // Natural panel height: temporarily clear any cap so we measure
+      // intrinsic height, then re-apply our decision below.
+      const prevMaxHeight = panel.style.maxHeight;
+      panel.style.maxHeight = "";
+      const panelHeight = panel.getBoundingClientRect().height;
+      panel.style.maxHeight = prevMaxHeight;
+
+      const spaceBelow = containerRect.bottom - triggerRect.bottom;
+      const spaceAbove = triggerRect.top - containerRect.top;
+
+      if (spaceBelow >= panelHeight + MARGIN) {
+        setPlacement("below");
+        setMaxHeightPx(null);
+      } else if (spaceAbove >= panelHeight + MARGIN) {
+        setPlacement("above");
+        setMaxHeightPx(null);
+      } else if (spaceAbove > spaceBelow) {
+        setPlacement("above");
+        setMaxHeightPx(Math.max(0, spaceAbove - MARGIN));
+      } else {
+        setPlacement("below");
+        setMaxHeightPx(Math.max(0, spaceBelow - MARGIN));
+      }
+    };
+
+    measure();
+
+    const onScrollOrResize = () => measure();
+    container.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      container.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [menuOpen]);
+
+  // Reset placement when the menu closes so the next open starts from
+  // the natural "below" position before measurement runs.
+  useEffect(() => {
+    if (!menuOpen) {
+      setPlacement("below");
+      setMaxHeightPx(null);
+    }
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -156,8 +236,13 @@ export function TaskListItem({
           {menuOpen && (
             <div
               ref={panelRef}
-              className="task-list__item-menu-panel"
+              className={`task-list__item-menu-panel task-list__item-menu-panel--${placement}`}
               role="menu"
+              style={
+                maxHeightPx != null
+                  ? ({ "--menu-max-height": `${maxHeightPx}px` } as React.CSSProperties)
+                  : undefined
+              }
               onClick={(e) => e.stopPropagation()}
               onKeyDown={handlePanelKeyDown}
             >
