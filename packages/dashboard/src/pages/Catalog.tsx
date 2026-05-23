@@ -1,5 +1,13 @@
 import type { AgentEntry, SkillEntry } from "@emploke/catalog";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   deleteAgent,
   deleteMcp,
@@ -27,11 +35,13 @@ import {
 import { CodeEditor } from "../components/CodeEditor";
 import { DetailDialog } from "../components/DetailDialog";
 import { EntryGrid } from "../components/EntryGrid";
+import { HeaderActions } from "../components/HeaderActions";
 import { PlusIcon } from "../components/Icons";
 import { McpGrid } from "../components/McpGrid";
 import { MetadataForm, type MetadataFormValues } from "../components/MetadataForm";
 import { Modal } from "../components/Modal";
 import { ResolveTree } from "../components/ResolveTree";
+import { useClickOutside } from "../hooks/useClickOutside";
 import { KIND_TITLE } from "../kindMeta";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
@@ -201,6 +211,19 @@ export function CatalogPage({
         </div>
       ) : (
         <>
+          <HeaderActions>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => {
+                setError(null);
+                setInstallOpen(true);
+              }}
+            >
+              <PlusIcon />
+              Install {KIND_LABEL[tab]}
+            </button>
+          </HeaderActions>
           <div className="page-toolbar">
             <nav className="section-tabs">
               <button
@@ -257,17 +280,6 @@ export function CatalogPage({
                   {busy ? "Removing…" : `Remove all (${orphanCount})`}
                 </button>
               )}
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  setError(null);
-                  setInstallOpen(true);
-                }}
-              >
-                <PlusIcon />
-                Install {KIND_LABEL[tab]}
-              </button>
             </div>
           </div>
 
@@ -607,9 +619,20 @@ const FILTER_LABEL: Record<StatusFilter, string> = {
  * top strip stays at one row of chrome regardless of how many filter
  * dimensions we add later.
  *
- * Built on `<details>` + `<summary>` rather than a custom popover
- * primitive so closing on outside-click and keyboard ESC come for free
- * — no global click handler bookkeeping.
+ * Implementation: a controlled popover (state-driven open/close).
+ * We previously used a native `<details>`/`<summary>` and claimed it
+ * gave close-on-outside-click + Esc for free — that was wrong.
+ * Browsers don't run a global handler on `<details>` and Esc only
+ * closes when focus is already inside the panel. The current pattern:
+ *   - `open` state on this component drives `aria-expanded` on the
+ *     trigger and conditional render of the panel.
+ *   - `useClickOutside` listens on `document` `pointerdown` and closes
+ *     when the event target is outside both the trigger and the panel.
+ *   - A `keydown` listener on `document` closes on Escape.
+ *   - The panel is `position: absolute` (parent `.filter-menu` is
+ *     `position: relative`) and lives above the grid below via a
+ *     high z-index, so opening the menu does not change toolbar
+ *     height.
  *
  * Per-tab option set:
  *   - agents: All / Ready / Blocked         (agents can never be orphaned)
@@ -639,22 +662,34 @@ function FilterMenu({ tab, value, onChange, orphanCount }: FilterMenuProps) {
   const activeLabel = FILTER_LABEL[value];
   const isFiltered = value !== "all";
 
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+  // Stable ref array so useClickOutside's effect deps don't churn each render.
+  const outsideRefs = useMemo(() => [triggerRef, panelRef] as const, []);
+  useClickOutside(outsideRefs, close, open);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: details/summary handles focus + ESC natively; no extra handlers needed
-    <details
-      className="filter-menu"
-      onToggle={(e) => {
-        // Auto-close after a selection so the popover doesn't linger.
-        // We can't use `useState({open})` here because the native
-        // <details> already owns the open state; this just ensures
-        // re-renders triggered by `onChange` don't accidentally
-        // reset open to true.
-        e.stopPropagation();
-      }}
-    >
-      <summary
+    <div className="filter-menu">
+      <button
+        ref={triggerRef}
+        type="button"
         className={`btn btn--ghost filter-menu__trigger${isFiltered ? " filter-menu__trigger--active" : ""}`}
         title={isFiltered ? `Showing ${activeLabel} only` : "Filter by status"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <span className="filter-menu__icon" aria-hidden="true">
           ⚙
@@ -668,36 +703,34 @@ function FilterMenu({ tab, value, onChange, orphanCount }: FilterMenuProps) {
             <span className="filter-menu__current">{activeLabel}</span>
           </>
         )}
-      </summary>
-      <div className="filter-menu__panel" role="menu">
-        <div className="filter-menu__group-label">Status</div>
-        {options.map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            role="menuitemradio"
-            aria-checked={value === opt.value}
-            className={`filter-menu__option${value === opt.value ? " filter-menu__option--active" : ""}`}
-            onClick={(e) => {
-              onChange(opt.value);
-              // Close the popover after picking — find the parent
-              // <details> and clear `open`. Built-in details don't
-              // close on inner clicks by default.
-              const details = (e.currentTarget as HTMLElement).closest("details");
-              if (details) details.removeAttribute("open");
-            }}
-          >
-            <span className="filter-menu__radio" aria-hidden="true">
-              {value === opt.value ? "●" : "○"}
-            </span>
-            <span className="filter-menu__option-label">{opt.label}</span>
-            {opt.count !== undefined && (
-              <span className="filter-menu__option-count">{opt.count}</span>
-            )}
-          </button>
-        ))}
-      </div>
-    </details>
+      </button>
+      {open && (
+        <div ref={panelRef} className="filter-menu__panel" role="menu">
+          <div className="filter-menu__group-label">Status</div>
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === opt.value}
+              className={`filter-menu__option${value === opt.value ? " filter-menu__option--active" : ""}`}
+              onClick={() => {
+                onChange(opt.value);
+                setOpen(false);
+              }}
+            >
+              <span className="filter-menu__radio" aria-hidden="true">
+                {value === opt.value ? "●" : "○"}
+              </span>
+              <span className="filter-menu__option-label">{opt.label}</span>
+              {opt.count !== undefined && (
+                <span className="filter-menu__option-count">{opt.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

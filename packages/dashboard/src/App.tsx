@@ -14,6 +14,7 @@ import {
   updateWorkspaceMetadata,
   type WorkspaceListItem,
 } from "./api";
+import { HeaderActionsContext } from "./components/HeaderActions";
 import { PlusIcon, TrashIcon } from "./components/Icons";
 import { Modal } from "./components/Modal";
 import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
@@ -466,6 +467,13 @@ function WorkspaceLayout() {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  /**
+   * Portal host for page-supplied trailing actions in the topbar. Pages
+   * render their own primary action buttons (Install, Dispatch, …) into
+   * it via `<HeaderActions>` so the chrome header doubles as the page
+   * action strip.
+   */
+  const [headerActionsHost, setHeaderActionsHost] = useState<HTMLDivElement | null>(null);
 
   // Sync the URL's wsId into the api module's active-workspace slot
   // BEFORE any child effect fires (useLayoutEffect runs before useEffect),
@@ -609,47 +617,50 @@ function WorkspaceLayout() {
         <TopBar
           title={meta.title + titleSuffix}
           {...(meta.crumb !== undefined ? { crumb: meta.crumb } : {})}
+          actionsRef={setHeaderActionsHost}
         />
 
-        <div className="content">
-          {error && <div className="alert alert--error"> {error}</div>}
+        <HeaderActionsContext.Provider value={headerActionsHost}>
+          <div className="content">
+            {error && <div className="alert alert--error"> {error}</div>}
 
-          {section === "overview" && <OverviewPage overview={data.overview} />}
+            {section === "overview" && <OverviewPage overview={data.overview} />}
 
-          {section === "catalog" && (
-            <CatalogPage
-              tab={catalogTab}
-              onTabChange={navigateToCatalogTab}
-              skills={data.skills}
-              agents={data.agents}
-              mcps={data.mcps}
-              currentWorkspaceId={wsId}
-              onChanged={refreshData}
-            />
-          )}
+            {section === "catalog" && (
+              <CatalogPage
+                tab={catalogTab}
+                onTabChange={navigateToCatalogTab}
+                skills={data.skills}
+                agents={data.agents}
+                mcps={data.mcps}
+                currentWorkspaceId={wsId}
+                onChanged={refreshData}
+              />
+            )}
 
-          {section === "sessions" && (
-            <SessionsPage
-              agents={data.agents}
-              config={config}
-              currentWorkspaceId={wsId}
-              workspaces={workspaces ?? []}
-            />
-          )}
+            {section === "sessions" && (
+              <SessionsPage
+                agents={data.agents}
+                config={config}
+                currentWorkspaceId={wsId}
+                workspaces={workspaces ?? []}
+              />
+            )}
 
-          {section === "tasks" && (
-            <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />
-          )}
+            {section === "tasks" && (
+              <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />
+            )}
 
-          {section === "settings" && (
-            <SettingsPage
-              serverUrl={typeof window !== "undefined" ? window.location.origin : ""}
-              config={config}
-              currentWorkspaceId={wsId}
-              workspaces={workspaces ?? []}
-            />
-          )}
-        </div>
+            {section === "settings" && (
+              <SettingsPage
+                serverUrl={typeof window !== "undefined" ? window.location.origin : ""}
+                config={config}
+                currentWorkspaceId={wsId}
+                workspaces={workspaces ?? []}
+              />
+            )}
+          </div>
+        </HeaderActionsContext.Provider>
       </div>
 
       <AddWorkspaceModal
