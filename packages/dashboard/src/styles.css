@@ -539,16 +539,6 @@ button {
   display: inline-block;
 }
 
-/* Hide the default ▶/▼ disclosure caret — the trigger already reads
- * as a button so the marker would be visual noise. */
-.filter-menu > summary {
-  list-style: none;
-}
-
-.filter-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
 .filter-menu__trigger {
   cursor: pointer;
   display: inline-flex;
