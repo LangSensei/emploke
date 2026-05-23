@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TaskRecord } from "../../api";
+import { useClickOutside } from "../../hooks/useClickOutside";
 import { MoreHorizontalIcon } from "../Icons";
 import { StatusBadge } from "./StatusBadge";
 import { readRuntime, STATUS_TONE } from "./shared";
@@ -18,6 +19,10 @@ export interface TaskListItemProps {
   onCancel: () => Promise<void> | void;
   /** Re-open the dispatch modal pre-filled from this task. */
   onRerun: () => void;
+  /** Page-level single-open coordination: true when this row's menu is the one open. */
+  menuOpen: boolean;
+  /** Request to open this row's menu (closes any other open one) or close it. */
+  onMenuOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -31,6 +36,13 @@ export interface TaskListItemProps {
  *   row 3: agent · runtime · relative time (muted)
  *   row 4: full id (mono, muted, demoted text-xs, right-aligned —
  *          bug-bash F11; the row title aligns flush-left independently).
+ *
+ * Iter-3: the per-row `⋯` is a controlled popover (state-driven open
+ * via `menuOpen` + `onMenuOpenChange`; click-outside via
+ * {@link useClickOutside}; Esc to close; absolute-positioned panel so
+ * it floats above sibling rows and the detail pane without altering
+ * row geometry). Only one row's menu may be open at a time — that
+ * single-open coordination is owned by `TaskList`.
  */
 export function TaskListItem({
   task,
@@ -39,6 +51,8 @@ export function TaskListItem({
   onDelete,
   onCancel,
   onRerun,
+  menuOpen,
+  onMenuOpenChange,
 }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
   const isRunning = task.status === "running";
@@ -49,19 +63,59 @@ export function TaskListItem({
   const headline = task.brief;
   const tooltip = task.details ? `${task.brief}\n\n${task.details}` : task.brief;
 
-  const closeMenu = (e: React.MouseEvent<HTMLElement>) => {
-    const details = (e.currentTarget as HTMLElement).closest("details");
-    if (details) details.removeAttribute("open");
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const refs = useMemo(() => [triggerRef, panelRef], []);
+
+  const closeMenu = useCallback(() => {
+    onMenuOpenChange(false);
+  }, [onMenuOpenChange]);
+
+  useClickOutside(refs, closeMenu, menuOpen);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeMenu();
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen, closeMenu]);
+
+  // When the panel opens, move focus into it so ArrowDown/Up can drive
+  // keyboard navigation and Esc has a sensible focus target to return to.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const first = panelRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    first?.focus();
+  }, [menuOpen]);
+
+  const handlePanelKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const items = panelRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    if (!items || items.length === 0) return;
+    e.preventDefault();
+    const arr = Array.from(items);
+    const active = document.activeElement as HTMLElement | null;
+    const idx = active ? arr.indexOf(active as HTMLButtonElement) : -1;
+    const next =
+      e.key === "ArrowDown"
+        ? arr[(idx + 1 + arr.length) % arr.length]
+        : arr[(idx - 1 + arr.length) % arr.length];
+    next?.focus();
   };
 
-  const handleCopyId = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
+  const handleCopyId = async () => {
     try {
       await navigator.clipboard.writeText(task.id);
     } catch {
       /* clipboard unavailable (e.g. insecure context) — silently no-op */
     }
-    closeMenu(e);
+    closeMenu();
   };
 
   return (
@@ -83,75 +137,90 @@ export function TaskListItem({
     >
       <div className="task-list__item-head">
         <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
-        <details
-          className="filter-menu task-list__item-menu"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          <summary
+        <div className="task-list__item-menu">
+          <button
+            ref={triggerRef}
+            type="button"
             className="btn btn--ghost btn--icon task-list__item-menu-trigger"
             aria-label={`Actions for task ${task.brief}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             title="Actions"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMenuOpenChange(!menuOpen);
+            }}
           >
             <MoreHorizontalIcon />
-          </summary>
-          <div className="filter-menu__panel" role="menu">
-            {isRunning ? (
+          </button>
+          {menuOpen && (
+            <div
+              ref={panelRef}
+              className="task-list__item-menu-panel"
+              role="menu"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={handlePanelKeyDown}
+            >
+              {isRunning ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="task-list__item-menu-option"
+                  disabled={cancelling}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (cancelling) return;
+                    setCancelling(true);
+                    try {
+                      await onCancel();
+                    } finally {
+                      setCancelling(false);
+                    }
+                    closeMenu();
+                  }}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="task-list__item-menu-option"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRerun();
+                    closeMenu();
+                  }}
+                >
+                  Re-dispatch
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"
-                className="filter-menu__option"
-                disabled={cancelling}
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (cancelling) return;
-                  setCancelling(true);
-                  try {
-                    await onCancel();
-                  } finally {
-                    setCancelling(false);
-                  }
-                  closeMenu(e);
-                }}
-              >
-                Cancel
-              </button>
-            ) : (
-              <button
-                type="button"
-                role="menuitem"
-                className="filter-menu__option"
+                className="task-list__item-menu-option"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onRerun();
-                  closeMenu(e);
+                  handleCopyId();
                 }}
               >
-                Re-dispatch
+                Copy ID
               </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              className="filter-menu__option"
-              onClick={handleCopyId}
-            >
-              Copy ID
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="filter-menu__option filter-menu__option--danger"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-                closeMenu(e);
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        </details>
+              <button
+                type="button"
+                role="menuitem"
+                className="task-list__item-menu-option task-list__item-menu-option--danger"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                  closeMenu();
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="task-list__item-headline task-list__item-headline--clamp" title={tooltip}>
         {headline}

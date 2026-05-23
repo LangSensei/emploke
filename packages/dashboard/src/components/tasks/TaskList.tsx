@@ -62,6 +62,11 @@ export function TaskList({
   });
   const toggle = (k: StatusGroup) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
+  // Page-level coordination: at most one per-row `⋯` menu is open at a
+  // time. Opening row B's menu auto-closes A's. The popover itself
+  // handles click-outside + Esc inside TaskListItem.
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
   return (
     <div className="task-list-groups">
       {groups.map((g) => {
@@ -105,6 +110,8 @@ export function TaskList({
                     onDelete={() => onDelete(t)}
                     onCancel={() => onCancel(t)}
                     onRerun={() => onRerun(t)}
+                    menuOpen={openMenuId === t.id}
+                    onMenuOpenChange={(open) => setOpenMenuId(open ? t.id : null)}
                   />
                 ))}
               </ul>
