@@ -1,4 +1,4 @@
-# @emploke/workflows
+# @emploke/workflow
 
 Append-only DAG substrate for emploke. Owns three tables —
 `workflows` / `workflow_nodes` / `workflow_edges` — plus the entity
@@ -24,9 +24,9 @@ src/
   schema.ts             Drizzle table definitions (private)
   entity.ts             Workflow / WorkflowNodeValue value objects + invariants
   repository.ts         Drizzle-backed CRUD (private)
-  service.ts            WorkflowsService — 8 tools + reads
-  compose.ts            composeWorkflowsModule({ dbFile, taskDispatcher })
-  testing.ts            openTestWorkflowsDb() in-memory test helper
+  service.ts            WorkflowService — 8 tools + reads
+  compose.ts            composeWorkflowModule({ dbFile, taskDispatcher })
+  testing.ts            openTestWorkflowDb() in-memory test helper
   paths.ts              workflowDir / workflowNodeDir helpers
   index.ts              public barrel
 drizzle/                generated SQL migrations (committed)
@@ -49,7 +49,7 @@ before write.
 
 ## Wiring
 
-`composeWorkflowsModule({ dbFile, taskDispatcher })` is the only
+`composeWorkflowModule({ dbFile, taskDispatcher })` is the only
 production composition path. `taskDispatcher` is any object satisfying
 the `TaskDispatcher` interface — in practice `@emploke/task`'s
 `TaskService` (the `dispatch(opts)` method matches structurally).

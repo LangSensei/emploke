@@ -1,14 +1,14 @@
 /**
- * Public API of `@emploke/workflows`.
+ * Public API of `@emploke/workflow`.
  *
  * Substrate for an append-only DAG of workflow nodes (CEO O5):
- * `WorkflowsService` exposes the 8 orchestrator-facing tools
+ * `WorkflowService` exposes the 8 orchestrator-facing tools
  * (createWorkflow / createNode / addEdge / launchNode / markDone /
  * markFailed / cancelNode / finishWorkflow) plus read methods
  * (`get`, `getState`, `list`).
  *
- * Construction: `composeWorkflowsModule({ dbFile, taskDispatcher })`.
- * Tests use `openTestWorkflowsDb()` from `./testing`.
+ * Construction: `composeWorkflowModule({ dbFile, taskDispatcher })`.
+ * Tests use `openTestWorkflowDb()` from `./testing`.
  *
  * Path helpers are exported because downstream packages (server,
  * future workflow CLI) need to compute the per-workflow / per-node
@@ -16,9 +16,9 @@
  */
 
 export {
-  composeWorkflowsModule,
-  type WorkflowsModule,
-  type WorkflowsModuleOptions,
+  composeWorkflowModule,
+  type WorkflowModule,
+  type WorkflowModuleOptions,
 } from "./compose.js";
 export {
   CorruptedWorkflowError,
@@ -33,12 +33,11 @@ export {
 } from "./errors.js";
 export {
   WORKFLOW_NODES_SUBDIR,
-  WORKFLOWS_SUBDIR,
+  WORKFLOW_SUBDIR,
   workflowDir,
   workflowNodeDir,
-  workflowsRoot,
+  workflowRoot,
 } from "./paths.js";
-export { WorkflowsService } from "./service.js";
 export type {
   CreateNodeArgs,
   CreateWorkflowArgs,
@@ -54,3 +53,4 @@ export type {
   WorkflowState,
   WorkflowStatus,
 } from "./types.js";
+export { WorkflowService } from "./workflow-service.js";

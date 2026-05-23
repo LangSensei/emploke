@@ -1,5 +1,5 @@
 /**
- * Error hierarchy for `@emploke/workflows`. All errors extend
+ * Error hierarchy for `@emploke/workflow`. All errors extend
  * {@link WorkflowError} so callers can `instanceof` a coarse check
  * within the same realm; cross-realm callers (HTTP routes, CLI)
  * should branch on the stable `name` string literal.

@@ -1,6 +1,4 @@
-import { Workflow } from "./entity.js";
 import { WorkflowNodeNotFoundError, WorkflowNotFoundError } from "./errors.js";
-import type { WorkflowsRepository } from "./repository.js";
 import type {
   CreateNodeArgs,
   CreateWorkflowArgs,
@@ -18,9 +16,11 @@ import {
   generateWorkflowId,
   generateWorkflowNodeId,
 } from "./validate.js";
+import { Workflow } from "./workflow-entity.js";
+import type { WorkflowRepository } from "./workflow-repository.js";
 
 /**
- * Orchestrator-facing tool surface for `@emploke/workflows`.
+ * Orchestrator-facing tool surface for `@emploke/workflow`.
  *
  * Eight tools, per TASK.md §3:
  *
@@ -42,13 +42,13 @@ import {
  * is the source of truth for the FSM and the DAG; this class never
  * branches on `status` independently of the entity.
  */
-export class WorkflowsService {
-  private readonly repo: WorkflowsRepository;
+export class WorkflowService {
+  private readonly repo: WorkflowRepository;
   private readonly taskDispatcher: TaskDispatcher;
   private readonly now: () => Date;
 
   constructor(opts: {
-    readonly repo: WorkflowsRepository;
+    readonly repo: WorkflowRepository;
     readonly taskDispatcher: TaskDispatcher;
     readonly now?: () => Date;
   }) {

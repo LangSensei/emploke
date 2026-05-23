@@ -1,14 +1,14 @@
 import path from "node:path";
 
 /** Subdirectory under `<workspaceDir>/` where per-workflow workdirs live. */
-export const WORKFLOWS_SUBDIR = "workflows";
+export const WORKFLOW_SUBDIR = "workflows";
 
 /** Subdirectory under `<workflowDir>/` where per-node workdirs live. */
 export const WORKFLOW_NODES_SUBDIR = "nodes";
 
 /** Resolve the absolute root directory for this workspace's workflow workdirs. */
-export function workflowsRoot(workspaceDir: string): string {
-  return path.join(workspaceDir, WORKFLOWS_SUBDIR);
+export function workflowRoot(workspaceDir: string): string {
+  return path.join(workspaceDir, WORKFLOW_SUBDIR);
 }
 
 /**
@@ -48,7 +48,7 @@ export function safeJoinUnderRoot(root: string, id: string): string {
 
 /** Resolve `<workspaceDir>/workflows/<workflowId>/`. */
 export function workflowDir(workspaceDir: string, workflowId: string): string {
-  return safeJoinUnderRoot(workflowsRoot(workspaceDir), workflowId);
+  return safeJoinUnderRoot(workflowRoot(workspaceDir), workflowId);
 }
 
 /**

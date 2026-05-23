@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
-import { Workflow, WorkflowNodeValue } from "./entity.js";
 import { CorruptedWorkflowError, WorkflowNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
 import {
@@ -19,6 +18,7 @@ import type {
   WorkflowStatus,
 } from "./types.js";
 import { assertValidWorkflowId } from "./validate.js";
+import { Workflow, WorkflowNodeValue } from "./workflow-entity.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
@@ -26,7 +26,7 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 /**
  * Drizzle-backed CRUD for the workflow aggregate. Private to the
- * pkg: external callers go through {@link WorkflowsService}.
+ * pkg: external callers go through {@link WorkflowService}.
  *
  * `save` is whole-aggregate replace inside a single SQLite
  * transaction — the append-only invariant means rows only ever grow,
@@ -35,7 +35,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * for v1's expected ~100-node graphs; revisit if the working set
  * ever grows past that).
  */
-export class WorkflowsRepository {
+export class WorkflowRepository {
   private readonly db: Db;
   private readonly logger: Logger;
 
@@ -138,7 +138,7 @@ export class WorkflowsRepository {
    * around the write (e.g. dispatching a subprocess) must happen
    * outside, in separate `mutateAtomic` calls.
    *
-   * Used by `WorkflowsService.launchNode` to close the
+   * Used by `WorkflowService.launchNode` to close the
    * check-then-act race between the FSM guard and the persisted
    * status flip: concurrent `launchNode(nodeId)` calls cannot both
    * pass `not_started → running` because the second one re-reads
