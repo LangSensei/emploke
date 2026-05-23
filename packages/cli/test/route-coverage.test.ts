@@ -48,6 +48,7 @@ const ALLOWED_GAPS: ReadonlySet<RouteKey> = new Set<RouteKey>([
   // last-opened workspace as its own UX state. See
   // `commands/workspace.ts:workspaceUse` for the full rationale.
   "workspaces.setCurrent",
+  "tasks.artifact", // dashboard-only download endpoint; CLI users have direct fs access to <workspace>/tasks/<tid>/artifact/
 ]);
 
 /**
