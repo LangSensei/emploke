@@ -2903,6 +2903,16 @@ button {
   overflow-y: auto;
 }
 
+/* iter-3 C4: the right detail pane sizes to its content within
+   [min 240px, max grid-row]. Previously this was unconditionally
+   `height: 100%`, which produced large empty whitespace below short
+   summaries (e.g. the "no summary was produced" placeholder + a
+   short activity stream). `align-self: start` opts the card out of
+   the grid's stretch on the cross axis; `max-height: 100%` keeps
+   long-content cases from spilling past the page row while letting
+   the existing inner `overflow: auto` regions (overview/activity/
+   artifacts) scroll as before. The left list column keeps the grid's
+   default stretch and remains full-viewport. */
 .tasks-pane__detail {
   display: flex;
   flex-direction: column;
@@ -2911,8 +2921,11 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  height: 100%;
-  min-height: 0;
+  align-self: start;
+  height: auto;
+  min-height: 240px;
+  max-height: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -3413,25 +3426,66 @@ button {
    continue to drive the underlying layout.
    ========================================================================== */
 
-/* Per-row `⋯` menu — reuses the .filter-menu primitive (native
-   <details>/<summary>) so close-on-outside-click + ESC come for free.
-   The trigger is icon-only; the panel anchors to the right edge so it
-   doesn't push the row taller. */
+/* Per-row `⋯` menu — iter-3 controlled popover.
+   The previous iter-1/iter-2 used native <details>/<summary> with a
+   comment claiming it gave close-on-outside-click + ESC for free.
+   That was wrong: browsers don't run a global handler on <details>,
+   and Esc only closes when focus is already inside the panel. The
+   current implementation is a state-driven popover (TaskListItem
+   owns `menuOpen`, TaskList holds the single openMenuId so opening
+   one row closes another, useClickOutside + a keydown listener
+   handle dismissal). The panel is `position: absolute` and a high
+   z-index so it floats above sibling rows and the detail pane
+   without altering row height when open. */
 .task-list__item-menu {
+  position: relative;
   margin-left: auto;
+  display: inline-flex;
 }
 .task-list__item-menu-trigger {
   padding: 4px;
 }
-.filter-menu__option--danger {
-  color: var(--color-danger, #c0392b);
+.task-list__item-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
 }
-.filter-menu__option--danger:hover {
-  background: var(--color-danger-bg, rgba(192, 57, 43, 0.08));
+.task-list__item-menu-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
 }
-.filter-menu__option:disabled {
+.task-list__item-menu-option:hover {
+  background: var(--color-surface-hover);
+}
+.task-list__item-menu-option:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.task-list__item-menu-option--danger {
+  color: var(--color-danger, #c0392b);
+}
+.task-list__item-menu-option--danger:hover {
+  background: var(--color-danger-bg, rgba(192, 57, 43, 0.08));
 }
 
 
@@ -3570,7 +3624,7 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-4) var(--space-2);
+  padding: 0 0 var(--space-2);
 }
 .task-detail__title-actions {
   display: flex;
@@ -3595,7 +3649,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding: 0 var(--space-4) var(--space-3);
+  padding: 0 0 var(--space-3);
 }
 .task-detail__meta-chip {
   display: inline-flex;
@@ -3609,9 +3663,16 @@ button {
   border-radius: 999px;
 }
 .task-detail__statbar-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--color-text-subtle);
+}
+.task-detail__statbar-id > code {
+  font: inherit;
+  color: inherit;
 }
 
 .task-tabs {
@@ -3711,16 +3772,25 @@ button {
   gap: var(--space-2);
 }
 .task-details__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: var(--radius-sm);
-  padding: 1px 6px;
+  padding: 2px;
   font-size: 11px;
   cursor: pointer;
-  color: var(--color-text-muted);
+  color: var(--color-text-subtle);
+  line-height: 0;
 }
 .task-details__copy:hover {
   background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+.task-details__copy-wrap {
+  display: inline-flex;
+  align-items: center;
 }
 
 .artifact-list {
@@ -4003,20 +4073,29 @@ button {
   background: var(--color-text-subtle);
 }
 
-/* F4: the SVG copy/check icon inside the title-strip CopyButton.
-   The .task-details__copy chip is sized for 14px square content; the
-   inline SVG defaults to currentColor + stroke-width 1.5 so it
-   tracks the surrounding text colour. */
-.task-details__copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 4px;
-  line-height: 0;
-}
+/* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
+   CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
+   it reads as inline metadata rather than a primary action. The
+   chip's own background/border/padding is now declared once above. */
 .task-details__copy-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.5;
+}
+
+/* Visually hidden but still announced by AT. Used as a live region
+   sibling on CopyButton so the "Copied" announcement has a node
+   whose text content actually changes. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* F6: succeeded-with-empty-output placeholder  muted, unobtrusive,
