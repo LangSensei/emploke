@@ -730,4 +730,57 @@ describe("tasksRoutes", () => {
       expect(res.status).toBe(503);
     });
   });
+
+  // ─── issue #181: GET /:tid/artifact/:name ─────────────────
+  describe("GET /:tid/artifact/:name", () => {
+    it("happy path: returns file bytes with content type", async () => {
+      const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const nodePath = await import("node:path");
+      const tmp = await mkdtemp(nodePath.join(tmpdir(), "emploke-tasks-artifact-"));
+      const abs = nodePath.join(tmp, "report.html");
+      await writeFile(abs, "<html><body>ok</body></html>");
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(async (_id: string, name: string) =>
+          name === "report.html" ? abs : null,
+        ),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/artifact/report.html`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const text = await res.text();
+      expect(text).toBe("<html><body>ok</body></html>");
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it("returns 404 when the manager rejects the name (whitelist)", async () => {
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(async () => null),
+      });
+      const res = await tasksRoutes(() => m).request(`/${sampleTask.id}/artifact/secret.txt`);
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 when name contains a path separator", async () => {
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(),
+      });
+      const res = await tasksRoutes(() => m).request(
+        `/${sampleTask.id}/artifact/${encodeURIComponent("../etc/passwd")}`,
+      );
+      expect(res.status).toBe(400);
+      expect(m.resolveArtifactPath).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when name contains a backslash separator", async () => {
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(),
+      });
+      const res = await tasksRoutes(() => m).request(
+        `/${sampleTask.id}/artifact/${encodeURIComponent("foo\\bar")}`,
+      );
+      expect(res.status).toBe(400);
+      expect(m.resolveArtifactPath).not.toHaveBeenCalled();
+    });
+  });
 });
