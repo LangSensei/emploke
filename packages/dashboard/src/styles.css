@@ -4214,6 +4214,7 @@ button {
   border-radius: 999px;
   background: var(--color-text-subtle);
   flex-shrink: 0;
+  align-self: center;
 }
 .task-list__item-dot--info { background: var(--color-accent); }
 .task-list__item-dot--success { background: var(--color-success); }
