@@ -19,12 +19,10 @@ interface Group {
 }
 
 /**
- * Left-column task list, grouped by status. Headers are always
- * rendered (Running / Not started / Completed) even when empty so
- * the data shape stays predictable while a task moves between
- * buckets (bug-bash iter-1 F6). The TaskStatus enum has no
- * `queued`/`not_started` row, so the middle group is a deliberately
- * empty placeholder collapsed by default.
+ * Left-column task list, grouped by status. Two groups are rendered —
+ * Running and Completed — and the headers stay visible even when empty
+ * so the data shape stays predictable while a task moves between
+ * buckets (bug-bash iter-1 F6).
  *
  * Each group is collapsible with a count badge. Empty groups
  * auto-collapse so the list above the fold stays compact. Within a
@@ -48,7 +46,6 @@ export function TaskList({
     }
     return [
       { key: "running", label: "Running", tasks: running },
-      { key: "not_started", label: "Not started", tasks: [] },
       { key: "completed", label: "Completed", tasks: completed },
     ];
   }, [tasks]);
@@ -57,7 +54,6 @@ export function TaskList({
   // list above the fold stays tight; populated groups start expanded.
   const [collapsed, setCollapsed] = useState<Record<StatusGroup, boolean>>({
     running: false,
-    not_started: true,
     completed: false,
   });
   const toggle = (k: StatusGroup) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
@@ -87,10 +83,6 @@ export function TaskList({
               <span className={`task-list-group__caret${isCollapsed ? " is-collapsed" : ""}`}>
                 {isCollapsed ? "▸" : "▾"}
               </span>
-              <span
-                className={`task-list-group__dot task-list-group__dot--${g.key}`}
-                aria-hidden="true"
-              />
               <span className="task-list-group__label">{g.label}</span>
               <span className="task-list-group__count">{g.tasks.length}</span>
             </button>

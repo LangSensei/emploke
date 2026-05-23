@@ -77,17 +77,11 @@ export function readRuntime(task: TaskRecord): string | null {
 }
 
 /**
- * Status group used by the master-detail list.
- *
- * The TaskStatus enum is `running | succeeded | failed | cancelled` —
- * no `queued`/`not_started`. Per the bug-bash iter-1 brief we still
- * render the `not_started` header (always count 0) so the data shape
- * is predictable across refreshes: users see Running → Not started →
- * Completed and never wonder "where did my task go?" while a row is
- * in flight. No real status ever maps to `not_started`; it exists
- * purely as a visual placeholder bucket.
+ * Status group used by the master-detail list. The TaskStatus enum is
+ * `running | succeeded | failed | cancelled` — running stays in its own
+ * bucket while the three terminal states collapse into `completed`.
  */
-export type StatusGroup = "running" | "not_started" | "completed";
+export type StatusGroup = "running" | "completed";
 
 export function statusGroup(status: TaskStatus): StatusGroup {
   return status === "running" ? "running" : "completed";

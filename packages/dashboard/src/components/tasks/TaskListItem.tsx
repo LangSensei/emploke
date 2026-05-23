@@ -233,6 +233,7 @@ export function TaskListItem({
       aria-selected={selected}
     >
       <div className="task-list__item-head">
+        <span className={`task-list__item-dot task-list__item-dot--${tone}`} aria-hidden="true" />
         <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
         <div className="task-list__item-menu">
           <button
