@@ -896,7 +896,7 @@ describe("buildInteractiveLaunch()", () => {
   });
 
   it.skip("two managers produce isolated launch envs (env layering moved to runtime)", async () => {
-    // Mimics what WorkspaceRuntimeCache does: one shared frozen base
+    // Mimics what WorkspaceContextRegistry does: one shared frozen base
     // passed by reference into every per-workspace SessionService.
     // The base must NEVER be mutated by buildInteractiveLaunch; per-
     // session fields go on a fresh layer on top.

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogService } from "@emploke/catalog";
-import type { WorkspaceRuntimeCache } from "@emploke/core";
+import type { Application } from "@emploke/core";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,13 +16,13 @@ import {
 let scratch: string;
 let sys: ServerTestSubsystem;
 let service: WorkspaceService;
-let cache: WorkspaceRuntimeCache;
+let application: Application;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-cat-"));
   sys = await setupTestSubsystem({ scratch });
   service = sys.service;
-  cache = sys.cache;
+  application = sys.application;
 });
 afterEach(async () => {
   await teardownTestSubsystem(sys);
@@ -43,7 +43,7 @@ function mountApp() {
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    const ctx = await cache.get(id);
+    const ctx = await application.getContext(id);
     if (!ctx) return c.json({ error: "not registered", code: "WorkspaceNotRegisteredError" }, 404);
     c.set("catalog", ctx.catalog);
     await next();
@@ -86,8 +86,8 @@ describe("workspace-scoped catalog routes", () => {
     const a = await ensureWorkspace("alpha");
     const b = await ensureWorkspace("beta");
 
-    const ctxA = await cache.get(a.id);
-    const ctxB = await cache.get(b.id);
+    const ctxA = await application.getContext(a.id);
+    const ctxB = await application.getContext(b.id);
     expect(ctxA).not.toBeNull();
     expect(ctxB).not.toBeNull();
     if (!ctxA || !ctxB) throw new Error("ctx must exist");
@@ -99,8 +99,8 @@ describe("workspace-scoped catalog routes", () => {
 
   it("memoises catalog per workspace", async () => {
     const ws = await ensureWorkspace("alpha");
-    const a1 = await cache.get(ws.id);
-    const a2 = await cache.get(ws.id);
+    const a1 = await application.getContext(ws.id);
+    const a2 = await application.getContext(ws.id);
     expect(a1).toBe(a2);
     expect(a1?.catalog).toBe(a2?.catalog);
   });

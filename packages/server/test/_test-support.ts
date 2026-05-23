@@ -1,21 +1,20 @@
 import path from "node:path";
-import type { EmplokeCore, WorkspaceRuntimeCache } from "@emploke/core";
+import type { Application } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceService } from "@emploke/workspace";
 import type { Logger } from "pino";
 import { buildServerContainer } from "../src/bootstrap.js";
 
 /**
- * Shared scaffolding for server-side tests. Builds the full `EmplokeCore`
+ * Shared scaffolding for server-side tests. Builds the full `Application`
  * composition root around an in-memory workspace registry.
  */
 export interface ServerTestSubsystem {
-  readonly core: EmplokeCore;
+  readonly application: Application;
   readonly service: WorkspaceService;
   readonly runtimeRegistry: RuntimeRegistry;
-  readonly cache: WorkspaceRuntimeCache;
   readonly defaultWorkspaceParent: string;
-  /** Close the workspace registry's sqlite connection. */
+  /** Close the workspace registry's sqlite connection and every per-workspace context. */
   close(): Promise<void>;
 }
 
@@ -35,10 +34,9 @@ export async function setupTestSubsystem(opts: {
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   });
   return {
-    core: composition,
+    application: composition,
     service: composition.workspaceService,
     runtimeRegistry,
-    cache: composition.runtimes as WorkspaceRuntimeCache,
     defaultWorkspaceParent,
     async close() {
       await composition.close();
@@ -48,11 +46,8 @@ export async function setupTestSubsystem(opts: {
 
 export async function teardownTestSubsystem(sys: ServerTestSubsystem): Promise<void> {
   try {
-    await sys.cache.closeAll();
-  } catch {
-    // best-effort
-  }
-  try {
+    // `application.close()` closes the internal per-workspace context
+    // registry first, then the global registry handle. Idempotent.
     await sys.close();
   } catch {
     // best-effort

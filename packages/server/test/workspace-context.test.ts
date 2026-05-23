@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { WorkspaceHasLiveTasksError, type WorkspaceRuntimeCache } from "@emploke/core";
+import { type Application, WorkspaceHasLiveTasksError } from "@emploke/core";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { captureLogger } from "./_capture-logger.js";
@@ -12,11 +12,14 @@ import {
 } from "./_test-support.js";
 
 /**
- * Tests for the per-workspace container cache lifecycle log lines added
- * for issue #58. The cache is the only surface in the server that
- * mutates long-lived per-workspace state outside of route handlers, so
- * its build / invalidate / reload events need to land in the log just
- * like state-mutating routes do.
+ * Tests for the per-workspace context lifecycle log lines added for
+ * issue #58. The internal `WorkspaceContextRegistry` is the only
+ * surface in the server that mutates long-lived per-workspace state
+ * outside of route handlers, so its build / invalidate / reload events
+ * need to land in the log just like state-mutating routes do. We
+ * exercise it through the public `Application` surface (`getContext`,
+ * `renameWorkspace`, `reloadWorkspace`) rather than reaching at the
+ * registry directly.
  *
  * Phase 2 / ADR-3: the global registry now goes through Drizzle
  * (`setupTestSubsystem` opens the ORM internally).
@@ -35,18 +38,18 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-interface CacheHarness {
+interface Harness {
   cap: ReturnType<typeof captureLogger>;
-  cache: WorkspaceRuntimeCache;
+  application: Application;
   service: WorkspaceService;
   queries: WorkspaceQueries;
 }
 
-async function makeCache(): Promise<CacheHarness> {
+async function makeHarness(): Promise<Harness> {
   const cap = captureLogger();
   const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
   openSubsystems.push(sys);
-  return { cap, cache: sys.cache, service: sys.service, queries: sys.service };
+  return { cap, application: sys.application, service: sys.service, queries: sys.service };
 }
 
 async function registerWs(
@@ -62,15 +65,15 @@ async function registerWs(
   return { id: result.id, workspaceDir: path.resolve(args.workspaceDir) };
 }
 
-describe("WorkspaceRuntimeCache observability", () => {
+describe("WorkspaceContext observability", () => {
   it("emits an info line on first container build, with workspaceId + workspaceDir", async () => {
-    const { cap, cache, service } = await makeCache();
+    const { cap, application, service } = await makeHarness();
     const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
 
-    const ctx = await cache.get(ws.id);
+    const ctx = await application.getContext(ws.id);
     expect(ctx).not.toBeNull();
 
     const built = cap.entries.find(
@@ -83,15 +86,15 @@ describe("WorkspaceRuntimeCache observability", () => {
   });
 
   it("does NOT re-emit the build line on a cache hit", async () => {
-    const { cap, cache, service } = await makeCache();
+    const { cap, application, service } = await makeHarness();
     const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
 
-    await cache.get(ws.id);
+    await application.getContext(ws.id);
     cap.entries.length = 0;
-    await cache.get(ws.id);
+    await application.getContext(ws.id);
 
     const built = cap.entries.find(
       (e) => e.msg === "per-workspace container built (first request)",
@@ -99,38 +102,44 @@ describe("WorkspaceRuntimeCache observability", () => {
     expect(built).toBeUndefined();
   });
 
-  it("emits an info line on invalidate of a loaded entry", async () => {
-    const { cap, cache, service } = await makeCache();
+  it("emits an info line on invalidate of a loaded entry (via rename)", async () => {
+    const { cap, application, service } = await makeHarness();
     const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
-    await cache.get(ws.id);
+    await application.getContext(ws.id);
     cap.entries.length = 0;
 
-    await cache.invalidate(ws.id);
+    // Renaming a workspace invalidates its cached context as a side
+    // effect — the canonical public-surface path to exercising the
+    // registry's invalidate observability hook.
+    await application.renameWorkspace(ws.id, { newName: "alpha-renamed" });
 
     const inv = cap.entries.find((e) => e.msg === "per-workspace container invalidated");
     expect(inv?.workspaceId).toBe(ws.id);
   });
 
-  it("emits NO line when invalidate is called for an unknown id (no-op)", async () => {
-    const { cap, cache } = await makeCache();
-    await cache.invalidate("00000000-0000-0000-0000-000000000000");
+  it("emits NO line when invalidate is triggered for an unknown id (no-op)", async () => {
+    const { cap, application } = await makeHarness();
+    // unregisterWorkspace is idempotent — calling it for an id we never
+    // registered is a no-op and must NOT log a spurious invalidated
+    // line (there is nothing to invalidate).
+    await application.unregisterWorkspace("00000000-0000-0000-0000-000000000000");
     const inv = cap.entries.find((e) => e.msg === "per-workspace container invalidated");
     expect(inv).toBeUndefined();
   });
 
   it("emits an info line on successful reload", async () => {
-    const { cap, cache, service } = await makeCache();
+    const { cap, application, service } = await makeHarness();
     const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
-    await cache.get(ws.id);
+    await application.getContext(ws.id);
     cap.entries.length = 0;
 
-    const fresh = await cache.reload(ws.id);
+    const fresh = await application.reloadWorkspace(ws.id);
     expect(fresh).not.toBeNull();
 
     const reloaded = cap.entries.find((e) => e.msg === "per-workspace container reloaded");
@@ -138,12 +147,12 @@ describe("WorkspaceRuntimeCache observability", () => {
   });
 
   it("emits a warn line on reload refusal (live tasks)", async () => {
-    const { cap, cache, service } = await makeCache();
+    const { cap, application, service } = await makeHarness();
     const ws = await registerWs(service, {
       name: "alpha",
       workspaceDir: path.join(scratch, "alpha"),
     });
-    const ctx = await cache.get(ws.id);
+    const ctx = await application.getContext(ws.id);
     if (ctx === null) throw new Error("expected per-workspace container");
 
     // Inject a fake live count so the gate engages without spawning a
@@ -153,7 +162,9 @@ describe("WorkspaceRuntimeCache observability", () => {
     cap.entries.length = 0;
 
     try {
-      await expect(cache.reload(ws.id)).rejects.toBeInstanceOf(WorkspaceHasLiveTasksError);
+      await expect(application.reloadWorkspace(ws.id)).rejects.toBeInstanceOf(
+        WorkspaceHasLiveTasksError,
+      );
 
       const refused = cap.entries.find(
         (e) => e.msg === "workspace reload refused: live tasks would be orphaned",

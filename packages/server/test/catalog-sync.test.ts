@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CatalogService, Skill } from "@emploke/catalog";
-import type { WorkspaceRuntimeCache } from "@emploke/core";
+import type { Application } from "@emploke/core";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -23,13 +23,13 @@ import {
 let scratch: string;
 let sys: ServerTestSubsystem;
 let service: WorkspaceService;
-let cache: WorkspaceRuntimeCache;
+let application: Application;
 
 beforeEach(async () => {
   scratch = await mkdtemp(path.join(tmpdir(), "emploke-server-sync-"));
   sys = await setupTestSubsystem({ scratch });
   service = sys.service;
-  cache = sys.cache;
+  application = sys.application;
 });
 
 afterEach(async () => {
@@ -51,7 +51,7 @@ function mountApp() {
   app.use("/api/workspaces/:id/catalog/*", async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    const ctx = await cache.get(id);
+    const ctx = await application.getContext(id);
     if (!ctx) return c.json({ error: "not registered", code: "WorkspaceNotRegisteredError" }, 404);
     c.set("catalog", ctx.catalog);
     await next();

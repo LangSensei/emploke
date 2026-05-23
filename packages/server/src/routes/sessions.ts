@@ -1,4 +1,4 @@
-import type { WorkspaceRuntime } from "@emploke/core";
+import type { WorkspaceContext } from "@emploke/core";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,
@@ -16,13 +16,13 @@ import type { SessionCreateBody } from "./manifest.js";
 
 /**
  * Resolver passed into `sessionsRoutes` so the routes can pull the
- * workspace-scoped `WorkspaceRuntime` out of Hono's per-request context
+ * workspace-scoped `WorkspaceContext` out of Hono's per-request context
  * (set by the workspace middleware on the parent route).
  *
  * The route accesses `.sessions` for CRUD operations and
  * `.spawnSession()` for the cross-BC spawn orchestration.
  */
-export type WorkspaceRuntimeResolver = (c: import("hono").Context) => WorkspaceRuntime;
+export type WorkspaceContextResolver = (c: import("hono").Context) => WorkspaceContext;
 
 type SessionCreateBodyRaw = { [K in keyof SessionCreateBody]?: unknown };
 
@@ -44,12 +44,12 @@ function statusForError(err: unknown): number | null {
 
 /**
  * Routes for `/api/workspaces/:id/sessions/*`. Pure transport — every
- * endpoint is parse body → dispatch to the workspace runtime → format
+ * endpoint is parse body → dispatch to the workspace context → format
  * response. The cross-BC `spawn` endpoint delegates to
- * `WorkspaceRuntime.spawnSession()` which in turn calls
+ * `WorkspaceContext.spawnSession()` which in turn calls
  * `SessionService.buildInteractiveLaunch` + `@emploke/terminal`.
  */
-export function sessionsRoutes(resolve: WorkspaceRuntimeResolver): Hono {
+export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
   const app = new Hono();
 
   // List sessions, optionally filtered by agent / createdSince / activeSince.
@@ -175,7 +175,7 @@ export function sessionsRoutes(resolve: WorkspaceRuntimeResolver): Hono {
       }
     }
 
-    let result: Awaited<ReturnType<WorkspaceRuntime["spawnSession"]>>;
+    let result: Awaited<ReturnType<WorkspaceContext["spawnSession"]>>;
     try {
       result = await resolve(c).spawnSession(id, { remote });
     } catch (err) {

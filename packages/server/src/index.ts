@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
-import type { WorkspaceRuntimeCache } from "@emploke/core";
+import type { Application, WorkspaceContext } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
 import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
@@ -68,7 +68,7 @@ export {
  * Both managers point at the same workspace; routes pull whichever they need.
  */
 type WorkspaceVars = {
-  runtime: import("@emploke/core").WorkspaceRuntime;
+  workspaceContext: WorkspaceContext;
 };
 
 /**
@@ -212,7 +212,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
 
   const workspaceService = composition.workspaceService;
-  const cache = composition.runtimes;
+  const application = composition;
 
   const app = new Hono();
 
@@ -256,33 +256,33 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     }),
   );
   app.route("/api/runtimes", runtimesRoutes(runtimeRegistry));
-  app.route("/api/workspaces", workspacesRoutes(composition));
+  app.route("/api/workspaces", workspacesRoutes(application));
 
   // Workspace-scoped sessions / tasks / catalog. Middleware resolves the
-  // `:id` workspace once and stashes the whole `WorkspaceRuntime` on
+  // `:id` workspace once and stashes the whole `WorkspaceContext` on
   // c.var; each route family reads the bits it needs. 404 if id is not
   // registered; 5xx if workspace.db cannot be opened.
   const sessionsApp = new Hono<{ Variables: WorkspaceVars }>();
-  sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(cache));
+  sessionsApp.use("/:id/sessions/*", workspaceContextMiddleware(application));
   sessionsApp.route(
     "/:id/sessions",
-    sessionsRoutes((c) => c.get("runtime")),
+    sessionsRoutes((c) => c.get("workspaceContext")),
   );
   app.route("/api/workspaces", sessionsApp);
 
   const tasksApp = new Hono<{ Variables: WorkspaceVars }>();
-  tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(cache));
+  tasksApp.use("/:id/tasks/*", workspaceContextMiddleware(application));
   tasksApp.route(
     "/:id/tasks",
-    tasksRoutes((c) => c.get("runtime").tasks),
+    tasksRoutes((c) => c.get("workspaceContext").tasks),
   );
   app.route("/api/workspaces", tasksApp);
 
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
-  catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(cache));
+  catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(application));
   catalogApp.route(
     "/:id/catalog",
-    catalogRoutes((c) => c.get("runtime").catalog),
+    catalogRoutes((c) => c.get("workspaceContext").catalog),
   );
   app.route("/api/workspaces", catalogApp);
 
@@ -339,7 +339,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   //      subprocess after we've already taken the snapshot, and (b) the
   //      first request to a workspace whose context wasn't loaded yet
   //      lazy-instantiating a fresh TaskService that wasn't in
-  //      `cache.loaded()` and would never get drained.
+  //      `application.loadedContexts()` and would never get drained.
   //   2. `tasks.shutdown()` second — by now no new dispatches can land,
   //      so the snapshot of cached contexts is authoritative.
   //
@@ -369,34 +369,22 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
       logger.error({ err }, "error closing http server");
     }
     try {
-      const ctxs = cache.loaded();
+      const ctxs = application.loadedContexts();
       await Promise.allSettled(ctxs.map((ctx) => ctx.tasks.shutdown()));
     } catch (err) {
       logger.error({ err }, "error during tasks shutdown");
     }
     try {
-      // Close every per-workspace `DatabaseSync` connection so the OS
-      // releases the lock on every `workspace.db` file. Required on
-      // Windows where `unlink` refuses to remove files with open
-      // handles (the CLI integration tests `rm -rf <EMPLOKE_HOME>`
-      // immediately after `stop`, and an unclosed `workspace.db`
-      // surfaces as `EBUSY: resource busy or locked`).
-      //
-      // `closeAll()` is async (each entry's `close()` awaits its
-      // own per-pkg disposers); missing the await would race the
-      // `composition.close()` below and leak handles past `process.exit`.
-      await cache.closeAll();
-    } catch (err) {
-      logger.error({ err }, "error closing workspace contexts");
-    }
-    try {
       // Close the workspace registry's underlying Drizzle DB handle
-      // (`global.db`) via the composition handle. Per-workspace
-      // contexts have already been closed by `cache.closeAll()` above,
-      // so closing the global handle here is safe. The handle's close()
-      // releases the SQLite file, which Windows needs before the CLI
-      // integration test can `rm -rf <EMPLOKE_HOME>`.
-      await composition.close();
+      // (`global.db`) plus every per-workspace SQLite handle via
+      // `application.close()` (composes the internal context
+      // registry's `closeAll()` then the global handle). Releasing
+      // the SQLite files is required on Windows where `unlink`
+      // refuses to remove files with open handles (the CLI
+      // integration tests `rm -rf <EMPLOKE_HOME>` immediately after
+      // `stop`, and an unclosed `workspace.db` surfaces as `EBUSY:
+      // resource busy or locked`).
+      await application.close();
     } catch (err) {
       logger.error({ err }, "error closing global.db");
     }
@@ -412,37 +400,38 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
 }
 
 /**
- * Hono middleware: pulls `:id` from the route params, asks the cache
- * for its `WorkspaceRuntime`, and stashes it on `c.var.runtime` as a
- * single field. Sub-routes pull whichever service they need off the
- * runtime (sessions read `c.get("runtime").sessions`; catalog reads
- * `c.get("runtime").catalog`; etc.).
+ * Hono middleware: pulls `:id` from the route params, asks the
+ * application for its `WorkspaceContext`, and stashes it on
+ * `c.var.workspaceContext` as a single field. Sub-routes pull
+ * whichever service they need off the context (sessions read
+ * `c.get("workspaceContext").sessions`; catalog reads
+ * `c.get("workspaceContext").catalog`; etc.).
  *
  *   - 400 if `:id` is missing (shouldn't happen given the route shape;
  *     defensive)
  *   - 404 if the id isn't in the registry
- *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (cache.load throws)
+ *   - 5xx if the workspace row is corrupted or workspace.db cannot be opened (getContext throws)
  */
 function workspaceContextMiddleware(
-  cache: WorkspaceRuntimeCache,
+  application: Application,
 ): MiddlewareHandler<{ Variables: WorkspaceVars }> {
   return async (c, next) => {
     const id = c.req.param("id");
     if (!id) return c.json({ error: "missing workspace id" }, 400);
-    let runtime: Awaited<ReturnType<WorkspaceRuntimeCache["get"]>>;
+    let context: WorkspaceContext | null;
     try {
-      runtime = await cache.get(id);
+      context = await application.getContext(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message, code: (err as Error)?.name }, 500);
     }
-    if (!runtime) {
+    if (!context) {
       return c.json(
         { error: `workspace "${id}" is not registered`, code: "WorkspaceNotRegisteredError" },
         404,
       );
     }
-    c.set("runtime", runtime);
+    c.set("workspaceContext", context);
     await next();
   };
 }

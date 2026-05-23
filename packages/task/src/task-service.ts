@@ -137,7 +137,7 @@ export class TaskService {
    * `persist(running)` have already run), but the `LiveTask` entry is
    * not yet installed.
    *
-   * Surfaced via `liveCount()` so callers like `WorkspaceRuntimeCache.reload`
+   * Surfaced via `liveCount()` so callers like `WorkspaceContextRegistry.reload`
    * — which uses a non-zero count to refuse to evict the cached
    * `TaskService` — see in-flight dispatches as "live" too. Without
    * this, a reload landing in the window between the workdir mkdir
@@ -250,7 +250,7 @@ export class TaskService {
 
     // From this point on the workdir exists on disk, so a freshly
     // constructed sibling `TaskService` for the same `tasksDir` —
-    // e.g. one built after `WorkspaceRuntimeCache.reload` evicts us —
+    // e.g. one built after `WorkspaceContextRegistry.reload` evicts us —
     // could see this row. Mark `id` as in-flight so `liveCount()`
     // refuses such evictions until the `LiveTask` entry below is
     // installed. Cleared in the `finally` regardless of which exit
@@ -1025,7 +1025,7 @@ export class TaskService {
    * Release the underlying repository handle. After `close()`, the
    * manager must not be used. Idempotent.
    *
-   * Servers that swap or evict a `TaskService` (e.g. `WorkspaceRuntimeCache`
+   * Servers that swap or evict a `TaskService` (e.g. `WorkspaceContextRegistry`
    * on workspace removal / cache reload) must call this so the SQLite
    * file handle releases — Windows requires it before the workspace
    * directory can be `rm`-ed. `shutdown()` deliberately does NOT call

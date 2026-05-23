@@ -1,4 +1,4 @@
-import { composeEmplokeCore, type EmplokeCore, type EmplokeCoreOptions } from "@emploke/core";
+import { type Application, type ApplicationOptions, composeApplication } from "@emploke/core";
 
 /**
  * Build the server-process composition root.
@@ -7,8 +7,8 @@ import { composeEmplokeCore, type EmplokeCore, type EmplokeCoreOptions } from "@
  * `@emploke/core`. The server is a thin wrapper that adds HTTP
  * routing on top.
  */
-export type ServerComposition = EmplokeCore;
+export type ServerComposition = Application;
 
-export async function buildServerContainer(opts: EmplokeCoreOptions): Promise<ServerComposition> {
-  return composeEmplokeCore(opts);
+export async function buildServerContainer(opts: ApplicationOptions): Promise<ServerComposition> {
+  return composeApplication(opts);
 }

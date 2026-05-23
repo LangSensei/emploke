@@ -19,7 +19,7 @@ is the chat UI. emploke''s job is to:
 - surface runtime-side display metadata (title / lastActiveAt) in
   `list()` by calling the runtime''s optional `readMetadata` hook
 
-You launch the CLI yourself (or `WorkspaceRuntime.spawnSession`
+You launch the CLI yourself (or `WorkspaceContext.spawnSession`
 in `@emploke/core` hands the command to `@emploke/terminal`).
 
 ## Layout
@@ -126,7 +126,7 @@ returned.
 ## What this package does NOT do
 
 - Spawn `copilot`. `buildInteractiveLaunch` returns the invocation;
-  the terminal pkg or `WorkspaceRuntime.spawnSession` (in
+  the terminal pkg or `WorkspaceContext.spawnSession` (in
   `@emploke/core`) hands it to a terminal.
 - Track headless task execution. That''s [`@emploke/task`](../task).
 - Stream events from Copilot. The Copilot CLI handles the chat UI
