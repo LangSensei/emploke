@@ -8,12 +8,11 @@ import {
   CloseIcon,
   HomeIcon,
   PencilIcon,
-  SessionsIcon,
+  RuntimeIcon,
   SettingsIcon,
-  TasksIcon,
 } from "./Icons";
 
-export type SectionId = "overview" | "catalog" | "sessions" | "tasks" | "settings";
+export type SectionId = "overview" | "runtime" | "catalog" | "settings";
 
 export interface SectionDef {
   id: SectionId;
@@ -24,9 +23,8 @@ export interface SectionDef {
 
 const ICONS: Record<SectionId, (props: { className?: string }) => ReactElement> = {
   overview: HomeIcon,
+  runtime: RuntimeIcon,
   catalog: CatalogIcon,
-  sessions: SessionsIcon,
-  tasks: TasksIcon,
   settings: SettingsIcon,
 };
 

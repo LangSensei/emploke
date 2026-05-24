@@ -11,6 +11,13 @@ import { usePollWithBackoff } from "./usePollWithBackoff";
 export interface UseTasksOpts {
   currentWorkspaceId: string | null;
   pollIntervalMs: number;
+  /**
+   * When set, the agent filter is locked to this fqn and `setAgentFilter`
+   * is a no-op. Used by the per-agent Tasks tab so the page's URL scope
+   * (`/runtime/agents/<scope>/<short>/tasks`) is the source of truth for
+   * which agent's tasks appear in the list.
+   */
+  fixedAgentFqn?: string;
 }
 
 export interface UseTasksResult {
@@ -40,13 +47,19 @@ export interface UseTasksResult {
  * master-detail redesign so the shell page stays under its 300-line
  * budget.
  */
-export function useTasks({ currentWorkspaceId, pollIntervalMs }: UseTasksOpts): UseTasksResult {
+export function useTasks({
+  currentWorkspaceId,
+  pollIntervalMs,
+  fixedAgentFqn,
+}: UseTasksOpts): UseTasksResult {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
+  const [agentFilterState, setAgentFilterState] = useState<string>(fixedAgentFqn ?? ALL_AGENTS);
+  const agentFilter = fixedAgentFqn ?? agentFilterState;
+  const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterState;
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
   const [idQuery, setIdQuery] = useState("");

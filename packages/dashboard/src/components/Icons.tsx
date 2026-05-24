@@ -38,6 +38,15 @@ export const CatalogIcon = (p: IconProps) =>
 export const SessionsIcon = (p: IconProps) =>
   SVG(<path d="M3.75 13.5 10.5 9l4.5 3 6-4.5M21 7.5h-4.5m4.5 0v4.5" />, p);
 
+export const RuntimeIcon = (p: IconProps) =>
+  SVG(
+    <>
+      <path d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25v10.5A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25V6.75Z" />
+      <path d="M7.5 9.75 10.5 12l-3 2.25M13.5 14.25h3" />
+    </>,
+    p,
+  );
+
 export const TasksIcon = (p: IconProps) =>
   SVG(
     <path d="M9 5H7.2A2.2 2.2 0 0 0 5 7.2v9.6A2.2 2.2 0 0 0 7.2 19h9.6A2.2 2.2 0 0 0 19 16.8V7.2A2.2 2.2 0 0 0 16.8 5H15M9 5a2 2 0 1 0 6 0M9 5a2 2 0 1 1 6 0M9 12l2 2 4-4" />,

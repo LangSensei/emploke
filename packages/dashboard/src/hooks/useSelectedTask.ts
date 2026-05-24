@@ -1,31 +1,19 @@
-import { useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useState } from "react";
 
 /**
- * URL-bound task selection. The router declares
- * `/workspaces/:wsId/:section/:tab`; for the tasks section the `tab`
- * slot carries the task id. Mirrors that pair to a single
- * `(selectedId, setSelectedId)` tuple so the page component doesn't
- * have to know about the route layout.
+ * Selected task id, stored as pure component state.
  *
- * The mission-A spec calls for a `?taskId=…` query param. The
- * existing path-param shape achieves the same goal (refresh +
- * shared link preserve the selection) without touching App.tsx
- * routing or breaking sibling pages, so we keep it.
+ * Earlier iterations coupled this to the URL (`/tasks/:taskId` path segment),
+ * but the agent-centric UI restructure (#agent-centric-ui §5) removed that:
+ * task selection is ephemeral — refresh-preservation is intentionally NOT a
+ * goal, and the row to re-select on remount is decided by the auto-select-
+ * first-visible rule in `TasksPage` instead. Keeping the hook keeps callers
+ * tidy and gives us a place to revisit the decision in one spot.
  */
-export function useSelectedTask(currentWorkspaceId: string | null): {
+export function useSelectedTask(): {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
 } {
-  const params = useParams<{ wsId: string; section?: string; tab?: string }>();
-  const navigate = useNavigate();
-  const selectedId = params.tab ?? null;
-  const setSelectedId = useCallback(
-    (id: string | null) => {
-      const ws = encodeURIComponent(currentWorkspaceId ?? "");
-      navigate(id === null ? `/workspaces/${ws}/tasks` : `/workspaces/${ws}/tasks/${id}`);
-    },
-    [navigate, currentWorkspaceId],
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   return { selectedId, setSelectedId };
 }

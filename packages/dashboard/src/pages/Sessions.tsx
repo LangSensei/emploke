@@ -31,6 +31,12 @@ interface SessionsProps {
   currentWorkspaceId: string | null;
   /** Full registered-workspace list, used to resolve display name for the workdir hint. */
   workspaces: WorkspaceListItem[];
+  /**
+   * When set (per-agent Sessions tab), the agent filter is locked to
+   * this fqn, the agent select disappears from the toolbar, and any new
+   * session created from this page is owned by the same agent.
+   */
+  fixedAgentFqn?: string;
 }
 
 interface FallbackInfo {
@@ -100,10 +106,18 @@ function presetToActiveSince(preset: TimePreset, now: Date = serverNow()): strin
  * no terminal emulator could be detected), we fall back to showing the
  * incantation in a modal so the user can still copy-paste it.
  */
-export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }: SessionsProps) {
+export function SessionsPage({
+  agents,
+  config,
+  currentWorkspaceId,
+  workspaces,
+  fixedAgentFqn,
+}: SessionsProps) {
   const [sessions, setSessions] = useState<SessionView[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
-  const [filter, setFilter] = useState<string>(ALL_AGENTS);
+  const [filterState, setFilterState] = useState<string>(ALL_AGENTS);
+  const filter = fixedAgentFqn ?? filterState;
+  const setFilter = fixedAgentFqn ? () => {} : setFilterState;
   const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
   const [timeFilter, setTimeFilter] = useState<TimePreset>(DEFAULT_TIME_PRESET);
   const [idQuery, setIdQuery] = useState<string>("");
@@ -269,6 +283,9 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   };
 
   const readyAgents = agents.filter((a) => a.status === "ready");
+  const createAgents = fixedAgentFqn
+    ? readyAgents.filter((a) => a.agent.fqn === fixedAgentFqn)
+    : readyAgents;
 
   // Client-side filters layered on top of the server-side agent narrow.
   // Both are interactive (typing / dropdown change), so doing them in-memory
@@ -303,10 +320,12 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           type="button"
           className="btn btn--primary"
           onClick={() => setCreateOpen(true)}
-          disabled={readyAgents.length === 0}
+          disabled={createAgents.length === 0}
           title={
-            readyAgents.length === 0
-              ? "Install at least one ready agent in the Catalog first"
+            createAgents.length === 0
+              ? fixedAgentFqn
+                ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                : "Install at least one ready agent in the Catalog first"
               : "Create a new session"
           }
         >
@@ -330,28 +349,28 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
             onChange={(e) => setIdQuery(e.target.value)}
             placeholder="session id…"
             className="input"
-            // Session ids are fixed-width (`YYYYMMDD-xxxxxxxx`, 17 chars).
-            // 160px is the sweet spot — holds the full id, the search-input
-            // clear-x, and a bit of breathing room. The original 200px was
-            // wasted; 150 was a hair too tight.
             style={{ width: 160 }}
           />
-          <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
-            Agent
-          </label>
-          <select
-            id="agent-filter"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="select"
-          >
-            <option value={ALL_AGENTS}>All</option>
-            {agents.map((a) => (
-              <option key={a.agent.fqn} value={a.agent.fqn}>
-                {a.agent.fqn}
-              </option>
-            ))}
-          </select>
+          {!fixedAgentFqn && (
+            <>
+              <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
+                Agent
+              </label>
+              <select
+                id="agent-filter"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="select"
+              >
+                <option value={ALL_AGENTS}>All</option>
+                {agents.map((a) => (
+                  <option key={a.agent.fqn} value={a.agent.fqn}>
+                    {a.agent.fqn}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <label htmlFor="runtime-filter" className="muted" style={{ fontSize: 12 }}>
             Runtime
           </label>
@@ -428,7 +447,7 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
 
       <CreateModal
         open={createOpen}
-        agents={readyAgents}
+        agents={createAgents}
         runtimes={runtimes}
         workspaceDisplayName={currentDisplayName}
         pathSeparator={config?.pathSeparator ?? "/"}

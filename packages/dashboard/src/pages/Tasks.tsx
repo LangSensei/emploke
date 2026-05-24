@@ -21,6 +21,12 @@ interface TasksProps {
   currentWorkspaceId: string | null;
   /** Server-supplied config; null while still being fetched. */
   config: ServerConfig | null;
+  /**
+   * When set (per-agent Tasks tab), the page hides the agent filter
+   * control, locks the data fetch to this agent, and restricts the
+   * dispatch modal so the new task is owned by the same agent.
+   */
+  fixedAgentFqn?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
@@ -43,11 +49,15 @@ const DEFAULT_POLL_INTERVAL_MS = 4000;
  * {@link useTasks}, per-task detail loading in `useTaskDetail`,
  * URL selection in {@link useSelectedTask}.
  */
-export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
+export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }: TasksProps) {
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
-  const { selectedId, setSelectedId } = useSelectedTask(currentWorkspaceId);
-  const data = useTasks({ currentWorkspaceId, pollIntervalMs });
+  const { selectedId, setSelectedId } = useSelectedTask();
+  const data = useTasks({
+    currentWorkspaceId,
+    pollIntervalMs,
+    ...(fixedAgentFqn !== undefined ? { fixedAgentFqn } : {}),
+  });
   const {
     tasks,
     runtimes,
@@ -166,6 +176,9 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   }, [cancelTarget, cancelBusy, refresh]);
 
   const readyAgents = agents.filter((a) => a.status === "ready");
+  const dispatchAgents = fixedAgentFqn
+    ? readyAgents.filter((a) => a.agent.fqn === fixedAgentFqn)
+    : readyAgents;
 
   const visibleTasks = useMemo(() => {
     const q = idQuery.trim().toLowerCase();
@@ -208,10 +221,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     <>
       <HeaderActions>
         <TasksToolbar
-          dispatchDisabled={readyAgents.length === 0}
+          dispatchDisabled={dispatchAgents.length === 0}
           dispatchDisabledTitle={
-            readyAgents.length === 0
-              ? "Install at least one ready agent in the Catalog first"
+            dispatchAgents.length === 0
+              ? fixedAgentFqn
+                ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                : "Install at least one ready agent in the Catalog first"
               : "Dispatch a new task"
           }
           onDispatch={() => setDispatchOpen(true)}
@@ -235,6 +250,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
               agents={agents}
               filterAgentNames={filterAgentNames}
               runtimes={runtimes}
+              hideAgentFilter={fixedAgentFqn !== undefined}
             />
             <div className="tasks-pane__list-scroll">
               {!loaded ? (
@@ -271,7 +287,7 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
 
       <DispatchModal
         open={dispatchOpen}
-        agents={readyAgents}
+        agents={dispatchAgents}
         runtimes={runtimes}
         busy={busy}
         prefill={rerunFrom}
