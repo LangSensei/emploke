@@ -4286,3 +4286,50 @@ button {
   line-height: 1.5;
   color: var(--color-text-muted);
 }
+
+/*  Agent Overview clickable rows (review round 1)  */
+.agent-overview__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.agent-overview__item {
+  margin: 0;
+}
+.agent-overview__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+.agent-overview__row:hover,
+.agent-overview__row:focus-visible {
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.04));
+  border-color: var(--color-border);
+  outline: none;
+  text-decoration: none;
+}
+.agent-overview__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-overview__meta {
+  flex: 0 0 auto;
+}
+
+/* Pre-selected (Overview  Sessions click) row highlight */
+.session-list__item--preselected {
+  border-color: var(--color-accent, var(--color-border-strong));
+  box-shadow: var(--shadow-md);
+}

@@ -1,5 +1,6 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   createSession,
   deleteSession,
@@ -131,6 +132,24 @@ export function SessionsPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [fallback, setFallback] = useState<FallbackInfo | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
+
+  // Pre-select a row when the user clicked one in the agent's Overview tab
+  // (#agent-centric-ui review round 1). The id arrives via `location.state`
+  // — we consume it once on mount, store it for highlight + scroll, then
+  // clear history.state so a browser-back into Overview followed by re-entry
+  // doesn't re-fire the pre-selection.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialPreselectId =
+    typeof location.state === "object" && location.state !== null
+      ? (((location.state as { preselectId?: unknown }).preselectId as string | undefined) ?? null)
+      : null;
+  const [preselectedId, setPreselectedId] = useState<string | null>(initialPreselectId);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; navigate/location read intentionally only on first render
+  useEffect(() => {
+    if (initialPreselectId === null) return;
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, []);
 
   // Tracks whether the component is still mounted so async handlers can skip
   // setState calls on a tombstoned instance. CRITICAL: the effect must reset
@@ -438,6 +457,8 @@ export function SessionsPage({
               key={s.id}
               session={s}
               launching={launchingId === s.id}
+              preselected={preselectedId === s.id}
+              onPreselectConsumed={() => setPreselectedId(null)}
               onLaunch={(opts) => onLaunch(s, opts)}
               onDelete={() => setDeleteModal({ session: s, purge: false })}
             />
@@ -497,6 +518,8 @@ export function SessionsPage({
 interface ListItemProps {
   session: SessionView;
   launching: boolean;
+  preselected?: boolean;
+  onPreselectConsumed?: () => void;
   onLaunch: (opts: { remote?: boolean }) => void;
   onDelete: () => void;
 }
@@ -512,7 +535,14 @@ interface ListItemProps {
  * earlier `<table>` whose fixed columns left the actions cell
  * widthless and made chip widths jitter across rows.
  */
-function SessionListItem({ session, launching, onLaunch, onDelete }: ListItemProps) {
+function SessionListItem({
+  session,
+  launching,
+  preselected,
+  onPreselectConsumed,
+  onLaunch,
+  onDelete,
+}: ListItemProps) {
   const hasHistory = session.runtimeSessionId !== null && session.lastActiveAt !== null;
   const verb = hasHistory ? "Resume" : "Launch";
   // Default the primary action to whatever the user picked last for
@@ -520,8 +550,22 @@ function SessionListItem({ session, launching, onLaunch, onDelete }: ListItemPro
   // as one click. Falls back to local on first launch (the safe and
   // historically conventional choice).
   const defaultMode: "local" | "remote" = session.lastLaunchMode ?? "local";
+
+  // Pre-selection from the Overview tab: scroll into view once, mark
+  // the row, then tell the parent to drop the flag so subsequent
+  // re-renders don't keep re-firing the effect.
+  const rowRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (!preselected) return;
+    rowRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+    onPreselectConsumed?.();
+  }, [preselected, onPreselectConsumed]);
+
   return (
-    <li className="session-list__item">
+    <li
+      ref={rowRef}
+      className={`session-list__item${preselected ? " session-list__item--preselected" : ""}`}
+    >
       <div className="session-list__head">
         <div className="session-list__headline" title={`Agent: ${session.agent}`}>
           {session.agent}
