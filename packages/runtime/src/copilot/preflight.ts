@@ -69,6 +69,40 @@ import { createRequire } from "node:module";
 import { CopilotSdkUnavailableError } from "./errors.js";
 
 /**
+ * Resolver dependencies injected into {@link assertCopilotSdkResolvable}
+ * so unit tests can drive the two resolution steps without monkey-
+ * patching `import.meta.resolve` (which Node refuses) or spawning a
+ * subprocess in a tmpdir. Production callers should pass no argument
+ * (`assertCopilotSdkResolvable()` keeps the existing zero-arg
+ * signature, so the call site in `runServer` is unaffected and the
+ * public API of `@emploke/runtime` doesn't break).
+ *
+ * Both methods are synchronous on purpose — the production
+ * implementations (`import.meta.resolve`, `createRequire(...).resolve`)
+ * are sync as of Node 22, and the preflight runs on the boot path
+ * where a Promise round-trip would just add latency.
+ */
+export interface CopilotPreflightDeps {
+  /**
+   * Resolve a bare specifier to a file URL, mirroring
+   * `import.meta.resolve(spec)`. Throws on missing module (the Step 1
+   * failure mode).
+   */
+  readonly resolveSpecifier: (spec: string) => string;
+  /**
+   * Build a CJS-style `require` rooted at the SDK's module URL,
+   * mirroring `createRequire(sdkUrl)`. The returned require is then
+   * used to probe the `@github/copilot/sdk` subpath in Step 2.
+   */
+  readonly createRequireAt: (sdkUrl: string) => NodeRequire;
+}
+
+const defaultDeps: CopilotPreflightDeps = {
+  resolveSpecifier: (spec) => import.meta.resolve(spec),
+  createRequireAt: (sdkUrl) => createRequire(sdkUrl),
+};
+
+/**
  * Run the Copilot SDK resolvability preflight. Returns void on success;
  * throws {@link CopilotSdkUnavailableError} on failure (caller should
  * let it propagate out of `runServer` so the operator sees the message
@@ -97,12 +131,18 @@ import { CopilotSdkUnavailableError } from "./errors.js";
  * See the module-level jsdoc for why we filter on the resolver's
  * error code to distinguish "package missing" from "subpath uses
  * ESM-only exports".
+ *
+ * The optional `deps` parameter is a test seam: production callers
+ * (the `runServer` boot path) keep calling `assertCopilotSdkResolvable()`
+ * with no arguments and get the real Node resolvers. Tests pass
+ * synthetic deps that throw the codes under test, exercising every
+ * branch of the catch logic without touching the real module graph.
  */
-export function assertCopilotSdkResolvable(): void {
+export function assertCopilotSdkResolvable(deps: CopilotPreflightDeps = defaultDeps): void {
   // Step 1: SDK itself must be present in *our* module graph.
   let sdkUrl: string;
   try {
-    sdkUrl = import.meta.resolve("@github/copilot-sdk");
+    sdkUrl = deps.resolveSpecifier("@github/copilot-sdk");
   } catch (cause) {
     throw new CopilotSdkUnavailableError(cause as Error);
   }
@@ -131,7 +171,7 @@ export function assertCopilotSdkResolvable(): void {
   // can't slip past the preflight just because Node grew a new
   // error code we didn't think to add to an allowlist.
   try {
-    const requireFromSdk = createRequire(sdkUrl);
+    const requireFromSdk = deps.createRequireAt(sdkUrl);
     requireFromSdk.resolve("@github/copilot/sdk");
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;

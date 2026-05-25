@@ -20,7 +20,10 @@ export {
   type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
 } from "./copilot/launch-headless.js";
-export { assertCopilotSdkResolvable } from "./copilot/preflight.js";
+export {
+  assertCopilotSdkResolvable,
+  type CopilotPreflightDeps,
+} from "./copilot/preflight.js";
 export { flattenSkillName } from "./copilot/provision.js";
 export { isPathCovered } from "./copilot/trust.js";
 export {
