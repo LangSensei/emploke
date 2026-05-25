@@ -2,6 +2,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { WorkspaceListItem } from "../api";
 import {
+  AgentsIcon,
   ArrowLeftIcon,
   CatalogIcon,
   CheckIcon,
@@ -59,7 +60,7 @@ const ICONS: Record<SectionId, (props: { className?: string }) => ReactElement> 
 };
 
 const CHILD_ICONS: Record<RuntimeChildId, (props: { className?: string }) => ReactElement> = {
-  agents: RuntimeIcon,
+  agents: AgentsIcon,
   sessions: SessionsIcon,
   tasks: TasksIcon,
 };

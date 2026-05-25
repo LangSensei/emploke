@@ -132,4 +132,28 @@ describe("Sidebar nested Runtime children (Phase 1.5 Block F, §4.1)", () => {
     expect(onSelect).toHaveBeenCalledWith("runtime");
     expect(onSelectRuntimeChild).not.toHaveBeenCalled();
   });
+
+  it("uses a distinct icon for the Agents child vs the Runtime parent (v4 Bug 4)", () => {
+    // PR #189 polish v4 Bug 4 — Runtime parent (RuntimeIcon, a stacked
+    // chevron + bar glyph) and the Agents child used to share the same
+    // SVG, making the two rows visually indistinguishable. The child
+    // now uses a user-circle outline so each row reads as its own
+    // affordance. Lock that in by comparing the rendered `path[d]`
+    // attributes — they must not be the same.
+    renderSidebar({ active: "runtime:agents" });
+
+    const runtimeBtn = screen.getByRole("button", { name: /^Runtime$/ });
+    const agentsBtn = screen.getByRole("button", { name: /^Agents$/ });
+    const runtimePaths = Array.from(runtimeBtn.querySelectorAll("svg path"))
+      .map((p) => p.getAttribute("d"))
+      .filter(Boolean)
+      .join("|");
+    const agentsPaths = Array.from(agentsBtn.querySelectorAll("svg path"))
+      .map((p) => p.getAttribute("d"))
+      .filter(Boolean)
+      .join("|");
+    expect(runtimePaths).not.toBe("");
+    expect(agentsPaths).not.toBe("");
+    expect(runtimePaths).not.toBe(agentsPaths);
+  });
 });
