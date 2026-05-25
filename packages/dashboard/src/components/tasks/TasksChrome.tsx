@@ -67,26 +67,27 @@ export function TasksEmptyState({ loading, title, hint }: TasksEmptyStateProps) 
   );
 }
 
-export interface TaskDetailPlaceholderProps {
-  /** Workspace has zero tasks at all (filters not the cause). */
-  zeroTasks: boolean;
-}
-
 /**
  * Calm centered placeholder rendered in the right column when no task
  * is selected (the visible list is empty). Sibling to {@link TasksEmptyState}
  * so the two pieces share styling but live in distinct DOM positions:
  * one inside `.tasks-pane__list`, this one inside `.tasks-pane__detail`.
+ *
+ * PR #189 polish v7 (#194) — the legacy `zeroTasks` prop was removed.
+ * Since v4 the workspace-empty case is handled by {@link TasksZeroState}
+ * upstream and the `visibleTasks.length === 0` early return in
+ * `TasksPage` short-circuits before this placeholder ever mounts, so
+ * the `zeroTasks ? … : …` ternary was unreachable. The remaining
+ * "filtered-to-zero but visible rows present" branch is the only one
+ * that ever rendered, so the copy is hard-coded.
  */
-export function TaskDetailPlaceholder({ zeroTasks }: TaskDetailPlaceholderProps) {
+export function TaskDetailPlaceholder() {
   return (
     <aside className="tasks-pane__detail tasks-pane__detail--empty">
       <div className="empty">
         <div className="empty__icon">📝</div>
         <p className="empty__title">No task selected</p>
-        <p className="empty__hint">
-          {zeroTasks ? "Dispatch a task to get started" : "No tasks match the current filters"}
-        </p>
+        <p className="empty__hint">No tasks match the current filters</p>
       </div>
     </aside>
   );

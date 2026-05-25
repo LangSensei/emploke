@@ -350,7 +350,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
               // practice rare because `effectiveSelectedId` auto-binds
               // to the first row, but we keep the branch for safety).
               // See `.pilot/inbox/20260525-v4-tasks-empty-state-filtered.md`.
-              <TaskDetailPlaceholder zeroTasks={false} />
+              <TaskDetailPlaceholder />
             )}
           </div>
         )}
