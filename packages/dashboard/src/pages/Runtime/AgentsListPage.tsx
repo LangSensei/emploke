@@ -139,61 +139,22 @@ export function AgentsListPage() {
 
   usePollWithBackoff(refreshTasks, pollIntervalMs, true);
 
-  // Per-selected-agent sessions. Refresh only when something is selected;
-  // when selection clears the polling stops (the `enabled` flag below is
-  // false), and any cached list is wiped synchronously by the reset effect
-  // so a stale right pane doesn't flash.
-  const refreshSessions = useCallback(async () => {
-    if (selectedFqn === null) return;
-    try {
-      const s = await listSessions({ agent: selectedFqn });
-      if (!mountedRef.current) return;
-      s.sort((a, b) => {
-        const al = a.lastActiveAt ?? a.createdAt;
-        const bl = b.lastActiveAt ?? b.createdAt;
-        return bl.localeCompare(al);
-      });
-      setSessions(s);
-      setSessionsError(null);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      setSessionsError(e instanceof Error ? e.message : String(e));
-      setSessions((prev) => (prev === null ? [] : prev));
-    }
-  }, [selectedFqn]);
-
-  // Wipe per-agent sessions state when selection changes (or clears) so
-  // the previous agent's list doesn't bleed into the new right pane.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate fqn-only reset; the lists belong to the previous selection and must be cleared synchronously when fqn changes
-  useEffect(() => {
-    setSessions(null);
-    setSessionsError(null);
-  }, [selectedFqn]);
-
-  useEffect(() => {
-    void refreshSessions();
-  }, [refreshSessions]);
-
-  usePollWithBackoff(refreshSessions, pollIntervalMs, selectedFqn !== null);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void refreshTasks();
-        void refreshSessions();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refreshTasks, refreshSessions]);
-
   // PR #189 polish v3 — DO NOT gate views computation on `tasks !== null`.
   // The agent identities come from the shell-preloaded `data.agents`, so
   // rows must render immediately. The tasks fetch only contributes per-row
   // runtime augmentation (the "X running" tag) — when it's pending, the
   // computed counts are all 0 but `runtimeLoading=true` lets each row
   // render a skeleton so the UI doesn't lie about an idle state.
+  //
+  // PR #189 polish v4 — the `views` / `filteredViews` / `effectiveSelectedFqn`
+  // chain is computed BEFORE the sessions fetch (below) because
+  // `refreshSessions` and its wipe/poll-enabled siblings now key off
+  // `effectiveSelectedFqn`, not `selectedFqn`. Without that re-key the
+  // right pane on the auto-selected row stays stuck on "Loading…"
+  // forever — the URL `?selected=` slot is empty on first paint, so
+  // `selectedFqn === null` short-circuits the sessions fetch even
+  // though the pane has resolved a real fqn via the auto-select
+  // fallback. See `.pilot/inbox/20260525-v4-activity-loading-hang.md`.
   const views: AgentRuntimeView[] = useMemo(
     () => computeAgentRuntimeViews(data.agents, tasks ?? []),
     [data.agents, tasks],
@@ -226,6 +187,66 @@ export function AgentsListPage() {
     if (filteredViews.length > 0) return filteredViews[0]?.entry.agent.fqn ?? null;
     return null;
   }, [selectedFqn, filteredViews]);
+
+  // Per-selected-agent sessions. Refresh only when something is
+  // effectively selected (URL `?selected=` OR the auto-select
+  // fallback); when selection clears the polling stops (the `enabled`
+  // flag below is false), and any cached list is wiped synchronously
+  // by the reset effect so a stale right pane doesn't flash.
+  //
+  // PR #189 polish v4 — keys off `effectiveSelectedFqn`, not the raw
+  // URL `selectedFqn`, so the auto-selected row's sessions fetch
+  // actually fires on first paint. The old `selectedFqn`-only guard
+  // never fired when the user landed on the page without a
+  // `?selected=` query param, leaving `AgentOverviewTab` stuck on
+  // "Loading…" forever.
+  const refreshSessions = useCallback(async () => {
+    if (effectiveSelectedFqn === null) return;
+    try {
+      const s = await listSessions({ agent: effectiveSelectedFqn });
+      if (!mountedRef.current) return;
+      s.sort((a, b) => {
+        const al = a.lastActiveAt ?? a.createdAt;
+        const bl = b.lastActiveAt ?? b.createdAt;
+        return bl.localeCompare(al);
+      });
+      setSessions(s);
+      setSessionsError(null);
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setSessionsError(e instanceof Error ? e.message : String(e));
+      setSessions((prev) => (prev === null ? [] : prev));
+    }
+  }, [effectiveSelectedFqn]);
+
+  // Wipe per-agent sessions state when the effective selection changes
+  // (or clears) so the previous agent's list doesn't bleed into the
+  // new right pane. Keys off `effectiveSelectedFqn` for the same
+  // reason as `refreshSessions` above — both must agree on the same
+  // fqn or the wipe runs against a stale identity.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate fqn-only reset; the lists belong to the previous selection and must be cleared synchronously when fqn changes
+  useEffect(() => {
+    setSessions(null);
+    setSessionsError(null);
+  }, [effectiveSelectedFqn]);
+
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
+  usePollWithBackoff(refreshSessions, pollIntervalMs, effectiveSelectedFqn !== null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refreshTasks();
+        void refreshSessions();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [refreshTasks, refreshSessions]);
 
   // Catalog entry for the selected fqn (null when the agent isn't
   // installed — the pane renders the "not installed" alert in that case).

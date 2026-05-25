@@ -446,3 +446,49 @@ describe("PR #189 polish v3 — anti-gating + row redesign", () => {
     expect(alpha.className).not.toContain("agents-list__item--selected");
   });
 });
+
+describe("PR #189 polish v4 — auto-selected agent's sessions fetch fires (Bug 1)", () => {
+  it("fires listSessions for the auto-selected agent when ?selected= is absent", async () => {
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    mockListTasks.mockResolvedValue([]);
+    mockListSessions.mockResolvedValue([] as SessionView[]);
+
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // The right pane drives off `effectiveSelectedFqn` (auto-select
+    // fallback). Bug 1 in v3 was that `refreshSessions` keyed off the
+    // raw URL `selectedFqn` instead, so `listSessions` never fired on
+    // first paint without `?selected=` — and the pane sat on
+    // "Loading…" forever. After the v4 re-key, the auto-selected agent
+    // triggers the same listSessions call as an explicit URL pick.
+    await waitFor(() => {
+      expect(mockListSessions).toHaveBeenCalled();
+    });
+    const lastCall = mockListSessions.mock.calls.at(-1) ?? [];
+    expect(lastCall[0]?.agent).toBe("emploke/alpha");
+  });
+
+  it("re-fires listSessions when the user picks a different row (selection wins over auto-select)", async () => {
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    mockListTasks.mockResolvedValue([]);
+    mockListSessions.mockResolvedValue([] as SessionView[]);
+
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    await waitFor(() => {
+      expect(mockListSessions).toHaveBeenCalled();
+    });
+    mockListSessions.mockClear();
+
+    const betaRow = screen.getByTestId("agent-row-emploke/beta");
+    act(() => {
+      fireEvent.click(betaRow);
+    });
+
+    await waitFor(() => {
+      expect(mockListSessions).toHaveBeenCalled();
+    });
+    const lastCall = mockListSessions.mock.calls.at(-1) ?? [];
+    expect(lastCall[0]?.agent).toBe("emploke/beta");
+  });
+});
