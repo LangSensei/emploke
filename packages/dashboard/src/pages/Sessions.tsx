@@ -1,5 +1,6 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   createSession,
   deleteSession,
@@ -20,7 +21,10 @@ import {
   RefreshIcon,
   TrashIcon,
 } from "../components/Icons";
+import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
+import { CreateModal } from "../components/sessions/CreateModal";
+import { useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
 
@@ -31,6 +35,12 @@ interface SessionsProps {
   currentWorkspaceId: string | null;
   /** Full registered-workspace list, used to resolve display name for the workdir hint. */
   workspaces: WorkspaceListItem[];
+  /**
+   * When set (per-agent Sessions tab), the agent filter is locked to
+   * this fqn, the agent select disappears from the toolbar, and any new
+   * session created from this page is owned by the same agent.
+   */
+  fixedAgentFqn?: string;
 }
 
 interface FallbackInfo {
@@ -100,13 +110,38 @@ function presetToActiveSince(preset: TimePreset, now: Date = serverNow()): strin
  * no terminal emulator could be detected), we fall back to showing the
  * incantation in a modal so the user can still copy-paste it.
  */
-export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }: SessionsProps) {
+export function SessionsPage({
+  agents,
+  config,
+  currentWorkspaceId,
+  workspaces,
+  fixedAgentFqn,
+}: SessionsProps) {
   const [sessions, setSessions] = useState<SessionView[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
-  const [filter, setFilter] = useState<string>(ALL_AGENTS);
-  const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
-  const [timeFilter, setTimeFilter] = useState<TimePreset>(DEFAULT_TIME_PRESET);
-  const [idQuery, setIdQuery] = useState<string>("");
+
+  // URL-driven filter state (Phase 1.5 §4.5 / Block G). Each filter
+  // reads from its querystring slot and writes back via the guarded
+  // setter from {@link useUrlSearchValue}, so refresh / back-button /
+  // share-link all reproduce the same view. `fixedAgentFqn` (set when
+  // this page is embedded inside an agent detail tab) takes
+  // precedence over the URL-driven `?agent=` slot and locks both the
+  // value and the writer.
+  const [idQuery, setIdQuery] = useUrlSearchValue("q", "");
+  const [agentFilterUrl, setAgentFilterUrl] = useUrlSearchValue("agent", ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
+  const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
+  const filter = fixedAgentFqn ?? agentFilterUrl;
+  const setFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
+  // Coerce the URL value to a known preset so a stale or malformed
+  // querystring (`?range=lastQuarter`) silently degrades to the
+  // default instead of breaking the data fetch.
+  const timeFilter: TimePreset = ((): TimePreset => {
+    const match = TIME_PRESETS.find((p) => p.value === rangeUrl);
+    return match ? match.value : DEFAULT_TIME_PRESET;
+  })();
+  const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
+
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Distinguishes "haven't loaded yet" from "loaded with zero results" so the
@@ -117,6 +152,24 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   const [createOpen, setCreateOpen] = useState(false);
   const [fallback, setFallback] = useState<FallbackInfo | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
+
+  // Pre-select a row when the user clicked one in the agent's Overview tab
+  // (#agent-centric-ui review round 1). The id arrives via `location.state`
+  // — we consume it once on mount, store it for highlight + scroll, then
+  // clear history.state so a browser-back into Overview followed by re-entry
+  // doesn't re-fire the pre-selection.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialPreselectId =
+    typeof location.state === "object" && location.state !== null
+      ? (((location.state as { preselectId?: unknown }).preselectId as string | undefined) ?? null)
+      : null;
+  const [preselectedId, setPreselectedId] = useState<string | null>(initialPreselectId);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; navigate/location read intentionally only on first render
+  useEffect(() => {
+    if (initialPreselectId === null) return;
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, []);
 
   // Tracks whether the component is still mounted so async handlers can skip
   // setState calls on a tombstoned instance. CRITICAL: the effect must reset
@@ -269,6 +322,9 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
   };
 
   const readyAgents = agents.filter((a) => a.status === "ready");
+  const createAgents = fixedAgentFqn
+    ? readyAgents.filter((a) => a.agent.fqn === fixedAgentFqn)
+    : readyAgents;
 
   // Client-side filters layered on top of the server-side agent narrow.
   // Both are interactive (typing / dropdown change), so doing them in-memory
@@ -281,6 +337,17 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
       return true;
     });
   })();
+
+  // PR #189 polish v3 — true when any filter chrome is constraining the
+  // list. Used by the workspace-empty zero-state collapse so we don't
+  // hide the filter controls behind a CTA when a filter is the actual
+  // reason the list is empty. `fixedAgentFqn` (per-agent embed) is NOT
+  // a user-set filter for this purpose.
+  const filtersActive =
+    idQuery.trim() !== "" ||
+    (!fixedAgentFqn && agentFilterUrl !== ALL_AGENTS) ||
+    runtimeFilter !== ALL_RUNTIMES ||
+    timeFilter !== DEFAULT_TIME_PRESET;
 
   if (currentWorkspaceId === null) {
     return (
@@ -303,10 +370,12 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           type="button"
           className="btn btn--primary"
           onClick={() => setCreateOpen(true)}
-          disabled={readyAgents.length === 0}
+          disabled={createAgents.length === 0}
           title={
-            readyAgents.length === 0
-              ? "Install at least one ready agent in the Catalog first"
+            createAgents.length === 0
+              ? fixedAgentFqn
+                ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                : "Install at least one ready agent in the Catalog first"
               : "Create a new session"
           }
         >
@@ -314,6 +383,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           <span>New session</span>
         </button>
       </HeaderActions>
+
+      {!fixedAgentFqn && <LegacyMovedBanner page="sessions" />}
 
       <div className="page-toolbar">
         <div
@@ -330,28 +401,28 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
             onChange={(e) => setIdQuery(e.target.value)}
             placeholder="session id…"
             className="input"
-            // Session ids are fixed-width (`YYYYMMDD-xxxxxxxx`, 17 chars).
-            // 160px is the sweet spot — holds the full id, the search-input
-            // clear-x, and a bit of breathing room. The original 200px was
-            // wasted; 150 was a hair too tight.
             style={{ width: 160 }}
           />
-          <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
-            Agent
-          </label>
-          <select
-            id="agent-filter"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="select"
-          >
-            <option value={ALL_AGENTS}>All</option>
-            {agents.map((a) => (
-              <option key={a.agent.fqn} value={a.agent.fqn}>
-                {a.agent.fqn}
-              </option>
-            ))}
-          </select>
+          {!fixedAgentFqn && (
+            <>
+              <label htmlFor="agent-filter" className="muted" style={{ fontSize: 12 }}>
+                Agent
+              </label>
+              <select
+                id="agent-filter"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="select"
+              >
+                <option value={ALL_AGENTS}>All</option>
+                {agents.map((a) => (
+                  <option key={a.agent.fqn} value={a.agent.fqn}>
+                    {a.agent.fqn}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <label htmlFor="runtime-filter" className="muted" style={{ fontSize: 12 }}>
             Runtime
           </label>
@@ -398,20 +469,46 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
           <p className="empty__title">Loading sessions…</p>
         </div>
       ) : visibleSessions.length === 0 ? (
-        <div className="empty">
-          <div className="empty__icon">📂</div>
-          <p className="empty__title">{sessions.length === 0 ? "No sessions yet" : "No matches"}</p>
-          <p className="empty__hint">
-            {sessions.length === 0 ? (
-              <>
-                Create a session to bake an agent into a workdir, then launch <code>copilot</code>{" "}
-                there.
-              </>
-            ) : (
-              <>Adjust the filters above to see more sessions.</>
-            )}
-          </p>
-        </div>
+        // Same shape as Tasks (`.pilot/inbox/20260525-empty-state-double-render.md`):
+        // collapse to a single full-width zero-state only when the
+        // workspace is genuinely empty AND no filter is constraining the
+        // list. When a filter is active, keep the standard filter-empty
+        // copy so the user sees what's hiding the rows.
+        sessions.length === 0 && !filtersActive ? (
+          <div className="empty tasks-pane__zero" data-testid="sessions-empty-zero">
+            <div className="empty__icon" aria-hidden="true">
+              📂
+            </div>
+            <p className="empty__title">No sessions yet</p>
+            <p className="empty__hint">
+              Create a session to bake an agent into a workdir, then launch <code>copilot</code>{" "}
+              there.
+            </p>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setCreateOpen(true)}
+              disabled={createAgents.length === 0}
+              title={
+                createAgents.length === 0
+                  ? fixedAgentFqn
+                    ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                    : "Install at least one ready agent in the Catalog first"
+                  : "Create a new session"
+              }
+              data-testid="sessions-empty-zero-cta"
+            >
+              <PlusIcon />
+              <span>New session</span>
+            </button>
+          </div>
+        ) : (
+          <div className="empty">
+            <div className="empty__icon">📂</div>
+            <p className="empty__title">No matches</p>
+            <p className="empty__hint">Adjust the filters above to see more sessions.</p>
+          </div>
+        )
       ) : (
         <ul className="session-list" aria-label="Sessions">
           {visibleSessions.map((s) => (
@@ -419,6 +516,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
               key={s.id}
               session={s}
               launching={launchingId === s.id}
+              preselected={preselectedId === s.id}
+              onPreselectConsumed={() => setPreselectedId(null)}
               onLaunch={(opts) => onLaunch(s, opts)}
               onDelete={() => setDeleteModal({ session: s, purge: false })}
             />
@@ -428,11 +527,15 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
 
       <CreateModal
         open={createOpen}
-        agents={readyAgents}
+        agents={createAgents}
         runtimes={runtimes}
         workspaceDisplayName={currentDisplayName}
         pathSeparator={config?.pathSeparator ?? "/"}
         busy={busy}
+        // PR #189 polish v3 — when the user has pinned the page to a
+        // single agent via `?agent=<fqn>`, seed the modal with that
+        // agent. "All" keeps the existing `agents[0]` fallback.
+        initialAgent={fixedAgentFqn ?? (agentFilterUrl !== ALL_AGENTS ? agentFilterUrl : undefined)}
         onClose={() => setCreateOpen(false)}
         onCreate={onCreated}
       />
@@ -478,6 +581,8 @@ export function SessionsPage({ agents, config, currentWorkspaceId, workspaces }:
 interface ListItemProps {
   session: SessionView;
   launching: boolean;
+  preselected?: boolean;
+  onPreselectConsumed?: () => void;
   onLaunch: (opts: { remote?: boolean }) => void;
   onDelete: () => void;
 }
@@ -493,7 +598,14 @@ interface ListItemProps {
  * earlier `<table>` whose fixed columns left the actions cell
  * widthless and made chip widths jitter across rows.
  */
-function SessionListItem({ session, launching, onLaunch, onDelete }: ListItemProps) {
+function SessionListItem({
+  session,
+  launching,
+  preselected,
+  onPreselectConsumed,
+  onLaunch,
+  onDelete,
+}: ListItemProps) {
   const hasHistory = session.runtimeSessionId !== null && session.lastActiveAt !== null;
   const verb = hasHistory ? "Resume" : "Launch";
   // Default the primary action to whatever the user picked last for
@@ -501,8 +613,22 @@ function SessionListItem({ session, launching, onLaunch, onDelete }: ListItemPro
   // as one click. Falls back to local on first launch (the safe and
   // historically conventional choice).
   const defaultMode: "local" | "remote" = session.lastLaunchMode ?? "local";
+
+  // Pre-selection from the Overview tab: scroll into view once, mark
+  // the row, then tell the parent to drop the flag so subsequent
+  // re-renders don't keep re-firing the effect.
+  const rowRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (!preselected) return;
+    rowRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+    onPreselectConsumed?.();
+  }, [preselected, onPreselectConsumed]);
+
   return (
-    <li className="session-list__item">
+    <li
+      ref={rowRef}
+      className={`session-list__item${preselected ? " session-list__item--preselected" : ""}`}
+    >
       <div className="session-list__head">
         <div className="session-list__headline" title={`Agent: ${session.agent}`}>
           {session.agent}
@@ -726,121 +852,11 @@ function CopyPathButton({ path }: { path: string }) {
 }
 
 // ─── Create modal ─────────────────────────────────────────────
-
-interface CreateModalProps {
-  open: boolean;
-  agents: AgentEntry[];
-  runtimes: string[];
-  /** Display name of the active workspace, used in the "where will it land" hint. */
-  workspaceDisplayName: string | null;
-  /** Native path separator on the server's OS (e.g. `\\` on Windows). */
-  pathSeparator: string;
-  busy: boolean;
-  onClose: () => void;
-  onCreate: (agent: string, runtime: string | undefined) => void;
-}
-
-function CreateModal({
-  open,
-  agents,
-  runtimes,
-  workspaceDisplayName,
-  pathSeparator,
-  busy,
-  onClose,
-  onCreate,
-}: CreateModalProps) {
-  const [agent, setAgent] = useState<string>("");
-  const [runtime, setRuntime] = useState<string>("");
-
-  useEffect(() => {
-    if (open && agents.length > 0 && !agents.some((a) => a.agent.fqn === agent)) {
-      setAgent(agents[0]?.agent.fqn ?? "");
-    }
-  }, [open, agents, agent]);
-
-  // Default runtime to the first registered kind. If the registry returns
-  // an empty list (server unreachable on mount), we leave it blank and
-  // submit without a runtime field — the server will pick its default.
-  useEffect(() => {
-    if (open && runtimes.length > 0 && !runtimes.includes(runtime)) {
-      setRuntime(runtimes[0] ?? "");
-    }
-  }, [open, runtimes, runtime]);
-
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!agent) return;
-    onCreate(agent, runtime || undefined);
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="New session" size="default">
-      <form onSubmit={onSubmit}>
-        <div className="modal__body">
-          <label htmlFor="new-session-agent">
-            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Agent
-            </div>
-            <select
-              id="new-session-agent"
-              value={agent}
-              onChange={(e) => setAgent(e.target.value)}
-              disabled={busy}
-              required
-              className="select select--full"
-            >
-              {agents.map((a) => (
-                <option key={a.agent.fqn} value={a.agent.fqn}>
-                  {a.agent.fqn}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label htmlFor="new-session-runtime">
-            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Runtime
-            </div>
-            <select
-              id="new-session-runtime"
-              value={runtime}
-              onChange={(e) => setRuntime(e.target.value)}
-              disabled={busy || runtimes.length === 0}
-              className="select select--full"
-            >
-              {runtimes.length === 0 ? (
-                <option value="">(server default)</option>
-              ) : (
-                runtimes.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            A new workdir will be created under{" "}
-            <code>
-              {workspaceDisplayName
-                ? `<workspace:${workspaceDisplayName}>${pathSeparator}sessions${pathSeparator}<id>`
-                : "<workspace>/sessions/<id>"}
-            </code>{" "}
-            and the agent will be baked into it.
-          </p>
-        </div>
-        <div className="modal__footer">
-          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="btn btn--primary" disabled={busy || !agent}>
-            {busy ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
+// Extracted to packages/dashboard/src/components/sessions/CreateModal.tsx
+// in PR #189 polish v3 so the AgentDetailPane can mount the same primitive
+// in place. The Sessions page now imports it from the new location and
+// passes its context-derived `initialAgent` (the `?agent=` filter when
+// pinned to a single agent, undefined when "All").
 
 // ─── Fallback modal ───────────────────────────────────────────
 

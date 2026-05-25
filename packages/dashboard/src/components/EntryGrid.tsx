@@ -142,6 +142,7 @@ function EntryCard({
     <div
       className="card-grid__item"
       data-status={item.status}
+      data-entry-name={item.name}
       role="button"
       tabIndex={0}
       onClick={onEdit}

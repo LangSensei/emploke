@@ -238,6 +238,41 @@ button {
   padding: var(--space-3) var(--space-3) var(--space-1);
 }
 
+/* Section group container. Holds the parent button + nested children
+   list (when present). No visual chrome of its own — the children list
+   handles indentation. */
+.sidebar__group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Indented child rows under a group parent (Phase 1.5 §4.1 — Runtime
+   gets Agents / Sessions / Tasks as children). Indent visually mirrors
+   the icon-gutter width (16 px icon + 12 px gap = ~28 px) so child
+   labels line up with parent labels. */
+.sidebar__children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  display: flex;
+  flex-direction: column;
+}
+.sidebar__item--parent {
+  /* No visual change to the parent — children expand below it. The
+     class is a CSS hook so future grouping treatments (e.g. removing
+     bottom margin when expanded) have a target. */
+  margin-bottom: 0;
+}
+.sidebar__item--child {
+  font-size: 13px;
+  padding-left: var(--space-3);
+}
+.sidebar__icon--child {
+  /* Slightly muted icon weight so the visual hierarchy reads
+     parent → child without a brand-new icon palette. */
+  opacity: 0.85;
+}
+
 .sidebar__item {
   display: flex;
   align-items: center;
@@ -1358,6 +1393,24 @@ button {
 .card-grid__item:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* PR #189 polish v3 — transient highlight applied to a Catalog card
+   when the user lands here from AgentDetailPane's Configure button
+   (`?agent=<fqn>`). Catalog.tsx adds the class on mount and clears it
+   after ~2s; the animation runs once for that window. */
+.card-grid__item--highlight {
+  animation: card-grid-highlight 2s ease-out both;
+}
+@keyframes card-grid-highlight {
+  0% {
+    background: var(--color-accent-bg);
+    box-shadow: 0 0 0 2px var(--color-accent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 /* Header strip: small kind tag (uppercase + icon) on the left, hidden
@@ -2940,6 +2993,35 @@ button {
   min-height: 240px;
 }
 
+/* PR #189 polish v3 — when the workspace itself is empty (not a
+   filter-narrowed result) the page collapses the two-column grid into a
+   single full-width empty state. Used by Tasks / Sessions / Agents — see
+   `.pilot/inbox/20260525-empty-state-double-render.md` for the 3-case
+   state machine. */
+.tasks-pane--zero {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tasks-pane__zero {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+.tasks-pane__zero .empty__title {
+  margin: 0;
+}
+.tasks-pane__zero .empty__hint {
+  max-width: 480px;
+}
+
 /*  Below 1024px the side-by-side layout becomes cramped (the
     detail panel demands ≥360px and the list ≥360px ≈ 720px just
     for content; once you add the sidebar that's tight on a 1280
@@ -3842,27 +3924,44 @@ button {
 
 /* ─── Artifact preview split-pane + viewers ──────────────────────── */
 
-/* Split layout: 30% file list / 70% preview pane. Fixed ratio
-   (resizable split is explicit non-goal for this commit). */
+/* Split layout: left file list (capped 240px) / right preview pane.
+   Fixed ratio (resizable split is explicit non-goal for this commit).
+   PR #189 polish v4 Bug 3 — capped the left column at 240px because
+   30% of the detail pane was far more than artifact filenames need;
+   dropped the 600px height caps on both children and switched to a
+   100%-height stretch container so the preview pane fills the full
+   detail-pane height instead of leaving whitespace below. The
+   parent chain that supplies the determinate height is
+   `.tasks-pane__detail > .task-detail__body` (the ArtifactsTab root
+   wears both classes — see `tasks-pane__detail > .task-detail__body`
+   rule below for the flex: 1 / min-height: 0 / overflow: auto). */
 .artifacts-split {
   display: grid;
-  grid-template-columns: minmax(220px, 30%) 1fr;
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: var(--space-3);
-  align-items: start;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
 }
 .artifacts-split__list {
   min-width: 0;
-  max-height: 600px;
+  min-height: 0;
   overflow: auto;
 }
 .artifacts-split__preview {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   padding: var(--space-3);
-  max-height: 600px;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.artifacts-split__preview > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .artifact-list__item--active {
@@ -4245,6 +4344,23 @@ button {
   overflow: auto;
 }
 
+/* PR #189 polish v2 — the Agents page reuses the .tasks-pane__detail
+   primitive as its right pane (CSS option A; see .agents-page comment
+   below for context). Mirror the head-pinned / body-scrolls rules above
+   for the agent-detail-specific children so the AgentDetailPane header
+   stays put while the Overview grid / "not installed" alert / loading
+   placeholder scrolls. */
+.tasks-pane__detail > .agent-detail__header {
+  flex: 0 0 auto;
+}
+.tasks-pane__detail > .agent-overview,
+.tasks-pane__detail > .empty,
+.tasks-pane__detail > .alert {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 /* F4 + iter-3 C3: the SVG copy/check icon inside the title-strip
    CopyButton. Smaller (12px) and subtler than the iter-2 sizing so
    it reads as inline metadata rather than a primary action. The
@@ -4285,4 +4401,620 @@ button {
   font-size: 13px;
   line-height: 1.5;
   color: var(--color-text-muted);
+}
+
+/*  Agent Overview clickable rows (review round 1)  */
+.agent-overview__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.agent-overview__item {
+  margin: 0;
+}
+.agent-overview__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+.agent-overview__row:hover,
+.agent-overview__row:focus-visible {
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.04));
+  border-color: var(--color-border);
+  outline: none;
+  text-decoration: none;
+}
+.agent-overview__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-overview__meta {
+  flex: 0 0 auto;
+}
+
+/* Pre-selected (Overview  Sessions click) row highlight */
+.session-list__item--preselected {
+  border-color: var(--color-accent, var(--color-border-strong));
+  box-shadow: var(--shadow-md);
+}
+
+/* ─── Runtime / Agent-centric pages (PR #189 polish round) ──────────
+   Baseline layout for the four class prefixes added in the Phase 1
+   restructure. Theming refinements (dark mode, motion, status-icon
+   system, animated pulse on the running dot) are intentionally
+   deferred — these rules just make the screens parseable. All tokens
+   come from `:root` at the top of this file; no new colors. */
+
+/* AgentsPage — /workspaces/<ws>/runtime/agents.
+   PR #189 polish v2 rewrote this page as a master-detail split layout
+   mirroring the Tasks page; the .agents-page wrapper provides the same
+   flex-height context the .tasks-page wrapper gives over there, and the
+   actual grid (left list + right detail) reuses the existing .tasks-pane*
+   primitives directly (CSS option A — lowest delta; see styles around
+   line 2922 for the grid geometry). The companion
+   `.tasks-pane__detail > .agent-detail__header` rule below extends the
+   tasks-pane detail flex chain to cover the agent detail children too,
+   so the right pane's header stays pinned while the body scrolls. */
+.agents-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.agents-page > .alert {
+  flex: 0 0 auto;
+}
+.agents-page > .tasks-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Toolbar above the agents list — status filter pills + search box.
+   Phase 1.5 §4.2 / Block H. Right-aligned search lets the pills sit
+   visually anchored to the heading edge. PR #189 polish v2 re-hosts
+   the toolbar inside the left .tasks-pane__list (was full-page width
+   before); padding + border-bottom give it the same affordance the
+   Tasks-page .task-filters has. */
+.agents-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+  background: var(--color-bg);
+}
+.agents-list-toolbar__search {
+  margin-left: auto;
+  min-width: 160px;
+  max-width: 320px;
+  flex: 1 1 160px;
+}
+
+/* PR #189 polish v3 — agents-list row redesigned around the shared
+   `<AgentAvatar>` + `<AgentFqn>` primitives. Three-column flex layout:
+   avatar | identity (FQN + subline) | status column (pill + activity).
+   The previous per-row kebab menu was deleted; the row is a single
+   "click to select" target, matching the equivalent row shape on
+   `/runtime/tasks` and `/runtime/sessions`. The accent stripe + tinted
+   bg + bold name on the selected row mirrors `.task-list__item--selected`
+   so the master-detail visual state reads identical across pages. */
+.agents-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.agents-list__item {
+  position: relative;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+.agents-list__item:last-child {
+  border-bottom: 0;
+}
+.agents-list__item:hover {
+  background: var(--color-surface-hover);
+}
+.agents-list__item:focus-visible {
+  outline: 2px solid var(--color-accent, #3b82f6);
+  outline-offset: -2px;
+}
+/* Selected-row visual highlight — mirrors `.task-list__item--selected`
+   (inset accent stripe + surface-hover background) so the master-detail
+   selected state reads identical across Tasks and Agents pages. The
+   bolder weight on the FQN's short half is applied by the
+   `.agent-fqn__short` rule and lives at `font-weight: 600` already;
+   the selected modifier nudges both the scope and the subline up so the
+   row stands out more clearly. */
+.agents-list__item--selected {
+  background: var(--color-surface-hover);
+  box-shadow: inset 4px 0 0 var(--color-accent, #3b82f6);
+}
+.agents-list__item--selected .agent-fqn__short,
+.agents-list__item--selected .agent-fqn__sep {
+  font-weight: 700;
+}
+.agents-list__item--selected .agent-fqn__scope {
+  font-weight: 500;
+}
+.agents-list__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.agents-list__subline {
+  font-size: 12px;
+  line-height: 1.3;
+}
+.agents-list__status-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+.agents-list__activity {
+  font-size: 12px;
+  min-height: 14px;
+  display: inline-flex;
+  align-items: center;
+}
+/* Tiny shimmer skeleton — reused for the activity tag while the
+   workspace-wide tasks fetch is still in flight. Width is fixed so the
+   right column doesn't jitter when the real count appears. */
+.skeleton {
+  display: inline-block;
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-hover) 0%,
+    var(--color-surface) 50%,
+    var(--color-surface-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+.skeleton--text {
+  width: 56px;
+  height: 10px;
+}
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* Status pill — shared between AgentsListPage rows and the detail
+   header. Running vs idle are distinguished by both a dot tone and a
+   subtle background tint so colour-blind users still get the contrast
+   from the border + label, not the dot alone. */
+.agent-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.agent-status-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+  flex: 0 0 auto;
+}
+.agent-status-pill--running {
+  background: rgba(21, 128, 61, 0.08);
+  border-color: rgba(21, 128, 61, 0.35);
+  color: var(--color-success);
+}
+.agent-status-pill--running .agent-status-pill__dot {
+  background: var(--color-success);
+}
+.agent-status-pill--idle {
+  /* Inherits the neutral defaults above. Declared explicitly so the
+     selector exists and downstream theming has a hook. */
+  background: var(--color-surface);
+}
+
+/* Sub-tab bar — Overview / Sessions / Tasks. **Removed** in Phase 1.5
+   §3.4 / Block I (Overview is the default and only sub-tab this round;
+   per-agent Sessions/Tasks were merged into the global pages). The
+   class names remain reserved so a future re-introduction lands the
+   same selectors. */
+
+/* Detail page header (Phase 1.5 §4.3 / Block I redesign):
+   row 1 — avatar + name/scope + status pill + version chip + actions
+   row 2 — 3 KPI tiles
+   Layout uses flexbox so the action buttons trail right and wrap
+   below the title at narrow widths (< 1024 px).
+
+   PR #189 polish v3: the inline `.agent-detail__avatar` markup was
+   replaced by the shared `<AgentAvatar size="lg">` primitive — its
+   `.agent-avatar--lg` rule sizes the square (56px) and the inline
+   style sets the deterministic bg/fg. The old selector is gone. */
+.agent-detail-page {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.agent-detail__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.agent-detail__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.agent-detail__name-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-detail__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.15;
+}
+.agent-detail__scope {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.agent-detail__version {
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono, monospace);
+}
+.agent-detail__spacer {
+  flex: 1;
+}
+.agent-detail__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* KPI tiles row — exactly 3 tiles per §4.3 (Running / Total 7d /
+   Sessions 7d). At 1024 px the row wraps to a 2-tile-per-line grid;
+   at narrower widths it collapses to a single column. PR #189 polish v2
+   also uses `auto-fit + minmax` so the row reflows inside the right
+   master-detail pane (which is narrower than the viewport), not just
+   at the explicit viewport breakpoints. */
+.agent-detail__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+@media (max-width: 1024px) {
+  .agent-detail__kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .agent-detail__kpis {
+    grid-template-columns: 1fr;
+  }
+}
+.kpi-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.kpi-tile__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kpi-tile__value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+.kpi-tile__caption {
+  font-size: 12px;
+}
+
+/* Legacy-URL redirect banner (Block C). Rendered on AgentsListPage
+   when the user navigated here from `/sessions` or `/tasks`. One-shot:
+   dismisses on the next navigation (handled in component code by
+   clearing `location.state`). Visually it's an `.alert--info` variant
+   sitting above the list so it's noticed but not modal. */
+.legacy-url-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legacy-url-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+.legacy-url-banner__dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.legacy-url-banner__dismiss:hover,
+.legacy-url-banner__dismiss:focus-visible {
+  background: rgba(37, 99, 235, 0.12);
+  outline: none;
+}
+
+/* Agent Overview — "View all →" links. Matches the row hover treatment
+   in `.agent-overview__row` so users learn the affordance once and see
+   the same shape on the row-level and section-level links. */
+.agent-overview__more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+.agent-overview__more:hover,
+.agent-overview__more:focus-visible {
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  text-decoration: none;
+  outline: none;
+}
+.agent-overview__heading {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.agent-overview__section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Default (legacy) layout — single column of stacked sections. The
+   2x2 grid variant below opts in via the `--grid` modifier. */
+.agent-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Phase 1.5 §4.4 / Block J — 2x2 grid for the per-agent Overview.
+   Capabilities cell is omitted (no data pipe; documented in §4.4),
+   so the third cell ("Current activity") spans the full bottom row.
+   Below 1024 px the grid degrades to a single column for readability. */
+.agent-overview--grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: var(--space-4);
+}
+@media (max-width: 1024px) {
+  .agent-overview--grid {
+    grid-template-columns: 1fr;
+  }
+}
+.agent-overview__cell {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-height: 140px;
+  /* Grid items default to `min-width: auto` (their intrinsic min-content
+     width), so a long unbreakable brief inside the cell would push the
+     `1fr 1fr` track past the container and trigger the detail pane's
+     horizontal scrollbar. Force the track back to 1fr by letting the
+     cell shrink below its content's min-content width; row-internal
+     `.agent-overview__title` already owns the ellipsis. */
+  min-width: 0;
+}
+.agent-overview__cell--wide {
+  grid-column: 1 / -1;
+}
+.agent-overview__activity {
+  /* `display: flex` (was `inline-flex`) so the paragraph fills the
+     cell width and child shrink rules can engage; pairs with the
+     `.agent-overview__activity > .agent-overview__title` override
+     below so a long brief ellipsises instead of pushing siblings
+     (activity dots + "running for ...") out of the cell. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+.agent-overview__activity > .agent-overview__title {
+  /* Current-activity context: take all remaining width and shrink so
+     the inherited ellipsis on `.agent-overview__title` (L4436) can
+     trigger. `.agent-overview__title` already declares `overflow`,
+     `text-overflow`, and `white-space: nowrap` — no re-declaration. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+.agent-overview__activity-dots {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+.agent-overview__activity-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: agent-activity-pulse 1.2s ease-in-out infinite;
+}
+.agent-overview__activity-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.agent-overview__activity-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes agent-activity-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.agent-overview__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+}
+.agent-overview__badge--running {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-accent);
+}
+.agent-overview__badge--succeeded {
+  background: rgba(21, 128, 61, 0.1);
+  color: var(--color-success);
+}
+.agent-overview__badge--failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.agent-overview__badge--cancelled {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+/* ─── Shared agent identity primitives (PR #189 polish v3) ────────
+   `<AgentAvatar>` and `<AgentFqn>` live in
+   src/components/agents/ and are reused by the agents-list row, the
+   AgentDetailPane header, and (future) agent-mention chips. CSS lives
+   here so consumers don't import per-component stylesheets. */
+
+.agent-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+  user-select: none;
+  /* `width`, `height`, `background-color`, and `color` are set
+     inline via the component (size preset + deterministic palette
+     pick + readable foreground). */
+}
+.agent-avatar--sm {
+  font-size: 11px;
+}
+.agent-avatar--md {
+  font-size: 14px;
+}
+.agent-avatar--lg {
+  font-size: 18px;
+}
+
+/* Two-tone `scope/short` FQN renderer. Same colour, same size — visual
+   hierarchy comes from font-weight only. Scope is at normal weight (NOT
+   muted: it disambiguates same-short / different-scope agents). Separator
+   + short share the semibold weight. Font-size is inherited from the
+   parent so consumers can drop the primitive into a row (14px) or a
+   page header (24px) without overrides. */
+.agent-fqn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+.agent-fqn__scope {
+  font-weight: 400;
+  color: var(--color-text);
+  min-width: 0;
+}
+.agent-fqn--truncate-scope .agent-fqn__scope {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-fqn__sep {
+  font-weight: 600;
+  color: var(--color-text);
+  padding: 0 1px;
+}
+.agent-fqn__short {
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  /* short never truncates — it's the most scannable token. */
 }

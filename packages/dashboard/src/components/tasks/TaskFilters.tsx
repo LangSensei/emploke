@@ -13,6 +13,14 @@ export interface TaskFiltersProps {
   agents: AgentEntry[];
   filterAgentNames: string[];
   runtimes: string[];
+  /**
+   * When true, the agent `<select>` is omitted from the rendered row.
+   * The parent should still pass `agentFilter` (e.g. fixed to the page's
+   * agent) so downstream filtering logic in `useTasks` / `TasksPage`
+   * keeps working unchanged. Used by the per-agent Tasks tab where the
+   * scope is already implicit in the URL.
+   */
+  hideAgentFilter?: boolean;
 }
 
 /**
@@ -22,6 +30,12 @@ export interface TaskFiltersProps {
  * trail right). Wraps naturally at narrower widths. The Origin pills
  * were removed — the Tasks page is standalone-only; workflow-origin
  * tasks surface on a separate (future) page.
+ *
+ * PR #189 polish v6 dropped the Running / Completed status pill: the
+ * list itself (`TaskList.tsx`) already groups visually by status, so
+ * the pill only ever collapsed one bucket — low value, and Sessions
+ * has no equivalent. Filtering surface now matches: search, agent,
+ * runtime, and time preset. A stale `?status=` URL slot is ignored.
  */
 export function TaskFilters(props: TaskFiltersProps) {
   const {
@@ -35,6 +49,7 @@ export function TaskFilters(props: TaskFiltersProps) {
     onTimeFilterChange,
     filterAgentNames,
     runtimes,
+    hideAgentFilter,
   } = props;
   return (
     <div className="task-filters">
@@ -51,20 +66,22 @@ export function TaskFilters(props: TaskFiltersProps) {
             aria-label="Search by task id"
           />
         </div>
-        <select
-          id="task-agent-filter"
-          aria-label="Filter by agent"
-          value={agentFilter}
-          onChange={(e) => onAgentFilterChange(e.target.value)}
-          className="select task-filters__select"
-        >
-          <option value={ALL_AGENTS}>All agents</option>
-          {filterAgentNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
+        {!hideAgentFilter && (
+          <select
+            id="task-agent-filter"
+            aria-label="Filter by agent"
+            value={agentFilter}
+            onChange={(e) => onAgentFilterChange(e.target.value)}
+            className="select task-filters__select"
+          >
+            <option value={ALL_AGENTS}>All agents</option>
+            {filterAgentNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           id="task-runtime-filter"
           aria-label="Filter by runtime"

@@ -2,7 +2,14 @@ import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecord } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
+import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { DispatchModal } from "../components/tasks/DispatchModal";
+import {
+  ALL_AGENTS,
+  ALL_RUNTIMES,
+  TIME_PRESETS,
+  type TimePreset,
+} from "../components/tasks/shared";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
 import { TaskDetail } from "../components/tasks/TaskDetail";
 import { TaskFilters } from "../components/tasks/TaskFilters";
@@ -11,9 +18,11 @@ import {
   TaskDetailPlaceholder,
   TasksEmptyState,
   TasksToolbar,
+  TasksZeroState,
 } from "../components/tasks/TasksChrome";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
+import { useUrlSearchValue } from "../hooks/useUrlState";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -21,51 +30,74 @@ interface TasksProps {
   currentWorkspaceId: string | null;
   /** Server-supplied config; null while still being fetched. */
   config: ServerConfig | null;
+  /**
+   * When set (per-agent Tasks tab), the page hides the agent filter
+   * control, locks the data fetch to this agent, and restricts the
+   * dispatch modal so the new task is owned by the same agent.
+   */
+  fixedAgentFqn?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
+const DEFAULT_TIME_PRESET: TimePreset = "7d";
+
+function coerceTimePreset(raw: string): TimePreset {
+  const match = TIME_PRESETS.find((p) => p.value === raw);
+  return match ? match.value : DEFAULT_TIME_PRESET;
+}
 
 /**
  * Tasks page — fire-and-forget agent dispatch, autonomous run,
  * polling detail view. Master-detail layout: a filtered + grouped
  * task list on the left, a tabbed detail panel on the right.
  *
- * Phase A redesign:
- *   - Refresh / Dispatch live in the workspace chrome header (via
- *     `<HeaderActions>`); no separate `.page-toolbar--tasks` strip.
- *   - The detail pane is always 2-column. The right column shows
- *     either `<TaskDetail>` for the selected task, or a calm
- *     placeholder when the list is empty.
- *   - Origin filter is dropped — the Tasks page is standalone-only;
- *     workflow-origin tasks surface on a separate (future) page.
- *
- * This file is a thin shell — page-level data loading lives in
- * {@link useTasks}, per-task detail loading in `useTaskDetail`,
- * URL selection in {@link useSelectedTask}.
+ * Phase 1.5 Block G — every filter (`?agent`, `?runtime`, `?range`,
+ * `?q`) plus the master-detail selection (`?taskId`) is URL-driven
+ * via {@link useUrlSearchValue}, so refresh / back-button / shared
+ * link all reproduce the same view. A legacy `?status=` slot lingers
+ * in old links; it is ignored gracefully (no read, no redirect).
  */
-export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
+export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }: TasksProps) {
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
-  const { selectedId, setSelectedId } = useSelectedTask(currentWorkspaceId);
-  const data = useTasks({ currentWorkspaceId, pollIntervalMs });
-  const {
-    tasks,
-    runtimes,
-    loaded,
-    error,
-    setError,
+  // URL-driven filter state. fixedAgentFqn (per-agent embed) takes
+  // precedence over the URL `?agent=` slot.
+  const [idQuery, setIdQuery] = useUrlSearchValue("q", "");
+  const [agentFilterUrl, setAgentFilterUrl] = useUrlSearchValue("agent", ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
+  const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
+
+  const agentFilter = fixedAgentFqn ?? agentFilterUrl;
+  const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
+  const timeFilter = coerceTimePreset(rangeUrl);
+  const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
+
+  const { selectedId, setSelectedId } = useSelectedTask();
+  const data = useTasks({
+    currentWorkspaceId,
+    pollIntervalMs,
     agentFilter,
-    setAgentFilter,
     runtimeFilter,
-    setRuntimeFilter,
     timeFilter,
-    setTimeFilter,
-    idQuery,
-    setIdQuery,
-    refresh,
-  } = data;
+  });
+  const { tasks, runtimes, loaded, error, setError, refresh } = data;
 
   const [dispatchOpen, setDispatchOpen] = useState(false);
+
+  // Legacy `?dispatch=1` deep-link reader (Phase 1.5 §4.3 → PR #189
+  // polish v3 in-place modals). The agent-detail "+ New task" button
+  // now mounts DispatchModal locally on AgentDetailPane and no longer
+  // navigates here, so nothing in-app writes this flag any more — the
+  // reader stays so pre-v3 bookmarks (`?dispatch=1&agent=<fqn>`) and
+  // externally-pasted URLs still open the modal on landing. The flag
+  // is stripped after consumption so a refresh/back doesn't re-open
+  // the modal.
+  const [dispatchFlagUrl, setDispatchFlagUrl] = useUrlSearchValue("dispatch", "");
+  useEffect(() => {
+    if (dispatchFlagUrl !== "1") return;
+    setDispatchOpen(true);
+    setDispatchFlagUrl("");
+  }, [dispatchFlagUrl, setDispatchFlagUrl]);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRecord | null>(null);
   const [deletePurge, setDeletePurge] = useState(false);
@@ -166,34 +198,55 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
   }, [cancelTarget, cancelBusy, refresh]);
 
   const readyAgents = agents.filter((a) => a.status === "ready");
+  const dispatchAgents = fixedAgentFqn
+    ? readyAgents.filter((a) => a.agent.fqn === fixedAgentFqn)
+    : readyAgents;
 
   const visibleTasks = useMemo(() => {
     const q = idQuery.trim().toLowerCase();
-    if (q === "") return tasks;
-    return tasks.filter((t) => t.id.toLowerCase().includes(q));
+    return tasks.filter((t) => {
+      if (q !== "" && !t.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
   }, [tasks, idQuery]);
 
-  // Phase A default-selection rule: as soon as the list loads (or
-  // filters change such that the current selection is no longer
-  // visible), auto-bind to the top-most task. When the visible list
-  // is empty, clear the selection so the right column falls back to
-  // the placeholder.
-  useEffect(() => {
-    if (!loaded) return;
-    if (visibleTasks.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
-      return;
+  // Phase A default-selection rule: auto-bind to the top-most visible
+  // task when the URL doesn't already pin one with `?taskId=` and the
+  // list is non-empty. Derived during render so it doesn't race the
+  // URL-clearing path (Phase 1.5 Block G — earlier auto-select-via-
+  // effect would silently re-introduce filter params it captured in a
+  // stale closure).
+  //
+  // Side-effect path (URL writes): only `setSelectedId` from user
+  // interactions writes to the URL — the auto-fallback stays component-
+  // local so `?taskId=` reflects deliberate selection, not the
+  // implicit "first row".
+  const effectiveSelectedId = useMemo(() => {
+    if (selectedId !== null && visibleTasks.some((t) => t.id === selectedId)) {
+      return selectedId;
     }
-    if (selectedId === null || !visibleTasks.some((t) => t.id === selectedId)) {
-      setSelectedId(visibleTasks[0].id);
-    }
-  }, [loaded, visibleTasks, selectedId, setSelectedId]);
+    if (loaded && visibleTasks.length > 0) return visibleTasks[0].id;
+    return null;
+  }, [selectedId, loaded, visibleTasks]);
 
   const filterAgentNames = useMemo(() => {
     const set = new Set<string>(agents.map((a) => a.agent.fqn));
     for (const t of tasks) set.add(t.agent);
     return Array.from(set).sort();
   }, [agents, tasks]);
+
+  // PR #189 polish v3 — true when any filter chrome is constraining the
+  // list. Used by the zero-state collapse: when the workspace returns
+  // zero tasks AND no filter is active, we collapse to a single
+  // full-width empty (Dispatch CTA); when a filter IS active we keep
+  // the split layout so the user can see and clear the filter chrome.
+  // `fixedAgentFqn` (per-agent embed) is NOT a user-set filter for this
+  // purpose — those embeds don't surface clear-filter affordances.
+  const filtersActive =
+    idQuery.trim() !== "" ||
+    (!fixedAgentFqn && agentFilterUrl !== ALL_AGENTS) ||
+    runtimeFilter !== ALL_RUNTIMES ||
+    timeFilter !== DEFAULT_TIME_PRESET;
 
   if (currentWorkspaceId === null) {
     return (
@@ -208,10 +261,12 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
     <>
       <HeaderActions>
         <TasksToolbar
-          dispatchDisabled={readyAgents.length === 0}
+          dispatchDisabled={dispatchAgents.length === 0}
           dispatchDisabledTitle={
-            readyAgents.length === 0
-              ? "Install at least one ready agent in the Catalog first"
+            dispatchAgents.length === 0
+              ? fixedAgentFqn
+                ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                : "Install at least one ready agent in the Catalog first"
               : "Dispatch a new task"
           }
           onDispatch={() => setDispatchOpen(true)}
@@ -219,62 +274,102 @@ export function TasksPage({ agents, currentWorkspaceId, config }: TasksProps) {
       </HeaderActions>
 
       <div className="tasks-page">
+        {!fixedAgentFqn && <LegacyMovedBanner page="tasks" />}
         {error && <div className="alert alert--error">⚠️ {error}</div>}
 
-        <div className="tasks-pane tasks-pane--with-detail">
-          <div className="tasks-pane__list">
-            <TaskFilters
-              idQuery={idQuery}
-              onIdQueryChange={setIdQuery}
-              agentFilter={agentFilter}
-              onAgentFilterChange={setAgentFilter}
-              runtimeFilter={runtimeFilter}
-              onRuntimeFilterChange={setRuntimeFilter}
-              timeFilter={timeFilter}
-              onTimeFilterChange={setTimeFilter}
-              agents={agents}
-              filterAgentNames={filterAgentNames}
-              runtimes={runtimes}
+        {/* PR #189 polish v3 — when the workspace has zero tasks AND no
+            user-set filter is hiding rows, collapse the split layout into
+            a single full-width zero-state with a Dispatch-task CTA. The
+            previous shape rendered both the list-side empty AND the
+            right-pane "No task selected" placeholder side-by-side, which
+            left a wide gap of empty space between two near-identical
+            cards. See
+            `.pilot/inbox/20260525-empty-state-double-render.md`.
+            When ANY filter is active (`?agent=`, `?runtime=`, `?q=`,
+            or a non-default time preset) we keep the split layout so
+            the user can see the filter chrome and clear it. */}
+        {loaded && tasks.length === 0 && !filtersActive ? (
+          <div className="tasks-pane tasks-pane--with-detail tasks-pane--zero">
+            <TasksZeroState
+              dispatchDisabled={dispatchAgents.length === 0}
+              dispatchDisabledTitle={
+                dispatchAgents.length === 0
+                  ? fixedAgentFqn
+                    ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                    : "Install at least one ready agent in the Catalog first"
+                  : "Dispatch a new task"
+              }
+              onDispatch={() => setDispatchOpen(true)}
             />
-            <div className="tasks-pane__list-scroll">
-              {!loaded ? (
-                <TasksEmptyState loading />
-              ) : visibleTasks.length === 0 ? (
-                <TasksEmptyState
-                  title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-                  hint={
-                    tasks.length === 0
-                      ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                      : "Adjust the filters above to see more tasks."
-                  }
-                />
-              ) : (
-                <TaskList
-                  tasks={visibleTasks}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
-                  onDelete={setDeleteTarget}
-                  onCancel={requestCancel}
-                  onRerun={requestRerun}
-                />
-              )}
-            </div>
           </div>
+        ) : (
+          <div className="tasks-pane tasks-pane--with-detail">
+            <div className="tasks-pane__list">
+              <TaskFilters
+                idQuery={idQuery}
+                onIdQueryChange={setIdQuery}
+                agentFilter={agentFilter}
+                onAgentFilterChange={setAgentFilter}
+                runtimeFilter={runtimeFilter}
+                onRuntimeFilterChange={setRuntimeFilter}
+                timeFilter={timeFilter}
+                onTimeFilterChange={setTimeFilter}
+                agents={agents}
+                filterAgentNames={filterAgentNames}
+                runtimes={runtimes}
+                hideAgentFilter={fixedAgentFqn !== undefined}
+              />
+              <div className="tasks-pane__list-scroll">
+                {!loaded ? (
+                  <TasksEmptyState loading />
+                ) : visibleTasks.length === 0 ? (
+                  <TasksEmptyState
+                    title="No matches"
+                    hint="Adjust the filters above to see more tasks."
+                  />
+                ) : (
+                  <TaskList
+                    tasks={visibleTasks}
+                    selectedId={effectiveSelectedId}
+                    onSelect={setSelectedId}
+                    onDelete={setDeleteTarget}
+                    onCancel={requestCancel}
+                    onRerun={requestRerun}
+                  />
+                )}
+              </div>
+            </div>
 
-          {selectedId ? (
-            <TaskDetail taskId={selectedId} pollIntervalMs={pollIntervalMs} />
-          ) : (
-            <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
-          )}
-        </div>
+            {effectiveSelectedId ? (
+              <TaskDetail taskId={effectiveSelectedId} pollIntervalMs={pollIntervalMs} />
+            ) : visibleTasks.length === 0 ? null : (
+              // PR #189 polish v4 — when the filter narrowed the list
+              // to zero rows the left card already carries the full
+              // "No matches" copy; rendering the detail-side
+              // "No task selected / No tasks match the current filters"
+              // placeholder next to it produced two redundant empty
+              // states. We only fall through to the placeholder when
+              // there ARE visible rows but selection is null (in
+              // practice rare because `effectiveSelectedId` auto-binds
+              // to the first row, but we keep the branch for safety).
+              // See `.pilot/inbox/20260525-v4-tasks-empty-state-filtered.md`.
+              <TaskDetailPlaceholder />
+            )}
+          </div>
+        )}
       </div>
 
       <DispatchModal
         open={dispatchOpen}
-        agents={readyAgents}
+        agents={dispatchAgents}
         runtimes={runtimes}
         busy={busy}
         prefill={rerunFrom}
+        // PR #189 polish v3 — seed the modal with the page's current
+        // agent context when a single agent is pinned via `?agent=`.
+        // "All" keeps the existing `agents[0]` fallback; `prefill`
+        // (re-run case) still wins over `initialAgent`.
+        initialAgent={fixedAgentFqn ?? (agentFilterUrl !== ALL_AGENTS ? agentFilterUrl : undefined)}
         onClose={() => {
           setDispatchOpen(false);
           setRerunFrom(null);

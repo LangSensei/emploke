@@ -1,31 +1,52 @@
-import { useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useUrlSearchValue } from "./useUrlState";
 
 /**
- * URL-bound task selection. The router declares
- * `/workspaces/:wsId/:section/:tab`; for the tasks section the `tab`
- * slot carries the task id. Mirrors that pair to a single
- * `(selectedId, setSelectedId)` tuple so the page component doesn't
- * have to know about the route layout.
+ * Selected task id, mirrored to the URL via `?taskId=` so refresh /
+ * back-button / share-link all land the user on the same master-detail
+ * row (Phase 1.5 §4.6 / Block G — URL-driven filters).
  *
- * The mission-A spec calls for a `?taskId=…` query param. The
- * existing path-param shape achieves the same goal (refresh +
- * shared link preserve the selection) without touching App.tsx
- * routing or breaking sibling pages, so we keep it.
+ * Backward compatibility for the agent-Overview deep-link affordance:
+ * older `location.state.preselectId` payloads (set by `AgentOverviewTab`
+ * before Phase 1.5) are consumed once on mount and translated into
+ * the URL slot, then cleared. Preserves the "click a recent task in
+ * the agent overview to land on it pre-selected" behaviour without
+ * forcing the Overview tab to know about the URL convention.
  */
-export function useSelectedTask(currentWorkspaceId: string | null): {
+export function useSelectedTask(): {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
 } {
-  const params = useParams<{ wsId: string; section?: string; tab?: string }>();
+  const [urlValue, setUrlValue] = useUrlSearchValue("taskId", "");
+  const location = useLocation();
   const navigate = useNavigate();
-  const selectedId = params.tab ?? null;
+
+  const selectedId = urlValue === "" ? null : urlValue;
   const setSelectedId = useCallback(
     (id: string | null) => {
-      const ws = encodeURIComponent(currentWorkspaceId ?? "");
-      navigate(id === null ? `/workspaces/${ws}/tasks` : `/workspaces/${ws}/tasks/${id}`);
+      setUrlValue(id ?? "");
     },
-    [navigate, currentWorkspaceId],
+    [setUrlValue],
   );
+
+  // One-shot translation of the legacy `location.state.preselectId`
+  // payload (from AgentOverviewTab pre-Phase-1.5) into the URL slot.
+  // After consuming we clear `history.state` so a browser-back into
+  // the agent Overview followed by re-entry doesn't re-fire it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; intentionally reads navigate/location only once
+  useEffect(() => {
+    const stateId = readPreselectId(location.state);
+    if (stateId === null) return;
+    setUrlValue(stateId);
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, []);
+
   return { selectedId, setSelectedId };
+}
+
+function readPreselectId(state: unknown): string | null {
+  if (typeof state !== "object" || state === null) return null;
+  const candidate = (state as { preselectId?: unknown }).preselectId;
+  return typeof candidate === "string" && candidate !== "" ? candidate : null;
 }
