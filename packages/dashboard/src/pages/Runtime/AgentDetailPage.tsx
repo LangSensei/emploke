@@ -1,136 +1,60 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
-import { listSessions, listTasks, type SessionView, type TaskRecord } from "../../api";
-import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
-import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
-import { AgentDetailPane } from "./AgentDetailPane";
-
-/** Default poll cadence when no server config is available. */
-const DEFAULT_POLL_INTERVAL_MS = 4000;
+import { Navigate, useLocation, useParams } from "react-router-dom";
 
 /**
- * Per-agent detail page (legacy standalone route). Phase 1.5 §3.4 dropped the
- * per-agent Sessions/Tasks sub-tabs, so this page is a single Overview view.
+ * PR #189 polish v2 — the per-agent detail moved into the master Agents
+ * page as a master-detail right pane (selection via `?selected=<scope>/<short>`).
+ * This component used to render the standalone detail view; it now exists
+ * purely as a backward-compatibility redirect for external bookmarks and
+ * PR-description links that pre-date the master-detail restructure.
  *
- * Phase 1.5 v2 polish: the rendering body moved to {@link AgentDetailPane}
- * so the new master-detail `AgentsPage` can mount the same chrome inline.
- * This component now exists purely as the route adapter for the legacy URL
- * `/runtime/agents/:scope/:short/overview` — it fetches the per-agent
- * task/session lists, polls, and renders the pane. The agents-page-side
- * redirect that points new URLs at the master-detail page lives in
- * `App.tsx`; this page keeps working for old bookmarks while the redirect
- * is in place, and continues to update the breadcrumb deeper into the
- * agent name for parity with the pre-master-detail UI.
+ * The legacy routes are:
+ *   /workspaces/<wsId>/runtime/agents/:scope/:short          (index)
+ *   /workspaces/<wsId>/runtime/agents/:scope/:short/overview (overview tab)
+ *
+ * Both collapse here and redirect to
+ *   /workspaces/<wsId>/runtime/agents?selected=<scope>/<short>
+ *
+ * Any other querystring the bookmark carried (e.g. `?ref=link`) is
+ * preserved verbatim by merging it into the destination's search params
+ * alongside the new `selected=` value — the master Agents page reads its
+ * own filter slots (`?filter=`, `?q=`) the same way Tasks does and is
+ * tolerant of unknown params.
+ *
+ * No breadcrumb push lives here any more; the master Agents page sets
+ * the breadcrumb to `Runtime / Agents` and keeps it there regardless of
+ * the selected agent.
  */
 export function AgentDetailPage() {
-  const { scope, short } = useParams<{ scope: string; short: string }>();
-  const { wsId, data, config } = useWorkspaceShell();
-  const fqn = `${scope ?? ""}/${short ?? ""}`;
-  const entry = data.agents.find((a) => a.agent.fqn === fqn) ?? null;
-
-  useBreadcrumb(short ?? "(unknown)", ["Runtime", "Agents", scope ?? "", short ?? ""]);
-
-  const [tasks, setTasks] = useState<TaskRecord[] | null>(null);
-  const [tasksError, setTasksError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<SessionView[] | null>(null);
-  const [sessionsError, setSessionsError] = useState<string | null>(null);
-
-  const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  // Reset cached state when the agent in the URL changes so a stale list
-  // from the previous agent doesn't flash before the new fetch resolves.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate fqn-only reset; both lists belong to the previous agent and must be cleared synchronously when fqn changes
-  useEffect(() => {
-    setTasks(null);
-    setTasksError(null);
-    setSessions(null);
-    setSessionsError(null);
-  }, [fqn]);
-
-  const refreshTasks = useCallback(async () => {
-    if (!scope || !short) return;
-    try {
-      const t = await listTasks({ agent: fqn, origin: "all" });
-      if (!mountedRef.current) return;
-      setTasks(t);
-      setTasksError(null);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      // Keep last-known list on transient failure — the pill must not flip
-      // to "Idle" because of a single failed poll while a task is still
-      // actually running.
-      setTasksError(e instanceof Error ? e.message : String(e));
-      setTasks((prev) => (prev === null ? [] : prev));
-    }
-  }, [fqn, scope, short]);
-
-  const refreshSessions = useCallback(async () => {
-    if (!scope || !short) return;
-    try {
-      const s = await listSessions({ agent: fqn });
-      if (!mountedRef.current) return;
-      s.sort((a, b) => {
-        const al = a.lastActiveAt ?? a.createdAt;
-        const bl = b.lastActiveAt ?? b.createdAt;
-        return bl.localeCompare(al);
-      });
-      setSessions(s);
-      setSessionsError(null);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      setSessionsError(e instanceof Error ? e.message : String(e));
-      setSessions((prev) => (prev === null ? [] : prev));
-    }
-  }, [fqn, scope, short]);
-
-  useEffect(() => {
-    void refreshTasks();
-  }, [refreshTasks]);
-
-  useEffect(() => {
-    void refreshSessions();
-  }, [refreshSessions]);
-
-  usePollWithBackoff(refreshTasks, pollIntervalMs, !!scope && !!short);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void refreshTasks();
-        void refreshSessions();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refreshTasks, refreshSessions]);
-
+  const { wsId, scope, short } = useParams<{
+    wsId: string;
+    scope: string;
+    short: string;
+  }>();
+  const location = useLocation();
+  if (!wsId) return <Navigate to="/" replace />;
   if (!scope || !short) {
-    return <Navigate to={`/workspaces/${encodeURIComponent(wsId)}/runtime/agents`} replace />;
-  }
-
-  // The page wraps the pane in `.agent-detail-page` so the legacy standalone
-  // layout (page padding + vertical stack) still applies; the pane carries
-  // the master-detail-friendly `.tasks-pane__detail` styling that becomes a
-  // no-op outside of `.tasks-pane`.
-  return (
-    <div className="agent-detail-page agent-detail-page--legacy">
-      <AgentDetailPane
-        fqn={fqn}
-        entry={entry}
-        wsId={wsId}
-        tasks={tasks}
-        sessions={sessions}
-        tasksError={tasksError}
-        sessionsError={sessionsError}
+    return (
+      <Navigate
+        to={`/workspaces/${encodeURIComponent(wsId)}/runtime/agents${location.search}`}
+        replace
       />
-    </div>
+    );
+  }
+  const fqn = `${scope}/${short}`;
+  // Preserve any pre-existing querystring the legacy bookmark carried,
+  // overlaying `selected=<fqn>` so the redirect target opens with the
+  // agent pre-selected. URLSearchParams.set replaces any prior value of
+  // the same key (defensive — the legacy URL shouldn't carry one, but a
+  // copy-pasted link from the new shape into the old shape might).
+  const incoming = new URLSearchParams(location.search);
+  incoming.set("selected", fqn);
+  return (
+    <Navigate
+      to={{
+        pathname: `/workspaces/${encodeURIComponent(wsId)}/runtime/agents`,
+        search: `?${incoming.toString()}`,
+      }}
+      replace
+    />
   );
 }

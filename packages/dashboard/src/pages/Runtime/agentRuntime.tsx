@@ -40,18 +40,22 @@ export function computeAgentRuntimeViews(
 }
 
 /**
- * Build the per-agent detail URL. Slashes inside the fqn are encoded by
- * keeping scope and short as two distinct path segments (#agent-centric-ui
- * §2) so the URL stays readable instead of carrying a percent-encoded `%2F`.
+ * Build the per-agent detail URL. PR #189 polish v2 (master-detail split):
+ * the canonical detail URL is now `/runtime/agents?selected=<scope>/<short>`
+ * — selection lives in a URL query slot on the master Agents page, not in
+ * a separate route. New code emits this shape directly so deep-links open
+ * the master-detail page with the agent pre-selected.
  *
- * Phase 1.5 §3.4 — Overview is the **default and only** sub-tab this round,
- * so the `tab` suffix dropped from the signature. The function emits the
- * `…/overview` path so the SPA's tab-aware route still matches.
+ * Backward compatibility: the old standalone routes
+ * (`/runtime/agents/<scope>/<short>` and …/overview) still resolve via a
+ * redirect adapter in `App.tsx`, so external bookmarks and PR-description
+ * links stay valid mid-deploy. The `scope` and `short` halves are kept as
+ * one slash-separated `?selected=` value (un-encoded slash for
+ * readability; only the wsId and the fqn payload are encoded).
  */
 export function agentDetailUrl(wsId: string, scope: string, short: string): string {
-  return `/workspaces/${encodeURIComponent(wsId)}/runtime/agents/${encodeURIComponent(
-    scope,
-  )}/${encodeURIComponent(short)}/overview`;
+  const fqn = `${scope}/${short}`;
+  return `/workspaces/${encodeURIComponent(wsId)}/runtime/agents?selected=${encodeURIComponent(fqn)}`;
 }
 
 /**

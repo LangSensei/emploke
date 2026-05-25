@@ -97,7 +97,13 @@ export function App() {
         <Route path="settings" element={<SettingsRoute />} />
         <Route path="runtime" element={<RuntimeIndexRedirect />} />
         <Route path="runtime/agents" element={<AgentsListPage />} />
-        <Route path="runtime/agents/:scope/:short" element={<AgentDetailIndexRedirect />} />
+        {/* PR #189 polish v2 — the per-agent detail moved into the master
+            Agents page as a master-detail right pane (?selected=<fqn>);
+            AgentDetailPage is now a redirect shim that catches both the
+            bare `/agents/<scope>/<short>` index AND the `/overview` suffix
+            and forwards to the new URL shape, preserving any query
+            string the legacy bookmark carried. */}
+        <Route path="runtime/agents/:scope/:short" element={<AgentDetailPage />} />
         <Route path="runtime/agents/:scope/:short/overview" element={<AgentDetailPage />} />
         {/* Per-agent Sessions / Tasks sub-tabs were deferred to Phase 2
             (design contract §3.4) — the global Sessions / Tasks pages
@@ -559,12 +565,12 @@ function AgentSubTabRedirect({ tab }: { tab: "sessions" | "tasks" }) {
 }
 
 /**
- * `/workspaces/<uuid>/runtime/agents/<scope>/<short>`
- *   -> `/workspaces/<uuid>/runtime/agents/<scope>/<short>/overview`.
+ * PR #189 polish v2 — the legacy `/runtime/agents/<scope>/<short>` (no
+ * suffix) used to redirect to `…/overview`, then the standalone overview
+ * page rendered the detail. Now the master Agents page owns the detail
+ * inline. The single redirect from both legacy shapes lives in
+ * {@link AgentDetailPage} itself; this helper was retired.
  */
-function AgentDetailIndexRedirect() {
-  return <Navigate to="overview" replace />;
-}
 
 function NotFoundRedirect() {
   return <Navigate to="/" replace />;
