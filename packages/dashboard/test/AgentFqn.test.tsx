@@ -67,7 +67,7 @@ describe("<AgentFqn />", () => {
     expect(root.className).not.toContain("agent-fqn--truncate-scope");
   });
 
-  it("renders the wrapper as a `<div>` when `as=\"div\"`", () => {
+  it('renders the wrapper as a `<div>` when `as="div"`', () => {
     const { container } = render(<AgentFqn fqn="emploke/dev" as="div" />);
     const root = container.querySelector("div.agent-fqn") as HTMLElement;
     expect(root).toBeTruthy();

@@ -151,19 +151,20 @@ describe("AgentsListPage Block H polish (§4.2)", () => {
     });
   });
 
-  it("kebab menu 'View tasks' link href targets the global tasks page with ?agent=", async () => {
+  it("row no longer renders the kebab menu (deleted in PR #189 polish v3 row redesign)", async () => {
     const agents = [makeAgent("emploke/dev")];
     mockListTasks.mockResolvedValue([]);
     renderList("/workspaces/ws-1/runtime/agents", agents);
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-row-menu-tasks")).toBeTruthy();
+      // The row itself renders.
+      expect(screen.getByTestId("agent-row-emploke/dev")).toBeTruthy();
     });
-    const tasksLink = screen.getByTestId("agent-row-menu-tasks") as HTMLAnchorElement;
-    expect(tasksLink.getAttribute("href")).toBe("/workspaces/ws-1/runtime/tasks?agent=emploke/dev");
-    const sessionsLink = screen.getByTestId("agent-row-menu-sessions") as HTMLAnchorElement;
-    expect(sessionsLink.getAttribute("href")).toBe(
-      "/workspaces/ws-1/runtime/sessions?agent=emploke/dev",
-    );
+    // The kebab and its menu items are gone — the row is a single
+    // "click to select" target. Recent tasks / sessions live in the
+    // detail pane on the right.
+    expect(screen.queryByTestId("agent-row-menu")).toBeNull();
+    expect(screen.queryByTestId("agent-row-menu-tasks")).toBeNull();
+    expect(screen.queryByTestId("agent-row-menu-sessions")).toBeNull();
   });
 });

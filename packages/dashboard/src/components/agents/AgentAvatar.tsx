@@ -156,6 +156,7 @@ export function AgentAvatar({ fqn, label, size = "md" }: AgentAvatarProps) {
         width: `${px}px`,
         height: `${px}px`,
       }}
+      role="img"
       aria-label={`Agent ${fqn}`}
       data-testid={`agent-avatar-${fqn}`}
     >

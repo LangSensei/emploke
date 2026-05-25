@@ -2,7 +2,8 @@ import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listSessions, listTasks, type SessionView, type TaskRecord } from "../../api";
-import { MoreHorizontalIcon } from "../../components/Icons";
+import { AgentAvatar } from "../../components/agents/AgentAvatar";
+import { AgentFqn } from "../../components/agents/AgentFqn";
 import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
@@ -31,11 +32,11 @@ const LIST_FILTER_TABS: ReadonlyArray<{ value: ListFilter; label: string }> = [
 const SEARCH_DEBOUNCE_MS = 200;
 
 /**
- * Master-detail Agents page (PR #189 polish v2). Left pane: the existing
+ * Master-detail Agents page (PR #189 polish v2 → v3). Left pane: status
  * filter pills + search + scrollable list of installed agents with live
- * status pills. Right pane: {@link AgentDetailPane} mounted inline against
- * the currently-selected agent (URL state `?selected=<scope>/<short>`),
- * or a placeholder when nothing is selected.
+ * status pills and per-row avatars. Right pane: {@link AgentDetailPane}
+ * mounted inline against the currently-selected agent (URL state
+ * `?selected=<scope>/<short>`), or a placeholder when nothing is selected.
  *
  * Mirrors `pages/Tasks.tsx` (the layout reference). Page-level concerns:
  *
@@ -61,6 +62,18 @@ const SEARCH_DEBOUNCE_MS = 200;
  *     agent is selected (the right pane doesn't push a deeper crumb the
  *     way the legacy `/runtime/agents/<scope>/<short>/overview` route
  *     did). Users want the top nav stable as they hop between agents.
+ *
+ * PR #189 polish v3 anti-gating:
+ *   - `computeAgentRuntimeViews(data.agents, tasks ?? [])` so the left
+ *     list renders rows immediately from the shell-preloaded
+ *     `data.agents`. The tasks fetch only feeds the per-row "running"
+ *     tag (skeleton via `runtimeLoading` until it resolves) and the
+ *     right-pane KPI / Recent-tasks regions.
+ *   - `effectiveSelectedFqn` drops the `tasks !== null` precondition;
+ *     auto-select fires on the first render with `data.agents`. URL
+ *     selection still wins; a stale `?selected=` against an
+ *     uninstalled agent still surfaces the "not installed" alert via
+ *     the detail pane (v2 §10 divergence — intentional).
  */
 export function AgentsListPage() {
   const { wsId, data, config } = useWorkspaceShell();
@@ -174,8 +187,17 @@ export function AgentsListPage() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [refreshTasks, refreshSessions]);
 
-  const views: AgentRuntimeView[] =
-    tasks === null ? [] : computeAgentRuntimeViews(data.agents, tasks);
+  // PR #189 polish v3 — DO NOT gate views computation on `tasks !== null`.
+  // The agent identities come from the shell-preloaded `data.agents`, so
+  // rows must render immediately. The tasks fetch only contributes per-row
+  // runtime augmentation (the "X running" tag) — when it's pending, the
+  // computed counts are all 0 but `runtimeLoading=true` lets each row
+  // render a skeleton so the UI doesn't lie about an idle state.
+  const views: AgentRuntimeView[] = useMemo(
+    () => computeAgentRuntimeViews(data.agents, tasks ?? []),
+    [data.agents, tasks],
+  );
+  const runtimeLoading = tasks === null;
 
   const filteredViews = useMemo(() => {
     const q = urlQuery.trim().toLowerCase();
@@ -195,12 +217,14 @@ export function AgentsListPage() {
   // Block G — see file-level comment). URL selection is authoritative
   // when present; the pane honours an out-of-list fqn so the
   // "not installed" alert keeps surfacing for stale deeplinks. The
-  // fallback only fires when the URL is empty.
+  // fallback fires the moment `data.agents` populates — PR #189 polish
+  // v3 dropped the `tasks !== null` precondition that used to hold the
+  // right pane in its placeholder state across the entire tasks fetch.
   const effectiveSelectedFqn = useMemo(() => {
     if (selectedFqn !== null) return selectedFqn;
-    if (tasks !== null && filteredViews.length > 0) return filteredViews[0].entry.agent.fqn;
+    if (filteredViews.length > 0) return filteredViews[0]?.entry.agent.fqn ?? null;
     return null;
-  }, [selectedFqn, tasks, filteredViews]);
+  }, [selectedFqn, filteredViews]);
 
   // Catalog entry for the selected fqn (null when the agent isn't
   // installed — the pane renders the "not installed" alert in that case).
@@ -217,117 +241,145 @@ export function AgentsListPage() {
     return tasks.filter((t) => t.agent === effectiveSelectedFqn);
   }, [tasks, effectiveSelectedFqn]);
 
+  // PR #189 polish v3 — collapse the split layout to a single full-width
+  // empty state when the workspace itself has zero installed agents.
+  // Without this the right pane shows the redundant "Select an agent"
+  // placeholder next to the same call-to-action on the left.
+  const workspaceEmpty = data.agents.length === 0;
+  const containerClass = `tasks-pane tasks-pane--with-detail${workspaceEmpty ? " tasks-pane--zero" : ""}`;
+
   return (
     <div className="agents-page" data-testid="agents-page">
       {tasksError && <div className="alert alert--error">⚠️ {tasksError}</div>}
 
-      <div className="tasks-pane tasks-pane--with-detail">
-        <div className="tasks-pane__list">
-          <div className="agents-list-toolbar">
-            <fieldset
-              className="pills"
-              aria-label="Filter agents by status"
-              data-testid="agents-list-filter-tabs"
-            >
-              {LIST_FILTER_TABS.map((t) => (
-                <button
-                  key={t.value}
-                  type="button"
-                  className={`pills__btn${listFilter === t.value ? " pills__btn--active" : ""}`}
-                  onClick={() => setListFilter(t.value)}
-                  aria-pressed={listFilter === t.value}
-                  data-testid={`agents-list-filter-${t.value}`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </fieldset>
-            <input
-              type="search"
-              className="input agents-list-toolbar__search"
-              value={searchDraft}
-              onChange={(e) => setSearchDraft(e.target.value)}
-              placeholder="Search agents…"
-              aria-label="Search agents by name, scope, or fqn"
-              data-testid="agents-list-search"
-            />
-          </div>
-          <div className="tasks-pane__list-scroll">
-            {tasks === null ? (
-              <div className="empty">
-                <p className="empty__title">Loading agents…</p>
-              </div>
-            ) : data.agents.length === 0 ? (
-              <div className="empty">
-                <div className="empty__icon" aria-hidden="true">
-                  🤖
-                </div>
-                <p className="empty__title">No agents installed</p>
-                <p className="empty__hint">
-                  Visit{" "}
-                  <Link to={`/workspaces/${encodeURIComponent(wsId)}/catalog/agents`}>Catalog</Link>{" "}
-                  to install agents into this workspace.
-                </p>
-              </div>
-            ) : filteredViews.length === 0 ? (
-              <div className="empty">
-                <div className="empty__icon" aria-hidden="true">
-                  🔎
-                </div>
-                <p className="empty__title">No agents match the current filters</p>
-                <p className="empty__hint">Try clearing the search or switching the status tab.</p>
-              </div>
-            ) : (
-              <ul
-                className="agents-list"
-                aria-label="Installed agents"
-                // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
-                role="listbox"
-              >
-                {filteredViews.map((v) => (
-                  <AgentRow
-                    key={v.entry.agent.fqn}
-                    wsId={wsId}
-                    view={v}
-                    selected={effectiveSelectedFqn === v.entry.agent.fqn}
-                    onSelect={() => setSelectedUrl(v.entry.agent.fqn)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-
-        {effectiveSelectedFqn !== null ? (
-          <AgentDetailPane
-            fqn={effectiveSelectedFqn}
-            entry={selectedEntry}
-            wsId={wsId}
-            tasks={selectedTasks}
-            sessions={sessions}
-            tasksError={null}
-            sessionsError={sessionsError}
-          />
+      <div className={containerClass}>
+        {workspaceEmpty ? (
+          <AgentsZeroState wsId={wsId} />
         ) : (
-          <AgentDetailPlaceholder noAgents={tasks !== null && data.agents.length === 0} />
+          <>
+            <div className="tasks-pane__list">
+              <div className="agents-list-toolbar">
+                <fieldset
+                  className="pills"
+                  aria-label="Filter agents by status"
+                  data-testid="agents-list-filter-tabs"
+                >
+                  {LIST_FILTER_TABS.map((t) => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      className={`pills__btn${listFilter === t.value ? " pills__btn--active" : ""}`}
+                      onClick={() => setListFilter(t.value)}
+                      aria-pressed={listFilter === t.value}
+                      data-testid={`agents-list-filter-${t.value}`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </fieldset>
+                <input
+                  type="search"
+                  className="input agents-list-toolbar__search"
+                  value={searchDraft}
+                  onChange={(e) => setSearchDraft(e.target.value)}
+                  placeholder="Search agents…"
+                  aria-label="Search agents by name, scope, or fqn"
+                  data-testid="agents-list-search"
+                />
+              </div>
+              <div className="tasks-pane__list-scroll">
+                {filteredViews.length === 0 ? (
+                  <div className="empty" data-testid="agents-list-filter-empty">
+                    <div className="empty__icon" aria-hidden="true">
+                      🔎
+                    </div>
+                    <p className="empty__title">No agents match the current filters</p>
+                    <p className="empty__hint">
+                      Try clearing the search or switching the status tab.
+                    </p>
+                  </div>
+                ) : (
+                  <ul
+                    className="agents-list"
+                    aria-label="Installed agents"
+                    // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
+                    role="listbox"
+                  >
+                    {filteredViews.map((v) => (
+                      <AgentRow
+                        key={v.entry.agent.fqn}
+                        view={v}
+                        selected={effectiveSelectedFqn === v.entry.agent.fqn}
+                        onSelect={() => setSelectedUrl(v.entry.agent.fqn)}
+                        runtimeLoading={runtimeLoading}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {effectiveSelectedFqn !== null ? (
+              <AgentDetailPane
+                fqn={effectiveSelectedFqn}
+                entry={selectedEntry}
+                wsId={wsId}
+                tasks={selectedTasks}
+                sessions={sessions}
+                tasksError={null}
+                sessionsError={sessionsError}
+              />
+            ) : (
+              <AgentDetailPlaceholder />
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-interface AgentDetailPlaceholderProps {
-  /** True when the workspace has zero installed agents (not a filter
-   *  hide). Drives the copy so users see actionable guidance. */
-  noAgents: boolean;
+interface AgentsZeroStateProps {
+  wsId: string;
 }
 
 /**
- * Right-pane placeholder rendered when no agent is selected. Sibling to
- * {@link AgentDetailPane}; both share the `.tasks-pane__detail*` layout
- * primitives from the Tasks page (PR #189 polish v2 §9 option A).
+ * Full-width single-pane empty rendered when the workspace has zero
+ * installed agents (PR #189 polish v3 — collapses the split layout
+ * "two empty placeholders side by side" duplication into one). The
+ * CTA links to Catalog because agent install isn't an in-page modal.
  */
-function AgentDetailPlaceholder({ noAgents }: AgentDetailPlaceholderProps) {
+function AgentsZeroState({ wsId }: AgentsZeroStateProps) {
+  return (
+    <div className="empty tasks-pane__zero" data-testid="agents-empty-zero">
+      <div className="empty__icon" aria-hidden="true">
+        🤖
+      </div>
+      <p className="empty__title">No agents installed</p>
+      <p className="empty__hint">
+        Agents wrap skills + MCPs into runnable templates. Install one in the Catalog to see its
+        runtime status here.
+      </p>
+      <Link
+        to={`/workspaces/${encodeURIComponent(wsId)}/catalog/agents`}
+        className="btn btn--primary"
+        data-testid="agents-empty-zero-cta"
+      >
+        Open Catalog
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * Right-pane placeholder rendered when no agent is selected but the
+ * workspace has at least one agent (filtered-to-zero / no-pick-yet case).
+ * Sibling to {@link AgentDetailPane}; both share the `.tasks-pane__detail*`
+ * layout primitives from the Tasks page (PR #189 polish v2 §9 option A).
+ * The zero-workspace case is handled by {@link AgentsZeroState} at the
+ * grid level instead so the two placeholders don't render simultaneously.
+ */
+function AgentDetailPlaceholder() {
   return (
     <aside
       className="tasks-pane__detail tasks-pane__detail--empty"
@@ -337,13 +389,9 @@ function AgentDetailPlaceholder({ noAgents }: AgentDetailPlaceholderProps) {
         <div className="empty__icon" aria-hidden="true">
           🤖
         </div>
-        <p className="empty__title">
-          {noAgents ? "No agent installed" : "Select an agent from the list"}
-        </p>
+        <p className="empty__title">Select an agent from the list</p>
         <p className="empty__hint">
-          {noAgents
-            ? "Install one in the Catalog to see its runtime status here."
-            : "Pick a row on the left to see its activity, sessions, and recent tasks."}
+          Pick a row on the left to see its activity, sessions, and recent tasks.
         </p>
       </div>
     </aside>
@@ -351,24 +399,36 @@ function AgentDetailPlaceholder({ noAgents }: AgentDetailPlaceholderProps) {
 }
 
 interface AgentRowProps {
-  wsId: string;
   view: AgentRuntimeView;
   /** True when this row is the currently-selected one. */
   selected: boolean;
   /** Click / keyboard activation — writes `?selected=<fqn>` via the parent. */
   onSelect: () => void;
+  /** True while the workspace-wide tasks fetch is still pending; row hides
+   *  the running-count tag behind a skeleton so we don't lie about idle. */
+  runtimeLoading: boolean;
 }
 
 /**
- * One row of the agents list. Becomes the active "selected" target when
- * the user clicks (or activates with Enter/Space). The kebab menu inside
- * stops event propagation so opening it doesn't change the selection.
+ * One row of the agents list. Two-column layout:
+ *
+ *   left  — `AgentAvatar` + `AgentFqn` two-tone + muted subline
+ *   right — status pill stacked above an activity tag
+ *
+ * PR #189 polish v3 row redesign:
+ *   - Avatar reinforces scope disambiguation (deterministic colour on
+ *     the FULL fqn).
+ *   - FQN renders as `scope/short` two-tone so users see the full
+ *     identity without the scope being relegated to a muted secondary
+ *     line.
+ *   - The previous per-row kebab menu was deleted: every menu item
+ *     duplicated affordances already in the detail pane, and removing
+ *     it eliminates the `stopPropagation` carve-out keeping the click
+ *     target simple — "the entire row selects the agent, period".
  */
-function AgentRow({ wsId, view, selected, onSelect }: AgentRowProps) {
+function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
   const { agent } = view.entry;
-  const [scope, short] = splitForDisplay(agent.fqn);
-  const tasksHref = `/workspaces/${encodeURIComponent(wsId)}/runtime/tasks?agent=${agent.fqn}`;
-  const sessionsHref = `/workspaces/${encodeURIComponent(wsId)}/runtime/sessions?agent=${agent.fqn}`;
+  const [, short] = splitForDisplay(agent.fqn);
   return (
     <li
       className={`agents-list__item${selected ? " agents-list__item--selected" : ""}`}
@@ -386,82 +446,34 @@ function AgentRow({ wsId, view, selected, onSelect }: AgentRowProps) {
       aria-current={selected ? "true" : undefined}
       data-testid={`agent-row-${agent.fqn}`}
     >
-      <div className="agents-list__head">
-        <span className="agents-list__name">{short}</span>
-        <span className="agents-list__scope">{scope}</span>
-        <span className="agents-list__spacer" />
+      <AgentAvatar fqn={agent.fqn} label={short} size="md" />
+      <div className="agents-list__identity">
+        <AgentFqn fqn={agent.fqn} />
+        <span className="agents-list__subline muted">
+          {view.status === "running" ? "Active" : "Idle"} · v{agent.version}
+        </span>
+      </div>
+      <div className="agents-list__status-col">
         <AgentStatusPill status={view.status} />
+        <span
+          className="agents-list__activity muted"
+          data-testid={`agent-row-activity-${agent.fqn}`}
+        >
+          {runtimeLoading ? (
+            <span
+              className="skeleton skeleton--text"
+              role="status"
+              aria-label="Loading activity"
+              data-testid={`agent-row-activity-skeleton-${agent.fqn}`}
+            />
+          ) : view.runningTasks > 0 ? (
+            `${view.runningTasks} running`
+          ) : (
+            "Idle"
+          )}
+        </span>
       </div>
-      <div className="agents-list__meta muted">
-        <span>Running {view.runningTasks}</span>
-        <span className="agents-list__sep">·</span>
-        <span>Total {view.totalTasks7d} (7d)</span>
-        <span className="agents-list__sep">·</span>
-        <span>v{agent.version}</span>
-      </div>
-      <AgentRowMenu tasksHref={tasksHref} sessionsHref={sessionsHref} />
     </li>
-  );
-}
-
-interface AgentRowMenuProps {
-  tasksHref: string;
-  sessionsHref: string;
-}
-
-/**
- * Per-row kebab menu rendered top-right of every agent card. Uses native
- * `<details><summary>` so we don't pull in `@radix-ui` or a sibling
- * dropdown library just for this round (C5 bundle budget).
- *
- * The "Open" item was dropped in PR #189 polish v2: now that clicking the
- * row itself selects the agent in-place, an "Open" menu item is redundant
- * (it would mean the same thing as clicking the row's body). Only the
- * cross-page deep-link items survive — "View tasks" / "View sessions".
- */
-function AgentRowMenu({ tasksHref, sessionsHref }: AgentRowMenuProps) {
-  const stopBubble = useCallback((e: React.SyntheticEvent) => {
-    // Click and keyboard activation on the menu container would otherwise
-    // bubble up into the surrounding agents-list <li>, whose onClick /
-    // onKeyDown updates `?selected=`. Opening / interacting with the
-    // kebab should never change selection — keep the bubble-stop even
-    // though the trigger isn't a wrapping <Link> any more (PR #189
-    // polish v2).
-    e.stopPropagation();
-  }, []);
-  return (
-    <details
-      className="agents-list__menu"
-      data-testid="agent-row-menu"
-      onClick={stopBubble}
-      onKeyDown={stopBubble}
-    >
-      <summary
-        className="agents-list__menu-trigger"
-        aria-label="Agent actions"
-        title="Agent actions"
-      >
-        <MoreHorizontalIcon className="agents-list__menu-icon" />
-      </summary>
-      <div className="agents-list__menu-panel" role="menu">
-        <Link
-          to={tasksHref}
-          className="agents-list__menu-item"
-          role="menuitem"
-          data-testid="agent-row-menu-tasks"
-        >
-          View tasks
-        </Link>
-        <Link
-          to={sessionsHref}
-          className="agents-list__menu-item"
-          role="menuitem"
-          data-testid="agent-row-menu-sessions"
-        >
-          View sessions
-        </Link>
-      </div>
-    </details>
   );
 }
 

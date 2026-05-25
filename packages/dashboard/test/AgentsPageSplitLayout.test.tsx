@@ -2,7 +2,7 @@ import type { AgentEntry } from "@emploke/catalog";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogData, ServerConfig, SessionView } from "../src/api";
+import type { CatalogData, ServerConfig, SessionView, TaskRecord } from "../src/api";
 import {
   BreadcrumbContext,
   type BreadcrumbValue,
@@ -118,15 +118,19 @@ afterEach(() => {
 });
 
 describe("Master-detail layout", () => {
-  it("renders the placeholder pane when the catalog is empty (and no ?selected= is set)", async () => {
+  it("renders the full-width zero-state when the catalog is empty (no split placeholder pair)", async () => {
     renderMasterDetail({ agents: [], initialPath: "/workspaces/ws-1/runtime/agents" });
-    // The placeholder shows up once the workspace-wide tasks fetch
-    // resolves (its loading state hides the list until then).
+    // PR #189 polish v3 — workspace-empty collapses the split layout into
+    // a single full-width empty pane. The detail-side placeholder must
+    // NOT render alongside.
     await waitFor(() => {
-      expect(screen.getByTestId("agent-detail-placeholder")).toBeTruthy();
+      expect(screen.getByTestId("agents-empty-zero")).toBeTruthy();
     });
-    // The list-empty hint also surfaces in the left pane.
+    expect(screen.queryByTestId("agent-detail-placeholder")).toBeNull();
+    // The single empty surfaces the install hint + CTA to Catalog.
     expect(screen.getByText(/No agents installed/i)).toBeTruthy();
+    const cta = screen.getByTestId("agents-empty-zero-cta") as HTMLAnchorElement;
+    expect(cta.getAttribute("href")).toBe("/workspaces/ws-1/catalog/agents");
   });
 
   it("auto-selects the first visible agent during render when ?selected= is absent", async () => {
@@ -301,22 +305,127 @@ describe("Legacy URL redirect → ?selected= form", () => {
 });
 
 describe("Per-row kebab menu", () => {
-  it("does not render the 'Open' item (clicking the row selects in-place instead)", async () => {
+  it("the kebab menu is removed entirely (row is a single 'click to select' target now)", async () => {
     const agents = [makeAgent("emploke/alpha")];
     mockListTasks.mockResolvedValue([]);
     renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-row-menu")).toBeTruthy();
+      expect(screen.getByTestId("agent-row-emploke/alpha")).toBeTruthy();
     });
-    // Only the two cross-page deep-link items survive — explicitly check
-    // there is NO menu item whose label is exactly "Open".
-    const menu = screen.getByTestId("agent-row-menu");
-    const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
-    expect(items.map((n) => n.textContent?.trim())).toEqual(["View tasks", "View sessions"]);
+    // No kebab container, no <details>, no menu items — every per-row
+    // navigation hook lived in the detail pane already, so the kebab was
+    // dead chrome. Removing it also drops the stopPropagation carve-out
+    // that used to keep menu clicks from changing selection.
+    expect(screen.queryByTestId("agent-row-menu")).toBeNull();
+    expect(screen.queryByTestId("agent-row-menu-tasks")).toBeNull();
+    expect(screen.queryByTestId("agent-row-menu-sessions")).toBeNull();
+    const row = screen.getByTestId("agent-row-emploke/alpha");
+    expect(row.querySelector("summary.agents-list__menu-trigger")).toBeNull();
+  });
+});
+
+describe("PR #189 polish v3 — anti-gating + row redesign", () => {
+  it("renders rows immediately from data.agents even while tasks fetch is pending", () => {
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    // Pending forever — the row list must NOT wait on this.
+    mockListTasks.mockReturnValue(new Promise<never>(() => {}));
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+    // Row visible synchronously, no "Loading agents…" empty branch.
+    expect(screen.getByTestId("agent-row-emploke/alpha")).toBeTruthy();
+    expect(screen.getByTestId("agent-row-emploke/beta")).toBeTruthy();
+    expect(screen.queryByText(/Loading agents/i)).toBeNull();
   });
 
-  it("clicking the kebab does not change the URL selection (event-bubble guard)", async () => {
+  it("first mount auto-selects data.agents[0] even before tasks resolves", async () => {
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    // Pending forever — the auto-select must still fire from data.agents.
+    mockListTasks.mockReturnValue(new Promise<never>(() => {}));
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    const pane = await screen.findByTestId("agent-detail-pane");
+    expect(pane.getAttribute("data-agent-fqn")).toBe("emploke/alpha");
+    // The first row reports its selected state too.
+    const alphaRow = screen.getByTestId("agent-row-emploke/alpha");
+    expect(alphaRow.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("per-row activity tag shows a skeleton while tasks is null, then the count after resolve", async () => {
+    const agents = [makeAgent("emploke/alpha")];
+    let resolveTasks: (value: TaskRecord[]) => void = () => {};
+    mockListTasks.mockReturnValue(
+      new Promise<TaskRecord[]>((res) => {
+        resolveTasks = res;
+      }),
+    );
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // Skeleton present while pending.
+    expect(screen.getByTestId("agent-row-activity-skeleton-emploke/alpha")).toBeTruthy();
+
+    // Resolve — running count surfaces in place of the skeleton.
+    await act(async () => {
+      resolveTasks([
+        {
+          id: "t-running",
+          agent: "emploke/alpha",
+          status: "running",
+          brief: "",
+          details: "",
+          origin: "cli",
+          metadata: {},
+          createdAt: "2026-05-23T00:00:00Z",
+        } as unknown as TaskRecord,
+      ]);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("agent-row-activity-skeleton-emploke/alpha")).toBeNull();
+    });
+    const activity = screen.getByTestId("agent-row-activity-emploke/alpha");
+    expect(activity.textContent).toBe("1 running");
+  });
+
+  it("user click wins over auto-select once tasks resolves", async () => {
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    mockListTasks.mockResolvedValue([]);
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // Click beta — URL pins it.
+    const betaRow = await screen.findByTestId("agent-row-emploke/beta");
+    act(() => {
+      fireEvent.click(betaRow);
+    });
+    await waitFor(() => {
+      const probe = screen.getByTestId("url-probe");
+      expect(probe.getAttribute("data-search")).toContain("selected=emploke%2Fbeta");
+    });
+    // Tasks already resolved (mockResolvedValue([])); the user's pick
+    // must not be replaced by the auto-select fallback.
+    const pane = screen.getByTestId("agent-detail-pane");
+    expect(pane.getAttribute("data-agent-fqn")).toBe("emploke/beta");
+  });
+
+  it("row uses the shared AgentAvatar + AgentFqn primitives", () => {
+    const agents = [makeAgent("langsensei/dev"), makeAgent("acme/dev")];
+    mockListTasks.mockResolvedValue([]);
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // Both rows render. Two different scopes share the same short name.
+    expect(screen.getByTestId("agent-row-langsensei/dev")).toBeTruthy();
+    expect(screen.getByTestId("agent-row-acme/dev")).toBeTruthy();
+
+    // Each row renders the full FQN via the shared <AgentFqn> primitive.
+    expect(screen.getByTestId("agent-fqn-langsensei/dev")).toBeTruthy();
+    expect(screen.getByTestId("agent-fqn-acme/dev")).toBeTruthy();
+
+    // And each row renders an avatar — colour-distinguishable because the
+    // hash keys off the full FQN (see AgentAvatar lock-in tests).
+    const avatarA = screen.getByTestId("agent-avatar-langsensei/dev") as HTMLElement;
+    const avatarB = screen.getByTestId("agent-avatar-acme/dev") as HTMLElement;
+    expect(avatarA.style.backgroundColor).not.toBe(avatarB.style.backgroundColor);
+  });
+
+  it("selected row carries the agents-list__item--selected class hook (accent stripe)", async () => {
     const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
     mockListTasks.mockResolvedValue([]);
     renderMasterDetail({
@@ -324,20 +433,9 @@ describe("Per-row kebab menu", () => {
       initialPath: "/workspaces/ws-1/runtime/agents?selected=emploke%2Fbeta",
     });
 
-    // beta is selected via URL. Click the kebab summary of beta's row
-    // and ensure no `?selected=` rewrite drops it back to alpha.
-    await waitFor(() => {
-      expect(screen.getByTestId("agent-detail-pane")).toBeTruthy();
-    });
-    const betaRow = screen.getByTestId("agent-row-emploke/beta");
-    const kebab = betaRow.querySelector("summary.agents-list__menu-trigger");
-    expect(kebab).toBeTruthy();
-    act(() => {
-      fireEvent.click(kebab as HTMLElement);
-    });
-
-    // URL probe still shows beta selected.
-    const probe = screen.getByTestId("url-probe");
-    expect(probe.getAttribute("data-search")).toContain("selected=emploke%2Fbeta");
+    const beta = await screen.findByTestId("agent-row-emploke/beta");
+    expect(beta.className).toContain("agents-list__item--selected");
+    const alpha = screen.getByTestId("agent-row-emploke/alpha");
+    expect(alpha.className).not.toContain("agents-list__item--selected");
   });
 });
