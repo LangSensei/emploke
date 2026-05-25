@@ -1,42 +1,52 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useUrlSearchValue } from "./useUrlState";
 
 /**
- * Selected task id, stored as pure component state.
+ * Selected task id, mirrored to the URL via `?taskId=` so refresh /
+ * back-button / share-link all land the user on the same master-detail
+ * row (Phase 1.5 §4.6 / Block G — URL-driven filters).
  *
- * Earlier iterations coupled this to the URL (`/tasks/:taskId` path segment),
- * but the agent-centric UI restructure (#agent-centric-ui §5) removed that:
- * task selection is ephemeral — refresh-preservation is intentionally NOT a
- * goal, and the row to re-select on remount is decided by the auto-select-
- * first-visible rule in `TasksPage` instead. Keeping the hook keeps callers
- * tidy and gives us a place to revisit the decision in one spot.
- *
- * The hook also reads a `preselectId` off `location.state` once on mount.
- * The Overview tab uses this to navigate into the Tasks tab with a specific
- * row highlighted (review round 1 — overview rows used to be inert). After
- * consuming, the state entry is cleared via `navigate(..., { replace: true })`
- * so a browser-back to Overview followed by re-entry doesn't re-fire the
- * pre-selection.
+ * Backward compatibility for the agent-Overview deep-link affordance:
+ * older `location.state.preselectId` payloads (set by `AgentOverviewTab`
+ * before Phase 1.5) are consumed once on mount and translated into
+ * the URL slot, then cleared. Preserves the "click a recent task in
+ * the agent overview to land on it pre-selected" behaviour without
+ * forcing the Overview tab to know about the URL convention.
  */
 export function useSelectedTask(): {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
 } {
+  const [urlValue, setUrlValue] = useUrlSearchValue("taskId", "");
   const location = useLocation();
   const navigate = useNavigate();
-  const initial =
-    typeof location.state === "object" && location.state !== null
-      ? (((location.state as { preselectId?: unknown }).preselectId as string | undefined) ?? null)
-      : null;
-  const [selectedId, setSelectedId] = useState<string | null>(initial);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; navigate/location read intentionally only on first render
+  const selectedId = urlValue === "" ? null : urlValue;
+  const setSelectedId = useCallback(
+    (id: string | null) => {
+      setUrlValue(id ?? "");
+    },
+    [setUrlValue],
+  );
+
+  // One-shot translation of the legacy `location.state.preselectId`
+  // payload (from AgentOverviewTab pre-Phase-1.5) into the URL slot.
+  // After consuming we clear `history.state` so a browser-back into
+  // the agent Overview followed by re-entry doesn't re-fire it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; intentionally reads navigate/location only once
   useEffect(() => {
-    if (initial === null) return;
-    // Consume the preselect once: swap it out of history.state but keep
-    // the same pathname so back-navigation lands where the user expects.
+    const stateId = readPreselectId(location.state);
+    if (stateId === null) return;
+    setUrlValue(stateId);
     navigate(location.pathname + location.search, { replace: true, state: null });
   }, []);
 
   return { selectedId, setSelectedId };
+}
+
+function readPreselectId(state: unknown): string | null {
+  if (typeof state !== "object" || state === null) return null;
+  const candidate = (state as { preselectId?: unknown }).preselectId;
+  return typeof candidate === "string" && candidate !== "" ? candidate : null;
 }

@@ -23,6 +23,7 @@ import {
 } from "../components/Icons";
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
+import { useClearUrlFilters, useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
 
@@ -117,12 +118,30 @@ export function SessionsPage({
 }: SessionsProps) {
   const [sessions, setSessions] = useState<SessionView[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
-  const [filterState, setFilterState] = useState<string>(ALL_AGENTS);
-  const filter = fixedAgentFqn ?? filterState;
-  const setFilter = fixedAgentFqn ? () => {} : setFilterState;
-  const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
-  const [timeFilter, setTimeFilter] = useState<TimePreset>(DEFAULT_TIME_PRESET);
-  const [idQuery, setIdQuery] = useState<string>("");
+
+  // URL-driven filter state (Phase 1.5 §4.5 / Block G). Each filter
+  // reads from its querystring slot and writes back via the guarded
+  // setter from {@link useUrlSearchValue}, so refresh / back-button /
+  // share-link all reproduce the same view. `fixedAgentFqn` (set when
+  // this page is embedded inside an agent detail tab) takes
+  // precedence over the URL-driven `?agent=` slot and locks both the
+  // value and the writer.
+  const [idQuery, setIdQuery] = useUrlSearchValue("q", "");
+  const [agentFilterUrl, setAgentFilterUrl] = useUrlSearchValue("agent", ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
+  const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
+  const filter = fixedAgentFqn ?? agentFilterUrl;
+  const setFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
+  // Coerce the URL value to a known preset so a stale or malformed
+  // querystring (`?range=lastQuarter`) silently degrades to the
+  // default instead of breaking the data fetch.
+  const timeFilter: TimePreset = ((): TimePreset => {
+    const match = TIME_PRESETS.find((p) => p.value === rangeUrl);
+    return match ? match.value : DEFAULT_TIME_PRESET;
+  })();
+  const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
+  const clearFilters = useClearUrlFilters();
+
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Distinguishes "haven't loaded yet" from "loaded with zero results" so the
@@ -426,6 +445,17 @@ export function SessionsPage({
               </button>
             ))}
           </div>
+          {!fixedAgentFqn && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={clearFilters}
+              title="Drop every filter and search term"
+              data-testid="clear-filters"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 

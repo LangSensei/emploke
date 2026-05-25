@@ -4,9 +4,16 @@ import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecor
 import { HeaderActions } from "../components/HeaderActions";
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { DispatchModal } from "../components/tasks/DispatchModal";
+import {
+  ALL_AGENTS,
+  ALL_RUNTIMES,
+  statusGroup,
+  TIME_PRESETS,
+  type TimePreset,
+} from "../components/tasks/shared";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
 import { TaskDetail } from "../components/tasks/TaskDetail";
-import { TaskFilters } from "../components/tasks/TaskFilters";
+import { type StatusFilter, TaskFilters } from "../components/tasks/TaskFilters";
 import { TaskList } from "../components/tasks/TaskList";
 import {
   TaskDetailPlaceholder,
@@ -15,6 +22,7 @@ import {
 } from "../components/tasks/TasksChrome";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
+import { useClearUrlFilters, useUrlSearchValue } from "../hooks/useUrlState";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -31,50 +39,58 @@ interface TasksProps {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
+const DEFAULT_TIME_PRESET: TimePreset = "7d";
+const VALID_STATUS_FILTERS: ReadonlyArray<StatusFilter> = ["all", "running", "completed"];
+
+function coerceTimePreset(raw: string): TimePreset {
+  const match = TIME_PRESETS.find((p) => p.value === raw);
+  return match ? match.value : DEFAULT_TIME_PRESET;
+}
+
+function coerceStatusFilter(raw: string): StatusFilter {
+  return (VALID_STATUS_FILTERS as ReadonlyArray<string>).includes(raw)
+    ? (raw as StatusFilter)
+    : "all";
+}
 
 /**
  * Tasks page — fire-and-forget agent dispatch, autonomous run,
  * polling detail view. Master-detail layout: a filtered + grouped
  * task list on the left, a tabbed detail panel on the right.
  *
- * Phase A redesign:
- *   - Refresh / Dispatch live in the workspace chrome header (via
- *     `<HeaderActions>`); no separate `.page-toolbar--tasks` strip.
- *   - The detail pane is always 2-column. The right column shows
- *     either `<TaskDetail>` for the selected task, or a calm
- *     placeholder when the list is empty.
- *   - Origin filter is dropped — the Tasks page is standalone-only;
- *     workflow-origin tasks surface on a separate (future) page.
- *
- * This file is a thin shell — page-level data loading lives in
- * {@link useTasks}, per-task detail loading in `useTaskDetail`,
- * URL selection in {@link useSelectedTask}.
+ * Phase 1.5 Block G — every filter (`?agent`, `?runtime`, `?range`,
+ * `?q`, `?status`) plus the master-detail selection (`?taskId`) is
+ * URL-driven via {@link useUrlSearchValue}, so refresh / back-button
+ * / shared link all reproduce the same view.
  */
 export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }: TasksProps) {
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+
+  // URL-driven filter state. fixedAgentFqn (per-agent embed) takes
+  // precedence over the URL `?agent=` slot.
+  const [idQuery, setIdQuery] = useUrlSearchValue("q", "");
+  const [agentFilterUrl, setAgentFilterUrl] = useUrlSearchValue("agent", ALL_AGENTS);
+  const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
+  const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
+  const [statusUrl, setStatusUrl] = useUrlSearchValue("status", "all");
+  const clearFilters = useClearUrlFilters();
+
+  const agentFilter = fixedAgentFqn ?? agentFilterUrl;
+  const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
+  const timeFilter = coerceTimePreset(rangeUrl);
+  const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
+  const statusFilter = coerceStatusFilter(statusUrl);
+  const setStatusFilter = (v: StatusFilter) => setStatusUrl(v);
 
   const { selectedId, setSelectedId } = useSelectedTask();
   const data = useTasks({
     currentWorkspaceId,
     pollIntervalMs,
-    ...(fixedAgentFqn !== undefined ? { fixedAgentFqn } : {}),
-  });
-  const {
-    tasks,
-    runtimes,
-    loaded,
-    error,
-    setError,
     agentFilter,
-    setAgentFilter,
     runtimeFilter,
-    setRuntimeFilter,
     timeFilter,
-    setTimeFilter,
-    idQuery,
-    setIdQuery,
-    refresh,
-  } = data;
+  });
+  const { tasks, runtimes, loaded, error, setError, refresh } = data;
 
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -183,25 +199,34 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
 
   const visibleTasks = useMemo(() => {
     const q = idQuery.trim().toLowerCase();
-    if (q === "") return tasks;
-    return tasks.filter((t) => t.id.toLowerCase().includes(q));
-  }, [tasks, idQuery]);
+    return tasks.filter((t) => {
+      if (q !== "" && !t.id.toLowerCase().includes(q)) return false;
+      // Status filter narrows by the same Running / Completed bucket
+      // the list groups into — `all` keeps both, `running` drops the
+      // completed group, `completed` drops the running group.
+      if (statusFilter !== "all" && statusGroup(t.status) !== statusFilter) return false;
+      return true;
+    });
+  }, [tasks, idQuery, statusFilter]);
 
-  // Phase A default-selection rule: as soon as the list loads (or
-  // filters change such that the current selection is no longer
-  // visible), auto-bind to the top-most task. When the visible list
-  // is empty, clear the selection so the right column falls back to
-  // the placeholder.
-  useEffect(() => {
-    if (!loaded) return;
-    if (visibleTasks.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
-      return;
+  // Phase A default-selection rule: auto-bind to the top-most visible
+  // task when the URL doesn't already pin one with `?taskId=` and the
+  // list is non-empty. Derived during render so it doesn't race the
+  // URL-clearing path (Phase 1.5 Block G — earlier auto-select-via-
+  // effect would silently re-introduce filter params it captured in a
+  // stale closure when the user clicked Clear filters).
+  //
+  // Side-effect path (URL writes): only `setSelectedId` from user
+  // interactions writes to the URL — the auto-fallback stays component-
+  // local so `?taskId=` reflects deliberate selection, not the
+  // implicit "first row".
+  const effectiveSelectedId = useMemo(() => {
+    if (selectedId !== null && visibleTasks.some((t) => t.id === selectedId)) {
+      return selectedId;
     }
-    if (selectedId === null || !visibleTasks.some((t) => t.id === selectedId)) {
-      setSelectedId(visibleTasks[0].id);
-    }
-  }, [loaded, visibleTasks, selectedId, setSelectedId]);
+    if (loaded && visibleTasks.length > 0) return visibleTasks[0].id;
+    return null;
+  }, [selectedId, loaded, visibleTasks]);
 
   const filterAgentNames = useMemo(() => {
     const set = new Set<string>(agents.map((a) => a.agent.fqn));
@@ -249,10 +274,13 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
               onRuntimeFilterChange={setRuntimeFilter}
               timeFilter={timeFilter}
               onTimeFilterChange={setTimeFilter}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
               agents={agents}
               filterAgentNames={filterAgentNames}
               runtimes={runtimes}
               hideAgentFilter={fixedAgentFqn !== undefined}
+              onClearFilters={fixedAgentFqn ? undefined : clearFilters}
             />
             <div className="tasks-pane__list-scroll">
               {!loaded ? (
@@ -269,7 +297,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
               ) : (
                 <TaskList
                   tasks={visibleTasks}
-                  selectedId={selectedId}
+                  selectedId={effectiveSelectedId}
                   onSelect={setSelectedId}
                   onDelete={setDeleteTarget}
                   onCancel={requestCancel}
@@ -279,8 +307,8 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
             </div>
           </div>
 
-          {selectedId ? (
-            <TaskDetail taskId={selectedId} pollIntervalMs={pollIntervalMs} />
+          {effectiveSelectedId ? (
+            <TaskDetail taskId={effectiveSelectedId} pollIntervalMs={pollIntervalMs} />
           ) : (
             <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
           )}

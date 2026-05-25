@@ -12,12 +12,16 @@ export interface UseTasksOpts {
   currentWorkspaceId: string | null;
   pollIntervalMs: number;
   /**
-   * When set, the agent filter is locked to this fqn and `setAgentFilter`
-   * is a no-op. Used by the per-agent Tasks tab so the page's URL scope
-   * (`/runtime/agents/<scope>/<short>/tasks`) is the source of truth for
-   * which agent's tasks appear in the list.
+   * Filter values flow in as opts — TasksPage owns them (URL-driven
+   * via `useUrlSearchValue`, Phase 1.5 Block G). The hook just runs
+   * the network fetch + polling cadence against whatever values the
+   * caller hands it; that way refresh / back-button / share-link all
+   * keep working without a parallel "internal state" layer to keep
+   * in sync.
    */
-  fixedAgentFqn?: string;
+  agentFilter: string;
+  runtimeFilter: string;
+  timeFilter: TimePreset;
 }
 
 export interface UseTasksResult {
@@ -26,16 +30,6 @@ export interface UseTasksResult {
   loaded: boolean;
   error: string | null;
   setError: (e: string | null) => void;
-  // Filter state.
-  agentFilter: string;
-  setAgentFilter: (v: string) => void;
-  runtimeFilter: string;
-  setRuntimeFilter: (v: string) => void;
-  timeFilter: TimePreset;
-  setTimeFilter: (v: TimePreset) => void;
-  idQuery: string;
-  setIdQuery: (v: string) => void;
-  // Actions.
   refresh: () => Promise<void>;
 }
 
@@ -43,26 +37,23 @@ export interface UseTasksResult {
  * Page-level data layer for the Tasks list view: fetches the task
  * list (with server-side filters), the runtime catalog, and keeps
  * the list fresh via {@link usePollWithBackoff} while anything is
- * still running. Extracted from `pages/Tasks.tsx` during the
- * master-detail redesign so the shell page stays under its 300-line
- * budget.
+ * still running.
+ *
+ * Phase 1.5 Block G — filter state lifted out of this hook to the
+ * page so it can be backed by the URL. The hook is now purely a
+ * data-fetcher; it does not own filter state.
  */
 export function useTasks({
   currentWorkspaceId,
   pollIntervalMs,
-  fixedAgentFqn,
+  agentFilter,
+  runtimeFilter,
+  timeFilter,
 }: UseTasksOpts): UseTasksResult {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimes, setRuntimes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [agentFilterState, setAgentFilterState] = useState<string>(fixedAgentFqn ?? ALL_AGENTS);
-  const agentFilter = fixedAgentFqn ?? agentFilterState;
-  const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterState;
-  const [runtimeFilter, setRuntimeFilter] = useState<string>(ALL_RUNTIMES);
-  const [timeFilter, setTimeFilter] = useState<TimePreset>("7d");
-  const [idQuery, setIdQuery] = useState("");
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -152,14 +143,6 @@ export function useTasks({
     loaded,
     error,
     setError,
-    agentFilter,
-    setAgentFilter,
-    runtimeFilter,
-    setRuntimeFilter,
-    timeFilter,
-    setTimeFilter,
-    idQuery,
-    setIdQuery,
     refresh,
   };
 }

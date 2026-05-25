@@ -1,6 +1,20 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { ALL_AGENTS, ALL_RUNTIMES, TIME_PRESETS, type TimePreset } from "./shared";
 
+/**
+ * Status-group filter for the master Tasks list (Phase 1.5 §4.6 /
+ * Block G). `all` shows both Running and Completed groups (current
+ * behaviour); the other two narrow to one bucket each by hiding the
+ * other group's rows before the list groups them.
+ */
+export type StatusFilter = "all" | "running" | "completed";
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "running", label: "Running" },
+  { value: "completed", label: "Completed" },
+];
+
 export interface TaskFiltersProps {
   idQuery: string;
   onIdQueryChange: (v: string) => void;
@@ -10,6 +24,8 @@ export interface TaskFiltersProps {
   onRuntimeFilterChange: (v: string) => void;
   timeFilter: TimePreset;
   onTimeFilterChange: (v: TimePreset) => void;
+  statusFilter: StatusFilter;
+  onStatusFilterChange: (v: StatusFilter) => void;
   agents: AgentEntry[];
   filterAgentNames: string[];
   runtimes: string[];
@@ -21,6 +37,12 @@ export interface TaskFiltersProps {
    * scope is already implicit in the URL.
    */
   hideAgentFilter?: boolean;
+  /**
+   * Optional "Clear filters" button — when provided, renders trailing
+   * the row and drops the entire querystring on click. Hidden when
+   * filters are page-scoped immutable (e.g. fixed agent).
+   */
+  onClearFilters?: () => void;
 }
 
 /**
@@ -30,6 +52,10 @@ export interface TaskFiltersProps {
  * trail right). Wraps naturally at narrower widths. The Origin pills
  * were removed — the Tasks page is standalone-only; workflow-origin
  * tasks surface on a separate (future) page.
+ *
+ * Phase 1.5 Block G adds the Status pill group + an explicit Clear
+ * filters affordance to match Sessions; every chip/dropdown/input is
+ * URL-driven now (state lives in the page).
  */
 export function TaskFilters(props: TaskFiltersProps) {
   const {
@@ -41,9 +67,12 @@ export function TaskFilters(props: TaskFiltersProps) {
     onRuntimeFilterChange,
     timeFilter,
     onTimeFilterChange,
+    statusFilter,
+    onStatusFilterChange,
     filterAgentNames,
     runtimes,
     hideAgentFilter,
+    onClearFilters,
   } = props;
   return (
     <div className="task-filters">
@@ -91,6 +120,20 @@ export function TaskFilters(props: TaskFiltersProps) {
             </option>
           ))}
         </select>
+        <fieldset className="pills task-filters__pills" aria-label="Filter by task status">
+          {STATUS_OPTIONS.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              className={`pills__btn${statusFilter === s.value ? " pills__btn--active" : ""}`}
+              onClick={() => onStatusFilterChange(s.value)}
+              aria-pressed={statusFilter === s.value}
+              data-testid={`task-status-filter-${s.value}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </fieldset>
         <div className="pills task-filters__pills">
           {TIME_PRESETS.map((p) => (
             <button
@@ -104,6 +147,17 @@ export function TaskFilters(props: TaskFiltersProps) {
             </button>
           ))}
         </div>
+        {onClearFilters && (
+          <button
+            type="button"
+            className="btn btn--ghost task-filters__clear"
+            onClick={onClearFilters}
+            data-testid="clear-filters"
+            title="Drop every filter and search term"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
     </div>
   );
