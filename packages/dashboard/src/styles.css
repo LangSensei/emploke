@@ -3924,27 +3924,44 @@ button {
 
 /* ─── Artifact preview split-pane + viewers ──────────────────────── */
 
-/* Split layout: 30% file list / 70% preview pane. Fixed ratio
-   (resizable split is explicit non-goal for this commit). */
+/* Split layout: left file list (capped 240px) / right preview pane.
+   Fixed ratio (resizable split is explicit non-goal for this commit).
+   PR #189 polish v4 Bug 3 — capped the left column at 240px because
+   30% of the detail pane was far more than artifact filenames need;
+   dropped the 600px height caps on both children and switched to a
+   100%-height stretch container so the preview pane fills the full
+   detail-pane height instead of leaving whitespace below. The
+   parent chain that supplies the determinate height is
+   `.tasks-pane__detail > .task-detail__body` (the ArtifactsTab root
+   wears both classes — see `tasks-pane__detail > .task-detail__body`
+   rule below for the flex: 1 / min-height: 0 / overflow: auto). */
 .artifacts-split {
   display: grid;
-  grid-template-columns: minmax(220px, 30%) 1fr;
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: var(--space-3);
-  align-items: start;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
 }
 .artifacts-split__list {
   min-width: 0;
-  max-height: 600px;
+  min-height: 0;
   overflow: auto;
 }
 .artifacts-split__preview {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   padding: var(--space-3);
-  max-height: 600px;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.artifacts-split__preview > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .artifact-list__item--active {

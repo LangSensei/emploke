@@ -88,4 +88,20 @@ describe("ArtifactsTab", () => {
     expect(links.length).toBeGreaterThan(0);
     expect(links[0]?.getAttribute("href")).toContain("/tasks/task-abc/artifact/one.bin");
   });
+
+  it("renders the split layout with the artifacts-split class hooks (v4 Bug 3 layout)", () => {
+    // PR #189 polish v4 Bug 3 — the split-pane CSS contract relies on
+    // these three class names being present on the container and its
+    // two children. Without them the v4 `.artifacts-split` rules
+    // (capped left column, stretched height) never bind.
+    const { container } = render(<ArtifactsTab task={makeTask(["/tmp/notes.md"])} />);
+    const split = container.querySelector(".artifacts-split");
+    expect(split).toBeTruthy();
+    // The root is also the task-detail body so the parent chain
+    // (`.tasks-pane__detail > .task-detail__body`) supplies a
+    // determinate height for the new `height: 100%` rule to consume.
+    expect(split?.classList.contains("task-detail__body")).toBe(true);
+    expect(split?.querySelector(".artifacts-split__list")).toBeTruthy();
+    expect(split?.querySelector(".artifacts-split__preview")).toBeTruthy();
+  });
 });
