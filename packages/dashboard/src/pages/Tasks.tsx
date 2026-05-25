@@ -84,10 +84,13 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
 
   const [dispatchOpen, setDispatchOpen] = useState(false);
 
-  // Phase 1.5 §4.3 — the agent-detail "+ New task" button deep-links to
-  // this page with `?dispatch=1` (plus `?agent=<fqn>`) so the dispatch
-  // modal opens with the agent pre-selected. We honour the flag once on
-  // mount, then strip it from the URL so a refresh/back doesn't re-open
+  // Legacy `?dispatch=1` deep-link reader (Phase 1.5 §4.3 → PR #189
+  // polish v3 in-place modals). The agent-detail "+ New task" button
+  // now mounts DispatchModal locally on AgentDetailPane and no longer
+  // navigates here, so nothing in-app writes this flag any more — the
+  // reader stays so pre-v3 bookmarks (`?dispatch=1&agent=<fqn>`) and
+  // externally-pasted URLs still open the modal on landing. The flag
+  // is stripped after consumption so a refresh/back doesn't re-open
   // the modal.
   const [dispatchFlagUrl, setDispatchFlagUrl] = useUrlSearchValue("dispatch", "");
   useEffect(() => {
