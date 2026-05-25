@@ -1,28 +1,17 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { cleanup, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogData, ServerConfig, SessionView, TaskRecord } from "../src/api";
-import {
-  WorkspaceShellContext,
-  type WorkspaceShellContextValue,
-} from "../src/components/WorkspaceShellContext";
-import { AgentDetailPage } from "../src/pages/Runtime/AgentDetailPage";
+import type { SessionView, TaskRecord } from "../src/api";
+import { AgentDetailPane } from "../src/pages/Runtime/AgentDetailPane";
 import { avatarColorFor, avatarInitialsFor } from "../src/pages/Runtime/agentRuntime";
 
-vi.mock("../src/api", async () => {
-  const actual = await vi.importActual<typeof import("../src/api")>("../src/api");
-  return {
-    ...actual,
-    listTasks: vi.fn(),
-    listSessions: vi.fn(),
-  };
-});
-
-import * as api from "../src/api";
-
-const mockListTasks = api.listTasks as unknown as ReturnType<typeof vi.fn>;
-const mockListSessions = api.listSessions as unknown as ReturnType<typeof vi.fn>;
+// PR #189 polish v2: the per-agent header (avatar, name, KPI tiles,
+// action buttons) was extracted into the pure-presentational
+// `AgentDetailPane`. These tests now mount the pane directly with
+// synthesised props instead of routing through the legacy
+// `AgentDetailPage` standalone URL (which is now a redirect shim into
+// the master Agents page).
 
 function makeAgent(fqn: string): AgentEntry {
   const [scope, short] = fqn.split("/");
@@ -66,42 +55,36 @@ function makeSession(overrides: Partial<SessionView> = {}): SessionView {
   } as unknown as SessionView;
 }
 
-function shell(agents: AgentEntry[]): WorkspaceShellContextValue {
-  const data: CatalogData = {
-    overview: null,
-    skills: [],
-    agents,
-    mcps: [],
-  } as unknown as CatalogData;
-  return {
-    wsId: "ws-1",
-    workspaces: [],
-    data,
-    config: { pathSeparator: "/" } as unknown as ServerConfig,
-    refreshData: async () => {},
-  };
+interface RenderPaneOptions {
+  fqn?: string;
+  entry?: AgentEntry | null;
+  tasks?: TaskRecord[] | null;
+  sessions?: SessionView[] | null;
+  wsId?: string;
 }
 
-function renderDetail(initialPath: string, agents: AgentEntry[]) {
+function renderPane(opts: RenderPaneOptions = {}) {
+  const fqn = opts.fqn ?? "emploke/dev";
+  const entry = opts.entry === undefined ? makeAgent(fqn) : opts.entry;
   return render(
-    <WorkspaceShellContext.Provider value={shell(agents)}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route
-            path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-            element={<AgentDetailPage />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </WorkspaceShellContext.Provider>,
+    <MemoryRouter>
+      <AgentDetailPane
+        fqn={fqn}
+        entry={entry}
+        wsId={opts.wsId ?? "ws-1"}
+        tasks={opts.tasks ?? []}
+        sessions={opts.sessions ?? []}
+        tasksError={null}
+        sessionsError={null}
+      />
+    </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
-  mockListTasks.mockReset();
-  mockListSessions.mockReset();
-  mockListTasks.mockResolvedValue([]);
-  mockListSessions.mockResolvedValue([]);
+  // Tests don't hit the API directly any more (the pane is pure), but
+  // a freshly-stubbed vi env keeps any future addition isolated.
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -110,13 +93,11 @@ afterEach(() => {
 });
 
 describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
-  const agents = [makeAgent("emploke/dev")];
-
   it("renders an avatar circle with deterministic color + 2-letter initials", async () => {
-    mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-1")]);
-    mockListSessions.mockResolvedValue([makeSession({ id: "s-1" })]);
-
-    renderDetail("/workspaces/ws-1/runtime/agents/emploke/dev/overview", agents);
+    renderPane({
+      tasks: [makeTask("emploke/dev", "succeeded", "t-1")],
+      sessions: [makeSession({ id: "s-1" })],
+    });
 
     const avatar = await screen.findByTestId("agent-detail-avatar");
     expect(avatar.textContent).toBe(avatarInitialsFor("dev"));
@@ -127,13 +108,13 @@ describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
   });
 
   it("renders exactly 3 KPI tiles with the labels Running tasks / Total tasks (7d) / Sessions (7d)", async () => {
-    mockListTasks.mockResolvedValue([
-      makeTask("emploke/dev", "running", "t-r"),
-      makeTask("emploke/dev", "succeeded", "t-s"),
-    ]);
-    mockListSessions.mockResolvedValue([makeSession({ id: "s-1" }), makeSession({ id: "s-2" })]);
-
-    renderDetail("/workspaces/ws-1/runtime/agents/emploke/dev/overview", agents);
+    renderPane({
+      tasks: [
+        makeTask("emploke/dev", "running", "t-r"),
+        makeTask("emploke/dev", "succeeded", "t-s"),
+      ],
+      sessions: [makeSession({ id: "s-1" }), makeSession({ id: "s-2" })],
+    });
 
     const kpis = await screen.findByTestId("agent-detail-kpis");
     const labels = Array.from(kpis.querySelectorAll(".kpi-tile__label")).map((n) => n.textContent);
@@ -143,10 +124,7 @@ describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
   });
 
   it("+ New task button links to /runtime/tasks?agent=<fqn>&dispatch=1", async () => {
-    mockListTasks.mockResolvedValue([]);
-    mockListSessions.mockResolvedValue([]);
-
-    renderDetail("/workspaces/ws-1/runtime/agents/emploke/dev/overview", agents);
+    renderPane({ tasks: [], sessions: [] });
 
     const newTaskLink = await screen.findByTestId("agent-detail-new-task");
     expect(newTaskLink.getAttribute("href")).toBe(
@@ -161,16 +139,14 @@ describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
 });
 
 describe("Agent Overview 2x2 grid — Phase 1.5 Block J (§4.4)", () => {
-  const agents = [makeAgent("emploke/dev")];
-
   it("renders the 2x2 grid with Recent tasks / Active sessions / Current activity cells", async () => {
-    mockListTasks.mockResolvedValue([
-      makeTask("emploke/dev", "running", "t-r"),
-      makeTask("emploke/dev", "succeeded", "t-s"),
-    ]);
-    mockListSessions.mockResolvedValue([makeSession({ id: "s-1" })]);
-
-    renderDetail("/workspaces/ws-1/runtime/agents/emploke/dev/overview", agents);
+    renderPane({
+      tasks: [
+        makeTask("emploke/dev", "running", "t-r"),
+        makeTask("emploke/dev", "succeeded", "t-s"),
+      ],
+      sessions: [makeSession({ id: "s-1" })],
+    });
 
     const grid = await screen.findByTestId("agent-overview-grid");
     expect(grid).toBeTruthy();
@@ -182,12 +158,10 @@ describe("Agent Overview 2x2 grid — Phase 1.5 Block J (§4.4)", () => {
   });
 
   it("Current activity cell shows 'Idle since X' when no running task is present", async () => {
-    mockListTasks.mockResolvedValue([
-      makeTask("emploke/dev", "succeeded", "t-1", "2026-05-22T10:00:00Z"),
-    ]);
-    mockListSessions.mockResolvedValue([makeSession({ id: "s-1" })]);
-
-    renderDetail("/workspaces/ws-1/runtime/agents/emploke/dev/overview", agents);
+    renderPane({
+      tasks: [makeTask("emploke/dev", "succeeded", "t-1", "2026-05-22T10:00:00Z")],
+      sessions: [makeSession({ id: "s-1" })],
+    });
 
     const idle = await screen.findByTestId("agent-overview-idle");
     expect(idle.textContent).toMatch(/^Idle/);

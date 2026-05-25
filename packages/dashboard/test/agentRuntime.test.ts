@@ -76,14 +76,14 @@ describe("splitFqn", () => {
 });
 
 describe("agentDetailUrl", () => {
-  it("keeps scope and short as two distinct path segments and lands on overview", () => {
+  it("emits the master-detail ?selected= shape (PR #189 polish v2)", () => {
     expect(agentDetailUrl("ws-1", "emploke", "dev")).toBe(
-      "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
+      "/workspaces/ws-1/runtime/agents?selected=emploke%2Fdev",
     );
   });
-  it("encodes special characters in wsId/scope/short", () => {
+  it("encodes special characters in wsId and in the scope/short fqn payload", () => {
     expect(agentDetailUrl("ws 1", "a b", "c d")).toBe(
-      "/workspaces/ws%201/runtime/agents/a%20b/c%20d/overview",
+      "/workspaces/ws%201/runtime/agents?selected=a%20b%2Fc%20d",
     );
   });
 });

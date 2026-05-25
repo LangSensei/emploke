@@ -19,8 +19,8 @@ import { AgentDetailPage } from "../src/pages/Runtime/AgentDetailPage";
 import { AgentsListPage } from "../src/pages/Runtime/AgentsListPage";
 
 /**
- * Tiny wrapper so the stubs in the legacy-redirect describe block
- * can read the post-redirect querystring without each one re-importing
+ * Tiny wrapper so the stubs in the legacy-redirect describe block can
+ * read the post-redirect querystring without each one re-importing
  * `useSearchParams` and unwrapping the tuple.
  */
 function useSearchParamsForTest(): URLSearchParams {
@@ -41,8 +41,8 @@ vi.mock("../src/api", async () => {
   };
 });
 
-// Re-import the mocked functions so the helpers below can set their behavior
-// without each test repeating the boilerplate.
+// Re-import the mocked functions so the helpers below can set their
+// behavior without each test repeating the boilerplate.
 import * as api from "../src/api";
 
 const mockListTasks = api.listTasks as unknown as ReturnType<typeof vi.fn>;
@@ -98,6 +98,27 @@ function renderWithShell(ui: React.ReactNode, agents: AgentEntry[], initialPath:
   );
 }
 
+/**
+ * Master-detail routing surface used by the bulk of the tests below. PR
+ * #189 polish v2 collapsed the standalone `/runtime/agents/<scope>/<short>/overview`
+ * route into a redirect into the master Agents page, so any test that
+ * mounted `AgentDetailPage` at the legacy URL now needs the legacy route
+ * AND the destination route both registered so the redirect lands
+ * somewhere renderable.
+ */
+function MasterDetailRoutes() {
+  return (
+    <Routes>
+      <Route path="/workspaces/:wsId/runtime/agents" element={<AgentsListPage />} />
+      <Route
+        path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
+        element={<AgentDetailPage />}
+      />
+      <Route path="/workspaces/:wsId/runtime/agents/:scope/:short" element={<AgentDetailPage />} />
+    </Routes>
+  );
+}
+
 beforeEach(() => {
   mockListTasks.mockReset();
   mockListSessions.mockReset();
@@ -113,7 +134,7 @@ afterEach(() => {
 });
 
 describe("AgentsListPage (§11)", () => {
-  it("renders each agent with the computed status (running vs idle)", async () => {
+  it("renders each agent with the computed status (running vs idle) in the left list", async () => {
     const agents = [makeAgent("emploke/dev"), makeAgent("emploke/qa")];
     mockListTasks.mockResolvedValueOnce([
       makeTask("emploke/dev", "running"),
@@ -122,35 +143,28 @@ describe("AgentsListPage (§11)", () => {
 
     renderWithShell(<AgentsListPage />, agents, "/workspaces/ws-1/runtime/agents");
 
+    // Scope the pill count to the left list so the auto-selected detail
+    // pane's own status pill (rendered in the right pane after PR #189
+    // polish v2) doesn't inflate the count.
+    const list = await screen.findByRole("listbox", { name: /Installed agents/i });
     await waitFor(() => {
-      expect(screen.getAllByRole("status")).toHaveLength(2);
+      const pills = list.querySelectorAll('[role="status"]');
+      expect(pills.length).toBe(2);
     });
-
-    const pills = screen.getAllByRole("status");
+    const pills = list.querySelectorAll('[role="status"]');
     // Order matches the catalog order (dev first, qa second).
     expect(pills[0].textContent).toMatch(/Running/);
     expect(pills[1].textContent).toMatch(/Idle/);
   });
 });
 
-describe("AgentDetailPage routing (Phase 1.5 §3.4 / Block I)", () => {
+describe("Legacy AgentDetailPage redirect (PR #189 polish v2)", () => {
   const agents = [makeAgent("emploke/dev")];
 
-  function DetailRoutes() {
-    return (
-      <Routes>
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage />}
-        />
-      </Routes>
-    );
-  }
-
-  it("renders the Overview view on …/overview", async () => {
+  it("renders the Overview view on …/overview via the redirect into the master page", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-seed")]);
     renderWithShell(
-      <DetailRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -159,26 +173,26 @@ describe("AgentDetailPage routing (Phase 1.5 §3.4 / Block I)", () => {
     });
   });
 
-  it("shows the Running pill on Overview when the agent has a running task", async () => {
+  it("shows the Running pill on the master-detail header when the agent has a running task", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running")]);
     renderWithShell(
-      <DetailRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
     await waitFor(() => {
-      // Multiple status pills exist (one in the header, one per task
-      // badge in the activity cell). At least one says Running.
+      // Multiple status pills exist after polish v2 — list row + detail
+      // header. At least one says Running.
       expect(screen.getAllByRole("status").some((p) => /Running/.test(p.textContent ?? ""))).toBe(
         true,
       );
     });
   });
 
-  it("shows the Idle pill when the agent has no running tasks", async () => {
+  it("shows the Idle pill on the master-detail header when the agent has no running tasks", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded")]);
     renderWithShell(
-      <DetailRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -186,8 +200,10 @@ describe("AgentDetailPage routing (Phase 1.5 §3.4 / Block I)", () => {
       expect(mockListTasks).toHaveBeenCalled();
     });
     await waitFor(() => {
-      const pill = screen.getByRole("status");
-      expect(pill.textContent).toMatch(/Idle/);
+      // List row + detail header pills, both Idle.
+      const pills = screen.getAllByRole("status");
+      expect(pills.length).toBeGreaterThanOrEqual(1);
+      expect(pills.every((p) => /Idle/.test(p.textContent ?? ""))).toBe(true);
     });
   });
 });
@@ -195,21 +211,10 @@ describe("AgentDetailPage routing (Phase 1.5 §3.4 / Block I)", () => {
 describe("Overview row click → opens row on the global Tasks/Sessions page (Phase 1.5)", () => {
   const agents = [makeAgent("emploke/dev")];
 
-  function OverviewRoutes() {
-    return (
-      <Routes>
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage />}
-        />
-      </Routes>
-    );
-  }
-
   it("renders recent-task rows as <Link> elements pointing at the global Tasks page with ?agent=&taskId=", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running", "t-r1")]);
     renderWithShell(
-      <OverviewRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -243,7 +248,7 @@ describe("Overview row click → opens row on the global Tasks/Sessions page (Ph
       } as unknown as SessionView,
     ]);
     renderWithShell(
-      <OverviewRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -264,7 +269,7 @@ describe("Overview row click → opens row on the global Tasks/Sessions page (Ph
   it("clicking a recent-task row does not throw and the row stays mounted", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running", "t-r1")]);
     renderWithShell(
-      <OverviewRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -388,17 +393,6 @@ describe("Legacy routes redirect to global /runtime/{sessions|tasks} (Block F)",
 describe("AgentOverviewTab 'View all' links (Block D → Block J retarget)", () => {
   const agents = [makeAgent("emploke/dev")];
 
-  function OverviewRoutes() {
-    return (
-      <Routes>
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage />}
-        />
-      </Routes>
-    );
-  }
-
   it("renders a 'View all tasks' link pointing at the global Tasks page with ?agent=", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-1")]);
     mockListSessions.mockResolvedValue([
@@ -414,7 +408,7 @@ describe("AgentOverviewTab 'View all' links (Block D → Block J retarget)", () 
       } as unknown as SessionView,
     ]);
     renderWithShell(
-      <OverviewRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -443,7 +437,7 @@ describe("AgentOverviewTab 'View all' links (Block D → Block J retarget)", () 
       } as unknown as SessionView,
     ]);
     renderWithShell(
-      <OverviewRoutes />,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -474,12 +468,7 @@ describe("Empty states (Block E)", () => {
     mockListTasks.mockResolvedValue([]);
     mockListSessions.mockResolvedValue([]);
     renderWithShell(
-      <Routes>
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage />}
-        />
-      </Routes>,
+      <MasterDetailRoutes />,
       agents,
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
@@ -503,44 +492,37 @@ describe("Empty states (Block E)", () => {
 describe("Live polling (Block B)", () => {
   const agents = [makeAgent("emploke/dev")];
 
-  function DetailRoute() {
-    return (
-      <Routes>
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage />}
-        />
-      </Routes>
-    );
-  }
-
-  it("AgentDetailPage header pill refreshes when polled fetch returns a new status", async () => {
+  it("AgentDetailPane header pill refreshes when the workspace-wide polled fetch returns a new status", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       // First fetch (initial mount): one running task.
       mockListTasks.mockResolvedValueOnce([makeTask("emploke/dev", "running", "t-1")]);
-      // Subsequent polled fetch(es): the task has completed; pill should flip to Idle.
+      // Subsequent polled fetch(es): the task has completed; pill should
+      // flip to Idle for the auto-selected agent.
       mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-1")]);
 
       renderWithShell(
-        <DetailRoute />,
+        <MasterDetailRoutes />,
         agents,
         "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
       );
 
       await waitFor(() => {
-        const pill = screen.getByRole("status");
-        expect(pill.textContent).toMatch(/Running/);
+        // At least one pill (list row + detail header) shows Running.
+        expect(screen.getAllByRole("status").some((p) => /Running/.test(p.textContent ?? ""))).toBe(
+          true,
+        );
       });
 
-      // Advance past the default 4 s poll interval. usePollWithBackoff
-      // schedules its first re-poll after `intervalMs`; one tick should
-      // suffice to surface the updated value.
+      // Advance past the default 4 s poll interval. The AgentsListPage's
+      // workspace-wide listTasks poll fires on the same cadence as the
+      // old per-agent fetch.
       await vi.advanceTimersByTimeAsync(4_500);
 
       await waitFor(() => {
-        const pill = screen.getByRole("status");
-        expect(pill.textContent).toMatch(/Idle/);
+        const pills = screen.getAllByRole("status");
+        expect(pills.length).toBeGreaterThanOrEqual(1);
+        expect(pills.every((p) => /Idle/.test(p.textContent ?? ""))).toBe(true);
       });
       expect(mockListTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
     } finally {
