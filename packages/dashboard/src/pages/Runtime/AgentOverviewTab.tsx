@@ -80,6 +80,29 @@ export function AgentOverviewTab({
   const recentTasks = sortedTasks.slice(0, 5);
   const recentSessions = sessions.slice(0, 5);
 
+  // Block E (PR #189 polish): when nothing has ever run for this agent,
+  // collapse the three empty section headers into a single panel with a
+  // dispatch CTA. Otherwise the page is just three "No ... yet" lines
+  // stacked under each other, which reads as broken rather than as a
+  // clean empty state.
+  const noActivity = sortedTasks.length === 0 && recentSessions.length === 0;
+  if (noActivity) {
+    return (
+      <div className="empty" data-testid="agent-overview-empty">
+        <div className="empty__icon" aria-hidden="true">
+          ✨
+        </div>
+        <p className="empty__title">No activity yet</p>
+        <p className="empty__hint">
+          This agent hasn't run any tasks or sessions in this workspace.{" "}
+          <Link to={tasksUrl} className="agent-overview__more">
+            Dispatch a task →
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="agent-overview">
       <section className="agent-overview__section">
