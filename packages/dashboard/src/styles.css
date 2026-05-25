@@ -238,6 +238,41 @@ button {
   padding: var(--space-3) var(--space-3) var(--space-1);
 }
 
+/* Section group container. Holds the parent button + nested children
+   list (when present). No visual chrome of its own — the children list
+   handles indentation. */
+.sidebar__group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Indented child rows under a group parent (Phase 1.5 §4.1 — Runtime
+   gets Agents / Sessions / Tasks as children). Indent visually mirrors
+   the icon-gutter width (16 px icon + 12 px gap = ~28 px) so child
+   labels line up with parent labels. */
+.sidebar__children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  display: flex;
+  flex-direction: column;
+}
+.sidebar__item--parent {
+  /* No visual change to the parent — children expand below it. The
+     class is a CSS hook so future grouping treatments (e.g. removing
+     bottom margin when expanded) have a target. */
+  margin-bottom: 0;
+}
+.sidebar__item--child {
+  font-size: 13px;
+  padding-left: var(--space-3);
+}
+.sidebar__icon--child {
+  /* Slightly muted icon weight so the visual hierarchy reads
+     parent → child without a brand-new icon palette. */
+  opacity: 0.85;
+}
+
 .sidebar__item {
   display: flex;
   align-items: center;

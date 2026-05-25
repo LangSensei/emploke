@@ -2,6 +2,7 @@ import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecord } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
+import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { DispatchModal } from "../components/tasks/DispatchModal";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
 import { TaskDetail } from "../components/tasks/TaskDetail";
@@ -234,6 +235,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
       </HeaderActions>
 
       <div className="tasks-page">
+        {!fixedAgentFqn && <LegacyMovedBanner page="tasks" />}
         {error && <div className="alert alert--error">⚠️ {error}</div>}
 
         <div className="tasks-pane tasks-pane--with-detail">

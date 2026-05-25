@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { listTasks, type TaskRecord } from "../../api";
 import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
@@ -16,14 +16,6 @@ import {
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 
 /**
- * Marker value the legacy-URL redirect routes drop on `location.state`
- * so this page knows to render the one-shot "moved" banner. Exported
- * so the redirect component (in App.tsx) and any future tests share
- * the same string literals.
- */
-export type LegacyRuntimeFrom = "sessions" | "tasks";
-
-/**
  * Monitor-only list of every installed agent in the workspace, with a
  * live status pill computed by cross-referencing the catalog response
  * with the running-task list. There are no actions on this page (no
@@ -36,11 +28,13 @@ export type LegacyRuntimeFrom = "sessions" | "tasks";
  * used to freeze at mount). The hook re-uses the same cadence as the
  * Tasks page (config.tasks.pollIntervalMs, default 4s) and applies the
  * shared exponential-backoff-on-failure behaviour.
+ *
+ * The "legacy URL moved" banner that lived here under PR #189 polish
+ * (Block C) moved to the new global Sessions/Tasks pages in Phase 1.5
+ * (§4.1, Block F) — those pages are now the redirect target.
  */
 export function AgentsListPage() {
   const { wsId, data, config } = useWorkspaceShell();
-  const navigate = useNavigate();
-  const location = useLocation();
   const [tasks, setTasks] = useState<TaskRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -54,18 +48,6 @@ export function AgentsListPage() {
   useBreadcrumb("Runtime", ["Runtime", "Agents"]);
 
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-
-  // One-shot banner for legacy /sessions /tasks redirects (Block C). The
-  // routing layer drops a `from: 'sessions' | 'tasks'` marker on
-  // `location.state` when it sends the user here; we read it once, then
-  // clear it so a browser-back doesn't re-show the banner.
-  const initialBanner = readLegacyFrom(location.state);
-  const [banner, setBanner] = useState<LegacyRuntimeFrom | null>(initialBanner);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount; navigate/location read intentionally only on first render
-  useEffect(() => {
-    if (initialBanner === null) return;
-    navigate(location.pathname + location.search, { replace: true, state: null });
-  }, []);
 
   const refresh = useCallback(async () => {
     // 7-day window matches the default surface the Tasks tab uses; the
@@ -108,23 +90,6 @@ export function AgentsListPage() {
 
   return (
     <div className="agents-list-page">
-      {banner !== null && (
-        <aside className="legacy-url-banner" role="status" data-testid="legacy-url-banner">
-          <span className="legacy-url-banner__body">
-            <strong>{banner === "sessions" ? "Sessions" : "Tasks"}</strong> moved to{" "}
-            <strong>Runtime → Agents</strong>. Pick an agent below to see its{" "}
-            {banner === "sessions" ? "sessions" : "tasks"}.
-          </span>
-          <button
-            type="button"
-            className="legacy-url-banner__dismiss"
-            onClick={() => setBanner(null)}
-            aria-label="Dismiss notice"
-          >
-            ✕
-          </button>
-        </aside>
-      )}
       {error && <div className="alert alert--error">⚠️ {error}</div>}
       {tasks === null ? (
         <div className="empty">
@@ -155,12 +120,6 @@ export function AgentsListPage() {
 interface AgentRowProps {
   wsId: string;
   view: AgentRuntimeView;
-}
-
-function readLegacyFrom(state: unknown): LegacyRuntimeFrom | null {
-  if (typeof state !== "object" || state === null) return null;
-  const candidate = (state as { from?: unknown }).from;
-  return candidate === "sessions" || candidate === "tasks" ? candidate : null;
 }
 
 function AgentRow({ wsId, view }: AgentRowProps) {

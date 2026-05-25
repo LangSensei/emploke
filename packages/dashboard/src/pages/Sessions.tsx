@@ -21,6 +21,7 @@ import {
   RefreshIcon,
   TrashIcon,
 } from "../components/Icons";
+import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
@@ -352,6 +353,8 @@ export function SessionsPage({
           <span>New session</span>
         </button>
       </HeaderActions>
+
+      {!fixedAgentFqn && <LegacyMovedBanner page="sessions" />}
 
       <div className="page-toolbar">
         <div

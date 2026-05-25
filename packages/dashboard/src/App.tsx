@@ -25,7 +25,13 @@ import {
 import { HeaderActionsContext } from "./components/HeaderActions";
 import { PlusIcon, TrashIcon } from "./components/Icons";
 import { Modal } from "./components/Modal";
-import { type SectionDef, type SectionId, Sidebar } from "./components/Sidebar";
+import {
+  type RuntimeChildId,
+  type SectionDef,
+  type SectionId,
+  Sidebar,
+  type SidebarItemId,
+} from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import {
   BreadcrumbContext,
@@ -38,13 +44,23 @@ import { CatalogPage, type CatalogTab } from "./pages/Catalog";
 import { OverviewPage } from "./pages/Overview";
 import { AgentDetailPage } from "./pages/Runtime/AgentDetailPage";
 import { AgentsListPage } from "./pages/Runtime/AgentsListPage";
+import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
+import { TasksPage } from "./pages/Tasks";
 import { startClockSync } from "./serverClock";
 import { formatRelative } from "./utils/time";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
-  { id: "runtime", label: "Runtime" },
+  {
+    id: "runtime",
+    label: "Runtime",
+    children: [
+      { id: "agents", label: "Agents" },
+      { id: "sessions", label: "Sessions" },
+      { id: "tasks", label: "Tasks" },
+    ],
+  },
   { id: "catalog", label: "Catalog" },
   { id: "settings", label: "Settings" },
 ];
@@ -57,6 +73,7 @@ const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
 };
 
 const VALID_SECTIONS = new Set<SectionId>(["overview", "runtime", "catalog", "settings"]);
+const VALID_RUNTIME_CHILDREN = new Set<RuntimeChildId>(["agents", "sessions", "tasks"]);
 const VALID_CATALOG_TABS = new Set<CatalogTab>(["agents", "skills", "mcps"]);
 
 /**
@@ -85,19 +102,26 @@ export function App() {
           path="runtime/agents/:scope/:short/overview"
           element={<AgentDetailPage tab="overview" />}
         />
+        {/* Per-agent Sessions / Tasks sub-tabs were deferred to Phase 2
+            (design contract §3.4) — the global Sessions / Tasks pages
+            with `?agent=<fqn>` carry the per-agent shortcut. Old
+            deeplinks still resolve cleanly. */}
         <Route
           path="runtime/agents/:scope/:short/sessions"
-          element={<AgentDetailPage tab="sessions" />}
+          element={<AgentSubTabRedirect tab="sessions" />}
         />
         <Route
           path="runtime/agents/:scope/:short/tasks"
-          element={<AgentDetailPage tab="tasks" />}
+          element={<AgentSubTabRedirect tab="tasks" />}
         />
-        {/* Legacy routes (Block C). The agent-centric restructure
-            removed the global /sessions and /tasks lists, but bookmarked
-            URLs still in user history would otherwise 404-redirect to /
-            silently. These adapters land them on Runtime → Agents with
-            a one-shot banner explaining the move. */}
+        <Route path="runtime/sessions" element={<RuntimeSessionsRoute />} />
+        <Route path="runtime/tasks" element={<RuntimeTasksRoute />} />
+        {/* Legacy routes (Block C → Phase 1.5 Block F). PR #189 added
+            adapters for the bookmarked top-level URLs that pre-date the
+            Runtime IA promotion; Phase 1.5 retargets them one level
+            deeper so the user lands on the new global Sessions/Tasks
+            pages instead of the agents list. Query strings are
+            preserved so filter-bearing bookmarks survive the move. */}
         <Route path="sessions" element={<LegacyRuntimeRedirect from="sessions" />} />
         <Route path="tasks" element={<LegacyRuntimeRedirect from="tasks" />} />
         <Route path="*" element={<NotFoundRedirect />} />
@@ -477,23 +501,62 @@ function RuntimeIndexRedirect() {
 
 /**
  * Adapter for the legacy `/workspaces/:wsId/sessions` and `…/tasks`
- * routes (Block C). The agent-centric restructure moved both lists
- * inside `/runtime/agents/<scope>/<short>/…`; this component lands
- * the user on the new index with a `from` marker on `location.state`
- * so AgentsListPage can render a one-shot "moved" banner.
+ * routes (Block C, retargeted by Phase 1.5 Block F). PR #189 sent
+ * these bookmarks to `/runtime/agents` with a "moved" banner explaining
+ * the agent-centric restructure; Phase 1.5 promotes the global lists
+ * back as siblings of Agents under Runtime, so the redirect lands one
+ * level deeper at `/runtime/sessions` (or `/runtime/tasks`) — the
+ * truly canonical home for the bookmarked content. The querystring is
+ * forwarded so filter-bearing bookmarks (`?agent=…`) survive the move.
  *
- * The `:wsId` parent route resolves the workspace; this component
- * just turns the bare segment into a Navigate one level up to the
- * canonical Runtime entry point.
+ * The legacy banner copy ("We moved Sessions to Runtime → Sessions.")
+ * now renders on the destination page via `<LegacyMovedBanner>`,
+ * triggered by the `state.from` marker dropped here.
  */
 function LegacyRuntimeRedirect({ from }: { from: "sessions" | "tasks" }) {
   const { wsId } = useParams<{ wsId: string }>();
+  const location = useLocation();
   if (!wsId) return <Navigate to="/" replace />;
   return (
     <Navigate
-      to={`/workspaces/${encodeURIComponent(wsId)}/runtime/agents`}
+      to={{
+        pathname: `/workspaces/${encodeURIComponent(wsId)}/runtime/${from}`,
+        search: location.search,
+      }}
       replace
       state={{ from }}
+    />
+  );
+}
+
+/**
+ * Per-agent Sessions / Tasks sub-tabs were deferred to Phase 2 by the
+ * design contract (§3.4) — the global Sessions / Tasks pages with an
+ * `?agent=<fqn>` filter carry that responsibility instead. Existing
+ * deeplinks (and the polish-era sub-tab links anyone shared) keep
+ * working: this adapter rewrites them in place, preserving any
+ * additional querystring the caller appended.
+ */
+function AgentSubTabRedirect({ tab }: { tab: "sessions" | "tasks" }) {
+  const { wsId, scope, short } = useParams<{ wsId: string; scope: string; short: string }>();
+  const location = useLocation();
+  if (!wsId || !scope || !short) return <Navigate to="/" replace />;
+  const fqn = `${scope}/${short}`;
+  // Compose `?agent=<fqn>` with any pre-existing query string the
+  // bookmark carried. Filters the caller had (range, q, etc.) are
+  // preserved; duplicate `agent=` values are deliberately allowed —
+  // the new page reads the first one.
+  const incoming = new URLSearchParams(location.search);
+  if (!incoming.getAll("agent").includes(fqn)) {
+    incoming.append("agent", fqn);
+  }
+  return (
+    <Navigate
+      to={{
+        pathname: `/workspaces/${encodeURIComponent(wsId)}/runtime/${tab}`,
+        search: `?${incoming.toString()}`,
+      }}
+      replace
     />
   );
 }
@@ -511,15 +574,28 @@ function NotFoundRedirect() {
 }
 
 /**
- * Map a URL pathname back to the sidebar SectionId. The first path
- * segment after `/workspaces/<wsId>/` is canonical; unknown segments
+ * Map a URL pathname back to the sidebar item identifier. The first
+ * path segment after `/workspaces/<wsId>/` selects the top-level
+ * section; for `runtime`, the **second** segment selects which Runtime
+ * child is highlighted (Agents / Sessions / Tasks). Unknown segments
  * fall back to `overview` so the sidebar always has a highlighted row.
+ *
+ * The compound `runtime:<child>` return value (a single string) keeps
+ * the sidebar invariant out of `App.tsx` — the renderer reads both
+ * halves from one id.
  */
-function sectionFromPathname(pathname: string, wsId: string): SectionId {
+function sectionFromPathname(pathname: string, wsId: string): SidebarItemId {
   const prefix = `/workspaces/${encodeURIComponent(wsId)}/`;
   if (!pathname.startsWith(prefix)) return "overview";
   const rest = pathname.slice(prefix.length);
-  const first = rest.split("/")[0] ?? "";
+  const segments = rest.split("/");
+  const first = segments[0] ?? "";
+  if (first === "runtime") {
+    const child = segments[1] ?? "agents";
+    return VALID_RUNTIME_CHILDREN.has(child as RuntimeChildId)
+      ? (`runtime:${child as RuntimeChildId}` as SidebarItemId)
+      : "runtime";
+  }
   return VALID_SECTIONS.has(first as SectionId) ? (first as SectionId) : "overview";
 }
 
@@ -607,11 +683,25 @@ function WorkspaceShell() {
 
   useEffect(() => startClockSync(), []);
 
-  const section: SectionId = sectionFromPathname(location.pathname, wsId);
+  const sidebarItem: SidebarItemId = sectionFromPathname(location.pathname, wsId);
+  // Top-level section the active sidebar item belongs to. For Runtime
+  // children (`runtime:<child>`) this collapses back to `runtime` so
+  // breadcrumb defaults and section-level navigation keep working.
+  const section: SectionId =
+    typeof sidebarItem === "string" && sidebarItem.startsWith("runtime:")
+      ? "runtime"
+      : (sidebarItem as SectionId);
 
   const navigateToSection = useCallback(
     (next: SectionId) => {
       navigate(buildSectionPath(wsId, next));
+    },
+    [navigate, wsId],
+  );
+
+  const navigateToRuntimeChild = useCallback(
+    (child: RuntimeChildId) => {
+      navigate(`/workspaces/${encodeURIComponent(wsId)}/runtime/${child}`);
     },
     [navigate, wsId],
   );
@@ -664,8 +754,9 @@ function WorkspaceShell() {
     <div className="shell">
       <Sidebar
         sections={SECTIONS}
-        active={section}
+        active={sidebarItem}
         onSelect={navigateToSection}
+        onSelectRuntimeChild={navigateToRuntimeChild}
         workspaces={workspaces ?? []}
         currentWorkspaceId={wsId}
         onSelectWorkspace={handleSelectWorkspace}
@@ -747,6 +838,40 @@ function SettingsRoute() {
       workspaces={workspaces ?? []}
     />
   );
+}
+
+/**
+ * Promoted global Sessions page (Phase 1.5 §4.1, Block F). Renders the
+ * existing `pages/Sessions.tsx` shell — no new component — at the new
+ * canonical URL `/workspaces/<wsId>/runtime/sessions`. The page itself
+ * reads `?agent=`, `?runtime=`, `?range=`, `?q=` from the URL so the
+ * per-agent shortcut (Overview's "View all sessions →" link) lands
+ * with the Agent filter pre-applied.
+ */
+function RuntimeSessionsRoute() {
+  const { wsId, data, config, workspaces } = useWorkspaceShell();
+  useBreadcrumb("Sessions", ["Runtime", "Sessions"]);
+  return (
+    <SessionsPage
+      agents={data.agents}
+      config={config}
+      currentWorkspaceId={wsId}
+      workspaces={workspaces ?? []}
+    />
+  );
+}
+
+/**
+ * Promoted global Tasks page (Phase 1.5 §4.1, Block F). Mirror of
+ * {@link RuntimeSessionsRoute} for the master-detail Tasks view at
+ * `/workspaces/<wsId>/runtime/tasks`. URL filters are the same
+ * vocabulary plus `?status=` and `?taskId=` for the master-detail
+ * row selection.
+ */
+function RuntimeTasksRoute() {
+  const { wsId, data, config } = useWorkspaceShell();
+  useBreadcrumb("Tasks", ["Runtime", "Tasks"]);
+  return <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />;
 }
 
 function capitalize(s: string): string {

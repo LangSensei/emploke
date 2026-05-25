@@ -1,14 +1,32 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  MemoryRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useSearchParams,
+} from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogData, ServerConfig, SessionView, TaskRecord } from "../src/api";
+import { LegacyMovedBanner } from "../src/components/LegacyMovedBanner";
 import {
   WorkspaceShellContext,
   type WorkspaceShellContextValue,
 } from "../src/components/WorkspaceShellContext";
 import { AgentDetailPage } from "../src/pages/Runtime/AgentDetailPage";
 import { AgentsListPage } from "../src/pages/Runtime/AgentsListPage";
+
+/**
+ * Tiny wrapper so the stubs in the legacy-redirect describe block
+ * can read the post-redirect querystring without each one re-importing
+ * `useSearchParams` and unwrapping the tuple.
+ */
+function useSearchParamsForTest(): URLSearchParams {
+  const [params] = useSearchParams();
+  return params;
+}
 
 // Module-mock the API layer at the boundary the pages import from. Each
 // test sets the per-test return values via the `mock*` helpers below so
@@ -306,7 +324,7 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
   });
 });
 
-describe("Legacy routes redirect to runtime/agents with banner (Block C)", () => {
+describe("Legacy routes redirect to global /runtime/{sessions|tasks} (Block F)", () => {
   function NotFoundRedirect() {
     return <div data-testid="landed-on-home">home</div>;
   }
@@ -314,11 +332,39 @@ describe("Legacy routes redirect to runtime/agents with banner (Block C)", () =>
     return <div data-testid="landing-page">landing</div>;
   }
 
-  // Mirror of the production LegacyRuntimeRedirect adapter (App.tsx). Kept
-  // inline here so the routing surface under test mirrors the production
-  // App.tsx shape without pulling the whole shell.
+  // Mirror of the production LegacyRuntimeRedirect adapter (App.tsx)
+  // post Phase 1.5 Block F: targets `/runtime/<from>` instead of
+  // `/runtime/agents` and forwards the incoming query string verbatim.
   function LegacyRuntimeRedirect({ from }: { from: "sessions" | "tasks" }) {
-    return <Navigate to="/workspaces/ws-1/runtime/agents" replace state={{ from }} />;
+    const location = useLocation();
+    return (
+      <Navigate
+        to={{ pathname: `/workspaces/ws-1/runtime/${from}`, search: location.search }}
+        replace
+        state={{ from }}
+      />
+    );
+  }
+
+  // Tiny destination stand-ins that render the production
+  // LegacyMovedBanner so the assertion that the banner fires after
+  // redirect mirrors the real wiring without pulling the full
+  // Sessions/Tasks pages.
+  function SessionsStub() {
+    return (
+      <div data-testid="sessions-stub">
+        <LegacyMovedBanner page="sessions" />
+        <span data-testid="search-value">{useSearchParamsForTest().get("agent") ?? ""}</span>
+      </div>
+    );
+  }
+  function TasksStub() {
+    return (
+      <div data-testid="tasks-stub">
+        <LegacyMovedBanner page="tasks" />
+        <span data-testid="search-value">{useSearchParamsForTest().get("agent") ?? ""}</span>
+      </div>
+    );
   }
 
   function AppRoutes() {
@@ -327,14 +373,8 @@ describe("Legacy routes redirect to runtime/agents with banner (Block C)", () =>
         <Route path="/" element={<LandingPage />} />
         <Route path="/workspaces/:wsId">
           <Route path="runtime/agents" element={<AgentsListPage />} />
-          <Route
-            path="runtime/agents/:scope/:short/sessions"
-            element={<AgentDetailPage tab="sessions" />}
-          />
-          <Route
-            path="runtime/agents/:scope/:short/tasks"
-            element={<AgentDetailPage tab="tasks" />}
-          />
+          <Route path="runtime/sessions" element={<SessionsStub />} />
+          <Route path="runtime/tasks" element={<TasksStub />} />
           <Route path="sessions" element={<LegacyRuntimeRedirect from="sessions" />} />
           <Route path="tasks" element={<LegacyRuntimeRedirect from="tasks" />} />
           <Route path="*" element={<NotFoundRedirect />} />
@@ -344,27 +384,42 @@ describe("Legacy routes redirect to runtime/agents with banner (Block C)", () =>
     );
   }
 
-  it("old /workspaces/:wsId/sessions URL redirects to runtime/agents AND shows the banner", async () => {
+  it("old /workspaces/:wsId/sessions URL redirects to runtime/sessions AND shows the banner", async () => {
     renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/sessions");
     await waitFor(() => {
-      expect(screen.getByTestId("legacy-url-banner")).toBeTruthy();
+      expect(screen.getByTestId("sessions-stub")).toBeTruthy();
     });
     const banner = screen.getByTestId("legacy-url-banner");
     expect(banner.textContent ?? "").toMatch(/Sessions/);
     expect(banner.textContent ?? "").toMatch(/Runtime/);
-    // And the home/landing fallback was NOT hit.
     expect(screen.queryByTestId("landed-on-home")).toBeNull();
   });
 
-  it("old /workspaces/:wsId/tasks URL redirects to runtime/agents AND shows the banner", async () => {
+  it("old /workspaces/:wsId/tasks URL redirects to runtime/tasks AND shows the banner", async () => {
     renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/tasks");
     await waitFor(() => {
-      expect(screen.getByTestId("legacy-url-banner")).toBeTruthy();
+      expect(screen.getByTestId("tasks-stub")).toBeTruthy();
     });
     const banner = screen.getByTestId("legacy-url-banner");
     expect(banner.textContent ?? "").toMatch(/Tasks/);
     expect(banner.textContent ?? "").toMatch(/Runtime/);
     expect(screen.queryByTestId("landed-on-home")).toBeNull();
+  });
+
+  it("Legacy /sessions URL redirects to /runtime/sessions preserving ?agent= query (Block F)", async () => {
+    renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/sessions?agent=emploke/dev");
+    await waitFor(() => {
+      expect(screen.getByTestId("sessions-stub")).toBeTruthy();
+    });
+    expect(screen.getByTestId("search-value").textContent).toBe("emploke/dev");
+  });
+
+  it("Legacy /tasks URL redirects to /runtime/tasks preserving ?agent= query (Block F)", async () => {
+    renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/tasks?agent=emploke/dev");
+    await waitFor(() => {
+      expect(screen.getByTestId("tasks-stub")).toBeTruthy();
+    });
+    expect(screen.getByTestId("search-value").textContent).toBe("emploke/dev");
   });
 });
 

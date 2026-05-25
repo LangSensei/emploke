@@ -9,16 +9,46 @@ import {
   HomeIcon,
   PencilIcon,
   RuntimeIcon,
+  SessionsIcon,
   SettingsIcon,
+  TasksIcon,
 } from "./Icons";
 
 export type SectionId = "overview" | "runtime" | "catalog" | "settings";
+
+/**
+ * Runtime children promoted under the Runtime group header per Phase 1.5
+ * §4.1: Agents (existing default landing) plus Sessions and Tasks which
+ * used to be either top-level items (legacy) or per-agent sub-tabs
+ * (PR #189). They share the workspace-scoped path prefix
+ * `/runtime/<child>` so the highlight selector can match on the segment
+ * after the section.
+ */
+export type RuntimeChildId = "agents" | "sessions" | "tasks";
+
+/**
+ * Full identity of a clickable sidebar item. A `SectionId` selects a
+ * top-level section; `runtime:<child>` selects one of Runtime's three
+ * children. The compound form keeps the section / sub-section invariant
+ * out of `App.tsx` (the renderer derives both halves from one id).
+ */
+export type SidebarItemId = SectionId | `runtime:${RuntimeChildId}`;
 
 export interface SectionDef {
   id: SectionId;
   label: string;
   badge?: string;
   disabled?: boolean;
+  /**
+   * Nested items rendered indented under the section. Per §4.1 only
+   * Runtime carries children today (Agents / Sessions / Tasks).
+   */
+  children?: ReadonlyArray<RuntimeChildDef>;
+}
+
+export interface RuntimeChildDef {
+  id: RuntimeChildId;
+  label: string;
 }
 
 const ICONS: Record<SectionId, (props: { className?: string }) => ReactElement> = {
@@ -28,12 +58,34 @@ const ICONS: Record<SectionId, (props: { className?: string }) => ReactElement> 
   settings: SettingsIcon,
 };
 
+const CHILD_ICONS: Record<RuntimeChildId, (props: { className?: string }) => ReactElement> = {
+  agents: RuntimeIcon,
+  sessions: SessionsIcon,
+  tasks: TasksIcon,
+};
+
 const ADD_OPTION = "__add__";
 
 interface SidebarProps {
   sections: SectionDef[];
-  active: SectionId;
+  /**
+   * Currently-selected item — either a top-level section id or a
+   * compound `runtime:<child>` id. Drives the highlight state for
+   * both the section button and the nested child rows.
+   */
+  active: SidebarItemId;
+  /**
+   * Called with a top-level section id when the user clicks a
+   * Sidebar row at the section level (Overview, Catalog, Settings)
+   * or the Runtime parent header.
+   */
   onSelect: (id: SectionId) => void;
+  /**
+   * Called with the Runtime child id when the user clicks one of the
+   * nested Agents / Sessions / Tasks rows. Routed to the matching
+   * `/workspaces/<wsId>/runtime/<child>` URL by the caller.
+   */
+  onSelectRuntimeChild: (id: RuntimeChildId) => void;
   workspaces: WorkspaceListItem[];
   /** UUID of the workspace currently in scope (from the URL), or null. */
   currentWorkspaceId: string | null;
@@ -59,6 +111,7 @@ export function Sidebar({
   sections,
   active,
   onSelect,
+  onSelectRuntimeChild,
   workspaces,
   currentWorkspaceId,
   onSelectWorkspace,
@@ -217,27 +270,71 @@ export function Sidebar({
       <nav className="sidebar__nav">
         {sections.map((s) => {
           const Icon = ICONS[s.id];
+          // Section is "active" iff the active id refers to it (either
+          // the top-level section, or — for Runtime — any of its
+          // children). Used to render the parent header as expanded /
+          // visually grouped rather than the underlying button highlight
+          // (which goes to the child row when one is active).
+          const sectionMatches =
+            active === s.id ||
+            (s.id === "runtime" && typeof active === "string" && active.startsWith("runtime:"));
+          // Only highlight the parent button when the section itself
+          // is the active id (no child selected). When a child is
+          // active the highlight moves to the child row.
+          const highlightParent = active === s.id;
           return (
-            <button
-              type="button"
-              key={s.id}
-              disabled={s.disabled}
-              onClick={() => !s.disabled && onSelect(s.id)}
-              className={[
-                "sidebar__item",
-                active === s.id ? "sidebar__item--active" : "",
-                s.disabled ? "sidebar__item--disabled" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              title={s.disabled ? "Coming soon" : undefined}
-            >
-              <span className="sidebar__icon">
-                <Icon />
-              </span>
-              <span>{s.label}</span>
-              {s.badge && <span className="sidebar__badge">{s.badge}</span>}
-            </button>
+            <div key={s.id} className="sidebar__group">
+              <button
+                type="button"
+                disabled={s.disabled}
+                onClick={() => !s.disabled && onSelect(s.id)}
+                className={[
+                  "sidebar__item",
+                  highlightParent ? "sidebar__item--active" : "",
+                  s.disabled ? "sidebar__item--disabled" : "",
+                  s.children && s.children.length > 0 ? "sidebar__item--parent" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                title={s.disabled ? "Coming soon" : undefined}
+                aria-expanded={s.children && s.children.length > 0 ? sectionMatches : undefined}
+              >
+                <span className="sidebar__icon">
+                  <Icon />
+                </span>
+                <span>{s.label}</span>
+                {s.badge && <span className="sidebar__badge">{s.badge}</span>}
+              </button>
+              {s.children && s.children.length > 0 && (
+                <ul className="sidebar__children" aria-label={`${s.label} sub-navigation`}>
+                  {s.children.map((c) => {
+                    const ChildIcon = CHILD_ICONS[c.id];
+                    const childActive = active === `runtime:${c.id}`;
+                    return (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelectRuntimeChild(c.id)}
+                          className={[
+                            "sidebar__item",
+                            "sidebar__item--child",
+                            childActive ? "sidebar__item--active" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          aria-current={childActive ? "page" : undefined}
+                        >
+                          <span className="sidebar__icon sidebar__icon--child">
+                            <ChildIcon />
+                          </span>
+                          <span>{c.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           );
         })}
       </nav>
