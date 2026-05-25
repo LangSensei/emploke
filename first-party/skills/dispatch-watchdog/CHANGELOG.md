@@ -20,7 +20,7 @@
 - Bash primitive — `$(...)` command substitution joins to a single
   string, `printf | sed` is stream-based; no equivalent bug.
 
-## 1.1.0
+## 1.1.0 (2026-05-23)
 
 - Caller contract: added item 4 mandating a 5-second "verify started"
   check against the first log line, plus made the mtime-based
@@ -31,6 +31,6 @@
   `watchdog started for <tid>` line on entry so callers have a
   deterministic marker to verify.
 
-## 1.0.0
+## 1.0.0 (2026-05-23)
 
 - Initial release under `emploke/dispatch-watchdog`. Migrated from `langsensei/dispatch-watchdog` in the community marketplace and relocated into the emploke first-party catalog.
