@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 /**
  * Read + guarded-write pair for a single URL search-params value.
@@ -56,22 +56,4 @@ export function useUrlSearchValue(
     [navigate, key, defaultValue, location.pathname, location.search, location.hash],
   );
   return [value, setValue] as const;
-}
-
-/**
- * "Clear filters" handler — drops the entire query string while
- * keeping the user on the current path. Used by the Clear-filters
- * button on Sessions and Tasks pages.
- *
- * Uses `useSearchParams().setSearchParams` rather than `navigate(...)`
- * directly: the former routes through react-router's own params-
- * mutation path which (unlike `navigate(pathname, {replace})` in v7)
- * reliably triggers a re-render even when the resolved pathname
- * matches the current one.
- */
-export function useClearUrlFilters(): () => void {
-  const [, setSearchParams] = useSearchParams();
-  return useCallback(() => {
-    setSearchParams(new URLSearchParams(), { replace: true });
-  }, [setSearchParams]);
 }

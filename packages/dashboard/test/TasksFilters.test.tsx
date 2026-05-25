@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogData, ServerConfig, TaskRecord } from "../src/api";
@@ -136,32 +136,5 @@ describe("TasksPage URL-driven filters (Phase 1.5 §4.6, Block G)", () => {
     await waitFor(() => {
       expect(mockGetTask).toHaveBeenCalledWith("task-B");
     });
-  });
-
-  it("Clear filters button drops the entire query string", async () => {
-    const agents = [makeAgent("emploke/dev")];
-    mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "task-A")]);
-
-    const { container } = renderTasks(
-      "/workspaces/ws-1/runtime/tasks?agent=emploke/dev&status=completed",
-      agents,
-    );
-
-    await waitFor(() => {
-      expect(mockListTasks).toHaveBeenCalled();
-    });
-    const select = container.querySelector("#task-agent-filter") as HTMLSelectElement;
-    expect(select).toBeTruthy();
-    expect(select.value).toBe("emploke/dev");
-
-    fireEvent.click(screen.getByTestId("clear-filters"));
-
-    await waitFor(() => {
-      const next = container.querySelector("#task-agent-filter") as HTMLSelectElement;
-      expect(next.value).toBe("__all__");
-    });
-    // Status filter pill row also reverts to All.
-    const allBtn = screen.getByTestId("task-status-filter-all");
-    expect(allBtn.getAttribute("aria-pressed")).toBe("true");
   });
 });

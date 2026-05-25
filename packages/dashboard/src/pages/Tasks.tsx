@@ -23,7 +23,7 @@ import {
 } from "../components/tasks/TasksChrome";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
-import { useClearUrlFilters, useUrlSearchValue } from "../hooks/useUrlState";
+import { useUrlSearchValue } from "../hooks/useUrlState";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -74,7 +74,6 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
   const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
   const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
   const [statusUrl, setStatusUrl] = useUrlSearchValue("status", "all");
-  const clearFilters = useClearUrlFilters();
 
   const agentFilter = fixedAgentFqn ?? agentFilterUrl;
   const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
@@ -227,7 +226,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
   // list is non-empty. Derived during render so it doesn't race the
   // URL-clearing path (Phase 1.5 Block G — earlier auto-select-via-
   // effect would silently re-introduce filter params it captured in a
-  // stale closure when the user clicked Clear filters).
+  // stale closure).
   //
   // Side-effect path (URL writes): only `setSelectedId` from user
   // interactions writes to the URL — the auto-fallback stays component-
@@ -333,7 +332,6 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
                 filterAgentNames={filterAgentNames}
                 runtimes={runtimes}
                 hideAgentFilter={fixedAgentFqn !== undefined}
-                onClearFilters={fixedAgentFqn ? undefined : clearFilters}
               />
               <div className="tasks-pane__list-scroll">
                 {!loaded ? (

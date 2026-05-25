@@ -24,7 +24,7 @@ import {
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
 import { CreateModal } from "../components/sessions/CreateModal";
-import { useClearUrlFilters, useUrlSearchValue } from "../hooks/useUrlState";
+import { useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
 
@@ -141,7 +141,6 @@ export function SessionsPage({
     return match ? match.value : DEFAULT_TIME_PRESET;
   })();
   const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
-  const clearFilters = useClearUrlFilters();
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -457,17 +456,6 @@ export function SessionsPage({
               </button>
             ))}
           </div>
-          {!fixedAgentFqn && (
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={clearFilters}
-              title="Drop every filter and search term"
-              data-testid="clear-filters"
-            >
-              Clear filters
-            </button>
-          )}
         </div>
       </div>
 

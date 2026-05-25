@@ -1,8 +1,8 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogData, ServerConfig, SessionView } from "../src/api";
+import type { CatalogData, ServerConfig } from "../src/api";
 import {
   WorkspaceShellContext,
   type WorkspaceShellContextValue,
@@ -70,20 +70,6 @@ function renderSessions(initialPath: string, agents: AgentEntry[] = []) {
   );
 }
 
-function makeSession(overrides: Partial<SessionView>): SessionView {
-  return {
-    id: "sess-1",
-    agent: "emploke/dev",
-    runtime: "copilot",
-    runtimeSessionId: null,
-    workdir: "/tmp/w",
-    lastLaunchMode: null,
-    lastActiveAt: null,
-    createdAt: "2026-05-23T00:00:00Z",
-    ...overrides,
-  } as unknown as SessionView;
-}
-
 beforeEach(() => {
   mockListSessions.mockReset();
   mockListRuntimes.mockReset();
@@ -118,29 +104,5 @@ describe("SessionsPage URL-driven filters (Phase 1.5 §4.5, Block G)", () => {
     // call's `agent` option.
     const lastCall = mockListSessions.mock.calls.at(-1) ?? [];
     expect(lastCall[0]?.agent).toBe("emploke/dev");
-  });
-
-  it("Clear filters button drops the entire query string", async () => {
-    const agents = [makeAgent("emploke/dev")];
-    mockListSessions.mockResolvedValue([makeSession({ id: "sess-1", agent: "emploke/dev" })]);
-
-    const { container } = renderSessions(
-      "/workspaces/ws-1/runtime/sessions?agent=emploke/dev&range=30d",
-      agents,
-    );
-
-    await waitFor(() => {
-      expect(mockListSessions).toHaveBeenCalled();
-    });
-
-    const select = container.querySelector("#agent-filter") as HTMLSelectElement;
-    expect(select.value).toBe("emploke/dev");
-
-    fireEvent.click(screen.getByTestId("clear-filters"));
-
-    await waitFor(() => {
-      const next = container.querySelector("#agent-filter") as HTMLSelectElement;
-      expect(next.value).toBe("__all__");
-    });
   });
 });

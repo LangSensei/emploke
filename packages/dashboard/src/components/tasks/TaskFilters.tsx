@@ -37,12 +37,6 @@ export interface TaskFiltersProps {
    * scope is already implicit in the URL.
    */
   hideAgentFilter?: boolean;
-  /**
-   * Optional "Clear filters" button — when provided, renders trailing
-   * the row and drops the entire querystring on click. Hidden when
-   * filters are page-scoped immutable (e.g. fixed agent).
-   */
-  onClearFilters?: () => void;
 }
 
 /**
@@ -72,7 +66,6 @@ export function TaskFilters(props: TaskFiltersProps) {
     filterAgentNames,
     runtimes,
     hideAgentFilter,
-    onClearFilters,
   } = props;
   return (
     <div className="task-filters">
@@ -147,17 +140,6 @@ export function TaskFilters(props: TaskFiltersProps) {
             </button>
           ))}
         </div>
-        {onClearFilters && (
-          <button
-            type="button"
-            className="btn btn--ghost task-filters__clear"
-            onClick={onClearFilters}
-            data-testid="clear-filters"
-            title="Drop every filter and search term"
-          >
-            Clear filters
-          </button>
-        )}
       </div>
     </div>
   );
