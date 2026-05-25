@@ -104,8 +104,9 @@ export function AgentDetailPage({ tab }: AgentDetailPageProps) {
   // Pill stays "idle" while loading (matches the original conservative
   // default) and reflects real ≥1-running-task signal once data lands.
   // Per design §7, "Running" = at least one task with status === "running".
-  const status: AgentRuntimeStatus =
-    tasks && tasks.some((t) => t.status === "running") ? "running" : "idle";
+  const status: AgentRuntimeStatus = tasks?.some((t) => t.status === "running")
+    ? "running"
+    : "idle";
 
   if (!scope || !short) {
     return <Navigate to={`/workspaces/${encodeURIComponent(wsId)}/runtime/agents`} replace />;

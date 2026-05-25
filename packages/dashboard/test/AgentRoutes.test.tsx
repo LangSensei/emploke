@@ -318,9 +318,7 @@ describe("Legacy routes redirect to runtime/agents with banner (Block C)", () =>
   // inline here so the routing surface under test mirrors the production
   // App.tsx shape without pulling the whole shell.
   function LegacyRuntimeRedirect({ from }: { from: "sessions" | "tasks" }) {
-    return (
-      <Navigate to="/workspaces/ws-1/runtime/agents" replace state={{ from }} />
-    );
+    return <Navigate to="/workspaces/ws-1/runtime/agents" replace state={{ from }} />;
   }
 
   function AppRoutes() {
@@ -438,9 +436,7 @@ describe("AgentOverviewTab 'View all' links (Block D)", () => {
     });
     const link = screen.getByText(/View all sessions/i).closest("a");
     expect(link).toBeTruthy();
-    expect(link?.getAttribute("href")).toBe(
-      "/workspaces/ws-1/runtime/agents/emploke/dev/sessions",
-    );
+    expect(link?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/agents/emploke/dev/sessions");
     expect(link?.className).toContain("agent-overview__more");
   });
 });

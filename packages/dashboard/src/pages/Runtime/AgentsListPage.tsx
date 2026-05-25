@@ -137,9 +137,8 @@ export function AgentsListPage() {
           </div>
           <p className="empty__title">No agents installed</p>
           <p className="empty__hint">
-            Visit{" "}
-            <Link to={`/workspaces/${encodeURIComponent(wsId)}/catalog/agents`}>Catalog</Link> to
-            install agents into this workspace.
+            Visit <Link to={`/workspaces/${encodeURIComponent(wsId)}/catalog/agents`}>Catalog</Link>{" "}
+            to install agents into this workspace.
           </p>
         </div>
       ) : (
