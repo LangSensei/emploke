@@ -119,24 +119,28 @@ export function assertCopilotSdkResolvable(): void {
   // subpath under the ESM `import` condition only, so CJS resolution
   // (via `createRequire`) throws `ERR_PACKAGE_PATH_NOT_EXPORTED`
   // even on a healthy install. We treat that error code as "package
-  // is present, just ESM-only" → preflight passes. Only a missing-
-  // module error (`MODULE_NOT_FOUND` from the CJS resolver, or
-  // `ERR_MODULE_NOT_FOUND` from the ESM resolver in case Node's
-  // implementation ever changes) means the packaging is broken and
-  // we must fail loud.
+  // is present, just ESM-only" → preflight passes.
+  //
+  // Every OTHER error code surfaces: missing-module (`MODULE_NOT_FOUND`
+  // / `ERR_MODULE_NOT_FOUND` — the packaging-chain bug we are
+  // guarding against), permission errors (`EACCES` — bad SDK file
+  // mode), broken junctions (`ENOTDIR`), and any future Node
+  // resolver error code we haven't named. The module-level jsdoc
+  // says "we must fail loud" for Step 2; this denylist-of-one
+  // brings the code into line with the doc, so a corrupted install
+  // can't slip past the preflight just because Node grew a new
+  // error code we didn't think to add to an allowlist.
   try {
     const requireFromSdk = createRequire(sdkUrl);
     requireFromSdk.resolve("@github/copilot/sdk");
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
-    // Cover both code spellings: CJS resolver throws `MODULE_NOT_FOUND`,
-    // ESM resolver throws `ERR_MODULE_NOT_FOUND`. Same logical
-    // failure (package absent on disk) — fail loud either way.
-    if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
-      throw new CopilotSdkUnavailableError(cause as Error);
-    }
-    // Any other code (notably `ERR_PACKAGE_PATH_NOT_EXPORTED`) means
-    // the package itself is reachable — the SDK's own ESM resolve at
-    // runtime will succeed. Swallow.
+    // ERR_PACKAGE_PATH_NOT_EXPORTED means the package itself is
+    // reachable on disk; only the subpath isn't visible to the CJS
+    // resolver. The SDK's own ESM `import.meta.resolve` at runtime
+    // honours the `import` condition and will succeed → preflight
+    // passes. This is the only swallow.
+    if (code === "ERR_PACKAGE_PATH_NOT_EXPORTED") return;
+    throw new CopilotSdkUnavailableError(cause as Error);
   }
 }
