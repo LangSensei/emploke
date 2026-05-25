@@ -25,6 +25,12 @@ vi.mock("../src/api", async () => {
     ...actual,
     listTasks: vi.fn(),
     listSessions: vi.fn(),
+    // PR #189 polish v7 (#193) — the new fqn-change reset effect on
+    // AgentDetailPane is exercised end-to-end via the dispatch flow,
+    // which needs both the runtime registry probe and the dispatch
+    // call mocked so the reset triggers a real action-error path.
+    listRuntimes: vi.fn(),
+    dispatchTask: vi.fn(),
   };
 });
 
@@ -32,6 +38,8 @@ import * as api from "../src/api";
 
 const mockListTasks = api.listTasks as unknown as ReturnType<typeof vi.fn>;
 const mockListSessions = api.listSessions as unknown as ReturnType<typeof vi.fn>;
+const mockListRuntimes = api.listRuntimes as unknown as ReturnType<typeof vi.fn>;
+const mockDispatchTask = api.dispatchTask as unknown as ReturnType<typeof vi.fn>;
 
 function makeAgent(fqn: string): AgentEntry {
   const [scope, short] = fqn.split("/");
@@ -108,8 +116,14 @@ function renderMasterDetail({ agents, initialPath, breadcrumbCapture }: RenderOp
 beforeEach(() => {
   mockListTasks.mockReset();
   mockListSessions.mockReset();
+  mockListRuntimes.mockReset();
+  mockDispatchTask.mockReset();
   mockListTasks.mockResolvedValue([]);
   mockListSessions.mockResolvedValue([] as SessionView[]);
+  // Defaults — keep the AgentDetailPane mount-effect runtimes probe
+  // quiet for tests that never exercise the dispatch flow.
+  mockListRuntimes.mockResolvedValue([{ kind: "copilot", capabilities: {} }]);
+  mockDispatchTask.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -490,6 +504,78 @@ describe("PR #189 polish v4 — auto-selected agent's sessions fetch fires (Bug 
     });
     const lastCall = mockListSessions.mock.calls.at(-1) ?? [];
     expect(lastCall[0]?.agent).toBe("emploke/beta");
+  });
+});
+
+describe("PR #189 polish v7 — agent switch resets pane-local state (#193)", () => {
+  it("clears the action-error banner when the user picks a different agent in the master list", async () => {
+    // Repro for issue #193: after a failed dispatch from agent A leaves
+    // the red `[data-testid="agent-detail-action-error"]` banner on the
+    // pane, switching to agent B used to keep that banner mounted —
+    // `AgentDetailPane` is rendered at the same JSX position by
+    // `AgentsListPage` with only `fqn` swapping, so React reconciled
+    // the same component instance and its `useState` slots carried
+    // across. The v7 fix adds a `useEffect([fqn])` reset on the pane;
+    // this test pins that behaviour.
+    const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
+    mockListTasks.mockResolvedValue([]);
+    mockListSessions.mockResolvedValue([] as SessionView[]);
+    mockDispatchTask.mockRejectedValueOnce(new Error("dispatch failed (mock)"));
+
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // Auto-select picks alpha (first row). Wait for the pane to mount
+    // against that agent before exercising the dispatch flow.
+    const initialPane = await screen.findByTestId("agent-detail-pane");
+    expect(initialPane.getAttribute("data-agent-fqn")).toBe("emploke/alpha");
+
+    // Open the in-place DispatchModal on agent A.
+    act(() => {
+      fireEvent.click(screen.getByTestId("agent-detail-new-task"));
+    });
+    const briefInput = await waitFor(() => {
+      const input = document.getElementById("task-brief") as HTMLInputElement | null;
+      expect(input).toBeTruthy();
+      return input as HTMLInputElement;
+    });
+
+    // Fill a valid brief and submit — the mocked dispatchTask rejects,
+    // so AgentDetailPane catches the error and surfaces the action
+    // banner on agent A's pane.
+    await act(async () => {
+      fireEvent.change(briefInput, { target: { value: "v7 repro brief" } });
+    });
+    const form = briefInput.closest("form") as HTMLFormElement;
+    expect(form).toBeTruthy();
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-detail-action-error")).toBeTruthy();
+    });
+
+    // Sanity: dispatchTask was actually invoked with agent A's fqn so
+    // the banner we just observed is genuinely the failed-dispatch one.
+    expect(mockDispatchTask).toHaveBeenCalledTimes(1);
+    expect(mockDispatchTask.mock.calls[0]?.[0]).toBe("emploke/alpha");
+
+    // Switch the master list to agent B.
+    act(() => {
+      fireEvent.click(screen.getByTestId("agent-row-emploke/beta"));
+    });
+
+    // The pane reconciles to agent B (same instance, new `fqn` prop).
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-detail-pane").getAttribute("data-agent-fqn")).toBe(
+        "emploke/beta",
+      );
+    });
+
+    // The v7 fix: the `useEffect([fqn])` reset clears `actionError`
+    // (and `busy` / `dispatchOpen` / `createOpen`) on agent switch, so
+    // agent A's banner must NOT bleed into agent B's pane.
+    expect(screen.queryByTestId("agent-detail-action-error")).toBeNull();
   });
 });
 

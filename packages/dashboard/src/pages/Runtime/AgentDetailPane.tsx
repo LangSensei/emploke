@@ -118,6 +118,27 @@ export function AgentDetailPane({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runtimes, setRuntimes] = useState<string[]>([]);
+
+  // PR #189 polish v7 (#193) — reset pane-local state when the master
+  // list switches to a different agent. The master-detail layout mounts
+  // this pane at a single JSX position and only swaps `fqn`, so React
+  // reconciles the same component instance across selections — without
+  // an explicit reset, agent A's `actionError` banner, in-flight `busy`
+  // spinner, and open dispatch/create modals would bleed into agent B's
+  // pane after the user picks a new row.
+  //
+  // Deps must stay `[fqn]` only: any unrelated re-render (parent poll
+  // tick, runtimes resolve) must NOT clobber valid in-progress state
+  // (e.g. an error banner the user is still reading, or an open modal
+  // mid-edit). The setters are stable React identities and intentionally
+  // omitted from the deps list.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate fqn-only reset
+  useEffect(() => {
+    setActionError(null);
+    setBusy(false);
+    setDispatchOpen(false);
+    setCreateOpen(false);
+  }, [fqn]);
   // Runtimes are static for a given server process; fetch once when the
   // pane mounts (i.e. when the user actually picks an agent). Failures are
   // non-fatal: the modals fall back to `(server default)` if the registry
