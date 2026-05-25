@@ -133,7 +133,7 @@ describe("AgentsListPage (§11)", () => {
   });
 });
 
-describe("AgentDetailPage tab routing (§11)", () => {
+describe("AgentDetailPage routing (Phase 1.5 §3.4 / Block I)", () => {
   const agents = [makeAgent("emploke/dev")];
 
   function DetailRoutes() {
@@ -141,23 +141,13 @@ describe("AgentDetailPage tab routing (§11)", () => {
       <Routes>
         <Route
           path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage tab="overview" />}
-        />
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/sessions"
-          element={<AgentDetailPage tab="sessions" />}
-        />
-        <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/tasks"
-          element={<AgentDetailPage tab="tasks" />}
+          element={<AgentDetailPage />}
         />
       </Routes>
     );
   }
 
-  it("renders the Overview tab on …/overview", async () => {
-    // Seed at least one task so the Overview tab renders its sections
-    // instead of the Block-E "No activity yet" empty state.
+  it("renders the Overview view on …/overview", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-seed")]);
     renderWithShell(
       <DetailRoutes />,
@@ -165,51 +155,33 @@ describe("AgentDetailPage tab routing (§11)", () => {
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
     await waitFor(() => {
-      expect(screen.getByText(/Running tasks/i)).toBeTruthy();
+      expect(screen.getByText(/Recent tasks/i)).toBeTruthy();
     });
   });
 
-  it("renders the Sessions tab on …/sessions", async () => {
-    renderWithShell(
-      <DetailRoutes />,
-      agents,
-      "/workspaces/ws-1/runtime/agents/emploke/dev/sessions",
-    );
-    await waitFor(() => {
-      // SessionsPage shows either "No sessions yet" or its toolbar; either
-      // way the Running-tasks Overview heading must NOT be on the page.
-      expect(screen.queryByText(/Running tasks/i)).toBeNull();
-    });
-    // Sub-tab bar still present with Sessions marked active.
-    const links = screen.getAllByRole("link", { name: /^Sessions$/ });
-    expect(links.length).toBeGreaterThan(0);
-  });
-
-  it("renders the Tasks tab on …/tasks", async () => {
-    renderWithShell(<DetailRoutes />, agents, "/workspaces/ws-1/runtime/agents/emploke/dev/tasks");
-    await waitFor(() => {
-      expect(screen.queryByText(/Running tasks/i)).toBeNull();
-    });
-    const links = screen.getAllByRole("link", { name: /^Tasks$/ });
-    expect(links.length).toBeGreaterThan(0);
-  });
-
-  it("shows the Running pill on Sessions/Tasks tabs when the agent has a running task (Fix 1)", async () => {
+  it("shows the Running pill on Overview when the agent has a running task", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running")]);
     renderWithShell(
       <DetailRoutes />,
       agents,
-      "/workspaces/ws-1/runtime/agents/emploke/dev/sessions",
+      "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
     await waitFor(() => {
-      const pill = screen.getByRole("status");
-      expect(pill.textContent).toMatch(/Running/);
+      // Multiple status pills exist (one in the header, one per task
+      // badge in the activity cell). At least one says Running.
+      expect(screen.getAllByRole("status").some((p) => /Running/.test(p.textContent ?? ""))).toBe(
+        true,
+      );
     });
   });
 
   it("shows the Idle pill when the agent has no running tasks", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded")]);
-    renderWithShell(<DetailRoutes />, agents, "/workspaces/ws-1/runtime/agents/emploke/dev/tasks");
+    renderWithShell(
+      <DetailRoutes />,
+      agents,
+      "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
+    );
     await waitFor(() => {
       expect(mockListTasks).toHaveBeenCalled();
     });
@@ -220,7 +192,7 @@ describe("AgentDetailPage tab routing (§11)", () => {
   });
 });
 
-describe("Overview row click → pre-selects target tab (Fix 2)", () => {
+describe("Overview row click → opens row on the global Tasks/Sessions page (Phase 1.5)", () => {
   const agents = [makeAgent("emploke/dev")];
 
   function OverviewRoutes() {
@@ -228,13 +200,13 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
       <Routes>
         <Route
           path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage tab="overview" />}
+          element={<AgentDetailPage />}
         />
       </Routes>
     );
   }
 
-  it("renders running-task rows as <Link> elements pointing at the Tasks tab", async () => {
+  it("renders recent-task rows as <Link> elements pointing at the global Tasks page with ?agent=&taskId=", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running", "t-r1")]);
     renderWithShell(
       <OverviewRoutes />,
@@ -245,21 +217,18 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
     await waitFor(() => {
       expect(screen.getAllByText(/running task for emploke\/dev/).length).toBeGreaterThan(0);
     });
-    // The clickable row is the <a> wrapping the task brief. Anchors with
-    // an href produce an implicit role="link".
     const links = screen
       .getAllByRole("link")
       .filter(
         (el) =>
-          el.getAttribute("href") === "/workspaces/ws-1/runtime/agents/emploke/dev/tasks" &&
+          el.getAttribute("href") ===
+            "/workspaces/ws-1/runtime/tasks?agent=emploke/dev&taskId=t-r1" &&
           el.className.includes("agent-overview__row"),
       );
-    // The task appears in both "Running tasks" and "Recent tasks" sections,
-    // so the same task id yields two clickable rows pointing at the same URL.
-    expect(links.length).toBe(2);
+    expect(links.length).toBe(1);
   });
 
-  it("renders recent-session rows as <Link> elements pointing at the Sessions tab", async () => {
+  it("renders active-session rows as <Link> elements pointing at the global Sessions page with ?agent=", async () => {
     mockListTasks.mockResolvedValue([]);
     mockListSessions.mockResolvedValue([
       {
@@ -286,17 +255,13 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
       .getAllByRole("link")
       .filter(
         (el) =>
-          el.getAttribute("href") === "/workspaces/ws-1/runtime/agents/emploke/dev/sessions" &&
+          el.getAttribute("href") === "/workspaces/ws-1/runtime/sessions?agent=emploke/dev" &&
           el.className.includes("agent-overview__row"),
       );
     expect(links.length).toBe(1);
   });
 
-  // Review round 3, suggestion #5 — the existing tests assert href/className
-  // but never click the row. This exercises the actual click path so a
-  // regression in the <Link to=…> wiring (e.g. accidentally passing a
-  // string instead of an object) would fail loudly.
-  it("clicking a running-task row navigates to the Tasks tab URL", async () => {
+  it("clicking a recent-task row does not throw and the row stays mounted", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "running", "t-r1")]);
     renderWithShell(
       <OverviewRoutes />,
@@ -311,14 +276,11 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
       .getAllByRole("link")
       .find(
         (el) =>
-          el.getAttribute("href") === "/workspaces/ws-1/runtime/agents/emploke/dev/tasks" &&
+          el.getAttribute("href") ===
+            "/workspaces/ws-1/runtime/tasks?agent=emploke/dev&taskId=t-r1" &&
           el.className.includes("agent-overview__row"),
       );
     expect(link).toBeTruthy();
-    // The click handler in react-router-dom intercepts the navigation; we
-    // verify it does not throw and that the row remains in the DOM after
-    // a synthetic click. Combined with the href assertion above this
-    // covers the round-3 review ask.
     link?.click();
     expect(link).toBeTruthy();
   });
@@ -423,7 +385,7 @@ describe("Legacy routes redirect to global /runtime/{sessions|tasks} (Block F)",
   });
 });
 
-describe("AgentOverviewTab 'View all' links (Block D)", () => {
+describe("AgentOverviewTab 'View all' links (Block D → Block J retarget)", () => {
   const agents = [makeAgent("emploke/dev")];
 
   function OverviewRoutes() {
@@ -431,13 +393,13 @@ describe("AgentOverviewTab 'View all' links (Block D)", () => {
       <Routes>
         <Route
           path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage tab="overview" />}
+          element={<AgentDetailPage />}
         />
       </Routes>
     );
   }
 
-  it("renders a 'View all tasks' link pointing at the Tasks sub-tab", async () => {
+  it("renders a 'View all tasks' link pointing at the global Tasks page with ?agent=", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-1")]);
     mockListSessions.mockResolvedValue([
       {
@@ -462,11 +424,11 @@ describe("AgentOverviewTab 'View all' links (Block D)", () => {
     });
     const link = screen.getByText(/View all tasks/i).closest("a");
     expect(link).toBeTruthy();
-    expect(link?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/agents/emploke/dev/tasks");
+    expect(link?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/tasks?agent=emploke/dev");
     expect(link?.className).toContain("agent-overview__more");
   });
 
-  it("renders a 'View all sessions' link pointing at the Sessions sub-tab", async () => {
+  it("renders a 'View all sessions' link pointing at the global Sessions page with ?agent=", async () => {
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "t-1")]);
     mockListSessions.mockResolvedValue([
       {
@@ -491,7 +453,7 @@ describe("AgentOverviewTab 'View all' links (Block D)", () => {
     });
     const link = screen.getByText(/View all sessions/i).closest("a");
     expect(link).toBeTruthy();
-    expect(link?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/agents/emploke/dev/sessions");
+    expect(link?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/sessions?agent=emploke/dev");
     expect(link?.className).toContain("agent-overview__more");
   });
 });
@@ -515,7 +477,7 @@ describe("Empty states (Block E)", () => {
       <Routes>
         <Route
           path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage tab="overview" />}
+          element={<AgentDetailPage />}
         />
       </Routes>,
       agents,
@@ -528,10 +490,13 @@ describe("Empty states (Block E)", () => {
     expect(screen.getByText(/No activity yet/i)).toBeTruthy();
     const cta = screen.getByText(/Dispatch a task/i).closest("a");
     expect(cta).toBeTruthy();
-    expect(cta?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/agents/emploke/dev/tasks");
-    // The Running tasks / Recent tasks / Recent sessions headings must
-    // NOT also be rendered — the empty panel replaces them.
-    expect(screen.queryByText(/Running tasks/i)).toBeNull();
+    // Phase 1.5 Block J — Dispatch CTA now bridges into the global
+    // Tasks page with the agent pre-applied (the per-agent Tasks tab
+    // was retired in §3.4).
+    expect(cta?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/tasks?agent=emploke/dev");
+    // The 2x2 grid headings (Recent tasks / Active sessions) must NOT
+    // render — the empty panel replaces them.
+    expect(screen.queryByText(/Recent tasks/i)).toBeNull();
   });
 });
 
@@ -542,8 +507,8 @@ describe("Live polling (Block B)", () => {
     return (
       <Routes>
         <Route
-          path="/workspaces/:wsId/runtime/agents/:scope/:short/sessions"
-          element={<AgentDetailPage tab="sessions" />}
+          path="/workspaces/:wsId/runtime/agents/:scope/:short/overview"
+          element={<AgentDetailPage />}
         />
       </Routes>
     );
@@ -560,7 +525,7 @@ describe("Live polling (Block B)", () => {
       renderWithShell(
         <DetailRoute />,
         agents,
-        "/workspaces/ws-1/runtime/agents/emploke/dev/sessions",
+        "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
       );
 
       await waitFor(() => {

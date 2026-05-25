@@ -98,10 +98,7 @@ export function App() {
         <Route path="runtime" element={<RuntimeIndexRedirect />} />
         <Route path="runtime/agents" element={<AgentsListPage />} />
         <Route path="runtime/agents/:scope/:short" element={<AgentDetailIndexRedirect />} />
-        <Route
-          path="runtime/agents/:scope/:short/overview"
-          element={<AgentDetailPage tab="overview" />}
-        />
+        <Route path="runtime/agents/:scope/:short/overview" element={<AgentDetailPage />} />
         {/* Per-agent Sessions / Tasks sub-tabs were deferred to Phase 2
             (design contract §3.4) — the global Sessions / Tasks pages
             with `?agent=<fqn>` carry the per-agent shortcut. Old

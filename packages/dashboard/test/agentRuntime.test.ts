@@ -76,14 +76,9 @@ describe("splitFqn", () => {
 });
 
 describe("agentDetailUrl", () => {
-  it("keeps scope and short as two distinct path segments and defaults to overview", () => {
+  it("keeps scope and short as two distinct path segments and lands on overview", () => {
     expect(agentDetailUrl("ws-1", "emploke", "dev")).toBe(
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
-    );
-  });
-  it("uses the requested tab segment", () => {
-    expect(agentDetailUrl("ws-1", "emploke", "dev", "tasks")).toBe(
-      "/workspaces/ws-1/runtime/agents/emploke/dev/tasks",
     );
   });
   it("encodes special characters in wsId/scope/short", () => {

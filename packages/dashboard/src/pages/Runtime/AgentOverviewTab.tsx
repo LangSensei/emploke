@@ -1,71 +1,87 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { listSessions, type SessionView, type TaskRecord } from "../../api";
+import type { SessionView, TaskRecord } from "../../api";
 import { formatRelative } from "../../utils/time";
 
 interface AgentOverviewTabProps {
   fqn: string;
   /**
-   * Tasks for this agent. Lifted to {@link AgentDetailPage} so the header
-   * status pill and this tab share one source of truth (fix for review
-   * round 1 — the pill used to be hard-coded "idle").
+   * Tasks for this agent. Lifted to {@link AgentDetailPage} so the
+   * header status pill, the KPI tiles, and this tab share one source
+   * of truth (Phase 1.5 §4.3 / Block I).
    *
    * `null` means "still loading"; we render the loading state until both
    * tasks and sessions resolve. `error` is also passed in from the parent
    * so a fetch failure surfaces here once.
    */
   tasks: TaskRecord[] | null;
+  /** Sessions for this agent — lifted to the parent for the same reason as `tasks`. */
+  sessions: SessionView[] | null;
   tasksError: string | null;
-  /** Pre-built URLs for the three tabs so navigation stays type-safe. */
-  overviewUrl: string;
+  sessionsError: string | null;
+  /** Pre-built URLs for the global Sessions/Tasks pages with the agent filter pre-applied. */
   sessionsUrl: string;
   tasksUrl: string;
 }
 
 /**
- * Monitor-only dashboard for a single agent: running tasks, recent tasks,
- * recent sessions. No metrics / logs / resource sections — those were in
- * the mockup but explicitly out of scope (TASK.md and #agent-centric-ui).
+ * Per-agent Overview — Phase 1.5 §4.4 / Block J. Replaced the previous
+ * stacked-sections layout with a 2x2 grid:
  *
- * Tasks are fetched by {@link AgentDetailPage} and passed in so the
- * header status pill stays accurate on every sub-tab. Sessions are
- * still fetched here since they're only consumed by this tab.
+ *   ┌───────────────────────┬───────────────────────┐
+ *   │ Recent tasks (top 5)  │ Active sessions       │
+ *   │ View all tasks →      │ View all sessions →   │
+ *   ├───────────────────────┼───────────────────────┤
+ *   │ Current activity      │ (Capabilities cell    │
+ *   │ (running … / Idle …)  │  omitted — no data    │
+ *   │                       │  pipe yet, §4.4)      │
+ *   └───────────────────────┴───────────────────────┘
+ *
+ * The "Capabilities" cell from the mockup is **omitted entirely** this
+ * round — the catalog API exposes `agent.dependencies.skills` and
+ * `agent.dependencies.mcps`, but those are install metadata, not
+ * runtime capabilities the agent "speaks". Surfacing them as
+ * "Capabilities" would conflate two unrelated things. The grid
+ * degrades to 2x1 (Current activity spans the bottom row) when the
+ * cell is absent.
+ *
+ * Empty-agent state (zero tasks + zero sessions) keeps the PR #189
+ * polish-round single-`.empty` panel — applied **before** the grid so
+ * the user sees one clear "nothing's happened" state instead of four
+ * "no rows" cells.
+ *
+ * The View-all links navigate to the global Sessions / Tasks pages
+ * with `?agent=<fqn>` pre-applied (the Phase 1.5 §4.5 / §4.6 contract
+ * for the per-agent shortcut into the panoramic lists).
  */
 export function AgentOverviewTab({
   fqn,
   tasks,
+  sessions,
   tasksError,
+  sessionsError,
   sessionsUrl,
   tasksUrl,
 }: AgentOverviewTabProps) {
-  const [sessions, setSessions] = useState<SessionView[] | null>(null);
-  const [sessionsError, setSessionsError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSessions(null);
-    setSessionsError(null);
-    listSessions({ agent: fqn })
-      .then((s) => {
-        if (cancelled) return;
-        s.sort((a, b) => {
-          const al = a.lastActiveAt ?? a.createdAt;
-          const bl = b.lastActiveAt ?? b.createdAt;
-          return bl.localeCompare(al);
-        });
-        setSessions(s);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setSessionsError(e instanceof Error ? e.message : String(e));
-        setSessions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fqn]);
-
   const error = tasksError ?? sessionsError;
+  // Compute the relative-time anchor for the "Idle since X" caption
+  // up front (before any early return) so the hook order stays stable
+  // across render paths. The memo computes safely against a null
+  // tasks list — it just yields null.
+  const sortedTasks = useMemo(
+    () => (tasks === null ? [] : [...tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+    [tasks],
+  );
+  const latestTaskUpdated = useMemo(() => {
+    const ts: string[] = [];
+    for (const t of sortedTasks) {
+      const candidate = t.endedAt ?? t.startedAt ?? t.createdAt;
+      if (candidate) ts.push(candidate);
+    }
+    if (ts.length === 0) return null;
+    return ts.sort().at(-1) ?? null;
+  }, [sortedTasks]);
+
   if (error) return <div className="alert alert--error">⚠️ {error}</div>;
   if (tasks === null || sessions === null) {
     return (
@@ -75,17 +91,15 @@ export function AgentOverviewTab({
     );
   }
 
-  const sortedTasks = [...tasks].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const running = sortedTasks.filter((t) => t.status === "running");
+  const runningTask = sortedTasks.find((t) => t.status === "running") ?? null;
   const recentTasks = sortedTasks.slice(0, 5);
-  const recentSessions = sessions.slice(0, 5);
+  const activeSessions = sessions.slice(0, 5);
 
-  // Block E (PR #189 polish): when nothing has ever run for this agent,
-  // collapse the three empty section headers into a single panel with a
-  // dispatch CTA. Otherwise the page is just three "No ... yet" lines
-  // stacked under each other, which reads as broken rather than as a
-  // clean empty state.
-  const noActivity = sortedTasks.length === 0 && recentSessions.length === 0;
+  // Block E (PR #189 polish): when nothing has ever run for this
+  // agent, collapse the grid into a single panel with a dispatch
+  // CTA. Otherwise the page is just four mostly-empty cells which
+  // reads as broken rather than as a clean empty state.
+  const noActivity = sortedTasks.length === 0 && activeSessions.length === 0;
   if (noActivity) {
     return (
       <div className="empty" data-testid="agent-overview-empty">
@@ -104,34 +118,12 @@ export function AgentOverviewTab({
   }
 
   return (
-    <div className="agent-overview">
-      <section className="agent-overview__section">
-        <h3 className="agent-overview__heading">Running tasks</h3>
-        {running.length === 0 ? (
-          <p className="muted">No tasks currently running for this agent.</p>
-        ) : (
-          <ul className="agent-overview__list">
-            {running.map((t) => (
-              <li key={t.id} className="agent-overview__item">
-                <Link
-                  to={tasksUrl}
-                  state={{ preselectId: t.id }}
-                  className="agent-overview__row"
-                  aria-label={`Open task ${t.brief}`}
-                >
-                  <span className="agent-overview__badge agent-overview__badge--running">
-                    running
-                  </span>
-                  <span className="agent-overview__title">{t.brief}</span>
-                  <span className="agent-overview__meta muted">{formatRelative(t.createdAt)}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="agent-overview__section">
+    <div
+      className="agent-overview agent-overview--grid"
+      data-testid="agent-overview-grid"
+      data-agent-fqn={fqn}
+    >
+      <section className="agent-overview__cell" data-testid="agent-overview-cell-tasks">
         <h3 className="agent-overview__heading">Recent tasks</h3>
         {recentTasks.length === 0 ? (
           <p className="muted">No tasks yet.</p>
@@ -140,8 +132,7 @@ export function AgentOverviewTab({
             {recentTasks.map((t) => (
               <li key={t.id} className="agent-overview__item">
                 <Link
-                  to={tasksUrl}
-                  state={{ preselectId: t.id }}
+                  to={`${tasksUrl}&taskId=${encodeURIComponent(t.id)}`}
                   className="agent-overview__row"
                   aria-label={`Open task ${t.brief}`}
                 >
@@ -160,13 +151,13 @@ export function AgentOverviewTab({
         </Link>
       </section>
 
-      <section className="agent-overview__section">
-        <h3 className="agent-overview__heading">Recent sessions</h3>
-        {recentSessions.length === 0 ? (
-          <p className="muted">No sessions yet.</p>
+      <section className="agent-overview__cell" data-testid="agent-overview-cell-sessions">
+        <h3 className="agent-overview__heading">Active sessions</h3>
+        {activeSessions.length === 0 ? (
+          <p className="muted">No active sessions for this agent.</p>
         ) : (
           <ul className="agent-overview__list">
-            {recentSessions.map((s) => (
+            {activeSessions.map((s) => (
               <li key={s.id} className="agent-overview__item">
                 <Link
                   to={sessionsUrl}
@@ -186,6 +177,28 @@ export function AgentOverviewTab({
         <Link to={sessionsUrl} className="agent-overview__more">
           View all sessions →
         </Link>
+      </section>
+
+      <section
+        className="agent-overview__cell agent-overview__cell--wide"
+        data-testid="agent-overview-cell-activity"
+      >
+        <h3 className="agent-overview__heading">Current activity</h3>
+        {runningTask !== null ? (
+          <p className="agent-overview__activity">
+            <span className="agent-overview__title">{runningTask.brief}</span>
+            <span className="agent-overview__activity-dots" aria-hidden="true">
+              <span className="agent-overview__activity-dot" />
+              <span className="agent-overview__activity-dot" />
+              <span className="agent-overview__activity-dot" />
+            </span>
+            <span className="muted">running for {formatRelative(runningTask.createdAt)}</span>
+          </p>
+        ) : (
+          <p className="muted" data-testid="agent-overview-idle">
+            Idle{latestTaskUpdated ? ` since ${formatRelative(latestTaskUpdated)}` : ""}
+          </p>
+        )}
       </section>
     </div>
   );

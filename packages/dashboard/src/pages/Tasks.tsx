@@ -93,6 +93,18 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
   const { tasks, runtimes, loaded, error, setError, refresh } = data;
 
   const [dispatchOpen, setDispatchOpen] = useState(false);
+
+  // Phase 1.5 §4.3 — the agent-detail "+ New task" button deep-links to
+  // this page with `?dispatch=1` (plus `?agent=<fqn>`) so the dispatch
+  // modal opens with the agent pre-selected. We honour the flag once on
+  // mount, then strip it from the URL so a refresh/back doesn't re-open
+  // the modal.
+  const [dispatchFlagUrl, setDispatchFlagUrl] = useUrlSearchValue("dispatch", "");
+  useEffect(() => {
+    if (dispatchFlagUrl !== "1") return;
+    setDispatchOpen(true);
+    setDispatchFlagUrl("");
+  }, [dispatchFlagUrl, setDispatchFlagUrl]);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRecord | null>(null);
   const [deletePurge, setDeletePurge] = useState(false);
