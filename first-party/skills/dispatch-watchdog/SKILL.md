@@ -2,7 +2,7 @@
 name: dispatch-watchdog
 scope: emploke
 description: "Spawns a properly-detached cross-platform watchdog over a running emploke task — polls status, exits on terminal state, and reliably surfaces runtime completion notifications to the orchestrator session"
-version: 1.1.0
+version: 1.1.1
 ---
 
 # Dispatch Watchdog Skill
@@ -74,7 +74,11 @@ $body = @"
 `$ErrorActionPreference = 'Continue'
 "`$(Get-Date -Format o) watchdog started for $tid" | Add-Content '$logPath'
 while (`$true) {
-    `$raw = & emploke task show '$tid' --json 2>`$null
+    # Join the array (CLI stdout is split by line in PowerShell) into a
+    # single string so the -match operator populates `$Matches reliably.
+    # PowerShell's -match on a string array behaves as a filter and does
+    # NOT populate `$Matches consistently — this is a known footgun.
+    `$raw = (& emploke task show '$tid' --json 2>`$null) -join "``n"
     # Regex-extract status to avoid host-shell JSON parser quirks.
     if (`$raw -match '"status"\s*:\s*"([^"]+)"') {
         `$status = `$Matches[1]
@@ -163,6 +167,13 @@ or runaway watchdogs:
   shutdown will kill it.
 - **Do not** poll faster than every ~15s without good reason — every
   poll is a CLI invocation that spawns a Node process.
+- **Do not** call `-match` directly on the PowerShell-side CLI
+  output without `-join`-ing the array into a single string first.
+  PowerShell returns multi-line CLI output as `System.String[]`, and
+  `-match` on arrays behaves as a filter — it does NOT populate
+  `$Matches` reliably, causing `$Matches[1]` to be the empty string
+  and the terminal-status check to silently never fire. The primitive
+  above already does the `-join`; preserve it.
 
 ## Caller contract
 
@@ -179,6 +190,12 @@ The caller (orchestrator) MUST:
    the marker is absent, the watchdog is dead (bad args, missing tid,
    exec failure) — fix the invocation and respawn. Do not proceed
    assuming monitoring is active.
+5. **Verify status capture within 2× the configured poll interval.**
+   Read `watchdog.log` and confirm at least one non-empty
+   `status=<value>` line exists. A line reading `status=` with no
+   value indicates the parse step is broken (e.g. the array `-match`
+   trap above). If detected, fix the primitive and respawn — do NOT
+   wait for a completion notification, it will never arrive.
 
 ## CHANGELOG
 
