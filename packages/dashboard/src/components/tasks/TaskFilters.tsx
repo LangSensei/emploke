@@ -1,20 +1,6 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { ALL_AGENTS, ALL_RUNTIMES, TIME_PRESETS, type TimePreset } from "./shared";
 
-/**
- * Status-group filter for the master Tasks list (Phase 1.5 §4.6 /
- * Block G). `all` shows both Running and Completed groups (current
- * behaviour); the other two narrow to one bucket each by hiding the
- * other group's rows before the list groups them.
- */
-export type StatusFilter = "all" | "running" | "completed";
-
-const STATUS_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "running", label: "Running" },
-  { value: "completed", label: "Completed" },
-];
-
 export interface TaskFiltersProps {
   idQuery: string;
   onIdQueryChange: (v: string) => void;
@@ -24,8 +10,6 @@ export interface TaskFiltersProps {
   onRuntimeFilterChange: (v: string) => void;
   timeFilter: TimePreset;
   onTimeFilterChange: (v: TimePreset) => void;
-  statusFilter: StatusFilter;
-  onStatusFilterChange: (v: StatusFilter) => void;
   agents: AgentEntry[];
   filterAgentNames: string[];
   runtimes: string[];
@@ -47,9 +31,11 @@ export interface TaskFiltersProps {
  * were removed — the Tasks page is standalone-only; workflow-origin
  * tasks surface on a separate (future) page.
  *
- * Phase 1.5 Block G adds the Status pill group + an explicit Clear
- * filters affordance to match Sessions; every chip/dropdown/input is
- * URL-driven now (state lives in the page).
+ * PR #189 polish v6 dropped the Running / Completed status pill: the
+ * list itself (`TaskList.tsx`) already groups visually by status, so
+ * the pill only ever collapsed one bucket — low value, and Sessions
+ * has no equivalent. Filtering surface now matches: search, agent,
+ * runtime, and time preset. A stale `?status=` URL slot is ignored.
  */
 export function TaskFilters(props: TaskFiltersProps) {
   const {
@@ -61,8 +47,6 @@ export function TaskFilters(props: TaskFiltersProps) {
     onRuntimeFilterChange,
     timeFilter,
     onTimeFilterChange,
-    statusFilter,
-    onStatusFilterChange,
     filterAgentNames,
     runtimes,
     hideAgentFilter,
@@ -113,20 +97,6 @@ export function TaskFilters(props: TaskFiltersProps) {
             </option>
           ))}
         </select>
-        <fieldset className="pills task-filters__pills" aria-label="Filter by task status">
-          {STATUS_OPTIONS.map((s) => (
-            <button
-              key={s.value}
-              type="button"
-              className={`pills__btn${statusFilter === s.value ? " pills__btn--active" : ""}`}
-              onClick={() => onStatusFilterChange(s.value)}
-              aria-pressed={statusFilter === s.value}
-              data-testid={`task-status-filter-${s.value}`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </fieldset>
         <div className="pills task-filters__pills">
           {TIME_PRESETS.map((p) => (
             <button

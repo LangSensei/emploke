@@ -7,13 +7,12 @@ import { DispatchModal } from "../components/tasks/DispatchModal";
 import {
   ALL_AGENTS,
   ALL_RUNTIMES,
-  statusGroup,
   TIME_PRESETS,
   type TimePreset,
 } from "../components/tasks/shared";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
 import { TaskDetail } from "../components/tasks/TaskDetail";
-import { type StatusFilter, TaskFilters } from "../components/tasks/TaskFilters";
+import { TaskFilters } from "../components/tasks/TaskFilters";
 import { TaskList } from "../components/tasks/TaskList";
 import {
   TaskDetailPlaceholder,
@@ -41,17 +40,10 @@ interface TasksProps {
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TIME_PRESET: TimePreset = "7d";
-const VALID_STATUS_FILTERS: ReadonlyArray<StatusFilter> = ["all", "running", "completed"];
 
 function coerceTimePreset(raw: string): TimePreset {
   const match = TIME_PRESETS.find((p) => p.value === raw);
   return match ? match.value : DEFAULT_TIME_PRESET;
-}
-
-function coerceStatusFilter(raw: string): StatusFilter {
-  return (VALID_STATUS_FILTERS as ReadonlyArray<string>).includes(raw)
-    ? (raw as StatusFilter)
-    : "all";
 }
 
 /**
@@ -60,9 +52,10 @@ function coerceStatusFilter(raw: string): StatusFilter {
  * task list on the left, a tabbed detail panel on the right.
  *
  * Phase 1.5 Block G — every filter (`?agent`, `?runtime`, `?range`,
- * `?q`, `?status`) plus the master-detail selection (`?taskId`) is
- * URL-driven via {@link useUrlSearchValue}, so refresh / back-button
- * / shared link all reproduce the same view.
+ * `?q`) plus the master-detail selection (`?taskId`) is URL-driven
+ * via {@link useUrlSearchValue}, so refresh / back-button / shared
+ * link all reproduce the same view. A legacy `?status=` slot lingers
+ * in old links; it is ignored gracefully (no read, no redirect).
  */
 export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }: TasksProps) {
   const pollIntervalMs = config?.tasks?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -73,14 +66,11 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
   const [agentFilterUrl, setAgentFilterUrl] = useUrlSearchValue("agent", ALL_AGENTS);
   const [runtimeFilter, setRuntimeFilter] = useUrlSearchValue("runtime", ALL_RUNTIMES);
   const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
-  const [statusUrl, setStatusUrl] = useUrlSearchValue("status", "all");
 
   const agentFilter = fixedAgentFqn ?? agentFilterUrl;
   const setAgentFilter = fixedAgentFqn ? () => {} : setAgentFilterUrl;
   const timeFilter = coerceTimePreset(rangeUrl);
   const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
-  const statusFilter = coerceStatusFilter(statusUrl);
-  const setStatusFilter = (v: StatusFilter) => setStatusUrl(v);
 
   const { selectedId, setSelectedId } = useSelectedTask();
   const data = useTasks({
@@ -213,13 +203,9 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     const q = idQuery.trim().toLowerCase();
     return tasks.filter((t) => {
       if (q !== "" && !t.id.toLowerCase().includes(q)) return false;
-      // Status filter narrows by the same Running / Completed bucket
-      // the list groups into — `all` keeps both, `running` drops the
-      // completed group, `completed` drops the running group.
-      if (statusFilter !== "all" && statusGroup(t.status) !== statusFilter) return false;
       return true;
     });
-  }, [tasks, idQuery, statusFilter]);
+  }, [tasks, idQuery]);
 
   // Phase A default-selection rule: auto-bind to the top-most visible
   // task when the URL doesn't already pin one with `?taskId=` and the
@@ -257,7 +243,6 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     idQuery.trim() !== "" ||
     (!fixedAgentFqn && agentFilterUrl !== ALL_AGENTS) ||
     runtimeFilter !== ALL_RUNTIMES ||
-    statusFilter !== "all" ||
     timeFilter !== DEFAULT_TIME_PRESET;
 
   if (currentWorkspaceId === null) {
@@ -297,9 +282,9 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
             left a wide gap of empty space between two near-identical
             cards. See
             `.pilot/inbox/20260525-empty-state-double-render.md`.
-            When ANY filter is active (`?agent=`, `?runtime=`, `?status=`,
-            `?q=` or a non-default time preset) we keep the split layout
-            so the user can see the filter chrome and clear it. */}
+            When ANY filter is active (`?agent=`, `?runtime=`, `?q=`,
+            or a non-default time preset) we keep the split layout so
+            the user can see the filter chrome and clear it. */}
         {loaded && tasks.length === 0 && !filtersActive ? (
           <div className="tasks-pane tasks-pane--with-detail tasks-pane--zero">
             <TasksZeroState
@@ -326,8 +311,6 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
                 onRuntimeFilterChange={setRuntimeFilter}
                 timeFilter={timeFilter}
                 onTimeFilterChange={setTimeFilter}
-                statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
                 agents={agents}
                 filterAgentNames={filterAgentNames}
                 runtimes={runtimes}
