@@ -975,6 +975,52 @@ describe("tasksRoutes", () => {
       expect(fault?.taskId).toBe(sampleTask.id);
     });
 
+    it("GET /:tid/artifact/:name: logs unmapped error with taskId + artifact name", async () => {
+      // The artifact resolver throws a bare Error (e.g. permission
+      // failure while reading the success.json index). Outer catch
+      // around `resolveArtifactPath` gained the new pattern.
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(async () => {
+          throw new Error("success.json permission denied");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/artifact/out.txt`);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.artifact: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+      // Artifact-route extra meta carries the requested filename so
+      // operators can filter on a specific resource without parsing
+      // the URL out of every access line.
+      expect(fault?.artifact).toBe("out.txt");
+    });
+
+    it("GET /:tid/activity/stream: logs unmapped error with taskId (outer catch before headers)", async () => {
+      // SSE-stream variant. The handler-level catch is the OUTER one
+      // that runs before headers are sent (the inner async-iterator
+      // catch sends `event: error` frames and is intentionally
+      // separate — see lint report I6). Wire `getTaskActivityStream`
+      // to throw synchronously so we hit the outer catch.
+      const m = stubManager({
+        getTaskActivityStream: vi.fn(async () => {
+          throw new Error("activity stream backend unavailable");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/activity/stream`);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.activity.stream: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+    });
+
     it("POST /: still surfaces mapped 5xx faults (RuntimeHeadlessLaunchFailed) WITHOUT the unmapped label", async () => {
       // 5xx faults already had a log entry pre-fix — confirm the
       // refactor preserved it AND did NOT relabel it as "unmapped".
