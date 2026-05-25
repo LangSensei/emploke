@@ -66,6 +66,7 @@
  */
 
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { CopilotSdkUnavailableError } from "./errors.js";
 
 /**
@@ -99,7 +100,23 @@ export interface CopilotPreflightDeps {
 
 const defaultDeps: CopilotPreflightDeps = {
   resolveSpecifier: (spec) => import.meta.resolve(spec),
-  createRequireAt: (sdkUrl) => createRequire(sdkUrl),
+  createRequireAt: (sdkUrl) => {
+    // Normalise `file:///C:/…` URLs to native paths before handing
+    // them to `createRequire`. `createRequire` accepts both file URL
+    // strings and absolute file paths on Node 22, but only the
+    // file-path form is reliably battle-tested on Windows under
+    // pnpm's symlink/junction store layout. Some Node 22 builds
+    // (and historical CI Windows runners under heavy fs-filter
+    // load) take a slower internal path when handed a URL string,
+    // which compounds with the cold-boot SQLite + Defender chain
+    // and was suspected as a contributor to the e2e
+    // `integration-smoke` 30s hook timeout on the
+    // `windows-latest` runner. Passing the absolute path skips
+    // that conversion entirely. On POSIX the two forms behave
+    // identically, so this is a no-op there.
+    const sdkPath = sdkUrl.startsWith("file:") ? fileURLToPath(sdkUrl) : sdkUrl;
+    return createRequire(sdkPath);
+  },
 };
 
 /**
