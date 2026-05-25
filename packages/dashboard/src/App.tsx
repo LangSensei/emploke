@@ -868,8 +868,9 @@ function RuntimeSessionsRoute() {
  * Promoted global Tasks page (Phase 1.5 §4.1, Block F). Mirror of
  * {@link RuntimeSessionsRoute} for the master-detail Tasks view at
  * `/workspaces/<wsId>/runtime/tasks`. URL filters are the same
- * vocabulary plus `?status=` and `?taskId=` for the master-detail
- * row selection.
+ * vocabulary (`?q`, `?agent`, `?runtime`, `?range`) plus `?taskId=`
+ * for the master-detail row selection. A legacy `?status=` slot is
+ * tolerated but no longer read (see `TasksPage` file-level docstring).
  */
 function RuntimeTasksRoute() {
   const { wsId, data, config } = useWorkspaceShell();
