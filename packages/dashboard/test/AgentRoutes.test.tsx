@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import {
   MemoryRouter,
   Navigate,
@@ -463,7 +463,7 @@ describe("Empty states (Block E)", () => {
     expect(catalogLink.getAttribute("href")).toBe("/workspaces/ws-1/catalog/agents");
   });
 
-  it("AgentOverviewTab renders 'No activity yet' with a Dispatch CTA when both tasks and sessions are empty", async () => {
+  it("AgentOverviewTab renders the 'No activity yet' empty panel without an embedded Dispatch link (v5 redundancy regression, Bug 3)", async () => {
     const agents = [makeAgent("emploke/dev")];
     mockListTasks.mockResolvedValue([]);
     mockListSessions.mockResolvedValue([]);
@@ -473,16 +473,15 @@ describe("Empty states (Block E)", () => {
       "/workspaces/ws-1/runtime/agents/emploke/dev/overview",
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId("agent-overview-empty")).toBeTruthy();
-    });
+    const empty = await screen.findByTestId("agent-overview-empty");
+    expect(empty).toBeTruthy();
     expect(screen.getByText(/No activity yet/i)).toBeTruthy();
-    const cta = screen.getByText(/Dispatch a task/i).closest("a");
-    expect(cta).toBeTruthy();
-    // Phase 1.5 Block J — Dispatch CTA now bridges into the global
-    // Tasks page with the agent pre-applied (the per-agent Tasks tab
-    // was retired in §3.4).
-    expect(cta?.getAttribute("href")).toBe("/workspaces/ws-1/runtime/tasks?agent=emploke/dev");
+    // PR #189 polish v5 — the inline "Dispatch a task →" link inside
+    // the empty hint duplicated the persistent "+ New task" button in
+    // the AgentDetailPane header above the tab. The header button is
+    // now the sole CTA for this case; the hint must NOT embed a
+    // Dispatch link of its own.
+    expect(within(empty).queryByText(/Dispatch a task/i)).toBeNull();
     // The 2x2 grid headings (Recent tasks / Active sessions) must NOT
     // render — the empty panel replaces them.
     expect(screen.queryByText(/Recent tasks/i)).toBeNull();

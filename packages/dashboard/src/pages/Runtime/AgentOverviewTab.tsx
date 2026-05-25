@@ -108,10 +108,7 @@ export function AgentOverviewTab({
         </div>
         <p className="empty__title">No activity yet</p>
         <p className="empty__hint">
-          This agent hasn't run any tasks or sessions in this workspace.{" "}
-          <Link to={tasksUrl} className="agent-overview__more">
-            Dispatch a task →
-          </Link>
+          This agent hasn't run any tasks or sessions in this workspace.
         </p>
       </div>
     );
