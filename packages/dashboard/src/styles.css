@@ -4864,15 +4864,36 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   min-height: 140px;
+  /* Grid items default to `min-width: auto` (their intrinsic min-content
+     width), so a long unbreakable brief inside the cell would push the
+     `1fr 1fr` track past the container and trigger the detail pane's
+     horizontal scrollbar. Force the track back to 1fr by letting the
+     cell shrink below its content's min-content width; row-internal
+     `.agent-overview__title` already owns the ellipsis. */
+  min-width: 0;
 }
 .agent-overview__cell--wide {
   grid-column: 1 / -1;
 }
 .agent-overview__activity {
-  display: inline-flex;
+  /* `display: flex` (was `inline-flex`) so the paragraph fills the
+     cell width and child shrink rules can engage; pairs with the
+     `.agent-overview__activity > .agent-overview__title` override
+     below so a long brief ellipsises instead of pushing siblings
+     (activity dots + "running for ...") out of the cell. */
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
+  min-width: 0;
+}
+.agent-overview__activity > .agent-overview__title {
+  /* Current-activity context: take all remaining width and shrink so
+     the inherited ellipsis on `.agent-overview__title` (L4436) can
+     trigger. `.agent-overview__title` already declares `overflow`,
+     `text-overflow`, and `white-space: nowrap` — no re-declaration. */
+  flex: 1 1 0;
+  min-width: 0;
 }
 .agent-overview__activity-dots {
   display: inline-flex;
