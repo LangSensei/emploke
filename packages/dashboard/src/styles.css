@@ -4383,6 +4383,92 @@ button {
   flex-direction: column;
   gap: var(--space-3);
 }
+
+/* Toolbar above the agents list — status filter pills + search box.
+   Phase 1.5 §4.2 / Block H. Right-aligned search lets the pills sit
+   visually anchored to the heading edge. */
+.agents-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.agents-list-toolbar__search {
+  margin-left: auto;
+  min-width: 220px;
+  max-width: 320px;
+}
+.agents-list__item {
+  position: relative;
+}
+
+/* Per-row kebab menu — native <details> as the lower-effort
+   alternative to a dropdown library (C5 bundle budget). The panel
+   anchors to top-right of the card with absolute positioning so the
+   row layout doesn't shift. The container sits inside the <li> next
+   to the <Link> so a click on the trigger doesn't bubble into the
+   underlying row navigation. */
+.agents-list__menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+.agents-list__menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  list-style: none;
+  background: transparent;
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+.agents-list__menu-trigger::-webkit-details-marker {
+  display: none;
+}
+.agents-list__menu-trigger:hover,
+.agents-list__menu[open] .agents-list__menu-trigger {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.agents-list__menu-icon {
+  width: 16px;
+  height: 16px;
+}
+.agents-list__menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  min-width: 160px;
+  padding: var(--space-1);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 10;
+}
+.agents-list__menu-item {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: 13px;
+}
+.agents-list__menu-item:hover,
+.agents-list__menu-item:focus-visible {
+  background: var(--color-surface-hover);
+  outline: none;
+  text-decoration: none;
+}
 .agents-list {
   list-style: none;
   margin: 0;
