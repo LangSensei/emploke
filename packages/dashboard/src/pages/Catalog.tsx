@@ -42,6 +42,7 @@ import { MetadataForm, type MetadataFormValues } from "../components/MetadataFor
 import { Modal } from "../components/Modal";
 import { ResolveTree } from "../components/ResolveTree";
 import { useClickOutside } from "../hooks/useClickOutside";
+import { useUrlSearchValue } from "../hooks/useUrlState";
 import { KIND_TITLE } from "../kindMeta";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
@@ -109,6 +110,43 @@ export function CatalogPage({
     if (statusFilter === "blocked") return agents.filter((a) => a.status === "blocked");
     return agents; // orphaned doesn't apply
   }, [agents, statusFilter]);
+
+  // PR #189 polish v3 — `?agent=<fqn>` deep-link. When the URL carries
+  // an agent fqn (e.g. from the AgentDetailPane's Configure button) and
+  // the matching row is rendered on the Agents tab, scroll it into view
+  // and apply a transient highlight class for ~2s. Misses are a silent
+  // no-op (stale link / uninstalled agent).
+  //
+  // `appliedAgentHighlightRef` keeps the scroll from re-firing on every
+  // unrelated re-render (filter typing, etc.) while still allowing the
+  // effect to re-run when `filteredAgents` arrives late so the row that
+  // wasn't in the DOM on first pass still gets the treatment.
+  const [agentHint] = useUrlSearchValue("agent", "");
+  const appliedAgentHighlightRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (tab !== "agents") {
+      appliedAgentHighlightRef.current = null;
+      return;
+    }
+    if (agentHint === "" || agentHint === null) return;
+    if (appliedAgentHighlightRef.current === agentHint) return;
+
+    const selector = `.card-grid__item[data-entry-name="${CSS.escape(agentHint)}"]`;
+    const row = document.querySelector<HTMLElement>(selector);
+    if (!row) return; // Silent no-op on miss (stale link / uninstalled agent).
+
+    appliedAgentHighlightRef.current = agentHint;
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    row.classList.add("card-grid__item--highlight");
+    const t = window.setTimeout(() => {
+      row.classList.remove("card-grid__item--highlight");
+    }, 2000);
+    return () => {
+      window.clearTimeout(t);
+      row.classList.remove("card-grid__item--highlight");
+    };
+  }, [agentHint, tab]);
 
   const filteredSkills = useMemo(() => {
     if (statusFilter === "all") return skills;

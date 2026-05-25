@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 describe("AgentsListPage Block H polish (§4.2)", () => {
-  it("filter tabs hide agents that don't match (?filter=active|idle)", async () => {
+  it("filter menu hides agents that don't match (?filter=active|idle)", async () => {
     const agents = [makeAgent("emploke/dev"), makeAgent("emploke/qa"), makeAgent("emploke/docs")];
     // dev has 1 running task; qa & docs have only completed tasks → idle.
     mockListTasks.mockResolvedValue([
@@ -100,12 +100,12 @@ describe("AgentsListPage Block H polish (§4.2)", () => {
       // Three rows render initially under the "All" filter.
       expect(screen.getAllByText(/^dev$/).length).toBeGreaterThan(0);
     });
-    // The "dev" name must always be visible across renders (it's both
-    // running and idle-eligible only under "All" and "Active").
     expect(screen.queryAllByText(/^dev$/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/^qa$/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/^docs$/).length).toBeGreaterThan(0);
 
+    // v3 — the pill bar was replaced by a popover. Open it first.
+    fireEvent.click(screen.getByTestId("agents-filter-menu-trigger"));
     // Switch to Active — only dev should remain.
     fireEvent.click(screen.getByTestId("agents-list-filter-active"));
     await waitFor(() => {
@@ -115,6 +115,7 @@ describe("AgentsListPage Block H polish (§4.2)", () => {
     });
 
     // Switch to Idle — dev disappears, qa+docs reappear.
+    fireEvent.click(screen.getByTestId("agents-filter-menu-trigger"));
     fireEvent.click(screen.getByTestId("agents-list-filter-idle"));
     await waitFor(() => {
       expect(screen.queryAllByText(/^dev$/).length).toBe(0);
@@ -166,5 +167,46 @@ describe("AgentsListPage Block H polish (§4.2)", () => {
     expect(screen.queryByTestId("agent-row-menu")).toBeNull();
     expect(screen.queryByTestId("agent-row-menu-tasks")).toBeNull();
     expect(screen.queryByTestId("agent-row-menu-sessions")).toBeNull();
+  });
+
+  it("filter pill bar replaced by a popover (no inline fieldset, popover renders on demand)", async () => {
+    const agents = [makeAgent("emploke/dev")];
+    mockListTasks.mockResolvedValue([]);
+    renderList("/workspaces/ws-1/runtime/agents", agents);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agents-filter-menu-trigger")).toBeTruthy();
+    });
+    // The old inline fieldset is gone.
+    expect(screen.queryByTestId("agents-list-filter-tabs")).toBeNull();
+    // Panel is closed by default (radio buttons not in the DOM yet).
+    expect(screen.queryByTestId("agents-filter-menu-panel")).toBeNull();
+    expect(screen.queryByTestId("agents-list-filter-all")).toBeNull();
+    // Trigger reports closed via aria-expanded.
+    expect(screen.getByTestId("agents-filter-menu-trigger").getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
+  it("opening the filter popover reflects the current ?filter= value as the checked radio", async () => {
+    const agents = [makeAgent("emploke/dev")];
+    mockListTasks.mockResolvedValue([]);
+    renderList("/workspaces/ws-1/runtime/agents?filter=active", agents);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agents-filter-menu-trigger")).toBeTruthy();
+    });
+    // With ?filter=active the trigger surfaces the active label.
+    expect(screen.getByTestId("agents-filter-menu-trigger").textContent).toMatch(/Active/);
+
+    fireEvent.click(screen.getByTestId("agents-filter-menu-trigger"));
+    await waitFor(() => {
+      expect(screen.getByTestId("agents-filter-menu-panel")).toBeTruthy();
+    });
+    // The currently-active option is the only one with aria-checked=true.
+    const activeOpt = screen.getByTestId("agents-list-filter-active");
+    expect(activeOpt.getAttribute("aria-checked")).toBe("true");
+    const allOpt = screen.getByTestId("agents-list-filter-all");
+    expect(allOpt.getAttribute("aria-checked")).toBe("false");
   });
 });

@@ -1395,6 +1395,24 @@ button {
   outline-offset: 2px;
 }
 
+/* PR #189 polish v3 — transient highlight applied to a Catalog card
+   when the user lands here from AgentDetailPane's Configure button
+   (`?agent=<fqn>`). Catalog.tsx adds the class on mount and clears it
+   after ~2s; the animation runs once for that window. */
+.card-grid__item--highlight {
+  animation: card-grid-highlight 2s ease-out both;
+}
+@keyframes card-grid-highlight {
+  0% {
+    background: var(--color-accent-bg);
+    box-shadow: 0 0 0 2px var(--color-accent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 /* Header strip: small kind tag (uppercase + icon) on the left, hidden
  * Remove icon on the right that fades in on hover. The Remove action
  * is intentionally low-visibility — the primary path is click-card-to-

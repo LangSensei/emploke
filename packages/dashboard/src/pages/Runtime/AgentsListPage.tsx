@@ -5,6 +5,7 @@ import { listSessions, listTasks, type SessionView, type TaskRecord } from "../.
 import { AgentAvatar } from "../../components/agents/AgentAvatar";
 import { AgentFqn } from "../../components/agents/AgentFqn";
 import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
+import { useClickOutside } from "../../hooks/useClickOutside";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
 import { AgentDetailPane } from "./AgentDetailPane";
@@ -259,24 +260,6 @@ export function AgentsListPage() {
           <>
             <div className="tasks-pane__list">
               <div className="agents-list-toolbar">
-                <fieldset
-                  className="pills"
-                  aria-label="Filter agents by status"
-                  data-testid="agents-list-filter-tabs"
-                >
-                  {LIST_FILTER_TABS.map((t) => (
-                    <button
-                      key={t.value}
-                      type="button"
-                      className={`pills__btn${listFilter === t.value ? " pills__btn--active" : ""}`}
-                      onClick={() => setListFilter(t.value)}
-                      aria-pressed={listFilter === t.value}
-                      data-testid={`agents-list-filter-${t.value}`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </fieldset>
                 <input
                   type="search"
                   className="input agents-list-toolbar__search"
@@ -286,6 +269,21 @@ export function AgentsListPage() {
                   aria-label="Search agents by name, scope, or fqn"
                   data-testid="agents-list-search"
                 />
+                {/*
+                  PR #189 polish v3 — the previous inline pill bar
+                  (All / Active / Idle) was replaced with a FilterMenu
+                  popover button so the toolbar stays at one row of
+                  chrome regardless of how many filter dimensions we
+                  add later (sort, group, etc.). Comment matches the
+                  rationale on the Catalog filter (the original
+                  primitive of this pattern in pages/Catalog.tsx).
+
+                  When the active filter is anything other than "All",
+                  the button title shows the picked value and a small
+                  indicator so it's still obvious from a glance that a
+                  filter is constraining the view.
+                */}
+                <AgentsFilterMenu value={listFilter} onChange={setListFilter} />
               </div>
               <div className="tasks-pane__list-scroll">
                 {filteredViews.length === 0 ? (
@@ -483,4 +481,109 @@ function splitForDisplay(fqn: string): [string, string] {
   const ix = fqn.indexOf("/");
   if (ix <= 0) return ["", fqn];
   return [fqn.slice(0, ix), fqn.slice(ix + 1)];
+}
+
+interface AgentsFilterMenuProps {
+  value: ListFilter;
+  onChange: (next: ListFilter) => void;
+}
+
+const FILTER_LABEL: Record<ListFilter, string> = {
+  all: "All",
+  active: "Active",
+  idle: "Idle",
+};
+
+/**
+ * Per-page filter menu rendered as a popover-triggered radio group.
+ * Mirrors the FilterMenu pattern from `pages/Catalog.tsx` (state-driven
+ * open/close, `useClickOutside` to dismiss, Escape handler) so the two
+ * agentic-control-plane pages keep the same toolbar shape.
+ *
+ * PR #189 polish v3 replaced the inline pill bar
+ * (`<button>All</button> <button>Active</button> ...`) with this popover
+ * so the toolbar stays at one row of chrome regardless of how many
+ * filter dimensions we add later (sort, group, etc.).
+ */
+function AgentsFilterMenu({ value, onChange }: AgentsFilterMenuProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+  const outsideRefs = useMemo(() => [triggerRef, panelRef] as const, []);
+  useClickOutside(outsideRefs, close, open);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const activeLabel = FILTER_LABEL[value];
+  const isFiltered = value !== "all";
+
+  return (
+    <div className="filter-menu" data-testid="agents-filter-menu">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`btn btn--ghost filter-menu__trigger${
+          isFiltered ? " filter-menu__trigger--active" : ""
+        }`}
+        title={isFiltered ? `Showing ${activeLabel} only` : "Filter by status"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+        data-testid="agents-filter-menu-trigger"
+      >
+        <span className="filter-menu__icon" aria-hidden="true">
+          ⚙
+        </span>
+        Filters
+        {isFiltered && (
+          <>
+            <span className="filter-menu__sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="filter-menu__current">{activeLabel}</span>
+          </>
+        )}
+      </button>
+      {open && (
+        <div
+          ref={panelRef}
+          className="filter-menu__panel"
+          role="menu"
+          data-testid="agents-filter-menu-panel"
+        >
+          <div className="filter-menu__group-label">Status</div>
+          {LIST_FILTER_TABS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === opt.value}
+              className={`filter-menu__option${
+                value === opt.value ? " filter-menu__option--active" : ""
+              }`}
+              onClick={() => {
+                onChange(opt.value);
+                setOpen(false);
+              }}
+              data-testid={`agents-list-filter-${opt.value}`}
+            >
+              <span className="filter-menu__radio" aria-hidden="true">
+                {value === opt.value ? "●" : "○"}
+              </span>
+              <span className="filter-menu__option-label">{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
