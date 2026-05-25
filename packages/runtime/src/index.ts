@@ -4,6 +4,7 @@ export type { CopilotRuntimeConfig } from "./copilot/copilot-runtime.js";
 // Copilot runtime
 export { CopilotRuntime } from "./copilot/copilot-runtime.js";
 export {
+  CopilotSdkUnavailableError,
   InvalidMcpJson,
   TrustRegistrationFailed,
 } from "./copilot/errors.js";
@@ -19,6 +20,10 @@ export {
   type LaunchCopilotHeadlessOpts,
   launchCopilotHeadless,
 } from "./copilot/launch-headless.js";
+export {
+  assertCopilotSdkResolvable,
+  type CopilotPreflightDeps,
+} from "./copilot/preflight.js";
 export { flattenSkillName } from "./copilot/provision.js";
 export { isPathCovered } from "./copilot/trust.js";
 export {

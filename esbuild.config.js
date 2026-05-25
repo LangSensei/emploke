@@ -41,6 +41,27 @@ const external = [
   // tiny resolver better-sqlite3 uses; same treatment.
   "better-sqlite3",
   "bindings",
+  // @github/copilot-sdk wraps the @github/copilot CLI and resolves it at
+  // runtime via `import.meta.resolve('@github/copilot/sdk')` (verified
+  // against @github/copilot-sdk@1.0.0-beta.4). That call walks the
+  // SDK module's own node_modules — which only exists when npm has
+  // materialised the SDK alongside its transitive `@github/copilot`
+  // dep. Inlining the SDK into our single-file bundle severs both
+  // sides of that lookup: the SDK code now lives at the bundle path
+  // (not at `node_modules/@github/copilot-sdk/`), and the CLI dep is
+  // never installed in the user's tree because the bundled SDK source
+  // can't carry its own `dependencies` declaration. Result is a
+  // silent `ERR_MODULE_NOT_FOUND` at first dispatch.
+  //
+  // Externalising keeps the SDK as a real `import` whose resolution
+  // happens through the user's installed `node_modules/@github/
+  // copilot-sdk/`, which npm sets up correctly because we declare the
+  // SDK in the root `package.json` `dependencies`. The SDK's own
+  // `@github/copilot` dep is then resolved transitively by npm — we
+  // do NOT declare the CLI directly because that would couple us to
+  // its version twice (once via the SDK's package.json, once via
+  // ours) and drift on every SDK bump.
+  "@github/copilot-sdk",
 ];
 
 const result = await esbuild.build({

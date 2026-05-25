@@ -783,4 +783,270 @@ describe("tasksRoutes", () => {
       expect(m.resolveArtifactPath).not.toHaveBeenCalled();
     });
   });
+
+  // ─── unmapped-error fall-through logging (T-fix/copilot-sdk) ──────────
+  //
+  // The original silent-failure mode that motivated the fix: an error
+  // class NOT recognised by `statusForError` (e.g. a bare `Error` thrown
+  // by a runtime adapter that hit `ERR_MODULE_NOT_FOUND` deep in the
+  // SDK) fell through `?? 400` to a 400 response with body
+  // `"internal error"` AND zero server-log output. The dashboard saw
+  // `HTTP 400 internal error` and the operator had nothing to grep for.
+  //
+  // The fix preserves the 4xx wire body (the SAFE_ERROR_NAMES whitelist
+  // policy is intentional anti-leakage; we are NOT widening it) but
+  // ADDS a structured log line so the operator can `jq` for "unmapped"
+  // in <emplokeHome>/logs/server-*.log and see exactly which error
+  // class fell through. Tests below pin both halves:
+  //
+  //   - the wire body is still `{ error: "internal error" }`
+  //   - the log carries the message suffix "unmapped error fell
+  //     through to 400" plus the underlying error's `name` and
+  //     `message` (so a future grep doesn't require parsing the
+  //     pino-serialised `err.type` nest)
+  //
+  // To assert log output we need the requestLogger middleware mounted
+  // (logFault is a silent no-op when no logger is on c.var — by design
+  // for the standalone-route test seam every other case above relies
+  // on). Helper below wires up the same middleware stack the prod
+  // `index.ts` uses, then mounts the route under test on top.
+  describe("unmapped error fall-through logging", () => {
+    // Local imports so the rest of the file's `tasksRoutes(() => m)`
+    // shortcut tests stay unchanged.
+    const buildAppWithLogger = async (m: TaskService) => {
+      const { Hono } = await import("hono");
+      const { requestId } = await import("../src/middleware/request-id.js");
+      const { requestLogger } = await import("../src/middleware/request-logger.js");
+      const { captureLogger } = await import("./_capture-logger.js");
+      const cap = captureLogger();
+      const app = new Hono();
+      app.use("*", requestId());
+      app.use("*", requestLogger(cap.logger));
+      app.route(
+        "/",
+        tasksRoutes(() => m),
+      );
+      return { app, cap };
+    };
+
+    it("GET /: logs unmapped error from TaskService.list and still returns 400 internal error", async () => {
+      // The list handler used to silently downgrade every error to
+      // `400 internal error` with NO log line — exactly the
+      // silent-failure shape the new pattern exists to eliminate.
+      // Now matches the sibling handlers' five-line treatment.
+      const m = stubManager({
+        list: vi.fn(async () => {
+          throw new Error("metadata.jsonl read failed");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request("/");
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.level).toBe(50); // error
+      expect(fault?.msg).toBe("tasks.list: unmapped error fell through to 400");
+      // List route has no taskId / sessionId to attach as extra meta —
+      // only the bare name + message land on the structured line.
+      expect(fault?.name).toBe("Error");
+      expect(fault?.message).toContain("metadata.jsonl read failed");
+    });
+
+    it("POST /: logs the unmapped error AND still returns 400 internal error on the wire", async () => {
+      const m = stubManager({
+        dispatch: vi.fn(async () => {
+          // A bare `Error` is NOT on `statusForError`'s mapping table.
+          // This mirrors the production failure mode: the SDK throws
+          // `ERR_MODULE_NOT_FOUND` deep inside `import.meta.resolve`,
+          // which surfaces as a bare `Error` at the route boundary.
+          throw new Error("ERR_MODULE_NOT_FOUND: cannot resolve @github/copilot-sdk");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent: "writer", brief: "go" }),
+      });
+      // Wire body unchanged — SAFE_ERROR_NAMES whitelist still flattens.
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+
+      // Server log gained a structured entry the operator can grep for.
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.level).toBe(50); // error
+      expect(fault?.msg).toBe("tasks: unmapped error fell through to 400");
+      // Underlying error metadata is on the structured line so
+      // `jq '.name'` / `jq '.message'` work without descending into
+      // pino's `err.*` nest.
+      expect(fault?.name).toBe("Error");
+      expect(fault?.message).toContain("ERR_MODULE_NOT_FOUND");
+    });
+
+    it("POST /: mapped 4xx errors (validation, not-found) still do NOT log (silent-4xx policy preserved)", async () => {
+      const m = stubManager({
+        dispatch: vi.fn(async () => {
+          // Mapped 4xx: caller-fixable input error. The original
+          // silent-4xx policy was correct for these — operators don't
+          // want noisy logs for "user typed wrong agent name".
+          throw new AgentNotFoundError("ghost");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent: "ghost", brief: "go" }),
+      });
+      expect(res.status).toBe(400);
+      // Critical: no "unmapped" log entry for a mapped 4xx. This is
+      // the policy split — only unrecognised classes fall into the
+      // observability bucket; recognised 4xx stay quiet.
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeUndefined();
+    });
+
+    it("GET /:tid: logs unmapped error with the taskId on the structured line", async () => {
+      const m = stubManager({
+        get: vi.fn(async () => {
+          throw new Error("disk read failed");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}`);
+      expect(res.status).toBe(400);
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.get: unmapped error fell through to 400");
+      // Per-route `extra` meta preserved through the helper — taskId
+      // is what operators filter by when investigating a specific
+      // failed dispatch.
+      expect(fault?.taskId).toBe(sampleTask.id);
+    });
+
+    it("DELETE /:tid: logs unmapped error with taskId + purge flag preserved", async () => {
+      const m = stubManager({
+        delete: vi.fn(async () => {
+          throw new Error("rm failed");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}?purge=1`, { method: "DELETE" });
+      expect(res.status).toBe(400);
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.delete: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+      expect(fault?.purge).toBe(true);
+    });
+
+    it("POST /:tid/cancel: logs unmapped error with taskId", async () => {
+      const m = stubManager({
+        cancel: vi.fn(async () => {
+          throw new Error("kill failed");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/cancel`, { method: "POST" });
+      expect(res.status).toBe(400);
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.cancel: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+    });
+
+    it("GET /:tid/activity: logs unmapped error with taskId (previously had no logFault at all)", async () => {
+      const m = stubManager({
+        getTaskActivity: vi.fn(async () => {
+          throw new Error("events.jsonl unreadable");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/activity`);
+      expect(res.status).toBe(400);
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.activity: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+    });
+
+    it("GET /:tid/artifact/:name: logs unmapped error with taskId + artifact name", async () => {
+      // The artifact resolver throws a bare Error (e.g. permission
+      // failure while reading the success.json index). Outer catch
+      // around `resolveArtifactPath` gained the new pattern.
+      const m = stubManager({
+        resolveArtifactPath: vi.fn(async () => {
+          throw new Error("success.json permission denied");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/artifact/out.txt`);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.artifact: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+      // Artifact-route extra meta carries the requested filename so
+      // operators can filter on a specific resource without parsing
+      // the URL out of every access line.
+      expect(fault?.artifact).toBe("out.txt");
+    });
+
+    it("GET /:tid/activity/stream: logs unmapped error with taskId (outer catch before headers)", async () => {
+      // SSE-stream variant. The handler-level catch is the OUTER one
+      // that runs before headers are sent (the inner async-iterator
+      // catch sends `event: error` frames and is intentionally
+      // separate — see lint report I6). Wire `getTaskActivityStream`
+      // to throw synchronously so we hit the outer catch.
+      const m = stubManager({
+        getTaskActivityStream: vi.fn(async () => {
+          throw new Error("activity stream backend unavailable");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request(`/${sampleTask.id}/activity/stream`);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.msg).toBe("tasks.activity.stream: unmapped error fell through to 400");
+      expect(fault?.taskId).toBe(sampleTask.id);
+    });
+
+    it("POST /: still surfaces mapped 5xx faults (RuntimeHeadlessLaunchFailed) WITHOUT the unmapped label", async () => {
+      // 5xx faults already had a log entry pre-fix — confirm the
+      // refactor preserved it AND did NOT relabel it as "unmapped".
+      // RuntimeHeadlessLaunchFailed is on `statusForError`'s mapping
+      // table → status=500, isUnmapped=false → the existing
+      // `"tasks: 5xx fault"` log line, not the new "unmapped" one.
+      const m = stubManager({
+        dispatch: vi.fn(async () => {
+          throw new RuntimeHeadlessLaunchFailed("copilot", "/tmp/wd", new Error("ENOENT"));
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent: "writer", brief: "x" }),
+      });
+      expect(res.status).toBe(500);
+      // The 5xx fault log fires (existing behaviour).
+      const fivexx = cap.entries.find((e) => e.msg === "tasks: 5xx fault");
+      expect(fivexx).toBeDefined();
+      // The unmapped log does NOT fire — the error class IS mapped,
+      // just to 500 rather than 4xx. This split keeps the two
+      // observability buckets from overlapping in the log stream.
+      const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(unmapped).toBeUndefined();
+    });
+  });
 });

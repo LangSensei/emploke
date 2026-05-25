@@ -9,7 +9,12 @@ import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
 import type { Application, WorkspaceContext } from "@emploke/core";
-import { CopilotRuntime, RuntimeRegistry, sharedDir } from "@emploke/runtime";
+import {
+  assertCopilotSdkResolvable,
+  CopilotRuntime,
+  RuntimeRegistry,
+  sharedDir,
+} from "@emploke/runtime";
 import { globalDbPath, workspacesParentDir } from "@emploke/workspace";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -172,6 +177,25 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   });
 
   const runtimeRegistry = new RuntimeRegistry();
+  // Fail-fast preflight: confirm `@github/copilot-sdk` (and its
+  // transitive `@github/copilot` CLI dep) are resolvable from this
+  // process's module graph BEFORE we register the copilot runtime.
+  // Without this check, the first `tasks.dispatch` against copilot
+  // would throw `ERR_MODULE_NOT_FOUND` deep inside the SDK and
+  // bubble back as a generic `HTTP 400 internal error` with no
+  // server log — the exact silent-failure mode that motivated this
+  // gate (see issue `fix/copilot-sdk-packaging-chain`).
+  //
+  // The thrown `CopilotSdkUnavailableError` carries the install
+  // hint and the underlying `ERR_MODULE_NOT_FOUND` chain so the
+  // operator sees actionable output on stderr.
+  //
+  // Pairs with Change 3 (unmapped-error fall-through logging in
+  // tasks.ts) — the preflight catches the common case at boot;
+  // the route-level log catches any residual deep-resolution
+  // failure at dispatch time. Together they fully eliminate the
+  // silent-failure surface.
+  assertCopilotSdkResolvable();
   runtimeRegistry.register(
     new CopilotRuntime({
       // Resolve `${sharedDir}` placeholders in MCP specs against
