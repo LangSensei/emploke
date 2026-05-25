@@ -4333,3 +4333,289 @@ button {
   border-color: var(--color-accent, var(--color-border-strong));
   box-shadow: var(--shadow-md);
 }
+
+/* ─── Runtime / Agent-centric pages (PR #189 polish round) ──────────
+   Baseline layout for the four class prefixes added in the Phase 1
+   restructure. Theming refinements (dark mode, motion, status-icon
+   system, animated pulse on the running dot) are intentionally
+   deferred — these rules just make the screens parseable. All tokens
+   come from `:root` at the top of this file; no new colors. */
+
+/* AgentsListPage — /workspaces/<ws>/runtime/agents */
+.agents-list-page {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.agents-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.agents-list__item {
+  margin: 0;
+}
+.agents-list__link {
+  display: block;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+.agents-list__link:hover,
+.agents-list__link:focus-visible {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+  outline: none;
+  text-decoration: none;
+}
+.agents-list__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.agents-list__name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text);
+}
+.agents-list__scope {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.agents-list__spacer {
+  flex: 1;
+}
+.agents-list__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: 12px;
+}
+.agents-list__sep {
+  color: var(--color-text-subtle);
+}
+
+/* Status pill — shared between AgentsListPage rows and the detail
+   header. Running vs idle are distinguished by both a dot tone and a
+   subtle background tint so colour-blind users still get the contrast
+   from the border + label, not the dot alone. */
+.agent-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.agent-status-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+  flex: 0 0 auto;
+}
+.agent-status-pill--running {
+  background: rgba(21, 128, 61, 0.08);
+  border-color: rgba(21, 128, 61, 0.35);
+  color: var(--color-success);
+}
+.agent-status-pill--running .agent-status-pill__dot {
+  background: var(--color-success);
+}
+.agent-status-pill--idle {
+  /* Inherits the neutral defaults above. Declared explicitly so the
+     selector exists and downstream theming has a hook. */
+  background: var(--color-surface);
+}
+
+/* Sub-tab bar — Overview / Sessions / Tasks. Active tab gets an
+   accent-coloured underline that overlaps the border-bottom by 1px so
+   it visually replaces it rather than stacking. */
+.agent-subtabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+}
+.agent-subtabs__tab {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color 0.1s ease, border-color 0.1s ease;
+}
+.agent-subtabs__tab:hover {
+  color: var(--color-text);
+  text-decoration: none;
+}
+.agent-subtabs__tab:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.agent-subtabs__tab--active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* Detail page header — short name + scope + version + status pill on
+   one row, sub-tab bar underneath. Header content shares horizontal
+   padding with the list page so navigation between them feels stable. */
+.agent-detail-page {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.agent-detail__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.agent-detail__title-block {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.agent-detail__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.agent-detail__scope {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.agent-detail__version {
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+}
+.agent-detail__spacer {
+  flex: 1;
+}
+
+/* Legacy-URL redirect banner (Block C). Rendered on AgentsListPage
+   when the user navigated here from `/sessions` or `/tasks`. One-shot:
+   dismisses on the next navigation (handled in component code by
+   clearing `location.state`). Visually it's an `.alert--info` variant
+   sitting above the list so it's noticed but not modal. */
+.legacy-url-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legacy-url-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+.legacy-url-banner__dismiss {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.legacy-url-banner__dismiss:hover,
+.legacy-url-banner__dismiss:focus-visible {
+  background: rgba(37, 99, 235, 0.12);
+  outline: none;
+}
+
+/* Agent Overview — "View all →" links. Matches the row hover treatment
+   in `.agent-overview__row` so users learn the affordance once and see
+   the same shape on the row-level and section-level links. */
+.agent-overview__more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+.agent-overview__more:hover,
+.agent-overview__more:focus-visible {
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  text-decoration: none;
+  outline: none;
+}
+.agent-overview__heading {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.agent-overview__section {
+  display: flex;
+  flex-direction: column;
+}
+.agent-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.agent-overview__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+}
+.agent-overview__badge--running {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-accent);
+}
+.agent-overview__badge--succeeded {
+  background: rgba(21, 128, 61, 0.1);
+  color: var(--color-success);
+}
+.agent-overview__badge--failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.agent-overview__badge--cancelled {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
