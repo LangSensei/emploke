@@ -484,9 +484,7 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
       <AgentAvatar fqn={agent.fqn} label={short} size="md" />
       <div className="agents-list__identity">
         <AgentFqn fqn={agent.fqn} />
-        <span className="agents-list__subline muted">
-          {view.status === "running" ? "Active" : "Idle"} · v{agent.version}
-        </span>
+        <span className="agents-list__subline muted">v{agent.version}</span>
       </div>
       <div className="agents-list__status-col">
         <AgentStatusPill status={view.status} />
@@ -503,9 +501,9 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
             />
           ) : view.runningTasks > 0 ? (
             `${view.runningTasks} running`
-          ) : (
-            "Idle"
-          )}
+          ) : view.totalTasks7d > 0 ? (
+            `${view.totalTasks7d} task${view.totalTasks7d === 1 ? "" : "s"} · 7d`
+          ) : null}
         </span>
       </div>
     </li>
