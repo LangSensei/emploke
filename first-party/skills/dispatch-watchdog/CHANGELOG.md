@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.1 (2026-05-25)
+
+### Fixed
+
+- PowerShell primitive: status parse silently failed because the
+  documented `$raw = & emploke task show … --json` returns
+  `System.String[]` in PowerShell, and the subsequent `-match` against
+  the array does not populate `$Matches[1]` reliably. The `$status`
+  variable was therefore always empty, the terminal-status check never
+  fired, and the watchdog ran forever instead of exiting and signalling
+  completion to the runtime. Fix: `-join` the array into a single
+  string before the regex match. Added an explicit anti-pattern bullet
+  and a post-spawn sanity-check step (caller contract item 5) to catch
+  the failure mode early if it recurs in a different form.
+
+### Audited (no change)
+
+- Bash primitive — `$(...)` command substitution joins to a single
+  string, `printf | sed` is stream-based; no equivalent bug.
+
 ## 1.1.0
 
 - Caller contract: added item 4 mandating a 5-second "verify started"
