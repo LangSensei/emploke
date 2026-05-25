@@ -338,6 +338,17 @@ export function SessionsPage({
     });
   })();
 
+  // PR #189 polish v3 — true when any filter chrome is constraining the
+  // list. Used by the workspace-empty zero-state collapse so we don't
+  // hide the filter controls behind a CTA when a filter is the actual
+  // reason the list is empty. `fixedAgentFqn` (per-agent embed) is NOT
+  // a user-set filter for this purpose.
+  const filtersActive =
+    idQuery.trim() !== "" ||
+    (!fixedAgentFqn && agentFilterUrl !== ALL_AGENTS) ||
+    runtimeFilter !== ALL_RUNTIMES ||
+    timeFilter !== DEFAULT_TIME_PRESET;
+
   if (currentWorkspaceId === null) {
     return (
       <div className="alert alert--error">
@@ -469,20 +480,46 @@ export function SessionsPage({
           <p className="empty__title">Loading sessions…</p>
         </div>
       ) : visibleSessions.length === 0 ? (
-        <div className="empty">
-          <div className="empty__icon">📂</div>
-          <p className="empty__title">{sessions.length === 0 ? "No sessions yet" : "No matches"}</p>
-          <p className="empty__hint">
-            {sessions.length === 0 ? (
-              <>
-                Create a session to bake an agent into a workdir, then launch <code>copilot</code>{" "}
-                there.
-              </>
-            ) : (
-              <>Adjust the filters above to see more sessions.</>
-            )}
-          </p>
-        </div>
+        // Same shape as Tasks (`.pilot/inbox/20260525-empty-state-double-render.md`):
+        // collapse to a single full-width zero-state only when the
+        // workspace is genuinely empty AND no filter is constraining the
+        // list. When a filter is active, keep the standard filter-empty
+        // copy so the user sees what's hiding the rows.
+        sessions.length === 0 && !filtersActive ? (
+          <div className="empty tasks-pane__zero" data-testid="sessions-empty-zero">
+            <div className="empty__icon" aria-hidden="true">
+              📂
+            </div>
+            <p className="empty__title">No sessions yet</p>
+            <p className="empty__hint">
+              Create a session to bake an agent into a workdir, then launch <code>copilot</code>{" "}
+              there.
+            </p>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setCreateOpen(true)}
+              disabled={createAgents.length === 0}
+              title={
+                createAgents.length === 0
+                  ? fixedAgentFqn
+                    ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                    : "Install at least one ready agent in the Catalog first"
+                  : "Create a new session"
+              }
+              data-testid="sessions-empty-zero-cta"
+            >
+              <PlusIcon />
+              <span>New session</span>
+            </button>
+          </div>
+        ) : (
+          <div className="empty">
+            <div className="empty__icon">📂</div>
+            <p className="empty__title">No matches</p>
+            <p className="empty__hint">Adjust the filters above to see more sessions.</p>
+          </div>
+        )
       ) : (
         <ul className="session-list" aria-label="Sessions">
           {visibleSessions.map((s) => (

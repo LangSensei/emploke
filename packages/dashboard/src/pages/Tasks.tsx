@@ -19,6 +19,7 @@ import {
   TaskDetailPlaceholder,
   TasksEmptyState,
   TasksToolbar,
+  TasksZeroState,
 } from "../components/tasks/TasksChrome";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
@@ -246,6 +247,20 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     return Array.from(set).sort();
   }, [agents, tasks]);
 
+  // PR #189 polish v3 — true when any filter chrome is constraining the
+  // list. Used by the zero-state collapse: when the workspace returns
+  // zero tasks AND no filter is active, we collapse to a single
+  // full-width empty (Dispatch CTA); when a filter IS active we keep
+  // the split layout so the user can see and clear the filter chrome.
+  // `fixedAgentFqn` (per-agent embed) is NOT a user-set filter for this
+  // purpose — those embeds don't surface clear-filter affordances.
+  const filtersActive =
+    idQuery.trim() !== "" ||
+    (!fixedAgentFqn && agentFilterUrl !== ALL_AGENTS) ||
+    runtimeFilter !== ALL_RUNTIMES ||
+    statusFilter !== "all" ||
+    timeFilter !== DEFAULT_TIME_PRESET;
+
   if (currentWorkspaceId === null) {
     return (
       <div className="alert alert--error">
@@ -275,56 +290,79 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
         {!fixedAgentFqn && <LegacyMovedBanner page="tasks" />}
         {error && <div className="alert alert--error">⚠️ {error}</div>}
 
-        <div className="tasks-pane tasks-pane--with-detail">
-          <div className="tasks-pane__list">
-            <TaskFilters
-              idQuery={idQuery}
-              onIdQueryChange={setIdQuery}
-              agentFilter={agentFilter}
-              onAgentFilterChange={setAgentFilter}
-              runtimeFilter={runtimeFilter}
-              onRuntimeFilterChange={setRuntimeFilter}
-              timeFilter={timeFilter}
-              onTimeFilterChange={setTimeFilter}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              agents={agents}
-              filterAgentNames={filterAgentNames}
-              runtimes={runtimes}
-              hideAgentFilter={fixedAgentFqn !== undefined}
-              onClearFilters={fixedAgentFqn ? undefined : clearFilters}
+        {/* PR #189 polish v3 — when the workspace has zero tasks AND no
+            user-set filter is hiding rows, collapse the split layout into
+            a single full-width zero-state with a Dispatch-task CTA. The
+            previous shape rendered both the list-side empty AND the
+            right-pane "No task selected" placeholder side-by-side, which
+            left a wide gap of empty space between two near-identical
+            cards. See
+            `.pilot/inbox/20260525-empty-state-double-render.md`.
+            When ANY filter is active (`?agent=`, `?runtime=`, `?status=`,
+            `?q=` or a non-default time preset) we keep the split layout
+            so the user can see the filter chrome and clear it. */}
+        {loaded && tasks.length === 0 && !filtersActive ? (
+          <div className="tasks-pane tasks-pane--with-detail tasks-pane--zero">
+            <TasksZeroState
+              dispatchDisabled={dispatchAgents.length === 0}
+              dispatchDisabledTitle={
+                dispatchAgents.length === 0
+                  ? fixedAgentFqn
+                    ? `Agent ${fixedAgentFqn} is not ready — see Catalog`
+                    : "Install at least one ready agent in the Catalog first"
+                  : "Dispatch a new task"
+              }
+              onDispatch={() => setDispatchOpen(true)}
             />
-            <div className="tasks-pane__list-scroll">
-              {!loaded ? (
-                <TasksEmptyState loading />
-              ) : visibleTasks.length === 0 ? (
-                <TasksEmptyState
-                  title={tasks.length === 0 ? "No tasks yet" : "No matches"}
-                  hint={
-                    tasks.length === 0
-                      ? "Dispatch a task to run an agent autonomously and read the result here when it finishes."
-                      : "Adjust the filters above to see more tasks."
-                  }
-                />
-              ) : (
-                <TaskList
-                  tasks={visibleTasks}
-                  selectedId={effectiveSelectedId}
-                  onSelect={setSelectedId}
-                  onDelete={setDeleteTarget}
-                  onCancel={requestCancel}
-                  onRerun={requestRerun}
-                />
-              )}
-            </div>
           </div>
+        ) : (
+          <div className="tasks-pane tasks-pane--with-detail">
+            <div className="tasks-pane__list">
+              <TaskFilters
+                idQuery={idQuery}
+                onIdQueryChange={setIdQuery}
+                agentFilter={agentFilter}
+                onAgentFilterChange={setAgentFilter}
+                runtimeFilter={runtimeFilter}
+                onRuntimeFilterChange={setRuntimeFilter}
+                timeFilter={timeFilter}
+                onTimeFilterChange={setTimeFilter}
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                agents={agents}
+                filterAgentNames={filterAgentNames}
+                runtimes={runtimes}
+                hideAgentFilter={fixedAgentFqn !== undefined}
+                onClearFilters={fixedAgentFqn ? undefined : clearFilters}
+              />
+              <div className="tasks-pane__list-scroll">
+                {!loaded ? (
+                  <TasksEmptyState loading />
+                ) : visibleTasks.length === 0 ? (
+                  <TasksEmptyState
+                    title="No matches"
+                    hint="Adjust the filters above to see more tasks."
+                  />
+                ) : (
+                  <TaskList
+                    tasks={visibleTasks}
+                    selectedId={effectiveSelectedId}
+                    onSelect={setSelectedId}
+                    onDelete={setDeleteTarget}
+                    onCancel={requestCancel}
+                    onRerun={requestRerun}
+                  />
+                )}
+              </div>
+            </div>
 
-          {effectiveSelectedId ? (
-            <TaskDetail taskId={effectiveSelectedId} pollIntervalMs={pollIntervalMs} />
-          ) : (
-            <TaskDetailPlaceholder zeroTasks={tasks.length === 0} />
-          )}
-        </div>
+            {effectiveSelectedId ? (
+              <TaskDetail taskId={effectiveSelectedId} pollIntervalMs={pollIntervalMs} />
+            ) : (
+              <TaskDetailPlaceholder zeroTasks={false} />
+            )}
+          </div>
+        )}
       </div>
 
       <DispatchModal

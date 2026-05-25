@@ -91,3 +91,45 @@ export function TaskDetailPlaceholder({ zeroTasks }: TaskDetailPlaceholderProps)
     </aside>
   );
 }
+
+export interface TasksZeroStateProps {
+  dispatchDisabled: boolean;
+  dispatchDisabledTitle: string;
+  onDispatch: () => void;
+}
+
+/**
+ * Full-width single-pane zero-state rendered when the workspace has no
+ * tasks at all (PR #189 polish v3 — collapses the double empty-state
+ * surfaced by the list + detail-placeholder pair). Sits inside a
+ * `.tasks-pane--zero` grid container so it spans the whole row. The
+ * Dispatch-task CTA opens the page's own modal in place — no nav.
+ */
+export function TasksZeroState({
+  dispatchDisabled,
+  dispatchDisabledTitle,
+  onDispatch,
+}: TasksZeroStateProps) {
+  return (
+    <div className="empty tasks-pane__zero" data-testid="tasks-empty-zero">
+      <div className="empty__icon" aria-hidden="true">
+        📝
+      </div>
+      <p className="empty__title">No tasks yet</p>
+      <p className="empty__hint">
+        Dispatch a task to run an agent autonomously and read the result here when it finishes.
+      </p>
+      <button
+        type="button"
+        className="btn btn--primary"
+        onClick={onDispatch}
+        disabled={dispatchDisabled}
+        title={dispatchDisabledTitle}
+        data-testid="tasks-empty-zero-cta"
+      >
+        <PlusIcon />
+        <span>Dispatch task</span>
+      </button>
+    </div>
+  );
+}
