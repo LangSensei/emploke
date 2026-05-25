@@ -492,3 +492,97 @@ describe("PR #189 polish v4 — auto-selected agent's sessions fetch fires (Bug 
     expect(lastCall[0]?.agent).toBe("emploke/beta");
   });
 });
+
+describe("PR #189 polish v4 — running-first sort (Bug 5)", () => {
+  it("orders active agents above idle, alpha within each bucket, on the default 'all' filter", async () => {
+    // Three agents: A idle, B and C both active. The runningTasks
+    // values are derived by computeAgentRuntimeViews from the tasks
+    // list — give B 1 running task and C 2 running tasks (count must
+    // NOT influence ordering — both go in the "active" bucket and
+    // sort alphabetically within it).
+    const agents = [
+      makeAgent("emploke/aardvark"),
+      makeAgent("emploke/beta"),
+      makeAgent("emploke/charlie"),
+    ];
+    mockListTasks.mockResolvedValue([
+      {
+        id: "t-1",
+        agent: "emploke/beta",
+        status: "running",
+        brief: "",
+        details: "",
+        origin: "cli",
+        metadata: {},
+        createdAt: "2026-05-23T00:00:00Z",
+      } as unknown as TaskRecord,
+      {
+        id: "t-2",
+        agent: "emploke/charlie",
+        status: "running",
+        brief: "",
+        details: "",
+        origin: "cli",
+        metadata: {},
+        createdAt: "2026-05-23T00:00:00Z",
+      } as unknown as TaskRecord,
+      {
+        id: "t-3",
+        agent: "emploke/charlie",
+        status: "running",
+        brief: "",
+        details: "",
+        origin: "cli",
+        metadata: {},
+        createdAt: "2026-05-23T00:00:00Z",
+      } as unknown as TaskRecord,
+    ]);
+
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    // Wait for the rendered DOM order to settle after the tasks fetch
+    // resolves — `computeAgentRuntimeViews` flips beta/charlie into
+    // the "running" bucket then.
+    await waitFor(() => {
+      const activity = screen.getByTestId("agent-row-activity-emploke/beta");
+      expect(activity.textContent).toMatch(/running/);
+    });
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="option"][data-testid^="agent-row-"]'),
+    ).map((el) => el.getAttribute("data-testid"));
+
+    expect(rows).toEqual([
+      "agent-row-emploke/beta",
+      "agent-row-emploke/charlie",
+      "agent-row-emploke/aardvark",
+    ]);
+
+    // Auto-select fallback picks the topmost active row (beta), NOT
+    // the alphabetically-first row across all buckets (aardvark).
+    const pane = screen.getByTestId("agent-detail-pane");
+    expect(pane.getAttribute("data-agent-fqn")).toBe("emploke/beta");
+  });
+
+  it("preserves alpha order when all agents are idle (regression for v4 Bug 5)", async () => {
+    const agents = [
+      makeAgent("emploke/zeta"),
+      makeAgent("emploke/alpha"),
+      makeAgent("emploke/middle"),
+    ];
+    mockListTasks.mockResolvedValue([]);
+
+    renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-row-emploke/alpha")).toBeTruthy();
+    });
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="option"][data-testid^="agent-row-"]'),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(rows).toEqual([
+      "agent-row-emploke/alpha",
+      "agent-row-emploke/middle",
+      "agent-row-emploke/zeta",
+    ]);
+  });
+});

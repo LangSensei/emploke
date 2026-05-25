@@ -163,7 +163,7 @@ export function AgentsListPage() {
 
   const filteredViews = useMemo(() => {
     const q = urlQuery.trim().toLowerCase();
-    return views.filter((v) => {
+    const result = views.filter((v) => {
       if (listFilter === "active" && v.runningTasks <= 0) return false;
       if (listFilter === "idle" && v.runningTasks > 0) return false;
       if (q !== "") {
@@ -173,6 +173,22 @@ export function AgentsListPage() {
       }
       return true;
     });
+    // PR #189 polish v4 Bug 5 — running-first ordering so active
+    // work is immediately visible. Within each bucket, fall back to
+    // FQN for stable, predictable ordering (the secondary key does
+    // NOT use `runningTasks` count -- otherwise rows would jiggle
+    // every poll as task counts changed between active agents).
+    // The auto-select fallback (`filteredViews[0]`) therefore picks
+    // the topmost active agent on the default `all` filter, which
+    // matches what a user opening /runtime/agents expects to land
+    // on. See `.pilot/inbox/20260525-v4-agent-list-sort.md`.
+    result.sort((a, b) => {
+      const aActive = a.runningTasks > 0 ? 1 : 0;
+      const bActive = b.runningTasks > 0 ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+      return a.entry.agent.fqn.localeCompare(b.entry.agent.fqn);
+    });
+    return result;
   }, [views, listFilter, urlQuery]);
 
   // Auto-select-first-row fallback, derived during render (Phase 1.5
