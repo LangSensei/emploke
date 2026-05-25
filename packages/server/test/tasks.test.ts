@@ -829,6 +829,32 @@ describe("tasksRoutes", () => {
       return { app, cap };
     };
 
+    it("GET /: logs unmapped error from TaskService.list and still returns 400 internal error", async () => {
+      // The list handler used to silently downgrade every error to
+      // `400 internal error` with NO log line — exactly the
+      // silent-failure shape the new pattern exists to eliminate.
+      // Now matches the sibling handlers' five-line treatment.
+      const m = stubManager({
+        list: vi.fn(async () => {
+          throw new Error("metadata.jsonl read failed");
+        }),
+      });
+      const { app, cap } = await buildAppWithLogger(m);
+      const res = await app.request("/");
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("internal error");
+
+      const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+      expect(fault).toBeDefined();
+      expect(fault?.level).toBe(50); // error
+      expect(fault?.msg).toBe("tasks.list: unmapped error fell through to 400");
+      // List route has no taskId / sessionId to attach as extra meta —
+      // only the bare name + message land on the structured line.
+      expect(fault?.name).toBe("Error");
+      expect(fault?.message).toContain("metadata.jsonl read failed");
+    });
+
     it("POST /: logs the unmapped error AND still returns 400 internal error on the wire", async () => {
       const m = stubManager({
         dispatch: vi.fn(async () => {

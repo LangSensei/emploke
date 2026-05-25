@@ -228,7 +228,14 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       const list = await getManager(c).list(opts);
       return c.json(list);
     } catch (err) {
-      return c.json(errorBody(err), 400);
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.list: 5xx fault");
+      } else if (isUnmapped) {
+        logFault(c, err, "tasks.list: unmapped error fell through to 400", unmappedFaultMeta(err));
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: see other handlers in this file.
+      return c.json(errorBody(err), status as any);
     }
   });
 
