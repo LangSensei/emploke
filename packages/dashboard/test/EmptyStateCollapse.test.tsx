@@ -174,7 +174,7 @@ describe("Tasks page empty-state collapse (PR #189 polish v3)", () => {
     expect(screen.queryByText(/No task selected/i)).toBeNull();
   });
 
-  it("keeps the split layout (list-empty + detail-placeholder) when the filter narrows to zero", async () => {
+  it("collapses the right-pane placeholder when the filter narrows to zero (v4 Bug 2)", async () => {
     // Workspace has 1 task; filter narrows to zero via ?q=nomatch.
     mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "task-A")]);
     renderTasks("/workspaces/ws-1/runtime/tasks?q=nomatch", [makeAgent("emploke/dev")]);
@@ -188,9 +188,33 @@ describe("Tasks page empty-state collapse (PR #189 polish v3)", () => {
     });
     // The zero-state CTA must NOT render — the workspace isn't empty.
     expect(screen.queryByTestId("tasks-empty-zero")).toBeNull();
-    // And the right-pane placeholder is still in the DOM (the split layout
-    // is preserved for the filter-narrowed case).
-    expect(screen.getByText(/No task selected/i)).toBeTruthy();
+    // PR #189 polish v4 Bug 2 — the right-pane "No task selected"
+    // placeholder is dropped when the filter narrows the visible list
+    // to zero. The left "No matches" card already carries the full
+    // message; rendering both side-by-side was redundant noise.
+    // See `.pilot/inbox/20260525-v4-tasks-empty-state-filtered.md`.
+    expect(screen.queryByText(/No task selected/i)).toBeNull();
+    // And exactly one "No matches" empty card surfaces (the list-side
+    // one), confirming the right placeholder didn't echo it.
+    expect(screen.getAllByText(/No matches/i)).toHaveLength(1);
+  });
+
+  it("still renders the right-pane detail when the filter has matches (regression for v4 Bug 2)", async () => {
+    // Workspace has 1 matching task — auto-select fallback fires and
+    // the right-pane TaskDetail mounts. We don't need to assert the
+    // full detail body (covered elsewhere); the contract here is just
+    // that we did NOT drop the right pane when there are visible rows.
+    mockListTasks.mockResolvedValue([makeTask("emploke/dev", "succeeded", "task-A")]);
+    mockGetTask.mockResolvedValue(makeTask("emploke/dev", "succeeded", "task-A"));
+    renderTasks("/workspaces/ws-1/runtime/tasks", [makeAgent("emploke/dev")]);
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledWith("task-A");
+    });
+    // The list isn't filtered to zero, so neither the "No matches"
+    // empty nor the "No task selected" placeholder should render.
+    expect(screen.queryByText(/No matches/i)).toBeNull();
+    expect(screen.queryByText(/No task selected/i)).toBeNull();
   });
 });
 

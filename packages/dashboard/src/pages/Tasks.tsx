@@ -358,7 +358,17 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
 
             {effectiveSelectedId ? (
               <TaskDetail taskId={effectiveSelectedId} pollIntervalMs={pollIntervalMs} />
-            ) : (
+            ) : visibleTasks.length === 0 ? null : (
+              // PR #189 polish v4 — when the filter narrowed the list
+              // to zero rows the left card already carries the full
+              // "No matches" copy; rendering the detail-side
+              // "No task selected / No tasks match the current filters"
+              // placeholder next to it produced two redundant empty
+              // states. We only fall through to the placeholder when
+              // there ARE visible rows but selection is null (in
+              // practice rare because `effectiveSelectedId` auto-binds
+              // to the first row, but we keep the branch for safety).
+              // See `.pilot/inbox/20260525-v4-tasks-empty-state-filtered.md`.
               <TaskDetailPlaceholder zeroTasks={false} />
             )}
           </div>
