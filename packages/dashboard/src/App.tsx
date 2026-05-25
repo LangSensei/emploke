@@ -93,6 +93,13 @@ export function App() {
           path="runtime/agents/:scope/:short/tasks"
           element={<AgentDetailPage tab="tasks" />}
         />
+        {/* Legacy routes (Block C). The agent-centric restructure
+            removed the global /sessions and /tasks lists, but bookmarked
+            URLs still in user history would otherwise 404-redirect to /
+            silently. These adapters land them on Runtime → Agents with
+            a one-shot banner explaining the move. */}
+        <Route path="sessions" element={<LegacyRuntimeRedirect from="sessions" />} />
+        <Route path="tasks" element={<LegacyRuntimeRedirect from="tasks" />} />
         <Route path="*" element={<NotFoundRedirect />} />
       </Route>
       <Route path="*" element={<NotFoundRedirect />} />
@@ -466,6 +473,29 @@ function CatalogIndexRedirect() {
 /** `/workspaces/<uuid>/runtime` -> `/workspaces/<uuid>/runtime/agents`. */
 function RuntimeIndexRedirect() {
   return <Navigate to="agents" replace />;
+}
+
+/**
+ * Adapter for the legacy `/workspaces/:wsId/sessions` and `…/tasks`
+ * routes (Block C). The agent-centric restructure moved both lists
+ * inside `/runtime/agents/<scope>/<short>/…`; this component lands
+ * the user on the new index with a `from` marker on `location.state`
+ * so AgentsListPage can render a one-shot "moved" banner.
+ *
+ * The `:wsId` parent route resolves the workspace; this component
+ * just turns the bare segment into a Navigate one level up to the
+ * canonical Runtime entry point.
+ */
+function LegacyRuntimeRedirect({ from }: { from: "sessions" | "tasks" }) {
+  const { wsId } = useParams<{ wsId: string }>();
+  if (!wsId) return <Navigate to="/" replace />;
+  return (
+    <Navigate
+      to={`/workspaces/${encodeURIComponent(wsId)}/runtime/agents`}
+      replace
+      state={{ from }}
+    />
+  );
 }
 
 /**

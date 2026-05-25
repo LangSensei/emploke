@@ -1,6 +1,6 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogData, ServerConfig, SessionView, TaskRecord } from "../src/api";
 import {
@@ -272,7 +272,7 @@ describe("Overview row click → pre-selects target tab (Fix 2)", () => {
   });
 });
 
-describe("Legacy routes fall through to NotFoundRedirect (§11, D7)", () => {
+describe("Legacy routes redirect to runtime/agents with banner (Block C)", () => {
   function NotFoundRedirect() {
     return <div data-testid="landed-on-home">home</div>;
   }
@@ -280,11 +280,21 @@ describe("Legacy routes fall through to NotFoundRedirect (§11, D7)", () => {
     return <div data-testid="landing-page">landing</div>;
   }
 
+  // Mirror of the production LegacyRuntimeRedirect adapter (App.tsx). Kept
+  // inline here so the routing surface under test mirrors the production
+  // App.tsx shape without pulling the whole shell.
+  function LegacyRuntimeRedirect({ from }: { from: "sessions" | "tasks" }) {
+    return (
+      <Navigate to="/workspaces/ws-1/runtime/agents" replace state={{ from }} />
+    );
+  }
+
   function AppRoutes() {
     return (
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/workspaces/:wsId">
+          <Route path="runtime/agents" element={<AgentsListPage />} />
           <Route
             path="runtime/agents/:scope/:short/sessions"
             element={<AgentDetailPage tab="sessions" />}
@@ -293,6 +303,8 @@ describe("Legacy routes fall through to NotFoundRedirect (§11, D7)", () => {
             path="runtime/agents/:scope/:short/tasks"
             element={<AgentDetailPage tab="tasks" />}
           />
+          <Route path="sessions" element={<LegacyRuntimeRedirect from="sessions" />} />
+          <Route path="tasks" element={<LegacyRuntimeRedirect from="tasks" />} />
           <Route path="*" element={<NotFoundRedirect />} />
         </Route>
         <Route path="*" element={<NotFoundRedirect />} />
@@ -300,17 +312,26 @@ describe("Legacy routes fall through to NotFoundRedirect (§11, D7)", () => {
     );
   }
 
-  it("old /workspaces/:wsId/sessions URL hits NotFoundRedirect", async () => {
+  it("old /workspaces/:wsId/sessions URL redirects to runtime/agents AND shows the banner", async () => {
     renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/sessions");
     await waitFor(() => {
-      expect(screen.getByTestId("landed-on-home")).toBeTruthy();
+      expect(screen.getByTestId("legacy-url-banner")).toBeTruthy();
     });
+    const banner = screen.getByTestId("legacy-url-banner");
+    expect(banner.textContent ?? "").toMatch(/Sessions/);
+    expect(banner.textContent ?? "").toMatch(/Runtime/);
+    // And the home/landing fallback was NOT hit.
+    expect(screen.queryByTestId("landed-on-home")).toBeNull();
   });
 
-  it("old /workspaces/:wsId/tasks URL hits NotFoundRedirect", async () => {
+  it("old /workspaces/:wsId/tasks URL redirects to runtime/agents AND shows the banner", async () => {
     renderWithShell(<AppRoutes />, [], "/workspaces/ws-1/tasks");
     await waitFor(() => {
-      expect(screen.getByTestId("landed-on-home")).toBeTruthy();
+      expect(screen.getByTestId("legacy-url-banner")).toBeTruthy();
     });
+    const banner = screen.getByTestId("legacy-url-banner");
+    expect(banner.textContent ?? "").toMatch(/Tasks/);
+    expect(banner.textContent ?? "").toMatch(/Runtime/);
+    expect(screen.queryByTestId("landed-on-home")).toBeNull();
   });
 });
