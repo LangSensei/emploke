@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      '@github/copilot-sdk':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0

@@ -71,6 +71,54 @@ function statusForError(err: unknown): number | null {
 }
 
 /**
+ * Resolve an unknown error to a response status while preserving the
+ * "this fell through unmapped" signal so the route can decide to log
+ * it (instead of silently swallowing it as a 400 the way
+ * `statusForError(err) ?? 400` does on its own).
+ *
+ * The "silent 4xx" policy is correct for *intentional* client-side
+ * errors (validation, not-found, etc.) that {@link statusForError}
+ * recognises. But when `statusForError` returns `null` — i.e. the
+ * thrown error class is NOT on the mapping table — the previous
+ * `?? 400` fallthrough served the caller a generic
+ * `{ error: "internal error" }` body AND wrote nothing to the server
+ * log. That hid real bugs: packaging-misconfig errors, missing
+ * runtime deps, new typed errors we forgot to map, etc.
+ *
+ * Returns `{ status, isUnmapped }`. `isUnmapped` is true exactly when
+ * `statusForError` returned `null` — distinct from a mapped 400 (which
+ * the caller deliberately wants silent because the validation path
+ * already returned a clean message). The route then opts into a
+ * "unmapped fell through to 400" log entry for the `isUnmapped` case,
+ * preserving the existing "no log for mapped 4xx" behaviour and the
+ * existing "log for 5xx faults" behaviour.
+ *
+ * The wire body is unchanged: `errorBody(err)` still collapses unknown
+ * error classes to `"internal error"` per the `SAFE_ERROR_NAMES`
+ * allow-list. Only the OPERATOR-facing log becomes informative.
+ */
+function resolveErrorStatus(err: unknown): { status: number; isUnmapped: boolean } {
+  const mapped = statusForError(err);
+  return { status: mapped ?? 400, isUnmapped: mapped === null };
+}
+
+/**
+ * Shared meta builder for the "unmapped fell through to 400" log
+ * entry. Pulls the unknown error's `name` and `message` onto the
+ * structured log line (in addition to the full `err` serialiser pino
+ * already attaches via `logFault`) so the operator can `jq` for
+ * unmapped error classes without parsing every nested `err.type`.
+ */
+function unmappedFaultMeta(err: unknown, extra?: Record<string, unknown>): Record<string, unknown> {
+  const e = err instanceof Error ? err : undefined;
+  return {
+    name: e?.name,
+    message: e?.message,
+    ...(extra ?? {}),
+  };
+}
+
+/**
  * Build the structured 409 body that pairs with an InvalidTransition
  * thrown out of cancel() / delete() / similar verbs.
  *
@@ -232,8 +280,18 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       });
       return c.json(task, 201);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "tasks: 5xx fault");
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks: 5xx fault");
+      } else if (isUnmapped) {
+        // Unmapped error class fell through to the default 400. The
+        // wire body is still `errorBody(err)` (collapsed to
+        // "internal error" for non-SAFE_ERROR_NAMES) — but we MUST
+        // log it so the operator can see what blew up. This is the
+        // observability half of the @github/copilot-sdk packaging
+        // fix; see resolveErrorStatus jsdoc.
+        logFault(c, err, "tasks: unmapped error fell through to 400", unmappedFaultMeta(err));
+      }
       // EntryNotReadyError carries a structured `BlockedReason` on
       // the instance; surface it on the wire so the dashboard can
       // render typed UI (the catalog list already uses the same
@@ -267,8 +325,17 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       if (!task) return c.json({ error: "not found", code: "TaskNotFoundError" }, 404);
       return c.json(task);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "tasks.get: 5xx fault", { taskId: id });
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.get: 5xx fault", { taskId: id });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.get: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id }),
+        );
+      }
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
@@ -296,8 +363,17 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       logEvent(c, "task deleted", { taskId: id, purge });
       return c.body(null, 204);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "tasks.delete: 5xx fault", { taskId: id, purge });
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.delete: 5xx fault", { taskId: id, purge });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.delete: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id, purge }),
+        );
+      }
       if (err instanceof InvalidTransition) {
         // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
         return c.json(invalidTransitionBody(err, "delete"), status as any);
@@ -334,8 +410,17 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       logEvent(c, "task cancelled", { taskId: id });
       return c.json(task);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "tasks.cancel: 5xx fault", { taskId: id });
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.cancel: 5xx fault", { taskId: id });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.cancel: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id }),
+        );
+      }
       if (err instanceof InvalidTransition) {
         // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union.
         return c.json(invalidTransitionBody(err, "cancel"), status as any);
@@ -381,9 +466,16 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
     try {
       absPath = await getManager(c).resolveArtifactPath(id, rawName);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
+      const { status, isUnmapped } = resolveErrorStatus(err);
       if (status >= 500) {
         logFault(c, err, "tasks.artifact: 5xx fault", { taskId: id, artifact: rawName });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.artifact: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id, artifact: rawName }),
+        );
       }
       // biome-ignore lint/suspicious/noExplicitAny: see other handlers in this file.
       return c.json(errorBody(err), status as any);
@@ -514,7 +606,17 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
         limit,
       });
     } catch (err) {
-      const status = statusForError(err) ?? 400;
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.activity: 5xx fault", { taskId: id });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.activity: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id }),
+        );
+      }
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
@@ -554,7 +656,17 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
         signal: c.req.raw.signal,
       });
     } catch (err) {
-      const status = statusForError(err) ?? 400;
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) {
+        logFault(c, err, "tasks.activity.stream: 5xx fault", { taskId: id });
+      } else if (isUnmapped) {
+        logFault(
+          c,
+          err,
+          "tasks.activity.stream: unmapped error fell through to 400",
+          unmappedFaultMeta(err, { taskId: id }),
+        );
+      }
       // biome-ignore lint/suspicious/noExplicitAny: see above.
       return c.json(errorBody(err), status as any);
     }
