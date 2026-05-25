@@ -411,17 +411,24 @@ describe("PR #189 polish v3 — anti-gating + row redesign", () => {
     renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
 
     // Both rows render. Two different scopes share the same short name.
-    expect(screen.getByTestId("agent-row-langsensei/dev")).toBeTruthy();
-    expect(screen.getByTestId("agent-row-acme/dev")).toBeTruthy();
+    const rowA = screen.getByTestId("agent-row-langsensei/dev");
+    const rowB = screen.getByTestId("agent-row-acme/dev");
 
     // Each row renders the full FQN via the shared <AgentFqn> primitive.
-    expect(screen.getByTestId("agent-fqn-langsensei/dev")).toBeTruthy();
-    expect(screen.getByTestId("agent-fqn-acme/dev")).toBeTruthy();
+    // We scope by the row so the assertion isn't confused by the same
+    // primitive being mounted in the right-pane header for the selected
+    // agent (v3 also adopted AgentFqn in the AgentDetailPane title).
+    expect(rowA.querySelector('[data-testid="agent-fqn-langsensei/dev"]')).toBeTruthy();
+    expect(rowB.querySelector('[data-testid="agent-fqn-acme/dev"]')).toBeTruthy();
 
     // And each row renders an avatar — colour-distinguishable because the
     // hash keys off the full FQN (see AgentAvatar lock-in tests).
-    const avatarA = screen.getByTestId("agent-avatar-langsensei/dev") as HTMLElement;
-    const avatarB = screen.getByTestId("agent-avatar-acme/dev") as HTMLElement;
+    const avatarA = rowA.querySelector(
+      '[data-testid="agent-avatar-langsensei/dev"]',
+    ) as HTMLElement;
+    const avatarB = rowB.querySelector('[data-testid="agent-avatar-acme/dev"]') as HTMLElement;
+    expect(avatarA).toBeTruthy();
+    expect(avatarB).toBeTruthy();
     expect(avatarA.style.backgroundColor).not.toBe(avatarB.style.backgroundColor);
   });
 

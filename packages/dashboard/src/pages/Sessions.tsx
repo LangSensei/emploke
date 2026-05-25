@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   createSession,
@@ -23,6 +23,7 @@ import {
 } from "../components/Icons";
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
+import { CreateModal } from "../components/sessions/CreateModal";
 import { useClearUrlFilters, useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
@@ -543,6 +544,10 @@ export function SessionsPage({
         workspaceDisplayName={currentDisplayName}
         pathSeparator={config?.pathSeparator ?? "/"}
         busy={busy}
+        // PR #189 polish v3 — when the user has pinned the page to a
+        // single agent via `?agent=<fqn>`, seed the modal with that
+        // agent. "All" keeps the existing `agents[0]` fallback.
+        initialAgent={fixedAgentFqn ?? (agentFilterUrl !== ALL_AGENTS ? agentFilterUrl : undefined)}
         onClose={() => setCreateOpen(false)}
         onCreate={onCreated}
       />
@@ -859,121 +864,11 @@ function CopyPathButton({ path }: { path: string }) {
 }
 
 // ─── Create modal ─────────────────────────────────────────────
-
-interface CreateModalProps {
-  open: boolean;
-  agents: AgentEntry[];
-  runtimes: string[];
-  /** Display name of the active workspace, used in the "where will it land" hint. */
-  workspaceDisplayName: string | null;
-  /** Native path separator on the server's OS (e.g. `\\` on Windows). */
-  pathSeparator: string;
-  busy: boolean;
-  onClose: () => void;
-  onCreate: (agent: string, runtime: string | undefined) => void;
-}
-
-function CreateModal({
-  open,
-  agents,
-  runtimes,
-  workspaceDisplayName,
-  pathSeparator,
-  busy,
-  onClose,
-  onCreate,
-}: CreateModalProps) {
-  const [agent, setAgent] = useState<string>("");
-  const [runtime, setRuntime] = useState<string>("");
-
-  useEffect(() => {
-    if (open && agents.length > 0 && !agents.some((a) => a.agent.fqn === agent)) {
-      setAgent(agents[0]?.agent.fqn ?? "");
-    }
-  }, [open, agents, agent]);
-
-  // Default runtime to the first registered kind. If the registry returns
-  // an empty list (server unreachable on mount), we leave it blank and
-  // submit without a runtime field — the server will pick its default.
-  useEffect(() => {
-    if (open && runtimes.length > 0 && !runtimes.includes(runtime)) {
-      setRuntime(runtimes[0] ?? "");
-    }
-  }, [open, runtimes, runtime]);
-
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!agent) return;
-    onCreate(agent, runtime || undefined);
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="New session" size="default">
-      <form onSubmit={onSubmit}>
-        <div className="modal__body">
-          <label htmlFor="new-session-agent">
-            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Agent
-            </div>
-            <select
-              id="new-session-agent"
-              value={agent}
-              onChange={(e) => setAgent(e.target.value)}
-              disabled={busy}
-              required
-              className="select select--full"
-            >
-              {agents.map((a) => (
-                <option key={a.agent.fqn} value={a.agent.fqn}>
-                  {a.agent.fqn}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label htmlFor="new-session-runtime">
-            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Runtime
-            </div>
-            <select
-              id="new-session-runtime"
-              value={runtime}
-              onChange={(e) => setRuntime(e.target.value)}
-              disabled={busy || runtimes.length === 0}
-              className="select select--full"
-            >
-              {runtimes.length === 0 ? (
-                <option value="">(server default)</option>
-              ) : (
-                runtimes.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            A new workdir will be created under{" "}
-            <code>
-              {workspaceDisplayName
-                ? `<workspace:${workspaceDisplayName}>${pathSeparator}sessions${pathSeparator}<id>`
-                : "<workspace>/sessions/<id>"}
-            </code>{" "}
-            and the agent will be baked into it.
-          </p>
-        </div>
-        <div className="modal__footer">
-          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="btn btn--primary" disabled={busy || !agent}>
-            {busy ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
+// Extracted to packages/dashboard/src/components/sessions/CreateModal.tsx
+// in PR #189 polish v3 so the AgentDetailPane can mount the same primitive
+// in place. The Sessions page now imports it from the new location and
+// passes its context-derived `initialAgent` (the `?agent=` filter when
+// pinned to a single agent, undefined when "All").
 
 // ─── Fallback modal ───────────────────────────────────────────
 

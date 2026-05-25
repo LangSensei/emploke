@@ -89,40 +89,11 @@ export function AgentStatusPill({ status }: StatusPillProps) {
  * via the Overview "View all" links; the SubTabBar export was removed to
  * eliminate dead chrome.
  *
- * The deterministic avatar palette and helper used by the new header live
- * here so both the header and the agents-list rows can share it (Phase 2
- * polish target: surface the avatar in the agents-list rows too).
+ * PR #189 polish v3 — the avatar helpers that lived here
+ * (`avatarColorFor`, `avatarInitialsFor`) were retired in favour of the
+ * shared {@link components/agents/AgentAvatar} component. The new
+ * primitive's contract differs (8-colour hex palette, full-FQN hash,
+ * monogram rule documented inline), so it's not a like-for-like move;
+ * callers migrate by replacing inline `<div .agent-detail__avatar>`
+ * markup with `<AgentAvatar fqn={fqn} label={short} size="…" />`.
  */
-const AVATAR_PALETTE: ReadonlyArray<string> = [
-  "var(--color-accent)",
-  "var(--color-success)",
-  "var(--color-warn)",
-  "var(--color-danger)",
-  "var(--color-accent-hover)",
-];
-
-/**
- * Deterministic accent-colour pick for an agent avatar. Hash-mod the
- * fqn through the existing accent palette (C4 — no new tokens this
- * round). Same fqn always yields the same colour across renders /
- * sessions / clients so the avatar acts as a stable visual id.
- */
-export function avatarColorFor(fqn: string): string {
-  let h = 0;
-  for (let i = 0; i < fqn.length; i++) {
-    h = (h * 31 + fqn.charCodeAt(i)) >>> 0;
-  }
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
-}
-
-/**
- * Two-letter avatar initials drawn from the agent's short name. Strips
- * the leading scope/separator before slicing so `emploke/dev-writer`
- * yields `DE` not `EM`. Up to 2 alphanumeric characters, upper-cased;
- * falls back to "??" if the short is empty (malformed fqn).
- */
-export function avatarInitialsFor(short: string): string {
-  const alphanum = short.replace(/[^a-zA-Z0-9]/g, "");
-  if (alphanum.length === 0) return "??";
-  return alphanum.slice(0, 2).toUpperCase();
-}

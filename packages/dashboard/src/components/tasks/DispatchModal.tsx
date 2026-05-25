@@ -10,6 +10,17 @@ export interface DispatchModalProps {
   busy: boolean;
   /** Pre-fill values from a previous task ("re-run"). null = blank form. */
   prefill: TaskRecord | null;
+  /**
+   * Agent FQN to pre-select when the modal opens with no `prefill`.
+   * When set and present in `agents`, it wins over the existing
+   * `agents[0]?.agent.fqn` fallback. When set but NOT in `agents`
+   * (stale URL / uninstalled agent), the modal silently falls back to
+   * `agents[0]` — no error surfaced. `prefill` continues to win over
+   * this prop. This is the cross-page contract from
+   * `.pilot/inbox/20260525-agent-detail-deeplinks.md` (modal default-
+   * agent rule).
+   */
+  initialAgent?: string;
   onClose: () => void;
   onDispatch: (
     agent: string,
@@ -27,6 +38,7 @@ export function DispatchModal({
   runtimes,
   busy,
   prefill,
+  initialAgent,
   onClose,
   onDispatch,
 }: DispatchModalProps) {
@@ -35,6 +47,14 @@ export function DispatchModal({
   const [brief, setBrief] = useState("");
   const [details, setDetails] = useState("");
 
+  // Mount-effect resolution order (PR #189 polish v3 — also applied by
+  // CreateModal so both modals share the same precedence):
+  //   1. `prefill` wins (re-run case carries the source task's agent).
+  //   2. `initialAgent` wins when present in `agents` (page context).
+  //   3. Fall back to `agents[0]` (existing default).
+  // When `initialAgent` is set but missing from the agents list (stale
+  // URL / uninstalled), we silently use the fallback — the parent page
+  // surfaces "not installed" alerts; the modal does not.
   useEffect(() => {
     if (!open) return;
     if (prefill) {
@@ -47,12 +67,16 @@ export function DispatchModal({
       setBrief(prefill.brief);
       setDetails(prefill.details ?? "");
     } else {
-      setAgent(agents[0]?.agent.fqn ?? "");
+      if (initialAgent && agents.some((a) => a.agent.fqn === initialAgent)) {
+        setAgent(initialAgent);
+      } else {
+        setAgent(agents[0]?.agent.fqn ?? "");
+      }
       setRuntime(runtimes[0] ?? "");
       setBrief("");
       setDetails("");
     }
-  }, [open, agents, runtimes, prefill]);
+  }, [open, agents, runtimes, prefill, initialAgent]);
 
   const briefTrimmed = brief.trim();
   const briefValid =

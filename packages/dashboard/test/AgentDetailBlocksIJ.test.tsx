@@ -1,10 +1,10 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionView, TaskRecord } from "../src/api";
+import { avatarColorForFqn, monogramForLabel } from "../src/components/agents/AgentAvatar";
 import { AgentDetailPane } from "../src/pages/Runtime/AgentDetailPane";
-import { avatarColorFor, avatarInitialsFor } from "../src/pages/Runtime/agentRuntime";
 
 // PR #189 polish v2: the per-agent header (avatar, name, KPI tiles,
 // action buttons) was extracted into the pure-presentational
@@ -12,6 +12,28 @@ import { avatarColorFor, avatarInitialsFor } from "../src/pages/Runtime/agentRun
 // synthesised props instead of routing through the legacy
 // `AgentDetailPage` standalone URL (which is now a redirect shim into
 // the master Agents page).
+//
+// PR #189 polish v3: the avatar is now rendered via the shared
+// <AgentAvatar> primitive (the deterministic-colour hash keys off the
+// FULL fqn), and the "+ New task" button mounts <DispatchModal> in
+// place instead of navigating to /runtime/tasks?dispatch=1.
+
+// The AgentDetailPane fetches runtimes on mount + dispatches tasks
+// directly. Mock both endpoints so the tests don't reach the network.
+vi.mock("../src/api", async () => {
+  const actual = await vi.importActual<typeof import("../src/api")>("../src/api");
+  return {
+    ...actual,
+    listRuntimes: vi.fn(),
+    dispatchTask: vi.fn(),
+    createSession: vi.fn(),
+  };
+});
+
+import * as api from "../src/api";
+import { WorkspaceShellContext } from "../src/components/WorkspaceShellContext";
+
+const mockListRuntimes = api.listRuntimes as unknown as ReturnType<typeof vi.fn>;
 
 function makeAgent(fqn: string): AgentEntry {
   const [scope, short] = fqn.split("/");
@@ -61,29 +83,57 @@ interface RenderPaneOptions {
   tasks?: TaskRecord[] | null;
   sessions?: SessionView[] | null;
   wsId?: string;
+  /** Additional agents to seed the WorkspaceShell with (defaults to just `entry`). */
+  extraAgents?: AgentEntry[];
 }
 
 function renderPane(opts: RenderPaneOptions = {}) {
   const fqn = opts.fqn ?? "emploke/dev";
   const entry = opts.entry === undefined ? makeAgent(fqn) : opts.entry;
+  const agents: AgentEntry[] = entry
+    ? [entry, ...(opts.extraAgents ?? [])]
+    : (opts.extraAgents ?? []);
   return render(
-    <MemoryRouter>
-      <AgentDetailPane
-        fqn={fqn}
-        entry={entry}
-        wsId={opts.wsId ?? "ws-1"}
-        tasks={opts.tasks ?? []}
-        sessions={opts.sessions ?? []}
-        tasksError={null}
-        sessionsError={null}
-      />
-    </MemoryRouter>,
+    <WorkspaceShellContext.Provider value={shellValue(agents, opts.wsId ?? "ws-1")}>
+      <MemoryRouter>
+        <AgentDetailPane
+          fqn={fqn}
+          entry={entry}
+          wsId={opts.wsId ?? "ws-1"}
+          tasks={opts.tasks ?? []}
+          sessions={opts.sessions ?? []}
+          tasksError={null}
+          sessionsError={null}
+        />
+      </MemoryRouter>
+    </WorkspaceShellContext.Provider>,
   );
+}
+
+function shellValue(
+  agents: AgentEntry[],
+  wsId: string,
+): import("../src/components/WorkspaceShellContext").WorkspaceShellContextValue {
+  const data = {
+    overview: null,
+    skills: [],
+    agents,
+    mcps: [],
+  } as unknown as import("../src/api").CatalogData;
+  return {
+    wsId,
+    workspaces: [],
+    data,
+    config: { pathSeparator: "/" } as unknown as import("../src/api").ServerConfig,
+    refreshData: async () => {},
+  };
 }
 
 beforeEach(() => {
   // Tests don't hit the API directly any more (the pane is pure), but
   // a freshly-stubbed vi env keeps any future addition isolated.
+  mockListRuntimes.mockReset();
+  mockListRuntimes.mockResolvedValue([{ kind: "copilot" }, { kind: "claude" }]);
   vi.clearAllMocks();
 });
 
@@ -92,19 +142,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
-  it("renders an avatar circle with deterministic color + 2-letter initials", async () => {
+describe("Agent detail header — Phase 1.5 Block I (§4.3) + v3 avatar refactor", () => {
+  it("renders an avatar via the shared <AgentAvatar> primitive (deterministic colour + monogram)", async () => {
     renderPane({
       tasks: [makeTask("emploke/dev", "succeeded", "t-1")],
       sessions: [makeSession({ id: "s-1" })],
     });
 
-    const avatar = await screen.findByTestId("agent-detail-avatar");
-    expect(avatar.textContent).toBe(avatarInitialsFor("dev"));
-    // The colour helper picks deterministically from the existing
-    // accent palette — same fqn yields the same value across renders.
-    const expected = avatarColorFor("emploke/dev");
-    expect((avatar as HTMLElement).style.backgroundColor).toBe(expected);
+    // v3: the avatar lives at `agent-avatar-<fqn>` (no more `agent-detail-avatar`).
+    const avatar = await screen.findByTestId("agent-avatar-emploke/dev");
+    expect(avatar.textContent).toBe(monogramForLabel("dev"));
+    const expected = avatarColorForFqn("emploke/dev");
+    expect((avatar as HTMLElement).style.backgroundColor.toLowerCase()).toBe(
+      expected.toLowerCase(),
+    );
   });
 
   it("renders exactly 3 KPI tiles with the labels Running tasks / Total tasks (7d) / Sessions (7d)", async () => {
@@ -123,15 +174,42 @@ describe("Agent detail header — Phase 1.5 Block I (§4.3)", () => {
     expect(values).toEqual(["1", "2", "2"]);
   });
 
-  it("+ New task button links to /runtime/tasks?agent=<fqn>&dispatch=1", async () => {
+  it("'+ New task' is a button that opens DispatchModal in place (no nav)", async () => {
     renderPane({ tasks: [], sessions: [] });
 
-    const newTaskLink = await screen.findByTestId("agent-detail-new-task");
-    expect(newTaskLink.getAttribute("href")).toBe(
-      "/workspaces/ws-1/runtime/tasks?agent=emploke/dev&dispatch=1",
-    );
-    // Configure button targets the catalog tab with the agent fqn hint.
-    const configureLink = screen.getByTestId("agent-detail-configure");
+    // It is a <button>, not a <Link> — no href attribute.
+    const newTaskBtn = await screen.findByTestId("agent-detail-new-task");
+    expect(newTaskBtn.tagName).toBe("BUTTON");
+    expect(newTaskBtn.getAttribute("href")).toBeNull();
+
+    // Clicking it opens the DispatchModal seeded with the current fqn.
+    fireEvent.click(newTaskBtn);
+    await waitFor(() => {
+      const dropdown = document.getElementById("task-agent") as HTMLSelectElement | null;
+      expect(dropdown).toBeTruthy();
+      expect(dropdown!.value).toBe("emploke/dev");
+    });
+  });
+
+  it("'+ New session' is a button that opens CreateModal in place seeded with the current agent", async () => {
+    renderPane({ tasks: [], sessions: [] });
+
+    const newSessionBtn = await screen.findByTestId("agent-detail-new-session");
+    expect(newSessionBtn.tagName).toBe("BUTTON");
+    expect(newSessionBtn.getAttribute("href")).toBeNull();
+
+    fireEvent.click(newSessionBtn);
+    await waitFor(() => {
+      const dropdown = document.getElementById("new-session-agent") as HTMLSelectElement | null;
+      expect(dropdown).toBeTruthy();
+      expect(dropdown!.value).toBe("emploke/dev");
+    });
+  });
+
+  it("Configure stays a <Link> targeting the catalog tab with the agent fqn hint", async () => {
+    renderPane({ tasks: [], sessions: [] });
+    const configureLink = await screen.findByTestId("agent-detail-configure");
+    expect(configureLink.tagName).toBe("A");
     expect(configureLink.getAttribute("href")).toBe(
       "/workspaces/ws-1/catalog/agents?agent=emploke/dev",
     );

@@ -371,6 +371,11 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
         runtimes={runtimes}
         busy={busy}
         prefill={rerunFrom}
+        // PR #189 polish v3 — seed the modal with the page's current
+        // agent context when a single agent is pinned via `?agent=`.
+        // "All" keeps the existing `agents[0]` fallback; `prefill`
+        // (re-run case) still wins over `initialAgent`.
+        initialAgent={fixedAgentFqn ?? (agentFilterUrl !== ALL_AGENTS ? agentFilterUrl : undefined)}
         onClose={() => {
           setDispatchOpen(false);
           setRerunFrom(null);
