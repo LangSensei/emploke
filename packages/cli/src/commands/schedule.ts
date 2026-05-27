@@ -1,6 +1,6 @@
 /**
- * `emploke schedule …` — 8 subcommands wrapping the workspace-scoped
- * schedules HTTP surface (list / create / show / patch via enable +
+ * `emploke schedule …` — 9 subcommands wrapping the workspace-scoped
+ * schedules HTTP surface (list / create / show / patch + enable +
  * disable / delete / run / preview) plus `list-tasks` which wraps the
  * sibling `scheduledTasks.list` route so users can audit which tasks
  * a schedule has launched.
@@ -257,6 +257,133 @@ export async function schedulePreview(opts: SchedulePreviewOpts): Promise<Comman
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(preview) };
     const lines = [preview.describe, ...preview.nextRuns.map((ts) => `  ${ts}`)];
     return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+  } catch (err) {
+    return formatError(err);
+  }
+}
+
+// ─── patch (general partial update) ────────────────────────────────────
+export interface SchedulePatchOpts extends CommonFlags {
+  readonly sid: string;
+  readonly name?: string;
+  readonly cron?: string;
+  readonly tz?: string;
+  readonly agent?: string;
+  readonly instructions?: string;
+  readonly runtime?: string;
+  readonly enabled?: boolean;
+}
+
+export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandResult> {
+  if (typeof opts.sid !== "string" || opts.sid.trim() === "") {
+    return { exitCode: 2, stderr: "schedule id is required\n" };
+  }
+
+  const touchesTrigger = opts.cron !== undefined || opts.tz !== undefined;
+  const touchesTarget =
+    opts.agent !== undefined || opts.instructions !== undefined || opts.runtime !== undefined;
+  const touchesAny =
+    opts.name !== undefined || touchesTrigger || touchesTarget || opts.enabled !== undefined;
+  if (!touchesAny) {
+    return {
+      exitCode: 2,
+      stderr:
+        "at least one of --name / --cron / --tz / --agent / --instructions / --runtime / --enabled is required\n",
+    };
+  }
+
+  const client = await makeClient(opts);
+  try {
+    const id = await resolveWorkspace(opts);
+
+    // Server-side PATCH replaces `trigger` / `target` wholesale (no
+    // deep merge) — see packages/schedule/src/schedule-entity.ts
+    // (`withPatched`) and schedule-service.ts:114-135. If the user only
+    // supplied a subset of a subtree's fields, the CLI must GET the
+    // current schedule, merge the missing leaves in, and PATCH the full
+    // object. Otherwise the entity-layer `assertValidTrigger` /
+    // `assertValidTarget` invariants would reject it.
+    let current: Awaited<ReturnType<typeof client.call<"schedules.get">>> | undefined;
+    const needCurrentForTrigger =
+      touchesTrigger && !(opts.cron !== undefined && opts.tz !== undefined);
+    const needCurrentForTarget =
+      touchesTarget && !(opts.agent !== undefined && opts.instructions !== undefined);
+    if (needCurrentForTrigger || needCurrentForTarget) {
+      current = await client.call("schedules.get", { params: { id, sid: opts.sid } });
+    }
+
+    const body: {
+      name?: string;
+      trigger?: { kind: "cron"; expr: string; tz: string };
+      target?: { kind: "task"; agent: string; instructions: string; runtime?: string };
+      enabled?: boolean;
+    } = {};
+
+    if (opts.name !== undefined) body.name = opts.name;
+    if (opts.enabled !== undefined) body.enabled = opts.enabled;
+
+    if (touchesTrigger) {
+      const existingTrigger = current?.trigger;
+      // v1 only models `cron` triggers (see types.ts); guard so a
+      // future `interval` schedule doesn't get silently coerced by
+      // the CLI's --cron / --tz flags.
+      if (existingTrigger !== undefined && existingTrigger.kind !== "cron") {
+        return {
+          exitCode: 2,
+          stderr: `--cron / --tz only supported when current trigger.kind === "cron" (got "${existingTrigger.kind}")\n`,
+        };
+      }
+      const expr = opts.cron ?? existingTrigger?.expr;
+      const tz = opts.tz ?? existingTrigger?.tz;
+      if (expr === undefined || tz === undefined) {
+        // Unreachable in practice — GET must return a complete
+        // trigger when one exists — but keep the defensive guard so
+        // a contract regression surfaces with a clear message instead
+        // of as an opaque server 400.
+        return { exitCode: 2, stderr: "internal: could not resolve cron/tz from server\n" };
+      }
+      body.trigger = { kind: "cron", expr, tz };
+    }
+
+    if (touchesTarget) {
+      const existingTarget = current?.target;
+      // v1 only models `task` targets; same defensive guard as trigger.
+      if (existingTarget !== undefined && existingTarget.kind !== "task") {
+        return {
+          exitCode: 2,
+          stderr: `--agent / --instructions / --runtime only supported when current target.kind === "task" (got "${existingTarget.kind}")\n`,
+        };
+      }
+      const agent = opts.agent ?? existingTarget?.agent;
+      const instructions = opts.instructions ?? existingTarget?.instructions;
+      if (agent === undefined || instructions === undefined) {
+        return {
+          exitCode: 2,
+          stderr: "internal: could not resolve agent/instructions from server\n",
+        };
+      }
+      const nextTarget: {
+        kind: "task";
+        agent: string;
+        instructions: string;
+        runtime?: string;
+      } = {
+        kind: "task",
+        agent,
+        instructions,
+      };
+      const runtime = opts.runtime !== undefined ? opts.runtime : existingTarget?.runtime;
+      if (runtime !== undefined) nextTarget.runtime = runtime;
+      body.target = nextTarget;
+    }
+
+    const updated = await client.call("schedules.patch", {
+      params: { id, sid: opts.sid },
+      body,
+    });
+    const fmt = pickFormat(opts, "table");
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(updated) };
+    return { exitCode: 0, stdout: `schedule ${opts.sid} patched\n` };
   } catch (err) {
     return formatError(err);
   }

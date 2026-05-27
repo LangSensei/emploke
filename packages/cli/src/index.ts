@@ -65,6 +65,7 @@ import {
   scheduleEnable,
   scheduleList,
   scheduleListTasks,
+  schedulePatch,
   schedulePreview,
   scheduleRm,
   scheduleRun,
@@ -455,6 +456,44 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Disable a schedule (cancels timer; in-flight tasks unaffected)")
     .action(async (sid: string, opts: Record<string, unknown>) => {
       slot.result = await scheduleDisable({ ...parseWorkspaceFlags(opts), sid });
+    });
+  withWorkspaceFlags(scheduleCmd.command("patch"))
+    .argument("<sid>", "Schedule id")
+    .description(
+      "Partially update a schedule (any subset of name / cron / tz / agent / instructions / runtime / enabled)",
+    )
+    .option("--name <text>", "New display name")
+    .option(
+      "--cron <expr>",
+      "New cron expression (5/6/7-field; preserves existing tz unless --tz also given)",
+    )
+    .option(
+      "--tz <iana>",
+      "New IANA timezone (preserves existing cron expr unless --cron also given)",
+    )
+    .option(
+      "--agent <fqn>",
+      "New agent FQN (preserves existing instructions/runtime unless --instructions / --runtime also given)",
+    )
+    .option(
+      "--instructions <text>",
+      "New instructions (preserves existing agent/runtime unless --agent / --runtime also given)",
+    )
+    .option("--runtime <kind>", "New runtime override")
+    .option("--enabled", "Re-arm timer (equivalent to `enable` subcommand)")
+    .option("--no-enabled", "Cancel timer (equivalent to `disable` subcommand)")
+    .action(async (sid: string, opts: Record<string, unknown>) => {
+      slot.result = await schedulePatch({
+        ...parseWorkspaceFlags(opts),
+        sid,
+        ...optionalString(opts, "name"),
+        ...optionalString(opts, "cron"),
+        ...optionalString(opts, "tz"),
+        ...optionalString(opts, "agent"),
+        ...optionalString(opts, "instructions"),
+        ...optionalString(opts, "runtime"),
+        ...(opts.enabled !== undefined ? { enabled: Boolean(opts.enabled) } : {}),
+      });
     });
   withWorkspaceFlags(scheduleCmd.command("rm"))
     .argument("<sid>", "Schedule id")
