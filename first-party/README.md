@@ -30,10 +30,12 @@ The emploke dashboard's "Install from URL" field also accepts these.
 - `emploke/agent-distill`  distills working catalog patterns into reusable agents/skills
 - `emploke/agent-forge`  creates new local agents from briefs
 - `emploke/agent-lint`  validates catalog entries against the schema
+- `emploke/designer`  iterates on `packages/dashboard` UI against MSW mocks (mock dev server + Playwright screenshots + PRs)
 
 ### Skills
 
 - `emploke/cli`  emploke CLI command reference (workspace, agent, task, session, catalog subcommands)
+- `emploke/dashboard-dev-loop`  lifecycle for the `packages/dashboard` mock dev server + Playwright screenshot conventions
 - `emploke/dispatch-watchdog`  script + pattern for blocking on a long-running task
 - `emploke/dispatch-with-details`  pattern for dispatching tasks with structured detail bodies
 - `emploke/git-pr`  git branch management and GitHub PR workflow using worktrees
