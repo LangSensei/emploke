@@ -173,16 +173,16 @@ export function ScheduleDetail({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>{detail.name}</h2>
           <span
-            className={`badge ${
-              detail.enabled ? "badge--success" : "badge--muted"
-            } badge--with-dot`}
+            className={`badge ${detail.enabled ? "badge--success" : "badge--warn"} badge--with-dot`}
           >
             <span className="badge__dot" aria-hidden="true" />
             {detail.enabled ? "Enabled" : "Paused"}
           </span>
         </div>
         <div className="task-list__item-meta muted">
-          <code title={`Cron expression in ${detail.trigger.tz}`}>{detail.trigger.expr}</code>
+          <code className="schedule-cron" title={`Cron expression in ${detail.trigger.tz}`}>
+            {detail.trigger.expr}
+          </code>
           <span className="task-list__sep">·</span>
           <span>{detail.trigger.tz}</span>
           <span className="task-list__sep">·</span>
@@ -199,7 +199,19 @@ export function ScheduleDetail({
             </>
           ) : null}
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+        {detail.lastFiredAt ? (
+          <div className="schedule-detail__last-fired" data-testid="schedule-detail-last-fired">
+            Last fired{" "}
+            <strong title={formatAbsolute(detail.lastFiredAt)}>
+              {formatRelative(detail.lastFiredAt)}
+            </strong>
+          </div>
+        ) : (
+          <div className="schedule-detail__last-fired" data-testid="schedule-detail-last-fired">
+            Has not fired yet.
+          </div>
+        )}
+        <div className="schedule-detail__actions">
           <button
             type="button"
             className={`btn ${detail.enabled ? "btn--ghost" : "btn--primary"}`}
@@ -228,7 +240,7 @@ export function ScheduleDetail({
           </button>
           <button
             type="button"
-            className="btn btn--danger"
+            className="btn btn--danger schedule-detail__delete"
             onClick={() => onRequestDelete(detail)}
             disabled={busyAction !== null}
             data-testid="schedule-detail-delete"
@@ -255,13 +267,13 @@ export function ScheduleDetail({
               No upcoming fires (the schedule may be paused or the cron expression yielded nothing).
             </p>
           ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            <ul className="schedule-next-fires">
               {preview.nextRuns.map((iso) => (
-                <li key={iso} style={{ fontSize: 13, padding: "2px 0" }}>
-                  <span title={formatAbsolute(iso)}>{formatRelative(iso)}</span>
-                  <span className="muted" style={{ marginLeft: 8 }}>
-                    ({formatAbsolute(iso)})
+                <li key={iso} className="schedule-next-fires__row">
+                  <span className="schedule-next-fires__primary" title={formatAbsolute(iso)}>
+                    {formatRelative(iso)}
                   </span>
+                  <span className="schedule-next-fires__secondary">{formatAbsolute(iso)}</span>
                 </li>
               ))}
             </ul>

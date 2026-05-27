@@ -193,4 +193,24 @@ describe("Schedule detail panel", () => {
       expect(mockDeleteSchedule).toHaveBeenCalledWith("sched-x");
     });
   });
+
+  it("surfaces a 'Has not fired yet.' header line when lastFiredAt is null", async () => {
+    // Sanity: the default SAMPLE_DETAIL above has no lastFiredAt set.
+    renderDetail();
+    const line = await screen.findByTestId("schedule-detail-last-fired");
+    expect(line.textContent).toMatch(/Has not fired yet/);
+  });
+
+  it("surfaces a 'Last fired …' header line when lastFiredAt is set", async () => {
+    mockGetSchedule.mockResolvedValue({
+      ...SAMPLE_DETAIL,
+      lastFiredAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    });
+    renderDetail();
+    const line = await screen.findByTestId("schedule-detail-last-fired");
+    expect(line.textContent).toMatch(/Last fired/);
+    // formatRelative emits "1h ago" / "2h ago" — accept either to keep
+    // the test resilient to rounding at the 5-second boundary.
+    expect(line.textContent).toMatch(/h ago|m ago/);
+  });
 });

@@ -4999,3 +4999,83 @@ button {
   white-space: nowrap;
   /* short never truncates — it's the most scannable token. */
 }
+
+
+/* ====================================================================
+   Schedule polish (designer pass on PR #221).
+   Surgical additions on top of the schedules surface:
+     - .schedule-cron: a chip-style treatment for inline cron expressions
+       so they read as code in both the list rows and the detail header.
+     - .schedule-next-fires: two-column rhythm for the Next-N-fires list
+       so the relative time (primary) and absolute time (secondary) sit
+       at distinct visual weights instead of running on as muted prose.
+     - .schedule-detail__last-fired: a one-line meta entry surfacing the
+       schedule's lastFiredAt so users know "when did this last run"
+       without scrolling to the Recent fires panel.
+     - .schedule-detail__actions: bottom of the header action row, pushes
+       the destructive Delete button to the right edge so it's visually
+       separated from the safe Pause/Resume + Run-now actions.
+   No tokens or palette additions; everything reuses existing CSS vars. */
+.schedule-cron {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--color-surface-hover);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+
+.schedule-next-fires {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.schedule-next-fires__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--color-border);
+  font-size: 13px;
+}
+
+.schedule-next-fires__row:last-child {
+  border-bottom: 0;
+}
+
+.schedule-next-fires__primary {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.schedule-next-fires__secondary {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.schedule-detail__last-fired {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.schedule-detail__last-fired strong {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.schedule-detail__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.schedule-detail__actions .schedule-detail__delete {
+  margin-left: auto;
+}

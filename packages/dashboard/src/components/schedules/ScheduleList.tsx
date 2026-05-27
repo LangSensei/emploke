@@ -47,7 +47,7 @@ export function ScheduleList({ schedules, selectedId, onSelect }: ScheduleListPr
           >
             <div className="task-list__item-head">
               <span
-                className={`badge ${s.enabled ? "badge--success" : "badge--muted"} badge--with-dot`}
+                className={`badge ${s.enabled ? "badge--success" : "badge--warn"} badge--with-dot`}
               >
                 <span className="badge__dot" aria-hidden="true" />
                 {s.enabled ? "Enabled" : "Paused"}
@@ -60,7 +60,9 @@ export function ScheduleList({ schedules, selectedId, onSelect }: ScheduleListPr
               {s.name}
             </div>
             <div className="task-list__item-meta muted">
-              <code title={`Cron: ${s.trigger.expr} (${s.trigger.tz})`}>{s.trigger.expr}</code>
+              <code className="schedule-cron" title={`Cron: ${s.trigger.expr} (${s.trigger.tz})`}>
+                {s.trigger.expr}
+              </code>
               <span className="task-list__sep">·</span>
               <span title={`Agent: ${s.target.agent}`}>{s.target.agent}</span>
               {s.target.runtime ? (
