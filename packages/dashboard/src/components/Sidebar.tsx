@@ -10,6 +10,7 @@ import {
   HomeIcon,
   PencilIcon,
   RuntimeIcon,
+  SchedulesIcon,
   SessionsIcon,
   SettingsIcon,
   TasksIcon,
@@ -21,11 +22,12 @@ export type SectionId = "overview" | "runtime" | "catalog" | "settings";
  * Runtime children promoted under the Runtime group header per Phase 1.5
  * §4.1: Agents (existing default landing) plus Sessions and Tasks which
  * used to be either top-level items (legacy) or per-agent sub-tabs
- * (PR #189). They share the workspace-scoped path prefix
- * `/runtime/<child>` so the highlight selector can match on the segment
- * after the section.
+ * (PR #189). PR 4/4 of #61 adds Schedules — workspace-scoped cron
+ * triggers — as the fourth child. They share the workspace-scoped
+ * path prefix `/runtime/<child>` so the highlight selector can match
+ * on the segment after the section.
  */
-export type RuntimeChildId = "agents" | "sessions" | "tasks";
+export type RuntimeChildId = "agents" | "sessions" | "tasks" | "schedules";
 
 /**
  * Full identity of a clickable sidebar item. A `SectionId` selects a
@@ -63,6 +65,7 @@ const CHILD_ICONS: Record<RuntimeChildId, (props: { className?: string }) => Rea
   agents: AgentsIcon,
   sessions: SessionsIcon,
   tasks: TasksIcon,
+  schedules: SchedulesIcon,
 };
 
 const ADD_OPTION = "__add__";

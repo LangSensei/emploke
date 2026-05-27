@@ -44,6 +44,7 @@ import { CatalogPage, type CatalogTab } from "./pages/Catalog";
 import { OverviewPage } from "./pages/Overview";
 import { AgentDetailPage } from "./pages/Runtime/AgentDetailPage";
 import { AgentsListPage } from "./pages/Runtime/AgentsListPage";
+import { SchedulesPage } from "./pages/Schedules";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
@@ -59,6 +60,7 @@ const SECTIONS: SectionDef[] = [
       { id: "agents", label: "Agents" },
       { id: "sessions", label: "Sessions" },
       { id: "tasks", label: "Tasks" },
+      { id: "schedules", label: "Schedules" },
     ],
   },
   { id: "catalog", label: "Catalog" },
@@ -73,7 +75,12 @@ const SECTION_TITLES: Record<SectionId, { title: string; crumb?: string }> = {
 };
 
 const VALID_SECTIONS = new Set<SectionId>(["overview", "runtime", "catalog", "settings"]);
-const VALID_RUNTIME_CHILDREN = new Set<RuntimeChildId>(["agents", "sessions", "tasks"]);
+const VALID_RUNTIME_CHILDREN = new Set<RuntimeChildId>([
+  "agents",
+  "sessions",
+  "tasks",
+  "schedules",
+]);
 const VALID_CATALOG_TABS = new Set<CatalogTab>(["agents", "skills", "mcps"]);
 
 /**
@@ -119,6 +126,7 @@ export function App() {
         />
         <Route path="runtime/sessions" element={<RuntimeSessionsRoute />} />
         <Route path="runtime/tasks" element={<RuntimeTasksRoute />} />
+        <Route path="runtime/schedules" element={<RuntimeSchedulesRoute />} />
         {/* Legacy routes (Block C → Phase 1.5 Block F). PR #189 added
             adapters for the bookmarked top-level URLs that pre-date the
             Runtime IA promotion; Phase 1.5 retargets them one level
@@ -876,6 +884,19 @@ function RuntimeTasksRoute() {
   const { wsId, data, config } = useWorkspaceShell();
   useBreadcrumb("Tasks", ["Runtime", "Tasks"]);
   return <TasksPage agents={data.agents} currentWorkspaceId={wsId} config={config} />;
+}
+
+/**
+ * Workspace-scoped Schedules page (PR 4/4 of #61). Renders the
+ * master-detail Schedules view at `/workspaces/<wsId>/runtime/schedules`.
+ * The detail panel selection is URL-driven via `?scheduleId=`,
+ * mirroring the Tasks page's `?taskId=` pattern so refresh /
+ * back-button / share-link all reproduce the same view.
+ */
+function RuntimeSchedulesRoute() {
+  const { wsId, data } = useWorkspaceShell();
+  useBreadcrumb("Schedules", ["Runtime", "Schedules"]);
+  return <SchedulesPage agents={data.agents} currentWorkspaceId={wsId} />;
 }
 
 function capitalize(s: string): string {

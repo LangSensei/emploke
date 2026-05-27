@@ -1,0 +1,196 @@
+import type { AgentEntry } from "@emploke/catalog";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ScheduleDetail as ScheduleDetailType, ScheduleView } from "../src/api";
+
+vi.mock("../src/api", async () => {
+  const actual = await vi.importActual<typeof import("../src/api")>("../src/api");
+  return {
+    ...actual,
+    listSchedules: vi.fn(),
+    getSchedule: vi.fn(),
+    previewSchedule: vi.fn(),
+    patchSchedule: vi.fn(),
+    deleteSchedule: vi.fn(),
+    runSchedule: vi.fn(),
+    listScheduledTasks: vi.fn(),
+  };
+});
+
+import * as api from "../src/api";
+import { SchedulesPage } from "../src/pages/Schedules";
+
+const mockListSchedules = api.listSchedules as unknown as ReturnType<typeof vi.fn>;
+const mockGetSchedule = api.getSchedule as unknown as ReturnType<typeof vi.fn>;
+const mockPreviewSchedule = api.previewSchedule as unknown as ReturnType<typeof vi.fn>;
+const mockPatchSchedule = api.patchSchedule as unknown as ReturnType<typeof vi.fn>;
+const mockDeleteSchedule = api.deleteSchedule as unknown as ReturnType<typeof vi.fn>;
+const mockRunSchedule = api.runSchedule as unknown as ReturnType<typeof vi.fn>;
+const mockListScheduledTasks = api.listScheduledTasks as unknown as ReturnType<typeof vi.fn>;
+
+function makeAgent(fqn: string): AgentEntry {
+  const [scope, short] = fqn.split("/");
+  return {
+    agent: { fqn, scope, short, version: "1.0.0" },
+    status: "ready",
+  } as unknown as AgentEntry;
+}
+
+const SAMPLE_VIEW: ScheduleView = {
+  id: "sched-x",
+  name: "Sample schedule",
+  enabled: true,
+  trigger: { kind: "cron", expr: "0 0 9 * * *", tz: "UTC" },
+  target: {
+    kind: "task",
+    agent: "emploke/dev",
+    instructions: "Do the thing.",
+    runtime: "copilot",
+  },
+  nextFireAt: "2026-05-30T09:00:00.000Z",
+  createdAt: "2026-05-01T00:00:00Z",
+  updatedAt: "2026-05-20T00:00:00Z",
+};
+
+const SAMPLE_DETAIL: ScheduleDetailType = { ...SAMPLE_VIEW, describe: "every day at 09:00" };
+
+function renderDetail() {
+  return render(
+    <MemoryRouter initialEntries={["/workspaces/ws-1/runtime/schedules?scheduleId=sched-x"]}>
+      <Routes>
+        <Route
+          path="/workspaces/:wsId/runtime/schedules"
+          element={<SchedulesPage agents={[makeAgent("emploke/dev")]} currentWorkspaceId="ws-1" />}
+        />
+        <Route path="/workspaces/:wsId/runtime/tasks" element={<div>Tasks page stub</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  mockListSchedules.mockReset();
+  mockGetSchedule.mockReset();
+  mockPreviewSchedule.mockReset();
+  mockPatchSchedule.mockReset();
+  mockDeleteSchedule.mockReset();
+  mockRunSchedule.mockReset();
+  mockListScheduledTasks.mockReset();
+  mockListSchedules.mockResolvedValue([SAMPLE_VIEW]);
+  mockGetSchedule.mockResolvedValue(SAMPLE_DETAIL);
+  mockPreviewSchedule.mockResolvedValue({
+    describe: SAMPLE_DETAIL.describe,
+    nextRuns: ["2026-05-30T09:00:00.000Z", "2026-05-31T09:00:00.000Z", "2026-06-01T09:00:00.000Z"],
+  });
+  mockListScheduledTasks.mockResolvedValue([]);
+});
+
+afterEach(() => cleanup());
+
+describe("Schedule detail panel", () => {
+  it("renders the name, cron expression, tz, and describe", async () => {
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 2, name: "Sample schedule" })).toBeTruthy();
+    });
+    // The cron expression also appears in the list row on the left; the
+    // detail header includes it at least once.
+    expect(screen.getAllByText("0 0 9 * * *").length).toBeGreaterThan(0);
+    expect(screen.getByText("UTC")).toBeTruthy();
+    expect(screen.getByText(/every day at 09:00/)).toBeTruthy();
+  });
+
+  it("renders the next-fire preview list (3 entries)", async () => {
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText(/Next 3 fires/)).toBeTruthy();
+    });
+    // Preview should request n=3
+    expect(mockPreviewSchedule).toHaveBeenCalledWith("sched-x", { n: 3 });
+  });
+
+  it("patches enabled=false when the Pause button is clicked", async () => {
+    mockPatchSchedule.mockResolvedValue({ ...SAMPLE_VIEW, enabled: false });
+    renderDetail();
+    const toggle = await screen.findByTestId("schedule-detail-toggle");
+    expect(toggle.textContent).toMatch(/Pause/);
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(mockPatchSchedule).toHaveBeenCalledWith("sched-x", { enabled: false });
+    });
+  });
+
+  it("rolls back the optimistic toggle on patch failure", async () => {
+    mockPatchSchedule.mockRejectedValue(new Error("server angry"));
+    renderDetail();
+    const toggle = await screen.findByTestId("schedule-detail-toggle");
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(screen.getByText(/server angry/)).toBeTruthy();
+    });
+    // After rollback the toggle label is "Pause" again (enabled=true restored).
+    expect((await screen.findByTestId("schedule-detail-toggle")).textContent).toMatch(/Pause/);
+  });
+
+  it("renders the recent-fires panel with mocked rows", async () => {
+    mockListScheduledTasks.mockResolvedValue([
+      {
+        id: "task-1",
+        agent: "emploke/dev",
+        brief: "fire 1",
+        origin: "schedule",
+        status: "succeeded",
+        metadata: { scheduleId: "sched-x" },
+        createdAt: "2026-05-28T09:00:00Z",
+        startedAt: "2026-05-28T09:00:01Z",
+        endedAt: "2026-05-28T09:01:00Z",
+      },
+    ]);
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText(/Recent fires/)).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("task-1")).toBeTruthy();
+    });
+  });
+
+  it("calls runSchedule and surfaces errors when Run now is clicked", async () => {
+    mockRunSchedule.mockRejectedValue(new Error("dispatch blew up"));
+    renderDetail();
+    const runBtn = await screen.findByTestId("schedule-detail-run-now");
+    fireEvent.click(runBtn);
+    await waitFor(() => {
+      expect(mockRunSchedule).toHaveBeenCalledWith("sched-x");
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/dispatch blew up/)).toBeTruthy();
+    });
+  });
+
+  it("opens the delete confirm modal when Delete is clicked", async () => {
+    renderDetail();
+    const deleteBtn = await screen.findByTestId("schedule-detail-delete");
+    fireEvent.click(deleteBtn);
+    // The modal renders inside the page-level host. The modal's dialog
+    // role + title is the cleanest anchor since the body copy is split
+    // across multiple text nodes.
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: /^Delete schedule$/ })).toBeTruthy();
+  });
+
+  it("calls deleteSchedule when the delete modal is confirmed", async () => {
+    mockDeleteSchedule.mockResolvedValue(undefined);
+    renderDetail();
+    const deleteBtn = await screen.findByTestId("schedule-detail-delete");
+    fireEvent.click(deleteBtn);
+    const confirm = await screen.findByRole("button", { name: /Delete schedule/i });
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(mockDeleteSchedule).toHaveBeenCalledWith("sched-x");
+    });
+  });
+});

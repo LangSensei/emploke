@@ -64,6 +64,7 @@ describe("prod bundle excludes mocks", () => {
     ["mockServiceWorker", "mockServiceWorker reference leaked into bundle"],
     ["fixtureTasks", "hand-authored task fixture identifier leaked into bundle"],
     ["fixtureAgents", "hand-authored agent fixture identifier leaked into bundle"],
+    ["fixtureSchedules", "hand-authored schedule fixture identifier leaked into bundle"],
     ["fixtureSessions", "hand-authored session fixture identifier leaked into bundle"],
     ["fixtureWorkspaces", "hand-authored workspace fixture identifier leaked into bundle"],
     ["artifactBodies", "artifact-body map leaked into bundle"],

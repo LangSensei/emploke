@@ -67,6 +67,21 @@ export const TasksIcon = (p: IconProps) =>
     p,
   );
 
+/**
+ * Heroicons `calendar-days` outline @ stroke 1.5 — the Schedules
+ * child icon (PR 4/4 of #61). Distinct from RuntimeIcon (parent
+ * group) and the other three child icons so the sub-nav stays
+ * scannable.
+ */
+export const SchedulesIcon = (p: IconProps) =>
+  SVG(
+    <>
+      <path d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+      <path d="M6.75 12.75h.008v.008H6.75v-.008Zm0 2.25h.008v.008H6.75V15Zm0 2.25h.008v.008H6.75v-.008Zm2.25-4.5h.008v.008H9v-.008Zm0 2.25h.008v.008H9V15Zm0 2.25h.008v.008H9v-.008Zm2.25-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H13.5v-.008Zm0 2.25h.008v.008H13.5V15Zm2.25-2.25h.008v.008H15.75v-.008Zm0 2.25h.008v.008H15.75V15Z" />
+    </>,
+    p,
+  );
+
 export const SettingsIcon = (p: IconProps) =>
   SVG(
     <>
