@@ -28,6 +28,7 @@ const PKGS = [
   { dir: "task", entity: "Task", tableSuffix: "task" },
   { dir: "catalog", entity: "Catalog", tableSuffix: "catalog" },
   { dir: "workflow", entity: "Workflow", tableSuffix: "workflow" },
+  { dir: "schedule", entity: "Schedule", tableSuffix: "schedule" },
   // Template uses placeholder tokens substituted by scripts/new-pkg.mjs.
   // `__PKG__` resolves to the kebab-case pkg name (e.g. "event-bus") at
   // scaffold time, giving e.g. `__drizzle_migrations_event-bus`. SQLite
