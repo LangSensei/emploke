@@ -30,6 +30,7 @@ import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
 import { scheduledTasksRoutes } from "./routes/scheduled-tasks.js";
+import { schedulesRoutes } from "./routes/schedules.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
@@ -56,6 +57,11 @@ export {
   type RouteRequest,
   type RouteRes,
   type RouteSpec,
+  type ScheduleCreateBody,
+  type ScheduleListQuery,
+  type SchedulePatchBody,
+  type SchedulePathParams,
+  type SchedulePreviewQuery,
   type SessionCreateBody,
   type SessionDeleteQuery,
   type SessionListQuery,
@@ -322,6 +328,18 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     scheduledTasksRoutes((c) => c.get("workspaceContext").tasks),
   );
   app.route("/api/workspaces", scheduledTasksApp);
+
+  // Schedule CRUD + run + preview. Sibling of `/scheduled-tasks` —
+  // that route is read-only over the dispatched task list; this
+  // route owns the trigger entities themselves. Both share the same
+  // workspace-scoped per-context state via the middleware.
+  const schedulesApp = new Hono<{ Variables: WorkspaceVars }>();
+  schedulesApp.use("/:id/schedules/*", workspaceContextMiddleware(application));
+  schedulesApp.route(
+    "/:id/schedules",
+    schedulesRoutes((c) => c.get("workspaceContext").schedules),
+  );
+  app.route("/api/workspaces", schedulesApp);
 
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(application));

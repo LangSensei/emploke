@@ -1,13 +1,16 @@
 /**
- * Ambient declaration for `cronstrue/i18n`. The cronstrue package
+ * Ambient declaration for `cronstrue/i18n.js`. The cronstrue package
  * ships subpath entries (`i18n.js`, `i18n.d.ts`) at its root but
  * does NOT declare them in an `exports` field, so TypeScript's
  * NodeNext resolver can't find them automatically.
  *
- * The Node runtime resolves `cronstrue/i18n` fine (subpath-without-
- * exports is the legacy fallback); only the type lookup needs help.
+ * Both type AND runtime resolution need the explicit `.js` extension
+ * under NodeNext ESM: the legacy "subpath-without-exports" fallback
+ * only applies to CommonJS / `node` module-resolution modes. The
+ * import in `cron.ts` is correspondingly written as
+ * `import cronstrue from "cronstrue/i18n.js"`.
  */
-declare module "cronstrue/i18n" {
+declare module "cronstrue/i18n.js" {
   interface CronstrueOptions {
     readonly locale?: string;
     readonly use24HourTimeFormat?: boolean;

@@ -29,6 +29,7 @@
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/runtime": "workspace:*",
+    "@emploke/schedule": "workspace:*",
     "@emploke/session": "workspace:*",
     "@emploke/task": "workspace:*",
     "@emploke/terminal": "workspace:*",

@@ -26,6 +26,7 @@
     "@emploke/catalog": "workspace:*",
     "@emploke/core": "workspace:*",
     "@emploke/runtime": "workspace:*",
+    "@emploke/schedule": "workspace:*",
     "@emploke/session": "workspace:*",
     "@emploke/task": "workspace:*",
     "@emploke/workspace": "workspace:*",
