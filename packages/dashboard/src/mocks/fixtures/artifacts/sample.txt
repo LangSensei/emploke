@@ -1,0 +1,8 @@
+Designer mode sample artifact (text/plain).
+
+This file is bundled into the dashboard's mocks via Vite's `?raw`
+import and served by the MSW handler for
+`/api/workspaces/:wsId/tasks/:tid/artifact/sample.txt`.
+
+Use it to exercise the TextViewer code path in
+`src/components/viewers/TextViewer.tsx`.
