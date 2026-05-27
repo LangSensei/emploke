@@ -44,7 +44,7 @@ import type {
 } from "@emploke/catalog";
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
 import type { Session } from "@emploke/session";
-import type { Task, TaskOrigin, TaskStatus } from "@emploke/task";
+import type { Task, TaskStatus } from "@emploke/task";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
 import type { ServerConfig } from "./config.js";
 import type { HealthResponse } from "./health.js";
@@ -181,20 +181,41 @@ export type SessionSpawnRes =
   | { readonly ok: true; readonly launcher: string; readonly display: string }
   | { readonly ok: false; readonly error: string; readonly code: string; readonly display: string };
 
-/** GET /api/workspaces/:id/tasks query params. CSV `status` / `origin` are parsed server-side. */
+/**
+ * GET /api/workspaces/:id/tasks query params (standalone-only route).
+ * CSV `status` is parsed server-side.
+ *
+ * The route is standalone-only by construction — `origin` is hardcoded
+ * at the handler layer; callers cannot widen the result set via a
+ * query param. Schedule-launched tasks live at `/scheduled-tasks`
+ * (see {@link ScheduledTaskListQuery}); workflow-launched tasks will
+ * move to their own dedicated route in a future PR.
+ */
 export interface TaskListQuery {
   readonly agent?: string;
   readonly runtime?: string;
   readonly createdSince?: string;
   /** Comma-separated list of {@link TaskStatus}. */
   readonly status?: string;
-  /**
-   * Comma-separated list of {@link TaskOrigin}. v4 (issue #119): filter
-   * out workflow-launched tasks by default in callers that want the
-   * "what I dispatched" view (CLI's `task list`, dashboard's default
-   * tab).
-   */
-  readonly origin?: string;
+}
+
+/**
+ * GET /api/workspaces/:id/scheduled-tasks query params (schedule-only route).
+ * Same shape as {@link TaskListQuery} plus `scheduleId` for filtering
+ * down to a single schedule's runs. CSV `status` is parsed server-side.
+ *
+ * The route is schedule-only by construction — `origin` is hardcoded
+ * at the handler layer; callers cannot widen the result set via a
+ * query param.
+ */
+export interface ScheduledTaskListQuery {
+  readonly agent?: string;
+  readonly runtime?: string;
+  readonly createdSince?: string;
+  /** Comma-separated list of {@link TaskStatus}. */
+  readonly status?: string;
+  /** Exact match on `metadata.scheduleId`. */
+  readonly scheduleId?: string;
 }
 
 /** POST /api/workspaces/:id/tasks body. */
@@ -415,6 +436,18 @@ export const ROUTES = {
     "GET",
     "/api/workspaces/:id/tasks",
   ),
+  /**
+   * Schedule-origin sibling of `tasks.list` (PR 1 of #61). Same
+   * response shape (`Task[]`) but the server constrains origin to
+   * `'schedule'` server-side; callers cannot widen via the URL. Each
+   * origin's caller surface gets a route whose URL IS the contract.
+   * Per-task surfaces (get, cancel, activity) stay on
+   * `/tasks/:tid` since task ids are globally unique.
+   */
+  "scheduledTasks.list": defineRoute<
+    { params: WorkspacePathParams; query: ScheduledTaskListQuery },
+    readonly Task[]
+  >("GET", "/api/workspaces/:id/scheduled-tasks"),
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",
     "/api/workspaces/:id/tasks",

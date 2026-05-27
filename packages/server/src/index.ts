@@ -29,6 +29,7 @@ import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
 import { runtimesRoutes } from "./routes/runtimes.js";
+import { scheduledTasksRoutes } from "./routes/scheduled-tasks.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
@@ -307,6 +308,20 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     tasksRoutes((c) => c.get("workspaceContext").tasks),
   );
   app.route("/api/workspaces", tasksApp);
+
+  // `/scheduled-tasks` is the schedule-origin sibling of `/tasks`. It
+  // shares the same workspace-scoped TaskService (via the same
+  // `workspaceContext.tasks` resolver) so storage / cancellation /
+  // dispatch all observe one in-memory state — splitting at the route
+  // layer, not the service layer, keeps the seam at the URL where it
+  // belongs.
+  const scheduledTasksApp = new Hono<{ Variables: WorkspaceVars }>();
+  scheduledTasksApp.use("/:id/scheduled-tasks/*", workspaceContextMiddleware(application));
+  scheduledTasksApp.route(
+    "/:id/scheduled-tasks",
+    scheduledTasksRoutes((c) => c.get("workspaceContext").tasks),
+  );
+  app.route("/api/workspaces", scheduledTasksApp);
 
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(application));

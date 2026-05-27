@@ -51,11 +51,15 @@ const SEARCH_DEBOUNCE_MS = 200;
  *     fallback re-introduces stale filter params after Clear-filters
  *     because it closes over the pre-clear state.
  *   - The page owns BOTH fetches:
- *       * `listTasks({ createdSince: 7d, origin: "all" })` for the left
- *         list's per-row status pills AND the right pane's KPI tiles +
- *         Overview-tab activity cells (filtered down to the selected fqn).
- *         One workspace-wide poll feeds both panes — no duplicate network
- *         calls.
+ *       * `listTasks({ createdSince: 7d })` for the left list's per-row
+ *         status pills AND the right pane's KPI tiles + Overview-tab
+ *         activity cells (filtered down to the selected fqn). One
+ *         workspace-wide poll feeds both panes — no duplicate network
+ *         calls. PR 1 of #61 made the `/tasks` route standalone-only;
+ *         this page intentionally surfaces only standalone-origin tasks
+ *         here. Schedule-launched runs live at `/scheduled-tasks` (a
+ *         future agent surface will join them in once we add the
+ *         schedule UI in PR 4 of #61).
  *       * `listSessions({ agent: <selectedFqn> })` only when something is
  *         selected; the per-agent session fetch stops when selection
  *         clears.
@@ -122,7 +126,7 @@ export function AgentsListPage() {
   const refreshTasks = useCallback(async () => {
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     try {
-      const next = await listTasks({ createdSince: since, origin: "all" });
+      const next = await listTasks({ createdSince: since });
       if (!mountedRef.current) return;
       setTasks(next);
       setTasksError(null);

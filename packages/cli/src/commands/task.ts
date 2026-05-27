@@ -34,15 +34,17 @@ export interface TaskListOpts extends CommonFlags {
   readonly createdSince?: string;
   /** Comma-separated TaskStatus values. */
   readonly status?: string;
-  /**
-   * Origin filter (issue #119). Accepts a single TaskOrigin value or
-   * the sentinel `'all'`. Defaults to `'standalone'` when omitted —
-   * matches today's UX of "show me what I dispatched". Pass
-   * `--origin all` to include workflow-launched tasks in the list.
-   */
-  readonly origin?: string;
 }
 
+/**
+ * `emploke task list` — lists standalone tasks for the workspace.
+ *
+ * PR 1 of #61 split `/scheduled-tasks` out of `/tasks` at the REST
+ * layer; this command targets the standalone-only `/tasks` route.
+ * Schedule-launched tasks will get a dedicated `emploke task list-scheduled`
+ * (or equivalent) command in a future PR; until then they are not
+ * surfaced through the CLI.
+ */
 export async function taskList(opts: TaskListOpts = {}): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
@@ -52,18 +54,11 @@ export async function taskList(opts: TaskListOpts = {}): Promise<CommandResult> 
       runtime?: string;
       createdSince?: string;
       status?: string;
-      origin?: string;
     } = {};
     if (opts.agent !== undefined) query.agent = opts.agent;
     if (opts.runtime !== undefined) query.runtime = opts.runtime;
     if (opts.createdSince !== undefined) query.createdSince = opts.createdSince;
     if (opts.status !== undefined) query.status = opts.status;
-    // Default to standalone-only so CLI users keep seeing the tasks
-    // they dispatched themselves. `--origin all` disables the filter
-    // by omitting it from the query string; any other value passes
-    // through verbatim (server validates).
-    const originFlag = opts.origin ?? "standalone";
-    if (originFlag !== "all") query.origin = originFlag;
     const list = await client.call("tasks.list", { params: { id }, query });
     const fmt = pickFormat(opts, "table");
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(list) };

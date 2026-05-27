@@ -13,7 +13,6 @@ import {
   RuntimeDoesNotSupportTasksError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
-  type TaskOrigin,
   type TaskService,
   type TaskStatus,
 } from "@emploke/task";
@@ -157,20 +156,23 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
   const getManager = resolveTaskService;
 
   // List tasks in this workspace, newest-first per the manager.
+  //
+  // **This route is standalone-only.** Schedule-launched tasks live at
+  // `/scheduled-tasks`; workflow-launched tasks will move to their own
+  // dedicated route in a future PR. The `origin` filter is hardcoded
+  // here so callers can't accidentally widen the result set — each
+  // origin has its own URL.
+  //
   // Optional server-side filters (mirroring the sessions route):
   //   ?agent=<name>             — exact match on Task.agent
   //   ?runtime=<kind>           — exact match on metadata.runtime
   //   ?createdSince=<iso8601>   — drop tasks older than the cutoff
   //   ?status=running,succeeded — include only listed statuses (CSV)
-  //   ?origin=standalone        — include only listed origins (CSV)
-  //   ?scheduleId=<id>          — exact match on metadata.scheduleId
   app.get("/", async (c) => {
     const agent = c.req.query("agent");
     const runtime = c.req.query("runtime");
     const createdSince = c.req.query("createdSince");
     const status = c.req.query("status");
-    const origin = c.req.query("origin");
-    const scheduleId = c.req.query("scheduleId");
 
     let createdSinceIso: string | undefined;
     if (createdSince !== undefined) {
@@ -200,32 +202,13 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
       statuses = parts as TaskStatus[];
     }
 
-    let origins: TaskOrigin[] | undefined;
-    if (origin !== undefined) {
-      const validOrigins = new Set<TaskOrigin>(["standalone", "workflow", "schedule"]);
-      const parts = origin
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-      const bad = parts.find((s) => !validOrigins.has(s as TaskOrigin));
-      if (bad !== undefined) {
-        return c.json(
-          {
-            error: `unknown origin: ${JSON.stringify(bad)} (expected standalone, workflow, schedule)`,
-          },
-          400,
-        );
-      }
-      origins = parts as TaskOrigin[];
-    }
-
-    const opts: { -readonly [K in keyof ListTaskOpts]: ListTaskOpts[K] } = {};
+    const opts: { -readonly [K in keyof ListTaskOpts]: ListTaskOpts[K] } = {
+      origin: ["standalone"],
+    };
     if (agent !== undefined) opts.agent = agent;
     if (runtime !== undefined) opts.runtime = runtime;
     if (createdSinceIso !== undefined) opts.createdSince = createdSinceIso;
     if (statuses !== undefined) opts.statuses = statuses;
-    if (origins !== undefined) opts.origin = origins;
-    if (scheduleId !== undefined) opts.scheduleId = scheduleId;
 
     try {
       const list = await getManager(c).list(opts);

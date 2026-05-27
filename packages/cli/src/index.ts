@@ -394,15 +394,11 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   const taskCmd = program.command("task").description("Task operations (workspace-scoped)");
 
   withWorkspaceFlags(taskCmd.command("list"))
-    .description("List tasks in the current workspace")
+    .description("List standalone tasks in the current workspace")
     .option("--agent <name>", "Filter by agent name")
     .option("--runtime <kind>", "Filter by runtime kind")
     .option("--created-since <iso>", "Drop tasks created before this ISO 8601 timestamp")
     .option("--status <csv>", "Comma-separated list (running, succeeded, failed, cancelled)")
-    .option(
-      "--origin <kind>",
-      "Filter by origin (standalone, workflow, or 'all' to disable). Defaults to 'standalone'.",
-    )
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await taskList({
         ...parseWorkspaceFlags(opts),
@@ -410,7 +406,6 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         ...optionalString(opts, "runtime"),
         ...optionalString(opts, "createdSince"),
         ...optionalString(opts, "status"),
-        ...optionalString(opts, "origin"),
       });
     });
   withWorkspaceFlags(taskCmd.command("dispatch"))
