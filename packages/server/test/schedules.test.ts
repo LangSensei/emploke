@@ -51,14 +51,16 @@ function stubService(overrides: Partial<Record<keyof ScheduleService, unknown>>)
     patch: vi.fn(async () => sampleSchedule),
     delete: vi.fn(async () => undefined),
     run: vi.fn(async () => ({ taskId: "task-001" })),
+    // Stub mirrors the real service's contract: returns exactly `n`
+    // entries (default 3) so the route-layer tests that exercise
+    // `?n=10` see the count plumbed through.
     preview: vi.fn(
-      async (): Promise<PreviewResult> => ({
+      async (_expr: string, _tz: string, n = 3): Promise<PreviewResult> => ({
         describe: "在周一至周五的 09:00",
-        nextRuns: [
-          "2026-06-01T01:00:00.000Z",
-          "2026-06-02T01:00:00.000Z",
-          "2026-06-03T01:00:00.000Z",
-        ],
+        nextRuns: Array.from(
+          { length: n },
+          (_, i) => `2026-06-${String(i + 1).padStart(2, "0")}T01:00:00.000Z`,
+        ),
       }),
     ),
     ...overrides,
@@ -178,11 +180,18 @@ describe("schedulesRoutes — create", () => {
 });
 
 describe("schedulesRoutes — get", () => {
-  it("GET /:sid returns the schedule", async () => {
+  it("GET /:sid returns the schedule enriched with describe", async () => {
     const svc = stubService({});
     const res = await schedulesRoutes(() => svc).request("/sched-abc");
     expect(res.status).toBe(200);
-    expect((await res.json()).id).toBe(sampleSchedule.id);
+    const body = await res.json();
+    expect(body.id).toBe(sampleSchedule.id);
+    // `describe` is computed by the route from `trigger.expr` (cronstrue,
+    // zh_CN locale). The exact string isn't snapshotted — we just
+    // assert the field is present and non-empty so the route stays
+    // wired to `describeCron` even if cronstrue's wording shifts.
+    expect(typeof body.describe).toBe("string");
+    expect(body.describe.length).toBeGreaterThan(0);
     expect(svc.get).toHaveBeenCalledWith("sched-abc");
   });
 
@@ -218,7 +227,20 @@ describe("schedulesRoutes — patch", () => {
     expect(patch).toHaveBeenCalledWith("sched-abc", { enabled: false });
   });
 
-  it("PATCH /:sid maps ScheduleNotFoundError → 404", async () => {
+  it("PATCH /:sid with a non-JSON body returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "not-json",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/JSON/);
+    expect(svc.patch).not.toHaveBeenCalled();
+  });
+
+  it("PATCH /:sid maps ScheduleNotFoundError → 404 with typed code", async () => {
     const patch = vi.fn(async () => {
       throw new ScheduleNotFoundError("x");
     });
@@ -229,6 +251,21 @@ describe("schedulesRoutes — patch", () => {
       body: JSON.stringify({ name: "renamed" }),
     });
     expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("ScheduleNotFoundError");
+  });
+
+  it("PATCH /:sid maps InvalidCronExprError → 400 with typed code", async () => {
+    const patch = vi.fn(async () => {
+      throw new InvalidCronExprError("bogus", "not a cron");
+    });
+    const svc = stubService({ patch });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger: { kind: "cron", expr: "bogus", tz: "UTC" } }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("InvalidCronExprError");
   });
 });
 
@@ -273,13 +310,14 @@ describe("schedulesRoutes — run", () => {
     expect(run).toHaveBeenCalledWith("sched-abc");
   });
 
-  it("POST /:sid/run on missing schedule → 404", async () => {
+  it("POST /:sid/run on missing schedule → 404 with typed code", async () => {
     const run = vi.fn(async () => {
       throw new ScheduleNotFoundError("ghost");
     });
     const svc = stubService({ run });
     const res = await schedulesRoutes(() => svc).request("/ghost/run", { method: "POST" });
     expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("ScheduleNotFoundError");
   });
 });
 
@@ -293,31 +331,73 @@ describe("schedulesRoutes — preview", () => {
     expect(body.nextRuns).toHaveLength(3);
   });
 
-  it("GET /:sid/preview?n=1 slices to 1 entry", async () => {
-    const svc = stubService({});
+  it("GET /:sid/preview?n=1 plumbs n=1 into the service (1 entry)", async () => {
+    const preview = vi.fn(
+      async (_expr: string, _tz: string, n = 3): Promise<PreviewResult> => ({
+        describe: "x",
+        nextRuns: Array.from({ length: n }, (_, i) => `2026-06-0${i + 1}T01:00:00.000Z`),
+      }),
+    );
+    const svc = stubService({ preview });
     const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=1");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.nextRuns).toHaveLength(1);
+    expect(preview).toHaveBeenCalledWith(sampleSchedule.trigger.expr, sampleSchedule.trigger.tz, 1);
   });
 
-  it("GET /:sid/preview?n=0 returns 400", async () => {
+  it("GET /:sid/preview?n=10 plumbs n=10 into the service (10 entries)", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=10");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nextRuns).toHaveLength(10);
+    expect(svc.preview).toHaveBeenCalledWith(
+      sampleSchedule.trigger.expr,
+      sampleSchedule.trigger.tz,
+      10,
+    );
+  });
+
+  it("GET /:sid/preview?n=0 returns 400 with typed code", async () => {
     const svc = stubService({});
     const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=0");
     expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(svc.preview).not.toHaveBeenCalled();
   });
 
-  it("GET /:sid/preview?n=999 returns 400 (over upper bound)", async () => {
+  it("GET /:sid/preview?n=101 returns 400 with typed code (over upper bound)", async () => {
     const svc = stubService({});
-    const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=999");
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=101");
     expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(svc.preview).not.toHaveBeenCalled();
   });
 
-  it("GET /:sid/preview on missing schedule → 404", async () => {
+  it("GET /:sid/preview?n=abc returns 400 with typed code", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/preview?n=abc");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(svc.preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /:sid/preview on missing schedule → 404 with typed code", async () => {
     const get = vi.fn(async () => null);
     const svc = stubService({ get });
     const res = await schedulesRoutes(() => svc).request("/missing/preview");
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBe("ScheduleNotFoundError");
+  });
+
+  it("GET /:sid/preview maps InvalidCronExprError from service → 400 with typed code", async () => {
+    const preview = vi.fn(async () => {
+      throw new InvalidCronExprError("bogus", "not a cron");
+    });
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/preview");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("InvalidCronExprError");
   });
 });

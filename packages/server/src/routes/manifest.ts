@@ -278,13 +278,27 @@ export interface SchedulePathParams {
 }
 
 /**
+ * GET /api/workspaces/:id/schedules/:sid response. Mirrors `Schedule`
+ * but adds a derived `describe` field (zh_CN human-readable cron text)
+ * so the dashboard and `emploke schedule show` can render it without
+ * a second round-trip. The field is computed on the response — it is
+ * NOT persisted on the entity (the underlying cron expression is the
+ * single source of truth; persisting `describe` would require keeping
+ * it in sync on every patch + a migration).
+ */
+export interface ScheduleGetResponse extends Schedule {
+  readonly describe: string;
+}
+
+/**
  * GET /api/workspaces/:id/schedules/:sid/preview query params.
  *
- * `n` is optional and validated as integer in [1, 50]. NOTE: the
- * underlying `ScheduleService.preview` is fixed at 3 next-fire
- * computations in v1; the route slices the resulting `nextRuns` array
- * down to `min(n, 3)`. Honouring N > 3 requires a schedule-pkg change
- * which is intentionally deferred to a follow-up PR.
+ * `n` is optional and validated as integer in `[1, 100]` at both the
+ * route boundary and inside `ScheduleService.preview`. The double
+ * check keeps each layer self-defending: the route emits a typed 400
+ * envelope before reaching the service; the service still rejects an
+ * out-of-range value if invoked directly (tests, future programmatic
+ * users).
  */
 export interface SchedulePreviewQuery {
   readonly n?: string;
@@ -530,7 +544,7 @@ export const ROUTES = {
     { params: WorkspacePathParams; body: ScheduleCreateBody },
     Schedule
   >("POST", "/api/workspaces/:id/schedules"),
-  "schedules.get": defineRoute<{ params: SchedulePathParams }, Schedule>(
+  "schedules.get": defineRoute<{ params: SchedulePathParams }, ScheduleGetResponse>(
     "GET",
     "/api/workspaces/:id/schedules/:sid",
   ),
@@ -560,7 +574,7 @@ export const ROUTES = {
   /**
    * Read-only — compute the next N fires for this schedule from now,
    * plus a zh_CN human-readable description of the cron expression.
-   * Does not touch state. `n` is capped at 3 in v1 (see
+   * Does not touch state. `n` is bounded in `[1, 100]` (see
    * {@link SchedulePreviewQuery}).
    */
   "schedules.preview": defineRoute<

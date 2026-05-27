@@ -3,6 +3,7 @@ import { assertValidCronExpr, assertValidTimezone, describeCron, nextRuns } from
 import {
   AgentNotFoundError,
   ScheduleEnabledError,
+  ScheduleError,
   ScheduleHasInFlightError,
   ScheduleNotFoundError,
 } from "./errors.js";
@@ -164,11 +165,25 @@ export class ScheduleService {
     return { taskId };
   }
 
-  async preview(expr: string, tz: string): Promise<PreviewResult> {
+  /**
+   * Compute the next `n` fires for `expr` in `tz` plus a human-readable
+   * description. `n` is optional and defaults to 3 (the legacy v1
+   * fixed count) so existing 2-arg call sites keep working unchanged.
+   *
+   * `n` is bounded to `[1, 100]` to avoid O(n) explosion if a caller
+   * (route layer, JSON-RPC manifest, future programmatic user) passes
+   * an unbounded value. The route's `?n=` query enforces the same
+   * range, so callers see the typed `ScheduleError` envelope before
+   * they reach the cron engine.
+   */
+  async preview(expr: string, tz: string, n = 3): Promise<PreviewResult> {
     assertValidCronExpr(expr);
     assertValidTimezone(tz);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      throw new ScheduleError(`preview n must be an integer in [1, 100], got ${n}`);
+    }
     const describe = describeCron(expr);
-    const nextRunsArr = nextRuns(expr, tz, this.now(), 3);
+    const nextRunsArr = nextRuns(expr, tz, this.now(), n);
     return { describe, nextRuns: nextRunsArr };
   }
 

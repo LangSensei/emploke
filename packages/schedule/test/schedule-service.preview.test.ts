@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { InvalidCronExprError, InvalidTimezoneError } from "../src/errors.js";
+import { InvalidCronExprError, InvalidTimezoneError, ScheduleError } from "../src/errors.js";
 import { makeScheduleTestHandle, type ScheduleTestHandle } from "./_helpers.js";
 
 describe("ScheduleService.preview", () => {
@@ -14,7 +14,7 @@ describe("ScheduleService.preview", () => {
     h.close();
   });
 
-  it("returns 3 ISO timestamps in ascending order", async () => {
+  it("returns 3 ISO timestamps in ascending order (default n)", async () => {
     const result = await h.service.preview("0 9 * * *", "UTC");
     expect(result.nextRuns).toHaveLength(3);
     expect(result.nextRuns[0]).toBe("2026-05-01T09:00:00.000Z");
@@ -26,6 +26,31 @@ describe("ScheduleService.preview", () => {
     const result = await h.service.preview("0 9 * * *", "UTC");
     expect(result.describe.length).toBeGreaterThan(0);
     expect(/[\u4e00-\u9fa5]/.test(result.describe)).toBe(true);
+  });
+
+  it("honours an explicit n=1", async () => {
+    const result = await h.service.preview("0 9 * * *", "UTC", 1);
+    expect(result.nextRuns).toHaveLength(1);
+    expect(result.nextRuns[0]).toBe("2026-05-01T09:00:00.000Z");
+  });
+
+  it("honours an explicit n=10", async () => {
+    const result = await h.service.preview("0 9 * * *", "UTC", 10);
+    expect(result.nextRuns).toHaveLength(10);
+    expect(result.nextRuns[0]).toBe("2026-05-01T09:00:00.000Z");
+    expect(result.nextRuns[9]).toBe("2026-05-10T09:00:00.000Z");
+  });
+
+  it("rejects n=0 with ScheduleError", async () => {
+    await expect(h.service.preview("0 9 * * *", "UTC", 0)).rejects.toBeInstanceOf(ScheduleError);
+  });
+
+  it("rejects n above upper bound (101) with ScheduleError", async () => {
+    await expect(h.service.preview("0 9 * * *", "UTC", 101)).rejects.toBeInstanceOf(ScheduleError);
+  });
+
+  it("rejects non-integer n with ScheduleError", async () => {
+    await expect(h.service.preview("0 9 * * *", "UTC", 2.5)).rejects.toBeInstanceOf(ScheduleError);
   });
 
   it("rejects 6-field cron with the locked literal phrase", async () => {

@@ -10,24 +10,26 @@
  * per-request context. The route file never touches workspace
  * resolution, only the schedule surface.
  *
- * Deliberate deviations from the brief:
+ * Notes:
  *
  *   - `GET /:sid` — `ScheduleService.get(sid)` returns `Schedule | null`
  *     rather than throwing on miss. The handler maps `null` to a
  *     `ScheduleNotFoundError`-shaped 404 envelope so dashboards /
- *     CLIs can `instanceof`-branch off the wire `code`.
- *   - `GET /:sid/preview` — `ScheduleService.preview` in v1 takes
- *     `(expr, tz)` and is hardcoded to 3 next-fire computations
- *     (per `packages/schedule/src/schedule-service.ts:167-173`). The
- *     handler looks up the entity, calls `preview(expr, tz)`, then
- *     slices `nextRuns` to `min(n, 3)`. A configurable N > 3 needs
- *     a schedule-pkg change (out of scope for this PR; see
- *     `SchedulePreviewQuery`).
+ *     CLIs can `instanceof`-branch off the wire `code`. The success
+ *     payload is enriched with a derived `describe` (zh_CN cron text)
+ *     so callers can render it without a second round-trip; the
+ *     field is computed from `trigger.expr`, NOT persisted.
+ *   - `GET /:sid/preview` — `?n=` is bounded in `[1, 100]` at both
+ *     the route boundary and inside `ScheduleService.preview` (see
+ *     `packages/schedule/src/schedule-service.ts`). Out-of-range
+ *     emits a typed 400 envelope; in-range plumbs straight through.
  */
 
 import {
   type CreateScheduleArgs,
+  describeCron,
   type PatchScheduleArgs,
+  ScheduleError,
   ScheduleNotFoundError,
   type ScheduleService,
 } from "@emploke/schedule";
@@ -164,7 +166,11 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
         const notFound = new ScheduleNotFoundError(sid);
         return c.json(errorBody(notFound), 404);
       }
-      return c.json(found);
+      // Enrich with derived cron `describe` so dashboards / CLI `show`
+      // can render the human-readable text without a second round-trip.
+      // NOT persisted on the entity — `trigger.expr` is the single
+      // source of truth.
+      return c.json({ ...found, describe: describeCron(found.trigger.expr) });
     } catch (err) {
       const { status, isUnmapped } = resolveErrorStatus(err);
       if (status >= 500) logFault(c, err, "schedules.get: 5xx fault");
@@ -225,19 +231,19 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
   });
 
   // ── GET /:sid/preview ─────────────────────────────────────────────
-  // The schedule-pkg's `preview(expr, tz)` is hardcoded to 3 fires in
-  // v1; this handler validates `n` in [1, 50] but the result is
-  // effectively capped at 3 until the underlying service grows an
-  // optional `n` parameter (out of scope for this PR — see
-  // SchedulePreviewQuery for the contract note).
+  // `?n=` is bounded in `[1, 100]` here AND inside
+  // `ScheduleService.preview` — see the service for the second-layer
+  // check. Out-of-range emits a typed 400 envelope (code:
+  // `ScheduleError`) before the service is touched; in-range plumbs
+  // straight through.
   app.get("/:sid/preview", async (c) => {
     const sid = c.req.param("sid");
     const nRaw = c.req.query("n");
     let n: number | undefined;
     if (nRaw !== undefined) {
       const parsed = Number.parseInt(nRaw, 10);
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 50 || `${parsed}` !== nRaw) {
-        return c.json({ error: "n must be an integer in [1, 50]" }, 400);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100 || `${parsed}` !== nRaw) {
+        return c.json(errorBody(new ScheduleError("n must be an integer in [1, 100]")), 400);
       }
       n = parsed;
     }
@@ -248,10 +254,7 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
         const notFound = new ScheduleNotFoundError(sid);
         return c.json(errorBody(notFound), 404);
       }
-      const preview = await service.preview(entity.trigger.expr, entity.trigger.tz);
-      if (n !== undefined && preview.nextRuns.length > n) {
-        return c.json({ describe: preview.describe, nextRuns: preview.nextRuns.slice(0, n) });
-      }
+      const preview = await service.preview(entity.trigger.expr, entity.trigger.tz, n ?? 3);
       return c.json(preview);
     } catch (err) {
       const { status, isUnmapped } = resolveErrorStatus(err);

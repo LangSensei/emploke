@@ -137,7 +137,17 @@ export async function scheduleShow(opts: ScheduleShowOpts): Promise<CommandResul
     const id = await resolveWorkspace(opts);
     const found = await client.call("schedules.get", { params: { id, sid: opts.sid } });
     const fmt = pickFormat(opts, "table");
-    const stdout = fmt === "json" ? formatJson(found) : formatRecord({ ...found });
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(found) };
+    // Surface `describe` (the derived zh_CN cron text the server
+    // adds to GET /:sid) right after `name` so it lands above the
+    // structured `trigger` / `target` JSON blobs in the table view.
+    const { id: foundId, name, describe, ...rest } = found;
+    const stdout = formatRecord({
+      id: foundId,
+      name,
+      describe: describe ?? "(no description)",
+      ...rest,
+    });
     return { exitCode: 0, stdout };
   } catch (err) {
     return formatError(err);
@@ -223,7 +233,7 @@ export async function scheduleRun(opts: ScheduleRunOpts): Promise<CommandResult>
 // ─── preview ───────────────────────────────────────────────────────────
 export interface SchedulePreviewOpts extends CommonFlags {
   readonly sid: string;
-  /** Number of upcoming fires to compute (1..50). Capped at 3 in v1. */
+  /** Number of upcoming fires to compute (1..100). */
   readonly n?: number;
 }
 
@@ -231,8 +241,8 @@ export async function schedulePreview(opts: SchedulePreviewOpts): Promise<Comman
   if (typeof opts.sid !== "string" || opts.sid.trim() === "") {
     return { exitCode: 2, stderr: "schedule id is required\n" };
   }
-  if (opts.n !== undefined && (!Number.isInteger(opts.n) || opts.n < 1 || opts.n > 50)) {
-    return { exitCode: 2, stderr: "-n must be an integer in [1, 50]\n" };
+  if (opts.n !== undefined && (!Number.isInteger(opts.n) || opts.n < 1 || opts.n > 100)) {
+    return { exitCode: 2, stderr: "-n must be an integer in [1, 100]\n" };
   }
   const client = await makeClient(opts);
   try {

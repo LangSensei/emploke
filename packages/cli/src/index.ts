@@ -470,10 +470,8 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     });
   withWorkspaceFlags(scheduleCmd.command("preview"))
     .argument("<sid>", "Schedule id")
-    .description("Show next fire times + cron description (capped at 3 in v1)")
-    .option("-n <count>", "Number of fires to compute (1..50; effective max 3 in v1)", (v) =>
-      Number.parseInt(v, 10),
-    )
+    .description("Show next fire times + cron description")
+    .option("-n <count>", "Number of fires to compute (1..100)", (v) => Number.parseInt(v, 10))
     .action(async (sid: string, opts: Record<string, unknown>) => {
       const n = typeof opts.n === "number" ? opts.n : undefined;
       slot.result = await schedulePreview({

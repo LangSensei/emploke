@@ -16,6 +16,7 @@ export {
   type ScheduleModule,
   type ScheduleModuleOptions,
 } from "./compose.js";
+export { describeCron } from "./cron.js";
 export {
   AgentNotFoundError,
   InvalidCronExprError,
