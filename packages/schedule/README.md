@@ -1,0 +1,74 @@
+# @emploke/schedule
+
+Cron-triggered task dispatch as a substrate-side referee. Owns one
+table — `schedules` — plus the entity invariants (5-field cron only,
+UUID v4 ids, target/trigger discriminated unions) and the
+`ScheduleService` surface (reads + writes + `recover()` +
+`shutdown()` + `preview()` + `run()`).
+
+v1 locks `target.kind` to `"task"` and `trigger.kind` to `"cron"`;
+both unions are designed for additive extension (`"workflow"` target,
+`"interval"` trigger) without a schema bump.
+
+No HTTP / CLI / dashboard surface — those land in follow-up PRs:
+PR 3 (server + REST + CLI), PR 4 (dashboard).
+
+## Layout
+
+Standard `packages/_template` shape plus one net-new file `cron.ts`:
+
+```
+packages/schedule/
+├── drizzle.config.ts
+├── package.json
+├── README.md
+├── tsconfig.json
+├── vitest.config.ts
+├── drizzle/0000_*.sql       Drizzle-kit generated migration (committed)
+└── src/
+    ├── compose.ts            composeScheduleModule({ dbFile, taskDispatcher, agentValidator })
+    ├── cron.ts               croner + cronstrue wrapper (validate / nextRuns / describe)
+    ├── errors.ts             8 named error classes
+    ├── index.ts              public barrel
+    ├── migrations.ts         AUTO-GENERATED inlined SQL
+    ├── schedule-entity.ts    ScheduleEntity factory + invariants + DTO projection
+    ├── schedule-repository.ts Drizzle CRUD (private)
+    ├── schedule-service.ts   ScheduleService reads + writes + timer chain
+    ├── schema.ts             Drizzle table definition (private)
+    ├── testing.ts            openTestScheduleDb() in-memory test helper
+    ├── types.ts              wire DTOs, ScheduleTrigger/ScheduleTarget, TaskDispatcher
+    └── validate.ts           SCHEDULE_ID_RE + generateScheduleId
+```
+
+## Invariants
+
+1. **Cron dialect** — 5-field POSIX only. 6-field expressions are
+   rejected with `InvalidCronExprError` carrying the literal phrase
+   `"6-field cron not supported in v1"`.
+2. **Concurrency = 1** — if `taskDispatcher.hasInFlightForSchedule(id)`
+   returns `true` at fire time, the tick is skipped (warn-logged) and
+   re-armed without writing `last_fired_at`.
+3. **Catchup-once** — `recover()` collapses every missed fire into a
+   single catchup dispatch with `metadata.firedAt` set to the planned
+   (past) time, not `now`.
+4. **Hard delete with guards** — `delete()` throws
+   `ScheduleEnabledError` if `enabled === true`, and
+   `ScheduleHasInFlightError` if a dispatched task is still running.
+5. **Manual `run()` bypasses `enabled`** — manual fires are
+   user-initiated and ignore the concurrency check.
+6. **Patch never affects in-flight tasks** — only the trigger / arm
+   state is recomputed; dispatched tasks continue under
+   `@emploke/task`'s lifecycle.
+
+## Wiring
+
+`composeScheduleModule({ dbFile, taskDispatcher, agentValidator })` is
+the only production composition path:
+
+- `taskDispatcher` — any object satisfying the `TaskDispatcher`
+  interface. PR 3 adapts `@emploke/task`'s
+  `TaskService.dispatch(opts)` + `TaskService.hasInFlightForSchedule(id)`
+  structurally; this package never imports `@emploke/task` directly.
+- `agentValidator(fqn)` — async predicate; resolves on success,
+  rejects on missing agent. PR 3 binds it to `CatalogService`.
+- Optional `now` / `randomUUID` are deterministic-test seams.
