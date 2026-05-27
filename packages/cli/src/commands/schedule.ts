@@ -306,8 +306,7 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     let current: Awaited<ReturnType<typeof client.call<"schedules.get">>> | undefined;
     const needCurrentForTrigger =
       touchesTrigger && !(opts.cron !== undefined && opts.tz !== undefined);
-    const needCurrentForTarget =
-      touchesTarget && !(opts.agent !== undefined && opts.instructions !== undefined);
+    const needCurrentForTarget = touchesTarget;
     if (needCurrentForTrigger || needCurrentForTarget) {
       current = await client.call("schedules.get", { params: { id, sid: opts.sid } });
     }
