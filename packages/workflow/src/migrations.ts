@@ -10,17 +10,17 @@ import type { MigrationMeta } from "drizzle-orm/migrator";
 export const MIGRATIONS: readonly MigrationMeta[] = [
   {
     sql: [
-      "CREATE TABLE `workflows` (\r\n\t`id` text PRIMARY KEY NOT NULL,\r\n\t`brief` text NOT NULL,\r\n\t`details` text,\r\n\t`status` text NOT NULL,\r\n\t`outcome` text,\r\n\t`metadata` text DEFAULT '{}' NOT NULL,\r\n\t`created_at` text NOT NULL,\r\n\t`started_at` text,\r\n\t`archived_at` text\r\n);\r\n",
-      "\r\nCREATE TABLE `workflow_nodes` (\r\n\t`id` text PRIMARY KEY NOT NULL,\r\n\t`workflow_id` text NOT NULL,\r\n\t`type` text DEFAULT 'task' NOT NULL,\r\n\t`status` text NOT NULL,\r\n\t`spec` text DEFAULT '{}' NOT NULL,\r\n\t`data` text DEFAULT '{}' NOT NULL,\r\n\t`created_at` text NOT NULL,\r\n\t`ready_at` text,\r\n\t`running_at` text,\r\n\t`ended_at` text\r\n);\r\n",
-      "\r\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
-      "\r\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
-      "\r\nCREATE TABLE `workflow_edges` (\r\n\t`workflow_id` text NOT NULL,\r\n\t`from_node_id` text NOT NULL,\r\n\t`to_node_id` text NOT NULL,\r\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\r\n);\r\n",
-      "\r\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
-      "\r\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\r\n"
+      "CREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`details` text,\n\t`status` text NOT NULL,\n\t`outcome` text,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`started_at` text,\n\t`archived_at` text\n);\n",
+      "\nCREATE TABLE `workflow_nodes` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workflow_id` text NOT NULL,\n\t`type` text DEFAULT 'task' NOT NULL,\n\t`status` text NOT NULL,\n\t`spec` text DEFAULT '{}' NOT NULL,\n\t`data` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`ready_at` text,\n\t`running_at` text,\n\t`ended_at` text\n);\n",
+      "\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
+      "\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
+      "\nCREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
+      "\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
+      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\n"
     ],
     bps: true,
     folderMillis: 1,
-    hash: "d53fece24e28444f0a986d78efe0f247498d6eec0abeaeb955399e9732e3c25e",
+    hash: "6e95eb00c1e13b2671a7c78313ab0c1a816dab78bb9c4e436c3cae23d9606c2a",
   },
 ];
 
