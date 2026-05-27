@@ -61,10 +61,12 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
-      "esbuild"
+      "esbuild",
+      "msw"
     ],
     "overrides": {
-      "better-sqlite3": "^12.10.0"
+      "better-sqlite3": "^12.10.0",
+      "mute-stream": "^3.0.0"
     }
   }
 }

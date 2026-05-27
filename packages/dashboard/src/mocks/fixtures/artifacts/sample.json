@@ -1,0 +1,11 @@
+{
+  "name": "designer-mode-sample",
+  "kind": "artifact",
+  "summary": "Hand-authored MSW fixture used by the dashboard's designer mode.",
+  "counts": {
+    "agents": 3,
+    "skills": 6,
+    "tasks": 6
+  },
+  "tags": ["mock", "fixture", "designer-mode"]
+}

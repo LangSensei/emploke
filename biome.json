@@ -13,7 +13,8 @@
       "**/*.json",
       "!**/dist",
       "!**/node_modules",
-      "!docs"
+      "!docs",
+      "!**/public/mockServiceWorker.js"
     ]
   },
   "formatter": {
