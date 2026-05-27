@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type TaskRecord, taskArtifactUrl } from "../../../api";
 import { FileViewer } from "../../viewers/FileViewer";
-import { pickViewer, viewerNeedsBlob } from "../../viewers/index";
+import { viewerNeedsBlob } from "../../viewers/index";
 
 export interface ArtifactsTabProps {
   task: TaskRecord;
@@ -47,10 +47,12 @@ export function ArtifactsTab({ task }: ArtifactsTabProps) {
   const [fetchState, setFetchState] = useState<FetchState>({ status: "idle" });
   const abortRef = useRef<AbortController | null>(null);
 
-  // Auto-select when there's exactly one artifact so the common case
-  // (a single report) renders immediately without a manual click.
+  // Auto-select the first artifact whenever there is one and nothing is
+  // selected yet. With the dropdown selector always visible (single and
+  // multi-artifact cases), this avoids a blank preview pane on mount —
+  // the user can still change the selection via the <select>.
   useEffect(() => {
-    if (artifacts.length === 1 && selected === null) {
+    if (artifacts.length > 0 && selected === null) {
       setSelected(artifacts[0]!.name);
     }
   }, [artifacts, selected]);
@@ -119,46 +121,37 @@ export function ArtifactsTab({ task }: ArtifactsTabProps) {
     );
   }
   return (
-    <div className="task-detail__body artifacts-split">
-      <div className="artifacts-split__list">
-        <ul className="artifact-list">
-          {artifacts.map((a, idx) => {
-            const isActive = a.name === selected;
-            return (
-              <li
-                // biome-ignore lint/suspicious/noArrayIndexKey: artifact list is render-only; ordering is server-stable and items are not reordered.
-                key={`${a.url}-${idx}`}
-                className={`artifact-list__item${isActive ? " artifact-list__item--active" : ""}`}
-              >
-                <span className="artifact-list__icon" aria-hidden="true">
-                  📄
-                </span>
-                <div className="artifact-list__main">
-                  <button
-                    type="button"
-                    onClick={() => handleSelect(a.name)}
-                    className="artifact-list__name artifact-list__name--button"
-                    aria-pressed={isActive}
-                  >
-                    {a.name}
-                  </button>
-                </div>
-                <a
-                  href={a.url}
-                  className="artifact-list__download"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  download={a.name}
-                  title={`Download ${a.name}`}
-                >
-                  Download
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-      <div className="artifacts-split__preview">
+    <div className="task-detail__body artifacts-pane">
+      <header className="artifacts-pane__header">
+        <label className="artifacts-pane__selector-label">
+          <span className="visually-hidden">Artifact</span>
+          <select
+            className="artifacts-pane__selector"
+            value={selected ?? ""}
+            onChange={(e) => handleSelect(e.target.value)}
+            aria-label="Select artifact"
+          >
+            {artifacts.map((a) => (
+              <option key={a.url} value={a.name}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <a
+          href={selected ? taskArtifactUrl(task.id, selected) : "#"}
+          className={`artifacts-pane__download${selected ? "" : " artifacts-pane__download--disabled"}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          download={selected ?? undefined}
+          aria-disabled={selected ? undefined : true}
+          tabIndex={selected ? undefined : -1}
+          title={selected ? `Download ${selected}` : "No artifact selected"}
+        >
+          Download
+        </a>
+      </header>
+      <div className="artifacts-pane__preview">
         <ArtifactPreview
           selected={selected}
           state={fetchState}
@@ -177,9 +170,10 @@ interface ArtifactPreviewProps {
 
 function ArtifactPreview({ selected, state, downloadUrl }: ArtifactPreviewProps) {
   if (!selected) {
-    return (
-      <div className="artifact-viewer artifact-viewer--empty">Select an artifact to preview.</div>
-    );
+    // Transient: the auto-select-first effect runs on mount, so this
+    // branch is only visible for one frame. Render the spinner copy
+    // instead of "Select an artifact" to avoid a confusing flash.
+    return <div className="artifact-viewer artifact-viewer--empty">Loading…</div>;
   }
   if (state.status === "loading") {
     return (
@@ -195,11 +189,11 @@ function ArtifactPreview({ selected, state, downloadUrl }: ArtifactPreviewProps)
   if (state.status === "loaded") {
     // Force-remount the viewer on selection change so internal state
     // (object URLs, JSON parsing memo, iframe doc) does not leak across
-    // artifacts even if the dispatcher resolves to the same component.
-    const kind = pickViewer(selected);
+    // artifacts. Keying on the filename is sufficient: changing files
+    // implies a different viewer kind in practice.
     return (
       <FileViewer
-        key={`${selected}:${kind}`}
+        key={selected}
         filename={selected}
         content={state.content}
         size={state.size}

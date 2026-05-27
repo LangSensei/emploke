@@ -56,10 +56,18 @@ describe("ArtifactsTab", () => {
     expect(calledUrl).toContain("/tasks/task-abc/artifact/notes.md");
   });
 
-  it("does NOT auto-select when there are multiple artifacts", () => {
+  it("auto-selects the first artifact and renders the dropdown when there are multiple", async () => {
+    fetchMock.mockResolvedValue(new Response("body", { status: 200 }));
     render(<ArtifactsTab task={makeTask(["/a/one.md", "/a/two.md"])} />);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText(/Select an artifact/i)).toBeTruthy();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    const select = screen.getByRole("combobox", { name: /select artifact/i });
+    expect((select as HTMLSelectElement).value).toBe("one.md");
+    expect(screen.getByRole("option", { name: "one.md" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "two.md" })).toBeTruthy();
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain("/tasks/task-abc/artifact/one.md");
   });
 
   it("aborts the prior in-flight fetch when the selection changes", async () => {
@@ -73,35 +81,60 @@ describe("ArtifactsTab", () => {
 
     render(<ArtifactsTab task={makeTask(["/a/one.md", "/a/two.md"])} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "one.md" }));
+    // Auto-select-first fires on mount, so the first fetch is for one.md
+    // without any user interaction.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole("button", { name: "two.md" }));
+    const select = screen.getByRole("combobox", { name: /select artifact/i });
+    fireEvent.change(select, { target: { value: "two.md" } });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(signals[0]?.aborted).toBe(true);
     expect(signals[1]?.aborted).toBe(false);
   });
 
-  it("keeps the per-row Download link as a permanent affordance", () => {
-    render(<ArtifactsTab task={makeTask(["/a/one.bin"])} />);
-    const links = screen.getAllByRole("link", { name: /Download/i });
-    expect(links.length).toBeGreaterThan(0);
-    expect(links[0]?.getAttribute("href")).toContain("/tasks/task-abc/artifact/one.bin");
+  it("renders a single Download link whose href reflects the current selection", async () => {
+    fetchMock.mockResolvedValue(new Response("body", { status: 200 }));
+    render(<ArtifactsTab task={makeTask(["/a/one.md", "/a/two.md"])} />);
+
+    await waitFor(() => {
+      const link = screen.getByRole("link", { name: /download/i });
+      expect(link.getAttribute("href")).toContain("/tasks/task-abc/artifact/one.md");
+    });
+
+    const select = screen.getByRole("combobox", { name: /select artifact/i });
+    fireEvent.change(select, { target: { value: "two.md" } });
+
+    await waitFor(() => {
+      const link = screen.getByRole("link", { name: /download/i });
+      expect(link.getAttribute("href")).toContain("/tasks/task-abc/artifact/two.md");
+    });
   });
 
-  it("renders the split layout with the artifacts-split class hooks (v4 Bug 3 layout)", () => {
-    // PR #189 polish v4 Bug 3 — the split-pane CSS contract relies on
-    // these three class names being present on the container and its
-    // two children. Without them the v4 `.artifacts-split` rules
-    // (capped left column, stretched height) never bind.
+  it("renders the dropdown with a single option for the one-artifact case", async () => {
+    fetchMock.mockResolvedValue(new Response("body", { status: 200 }));
+    render(<ArtifactsTab task={makeTask(["/a/only.bin"])} />);
+    const select = screen.getByRole("combobox", { name: /select artifact/i });
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect((options[0] as HTMLOptionElement).value).toBe("only.bin");
+    await waitFor(() => {
+      expect((select as HTMLSelectElement).value).toBe("only.bin");
+    });
+  });
+
+  it("renders the pane layout with the artifacts-pane class hooks", () => {
+    // The CSS contract relies on these class names being present on the
+    // container, its header, and its preview pane. Without them the
+    // `.artifacts-pane` rules (full-height column, dropdown header,
+    // full-bleed preview) never bind.
     const { container } = render(<ArtifactsTab task={makeTask(["/tmp/notes.md"])} />);
-    const split = container.querySelector(".artifacts-split");
-    expect(split).toBeTruthy();
+    const pane = container.querySelector(".artifacts-pane");
+    expect(pane).toBeTruthy();
     // The root is also the task-detail body so the parent chain
     // (`.tasks-pane__detail > .task-detail__body`) supplies a
-    // determinate height for the new `height: 100%` rule to consume.
-    expect(split?.classList.contains("task-detail__body")).toBe(true);
-    expect(split?.querySelector(".artifacts-split__list")).toBeTruthy();
-    expect(split?.querySelector(".artifacts-split__preview")).toBeTruthy();
+    // determinate height for the `height: 100%` rule to consume.
+    expect(pane?.classList.contains("task-detail__body")).toBe(true);
+    expect(pane?.querySelector(".artifacts-pane__header")).toBeTruthy();
+    expect(pane?.querySelector(".artifacts-pane__preview")).toBeTruthy();
   });
 });

@@ -3893,63 +3893,70 @@ button {
   align-items: center;
 }
 
-.artifact-list {
-  list-style: none;
-  margin: 0;
-  padding: var(--space-4);
+/* ─── Artifact preview pane (vertical stack: header + full-bleed preview) ─── */
+
+/* Vertical layout: top header (dropdown selector + Download button) over
+   a full-bleed preview pane. PR #189 polish v5 — replaced the legacy
+   `.artifacts-split` 2-column grid (sidebar + preview) with this
+   dropdown-driven layout because the sidebar wasted ~25% of horizontal
+   width on a list that is usually one filename, and the previous 560px
+   height clamps on iframe / code / text viewers cropped HTML reports.
+   The parent chain that supplies the determinate height is
+   `.tasks-pane__detail > .task-detail__body` (the ArtifactsTab root
+   wears both classes). `min-height: 0` is load-bearing in flex layouts:
+   without it the preview's `overflow: auto` cannot bind because the
+   flex child's implicit min-height equals its content size. */
+.artifacts-pane {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-}
-.artifact-list__item {
-  display: flex;
-  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-.artifact-list__icon { font-size: 18px; }
-.artifact-list__main { flex: 1; min-width: 0; }
-.artifact-list__name {
-  font-size: 13px;
-  color: var(--color-text);
-  word-break: break-all;
-}
-.artifact-list__size {
-  font-size: 11px;
-  color: var(--color-text-subtle);
-}
-
-/* ─── Artifact preview split-pane + viewers ──────────────────────── */
-
-/* Split layout: left file list (capped 240px) / right preview pane.
-   Fixed ratio (resizable split is explicit non-goal for this commit).
-   PR #189 polish v4 Bug 3 — capped the left column at 240px because
-   30% of the detail pane was far more than artifact filenames need;
-   dropped the 600px height caps on both children and switched to a
-   100%-height stretch container so the preview pane fills the full
-   detail-pane height instead of leaving whitespace below. The
-   parent chain that supplies the determinate height is
-   `.tasks-pane__detail > .task-detail__body` (the ArtifactsTab root
-   wears both classes — see `tasks-pane__detail > .task-detail__body`
-   rule below for the flex: 1 / min-height: 0 / overflow: auto). */
-.artifacts-split {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
-  gap: var(--space-3);
-  align-items: stretch;
   height: 100%;
   min-height: 0;
 }
-.artifacts-split__list {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
+.artifacts-pane__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
 }
-.artifacts-split__preview {
+.artifacts-pane__selector-label {
+  flex: 1 1 auto;
   min-width: 0;
+}
+.artifacts-pane__selector {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font: inherit;
+  cursor: pointer;
+}
+.artifacts-pane__selector:focus-visible {
+  outline: 2px solid var(--color-accent, var(--color-text));
+  outline-offset: 1px;
+}
+.artifacts-pane__download {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface);
+}
+.artifacts-pane__download:hover {
+  color: var(--color-text);
+}
+.artifacts-pane__download--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.artifacts-pane__preview {
+  flex: 1 1 auto;
   min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -3959,36 +3966,10 @@ button {
   display: flex;
   flex-direction: column;
 }
-.artifacts-split__preview > * {
+.artifacts-pane__preview > * {
   flex: 1 1 auto;
   min-height: 0;
 }
-
-.artifact-list__item--active {
-  border-color: var(--color-accent, var(--color-border));
-  background: var(--color-surface-elevated, var(--color-surface));
-}
-.artifact-list__name--button {
-  background: none;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  color: var(--color-text);
-  cursor: pointer;
-  text-align: left;
-  word-break: break-all;
-}
-.artifact-list__name--button:hover { text-decoration: underline; }
-.artifact-list__download {
-  font-size: 11px;
-  color: var(--color-text-subtle);
-  text-decoration: none;
-  padding: 2px 6px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm, 4px);
-}
-.artifact-list__download:hover { color: var(--color-text); }
 
 .artifact-viewer {
   font-size: 13px;
@@ -4030,7 +4011,6 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
-  max-height: 560px;
 }
 .artifact-viewer--code code {
   font: inherit;
@@ -4038,15 +4018,16 @@ button {
   padding: 0;
 }
 
-.artifact-viewer--html { padding: 0; }
+.artifact-viewer--html {
+  padding: 0;
+  height: 100%;
+}
 .artifact-viewer__iframe {
   width: 100%;
-  height: 560px;
-  max-height: 560px;
+  height: 100%;
   border: 0;
   background: #fff;
   border-radius: var(--radius-sm, 4px);
-  overflow: auto;
 }
 
 .artifact-viewer--image {
@@ -4057,7 +4038,7 @@ button {
 }
 .artifact-viewer__img {
   max-width: 100%;
-  max-height: 560px;
+  max-height: 100%;
   height: auto;
   object-fit: contain;
 }
