@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
 import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
+import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
 import { composeSessionModule, type SessionService } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
 import {
@@ -13,6 +14,8 @@ import {
 } from "@emploke/terminal";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
+import { makeScheduleAgentValidator } from "./wiring/schedule-agent-validator.js";
+import { makeScheduleTaskDispatcher } from "./wiring/schedule-task-dispatcher.js";
 
 export const silentLogger: Logger = pino({ level: "silent" });
 
@@ -62,6 +65,13 @@ export interface WorkspaceContext {
   readonly catalog: CatalogService;
   readonly sessions: SessionService;
   readonly tasks: TaskService;
+  /**
+   * Per-workspace cron-driven task dispatch substrate. The timer is
+   * armed in `load()` via `service.recover()` (catchup-once on boot)
+   * and torn down before tasks in `close()` so a fire in flight
+   * doesn't race a closed `TaskService`.
+   */
+  readonly schedules: ScheduleService;
   /**
    * Build the session's interactive launch command via
    * {@link SessionService.buildInteractiveLaunch} and immediately hand
@@ -244,6 +254,7 @@ export class WorkspaceContextRegistry {
     let catalogModule: Awaited<ReturnType<typeof composeCatalogModule>>;
     let sessionModule: Awaited<ReturnType<typeof composeSessionModule>>;
     let taskModule: Awaited<ReturnType<typeof composeTaskModule>>;
+    let scheduleModule: Awaited<ReturnType<typeof composeScheduleModule>>;
     try {
       catalogModule = await composeCatalogModule({
         dbFile,
@@ -269,7 +280,24 @@ export class WorkspaceContextRegistry {
       });
       cleanup.push(() => taskModule.close());
 
+      // Schedules are composed AFTER tasks so the TaskDispatcher
+      // adapter has a live `TaskService` to bridge to. The same
+      // workspace.db file is reused (WAL-mode shared connection per
+      // ADR-3); migrations are idempotent.
+      scheduleModule = await composeScheduleModule({
+        dbFile,
+        taskDispatcher: makeScheduleTaskDispatcher(taskModule.service),
+        agentValidator: makeScheduleAgentValidator(catalogModule.service),
+        logger: this.logger,
+      });
+      cleanup.push(() => scheduleModule.close());
+
       await taskModule.service.recoverOrphaned();
+      // Schedule recovery MUST run AFTER tasks.recoverOrphaned so a
+      // catchup fire (next_fire_at in the past at boot) sees the
+      // freshly-reconciled task list when it checks
+      // hasInFlightForSchedule.
+      await scheduleModule.service.recover();
     } catch (err) {
       await teardown();
       throw err;
@@ -283,6 +311,7 @@ export class WorkspaceContextRegistry {
       catalog: catalogModule.service,
       sessions,
       tasks: taskModule.service,
+      schedules: scheduleModule.service,
       async spawnSession(sid, opts) {
         // buildInteractiveLaunch can throw (e.g.
         // RuntimeDoesNotSupportRemoteError, TrustRegistrationFailed,
@@ -322,10 +351,15 @@ export class WorkspaceContextRegistry {
       },
       async close() {
         // Per-module try/catch: a throw from one module's close()
-        // must NOT skip the other two. Earlier shape chained awaits
+        // must NOT skip the others. Earlier shape chained awaits
         // bare, so a `taskModule.close()` throw leaked the session +
         // catalog SQLite handles. Same all-or-nothing disposal idiom
         // as load()'s cleanup stack.
+        //
+        // Ordering: schedule FIRST (reverse of compose). schedule's
+        // close() awaits `service.shutdown()`, which clears the
+        // in-flight setTimeout queue; closing it before tasks means
+        // no new fires can land on a torn-down TaskService.
         //
         // Multi-error handling: the FIRST error is re-thrown so the
         // caller sees something; LATER errors are logged via the
@@ -334,6 +368,11 @@ export class WorkspaceContextRegistry {
         // discarded later errors via `void e`, contradicting the
         // comment that promised operator logging.
         const errors: unknown[] = [];
+        try {
+          await scheduleModule.close();
+        } catch (err) {
+          errors.push(err);
+        }
         try {
           await taskModule.close();
         } catch (err) {

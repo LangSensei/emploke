@@ -27,6 +27,7 @@ const silentLogger = pino({ level: "silent" });
 
 import type { Application } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
+import type { ScheduleService } from "@emploke/schedule";
 import type { SessionService } from "@emploke/session";
 import type { TaskService } from "@emploke/task";
 import { Hono } from "hono";
@@ -37,6 +38,7 @@ import { healthRoutes } from "../src/routes/health.js";
 import { type HttpMethod, listRoutes, type RouteSpec } from "../src/routes/manifest.js";
 import { runtimesRoutes } from "../src/routes/runtimes.js";
 import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
+import { schedulesRoutes } from "../src/routes/schedules.js";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 import { tasksRoutes } from "../src/routes/tasks.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
@@ -99,6 +101,13 @@ function buildAppForTest(): Hono {
   );
   app.route("/api/workspaces", scheduledTasksApp);
 
+  const schedulesApp = new Hono();
+  schedulesApp.route(
+    "/:id/schedules",
+    schedulesRoutes(() => stubScheduleService()),
+  );
+  app.route("/api/workspaces", schedulesApp);
+
   const catalogApp = new Hono();
   catalogApp.route(
     "/:id/catalog",
@@ -133,7 +142,7 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 57 entries (the current API surface)", () => {
+  it("listRoutes returns 64 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
     // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
@@ -142,7 +151,9 @@ describe("route manifest", () => {
     // Bumped 55 → 56 for issue #181's `tasks.artifact` download route.
     // Bumped 56 → 57 for #61 PR 1's `scheduledTasks.list` route
     // (split-out of the legacy `?origin=schedule` filter on `/tasks`).
-    expect(listRoutes()).toHaveLength(57);
+    // Bumped 57 → 64 for #61 PR 3's seven `schedules.*` CRUD routes
+    // (list, create, get, patch, delete, run, preview).
+    expect(listRoutes()).toHaveLength(64);
   });
 });
 
@@ -203,6 +214,14 @@ function stubTaskManager(): TaskService {
   return new Proxy({} as TaskService, {
     get() {
       throw new Error("stubTaskManager: not callable");
+    },
+  });
+}
+
+function stubScheduleService(): ScheduleService {
+  return new Proxy({} as ScheduleService, {
+    get() {
+      throw new Error("stubScheduleService: not callable");
     },
   });
 }

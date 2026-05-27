@@ -92,6 +92,21 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "TaskError",
   "InvalidTransition",
   "ManagerShuttingDownError",
+  // @emploke/schedule
+  "ScheduleError",
+  "ScheduleNotFoundError",
+  "InvalidScheduleIdError",
+  "InvalidCronExprError",
+  "InvalidTimezoneError",
+  // schedule's own `AgentNotFoundError` shares the name string with
+  // the catalog + session variants already on this list — one allow-list
+  // entry covers all three callers. The schedule class's super(...)
+  // template (`Agent "${agent}" not found`, see
+  // `packages/schedule/src/errors.ts`) is audited safe: no host paths,
+  // no caller-controlled echoes beyond the agent FQN the caller
+  // themselves provided.
+  "ScheduleEnabledError",
+  "ScheduleHasInFlightError",
   // @emploke/terminal (surface via /:id/spawn)
   "NoTerminalFoundError",
   "TerminalSpawnFailedError",

@@ -1,5 +1,5 @@
 import { Cron } from "croner";
-import cronstrue from "cronstrue/i18n";
+import cronstrue from "cronstrue/i18n.js";
 import { InvalidCronExprError, InvalidTimezoneError } from "./errors.js";
 
 const FIVE_FIELD_RE = /^\s*\S+\s+\S+\s+\S+\s+\S+\s+\S+\s*$/;

@@ -43,6 +43,7 @@ import type {
   SkillMetadataPatch,
 } from "@emploke/catalog";
 import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
+import type { PreviewResult, Schedule } from "@emploke/schedule";
 import type { Session } from "@emploke/session";
 import type { Task, TaskStatus } from "@emploke/task";
 import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
@@ -216,6 +217,91 @@ export interface ScheduledTaskListQuery {
   readonly status?: string;
   /** Exact match on `metadata.scheduleId`. */
   readonly scheduleId?: string;
+}
+
+/** GET /api/workspaces/:id/schedules query params. */
+export interface ScheduleListQuery {
+  /** Filter to schedules whose `target.agent` matches this exact value. */
+  readonly agent?: string;
+  /** Filter on `enabled` flag. `"true"` / `"false"` (string per query convention). */
+  readonly enabled?: "true" | "false";
+}
+
+/**
+ * POST /api/workspaces/:id/schedules body. Mirrors `CreateScheduleArgs`
+ * from `@emploke/schedule` — the route validates the wire shape and
+ * forwards to `ScheduleService.create`.
+ *
+ * `trigger.tz` is required at the wire layer (the schedule service
+ * itself does NOT default a timezone — every fire is timezone-anchored,
+ * so the user must commit to one explicitly). If callers want UTC,
+ * they pass `"UTC"`.
+ */
+export interface ScheduleCreateBody {
+  readonly name: string;
+  readonly target: {
+    readonly kind: "task";
+    readonly agent: string;
+    readonly instructions: string;
+    readonly runtime?: string;
+  };
+  readonly trigger: {
+    readonly kind: "cron";
+    readonly expr: string;
+    readonly tz: string;
+  };
+  readonly enabled?: boolean;
+}
+
+/**
+ * PATCH /api/workspaces/:id/schedules/:sid body. Every field optional;
+ * server forwards the bag to `ScheduleService.patch` which applies a
+ * shallow merge under the same validation rules as create.
+ *
+ * The full `target` / `trigger` subtree, if present, replaces the
+ * existing one wholesale (no per-leaf merge under `target` / `trigger`
+ * — keeps the shape unambiguous and matches `schedule-service.ts`).
+ */
+export interface SchedulePatchBody {
+  readonly name?: string;
+  readonly target?: ScheduleCreateBody["target"];
+  readonly trigger?: ScheduleCreateBody["trigger"];
+  readonly enabled?: boolean;
+}
+
+/** Path params for per-schedule routes. */
+export interface SchedulePathParams {
+  /** Workspace id (UUID). */
+  readonly id: string;
+  /** Schedule id (UUID v4). */
+  readonly sid: string;
+}
+
+/**
+ * GET /api/workspaces/:id/schedules/:sid response. Mirrors `Schedule`
+ * but adds a derived `describe` field (zh_CN human-readable cron text)
+ * so the dashboard and `emploke schedule show` can render it without
+ * a second round-trip. The field is computed on the response — it is
+ * NOT persisted on the entity (the underlying cron expression is the
+ * single source of truth; persisting `describe` would require keeping
+ * it in sync on every patch + a migration).
+ */
+export interface ScheduleGetResponse extends Schedule {
+  readonly describe: string;
+}
+
+/**
+ * GET /api/workspaces/:id/schedules/:sid/preview query params.
+ *
+ * `n` is optional and validated as integer in `[1, 100]` at both the
+ * route boundary and inside `ScheduleService.preview`. The double
+ * check keeps each layer self-defending: the route emits a typed 400
+ * envelope before reaching the service; the service still rejects an
+ * out-of-range value if invoked directly (tests, future programmatic
+ * users).
+ */
+export interface SchedulePreviewQuery {
+  readonly n?: string;
 }
 
 /** POST /api/workspaces/:id/tasks body. */
@@ -448,6 +534,53 @@ export const ROUTES = {
     { params: WorkspacePathParams; query: ScheduledTaskListQuery },
     readonly Task[]
   >("GET", "/api/workspaces/:id/scheduled-tasks"),
+
+  // ── schedules (workspace-scoped) ───────────────────────────────────
+  "schedules.list": defineRoute<
+    { params: WorkspacePathParams; query: ScheduleListQuery },
+    readonly Schedule[]
+  >("GET", "/api/workspaces/:id/schedules"),
+  "schedules.create": defineRoute<
+    { params: WorkspacePathParams; body: ScheduleCreateBody },
+    Schedule
+  >("POST", "/api/workspaces/:id/schedules"),
+  "schedules.get": defineRoute<{ params: SchedulePathParams }, ScheduleGetResponse>(
+    "GET",
+    "/api/workspaces/:id/schedules/:sid",
+  ),
+  "schedules.patch": defineRoute<{ params: SchedulePathParams; body: SchedulePatchBody }, Schedule>(
+    "PATCH",
+    "/api/workspaces/:id/schedules/:sid",
+  ),
+  "schedules.delete": defineRoute<{ params: SchedulePathParams }, OkResponse>(
+    "DELETE",
+    "/api/workspaces/:id/schedules/:sid",
+  ),
+  /**
+   * Manual fire-now. Server invokes `ScheduleService.run(sid)` which
+   * dispatches a task under the same code path as a cron-driven fire
+   * (origin = "schedule", metadata = { scheduleId, firedAt: now }).
+   * Does NOT advance the schedule's `lastFiredAt` / `nextFireAt`
+   * cursor — manual runs are out-of-band and the next cron fire still
+   * lands on its expected wall clock.
+   *
+   * Returns `{ taskId }` so the caller can poll / cancel the resulting
+   * task without a second round-trip.
+   */
+  "schedules.run": defineRoute<{ params: SchedulePathParams }, { readonly taskId: string }>(
+    "POST",
+    "/api/workspaces/:id/schedules/:sid/run",
+  ),
+  /**
+   * Read-only — compute the next N fires for this schedule from now,
+   * plus a zh_CN human-readable description of the cron expression.
+   * Does not touch state. `n` is bounded in `[1, 100]` (see
+   * {@link SchedulePreviewQuery}).
+   */
+  "schedules.preview": defineRoute<
+    { params: SchedulePathParams; query: SchedulePreviewQuery },
+    PreviewResult
+  >("GET", "/api/workspaces/:id/schedules/:sid/preview"),
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",
     "/api/workspaces/:id/tasks",

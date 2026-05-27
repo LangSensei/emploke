@@ -49,13 +49,6 @@ const ALLOWED_GAPS: ReadonlySet<RouteKey> = new Set<RouteKey>([
   // `commands/workspace.ts:workspaceUse` for the full rationale.
   "workspaces.setCurrent",
   "tasks.artifact", // dashboard-only download endpoint; CLI users have direct fs access to <workspace>/tasks/<tid>/artifact/
-  // PR 1 of #61 split this route out of `/tasks` at the REST layer.
-  // The CLI wrapper (`emploke task list-scheduled` or equivalent)
-  // ships with the @emploke/schedule package in a later PR of #61;
-  // surfacing the read route alone here without the dispatch / cancel
-  // verbs that pair with it would be misleading. Until then,
-  // `curl /api/workspaces/<id>/scheduled-tasks` is the manual fallback.
-  "scheduledTasks.list",
 ]);
 
 /**
