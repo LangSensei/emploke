@@ -1,20 +1,6 @@
-import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
-import {
-  AgentNotFoundError,
-  CorruptedTaskError,
-  EntryNotReadyError,
-  InvalidTaskIdError,
-  InvalidTransition,
-  type ListTaskOpts,
-  ManagerShuttingDownError,
-  RuntimeDoesNotSupportTasksError,
-  TaskIdAllocationFailedError,
-  TaskNotFoundError,
-  type TaskService,
-  type TaskStatus,
-} from "@emploke/task";
+import type { ListTaskOpts, TaskService, TaskStatus } from "@emploke/task";
 import { Hono } from "hono";
-import { errorBody, logFault } from "./_shared.js";
+import { errorBody, logFault, resolveErrorStatus, unmappedFaultMeta } from "./_shared.js";
 
 /**
  * Resolver passed in by the mount point so route handlers pull the
@@ -26,42 +12,7 @@ import { errorBody, logFault } from "./_shared.js";
  */
 export type TaskServiceResolver = (c: import("hono").Context) => TaskService;
 
-/**
- * Subset of `routes/tasks.ts:statusForError` that the list handler can
- * actually surface. The other handlers (dispatch, cancel, activity)
- * live exclusively on `/tasks/:tid`; the schedule route is read-only.
- *
- * Mirror, not import, so the two route files stay independently
- * understandable — adding a new error class only requires updating the
- * one route that throws it.
- */
-function statusForError(err: unknown): number | null {
-  if (err instanceof InvalidTaskIdError) return 400;
-  if (err instanceof TaskNotFoundError) return 404;
-  if (err instanceof AgentNotFoundError) return 400;
-  if (err instanceof RuntimeDoesNotSupportTasksError) return 400;
-  if (err instanceof EntryNotReadyError) return 409;
-  if (err instanceof InvalidTransition) return 409;
-  if (err instanceof ManagerShuttingDownError) return 503;
-  if (err instanceof TaskIdAllocationFailedError) return 500;
-  if (err instanceof RuntimeHeadlessLaunchFailed) return 500;
-  if (err instanceof CorruptedTaskError) return 500;
-  return null;
-}
-
-function resolveErrorStatus(err: unknown): { status: number; isUnmapped: boolean } {
-  const mapped = statusForError(err);
-  return { status: mapped ?? 400, isUnmapped: mapped === null };
-}
-
-function unmappedFaultMeta(err: unknown, extra?: Record<string, unknown>): Record<string, unknown> {
-  const e = err instanceof Error ? err : undefined;
-  return {
-    name: e?.name,
-    message: e?.message,
-    ...(extra ?? {}),
-  };
-}
+// Task-error → HTTP status mapping lives in ./_shared.ts; both routes consume the canonical implementation.
 
 /**
  * Routes for `/api/workspaces/:wsId/scheduled-tasks`.

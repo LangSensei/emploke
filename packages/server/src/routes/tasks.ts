@@ -1,23 +1,22 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
-  AgentNotFoundError,
-  CorruptedTaskError,
   EntryNotReadyError,
-  InvalidTaskIdError,
   InvalidTransition,
   type ListTaskOpts,
-  ManagerShuttingDownError,
-  RuntimeDoesNotSupportTasksError,
-  TaskIdAllocationFailedError,
-  TaskNotFoundError,
   type TaskService,
   type TaskStatus,
 } from "@emploke/task";
 import { Hono } from "hono";
-import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
+import {
+  errorBody,
+  logEvent,
+  logFault,
+  parseJsonBody,
+  resolveErrorStatus,
+  unmappedFaultMeta,
+} from "./_shared.js";
 import type { TaskDispatchBody } from "./manifest.js";
 
 /**
@@ -33,89 +32,6 @@ type TaskDispatchBodyRaw = { [K in keyof TaskDispatchBody]?: unknown };
  * the SessionService pattern exactly.
  */
 export type TaskServiceResolver = (c: import("hono").Context) => TaskService;
-
-function statusForError(err: unknown): number | null {
-  // Client-side / input errors → 4xx.
-  if (err instanceof InvalidTaskIdError) return 400;
-  if (err instanceof TaskNotFoundError) return 404;
-  if (err instanceof AgentNotFoundError) return 400;
-  if (err instanceof RuntimeDoesNotSupportTasksError) return 400;
-  // The agent (or one of its transitive deps) is currently `blocked`
-  // — caller-fixable state conflict (acknowledge prereqs, enable the
-  // agent, install the missing dep, etc.). 409 mirrors how
-  // `HasDependentsError` is mapped on the catalog side.
-  if (err instanceof EntryNotReadyError) return 409;
-  // ADR-001: cancel on a terminal task, or delete on a non-terminal
-  // task, throws InvalidTransition. Same mapping pattern as
-  // EntryNotReadyError above — the dashboard branches on `code` +
-  // `transition` from the structured 409 body.
-  if (err instanceof InvalidTransition) return 409;
-  // ADR-001: dispatch + cancel refuse during shutdown so the caller
-  // can show a one-shot "server restarting" toast and retry.
-  if (err instanceof ManagerShuttingDownError) return 503;
-  // Server-side / host faults → 5xx. These match the analogous
-  // mappings in sessions.ts (SessionIdAllocationFailedError → 500,
-  // RuntimeProvisionFailed → 500). Falling through to the default 400
-  // would lie to the dashboard about whose fault it is.
-  if (err instanceof TaskIdAllocationFailedError) return 500;
-  if (err instanceof RuntimeHeadlessLaunchFailed) return 500;
-  // Corrupted metadata column (JSON parse failure, non-object root,
-  // invalid status enum, etc.) is a host-side / on-disk fault —
-  // operators need to see a 5xx, not a misleading 404 that the
-  // dashboard would render as "task gone". The instance carries
-  // `taskId` + `reason` for triage; the route's `logFault` companion
-  // captures both via pino's `err` serializer.
-  if (err instanceof CorruptedTaskError) return 500;
-  return null;
-}
-
-/**
- * Resolve an unknown error to a response status while preserving the
- * "this fell through unmapped" signal so the route can decide to log
- * it (instead of silently swallowing it as a 400 the way
- * `statusForError(err) ?? 400` does on its own).
- *
- * The "silent 4xx" policy is correct for *intentional* client-side
- * errors (validation, not-found, etc.) that {@link statusForError}
- * recognises. But when `statusForError` returns `null` — i.e. the
- * thrown error class is NOT on the mapping table — the previous
- * `?? 400` fallthrough served the caller a generic
- * `{ error: "internal error" }` body AND wrote nothing to the server
- * log. That hid real bugs: packaging-misconfig errors, missing
- * runtime deps, new typed errors we forgot to map, etc.
- *
- * Returns `{ status, isUnmapped }`. `isUnmapped` is true exactly when
- * `statusForError` returned `null` — distinct from a mapped 400 (which
- * the caller deliberately wants silent because the validation path
- * already returned a clean message). The route then opts into a
- * "unmapped fell through to 400" log entry for the `isUnmapped` case,
- * preserving the existing "no log for mapped 4xx" behaviour and the
- * existing "log for 5xx faults" behaviour.
- *
- * The wire body is unchanged: `errorBody(err)` still collapses unknown
- * error classes to `"internal error"` per the `SAFE_ERROR_NAMES`
- * allow-list. Only the OPERATOR-facing log becomes informative.
- */
-function resolveErrorStatus(err: unknown): { status: number; isUnmapped: boolean } {
-  const mapped = statusForError(err);
-  return { status: mapped ?? 400, isUnmapped: mapped === null };
-}
-
-/**
- * Shared meta builder for the "unmapped fell through to 400" log
- * entry. Pulls the unknown error's `name` and `message` onto the
- * structured log line (in addition to the full `err` serialiser pino
- * already attaches via `logFault`) so the operator can `jq` for
- * unmapped error classes without parsing every nested `err.type`.
- */
-function unmappedFaultMeta(err: unknown, extra?: Record<string, unknown>): Record<string, unknown> {
-  const e = err instanceof Error ? err : undefined;
-  return {
-    name: e?.name,
-    message: e?.message,
-    ...(extra ?? {}),
-  };
-}
 
 /**
  * Build the structured 409 body that pairs with an InvalidTransition
