@@ -122,6 +122,30 @@ describe("tasksRoutes", () => {
     });
   });
 
+  it("GET /?origin=schedule forwards the origin filter (PR 1 of #61)", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(() => m).request("/?origin=schedule");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ origin: ["schedule"] });
+  });
+
+  it("GET /?scheduleId=<id> forwards the schedule filter (PR 1 of #61)", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(() => m).request("/?scheduleId=sched-abc");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ scheduleId: "sched-abc" });
+  });
+
+  it("GET /?origin=schedule&scheduleId=<id> AND-composes both filters", async () => {
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(() => m).request("/?origin=schedule&scheduleId=sched-abc");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ origin: ["schedule"], scheduleId: "sched-abc" });
+  });
+
   it("POST / requires JSON body", async () => {
     const m = stubManager({});
     const res = await tasksRoutes(() => m).request("/", { method: "POST", body: "not json" });

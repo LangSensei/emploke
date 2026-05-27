@@ -751,10 +751,10 @@ export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 /**
  * Who launched this task (issue #119). String union to match
  * `@emploke/task` `TaskOrigin`. Dashboards default the list query to
- * `'standalone'` so workflow-launched tasks don't pollute the "what I
- * dispatched" view.
+ * `'standalone'` so workflow- / schedule-launched tasks don't pollute
+ * the "what I dispatched" view.
  */
-export type TaskOrigin = "standalone" | "workflow";
+export type TaskOrigin = "standalone" | "workflow" | "schedule";
 
 /**
  * Why a task ended in `failed`. Discriminated by `kind` (issue #119).

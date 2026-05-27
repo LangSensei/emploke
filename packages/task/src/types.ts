@@ -54,7 +54,7 @@ export type TerminalStatus = "succeeded" | "failed" | "cancelled";
  * `'schedule'` later does not break consumers that only branch on
  * existing values.
  */
-export type TaskOrigin = "standalone" | "workflow";
+export type TaskOrigin = "standalone" | "workflow" | "schedule";
 
 /**
  * Payload attached when a Task transitions to `succeeded`. Both fields
@@ -195,11 +195,19 @@ export interface DispatchOpts {
   /**
    * Who launched this task. Defaults to `'standalone'` in the manager
    * when omitted (a direct CLI / dashboard / MCP call). Workflow /
-   * future scheduler call sites pass `'workflow'` so dashboards and
-   * CLI can filter standalone-only by default and reveal workflow-
-   * launched tasks on demand.
+   * scheduler call sites pass `'workflow'` / `'schedule'` so dashboards
+   * and CLI can filter standalone-only by default and reveal workflow-
+   * or schedule-launched tasks on demand.
    */
   readonly origin?: TaskOrigin;
+  /**
+   * Optional caller-supplied metadata to shallow-merge into the initial
+   * Task.metadata bag. Kernel-supplied keys (workdir, runtime) take
+   * precedence — user values for those keys are silently overridden.
+   * Used by the scheduler to inject {scheduleId, firedAt}; future
+   * orchestrators can add their own tags.
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -240,4 +248,10 @@ export interface ListTaskOpts {
    * every origin.
    */
   readonly origin?: TaskOrigin | readonly TaskOrigin[];
+  /**
+   * Filter to tasks whose `metadata.scheduleId` matches the given value.
+   * Combined with the other filters via AND. Useful for the schedule
+   * detail page's "recent fires" panel.
+   */
+  readonly scheduleId?: string;
 }

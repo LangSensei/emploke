@@ -283,6 +283,7 @@ export class TaskService {
         origin: opts.origin ?? "standalone",
         runtime,
         resolveResult,
+        ...(opts.metadata !== undefined ? { metadata: opts.metadata } : {}),
       });
     } finally {
       this.dispatchInProgress.delete(id);
@@ -298,6 +299,7 @@ export class TaskService {
     origin: TaskOrigin;
     runtime: Runtime;
     resolveResult: AgentResolveResult;
+    metadata?: Readonly<Record<string, unknown>>;
   }): Promise<TaskEntity> {
     const { id, workdir, agentName, brief, details, origin, runtime, resolveResult } = args;
     // Re-narrow `runtime.launchHeadless` for TypeScript. The caller
@@ -315,8 +317,18 @@ export class TaskService {
     //    time (v4 dropped the `not_started` placeholder — see TaskStatus).
     //    If anything below fails, we roll back the workdir entirely;
     //    pre-spawn failures should not leave a ghost row on disk.
+    //
+    //    Spread order is intentional: caller-supplied `metadata` first,
+    //    kernel keys (workdir, runtime) override. Lets schedulers and
+    //    other orchestrators tag a task at dispatch time (e.g.
+    //    `metadata: { scheduleId, firedAt }`) without giving them a
+    //    way to spoof the runtime column (`task-repository.ts` promotes
+    //    `metadata.runtime` to a first-class indexed column on save and
+    //    folds it back on read — divergence would mislead the runtime
+    //    filter / dashboard).
     const createdAt = this.now().toISOString();
     const initialMeta: Record<string, unknown> = {
+      ...(args.metadata ?? {}),
       workdir,
       runtime: runtime.kind,
     };
@@ -549,6 +561,20 @@ export class TaskService {
     // need the runtime-recency field for a list row must call
     // `get(id)` per task they want to enrich.
     return tasks;
+  }
+
+  // ─── hasInFlightForSchedule ─────────────────────────────────
+
+  /**
+   * True if any non-terminal task with `origin='schedule'` and
+   * `metadata.scheduleId === scheduleId` exists. Used by the
+   * scheduler's concurrency=1 check (skip fire if previous still
+   * running) and by the delete-schedule guard (refuse delete while a
+   * fired task is still in flight). Cheap thanks to the
+   * `tasks_schedule_id_idx` functional index added in PR 1 of #61.
+   */
+  async hasInFlightForSchedule(scheduleId: string): Promise<boolean> {
+    return this.repository.hasInFlightForSchedule(scheduleId);
   }
 
   // ─── get ─────────────────────────────────────────────────

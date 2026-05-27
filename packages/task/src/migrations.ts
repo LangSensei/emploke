@@ -20,6 +20,14 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 1,
     hash: "08f637650da2d5393e61a99e84b7fa83096ff2caf1abea0d7274eed09f2b06e6",
   },
+  {
+    sql: [
+      "CREATE INDEX `tasks_schedule_id_idx`\n  ON `tasks` (json_extract(`metadata`, '$.scheduleId'))\n  WHERE `origin` = 'schedule';\n"
+    ],
+    bps: true,
+    folderMillis: 2,
+    hash: "78071717c7b3a3a8a17342a8b446c75c3642d3da441b323fecd726ae7bcb09e4",
+  },
 ];
 
 /**
