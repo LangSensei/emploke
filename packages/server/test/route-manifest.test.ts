@@ -36,6 +36,7 @@ import { configRoutes } from "../src/routes/config.js";
 import { healthRoutes } from "../src/routes/health.js";
 import { type HttpMethod, listRoutes, type RouteSpec } from "../src/routes/manifest.js";
 import { runtimesRoutes } from "../src/routes/runtimes.js";
+import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 import { tasksRoutes } from "../src/routes/tasks.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
@@ -91,6 +92,13 @@ function buildAppForTest(): Hono {
   );
   app.route("/api/workspaces", tasksApp);
 
+  const scheduledTasksApp = new Hono();
+  scheduledTasksApp.route(
+    "/:id/scheduled-tasks",
+    scheduledTasksRoutes(() => stubTaskManager()),
+  );
+  app.route("/api/workspaces", scheduledTasksApp);
+
   const catalogApp = new Hono();
   catalogApp.route(
     "/:id/catalog",
@@ -125,14 +133,16 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 55 entries (the current API surface)", () => {
+  it("listRoutes returns 57 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
     // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
     // Bumped 53 → 55 for issue #122's `catalog.{agents,skills}.anchor`
     // dedicated endpoints (split-out anchor fetch from entry GET).
     // Bumped 55 → 56 for issue #181's `tasks.artifact` download route.
-    expect(listRoutes()).toHaveLength(56);
+    // Bumped 56 → 57 for #61 PR 1's `scheduledTasks.list` route
+    // (split-out of the legacy `?origin=schedule` filter on `/tasks`).
+    expect(listRoutes()).toHaveLength(57);
   });
 });
 

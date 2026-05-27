@@ -9,7 +9,7 @@ import type {
 import { assertValidTaskId, generateTaskId, TASK_ID_RE } from "./validate.js";
 
 const VALID_STATUSES = new Set<TaskStatus>(["running", "succeeded", "failed", "cancelled"]);
-const VALID_ORIGINS = new Set<TaskOrigin>(["standalone", "workflow"]);
+const VALID_ORIGINS = new Set<TaskOrigin>(["standalone", "workflow", "schedule"]);
 
 /**
  * Args accepted by {@link Task.create}. `agent` and `brief` are

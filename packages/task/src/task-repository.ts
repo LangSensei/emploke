@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, type SQL, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
@@ -74,6 +74,14 @@ export class TaskRepository {
         : [opts.origin as TaskOrigin];
       if (origins.length > 0) filters.push(inArray(tasks.origin, origins));
     }
+    if (opts.scheduleId !== undefined) {
+      // Functional predicate: `metadata` is a JSON text column, and
+      // `scheduleId` lives at `$.scheduleId`. The companion functional
+      // index `tasks_schedule_id_idx` (PR 1 of #61) makes this O(log n)
+      // when the optimiser can prove the WHERE shape lines up — combine
+      // with `origin='schedule'` in the same query to engage it.
+      filters.push(sql`json_extract(${tasks.metadata}, '$.scheduleId') = ${opts.scheduleId}`);
+    }
     const query = this.db.select().from(tasks);
     const rows = filters.length > 0 ? query.where(and(...filters)).all() : query.all();
     const out: TaskEntity[] = [];
@@ -85,6 +93,30 @@ export class TaskRepository {
       }
     }
     return out;
+  }
+
+  /**
+   * True if any task with `origin='schedule'` and
+   * `metadata.scheduleId === scheduleId` is non-terminal (status =
+   * 'running'). Backed by the `tasks_schedule_id_idx` functional
+   * index added in PR 1 of #61; the partial WHERE on the index
+   * matches the `origin = 'schedule'` predicate here, so the planner
+   * can satisfy the query from the index without a full table scan.
+   */
+  async hasInFlightForSchedule(scheduleId: string): Promise<boolean> {
+    const row = this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.origin, "schedule"),
+          eq(tasks.status, "running"),
+          sql`json_extract(${tasks.metadata}, '$.scheduleId') = ${scheduleId}`,
+        ),
+      )
+      .limit(1)
+      .get();
+    return row !== undefined;
   }
 }
 

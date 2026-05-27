@@ -82,10 +82,6 @@ export function useTasks({
       if (agentFilter !== ALL_AGENTS) opts.agent = agentFilter;
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
-      // Phase A: Tasks page is standalone-only. Workflow-origin tasks
-      // will surface on a separate (future) page; we never want them
-      // mixed into the master list here.
-      opts.origin = "standalone";
       const next = await listTasks(opts);
       if (!mountedRef.current) return;
       if (token !== currentWorkspaceId) return;

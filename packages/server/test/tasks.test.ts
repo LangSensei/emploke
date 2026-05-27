@@ -46,7 +46,7 @@ function stubManager(overrides: Partial<Record<keyof TaskService, unknown>>): Ta
 }
 
 describe("tasksRoutes", () => {
-  it("GET / lists tasks (no filters)", async () => {
+  it("GET / lists tasks (hardcodes origin=standalone; schedule/workflow NOT returned)", async () => {
     const m = stubManager({});
     const res = await tasksRoutes(() => m).request("/");
     expect(res.status).toBe(200);
@@ -55,7 +55,22 @@ describe("tasksRoutes", () => {
     expect(body[0].id).toBe(sampleTask.id);
     expect(body[0].agent).toBe("writer");
     expect(m.list).toHaveBeenCalledTimes(1);
-    expect(m.list).toHaveBeenCalledWith({});
+    // Standalone-only by construction (PR 1 iter, #61): origin is
+    // hardcoded server-side and `?origin=` is gone from the route's
+    // surface. Schedule-launched runs live at `/scheduled-tasks`.
+    expect(m.list).toHaveBeenCalledWith({ origin: ["standalone"] });
+  });
+
+  it("GET / silently ignores ?origin= and ?scheduleId= (no longer route params)", async () => {
+    // Belt-and-braces: even if a stale client sends `?origin=schedule`
+    // or `?scheduleId=foo`, the standalone-only contract still holds.
+    // Hono passes unknown query params through; the route just doesn't
+    // read them. No 400, no widening.
+    const list = vi.fn(async () => [sampleTask]);
+    const m = stubManager({ list });
+    const res = await tasksRoutes(() => m).request("/?origin=schedule&scheduleId=sched-abc");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ origin: ["standalone"] });
   });
 
   it("GET /?agent=X forwards the agent filter to the manager", async () => {
@@ -63,7 +78,7 @@ describe("tasksRoutes", () => {
     const m = stubManager({ list });
     const res = await tasksRoutes(() => m).request("/?agent=writer");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ agent: "writer" });
+    expect(list).toHaveBeenCalledWith({ origin: ["standalone"], agent: "writer" });
   });
 
   it("GET /?runtime=copilot forwards the runtime filter", async () => {
@@ -71,7 +86,7 @@ describe("tasksRoutes", () => {
     const m = stubManager({ list });
     const res = await tasksRoutes(() => m).request("/?runtime=copilot");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ runtime: "copilot" });
+    expect(list).toHaveBeenCalledWith({ origin: ["standalone"], runtime: "copilot" });
   });
 
   it("GET /?createdSince=<iso> canonicalises the timestamp before forwarding", async () => {
@@ -82,7 +97,10 @@ describe("tasksRoutes", () => {
     // correct.
     const res = await tasksRoutes(() => m).request("/?createdSince=2026-05-08T01%3A00%3A00.000Z");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ createdSince: "2026-05-08T01:00:00.000Z" });
+    expect(list).toHaveBeenCalledWith({
+      origin: ["standalone"],
+      createdSince: "2026-05-08T01:00:00.000Z",
+    });
   });
 
   it("GET /?createdSince=garbage returns 400", async () => {
@@ -97,7 +115,10 @@ describe("tasksRoutes", () => {
     const m = stubManager({ list });
     const res = await tasksRoutes(() => m).request("/?status=running,succeeded");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ statuses: ["running", "succeeded"] });
+    expect(list).toHaveBeenCalledWith({
+      origin: ["standalone"],
+      statuses: ["running", "succeeded"],
+    });
   });
 
   it("GET /?status=bogus returns 400 (unknown status)", async () => {
@@ -115,6 +136,7 @@ describe("tasksRoutes", () => {
     );
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({
+      origin: ["standalone"],
       agent: "writer",
       runtime: "copilot",
       createdSince: "2026-05-08T01:00:00.000Z",

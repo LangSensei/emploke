@@ -750,11 +750,18 @@ export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 
 /**
  * Who launched this task (issue #119). String union to match
- * `@emploke/task` `TaskOrigin`. Dashboards default the list query to
- * `'standalone'` so workflow-launched tasks don't pollute the "what I
- * dispatched" view.
+ * `@emploke/task` `TaskOrigin`. The union is a **data-shape contract**:
+ * any `Task` record returned from any endpoint (`/tasks/:id`,
+ * `/scheduled-tasks`, etc.) can carry any of these values on its
+ * `origin` field. Route-level filtering is enforced by the URL the
+ * client hits, not by an opt-in query filter — `/tasks` lists
+ * standalone-only; `/scheduled-tasks` lists schedule-only; future
+ * workflow-launched tasks will get their own dedicated route. PR 1 of
+ * #61 removed the legacy `?origin=` filter on `/tasks` (and the
+ * dashboard's matching hardcoded `opts.origin = 'standalone'` safety
+ * shim) in favour of this URL split.
  */
-export type TaskOrigin = "standalone" | "workflow";
+export type TaskOrigin = "standalone" | "workflow" | "schedule";
 
 /**
  * Why a task ended in `failed`. Discriminated by `kind` (issue #119).
@@ -832,8 +839,14 @@ export interface TaskRecord {
 
 /**
  * Optional server-side filters for `listTasks`. Mirrors the server's
- * `ListTaskOpts`. Omitted fields are not sent on the wire and the
+ * `TaskListQuery`. Omitted fields are not sent on the wire and the
  * server returns the matching set.
+ *
+ * PR 1 of #61: `origin` and `scheduleId` are no longer accepted on
+ * `/tasks` (the route is standalone-only by construction).
+ * Schedule-launched runs live at `/scheduled-tasks`; use
+ * {@link listScheduledTasks} (and {@link ListScheduledTasksOpts}) for
+ * those.
  */
 export interface ListTasksOpts {
   agent?: string;
@@ -842,13 +855,6 @@ export interface ListTasksOpts {
   createdSince?: string;
   /** Statuses to include. The server joins with `,` for the query. */
   statuses?: TaskStatus[];
-  /**
-   * Origin filter (issue #119). `'all'` disables the filter and
-   * returns every origin; any other value is forwarded verbatim.
-   * Default behaviour at call sites is `'standalone'` (matches the
-   * dashboard's "what I dispatched" tab).
-   */
-  origin?: TaskOrigin | "all";
 }
 
 export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
@@ -857,9 +863,46 @@ export const listTasks = (opts: ListTasksOpts = {}): Promise<TaskRecord[]> => {
   if (opts.runtime) qs.set("runtime", opts.runtime);
   if (opts.createdSince) qs.set("createdSince", opts.createdSince);
   if (opts.statuses && opts.statuses.length > 0) qs.set("status", opts.statuses.join(","));
-  if (opts.origin && opts.origin !== "all") qs.set("origin", opts.origin);
   const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
   return fetchJson<TaskRecord[]>(`${workspacePrefix()}/tasks${suffix}`, "tasks");
+};
+
+/**
+ * Optional server-side filters for {@link listScheduledTasks}. Mirrors
+ * the server's `ScheduledTaskListQuery`. Same shape as
+ * {@link ListTasksOpts} plus `scheduleId` for narrowing down to a
+ * single schedule's runs.
+ */
+export interface ListScheduledTasksOpts {
+  agent?: string;
+  runtime?: string;
+  /** ISO 8601 (the server canonicalises). */
+  createdSince?: string;
+  /** Statuses to include. The server joins with `,` for the query. */
+  statuses?: TaskStatus[];
+  /** Exact match on `metadata.scheduleId`. */
+  scheduleId?: string;
+}
+
+/**
+ * List schedule-launched tasks in the current workspace. The route's
+ * URL pins `origin = 'schedule'` server-side; callers cannot widen
+ * the result set. Use {@link listTasks} for standalone tasks (PR 1 of
+ * #61 split the two surfaces — each origin's caller surface gets a
+ * route whose URL IS the contract).
+ */
+export const listScheduledTasks = (opts: ListScheduledTasksOpts = {}): Promise<TaskRecord[]> => {
+  const qs = new URLSearchParams();
+  if (opts.agent) qs.set("agent", opts.agent);
+  if (opts.runtime) qs.set("runtime", opts.runtime);
+  if (opts.createdSince) qs.set("createdSince", opts.createdSince);
+  if (opts.statuses && opts.statuses.length > 0) qs.set("status", opts.statuses.join(","));
+  if (opts.scheduleId) qs.set("scheduleId", opts.scheduleId);
+  const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
+  return fetchJson<TaskRecord[]>(
+    `${workspacePrefix()}/scheduled-tasks${suffix}`,
+    "scheduled tasks",
+  );
 };
 
 export const getTask = (id: string): Promise<TaskRecord> =>
