@@ -7,19 +7,22 @@
  * request through to the (non-existent) backend and log an
  * `onUnhandledRequest: "warn"` warning in the browser console.
  *
- * The handlers are deliberately read-only. Mutations (POST/PATCH/DELETE)
- * are caught by the trailing `http.all` handler that returns 501 with a
- * console.warn; tracking work for designer-mode mutations lives in
- * issue #213 (Designer mode phase 2).
+ * The handlers are read-only PLUS a narrow mutation slice for
+ * `/schedules*` (PR 4/4 of #61). General mutation support across
+ * the rest of the surface is still tracked in #213 (Designer mode
+ * phase 2); the catch-all returns 501 for any non-GET mutation that
+ * doesn't match a handler above it.
  */
 
 import { type DefaultBodyType, HttpResponse, http } from "msw";
 
+import type { PatchScheduleBody, ScheduleDetail } from "../api.js";
 import {
   artifactBodies,
   fixtureActiveWorkspaceId,
   fixtureActivities,
   fixtureAgents,
+  fixtureSchedules,
   fixtureSessions,
   fixtureTasks,
   fixtureWorkspaces,
@@ -30,6 +33,25 @@ const W = ":wsId";
 function notFound(message: string): HttpResponse<DefaultBodyType> {
   return HttpResponse.json({ error: message }, { status: 404 });
 }
+
+/**
+ * Ephemeral, in-memory copy of the schedule fixtures so PATCH /
+ * DELETE / POST run mutate this slot without polluting the
+ * source-of-truth fixture array. A browser refresh re-imports this
+ * module and resets the slot — designer mode is intentionally
+ * non-persistent (designer iteration ≠ a real backend).
+ */
+const schedulesState: ScheduleDetail[] = fixtureSchedules.map((s) => ({ ...s }));
+
+/**
+ * Ephemeral, in-memory copy of the task fixtures so synthetic
+ * schedule-launched task rows (appended by POST /schedules/:sid/run)
+ * surface in the per-schedule "Recent fires" panel. Reset on refresh,
+ * same lifetime as `schedulesState`.
+ */
+const tasksState = fixtureTasks.map((t) => ({ ...t }));
+
+let synthFireSeq = 0;
 
 export const handlers = [
   // ── catalog (workspace-scoped) ───────────────────────────────
@@ -53,13 +75,22 @@ export const handlers = [
   // `/scheduled-tasks` for schedule-launched runs; both routes share
   // this fixture set with origin-based filtering.
   http.get(`/api/workspaces/${W}/tasks`, () =>
-    HttpResponse.json(fixtureTasks.filter((t) => t.origin === "standalone")),
+    HttpResponse.json(tasksState.filter((t) => t.origin === "standalone")),
   ),
-  http.get(`/api/workspaces/${W}/scheduled-tasks`, () =>
-    HttpResponse.json(fixtureTasks.filter((t) => t.origin === "schedule")),
-  ),
+  http.get(`/api/workspaces/${W}/scheduled-tasks`, ({ request }) => {
+    const url = new URL(request.url);
+    const scheduleId = url.searchParams.get("scheduleId");
+    let rows = tasksState.filter((t) => t.origin === "schedule");
+    if (scheduleId !== null) {
+      rows = rows.filter((t) => {
+        const sid = (t.metadata as Record<string, unknown> | undefined)?.scheduleId;
+        return typeof sid === "string" && sid === scheduleId;
+      });
+    }
+    return HttpResponse.json(rows);
+  }),
   http.get(`/api/workspaces/${W}/tasks/:tid`, ({ params }) => {
-    const task = fixtureTasks.find((t) => t.id === params.tid);
+    const task = tasksState.find((t) => t.id === params.tid);
     return task ? HttpResponse.json(task) : notFound("task not found");
   }),
   http.get(`/api/workspaces/${W}/tasks/:tid/activity`, ({ params }) => {
@@ -69,7 +100,7 @@ export const handlers = [
     // Tasks without a hand-authored timeline still return a valid empty
     // payload — the dashboard's ActivityTab handles { activity: [] }
     // gracefully, but treats 404 as "runtime has no event log".
-    if (fixtureTasks.some((t) => t.id === tid)) {
+    if (tasksState.some((t) => t.id === tid)) {
       return HttpResponse.json({ activity: [], result: null, totalItems: 0 });
     }
     return new HttpResponse(null, { status: 404 });
@@ -135,6 +166,96 @@ export const handlers = [
         headers: { "content-type": "text/event-stream" },
       }),
   ),
+
+  // ── schedules (workspace-scoped, PR 4/4 of #61) ──────────────
+  // List + detail + preview are read-only; PATCH (enabled toggle),
+  // DELETE, and POST /:sid/run form the narrow mutation slice the
+  // dashboard's detail surface drives. State lives in
+  // `schedulesState` and resets on browser refresh.
+  http.get(`/api/workspaces/${W}/schedules`, ({ request }) => {
+    const url = new URL(request.url);
+    const agent = url.searchParams.get("agent");
+    const enabled = url.searchParams.get("enabled");
+    let rows = schedulesState.slice();
+    if (agent !== null) rows = rows.filter((s) => s.target.agent === agent);
+    if (enabled === "true") rows = rows.filter((s) => s.enabled);
+    if (enabled === "false") rows = rows.filter((s) => !s.enabled);
+    rows.sort((a, b) => (a.nextFireAt ?? "").localeCompare(b.nextFireAt ?? ""));
+    // Strip `describe` from the list view to mirror the server's
+    // `GET /` response shape (the describe enrichment is per-GET).
+    return HttpResponse.json(rows.map(({ describe: _describe, ...rest }) => rest));
+  }),
+  http.get(`/api/workspaces/${W}/schedules/:sid`, ({ params }) => {
+    const row = schedulesState.find((s) => s.id === params.sid);
+    return row ? HttpResponse.json(row) : notFound("schedule not found");
+  }),
+  http.get(`/api/workspaces/${W}/schedules/:sid/preview`, ({ params, request }) => {
+    const row = schedulesState.find((s) => s.id === params.sid);
+    if (!row) return notFound("schedule not found");
+    // Server enforces `[1, 100]`; mirror exactly so screenshots at the
+    // boundary line up with prod behaviour.
+    const nRaw = new URL(request.url).searchParams.get("n");
+    const n = Math.min(100, Math.max(1, Number.parseInt(nRaw ?? "3", 10) || 3));
+    const base = row.nextFireAt ? new Date(row.nextFireAt).getTime() : Date.now();
+    const nextRuns = Array.from({ length: n }, (_, i) =>
+      new Date(base + i * 3_600_000).toISOString(),
+    );
+    return HttpResponse.json({ describe: row.describe, nextRuns });
+  }),
+  http.patch(`/api/workspaces/${W}/schedules/:sid`, async ({ params, request }) => {
+    const idx = schedulesState.findIndex((s) => s.id === params.sid);
+    if (idx === -1) return notFound("schedule not found");
+    const body = (await request.json()) as PatchScheduleBody;
+    const current = schedulesState[idx]!;
+    const merged: ScheduleDetail = {
+      ...current,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.trigger !== undefined ? { trigger: body.trigger } : {}),
+      ...(body.target !== undefined ? { target: body.target } : {}),
+      ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    schedulesState[idx] = merged;
+    // Server's PATCH returns the entity without the describe enrichment
+    // (re-derived only on GET); mirror that shape so the dashboard
+    // doesn't get a stale describe baked into list rows.
+    const { describe: _describe, ...entity } = merged;
+    return HttpResponse.json(entity);
+  }),
+  http.delete(`/api/workspaces/${W}/schedules/:sid`, ({ params }) => {
+    const idx = schedulesState.findIndex((s) => s.id === params.sid);
+    if (idx === -1) return notFound("schedule not found");
+    schedulesState.splice(idx, 1);
+    return HttpResponse.json({ ok: true });
+  }),
+  http.post(`/api/workspaces/${W}/schedules/:sid/run`, ({ params }) => {
+    const row = schedulesState.find((s) => s.id === params.sid);
+    if (!row) return notFound("schedule not found");
+    // Synthesise a freshly-running task so the "Recent fires" panel
+    // (which polls `/scheduled-tasks?scheduleId=…`) surfaces it on
+    // the next refresh, and the dashboard's deep-link navigate to
+    // `/runtime/tasks?taskId=<new>` shows a valid row instead of a
+    // 404 "not found" detail pane.
+    synthFireSeq += 1;
+    const taskId = `sched-${row.id}-run-${synthFireSeq}`;
+    const firedAt = new Date().toISOString();
+    tasksState.unshift({
+      id: taskId,
+      agent: row.target.agent,
+      brief: `${row.name} (manual run)`,
+      origin: "schedule",
+      status: "running",
+      metadata: {
+        workdir: `/mock/workspaces/designer/tasks/${taskId}`,
+        ...(row.target.runtime !== undefined ? { runtime: row.target.runtime } : {}),
+        scheduleId: row.id,
+        firedAt,
+      },
+      createdAt: firedAt,
+      startedAt: firedAt,
+    });
+    return HttpResponse.json({ taskId });
+  }),
 
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────
   // GETs that no handler above matched fall through to MSW's

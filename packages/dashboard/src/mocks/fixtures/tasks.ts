@@ -153,4 +153,111 @@ export const fixtureTasks: TaskRecord[] = [
       ],
     },
   },
+  // Schedule-launched fires for the #61 PR-4 schedules page. Each
+  // `metadata.scheduleId` matches one of the entries in
+  // `fixtureSchedules`, so the per-schedule "Recent fires" panel on
+  // the schedule detail surface has rows to render. Status mix keeps
+  // the StatusBadge variants (success / failure / running) all
+  // exercised in screenshots.
+  {
+    id: "sched-cleanup-fire-1",
+    agent: "emploke/dev",
+    brief: "Nightly cleanup",
+    origin: "schedule",
+    status: "succeeded",
+    metadata: {
+      workdir: `${ART_DIR}/sched-cleanup-fire-1`,
+      runtime: "copilot",
+      runtimeSessionId: "copilot-rt-cleanup-1",
+      scheduleId: "sched-nightly-cleanup",
+      firedAt: "2026-05-27T19:00:00.000Z",
+    },
+    createdAt: "2026-05-27T19:00:00.000Z",
+    startedAt: "2026-05-27T19:00:01.000Z",
+    endedAt: "2026-05-27T19:04:12.000Z",
+    success: {
+      output: "Reclaimed 412 MB of session caches; 0 errors.",
+      artifacts: [],
+    },
+  },
+  {
+    id: "sched-cleanup-fire-2",
+    agent: "emploke/dev",
+    brief: "Nightly cleanup",
+    origin: "schedule",
+    status: "failed",
+    metadata: {
+      workdir: `${ART_DIR}/sched-cleanup-fire-2`,
+      runtime: "copilot",
+      runtimeSessionId: "copilot-rt-cleanup-2",
+      scheduleId: "sched-nightly-cleanup",
+      firedAt: "2026-05-26T19:00:00.000Z",
+    },
+    createdAt: "2026-05-26T19:00:00.000Z",
+    startedAt: "2026-05-26T19:00:01.000Z",
+    endedAt: "2026-05-26T19:00:42.000Z",
+    failure: {
+      kind: "exited",
+      exit_code: 2,
+      message: "Cache root /var/cache/emploke was read-only (permission denied).",
+    },
+  },
+  {
+    id: "sched-report-fire-running",
+    agent: "emploke/review",
+    brief: "Hourly health report",
+    origin: "schedule",
+    status: "running",
+    metadata: {
+      workdir: `${ART_DIR}/sched-report-fire-running`,
+      runtime: "copilot",
+      runtimeSessionId: "copilot-rt-report-1",
+      scheduleId: "sched-hourly-report",
+      firedAt: "2026-05-27T23:00:00.000Z",
+    },
+    createdAt: "2026-05-27T23:00:00.000Z",
+    startedAt: "2026-05-27T23:00:01.000Z",
+  },
+  {
+    id: "sched-report-fire-prev",
+    agent: "emploke/review",
+    brief: "Hourly health report",
+    origin: "schedule",
+    status: "succeeded",
+    metadata: {
+      workdir: `${ART_DIR}/sched-report-fire-prev`,
+      runtime: "copilot",
+      runtimeSessionId: "copilot-rt-report-prev",
+      scheduleId: "sched-hourly-report",
+      firedAt: "2026-05-27T22:00:00.000Z",
+    },
+    createdAt: "2026-05-27T22:00:00.000Z",
+    startedAt: "2026-05-27T22:00:01.000Z",
+    endedAt: "2026-05-27T22:01:23.000Z",
+    success: {
+      output: "12 runtime events; 0 anomalies flagged.",
+      artifacts: [],
+    },
+  },
+  {
+    id: "sched-digest-fire-pre-pause",
+    agent: "emploke/dev",
+    brief: "Weekly digest (last run before pause)",
+    origin: "schedule",
+    status: "succeeded",
+    metadata: {
+      workdir: `${ART_DIR}/sched-digest-fire-pre-pause`,
+      runtime: "claude",
+      runtimeSessionId: "claude-rt-digest-1",
+      scheduleId: "sched-weekly-digest",
+      firedAt: "2026-05-19T01:00:00.000Z",
+    },
+    createdAt: "2026-05-19T01:00:00.000Z",
+    startedAt: "2026-05-19T01:00:01.000Z",
+    endedAt: "2026-05-19T01:06:30.000Z",
+    success: {
+      output: "Digest published; 38 PRs covered.",
+      artifacts: [],
+    },
+  },
 ];

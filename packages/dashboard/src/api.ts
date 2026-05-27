@@ -1,4 +1,5 @@
 import type { AgentEntry, Mcp, MissingDep, SkillEntry } from "@emploke/catalog";
+import type { PatchScheduleArgs, PreviewResult, Schedule } from "@emploke/schedule";
 
 export interface OverviewData {
   counts: {
@@ -1188,3 +1189,90 @@ export const subscribeTaskActivity = (
     close: () => es.close(),
   };
 };
+
+//  Schedules
+//
+// PR 4/4 of #61 — workspace-scoped cron triggers. Mounted at
+// `/api/workspaces/:wsId/schedules` server-side (see
+// `packages/server/src/routes/schedules.ts`). The dashboard surfaces
+// list + detail (read), enable-toggle + delete + run-now (narrow
+// mutation slice); create / cron edit stay CLI-only in v1 per the
+// #61 RFC.
+
+/**
+ * Wire-shape view of a schedule — re-exports `@emploke/schedule`'s
+ * `Schedule` so the dashboard doesn't have to mirror the type by
+ * hand. The schedule package is a `devDependency` (type-only import),
+ * so it tree-shakes out of the runtime bundle.
+ */
+export type ScheduleView = Schedule;
+
+/**
+ * Response shape for `GET /schedules/:sid` — the entity plus the
+ * server-computed cronstrue description (`describe`). The dashboard
+ * never re-derives `describe` client-side; cronstrue isn't a
+ * dashboard dep and the server is the single source of truth for
+ * the locale + format (zh_CN, per the route handler).
+ */
+export interface ScheduleDetail extends ScheduleView {
+  describe: string;
+}
+
+/** Body for `PATCH /schedules/:sid`. */
+export type PatchScheduleBody = PatchScheduleArgs;
+
+/** Response shape for `GET /schedules/:sid/preview?n=N`. */
+export type SchedulePreview = PreviewResult;
+
+export interface ListSchedulesOpts {
+  /** Filter by target agent FQN (e.g. `"emploke/dev"`). */
+  agent?: string;
+  /** Filter by enabled state. */
+  enabled?: boolean;
+}
+
+export const listSchedules = (opts: ListSchedulesOpts = {}): Promise<ScheduleView[]> => {
+  const qs = new URLSearchParams();
+  if (opts.agent !== undefined) qs.set("agent", opts.agent);
+  if (opts.enabled !== undefined) qs.set("enabled", opts.enabled ? "true" : "false");
+  const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
+  return fetchJson<ScheduleView[]>(`${workspacePrefix()}/schedules${suffix}`, "schedules");
+};
+
+export const getSchedule = (sid: string): Promise<ScheduleDetail> =>
+  fetchJson<ScheduleDetail>(
+    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`,
+    "schedule",
+  );
+
+export interface PreviewScheduleOpts {
+  /** Number of upcoming fire times to compute. Server clamps to `[1, 100]` and defaults to 3. */
+  n?: number;
+}
+
+export const previewSchedule = (
+  sid: string,
+  opts: PreviewScheduleOpts = {},
+): Promise<SchedulePreview> => {
+  const qs = new URLSearchParams();
+  if (opts.n !== undefined) qs.set("n", String(opts.n));
+  const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
+  return fetchJson<SchedulePreview>(
+    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/preview${suffix}`,
+    "schedule preview",
+  );
+};
+
+export const patchSchedule = (sid: string, body: PatchScheduleBody): Promise<ScheduleView> =>
+  mutateJson<ScheduleView>(
+    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`,
+    jsonInit("PATCH", body as object),
+  );
+
+export const deleteSchedule = (sid: string): Promise<void> =>
+  mutate(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`, { method: "DELETE" });
+
+export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
+  mutateJson<{ taskId: string }>(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/run`, {
+    method: "POST",
+  });

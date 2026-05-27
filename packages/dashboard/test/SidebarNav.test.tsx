@@ -18,6 +18,7 @@ const SECTIONS: SectionDef[] = [
       { id: "agents", label: "Agents" },
       { id: "sessions", label: "Sessions" },
       { id: "tasks", label: "Tasks" },
+      { id: "schedules", label: "Schedules" },
     ],
   },
   { id: "catalog", label: "Catalog" },
@@ -52,30 +53,33 @@ function renderSidebar(opts: RenderOpts) {
 afterEach(() => cleanup());
 
 describe("Sidebar nested Runtime children (Phase 1.5 Block F, §4.1)", () => {
-  it("renders Sessions and Tasks under the Runtime group", () => {
+  it("renders Sessions, Tasks, and Schedules under the Runtime group", () => {
     renderSidebar({ active: "runtime:agents" });
 
     // The Runtime parent button is still present at the top level.
     expect(screen.getByRole("button", { name: /^Runtime$/ })).toBeTruthy();
 
-    // The three children render inside an Agents/Sessions/Tasks sub-nav,
+    // The four children render inside an Agents/Sessions/Tasks/Schedules sub-nav,
     // each as its own button so the parent owns top-level navigation
     // while the children own per-page navigation.
     const agentsChild = screen.getByRole("button", { name: /^Agents$/ });
     const sessionsChild = screen.getByRole("button", { name: /^Sessions$/ });
     const tasksChild = screen.getByRole("button", { name: /^Tasks$/ });
+    const schedulesChild = screen.getByRole("button", { name: /^Schedules$/ });
     expect(agentsChild).toBeTruthy();
     expect(sessionsChild).toBeTruthy();
     expect(tasksChild).toBeTruthy();
+    expect(schedulesChild).toBeTruthy();
 
-    // All three children live under a single sub-nav <ul> labelled
-    // after their parent — confirming the nesting (not three more
+    // All four children live under a single sub-nav <ul> labelled
+    // after their parent — confirming the nesting (not four more
     // top-level rows).
     const subnav = screen.getByLabelText(/Runtime sub-navigation/i);
     expect(subnav.tagName.toLowerCase()).toBe("ul");
     expect(subnav.contains(agentsChild)).toBe(true);
     expect(subnav.contains(sessionsChild)).toBe(true);
     expect(subnav.contains(tasksChild)).toBe(true);
+    expect(subnav.contains(schedulesChild)).toBe(true);
   });
 
   it("highlights exactly one Runtime child at a time", () => {
@@ -111,6 +115,11 @@ describe("Sidebar nested Runtime children (Phase 1.5 Block F, §4.1)", () => {
     active = document.querySelectorAll(".sidebar__item--active");
     expect(active.length).toBe(1);
     expect(active[0].textContent).toMatch(/Tasks/);
+
+    rerender(<SidebarHarness active="runtime:schedules" />);
+    active = document.querySelectorAll(".sidebar__item--active");
+    expect(active.length).toBe(1);
+    expect(active[0].textContent).toMatch(/Schedules/);
   });
 
   it("routes child clicks via onSelectRuntimeChild, not onSelect", () => {
@@ -123,6 +132,12 @@ describe("Sidebar nested Runtime children (Phase 1.5 Block F, §4.1)", () => {
     onSelectRuntimeChild.mockClear();
     screen.getByRole("button", { name: /^Tasks$/ }).click();
     expect(onSelectRuntimeChild).toHaveBeenCalledWith("tasks");
+    expect(onSelect).not.toHaveBeenCalled();
+
+    onSelect.mockClear();
+    onSelectRuntimeChild.mockClear();
+    screen.getByRole("button", { name: /^Schedules$/ }).click();
+    expect(onSelectRuntimeChild).toHaveBeenCalledWith("schedules");
     expect(onSelect).not.toHaveBeenCalled();
   });
 

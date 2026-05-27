@@ -21,6 +21,7 @@ import sampleText from "./artifacts/sample.txt?raw";
 
 export { fixtureActivities } from "./activities.js";
 export { fixtureAgents } from "./agents.js";
+export { fixtureSchedules } from "./schedules.js";
 export { fixtureSessions } from "./sessions.js";
 export { fixtureTasks } from "./tasks.js";
 export { fixtureActiveWorkspaceId, fixtureWorkspaces } from "./workspaces.js";

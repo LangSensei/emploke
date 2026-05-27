@@ -188,6 +188,9 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/schedule':
+        specifier: workspace:*
+        version: link:../schedule
       '@testing-library/react':
         specifier: ^16.3.0
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
