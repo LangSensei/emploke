@@ -123,6 +123,19 @@ export const handlers = [
     });
   }),
 
+  // SSE stream for a running task. 204 closes the EventSource cleanly so
+  // the browser does NOT enter its ~3-second reconnect loop and spam the
+  // console. Phase 2 (#213) can replace this with a synthetic stream that
+  // emits a couple of `event: activity` frames to exercise mergeStreamItem.
+  http.get(
+    `/api/workspaces/${W}/tasks/:tid/activity/stream`,
+    () =>
+      new HttpResponse(null, {
+        status: 204,
+        headers: { "content-type": "text/event-stream" },
+      }),
+  ),
+
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────
   // GETs that no handler above matched fall through to MSW's
   // `onUnhandledRequest: "warn"` setting (configured in browser.ts),

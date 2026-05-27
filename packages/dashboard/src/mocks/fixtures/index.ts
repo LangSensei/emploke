@@ -44,10 +44,6 @@ const samplePngBlob: Blob = await fetch(samplePngUrl).then((r) => r.blob());
  * after `extractArtifacts()` strips the absolute-path prefix.
  */
 export const artifactBodies = new Map<string, ArtifactBody>([
-  ["running-with-activity/sample.html", { contentType: "text/html", body: sampleHtml }],
-  ["running-with-activity/sample.json", { contentType: "application/json", body: sampleJson }],
-  ["running-with-activity/sample.png", { contentType: "image/png", body: samplePngBlob }],
-  ["running-with-activity/sample.txt", { contentType: "text/plain", body: sampleText }],
   ["single-html/sample.html", { contentType: "text/html", body: sampleHtml }],
   ["code-markdown/sample.md", { contentType: "text/markdown", body: sampleMarkdown }],
   ["code-markdown/sample.txt", { contentType: "text/plain", body: sampleText }],
