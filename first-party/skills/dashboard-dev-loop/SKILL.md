@@ -2,7 +2,7 @@
 name: dashboard-dev-loop
 scope: emploke
 description: "Start a mock-backed dashboard dev server, drive it via Playwright MCP, iterate edits + screenshots, and tear down cleanly"
-version: 1.0.0
+version: 1.0.1
 ---
 
 # Dashboard Dev Loop Skill
@@ -192,9 +192,11 @@ start_dashboard_mock() {
     log="${dir}/dev-server.log"
     : > "${log}"  # truncate
 
-    # setsid makes the dev server its own process group leader, so a single
-    # `kill -- -PGID` reliably reaps the pnpm/node/vite tree on teardown.
-    setsid pnpm -C "${repo_root}" -F @emploke/dashboard dev:mock:e2e \
+    # Background pnpm normally. We deliberately do NOT use `setsid` here
+    # because it ships in `util-linux` on Linux but is not present on
+    # macOS by default. Teardown walks the descendant tree explicitly
+    # in stop_dashboard_mock — see comments there.
+    pnpm -C "${repo_root}" -F @emploke/dashboard dev:mock:e2e \
         >> "${log}" 2>&1 < /dev/null &
     local pid=$!
     export DASHBOARD_MOCK_PID="${pid}"
@@ -221,17 +223,31 @@ start_dashboard_mock() {
     return 1
 }
 
-# --- stop the mock dashboard (kills the process group) ----------------------
+# --- stop the mock dashboard (walks descendants, no process-group leader) ---
+# Helper: recursively collect all descendants of $1 in post-order (leaves first).
+_dashboard_mock_descendants() {
+    local parent="$1" child
+    for child in $(pgrep -P "${parent}" 2>/dev/null); do
+        _dashboard_mock_descendants "${child}"
+        printf '%s\n' "${child}"
+    done
+}
+
 stop_dashboard_mock() {
     local pid="${1:-${DASHBOARD_MOCK_PID:-}}"
     [ -z "${pid}" ] && return 0
 
-    # Kill the process group setsid created (PGID == pid because the shell
-    # made $pid the group leader). TERM first so vite can flush its socket,
-    # then KILL after a brief grace period so we never strand the port.
-    kill -TERM -- "-${pid}" 2>/dev/null || true
+    # Collect pnpm + all descendants (node, vite, etc.) post-order so leaves
+    # die first. TERM first so vite can flush its socket; KILL after a brief
+    # grace period so we never strand the port. We do not rely on process
+    # groups (would need `setsid` on Linux, not available on macOS).
+    local victims
+    victims=$(_dashboard_mock_descendants "${pid}"; printf '%s\n' "${pid}")
+
+    local v
+    for v in ${victims}; do kill -TERM "${v}" 2>/dev/null || true; done
     sleep 1
-    kill -KILL -- "-${pid}" 2>/dev/null || true
+    for v in ${victims}; do kill -KILL "${v}" 2>/dev/null || true; done
 
     unset DASHBOARD_MOCK_PID
 }
