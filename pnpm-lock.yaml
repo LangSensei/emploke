@@ -283,8 +283,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1
       cronstrue:
-        specifier: ^2.50.0
-        version: 2.61.0
+        specifier: ^3.14.0
+        version: 3.14.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.10.0)(knex@3.2.10(better-sqlite3@12.10.0))
@@ -1883,9 +1883,8 @@ packages:
     resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
     engines: {node: '>=18.0'}
 
-  cronstrue@2.61.0:
-    resolution: {integrity: sha512-ootN5bvXbIQI9rW94+QsXN5eROtXWwew6NkdGxIRpS/UFWRggL0G5Al7a9GTBFEsuvVhJ2K3CntIIVt7L2ILhA==}
-    deprecated: Non-backwards compatible Breaking changes
+  cronstrue@3.14.0:
+    resolution: {integrity: sha512-XnW4vuK/jPJjmTyDWiej1Zq36Od7ITwxaV2O1pzHZuyMVvdy7NAvyvIBzybt+idqSpfqYuoDG7uf/ocGtJVWxA==}
     hasBin: true
 
   cross-env@7.0.3:
@@ -3964,7 +3963,7 @@ snapshots:
 
   croner@10.0.1: {}
 
-  cronstrue@2.61.0: {}
+  cronstrue@3.14.0: {}
 
   cross-env@7.0.3:
     dependencies:
