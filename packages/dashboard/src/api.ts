@@ -1282,11 +1282,13 @@ export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
  * server route's accepted shape (`packages/server/src/routes/schedules.ts`
  * `app.post("/")`). The dashboard's "New schedule" modal (issue #222)
  * is the first surface to use this; the CLI's `emploke schedule create`
- * sends the same wire shape directly.
+ * sends the same wire shape directly. The `target.brief` + optional
+ * `target.details` pair mirrors `@emploke/task` `DispatchOpts` (RFC
+ * #61 v2).
  */
 export interface CreateScheduleBody {
   name: string;
-  target: { kind: "task"; agent: string; instructions: string; runtime?: string };
+  target: { kind: "task"; agent: string; brief: string; details?: string; runtime?: string };
   trigger: { kind: "cron"; expr: string; tz: string };
   enabled?: boolean;
 }

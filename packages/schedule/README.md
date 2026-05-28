@@ -10,8 +10,12 @@ v1 locks `target.kind` to `"task"` and `trigger.kind` to `"cron"`;
 both unions are designed for additive extension (`"workflow"` target,
 `"interval"` trigger) without a schema bump.
 
-No HTTP / CLI / dashboard surface — those land in follow-up PRs:
-PR 3 (server + REST + CLI), PR 4 (dashboard).
+`ScheduleTarget.task` mirrors `@emploke/task` `DispatchOpts` — single
+`brief` (≤ 200 chars, no newlines) plus optional `details` (RFC #61
+v2). The substrate adapter in `@emploke/core` is a pass-through; no
+brief synthesis. HTTP / CLI / dashboard surface lands via
+`@emploke/server` routes, `emploke schedule` CLI subcommands, and the
+dashboard's "New schedule" modal (issue #222).
 
 ## Layout
 
@@ -25,6 +29,8 @@ packages/schedule/
 ├── tsconfig.json
 ├── vitest.config.ts
 ├── drizzle/0000_*.sql       Drizzle-kit generated migration (committed)
+├── drizzle/0001_*.sql       Hand-written: drops target_agent + adds
+│                            functional partial JSON-extract index
 └── src/
     ├── compose.ts            composeScheduleModule({ dbFile, taskDispatcher, agentValidator })
     ├── cron.ts               croner + cronstrue wrapper (validate / nextRuns / describe)
@@ -36,7 +42,7 @@ packages/schedule/
     ├── schedule-service.ts   ScheduleService reads + writes + timer chain
     ├── schema.ts             Drizzle table definition (private)
     ├── testing.ts            openTestScheduleDb() in-memory test helper
-    ├── types.ts              wire DTOs, ScheduleTrigger/ScheduleTarget, TaskDispatcher
+    ├── types.ts              wire DTOs, ScheduleTrigger/ScheduleTarget (brief+details?), TaskDispatcher
     └── validate.ts           SCHEDULE_ID_RE + generateScheduleId
 ```
 
@@ -60,15 +66,37 @@ packages/schedule/
    state is recomputed; dispatched tasks continue under
    `@emploke/task`'s lifecycle.
 
+## Data model
+
+`target.kind === "task"` carries `agent`, `brief` (single line, ≤ 200
+chars, validated entity-side and route-side), optional `details`
+(any string, including `""` — mirrors `@emploke/task`'s lax shape),
+and optional `runtime`. There is no longer a denormalised
+`target_agent` column on the `schedules` table.
+
+**Indexes.** `schedules_target_agent_idx` is a **functional partial
+index** on `json_extract(target_json, '$.agent')` filtered
+`WHERE target_kind = 'task'`. SQLite has supported JSON-extract in
+index expressions for years and `@emploke/task` already uses the
+same pattern (`tasks_schedule_id_idx`). Drizzle-kit cannot declare
+expression indexes in the TypeScript schema, so this index lives in
+a hand-written `drizzle/0001_drop_target_agent_add_json_index.sql`.
+Queries that engage it must use the raw `` sql`json_extract(...)` ``
+template — the Drizzle typed query builder does not generate the
+index-engaging form. The `list({ agent })` repository method pushes
+both `eq(targetKind, "task")` and the json_extract equality so the
+partial index lights up; without the `target_kind` predicate SQLite
+falls back to a full scan.
+
 ## Wiring
 
 `composeScheduleModule({ dbFile, taskDispatcher, agentValidator })` is
 the only production composition path:
 
 - `taskDispatcher` — any object satisfying the `TaskDispatcher`
-  interface. PR 3 adapts `@emploke/task`'s
+  interface. `@emploke/core` adapts `@emploke/task`'s
   `TaskService.dispatch(opts)` + `TaskService.hasInFlightForSchedule(id)`
   structurally; this package never imports `@emploke/task` directly.
 - `agentValidator(fqn)` — async predicate; resolves on success,
-  rejects on missing agent. PR 3 binds it to `CatalogService`.
+  rejects on missing agent. Bound to `CatalogService` in production.
 - Optional `now` / `randomUUID` are deterministic-test seams.

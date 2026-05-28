@@ -92,7 +92,7 @@ beforeEach(() => {
     name: "from-form",
     enabled: true,
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "emploke/dev", instructions: "do it" },
+    target: { kind: "task", agent: "emploke/dev", brief: "do it" },
     nextFireAt: "2026-06-01T09:00:00.000Z",
     createdAt: "2026-05-28T00:00:00.000Z",
     updatedAt: "2026-05-28T00:00:00.000Z",
@@ -111,7 +111,7 @@ describe("SchedulesPage list", () => {
         name: "Schedule A",
         enabled: true,
         trigger: { kind: "cron", expr: "0 0 1 * * *", tz: "UTC" },
-        target: { kind: "task", agent: "emploke/dev", instructions: "do a" },
+        target: { kind: "task", agent: "emploke/dev", brief: "do a" },
         nextFireAt: "2026-06-01T01:00:00.000Z",
       }),
       makeSchedule({
@@ -119,7 +119,7 @@ describe("SchedulesPage list", () => {
         name: "Schedule B",
         enabled: false,
         trigger: { kind: "cron", expr: "0 0 2 * * *", tz: "UTC" },
-        target: { kind: "task", agent: "emploke/review", instructions: "do b" },
+        target: { kind: "task", agent: "emploke/review", brief: "do b" },
         nextFireAt: "2026-05-30T02:00:00.000Z",
       }),
     ];
@@ -147,7 +147,7 @@ describe("SchedulesPage list", () => {
         name: "Live",
         enabled: true,
         trigger: { kind: "cron", expr: "*/5 * * * * *", tz: "UTC" },
-        target: { kind: "task", agent: "emploke/dev", instructions: "x" },
+        target: { kind: "task", agent: "emploke/dev", brief: "x" },
         nextFireAt: "2026-06-01T01:00:00.000Z",
       }),
       makeSchedule({
@@ -155,7 +155,7 @@ describe("SchedulesPage list", () => {
         name: "Paused one",
         enabled: false,
         trigger: { kind: "cron", expr: "0 0 9 * * 1", tz: "UTC" },
-        target: { kind: "task", agent: "emploke/dev", instructions: "x" },
+        target: { kind: "task", agent: "emploke/dev", brief: "x" },
         nextFireAt: "2026-06-02T09:00:00.000Z",
       }),
     ];
@@ -245,7 +245,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
           name: "A",
           enabled: true,
           trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-          target: { kind: "task", agent: "emploke/dev", instructions: "x" },
+          target: { kind: "task", agent: "emploke/dev", brief: "x" },
           nextFireAt: "2026-06-01T01:00:00.000Z",
         }),
       ],
@@ -259,7 +259,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
           name: "A",
           enabled: true,
           trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-          target: { kind: "task", agent: "emploke/dev", instructions: "x" },
+          target: { kind: "task", agent: "emploke/dev", brief: "x" },
           nextFireAt: "2026-06-01T01:00:00.000Z",
         }),
       ],
@@ -289,7 +289,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
     fireEvent.click(await screen.findByTestId("schedules-new-cta"));
     await waitFor(() => expect(screen.getByTestId("create-schedule-form")).toBeTruthy());
     fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "A" } });
-    fireEvent.change(screen.getByTestId("create-schedule-instructions"), {
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), {
       target: { value: "do it" },
     });
     // Wait past the 300ms debounce so the submit button enables.
@@ -318,7 +318,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
       target: { value: "emploke/dev" },
     });
     fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "A" } });
-    fireEvent.change(screen.getByTestId("create-schedule-instructions"), {
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), {
       target: { value: "do it" },
     });
     await new Promise((r) => setTimeout(r, 350));
@@ -331,7 +331,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
       name: "A",
       enabled: true,
       trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-      target: { kind: "task", agent: "emploke/dev", instructions: "do it" },
+      target: { kind: "task", agent: "emploke/dev", brief: "do it" },
       nextFireAt: "2026-06-01T09:00:00.000Z",
       createdAt: "2026-05-28T00:00:00.000Z",
       updatedAt: "2026-05-28T00:00:00.000Z",
@@ -341,7 +341,7 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
       name: "A",
       enabled: true,
       trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-      target: { kind: "task", agent: "emploke/dev", instructions: "do it" },
+      target: { kind: "task", agent: "emploke/dev", brief: "do it" },
       nextFireAt: "2026-06-01T09:00:00.000Z",
       createdAt: "2026-05-28T00:00:00.000Z",
       updatedAt: "2026-05-28T00:00:00.000Z",

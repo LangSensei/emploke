@@ -12,7 +12,7 @@ function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", instructions: "Run the daily report" },
+    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }
@@ -42,11 +42,36 @@ describe("ScheduleService.run + private fire flow", () => {
     expect(h.dispatcher.calls).toHaveLength(1);
     const call = h.dispatcher.calls[0]!;
     expect(call.agent).toBe("report-bot");
-    expect(call.instructions).toBe("Run the daily report");
+    expect(call.brief).toBe("Run the daily report");
+    expect(call.details).toBeUndefined();
     expect(call.origin).toBe("schedule");
     expect(call.metadata.scheduleId).toBe(VALID_UUIDS[0]);
     expect(call.metadata.firedAt).toBe("2026-05-01T09:00:00.000Z");
     expect(call.runtime).toBeUndefined();
+  });
+
+  it("run() forwards details when target has them", async () => {
+    await h.service.create(
+      baseArgs({
+        target: {
+          kind: "task",
+          agent: "report-bot",
+          brief: "Run the daily report",
+          details: "Full body across\nmultiple lines.",
+        },
+      }),
+    );
+    h.setNow(new Date("2026-05-01T09:00:00.000Z"));
+    await h.service.run(VALID_UUIDS[0]);
+    expect(h.dispatcher.calls[0]?.details).toBe("Full body across\nmultiple lines.");
+  });
+
+  it("run() omits details key entirely (not undefined) when not set", async () => {
+    await h.service.create(baseArgs());
+    h.setNow(new Date("2026-05-01T09:00:00.000Z"));
+    await h.service.run(VALID_UUIDS[0]);
+    const call = h.dispatcher.calls[0]!;
+    expect(Object.hasOwn(call, "details")).toBe(false);
   });
 
   it("run() passes runtime when set; omits when undefined", async () => {
@@ -55,7 +80,7 @@ describe("ScheduleService.run + private fire flow", () => {
         target: {
           kind: "task",
           agent: "report-bot",
-          instructions: "Run",
+          brief: "Run",
           runtime: "copilot-cli",
         },
       }),
@@ -121,7 +146,7 @@ describe("ScheduleService.fire — exhaustiveness shim", () => {
       {
         name: "x",
         trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-        target: { kind: "task", agent: "a", instructions: "i" },
+        target: { kind: "task", agent: "a", brief: "i" },
       },
       { id: VALID_UUIDS[0], now: new Date() },
     );

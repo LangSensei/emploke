@@ -35,7 +35,8 @@ const sampleSchedule: Schedule = {
   target: {
     kind: "task",
     agent: "writer",
-    instructions: "Summarise yesterday's commits",
+    brief: "Summarise yesterday's commits",
+    details: "Pull yesterday's commit log and produce a short digest grouped by author.",
   },
   trigger: { kind: "cron", expr: "0 9 * * 1-5", tz: "Asia/Shanghai" },
   enabled: true,
@@ -140,6 +141,114 @@ describe("schedulesRoutes — create", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/target/);
+  });
+
+  it("POST / with missing target.brief returns 400 (route-layer rejection)", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/brief/);
+    expect(svc.create).not.toHaveBeenCalled();
+  });
+
+  it("POST / with target.brief over 200 chars returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "x".repeat(201) },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/200/);
+  });
+
+  it("POST / with target.brief containing newline returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "foo\nbar" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/single line/);
+  });
+
+  it("POST / with target.brief containing carriage return returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "foo\rbar" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/single line/);
+  });
+
+  it("POST / with target.details set to empty string returns 201 (mirrors @emploke/task)", async () => {
+    const create = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ create });
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "ok", details: "" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST / with target.details set to a non-string returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "ok", details: 7 },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/details/);
+  });
+
+  it("POST / with target.details omitted returns 201", async () => {
+    const create = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ create });
+    const res = await schedulesRoutes(() => svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { kind: "task", agent: "writer", brief: "ok" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("POST / with invalid cron expr maps to 400 with typed code", async () => {
@@ -266,6 +375,64 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("InvalidCronExprError");
+  });
+
+  it("PATCH /:sid with target.brief over 200 chars returns 400 (route-layer rejection)", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: { kind: "task", agent: "writer", brief: "x".repeat(201) },
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/200/);
+    expect(svc.patch).not.toHaveBeenCalled();
+  });
+
+  it("PATCH /:sid with target.brief containing newline returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: { kind: "task", agent: "writer", brief: "foo\nbar" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/single line/);
+  });
+
+  it("PATCH /:sid with target.details non-string returns 400", async () => {
+    const svc = stubService({});
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: { kind: "task", agent: "writer", brief: "ok", details: 7 },
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/details/);
+    expect(svc.patch).not.toHaveBeenCalled();
+  });
+
+  it("PATCH /:sid with target.details empty string is forwarded (mirrors @emploke/task)", async () => {
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: { kind: "task", agent: "writer", brief: "ok", details: "" },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith("sched-abc", {
+      target: { kind: "task", agent: "writer", brief: "ok", details: "" },
+    });
   });
 });
 

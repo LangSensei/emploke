@@ -45,7 +45,7 @@ const SAMPLE_VIEW: ScheduleView = {
   target: {
     kind: "task",
     agent: "emploke/dev",
-    instructions: "Do the thing.",
+    brief: "Do the thing.",
     runtime: "copilot",
   },
   nextFireAt: "2026-05-30T09:00:00.000Z",

@@ -219,10 +219,10 @@ export const handlers = [
       body.target === null ||
       body.target.kind !== "task" ||
       typeof body.target.agent !== "string" ||
-      typeof body.target.instructions !== "string"
+      typeof body.target.brief !== "string"
     ) {
       return HttpResponse.json(
-        { error: "target must be { kind: 'task', agent, instructions, runtime? }" },
+        { error: "target must be { kind: 'task', agent, brief, details?, runtime? }" },
         { status: 400 },
       );
     }

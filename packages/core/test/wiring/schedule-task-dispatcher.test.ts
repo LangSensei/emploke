@@ -1,16 +1,16 @@
 /**
- * Unit tests for `makeScheduleTaskDispatcher`. Verifies the shape
- * adaptation between `@emploke/schedule`'s `TaskDispatcher` interface
- * and `@emploke/task`'s `TaskService.dispatch` — specifically:
+ * Unit tests for `makeScheduleTaskDispatcher`. Post-RFC #61 v2 the
+ * adapter is a pass-through between `@emploke/schedule`'s
+ * `TaskDispatcher` interface and `@emploke/task`'s
+ * `TaskService.dispatch`. It still owns:
  *
- *   - passthrough of agent / details / origin / metadata
- *   - first-line truncation + ellipsis for brief
- *   - fallback to `Scheduled run <scheduleId>` on empty instructions
- *   - conditional spread of optional runtime (NEVER passes
- *     `{ runtime: undefined }` per exactOptionalPropertyTypes)
- *   - return shape collapses to `{ id }` (rest of TaskEntity is not
+ *   - structural decoupling (schedule pkg never imports task pkg)
+ *   - conditional-spread of optional `details` / `runtime` (NEVER
+ *     passes `{ details: undefined }` / `{ runtime: undefined }`
+ *     under exactOptionalPropertyTypes)
+ *   - return-shape narrowing to `{ id }` (rest of TaskEntity is not
  *     leaked through the schedule pkg's narrower contract)
- *   - hasInFlightForSchedule is a pass-through (one call, one arg)
+ *   - hasInFlightForSchedule pass-through
  */
 
 import type { TaskService } from "@emploke/task";
@@ -29,80 +29,68 @@ function stubTaskService(dispatchReturn: { id: string } = { id: "task-xyz" }): {
 }
 
 describe("makeScheduleTaskDispatcher", () => {
-  it("passes agent, details, origin, metadata straight through", async () => {
+  it("passes agent, brief, origin, metadata straight through", async () => {
     const { dispatch, service } = stubTaskService();
     const adapter = makeScheduleTaskDispatcher(service);
     await adapter.dispatch({
       agent: "writer",
-      instructions: "Summarize yesterday",
+      brief: "Summarize yesterday",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });
     expect(dispatch).toHaveBeenCalledTimes(1);
     const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(call.agent).toBe("writer");
-    expect(call.details).toBe("Summarize yesterday");
+    expect(call.brief).toBe("Summarize yesterday");
     expect(call.origin).toBe("schedule");
     expect(call.metadata).toEqual({ scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" });
   });
 
-  it("uses the first line of instructions as brief", async () => {
+  it("forwards details verbatim when provided", async () => {
     const { dispatch, service } = stubTaskService();
     const adapter = makeScheduleTaskDispatcher(service);
     await adapter.dispatch({
       agent: "writer",
-      instructions: "Daily summary\n\nLong markdown body here.\n- a\n- b",
+      brief: "Daily summary",
+      details: "Long markdown body here.\n- a\n- b",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });
     const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(call.brief).toBe("Daily summary");
-    expect(typeof call.brief).toBe("string");
-    expect((call.brief as string).includes("\n")).toBe(false);
+    expect(call.details).toBe("Long markdown body here.\n- a\n- b");
   });
 
-  it("truncates briefs > 200 chars with an ellipsis (length stays ≤ 200)", async () => {
+  it("OMITS details from the underlying dispatch call when not provided", async () => {
     const { dispatch, service } = stubTaskService();
     const adapter = makeScheduleTaskDispatcher(service);
-    const longLine = "x".repeat(500);
     await adapter.dispatch({
       agent: "writer",
-      instructions: longLine,
+      brief: "Body",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });
     const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
-    const brief = call.brief as string;
-    expect(brief.length).toBe(200);
-    expect(brief.endsWith("...")).toBe(true);
-    // The original instructions are preserved verbatim in details.
-    expect(call.details).toBe(longLine);
+    // Critical: `{ details: undefined }` is NOT equivalent to omitting
+    // the key under exactOptionalPropertyTypes. The adapter uses the
+    // conditional-spread pattern `...(details !== undefined ? { details } : {})`
+    // to satisfy that constraint.
+    expect(Object.hasOwn(call, "details")).toBe(false);
   });
 
-  it("falls back to `Scheduled run <scheduleId>` when instructions is empty", async () => {
+  it("forwards details when set to an empty string (mirrors @emploke/task lax shape)", async () => {
     const { dispatch, service } = stubTaskService();
     const adapter = makeScheduleTaskDispatcher(service);
     await adapter.dispatch({
       agent: "writer",
-      instructions: "",
+      brief: "Body",
+      details: "",
       origin: "schedule",
-      metadata: { scheduleId: "sched-abc", firedAt: "2026-06-01T00:00:00Z" },
+      metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });
     const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(call.brief).toBe("Scheduled run sched-abc");
-  });
-
-  it("falls back when instructions is whitespace / newline only", async () => {
-    const { dispatch, service } = stubTaskService();
-    const adapter = makeScheduleTaskDispatcher(service);
-    await adapter.dispatch({
-      agent: "writer",
-      instructions: "   \n  \n",
-      origin: "schedule",
-      metadata: { scheduleId: "s-2", firedAt: "2026-06-01T00:00:00Z" },
-    });
-    const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(call.brief).toBe("Scheduled run s-2");
+    expect(Object.hasOwn(call, "details")).toBe(true);
+    expect(call.details).toBe("");
   });
 
   it("OMITS runtime from the underlying dispatch call when not provided", async () => {
@@ -110,15 +98,11 @@ describe("makeScheduleTaskDispatcher", () => {
     const adapter = makeScheduleTaskDispatcher(service);
     await adapter.dispatch({
       agent: "writer",
-      instructions: "Body",
+      brief: "Body",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });
     const call = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
-    // Critical: `{ runtime: undefined }` is NOT equivalent to omitting
-    // the key under exactOptionalPropertyTypes. The adapter uses the
-    // conditional-spread pattern `...(runtime !== undefined ? { runtime } : {})`
-    // to satisfy that constraint.
     expect(Object.hasOwn(call, "runtime")).toBe(false);
   });
 
@@ -127,7 +111,7 @@ describe("makeScheduleTaskDispatcher", () => {
     const adapter = makeScheduleTaskDispatcher(service);
     await adapter.dispatch({
       agent: "writer",
-      instructions: "Body",
+      brief: "Body",
       runtime: "copilot",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
@@ -150,7 +134,7 @@ describe("makeScheduleTaskDispatcher", () => {
     const adapter = makeScheduleTaskDispatcher(service);
     const out = await adapter.dispatch({
       agent: "writer",
-      instructions: "x",
+      brief: "x",
       origin: "schedule",
       metadata: { scheduleId: "s-1", firedAt: "2026-06-01T00:00:00Z" },
     });

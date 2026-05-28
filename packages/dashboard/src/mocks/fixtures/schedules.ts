@@ -32,7 +32,8 @@ export const fixtureSchedules: ScheduleDetail[] = [
       kind: "task",
       agent: "emploke/dev",
       runtime: "copilot",
-      instructions:
+      brief: "Nightly artifact + cache cleanup",
+      details:
         "Sweep ephemeral artifacts, prune session caches older than 7 days, and report disk reclaim totals in the artifact JSON. Refer to docs/operations/cleanup-runbook.md for the full sweep order; keep the run idempotent so a missed night is recovered on the next fire without double-deletion.",
     },
     enabled: true,
@@ -50,7 +51,8 @@ export const fixtureSchedules: ScheduleDetail[] = [
       kind: "task",
       agent: "emploke/review",
       runtime: "copilot",
-      instructions: "Summarise the last hour of runtime events and post the digest to ops.",
+      brief: "Hourly runtime-events digest to ops",
+      details: "Summarise the last hour of runtime events and post the digest to ops.",
     },
     enabled: true,
     createdAt: "2026-05-10T12:00:00.000Z",
@@ -67,7 +69,8 @@ export const fixtureSchedules: ScheduleDetail[] = [
       kind: "task",
       agent: "emploke/dev",
       runtime: "claude",
-      instructions: "Compose the weekly engineering digest and publish to the team feed.",
+      brief: "Weekly engineering digest publish",
+      details: "Compose the weekly engineering digest and publish to the team feed.",
     },
     enabled: false,
     createdAt: "2026-04-15T08:00:00.000Z",
@@ -82,7 +85,8 @@ export const fixtureSchedules: ScheduleDetail[] = [
     target: {
       kind: "task",
       agent: "emploke/designer",
-      instructions:
+      brief: "Dashboard visual-diff sweep",
+      details:
         "Capture before/after screenshots of the dashboard and diff them; flag visual regressions.",
     },
     enabled: false,

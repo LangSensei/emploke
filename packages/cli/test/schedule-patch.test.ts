@@ -102,7 +102,8 @@ const sampleSchedule = {
   target: {
     kind: "task",
     agent: "emploke/dev",
-    instructions: "do the thing",
+    brief: "do the thing",
+    details: "Long body for the daily brief task.",
     runtime: "copilot",
   },
   enabled: true,
@@ -207,7 +208,7 @@ describe("schedulePatch — sparse trigger updates (GET + merge + PATCH)", () =>
 });
 
 describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => {
-  it("--agent alone preserves existing instructions/runtime", async () => {
+  it("--agent alone preserves existing brief/details/runtime", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
       { status: 200, body: JSON.stringify(sampleSchedule) },
@@ -221,13 +222,14 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       target: {
         kind: "task",
         agent: "emploke/qa",
-        instructions: "do the thing",
+        brief: "do the thing",
+        details: "Long body for the daily brief task.",
         runtime: "copilot",
       },
     });
   });
 
-  it("--instructions alone preserves existing agent/runtime", async () => {
+  it("--brief alone preserves existing agent/details/runtime", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
       { status: 200, body: JSON.stringify(sampleSchedule) },
@@ -235,7 +237,7 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
-      instructions: "new instructions",
+      brief: "renamed brief",
     });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(2);
@@ -244,13 +246,75 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       target: {
         kind: "task",
         agent: "emploke/dev",
-        instructions: "new instructions",
+        brief: "renamed brief",
+        details: "Long body for the daily brief task.",
         runtime: "copilot",
       },
     });
   });
 
-  it("--runtime alone preserves existing agent/instructions", async () => {
+  it("--details alone preserves existing agent/brief/runtime (multi-line value allowed)", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify(sampleScheduleGet) },
+      { status: 200, body: JSON.stringify(sampleSchedule) },
+    ]);
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      details: "new details\n- a\n- b",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.method).toBe("PATCH");
+    expect(calls[1]?.body).toEqual({
+      target: {
+        kind: "task",
+        agent: "emploke/dev",
+        brief: "do the thing",
+        details: "new details\n- a\n- b",
+        runtime: "copilot",
+      },
+    });
+  });
+
+  it("--details with empty string sets details to '' (mirrors @emploke/task lax shape)", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify(sampleScheduleGet) },
+      { status: 200, body: JSON.stringify(sampleSchedule) },
+    ]);
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, details: "" });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(2);
+    const body = calls[1]?.body as { target: { details: string } };
+    expect(body.target.details).toBe("");
+  });
+
+  it("--clear-details removes details from the patched target entirely (key absent on wire)", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify(sampleScheduleGet) },
+      { status: 200, body: JSON.stringify(sampleSchedule) },
+    ]);
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, clearDetails: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(2);
+    const body = calls[1]?.body as { target: Record<string, unknown> };
+    expect(Object.hasOwn(body.target, "details")).toBe(false);
+  });
+
+  it("--details and --clear-details together → exit 2 (mutually exclusive)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      details: "x",
+      clearDetails: true,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/mutually exclusive/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("--runtime alone preserves existing agent/brief/details", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
       { status: 200, body: JSON.stringify(sampleSchedule) },
@@ -263,13 +327,14 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       target: {
         kind: "task",
         agent: "emploke/dev",
-        instructions: "do the thing",
+        brief: "do the thing",
+        details: "Long body for the daily brief task.",
         runtime: "echo",
       },
     });
   });
 
-  it("--agent + --instructions still GETs the current schedule and preserves runtime", async () => {
+  it("--agent + --brief still GETs the current schedule and preserves details/runtime", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
       { status: 200, body: JSON.stringify(sampleSchedule) },
@@ -278,7 +343,7 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       ...commonOpts(),
       sid: SID,
       agent: "emploke/qa",
-      instructions: "go",
+      brief: "go",
     });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(2);
@@ -289,7 +354,8 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       target: {
         kind: "task",
         agent: "emploke/qa",
-        instructions: "go",
+        brief: "go",
+        details: "Long body for the daily brief task.",
         runtime: "copilot",
       },
     });
@@ -304,7 +370,7 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       ...commonOpts(),
       sid: SID,
       agent: "new-agent",
-      instructions: "new",
+      brief: "new",
     });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(2);
@@ -314,10 +380,37 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       target: {
         kind: "task",
         agent: "new-agent",
-        instructions: "new",
+        brief: "new",
+        details: "Long body for the daily brief task.",
         runtime: "copilot",
       },
     });
+  });
+});
+
+describe("schedulePatch — --brief content validation (no fetch)", () => {
+  it("--brief with newline → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, brief: "foo\nbar" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/single line/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("--brief over 200 chars → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, brief: "x".repeat(201) });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/200/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("--brief whitespace only → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, brief: "   " });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/non-empty/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -334,7 +427,7 @@ describe("schedulePatch — combined fields", () => {
       cron: "0 12 * * *",
       tz: "UTC",
       agent: "emploke/qa",
-      instructions: "go",
+      brief: "go",
     });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(2);
@@ -346,7 +439,8 @@ describe("schedulePatch — combined fields", () => {
       target: {
         kind: "task",
         agent: "emploke/qa",
-        instructions: "go",
+        brief: "go",
+        details: "Long body for the daily brief task.",
         runtime: "copilot",
       },
     });
@@ -392,7 +486,9 @@ describe("schedulePatch — input validation (no fetch)", () => {
     expect(r.stderr).toContain("--cron");
     expect(r.stderr).toContain("--tz");
     expect(r.stderr).toContain("--agent");
-    expect(r.stderr).toContain("--instructions");
+    expect(r.stderr).toContain("--brief");
+    expect(r.stderr).toContain("--details");
+    expect(r.stderr).toContain("--clear-details");
     expect(r.stderr).toContain("--runtime");
     expect(r.stderr).toContain("--enabled");
     expect(fetchSpy).not.toHaveBeenCalled();

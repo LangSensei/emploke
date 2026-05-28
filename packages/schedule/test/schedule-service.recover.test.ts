@@ -10,7 +10,7 @@ function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", instructions: "Run the daily report" },
+    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }

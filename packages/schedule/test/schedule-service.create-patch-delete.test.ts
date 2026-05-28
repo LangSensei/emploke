@@ -18,7 +18,7 @@ function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", instructions: "Run the daily report" },
+    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }
@@ -90,7 +90,7 @@ describe("ScheduleService.create / patch / delete", () => {
     await h.service.create(
       baseArgs({
         name: "b",
-        target: { kind: "task", agent: "other-bot", instructions: "x" },
+        target: { kind: "task", agent: "other-bot", brief: "x" },
       }),
     );
     const filtered = await h.service.list({ agent: "report-bot" });
@@ -185,7 +185,7 @@ describe("ScheduleService.create / patch / delete", () => {
       });
       await expect(
         svc.patch(VALID_UUIDS[0], {
-          target: { kind: "task", agent: "missing-bot", instructions: "x" },
+          target: { kind: "task", agent: "missing-bot", brief: "x" },
         }),
       ).rejects.toThrow(AgentNotFoundError);
       await svc.shutdown();

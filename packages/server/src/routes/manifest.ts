@@ -242,7 +242,10 @@ export interface ScheduleCreateBody {
   readonly target: {
     readonly kind: "task";
     readonly agent: string;
-    readonly instructions: string;
+    /** Single line, ≤ 200 chars. Mirrors `@emploke/task` `DispatchOpts.brief`. */
+    readonly brief: string;
+    /** Optional multi-line body. Mirrors `@emploke/task` `DispatchOpts.details`. */
+    readonly details?: string;
     readonly runtime?: string;
   };
   readonly trigger: {

@@ -109,7 +109,13 @@ export function CreateScheduleModal({
   const [name, setName] = useState("");
   const [agent, setAgent] = useState("");
   const [runtime, setRuntime] = useState("");
-  const [instructions, setInstructions] = useState("");
+  const [brief, setBrief] = useState("");
+  const [details, setDetails] = useState("");
+  // Disabled today (only `task` exists). Kept as state for forward
+  // compatibility — once `workflow` lands, we add a setter and unlock
+  // the <select>. Keep this prop so future commits don't have to
+  // re-introduce the discriminator-of-the-union state.
+  const [targetKind] = useState<"task">("task");
   const [preset, setPreset] = useState<Preset>({ kind: "daily", hour: 9, minute: 0 });
   const [tz, setTz] = useState<string>(() => browserTimezone());
   const [enabled, setEnabled] = useState(true);
@@ -205,7 +211,7 @@ export function CreateScheduleModal({
 
   // Reset transient state on close so a re-open starts clean. Persist
   // the form fields themselves — re-opening immediately after closing
-  // shouldn't drop the user's half-typed instructions.
+  // shouldn't drop the user's half-typed brief/details.
   useEffect(() => {
     if (!open) {
       setSubmitError(null);
@@ -217,7 +223,10 @@ export function CreateScheduleModal({
     !submitting &&
     name.trim() !== "" &&
     agent !== "" &&
-    instructions.trim() !== "" &&
+    brief.trim() !== "" &&
+    brief.trim().length <= 200 &&
+    !brief.includes("\n") &&
+    !brief.includes("\r") &&
     presetError === null &&
     previewError === null;
 
@@ -232,7 +241,8 @@ export function CreateScheduleModal({
         target: {
           kind: "task",
           agent,
-          instructions: instructions.trim(),
+          brief: brief.trim(),
+          ...(details.trim() ? { details: details.trim() } : {}),
           ...(runtime ? { runtime } : {}),
         },
         trigger: { kind: "cron", expr, tz },
@@ -319,21 +329,69 @@ export function CreateScheduleModal({
             </select>
           </label>
 
-          <label htmlFor="new-schedule-instructions">
+          <label htmlFor="new-schedule-target-kind">
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-              Instructions
+              Target type
+            </div>
+            <select
+              id="new-schedule-target-kind"
+              value={targetKind}
+              disabled
+              className="select select--full"
+              data-testid="create-schedule-target-kind"
+            >
+              <option value="task">Task</option>
+            </select>
+          </label>
+
+          <label htmlFor="new-schedule-brief">
+            <div
+              className="muted"
+              style={{
+                fontSize: 12,
+                marginBottom: 4,
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>Brief</span>
+              <span
+                className={brief.length > 200 ? "error" : "muted"}
+                style={{ fontSize: 11 }}
+                data-testid="create-schedule-brief-counter"
+              >
+                {brief.length}/200
+              </span>
+            </div>
+            <input
+              id="new-schedule-brief"
+              type="text"
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              disabled={submitting}
+              placeholder="One-line summary the task list will show (e.g. Refresh weekday digest)"
+              maxLength={200}
+              className="input"
+              style={{ width: "100%" }}
+              required
+              data-testid="create-schedule-brief"
+            />
+          </label>
+
+          <label htmlFor="new-schedule-details">
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Details (optional)
             </div>
             <textarea
-              id="new-schedule-instructions"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
+              id="new-schedule-details"
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
               disabled={submitting}
-              placeholder="What should the agent do each time this schedule fires?"
+              placeholder="Full instructions the agent will receive on each fire. Markdown OK."
               rows={4}
               className="input"
               style={{ width: "100%", fontFamily: "inherit", resize: "vertical" }}
-              required
-              data-testid="create-schedule-instructions"
+              data-testid="create-schedule-details"
             />
           </label>
 

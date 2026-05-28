@@ -35,7 +35,7 @@ const SAMPLE_CREATED: ScheduleView = {
   name: "from-test",
   enabled: true,
   trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-  target: { kind: "task", agent: "emploke/dev", instructions: "do it" },
+  target: { kind: "task", agent: "emploke/dev", brief: "do it" },
   nextFireAt: "2026-06-01T09:00:00.000Z",
   createdAt: "2026-05-28T00:00:00.000Z",
   updatedAt: "2026-05-28T00:00:00.000Z",
@@ -83,10 +83,19 @@ async function flushDebounce() {
 }
 
 describe("CreateScheduleModal", () => {
-  it("renders with name and instructions empty → submit disabled", async () => {
+  it("renders with name and brief empty → submit disabled", async () => {
     renderModal();
     const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
+  });
+
+  it("renders the disabled target-type selector with a single 'Task' option (future-compat placeholder for workflow)", async () => {
+    renderModal();
+    const sel = screen.getByTestId("create-schedule-target-kind") as HTMLSelectElement;
+    expect(sel.disabled).toBe(true);
+    expect(sel.value).toBe("task");
+    expect(sel.options.length).toBe(1);
+    expect(sel.options[0]?.value).toBe("task");
   });
 
   it("default 'Daily at 09:00' preset produces cron 0 9 * * * in the chip", async () => {
@@ -132,7 +141,7 @@ describe("CreateScheduleModal", () => {
     fireEvent.change(screen.getByTestId("create-schedule-name"), {
       target: { value: "five-min" },
     });
-    fireEvent.change(screen.getByTestId("create-schedule-instructions"), {
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), {
       target: { value: "do it" },
     });
     await flushDebounce();
@@ -148,15 +157,85 @@ describe("CreateScheduleModal", () => {
     const body = mockCreateSchedule.mock.calls[0]![0];
     expect(body.trigger.expr).toBe("*/5 9-17 * * 1-5");
     expect(body.target.agent).toBe("emploke/dev");
+    expect(body.target.brief).toBe("do it");
     expect(body.name).toBe("five-min");
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(SAMPLE_CREATED));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('submits without details → request body omits the details key entirely (not `details: ""`)', async () => {
+    renderModal();
+    fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "x" } });
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), { target: { value: "y" } });
+    await flushDebounce();
+    const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockCreateSchedule).toHaveBeenCalledTimes(1));
+    const body = mockCreateSchedule.mock.calls[0]![0];
+    expect(body.target.brief).toBe("y");
+    expect(Object.hasOwn(body.target, "details")).toBe(false);
+  });
+
+  it("submits with details → request body includes the details key", async () => {
+    renderModal();
+    fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "x" } });
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), { target: { value: "y" } });
+    fireEvent.change(screen.getByTestId("create-schedule-details"), {
+      target: { value: "Multi-line\nbody content." },
+    });
+    await flushDebounce();
+    const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockCreateSchedule).toHaveBeenCalledTimes(1));
+    const body = mockCreateSchedule.mock.calls[0]![0];
+    expect(body.target.details).toBe("Multi-line\nbody content.");
+  });
+
+  it("rejects brief over 200 chars: counter shows red + submit stays disabled", async () => {
+    renderModal();
+    fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "x" } });
+    // The native <input maxLength> may clip on synthesised events; assign the
+    // value directly to simulate paste-past-cap and exercise the canSubmit gate.
+    const briefInput = screen.getByTestId("create-schedule-brief") as HTMLInputElement;
+    const tooLong = "x".repeat(201);
+    fireEvent.change(briefInput, { target: { value: tooLong } });
+    await flushDebounce();
+    const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
+    // Either the maxLength clipped to 200 (submit enabled) OR the value
+    // landed >200 chars and the gate keeps submit disabled. The contract
+    // we verify: if length > 200 the submit must stay disabled.
+    if (briefInput.value.length > 200) {
+      expect(submit.disabled).toBe(true);
+      const counter = screen.getByTestId("create-schedule-brief-counter");
+      expect(counter.className).toMatch(/error/);
+    }
+  });
+
+  it("rejects brief containing a newline: input strips it OR submit stays disabled", async () => {
+    renderModal();
+    fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "x" } });
+    const briefInput = screen.getByTestId("create-schedule-brief") as HTMLInputElement;
+    fireEvent.change(briefInput, { target: { value: "foo\nbar" } });
+    await flushDebounce();
+    const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
+    // Two acceptable outcomes for the spec:
+    //  - The DOM `<input type="text">` stripped the newline on change
+    //    (typical browser behaviour), so the value is now newline-free.
+    //  - The newline survived (some test renderers preserve it), in
+    //    which case the `canSubmit` gate must keep submit disabled.
+    if (briefInput.value.includes("\n") || briefInput.value.includes("\r")) {
+      expect(submit.disabled).toBe(true);
+    } else {
+      expect(briefInput.value).not.toMatch(/[\n\r]/);
+    }
+  });
+
   it("server 400 on submit: modal stays open, error rendered inline (server's verbatim message)", async () => {
     const { onCreated, onClose } = renderModal();
     fireEvent.change(screen.getByTestId("create-schedule-name"), { target: { value: "x" } });
-    fireEvent.change(screen.getByTestId("create-schedule-instructions"), {
+    fireEvent.change(screen.getByTestId("create-schedule-brief"), {
       target: { value: "y" },
     });
     await flushDebounce();

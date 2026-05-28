@@ -132,9 +132,26 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       typeof target.agent !== "string"
     ) {
       return c.json(
-        { error: "target must be { kind: 'task', agent, instructions, runtime? }" },
+        { error: "target must be { kind: 'task', agent, brief, details?, runtime? }" },
         400,
       );
+    }
+    const briefVal = (target as { brief?: unknown }).brief;
+    if (typeof briefVal !== "string" || briefVal.trim().length === 0) {
+      return c.json({ error: "target.brief must be a non-empty string" }, 400);
+    }
+    if (briefVal.includes("\n") || briefVal.includes("\r")) {
+      return c.json(
+        { error: "target.brief must be a single line — pass long content via target.details" },
+        400,
+      );
+    }
+    if (briefVal.trim().length > 200) {
+      return c.json({ error: "target.brief must be at most 200 chars" }, 400);
+    }
+    const detailsVal = (target as { details?: unknown }).details;
+    if (detailsVal !== undefined && typeof detailsVal !== "string") {
+      return c.json({ error: "target.details, when set, must be a string" }, 400);
     }
     if (
       trigger === undefined ||
@@ -242,6 +259,34 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
     const sid = c.req.param("sid");
     const parsed = await parseJsonBody<Partial<PatchScheduleArgs>>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    // Route-layer brief/details validation for early-out friendliness;
+    // entity-layer `assertValidTarget` re-asserts the same invariants
+    // on the service path, but its messages are entity-flavoured.
+    const patchTarget = parsed.body.target as unknown;
+    if (patchTarget !== undefined && patchTarget !== null && typeof patchTarget === "object") {
+      const t = patchTarget as { kind?: unknown; brief?: unknown; details?: unknown };
+      if (t.kind === "task") {
+        if (t.brief !== undefined) {
+          if (typeof t.brief !== "string" || t.brief.trim().length === 0) {
+            return c.json({ error: "target.brief must be a non-empty string" }, 400);
+          }
+          if (t.brief.includes("\n") || t.brief.includes("\r")) {
+            return c.json(
+              {
+                error: "target.brief must be a single line — pass long content via target.details",
+              },
+              400,
+            );
+          }
+          if (t.brief.trim().length > 200) {
+            return c.json({ error: "target.brief must be at most 200 chars" }, 400);
+          }
+        }
+        if (t.details !== undefined && typeof t.details !== "string") {
+          return c.json({ error: "target.details, when set, must be a string" }, 400);
+        }
+      }
+    }
     try {
       const updated = await resolve(c).patch(sid, parsed.body);
       logEvent(c, "schedule.patch", { scheduleId: sid });
