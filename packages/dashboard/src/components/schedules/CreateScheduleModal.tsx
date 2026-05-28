@@ -23,8 +23,6 @@ export interface CreateScheduleModalProps {
   runtimes: string[];
   /** Timezones already present on the workspace's existing schedules. Modal dedupes against UTC + browser local. */
   existingTimezones: string[];
-  /** UUID of the active workspace. Reserved for future per-workspace defaults; not used directly today. */
-  currentWorkspaceId: string;
   onClose: () => void;
   onCreated: (s: ScheduleView) => void;
 }
@@ -82,11 +80,13 @@ function buildTimezoneOptions(existing: readonly string[]): string[] {
  * arbitrary cron expressions for the long tail (`*\/5 9-17 * * 1-5`
  * is the canonical example).
  *
- * Stale-response protection: the debounced preview effect captures
- * a per-call `cancelled` boolean and discards out-of-order responses
- * in the cleanup function. Without this, a slow request kicked off
- * at edit T1 can resolve after a fast request kicked off at T2 and
- * clobber the newer preview.
+ * Stale-response protection: the debounced preview effect owns a
+ * per-call `AbortController` whose `.abort()` runs in the cleanup
+ * function. This both cancels the in-flight `fetch` at the network
+ * layer (no wasted server work on every keystroke) and short-circuits
+ * the `.then`/`.catch` handlers via the `signal.aborted` check, so a
+ * slow request kicked off at edit T1 cannot resolve after a fast one
+ * kicked off at T2 and clobber the newer preview.
  *
  * Local validation gates the network round-trip: empty advanced expr,
  * weekly with zero days selected, etc. all short-circuit before the
@@ -154,10 +154,12 @@ export function CreateScheduleModal({
   const presetError = useMemo(() => validatePreset(preset), [preset]);
 
   // Debounced preview fetch. Cleanup pattern uses a per-effect
-  // `cancelled` boolean so a stale response from a slow earlier
-  // request cannot overwrite a newer preview. Short-circuits on
-  // local validation failures and on tz === "" so we don't spam
-  // the server with known-bad inputs.
+  // `AbortController` so a stale response from a slow earlier
+  // request cannot overwrite a newer preview AND the underlying
+  // `fetch` is cancelled at the network layer (no wasted server
+  // work on every keystroke). Short-circuits on local validation
+  // failures and on tz === "" so we don't spam the server with
+  // known-bad inputs.
   useEffect(() => {
     if (!open) return;
     if (presetError !== null) {
@@ -172,27 +174,32 @@ export function CreateScheduleModal({
       setPreviewLoading(false);
       return;
     }
-    let cancelled = false;
+    const ctrl = new AbortController();
     setPreviewLoading(true);
     const handle = setTimeout(() => {
-      previewCron({ expr, tz, n: PREVIEW_COUNT })
+      previewCron({ expr, tz, n: PREVIEW_COUNT }, ctrl.signal)
         .then((p) => {
-          if (cancelled) return;
+          if (ctrl.signal.aborted) return;
           setPreview(p);
           setPreviewError(null);
         })
         .catch((e: unknown) => {
-          if (cancelled) return;
+          // `AbortError` is the expected reject path when the effect
+          // cleanup runs `ctrl.abort()`; silently swallow it so the
+          // modal doesn't flash a misleading "preview failed" on
+          // every keystroke.
+          if ((e as { name?: string }).name === "AbortError") return;
+          if (ctrl.signal.aborted) return;
           setPreview(null);
           setPreviewError((e as Error).message);
         })
         .finally(() => {
-          if (!cancelled) setPreviewLoading(false);
+          if (!ctrl.signal.aborted) setPreviewLoading(false);
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => {
-      cancelled = true;
       clearTimeout(handle);
+      ctrl.abort();
     };
   }, [open, expr, tz, presetError]);
 

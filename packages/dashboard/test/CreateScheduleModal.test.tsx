@@ -50,7 +50,6 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof CreateSchedu
       agents={[makeAgent("emploke/dev"), makeAgent("emploke/review")]}
       runtimes={["copilot", "claude"]}
       existingTimezones={["Asia/Shanghai", "Europe/Berlin"]}
-      currentWorkspaceId="ws-1"
       onClose={onClose}
       onCreated={onCreated}
       {...overrides}
@@ -102,12 +101,17 @@ describe("CreateScheduleModal", () => {
     expect(mockPreviewCron).not.toHaveBeenCalled();
     await flushDebounce();
     // After the debounce, the fetch fires with the daily preset cron.
+    // Second arg is the AbortController.signal the modal uses to
+    // cancel in-flight requests when a newer one supersedes them.
     expect(mockPreviewCron).toHaveBeenCalledTimes(1);
-    expect(mockPreviewCron).toHaveBeenCalledWith({
-      expr: "0 9 * * *",
-      tz: expect.any(String),
-      n: 5,
-    });
+    expect(mockPreviewCron).toHaveBeenCalledWith(
+      {
+        expr: "0 9 * * *",
+        tz: expect.any(String),
+        n: 5,
+      },
+      expect.any(AbortSignal),
+    );
     await waitFor(() => {
       expect(screen.getByTestId("create-schedule-preview-describe").textContent).toBe(
         "mock describe",
@@ -135,6 +139,7 @@ describe("CreateScheduleModal", () => {
     // The preview MUST have been called with the trimmed expr.
     expect(mockPreviewCron).toHaveBeenCalledWith(
       expect.objectContaining({ expr: "*/5 9-17 * * 1-5" }),
+      expect.any(AbortSignal),
     );
     const submit = screen.getByTestId("create-schedule-submit") as HTMLButtonElement;
     await waitFor(() => expect(submit.disabled).toBe(false));

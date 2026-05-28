@@ -1321,12 +1321,23 @@ export interface PreviewCronArgs {
  * timezone: …") inline. The plain `fetchJson` helper discards the
  * body and throws `"schedule preview: 400"`, which is not acceptable
  * UX for a live preview surface.
+ *
+ * The optional `signal` parameter forwards an `AbortSignal` to the
+ * underlying `fetch(...)` so callers (notably the debounced live
+ * preview in `CreateScheduleModal`) can cancel an in-flight request
+ * when a newer one supersedes it. Aborted requests reject with
+ * `DOMException { name: "AbortError" }`; callers should filter that
+ * shape out of their error UI.
  */
-export const previewCron = (args: PreviewCronArgs): Promise<SchedulePreview> => {
+export const previewCron = (
+  args: PreviewCronArgs,
+  signal?: AbortSignal,
+): Promise<SchedulePreview> => {
   const qs = new URLSearchParams({ expr: args.expr, tz: args.tz });
   if (args.n !== undefined) qs.set("n", String(args.n));
   return fetchJsonWithErrorBody<SchedulePreview>(
     `${workspacePrefix()}/schedules/preview-cron?${qs.toString()}`,
+    signal,
   );
 };
 
@@ -1335,9 +1346,12 @@ export const previewCron = (args: PreviewCronArgs): Promise<SchedulePreview> => 
  * response. Used by `previewCron` (issue #222) so the inline preview
  * surface can render the server's "Invalid cron expression: …"
  * string verbatim rather than the generic "label: status" form.
+ *
+ * Accepts an optional `signal` for request cancellation; rejections
+ * from an aborted fetch surface as `DOMException { name: "AbortError" }`.
  */
-async function fetchJsonWithErrorBody<T>(path: string): Promise<T> {
-  const r = await fetch(path);
+async function fetchJsonWithErrorBody<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(path, signal ? { signal } : undefined);
   if (!r.ok) throw new Error(await extractError(r));
   return (await r.json()) as T;
 }
