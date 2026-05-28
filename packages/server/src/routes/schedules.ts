@@ -23,6 +23,15 @@
  *     the route boundary and inside `ScheduleService.preview` (see
  *     `packages/schedule/src/schedule-service.ts`). Out-of-range
  *     emits a typed 400 envelope; in-range plumbs straight through.
+ *   - `GET /preview-cron` — unscoped preview for an arbitrary
+ *     `(expr, tz)` pair, used by the dashboard's "New schedule"
+ *     modal so the user can see `describe` + next-N fires before
+ *     any entity exists (issue #222). Same `[1, 100]` bound on
+ *     `?n=`, but defaults to **5** (the modal's preview count),
+ *     vs the `/:sid/preview` default of 3 (the detail page count).
+ *     MUST be registered before `/:sid` so the literal path wins
+ *     over the param match (`:sid = "preview-cron"` is the bug
+ *     this ordering prevents).
  */
 
 import {
@@ -33,6 +42,9 @@ import {
   ScheduleNotFoundError,
   type ScheduleService,
 } from "@emploke/schedule";
+// `ScheduleError` is used by both the `/:sid/preview` n-bound check
+// and the new `/preview-cron` n-bound check (issue #222) for a typed
+// envelope on rejection.
 import { Hono } from "hono";
 import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
 
@@ -149,6 +161,51 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       const { status, isUnmapped } = resolveErrorStatus(err);
       if (status >= 500) logFault(c, err, "schedules.create: 5xx fault");
       else if (isUnmapped) logFault(c, err, "schedules.create: unmapped error fell through to 400");
+      // biome-ignore lint/suspicious/noExplicitAny: see above
+      return c.json(errorBody(err), status as any);
+    }
+  });
+
+  // ── GET /preview-cron — preview an arbitrary (expr, tz) ──────────
+  // Unscoped sibling of `/:sid/preview` for the "still being
+  // authored" UI flow (issue #222). Wraps `ScheduleService.preview`
+  // directly — no entity lookup. MUST be registered BEFORE
+  // `app.get('/:sid')` so the literal `preview-cron` path wins over
+  // `:sid = "preview-cron"` param matching.
+  //
+  // Defaults: `n = 5` (matches the modal's preview count). Same
+  // `[1, 100]` integer bound + strict parse as `/:sid/preview` so
+  // `?n=1abc` is rejected (not silently accepted as `1`).
+  app.get("/preview-cron", async (c) => {
+    const expr = c.req.query("expr");
+    const tz = c.req.query("tz");
+    if (typeof expr !== "string" || expr.trim() === "") {
+      return c.json({ error: "expr query param is required" }, 400);
+    }
+    if (typeof tz !== "string" || tz.trim() === "") {
+      return c.json({ error: "tz query param is required" }, 400);
+    }
+    // Modal default of 5; issue #222 picked 5 over the /:sid/preview
+    // default of 3 because the modal has more vertical space and
+    // 5 fires is a clearer "what does this cron actually mean"
+    // signal for the user.
+    let n = 5;
+    const nRaw = c.req.query("n");
+    if (nRaw !== undefined) {
+      const parsed = Number.parseInt(nRaw, 10);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100 || `${parsed}` !== nRaw) {
+        return c.json(errorBody(new ScheduleError("n must be an integer in [1, 100]")), 400);
+      }
+      n = parsed;
+    }
+    try {
+      const preview = await resolve(c).preview(expr, tz, n);
+      return c.json(preview);
+    } catch (err) {
+      const { status, isUnmapped } = resolveErrorStatus(err);
+      if (status >= 500) logFault(c, err, "schedules.previewCron: 5xx fault");
+      else if (isUnmapped)
+        logFault(c, err, "schedules.previewCron: unmapped error fell through to 400");
       // biome-ignore lint/suspicious/noExplicitAny: see above
       return c.json(errorBody(err), status as any);
     }

@@ -1276,3 +1276,68 @@ export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
   mutateJson<{ taskId: string }>(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/run`, {
     method: "POST",
   });
+
+/**
+ * Body for `POST /api/workspaces/:wsId/schedules` — mirrors the
+ * server route's accepted shape (`packages/server/src/routes/schedules.ts`
+ * `app.post("/")`). The dashboard's "New schedule" modal (issue #222)
+ * is the first surface to use this; the CLI's `emploke schedule create`
+ * sends the same wire shape directly.
+ */
+export interface CreateScheduleBody {
+  name: string;
+  target: { kind: "task"; agent: string; instructions: string; runtime?: string };
+  trigger: { kind: "cron"; expr: string; tz: string };
+  enabled?: boolean;
+}
+
+/**
+ * Create a schedule. Surfaces server-side validation errors verbatim
+ * (typed envelope `{ error, code }`) via the shared `extractError`
+ * helper — the modal renders these inline so the user sees, e.g.,
+ * "Invalid cron expression: …" rather than a generic "schedule
+ * create: 400".
+ */
+export const createSchedule = (body: CreateScheduleBody): Promise<ScheduleView> =>
+  mutateJson<ScheduleView>(`${workspacePrefix()}/schedules`, jsonInit("POST", body));
+
+export interface PreviewCronArgs {
+  expr: string;
+  tz: string;
+  /** Number of upcoming fires to compute. Server bounds `[1, 100]`; defaults to 5. */
+  n?: number;
+}
+
+/**
+ * Unscoped cron preview (issue #222). Calls the new
+ * `GET /api/workspaces/:wsId/schedules/preview-cron?expr=&tz=&n=`
+ * route so the "New schedule" modal can show `describe` + next-N
+ * fires while the user is still authoring an expression, with no
+ * saved entity required.
+ *
+ * Uses the error-preserving `extractError` path (via `mutateJson`'s
+ * sibling `fetchJsonWithErrorBody`) so the modal can surface the
+ * server's `error` string ("Invalid cron expression: …" / "Unknown
+ * timezone: …") inline. The plain `fetchJson` helper discards the
+ * body and throws `"schedule preview: 400"`, which is not acceptable
+ * UX for a live preview surface.
+ */
+export const previewCron = (args: PreviewCronArgs): Promise<SchedulePreview> => {
+  const qs = new URLSearchParams({ expr: args.expr, tz: args.tz });
+  if (args.n !== undefined) qs.set("n", String(args.n));
+  return fetchJsonWithErrorBody<SchedulePreview>(
+    `${workspacePrefix()}/schedules/preview-cron?${qs.toString()}`,
+  );
+};
+
+/**
+ * Like `fetchJson` but preserves the server's error body on a non-OK
+ * response. Used by `previewCron` (issue #222) so the inline preview
+ * surface can render the server's "Invalid cron expression: …"
+ * string verbatim rather than the generic "label: status" form.
+ */
+async function fetchJsonWithErrorBody<T>(path: string): Promise<T> {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(await extractError(r));
+  return (await r.json()) as T;
+}

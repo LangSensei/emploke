@@ -142,7 +142,7 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 64 entries (the current API surface)", () => {
+  it("listRoutes returns 65 entries (the current API surface)", () => {
     // A canary so a stealth route addition that DOES update the manifest
     // (good) and the handler (good) still surfaces in code review.
     // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
@@ -153,7 +153,7 @@ describe("route manifest", () => {
     // (split-out of the legacy `?origin=schedule` filter on `/tasks`).
     // Bumped 57 → 64 for #61 PR 3's seven `schedules.*` CRUD routes
     // (list, create, get, patch, delete, run, preview).
-    expect(listRoutes()).toHaveLength(64);
+    expect(listRoutes()).toHaveLength(65); // +1 schedules.previewCron (#222)
   });
 });
 

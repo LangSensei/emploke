@@ -401,3 +401,162 @@ describe("schedulesRoutes — preview", () => {
     expect((await res.json()).code).toBe("InvalidCronExprError");
   });
 });
+
+describe("schedulesRoutes — previewCron", () => {
+  // Unscoped preview-cron route (issue #222) — same shape as
+  // `/:sid/preview` but without an entity lookup. Tests mirror the
+  // sibling set + add coverage for the route's own validation
+  // (required expr / required tz) and for the default n = 5 (vs the
+  // sibling's default of 3).
+
+  it("GET /preview-cron returns describe + nextRuns with n defaulting to 5", async () => {
+    const preview = vi.fn(
+      async (_expr: string, _tz: string, n = 5): Promise<PreviewResult> => ({
+        describe: "every day at 09:00",
+        nextRuns: Array.from(
+          { length: n },
+          (_, i) => `2026-06-${String(i + 1).padStart(2, "0")}T01:00:00.000Z`,
+        ),
+      }),
+    );
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=0+9+*+*+*&tz=UTC");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.describe).toBe("every day at 09:00");
+    // Default n is 5 (modal preview count). The sibling /:sid/preview
+    // defaults to 3 — different surfaces, different defaults.
+    expect(body.nextRuns).toHaveLength(5);
+    expect(preview).toHaveBeenCalledWith("0 9 * * *", "UTC", 5);
+  });
+
+  it("GET /preview-cron?n=7 plumbs n=7 into the service", async () => {
+    const preview = vi.fn(
+      async (_expr: string, _tz: string, n = 5): Promise<PreviewResult> => ({
+        describe: "x",
+        nextRuns: Array.from({ length: n }, (_, i) => `2026-06-0${i + 1}T01:00:00.000Z`),
+      }),
+    );
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request(
+      "/preview-cron?expr=*%2F5+*+*+*+*&tz=UTC&n=7",
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nextRuns).toHaveLength(7);
+    expect(preview).toHaveBeenCalledWith("*/5 * * * *", "UTC", 7);
+  });
+
+  it("GET /preview-cron with missing expr returns 400 without touching the service", async () => {
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?tz=UTC");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/expr/);
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron with blank expr returns 400 without touching the service", async () => {
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=+&tz=UTC");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/expr/);
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron with missing tz returns 400 without touching the service", async () => {
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=0+9+*+*+*");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/tz/);
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron maps InvalidCronExprError from service → 400 with typed code", async () => {
+    // The default stub returns 200 for every call, so we MUST override
+    // `preview` to throw the typed error. Without this override the
+    // test would pass trivially with 200 and the contract under test
+    // (typed envelope for cron-validation failure) would be silently
+    // unverified.
+    const preview = vi.fn(async () => {
+      throw new InvalidCronExprError("not a cron", "syntax");
+    });
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=not+a+cron&tz=UTC");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("InvalidCronExprError");
+  });
+
+  it("GET /preview-cron maps InvalidTimezoneError from service → 400 with typed code", async () => {
+    // Same override-or-it-passes-trivially caveat as the previous test.
+    const preview = vi.fn(async () => {
+      throw new InvalidTimezoneError("Mars/Olympus");
+    });
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request(
+      "/preview-cron?expr=0+9+*+*+*&tz=Mars%2FOlympus",
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("InvalidTimezoneError");
+  });
+
+  it("GET /preview-cron?n=0 returns 400 (route rejects, does NOT clamp)", async () => {
+    // Issue #222 reads "clamped" in places but the implementation
+    // matches `/:sid/preview` — reject with a typed envelope rather
+    // than silently clamp. Tests pin the rejection contract.
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=0+9+*+*+*&tz=UTC&n=0");
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron?n=101 returns 400 (route rejects, does NOT clamp)", async () => {
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request(
+      "/preview-cron?expr=0+9+*+*+*&tz=UTC&n=101",
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron?n=1abc returns 400 (strict integer parse rejects)", async () => {
+    // Plain `Number.parseInt("1abc")` returns 1; if the route relied on
+    // that it would silently accept malformed `n`. The strict check
+    // (`String(parsed) === nRaw`) catches it. Sibling /:sid/preview
+    // uses the same guard.
+    const preview = vi.fn();
+    const svc = stubService({ preview });
+    const res = await schedulesRoutes(() => svc).request(
+      "/preview-cron?expr=0+9+*+*+*&tz=UTC&n=1abc",
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("ScheduleError");
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("GET /preview-cron literal path wins over /:sid match (route-order regression guard)", async () => {
+    // If the new route were mounted AFTER `/:sid`, this request would
+    // try to load a schedule with sid = "preview-cron" and fall into
+    // the entity-lookup path (404, code = ScheduleNotFoundError). The
+    // 200 success here pins the mount-order contract: literal route
+    // before param route.
+    const preview = vi.fn(
+      async (_expr: string, _tz: string, n = 5): Promise<PreviewResult> => ({
+        describe: "every day at 09:00",
+        nextRuns: Array.from({ length: n }, () => "2026-06-01T01:00:00.000Z"),
+      }),
+    );
+    const get = vi.fn();
+    const svc = stubService({ preview, get });
+    const res = await schedulesRoutes(() => svc).request("/preview-cron?expr=0+9+*+*+*&tz=UTC");
+    expect(res.status).toBe(200);
+    expect(get).not.toHaveBeenCalled();
+    expect(preview).toHaveBeenCalledTimes(1);
+  });
+});
