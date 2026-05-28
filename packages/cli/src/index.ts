@@ -422,7 +422,14 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     .description("Create a new schedule")
     .requiredOption("--name <text>", "Human-readable display name")
     .requiredOption("--agent <fqn>", "Agent to dispatch (e.g. emploke/dev)")
-    .requiredOption("--instructions <text>", "Instructions passed to the dispatched task")
+    .requiredOption(
+      "--brief <text>",
+      "Single-line task title (≤ 200 chars; mirrors `emploke task dispatch --brief`)",
+    )
+    .option(
+      "--details <text>",
+      'Optional multi-line task body (mirrors `emploke task dispatch --details`; "" is treated as omitted)',
+    )
     .requiredOption("--cron <expr>", "5-field cron expression")
     .requiredOption("--tz <iana>", "IANA timezone (e.g. UTC, Asia/Shanghai)")
     .option("--runtime <kind>", "Runtime override (default: copilot)")
@@ -432,7 +439,8 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         ...parseWorkspaceFlags(opts),
         name: pickString(opts, "name") ?? "",
         agent: pickString(opts, "agent") ?? "",
-        instructions: pickString(opts, "instructions") ?? "",
+        brief: pickString(opts, "brief") ?? "",
+        ...optionalString(opts, "details"),
         cron: pickString(opts, "cron") ?? "",
         tz: pickString(opts, "tz") ?? "",
         ...optionalString(opts, "runtime"),
@@ -460,7 +468,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(scheduleCmd.command("patch"))
     .argument("<sid>", "Schedule id")
     .description(
-      "Partially update a schedule (any subset of name / cron / tz / agent / instructions / runtime / enabled)",
+      "Partially update a schedule (any subset of name / cron / tz / agent / brief / details / clear-details / runtime / enabled)",
     )
     .option("--name <text>", "New display name")
     .option(
@@ -473,12 +481,17 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     )
     .option(
       "--agent <fqn>",
-      "New agent FQN (preserves existing instructions/runtime unless --instructions / --runtime also given)",
+      "New agent FQN (preserves existing brief/details/runtime unless those flags are also given)",
     )
     .option(
-      "--instructions <text>",
-      "New instructions (preserves existing agent/runtime unless --agent / --runtime also given)",
+      "--brief <text>",
+      "New single-line brief (≤ 200 chars; mirrors `emploke task dispatch --brief`)",
     )
+    .option(
+      "--details <text>",
+      'New details body (mirrors `emploke task dispatch --details`; "" is treated as omitted — use --clear-details to remove)',
+    )
+    .option("--clear-details", "Remove existing details from the schedule's task target")
     .option("--runtime <kind>", "New runtime override")
     .option("--enabled", "Re-arm timer (equivalent to `enable` subcommand)")
     .option("--no-enabled", "Cancel timer (equivalent to `disable` subcommand)")
@@ -490,7 +503,9 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         ...optionalString(opts, "cron"),
         ...optionalString(opts, "tz"),
         ...optionalString(opts, "agent"),
-        ...optionalString(opts, "instructions"),
+        ...optionalString(opts, "brief"),
+        ...optionalString(opts, "details"),
+        ...(opts.clearDetails === true ? { clearDetails: true } : {}),
         ...optionalString(opts, "runtime"),
         ...(opts.enabled !== undefined ? { enabled: Boolean(opts.enabled) } : {}),
       });
@@ -562,7 +577,10 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
       "--brief <text>",
       "Single-line task title (required, ≤200 chars). Doubles as the displayed label.",
     )
-    .option("--details <text>", "Optional long-form task body (multi-line allowed)")
+    .option(
+      "--details <text>",
+      'Optional long-form task body (multi-line allowed; "" is treated as omitted)',
+    )
     .option("--details-file <path>", "Read details from a file (mutually exclusive with --details)")
     .option("--runtime <kind>", "Runtime override (default: copilot)")
     .action(async (opts: Record<string, unknown>) => {
@@ -1006,7 +1024,22 @@ function parseWorkspaceFlags(opts: Record<string, unknown>): WorkspaceFlagOpts {
   return out;
 }
 
-/** Extract a string flag from commander's already-camelCased options object. */
+/**
+ * Read a string flag from a commander opts bag, normalising empty strings
+ * to `undefined`. This gives every CLI flag uniform "absent vs empty"
+ * semantics: `--flag ""` is treated identically to omitting `--flag`.
+ *
+ * Rationale: the alternative — letting empty strings reach the wire —
+ * would either cause server-side validation errors (`--name ""` creating
+ * a workspace called "") or silently produce nonsense rows. The collapse
+ * is applied uniformly across ~50 flag sites for predictability; per-flag
+ * exceptions are explicitly rejected as ugly asymmetry. The one
+ * "intentionally clear a string field" gesture in the CLI is
+ * `schedule patch --clear-details`, which is a separate boolean flag
+ * (not an overload of `--details`).
+ *
+ * Tests: see `packages/cli/test/pick-string-empty-collapse.test.ts`.
+ */
 function pickString(opts: Record<string, unknown>, key: string): string | undefined {
   const v = opts[key];
   return typeof v === "string" && v !== "" ? v : undefined;

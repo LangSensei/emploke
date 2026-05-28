@@ -19,6 +19,16 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 1,
     hash: "847cb575719821100520be326745001dcca596ae9ae839422c4b821ea75658c1",
   },
+  {
+    sql: [
+      "DROP INDEX `schedules_target_agent_idx`;\n",
+      "\nALTER TABLE `schedules` DROP COLUMN `target_agent`;\n",
+      "\nCREATE INDEX `schedules_target_agent_idx` ON `schedules` (json_extract(`target_json`, '$.agent')) WHERE `target_kind` = 'task';"
+    ],
+    bps: true,
+    folderMillis: 2,
+    hash: "19fe6665280e23e42ad0a6542b45bfe8b5c907882597f28d464f520efc4756bd",
+  },
 ];
 
 /**

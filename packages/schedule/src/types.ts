@@ -10,7 +10,10 @@
 export type ScheduleTarget = {
   readonly kind: "task";
   readonly agent: string;
-  readonly instructions: string;
+  /** Single line, ≤ 200 chars. Mirrors `@emploke/task` DispatchOpts.brief. */
+  readonly brief: string;
+  /** Multi-line, optional. Mirrors `@emploke/task` DispatchOpts.details. */
+  readonly details?: string;
   readonly runtime?: string;
 };
 // Future: | { kind: "workflow"; workflowId: string; inputs?: Record<string, unknown> }
@@ -63,8 +66,12 @@ export interface PreviewResult {
  * Capability the schedule pkg consumes for dispatching tasks. Schedule
  * pkg never imports from `@emploke/task` — this interface is what
  * `composeScheduleModule({ taskDispatcher })` accepts, and the
- * production wiring (in PR 3) adapts `TaskService.dispatch` +
+ * production wiring (in `@emploke/core`) adapts `TaskService.dispatch` +
  * `TaskService.hasInFlightForSchedule` to it structurally.
+ *
+ * The dispatch opts mirror `@emploke/task` `DispatchOpts` (brief +
+ * details?) so the adapter in `@emploke/core` is a pass-through with
+ * no brief synthesis. RFC #61 v2.
  *
  * `origin: "schedule"` and the `metadata.scheduleId` + `metadata.firedAt`
  * keys are wire-shape contract enforced by PR 1's `TaskOrigin` extension
@@ -73,7 +80,8 @@ export interface PreviewResult {
 export interface TaskDispatcher {
   dispatch(opts: {
     readonly agent: string;
-    readonly instructions: string;
+    readonly brief: string;
+    readonly details?: string;
     readonly runtime?: string;
     readonly origin: "schedule";
     readonly metadata: { readonly scheduleId: string; readonly firedAt: string };

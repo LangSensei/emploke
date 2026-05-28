@@ -304,7 +304,8 @@ export class ScheduleService {
       case "task": {
         const result = await this.taskDispatcher.dispatch({
           agent: target.agent,
-          instructions: target.instructions,
+          brief: target.brief,
+          ...(target.details !== undefined ? { details: target.details } : {}),
           ...(target.runtime !== undefined ? { runtime: target.runtime } : {}),
           origin: "schedule",
           metadata: { scheduleId: entity.id, firedAt },

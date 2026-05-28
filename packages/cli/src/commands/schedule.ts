@@ -70,7 +70,10 @@ export async function scheduleList(opts: ScheduleListOpts = {}): Promise<Command
 export interface ScheduleCreateOpts extends CommonFlags {
   readonly name: string;
   readonly agent: string;
-  readonly instructions: string;
+  /** Short, single-line task title (≤ 200 chars). Required. */
+  readonly brief: string;
+  /** Optional long-form details. Multi-line allowed. */
+  readonly details?: string;
   readonly cron: string;
   readonly tz: string;
   readonly runtime?: string;
@@ -85,8 +88,20 @@ export async function scheduleCreate(opts: ScheduleCreateOpts): Promise<CommandR
   if (typeof opts.agent !== "string" || opts.agent.trim() === "") {
     return { exitCode: 2, stderr: "missing required --agent <fqn>\n" };
   }
-  if (typeof opts.instructions !== "string" || opts.instructions === "") {
-    return { exitCode: 2, stderr: "missing required --instructions <text>\n" };
+  // --brief mirrors `emploke task dispatch --brief` exactly (see
+  // commands/task.ts): required, no newlines, ≤ 200 trimmed chars.
+  if (typeof opts.brief !== "string" || opts.brief.trim() === "") {
+    return { exitCode: 2, stderr: "missing required --brief <text>\n" };
+  }
+  if (opts.brief.includes("\n") || opts.brief.includes("\r")) {
+    return {
+      exitCode: 2,
+      stderr:
+        "--brief must be a single line (no newline characters); pass long content via --details\n",
+    };
+  }
+  if (opts.brief.trim().length > 200) {
+    return { exitCode: 2, stderr: "--brief must be 200 characters or fewer\n" };
   }
   if (typeof opts.cron !== "string" || opts.cron.trim() === "") {
     return { exitCode: 2, stderr: "missing required --cron <expr>\n" };
@@ -100,13 +115,15 @@ export async function scheduleCreate(opts: ScheduleCreateOpts): Promise<CommandR
     const target: {
       kind: "task";
       agent: string;
-      instructions: string;
+      brief: string;
+      details?: string;
       runtime?: string;
     } = {
       kind: "task",
       agent: opts.agent,
-      instructions: opts.instructions,
+      brief: opts.brief.trim(),
     };
+    if (opts.details !== undefined) target.details = opts.details;
     if (opts.runtime !== undefined) target.runtime = opts.runtime;
     const body = {
       name: opts.name,
@@ -269,7 +286,19 @@ export interface SchedulePatchOpts extends CommonFlags {
   readonly cron?: string;
   readonly tz?: string;
   readonly agent?: string;
-  readonly instructions?: string;
+  /** Replace the brief. Mirrors `emploke task dispatch --brief` validation. */
+  readonly brief?: string;
+  /**
+   * Replace the details with `value` (including `""` — mirrors the
+   * task CLI's lax shape). Mutually exclusive with --clear-details.
+   */
+  readonly details?: string;
+  /**
+   * Remove `details` from the patched target entirely (key absent on
+   * the wire). Distinct from `--details ""`, which SETS details to
+   * the empty string. Mutually exclusive with --details.
+   */
+  readonly clearDetails?: boolean;
   readonly runtime?: string;
   readonly enabled?: boolean;
 }
@@ -279,16 +308,45 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     return { exitCode: 2, stderr: "schedule id is required\n" };
   }
 
+  if (opts.clearDetails === true && opts.details !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--details and --clear-details are mutually exclusive\n",
+    };
+  }
+
+  // Validate --brief content up-front (mirrors `scheduleCreate`):
+  // non-empty, no newlines, ≤ 200 trimmed chars.
+  if (opts.brief !== undefined) {
+    if (typeof opts.brief !== "string" || opts.brief.trim() === "") {
+      return { exitCode: 2, stderr: "--brief must be a non-empty string\n" };
+    }
+    if (opts.brief.includes("\n") || opts.brief.includes("\r")) {
+      return {
+        exitCode: 2,
+        stderr:
+          "--brief must be a single line (no newline characters); pass long content via --details\n",
+      };
+    }
+    if (opts.brief.trim().length > 200) {
+      return { exitCode: 2, stderr: "--brief must be 200 characters or fewer\n" };
+    }
+  }
+
   const touchesTrigger = opts.cron !== undefined || opts.tz !== undefined;
   const touchesTarget =
-    opts.agent !== undefined || opts.instructions !== undefined || opts.runtime !== undefined;
+    opts.agent !== undefined ||
+    opts.brief !== undefined ||
+    opts.details !== undefined ||
+    opts.clearDetails === true ||
+    opts.runtime !== undefined;
   const touchesAny =
     opts.name !== undefined || touchesTrigger || touchesTarget || opts.enabled !== undefined;
   if (!touchesAny) {
     return {
       exitCode: 2,
       stderr:
-        "at least one of --name / --cron / --tz / --agent / --instructions / --runtime / --enabled is required\n",
+        "at least one of --name / --cron / --tz / --agent / --brief / --details / --clear-details / --runtime / --enabled is required\n",
     };
   }
 
@@ -298,10 +356,10 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
 
     // Server-side PATCH replaces `trigger` / `target` wholesale (no
     // deep merge) — see packages/schedule/src/schedule-entity.ts
-    // (`withPatched`) and schedule-service.ts:114-135. If the user only
+    // (`withPatched`) and schedule-service.ts. If the user only
     // supplied a subset of a subtree's fields, the CLI must GET the
-    // current schedule, merge the missing leaves in, and PATCH the full
-    // object. Otherwise the entity-layer `assertValidTrigger` /
+    // current schedule, merge the missing leaves in, and PATCH the
+    // full object. Otherwise the entity-layer `assertValidTrigger` /
     // `assertValidTarget` invariants would reject it.
     let current: Awaited<ReturnType<typeof client.call<"schedules.get">>> | undefined;
     const needCurrentForTrigger =
@@ -314,7 +372,7 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     const body: {
       name?: string;
       trigger?: { kind: "cron"; expr: string; tz: string };
-      target?: { kind: "task"; agent: string; instructions: string; runtime?: string };
+      target?: { kind: "task"; agent: string; brief: string; details?: string; runtime?: string };
       enabled?: boolean;
     } = {};
 
@@ -350,27 +408,41 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
       if (existingTarget !== undefined && existingTarget.kind !== "task") {
         return {
           exitCode: 2,
-          stderr: `--agent / --instructions / --runtime only supported when current target.kind === "task" (got "${existingTarget.kind}")\n`,
+          stderr: `--agent / --brief / --details / --clear-details / --runtime only supported when current target.kind === "task" (got "${existingTarget.kind}")\n`,
         };
       }
       const agent = opts.agent ?? existingTarget?.agent;
-      const instructions = opts.instructions ?? existingTarget?.instructions;
-      if (agent === undefined || instructions === undefined) {
+      const brief =
+        opts.brief !== undefined ? opts.brief.trim() : (existingTarget?.brief ?? undefined);
+      if (agent === undefined || brief === undefined) {
         return {
           exitCode: 2,
-          stderr: "internal: could not resolve agent/instructions from server\n",
+          stderr: "internal: could not resolve agent/brief from server\n",
         };
       }
       const nextTarget: {
         kind: "task";
         agent: string;
-        instructions: string;
+        brief: string;
+        details?: string;
         runtime?: string;
       } = {
         kind: "task",
         agent,
-        instructions,
+        brief,
       };
+      // Four-way merge for details:
+      //   1. --clear-details → omit `details` entirely.
+      //   2. --details <value> → set to value (empty string allowed).
+      //   3. existing target.details present → preserve verbatim.
+      //   4. otherwise → omit.
+      if (opts.clearDetails !== true) {
+        if (opts.details !== undefined) {
+          nextTarget.details = opts.details;
+        } else if (existingTarget?.details !== undefined) {
+          nextTarget.details = existingTarget.details;
+        }
+      }
       const runtime = opts.runtime !== undefined ? opts.runtime : existingTarget?.runtime;
       if (runtime !== undefined) nextTarget.runtime = runtime;
       body.target = nextTarget;

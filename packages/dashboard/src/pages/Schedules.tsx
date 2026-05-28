@@ -2,10 +2,14 @@ import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteSchedule,
+  listRuntimes,
   listSchedules,
   type ScheduleDetail as ScheduleDetailType,
   type ScheduleView,
 } from "../api";
+import { HeaderActions } from "../components/HeaderActions";
+import { PlusIcon } from "../components/Icons";
+import { CreateScheduleModal } from "../components/schedules/CreateScheduleModal";
 import { DeleteScheduleModal } from "../components/schedules/ScheduleConfirmModals";
 import { ScheduleDetail } from "../components/schedules/ScheduleDetail";
 import { ScheduleList } from "../components/schedules/ScheduleList";
@@ -45,7 +49,10 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
   const [selectedIdRaw, setSelectedIdRaw] = useUrlSearchValue("scheduleId", "");
 
   const enabledFilter = coerceEnabledFilter(enabledFilterRaw);
-  const setEnabledFilter = (v: EnabledFilter) => setEnabledFilterRaw(v);
+  const setEnabledFilter = useCallback(
+    (v: EnabledFilter) => setEnabledFilterRaw(v),
+    [setEnabledFilterRaw],
+  );
   const selectedId = selectedIdRaw === "" ? null : selectedIdRaw;
   const setSelectedId = useCallback(
     (id: string | null) => setSelectedIdRaw(id ?? ""),
@@ -60,6 +67,26 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
   const [deleteTarget, setDeleteTarget] = useState<ScheduleDetailType | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Issue #222 — "New schedule" modal state + supporting fetches.
+  // `runtimes` is fetched here (mirroring Sessions.tsx) because
+  // SchedulesPage doesn't currently receive it as a prop and the
+  // modal needs the dropdown population.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [runtimes, setRuntimes] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listRuntimes()
+      .then((list) => {
+        if (!cancelled) setRuntimes(list.map((r) => r.kind));
+      })
+      .catch(() => {
+        // Non-fatal: modal falls back to "(server default)" runtime option.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -149,6 +176,40 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
     }
   }, [deleteTarget, selectedId, setSelectedId]);
 
+  // Timezones already present on the workspace's existing schedules,
+  // surfaced as quick-pick options in the modal's tz dropdown
+  // (alongside browser-local and UTC). De-duplicated by the modal.
+  const existingTimezones = useMemo(
+    () => Array.from(new Set(schedules.map((s) => s.trigger.tz))),
+    [schedules],
+  );
+
+  // Created-row handler for the "New schedule" modal. Optimistically
+  // prepends the new row + selects it + bumps the refresh token so
+  // the detail pane re-fetches with the server's authoritative copy
+  // (including the `describe` enrichment the POST response lacks).
+  //
+  // Filter-reset rule: if the active filters would hide the new row,
+  // reset them so the user isn't left staring at "row created but you
+  // can't see it". Issue #222 acceptance criterion: "Successful
+  // create: modal closes, new row appears in list, auto-selected in
+  // detail pane."
+  const handleCreated = useCallback(
+    (created: ScheduleView) => {
+      setSchedules((prev) => sortByNextFire([created, ...prev]));
+      setSelectedId(created.id);
+      setRefreshToken((n) => n + 1);
+      setCreateOpen(false);
+      const hiddenByAgent = agentFilter !== ALL_AGENTS && created.target.agent !== agentFilter;
+      const hiddenByEnabled =
+        (enabledFilter === "true" && !created.enabled) ||
+        (enabledFilter === "false" && created.enabled);
+      if (hiddenByAgent) setAgentFilter(ALL_AGENTS);
+      if (hiddenByEnabled) setEnabledFilter(ALL_ENABLED);
+    },
+    [agentFilter, enabledFilter, setSelectedId, setAgentFilter, setEnabledFilter],
+  );
+
   if (currentWorkspaceId === null) {
     return (
       <div className="alert alert--error">
@@ -162,6 +223,24 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
 
   return (
     <>
+      <HeaderActions>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => setCreateOpen(true)}
+          disabled={agents.length === 0}
+          title={
+            agents.length === 0
+              ? "Install at least one agent in the Catalog before creating schedules"
+              : "Create a new schedule"
+          }
+          data-testid="schedules-new-cta"
+        >
+          <PlusIcon />
+          <span>New schedule</span>
+        </button>
+      </HeaderActions>
+
       <div className="tasks-page">
         {error && <div className="alert alert--error">⚠️ {error}</div>}
         {loaded && schedules.length === 0 && !filtersActive ? (
@@ -172,8 +251,9 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
               </div>
               <p className="empty__title">No schedules yet</p>
               <p className="empty__hint">
-                Create one from the CLI with <code>emploke schedule create</code>; the dashboard
-                will list it here. Create / edit UI is intentionally CLI-only in v1 (RFC #61).
+                Get started by clicking the <strong>New schedule</strong> button above.
+                Cron-expression editing of existing schedules stays CLI-only in v1 (
+                <code>emploke schedule patch</code>).
               </p>
             </div>
           </div>
@@ -240,6 +320,17 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
             setDeleteError(null);
           }}
           onConfirm={handleConfirmDelete}
+        />
+      )}
+
+      {createOpen && (
+        <CreateScheduleModal
+          open={createOpen}
+          agents={agents}
+          runtimes={runtimes}
+          existingTimezones={existingTimezones}
+          onClose={() => setCreateOpen(false)}
+          onCreated={handleCreated}
         />
       )}
     </>

@@ -242,7 +242,10 @@ export interface ScheduleCreateBody {
   readonly target: {
     readonly kind: "task";
     readonly agent: string;
-    readonly instructions: string;
+    /** Single line, ≤ 200 chars. Mirrors `@emploke/task` `DispatchOpts.brief`. */
+    readonly brief: string;
+    /** Optional multi-line body. Mirrors `@emploke/task` `DispatchOpts.details`. */
+    readonly details?: string;
     readonly runtime?: string;
   };
   readonly trigger: {
@@ -301,6 +304,22 @@ export interface ScheduleGetResponse extends Schedule {
  * users).
  */
 export interface SchedulePreviewQuery {
+  readonly n?: string;
+}
+
+/**
+ * GET /api/workspaces/:id/schedules/preview-cron query params.
+ *
+ * Unscoped sibling of {@link SchedulePreviewQuery} for previewing an
+ * arbitrary cron expression without a saved entity — used by the
+ * dashboard's "New schedule" modal (issue #222). `expr` and `tz` are
+ * required (route returns 400 if missing or blank); `n` is optional,
+ * defaults to **5** (modal default; differs from `/:sid/preview`'s
+ * default of 3), bounded `[1, 100]` with strict integer parsing.
+ */
+export interface SchedulePreviewCronQuery {
+  readonly expr: string;
+  readonly tz: string;
   readonly n?: string;
 }
 
@@ -581,6 +600,19 @@ export const ROUTES = {
     { params: SchedulePathParams; query: SchedulePreviewQuery },
     PreviewResult
   >("GET", "/api/workspaces/:id/schedules/:sid/preview"),
+  /**
+   * Unscoped preview for an arbitrary `(expr, tz)` pair — issue #222.
+   * Wraps `ScheduleService.preview(expr, tz, n)` directly without
+   * an entity lookup so the dashboard's "New schedule" modal can
+   * render `{ describe, nextRuns }` while the user is still typing.
+   * `n` defaults to 5 (modal preview count); same `[1, 100]` bound
+   * as `/:sid/preview`. MUST be mounted before `/:sid` so the
+   * literal path wins over `:sid = "preview-cron"`.
+   */
+  "schedules.previewCron": defineRoute<
+    { params: WorkspacePathParams; query: SchedulePreviewCronQuery },
+    PreviewResult
+  >("GET", "/api/workspaces/:id/schedules/preview-cron"),
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",
     "/api/workspaces/:id/tasks",

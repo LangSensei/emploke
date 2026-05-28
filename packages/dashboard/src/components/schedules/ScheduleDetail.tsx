@@ -280,15 +280,27 @@ export function ScheduleDetail({
           )}
         </section>
 
-        <section aria-label="Instructions">
-          <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px 0" }}>Instructions</h3>
+        <section aria-label="Brief">
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px 0" }}>Brief</h3>
           <p
             className="muted"
             style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.45, margin: 0 }}
           >
-            {detail.target.instructions}
+            {detail.target.brief}
           </p>
         </section>
+
+        {detail.target.details !== undefined && detail.target.details !== "" && (
+          <section aria-label="Details">
+            <h3 style={{ fontSize: 14, fontWeight: 600, margin: "12px 0 8px 0" }}>Details</h3>
+            <p
+              className="muted"
+              style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.45, margin: 0 }}
+            >
+              {detail.target.details}
+            </p>
+          </section>
+        )}
 
         <ScheduleRecentFires
           scheduleId={scheduleId}

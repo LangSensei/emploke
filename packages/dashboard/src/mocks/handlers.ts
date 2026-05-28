@@ -16,7 +16,12 @@
 
 import { type DefaultBodyType, HttpResponse, http } from "msw";
 
-import type { PatchScheduleBody, ScheduleDetail } from "../api.js";
+import type {
+  CreateScheduleBody,
+  PatchScheduleBody,
+  ScheduleDetail,
+  ScheduleView,
+} from "../api.js";
 import {
   artifactBodies,
   fixtureActiveWorkspaceId,
@@ -52,6 +57,20 @@ const schedulesState: ScheduleDetail[] = fixtureSchedules.map((s) => ({ ...s }))
 const tasksState = fixtureTasks.map((t) => ({ ...t }));
 
 let synthFireSeq = 0;
+
+/**
+ * Short, deterministic-enough random id helper for synthesised
+ * schedule entities (mock mode only). `crypto.randomUUID()` exists in
+ * every modern browser; we slice 8 hex chars off the start for a
+ * compact-looking sched id (`sched-1a2b3c4d`). Tests that need a
+ * stable id can still set their own fixture and avoid the POST path.
+ */
+function cryptoRandom8(): string {
+  return (globalThis.crypto?.randomUUID?.() ?? `${Math.random().toString(16).slice(2)}-x`).slice(
+    0,
+    8,
+  );
+}
 
 export const handlers = [
   // ── catalog (workspace-scoped) ───────────────────────────────
@@ -184,6 +203,81 @@ export const handlers = [
     // Strip `describe` from the list view to mirror the server's
     // `GET /` response shape (the describe enrichment is per-GET).
     return HttpResponse.json(rows.map(({ describe: _describe, ...rest }) => rest));
+  }),
+  // POST /schedules — issue #222's "New schedule" modal lands here.
+  // Mirrors the server route's validation shape (name + target.kind=task
+  // + trigger.kind=cron). Synthesises ids, timestamps, and a hand-wavy
+  // describe — designer mode is intentionally rough on the describe
+  // accuracy; cronstrue is a server-side dep.
+  http.post(`/api/workspaces/${W}/schedules`, async ({ request }) => {
+    const body = (await request.json()) as CreateScheduleBody;
+    if (typeof body.name !== "string" || body.name.trim() === "") {
+      return HttpResponse.json({ error: "name must be a non-empty string" }, { status: 400 });
+    }
+    if (
+      body.target === undefined ||
+      body.target === null ||
+      body.target.kind !== "task" ||
+      typeof body.target.agent !== "string" ||
+      typeof body.target.brief !== "string"
+    ) {
+      return HttpResponse.json(
+        { error: "target must be { kind: 'task', agent, brief, details?, runtime? }" },
+        { status: 400 },
+      );
+    }
+    if (
+      body.trigger === undefined ||
+      body.trigger === null ||
+      body.trigger.kind !== "cron" ||
+      typeof body.trigger.expr !== "string" ||
+      typeof body.trigger.tz !== "string"
+    ) {
+      return HttpResponse.json(
+        { error: "trigger must be { kind: 'cron', expr, tz }" },
+        { status: 400 },
+      );
+    }
+    const id = `sched-${cryptoRandom8()}`;
+    const now = new Date().toISOString();
+    const created: ScheduleDetail = {
+      id,
+      name: body.name.trim(),
+      target: body.target,
+      trigger: body.trigger,
+      enabled: body.enabled ?? true,
+      createdAt: now,
+      updatedAt: now,
+      nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+      lastFiredAt: undefined,
+      describe: `Mock describe for ${body.trigger.expr}`,
+    };
+    schedulesState.unshift(created);
+    // Server's POST returns 201 with the entity (no `describe` —
+    // that's enriched only on GET /:sid). Mirror exactly so the
+    // wire shape lines up.
+    const { describe: _describe, ...entity } = created;
+    return HttpResponse.json(entity satisfies ScheduleView, { status: 201 });
+  }),
+  // GET /schedules/preview-cron — issue #222's unscoped preview.
+  // MUST come BEFORE the GET /:sid handlers so MSW matches the
+  // literal `preview-cron` path before the `:sid` wildcard.
+  // Designer mode synthesises hourly-spaced nextRuns; cronstrue is
+  // not a dashboard dep, so describe is a hand-rolled passthrough.
+  http.get(`/api/workspaces/${W}/schedules/preview-cron`, ({ request }) => {
+    const u = new URL(request.url);
+    const expr = u.searchParams.get("expr") ?? "";
+    const tz = u.searchParams.get("tz") ?? "";
+    if (!expr || !tz) {
+      return HttpResponse.json({ error: "expr+tz required" }, { status: 400 });
+    }
+    const rawN = u.searchParams.get("n");
+    const n = Math.min(100, Math.max(1, Number.parseInt(rawN ?? "5", 10) || 5));
+    const base = Date.now();
+    const nextRuns = Array.from({ length: n }, (_, i) =>
+      new Date(base + (i + 1) * 3_600_000).toISOString(),
+    );
+    return HttpResponse.json({ describe: `Mock describe for ${expr}`, nextRuns });
   }),
   http.get(`/api/workspaces/${W}/schedules/:sid`, ({ params }) => {
     const row = schedulesState.find((s) => s.id === params.sid);

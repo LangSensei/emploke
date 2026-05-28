@@ -59,6 +59,8 @@ describe("schedules schema", () => {
       name: string;
     }[];
     const names = cols.map((c) => c.name).sort();
+    // `target_agent` is dropped in 0001 (RFC #61 v2); the index is
+    // now a functional partial JSON-extract over `target_json`.
     expect(names).toEqual(
       [
         "created_at",
@@ -67,7 +69,6 @@ describe("schedules schema", () => {
         "last_fired_at",
         "name",
         "next_fire_at",
-        "target_agent",
         "target_json",
         "target_kind",
         "trigger_expr",
@@ -76,16 +77,31 @@ describe("schedules schema", () => {
         "updated_at",
       ].sort(),
     );
+    // Defensive belt-and-braces: explicit assertion the dropped
+    // column is gone, so a future regression that accidentally
+    // re-adds it fails with a clear message.
+    expect(names).not.toContain("target_agent");
   });
 
-  it("creates the three documented indexes", () => {
+  it("creates the three documented indexes (target_agent_idx is now a functional partial index)", () => {
     const rows = handle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL")
-      .all() as { name: string }[];
+      .all() as { name: string; sql?: string }[];
     const names = rows.map((r) => r.name);
     expect(names).toContain("schedules_enabled_idx");
     expect(names).toContain("schedules_next_fire_idx");
     expect(names).toContain("schedules_target_agent_idx");
+  });
+
+  it("schedules_target_agent_idx is a functional partial index on json_extract(target_json,'$.agent')", () => {
+    const row = handle.sqlite
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='schedules_target_agent_idx'",
+      )
+      .get() as { sql: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.sql).toMatch(/json_extract\(`?target_json`?,\s*'\$\.agent'\)/);
+    expect(row!.sql).toMatch(/WHERE\s+`?target_kind`?\s*=\s*'task'/);
   });
 
   it("writes the journal table __drizzle_migrations_schedule", () => {

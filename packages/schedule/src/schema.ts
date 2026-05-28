@@ -5,11 +5,15 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
  * column (single-table inheritance) — target field count is small and
  * stable, variants don't cross-reference, v1 has only one variant.
  *
- * `target_agent` is a denormalised redundant column for the
- * "list schedules by agent" query path: writer sets it only when
- * `target_kind='task'`, leaves NULL for future kinds. Trade-off
- * accepted in RFC §"Schema rationale" — simpler schema + native
- * b-tree index vs JSON-extract expression index.
+ * **Indexes.** `schedules_target_agent_idx` is a **functional partial
+ * index** on `json_extract(target_json, '$.agent')` filtered
+ * `WHERE target_kind = 'task'`. Declared via hand-written
+ * `drizzle/0001_drop_target_agent_add_json_index.sql` because
+ * drizzle-kit cannot express expression indexes in schema; the
+ * runtime query in `schedule-repository.ts` MUST use
+ * `sql\`json_extract(${schedules.targetJson}, '$.agent')\`` against
+ * `target_json` to engage it. The same pattern is used in
+ * `@emploke/task` for `tasks_schedule_id_idx`.
  *
  * `next_fire_at` is persisted (despite being derivable from
  * trigger + last_fired_at) so the list endpoint can ORDER BY
@@ -30,7 +34,6 @@ export const schedules = sqliteTable(
     triggerTz: text("trigger_tz").notNull(),
     targetKind: text("target_kind").notNull(),
     targetJson: text("target_json").notNull(),
-    targetAgent: text("target_agent"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -40,7 +43,9 @@ export const schedules = sqliteTable(
   (t) => [
     index("schedules_enabled_idx").on(t.enabled),
     index("schedules_next_fire_idx").on(t.nextFireAt),
-    index("schedules_target_agent_idx").on(t.targetAgent),
+    // schedules_target_agent_idx is a functional partial index defined
+    // in drizzle/0001_*.sql (json_extract on target_json, filtered to
+    // target_kind='task'); drizzle-kit can't express it in TS schema.
   ],
 );
 

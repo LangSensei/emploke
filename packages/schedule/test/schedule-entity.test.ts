@@ -11,7 +11,7 @@ function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", instructions: "Run the daily report" },
+    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }
@@ -86,17 +86,96 @@ describe("ScheduleEntity.create", () => {
 
   it("rejects empty agent in task target", () => {
     expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { kind: "task", agent: "", instructions: "X" } }), {
+      ScheduleEntity.create(baseArgs({ target: { kind: "task", agent: "", brief: "X" } }), {
         id: VALID_ID,
         now: FIXED_NOW,
       }),
     ).toThrow(ScheduleError);
   });
 
-  it("rejects empty instructions in task target", () => {
+  it("rejects empty brief in task target", () => {
     expect(() =>
       ScheduleEntity.create(
-        baseArgs({ target: { kind: "task", agent: "report-bot", instructions: "" } }),
+        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "" } }),
+        { id: VALID_ID, now: FIXED_NOW },
+      ),
+    ).toThrow(ScheduleError);
+  });
+
+  it("rejects brief over 200 chars", () => {
+    const longBrief = "x".repeat(201);
+    expect(() =>
+      ScheduleEntity.create(
+        baseArgs({ target: { kind: "task", agent: "report-bot", brief: longBrief } }),
+        { id: VALID_ID, now: FIXED_NOW },
+      ),
+    ).toThrow(ScheduleError);
+  });
+
+  it("rejects brief containing newline", () => {
+    expect(() =>
+      ScheduleEntity.create(
+        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "foo\nbar" } }),
+        { id: VALID_ID, now: FIXED_NOW },
+      ),
+    ).toThrow(ScheduleError);
+  });
+
+  it("rejects brief containing carriage return", () => {
+    expect(() =>
+      ScheduleEntity.create(
+        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "foo\rbar" } }),
+        { id: VALID_ID, now: FIXED_NOW },
+      ),
+    ).toThrow(ScheduleError);
+  });
+
+  it("accepts brief of exactly 200 chars (boundary)", () => {
+    const boundary = "x".repeat(200);
+    const e = ScheduleEntity.create(
+      baseArgs({ target: { kind: "task", agent: "report-bot", brief: boundary } }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    expect((e.target as { brief: string }).brief.length).toBe(200);
+  });
+
+  it("accepts details as a string (including empty string — mirrors @emploke/task)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({ target: { kind: "task", agent: "report-bot", brief: "B", details: "" } }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    expect((e.target as { details?: string }).details).toBe("");
+  });
+
+  it("accepts details containing newlines (multi-line)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: { kind: "task", agent: "report-bot", brief: "B", details: "line 1\nline 2" },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    expect((e.target as { details?: string }).details).toBe("line 1\nline 2");
+  });
+
+  it("accepts target without details (optional, omitted)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({ target: { kind: "task", agent: "report-bot", brief: "B" } }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    expect((e.target as { details?: string }).details).toBeUndefined();
+  });
+
+  it("rejects details of non-string type", () => {
+    expect(() =>
+      ScheduleEntity.create(
+        baseArgs({
+          target: {
+            kind: "task",
+            agent: "report-bot",
+            brief: "B",
+            details: 123 as unknown as string,
+          },
+        }),
         { id: VALID_ID, now: FIXED_NOW },
       ),
     ).toThrow(ScheduleError);
@@ -104,24 +183,28 @@ describe("ScheduleEntity.create", () => {
 });
 
 describe("ScheduleEntity.toRow / fromStored round-trip", () => {
-  it("populates targetAgent only when target.kind === 'task'", () => {
+  it("serialises target_json with agent + brief", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
     const row = e.toRow();
-    expect(row.targetAgent).toBe("report-bot");
     expect(row.targetKind).toBe("task");
     expect(row.triggerKind).toBe("cron");
     expect(row.triggerExpr).toBe("0 9 * * *");
     expect(row.triggerTz).toBe("UTC");
     expect(row.enabled).toBe(true);
+    // target_agent column is gone post-RFC #61 v2; toRow must not
+    // emit it (drizzle would otherwise try to write to a missing
+    // column and fail at runtime).
+    expect(Object.hasOwn(row as object, "targetAgent")).toBe(false);
   });
 
-  it("serialises target_json with agent + instructions + runtime", () => {
+  it("serialises target_json with agent + brief + details + runtime", () => {
     const e = ScheduleEntity.create(
       baseArgs({
         target: {
           kind: "task",
           agent: "report-bot",
-          instructions: "Hi",
+          brief: "Hi",
+          details: "Full body here.",
           runtime: "copilot-cli",
         },
       }),
@@ -131,7 +214,8 @@ describe("ScheduleEntity.toRow / fromStored round-trip", () => {
     const parsed = JSON.parse(row.targetJson) as Record<string, unknown>;
     expect(parsed.kind).toBe("task");
     expect(parsed.agent).toBe("report-bot");
-    expect(parsed.instructions).toBe("Hi");
+    expect(parsed.brief).toBe("Hi");
+    expect(parsed.details).toBe("Full body here.");
     expect(parsed.runtime).toBe("copilot-cli");
   });
 
@@ -146,6 +230,18 @@ describe("ScheduleEntity.toRow / fromStored round-trip", () => {
     expect(hydrated.enabled).toBe(e.enabled);
     expect(hydrated.createdAt).toBe(e.createdAt);
     expect(hydrated.updatedAt).toBe(e.updatedAt);
+  });
+
+  it("round-trips empty-string details (mirrors @emploke/task contract)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: { kind: "task", agent: "report-bot", brief: "B", details: "" },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    const row = e.toRow() as ScheduleRow;
+    const hydrated = ScheduleEntity.fromStored(row);
+    expect((hydrated.target as { details?: string }).details).toBe("");
   });
 });
 
@@ -179,7 +275,7 @@ describe("ScheduleEntity.withPatched", () => {
   it("rejects bad target", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
     expect(() =>
-      e.withPatched({ target: { kind: "task", agent: "", instructions: "X" } }, FIXED_NOW),
+      e.withPatched({ target: { kind: "task", agent: "", brief: "X" } }, FIXED_NOW),
     ).toThrow(ScheduleError);
   });
 });
@@ -204,7 +300,7 @@ describe("ScheduleEntity.withNextFireAt / withFired", () => {
 
 describe("ScheduleEntity.fromStored corruption guards", () => {
   function makeRow(over: Partial<ScheduleRow> = {}): ScheduleRow {
-    const target = { kind: "task", agent: "report-bot", instructions: "Run" };
+    const target = { kind: "task", agent: "report-bot", brief: "Run" };
     return {
       id: VALID_ID,
       name: "daily-report",
@@ -213,7 +309,6 @@ describe("ScheduleEntity.fromStored corruption guards", () => {
       triggerTz: "UTC",
       targetKind: "task",
       targetJson: JSON.stringify(target),
-      targetAgent: "report-bot",
       enabled: true,
       createdAt: FIXED_NOW.toISOString(),
       updatedAt: FIXED_NOW.toISOString(),
@@ -241,10 +336,37 @@ describe("ScheduleEntity.fromStored corruption guards", () => {
     );
   });
 
-  it("throws when target_agent column does not match target_json.agent", () => {
-    expect(() => ScheduleEntity.fromStored(makeRow({ targetAgent: "different-agent" }))).toThrow(
-      ScheduleError,
-    );
+  it("throws a remediation-bearing error on pre-v2 target_json with `instructions` but no `brief`", () => {
+    // Fail-fast guard for local dev DBs created before RFC #61 v2.
+    // The remediation hint MUST mention deleting the dev DB so the
+    // symptom is obvious rather than leaking through as a cryptic
+    // undefined-property error deep in the dispatch loop.
+    const preV2Target = { kind: "task", agent: "report-bot", instructions: "Run" };
+    let caught: unknown;
+    try {
+      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(preV2Target) }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ScheduleError);
+    const msg = (caught as Error).message;
+    expect(msg).toMatch(/pre-v2 target shape/);
+    expect(msg).toMatch(/RFC #61 v2/);
+    expect(msg).toMatch(/delete your local dev DB/);
+  });
+
+  it("throws when target_json.brief is missing (no instructions either)", () => {
+    const noBrief = { kind: "task", agent: "report-bot" };
+    expect(() =>
+      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(noBrief) })),
+    ).toThrow(ScheduleError);
+  });
+
+  it("throws when target_json.details is non-string", () => {
+    const badDetails = { kind: "task", agent: "report-bot", brief: "B", details: 7 };
+    expect(() =>
+      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(badDetails) })),
+    ).toThrow(ScheduleError);
   });
 
   it("hydrates lastFiredAt + nextFireAt to undefined when row column is null", () => {

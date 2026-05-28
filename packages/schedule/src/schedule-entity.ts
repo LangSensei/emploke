@@ -19,9 +19,9 @@ import { assertValidScheduleId } from "./validate.js";
  *
  *   1. `id` matches `SCHEDULE_ID_RE` (UUID v4).
  *   2. `trigger.kind === 'cron'` → 5-field expression + valid IANA tz.
- *   3. `target.kind === 'task'` → non-empty `agent` + non-empty
- *      `instructions`.
- *   4. `targetAgent` denormalised column is set iff `target.kind === 'task'`.
+ *   3. `target.kind === 'task'` → non-empty `agent`; `brief` is a
+ *      non-empty single-line string ≤ 200 chars; `details?` if set
+ *      must be a string (empty string allowed, mirroring `@emploke/task`).
  *
  * Agent existence is NOT an entity invariant — it requires async
  * catalog lookup, so it lives in {@link ScheduleService}.
@@ -70,12 +70,6 @@ export class ScheduleEntity {
     assertValidScheduleId(row.id);
     const trigger: ScheduleTrigger = parseTriggerRow(row);
     const target: ScheduleTarget = parseTargetRow(row);
-    // Defense-in-depth: re-assert the denormalised column matches the JSON.
-    if (target.kind === "task" && row.targetAgent !== target.agent) {
-      throw new ScheduleError(
-        `Schedule "${row.id}" corrupted: target_agent="${row.targetAgent}" does not match target_json.agent="${target.agent}"`,
-      );
-    }
     return new ScheduleEntity(
       row.id,
       row.name,
@@ -106,7 +100,6 @@ export class ScheduleEntity {
 
   /** Project to a Drizzle row for the repository. */
   toRow(): NewScheduleRow {
-    const targetAgent = this.target.kind === "task" ? this.target.agent : null;
     return {
       id: this.id,
       name: this.name,
@@ -115,7 +108,6 @@ export class ScheduleEntity {
       triggerTz: this.trigger.tz,
       targetKind: this.target.kind,
       targetJson: JSON.stringify(this.target),
-      targetAgent,
       enabled: this.enabled,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
@@ -216,8 +208,23 @@ function assertValidTarget(target: ScheduleTarget): void {
       if (typeof target.agent !== "string" || target.agent.trim().length === 0) {
         throw new ScheduleError("Task target requires non-empty agent");
       }
-      if (typeof target.instructions !== "string" || target.instructions.trim().length === 0) {
-        throw new ScheduleError("Task target requires non-empty instructions");
+      // Brief mirrors `@emploke/task`'s assertValidBrief: non-empty
+      // single-line string ≤ 200 chars.
+      if (typeof target.brief !== "string" || target.brief.trim().length === 0) {
+        throw new ScheduleError("Task target requires non-empty brief");
+      }
+      if (target.brief.includes("\n") || target.brief.includes("\r")) {
+        throw new ScheduleError(
+          "Task target brief must be a single line (no newline characters); pass long content via details",
+        );
+      }
+      if (target.brief.trim().length > 200) {
+        throw new ScheduleError("Task target brief must be 200 characters or fewer");
+      }
+      // Details is optional and unconstrained beyond `typeof string`
+      // — empty string is allowed (mirrors `@emploke/task` exactly).
+      if (target.details !== undefined && typeof target.details !== "string") {
+        throw new ScheduleError("Task target details, when set, must be a string");
       }
       if (
         target.runtime !== undefined &&
@@ -261,18 +268,36 @@ function parseTargetRow(row: ScheduleRow): ScheduleTarget {
   switch (row.targetKind) {
     case "task": {
       const agent = obj.agent;
-      const instructions = obj.instructions;
+      const brief = obj.brief;
+      const details = obj.details;
       const runtime = obj.runtime;
       if (typeof agent !== "string" || agent.length === 0) {
         throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json.agent missing`);
       }
-      if (typeof instructions !== "string" || instructions.length === 0) {
-        throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json.instructions missing`);
+      // Fail-fast guard for pre-v2 (RFC #61 v2) rows that still carry
+      // `instructions` instead of `brief`. Migration 0001 does not
+      // rewrite target_json, so a local dev DB created before the
+      // redesign would otherwise leak through as a cryptic
+      // undefined-property error deep in the dispatch loop. No
+      // production rows exist (pre-release).
+      if (brief === undefined && obj.instructions !== undefined) {
+        throw new ScheduleError(
+          `Schedule "${row.id}" uses pre-v2 target shape (target_json carries "instructions", not "brief"). This row was created before RFC #61 v2; delete your local dev DB (typically under ~/.emploke/) and re-create the schedule, or hand-rewrite target_json from {instructions} to {brief, details?} via SQL.`,
+        );
+      }
+      if (typeof brief !== "string" || brief.length === 0) {
+        throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json.brief missing`);
+      }
+      if (details !== undefined && typeof details !== "string") {
+        throw new ScheduleError(
+          `Schedule "${row.id}" corrupted: target_json.details, when set, must be a string`,
+        );
       }
       const target: ScheduleTarget = {
         kind: "task",
         agent,
-        instructions,
+        brief,
+        ...(details !== undefined ? { details } : {}),
         ...(runtime !== undefined ? { runtime: runtime as string } : {}),
       };
       return target;

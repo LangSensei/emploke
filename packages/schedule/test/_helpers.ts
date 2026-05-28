@@ -7,7 +7,8 @@ import type { TaskDispatcher } from "../src/types.js";
 
 export interface DispatchCall {
   readonly agent: string;
-  readonly instructions: string;
+  readonly brief: string;
+  readonly details?: string;
   readonly runtime?: string;
   readonly origin: "schedule";
   readonly metadata: { readonly scheduleId: string; readonly firedAt: string };

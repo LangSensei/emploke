@@ -43,7 +43,17 @@ export class ScheduleRepository {
       conditions.push(eq(schedules.enabled, opts.enabled));
     }
     if (opts.agent !== undefined) {
-      conditions.push(eq(schedules.targetAgent, opts.agent));
+      // Engages the functional partial index `schedules_target_agent_idx`
+      // (see schema.ts + drizzle/0001_drop_target_agent_add_json_index.sql).
+      // The expression MUST match the index declaration verbatim —
+      // different whitespace or quoting will silently skip the index.
+      // The `target_kind = 'task'` predicate is REQUIRED for SQLite's
+      // planner to engage a partial index — without it the planner
+      // can't prove the partial predicate holds and falls back to a
+      // full scan. It's also correct: `$.agent` is only defined on
+      // task targets; future kinds may not have an `agent` field.
+      conditions.push(eq(schedules.targetKind, "task"));
+      conditions.push(sql`json_extract(${schedules.targetJson}, '$.agent') = ${opts.agent}`);
     }
     const baseQuery = this.db.select().from(schedules);
     const whereQuery = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
