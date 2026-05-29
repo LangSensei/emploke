@@ -112,14 +112,13 @@ export async function scheduleCreate(opts: ScheduleCreateOpts): Promise<CommandR
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
+    // No `kind` field — the URL (`POST /schedules/task`) declares it.
     const target: {
-      kind: "task";
       agent: string;
       brief: string;
       details?: string;
       runtime?: string;
     } = {
-      kind: "task",
       agent: opts.agent,
       brief: opts.brief.trim(),
     };
@@ -131,7 +130,7 @@ export async function scheduleCreate(opts: ScheduleCreateOpts): Promise<CommandR
       trigger: { kind: "cron" as const, expr: opts.cron, tz: opts.tz },
       enabled: !opts.disabled,
     };
-    const created = await client.call("schedules.create", { params: { id }, body });
+    const created = await client.call("schedules.task.create", { params: { id }, body });
     const fmt = pickFormat(opts, "table");
     const stdout = fmt === "json" ? formatJson(created) : formatRecord({ ...created });
     return { exitCode: 0, stdout };
@@ -195,7 +194,7 @@ async function patchEnabled(
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const updated = await client.call("schedules.patch", {
+    const updated = await client.call("schedules.task.patch", {
       params: { id, sid: opts.sid },
       body: { enabled },
     });
@@ -291,15 +290,26 @@ export interface SchedulePatchOpts extends CommonFlags {
   /**
    * Replace the details with `value` (including `""` — mirrors the
    * task CLI's lax shape). Mutually exclusive with --clear-details.
+   *
+   * Note: emploke's `pickString` collapses `--details ""` to undefined
+   * (treated as omitted) at the commander boundary, so the empty-string
+   * SET case is only reachable via direct API / dashboard.
    */
   readonly details?: string;
   /**
-   * Remove `details` from the patched target entirely (key absent on
-   * the wire). Distinct from `--details ""`, which SETS details to
-   * the empty string. Mutually exclusive with --details.
+   * Remove `details` from the patched target entirely (sends
+   * `target.details: null` on the wire — RFC 7396 delete semantics).
+   * Distinct from `--details ""`, which SETS details to the empty
+   * string. Mutually exclusive with --details.
    */
   readonly clearDetails?: boolean;
   readonly runtime?: string;
+  /**
+   * Remove `runtime` from the patched target entirely (sends
+   * `target.runtime: null` on the wire — RFC 7396 delete semantics).
+   * Mutually exclusive with --runtime.
+   */
+  readonly clearRuntime?: boolean;
   readonly enabled?: boolean;
 }
 
@@ -312,6 +322,12 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     return {
       exitCode: 2,
       stderr: "--details and --clear-details are mutually exclusive\n",
+    };
+  }
+  if (opts.clearRuntime === true && opts.runtime !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--runtime and --clear-runtime are mutually exclusive\n",
     };
   }
 
@@ -339,14 +355,15 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     opts.brief !== undefined ||
     opts.details !== undefined ||
     opts.clearDetails === true ||
-    opts.runtime !== undefined;
+    opts.runtime !== undefined ||
+    opts.clearRuntime === true;
   const touchesAny =
     opts.name !== undefined || touchesTrigger || touchesTarget || opts.enabled !== undefined;
   if (!touchesAny) {
     return {
       exitCode: 2,
       stderr:
-        "at least one of --name / --cron / --tz / --agent / --brief / --details / --clear-details / --runtime / --enabled is required\n",
+        "at least one of --name / --cron / --tz / --agent / --brief / --details / --clear-details / --runtime / --clear-runtime / --enabled is required\n",
     };
   }
 
@@ -354,25 +371,29 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
   try {
     const id = await resolveWorkspace(opts);
 
-    // Server-side PATCH replaces `trigger` / `target` wholesale (no
-    // deep merge) — see packages/schedule/src/schedule-entity.ts
-    // (`withPatched`) and schedule-service.ts. If the user only
-    // supplied a subset of a subtree's fields, the CLI must GET the
-    // current schedule, merge the missing leaves in, and PATCH the
-    // full object. Otherwise the entity-layer `assertValidTrigger` /
-    // `assertValidTarget` invariants would reject it.
+    // `target` is RFC 7396 deep-merged server-side (see
+    // packages/server/src/routes/schedules.ts `PATCH /task/:sid`),
+    // so the CLI no longer needs to GET-merge target leaves before
+    // sending the patch. `trigger`, however, is still wholesale-
+    // replace (small atomic shape), so a partial trigger update
+    // (--cron OR --tz, but not both) still requires one GET to fill
+    // the other field. This is the only remaining GET-merge case.
     let current: Awaited<ReturnType<typeof client.call<"schedules.get">>> | undefined;
     const needCurrentForTrigger =
       touchesTrigger && !(opts.cron !== undefined && opts.tz !== undefined);
-    const needCurrentForTarget = touchesTarget;
-    if (needCurrentForTrigger || needCurrentForTarget) {
+    if (needCurrentForTrigger) {
       current = await client.call("schedules.get", { params: { id, sid: opts.sid } });
     }
 
     const body: {
       name?: string;
       trigger?: { kind: "cron"; expr: string; tz: string };
-      target?: { kind: "task"; agent: string; brief: string; details?: string; runtime?: string };
+      target?: {
+        agent?: string;
+        brief?: string;
+        details?: string | null;
+        runtime?: string | null;
+      };
       enabled?: boolean;
     } = {};
 
@@ -403,52 +424,23 @@ export async function schedulePatch(opts: SchedulePatchOpts): Promise<CommandRes
     }
 
     if (touchesTarget) {
-      const existingTarget = current?.target;
-      // v1 only models `task` targets; same defensive guard as trigger.
-      if (existingTarget !== undefined && existingTarget.kind !== "task") {
-        return {
-          exitCode: 2,
-          stderr: `--agent / --brief / --details / --clear-details / --runtime only supported when current target.kind === "task" (got "${existingTarget.kind}")\n`,
-        };
-      }
-      const agent = opts.agent ?? existingTarget?.agent;
-      const brief =
-        opts.brief !== undefined ? opts.brief.trim() : (existingTarget?.brief ?? undefined);
-      if (agent === undefined || brief === undefined) {
-        return {
-          exitCode: 2,
-          stderr: "internal: could not resolve agent/brief from server\n",
-        };
-      }
+      // Sparse target — server deep-merges per field. No GET needed.
       const nextTarget: {
-        kind: "task";
-        agent: string;
-        brief: string;
-        details?: string;
-        runtime?: string;
-      } = {
-        kind: "task",
-        agent,
-        brief,
-      };
-      // Four-way merge for details:
-      //   1. --clear-details → omit `details` entirely.
-      //   2. --details <value> → set to value (empty string allowed).
-      //   3. existing target.details present → preserve verbatim.
-      //   4. otherwise → omit.
-      if (opts.clearDetails !== true) {
-        if (opts.details !== undefined) {
-          nextTarget.details = opts.details;
-        } else if (existingTarget?.details !== undefined) {
-          nextTarget.details = existingTarget.details;
-        }
-      }
-      const runtime = opts.runtime !== undefined ? opts.runtime : existingTarget?.runtime;
-      if (runtime !== undefined) nextTarget.runtime = runtime;
+        agent?: string;
+        brief?: string;
+        details?: string | null;
+        runtime?: string | null;
+      } = {};
+      if (opts.agent !== undefined) nextTarget.agent = opts.agent;
+      if (opts.brief !== undefined) nextTarget.brief = opts.brief.trim();
+      if (opts.clearDetails === true) nextTarget.details = null;
+      else if (opts.details !== undefined) nextTarget.details = opts.details;
+      if (opts.clearRuntime === true) nextTarget.runtime = null;
+      else if (opts.runtime !== undefined) nextTarget.runtime = opts.runtime;
       body.target = nextTarget;
     }
 
-    const updated = await client.call("schedules.patch", {
+    const updated = await client.call("schedules.task.patch", {
       params: { id, sid: opts.sid },
       body,
     });

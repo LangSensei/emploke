@@ -5,14 +5,15 @@ import {
   ScheduleEnabledError,
   ScheduleError,
   ScheduleHasInFlightError,
+  ScheduleKindMismatchError,
   ScheduleNotFoundError,
 } from "./errors.js";
 import { ScheduleEntity } from "./schedule-entity.js";
 import type { ScheduleRepository } from "./schedule-repository.js";
 import type {
-  CreateScheduleArgs,
+  CreateTaskScheduleArgs,
   ListScheduleOpts,
-  PatchScheduleArgs,
+  PatchTaskScheduleArgs,
   PreviewResult,
   Schedule,
   TaskDispatcher,
@@ -45,10 +46,19 @@ interface ScheduleServiceOpts {
  *   - no failure retry (referee never observes task outcome)
  *   - hard delete; requires `enabled=false` + no in-flight
  *   - manual `run` bypasses the enabled check
- *   - `patch(trigger.*)` re-arms; `patch(target.*)` does not
- *   - `patch(enabled: …)` re-arms or cancels accordingly
+ *   - `patchTask(trigger.*)` re-arms; `patchTask(target.*)` does not
+ *   - `patchTask(enabled: …)` re-arms or cancels accordingly
  *
  * None of these are user-configurable in v1.
+ *
+ * ## Kind-discriminated mutations
+ *
+ * `createTask` / `patchTask` are the v1 mutation entry points; they
+ * correspond 1:1 to `POST /schedules/task` and
+ * `PATCH /schedules/task/:sid`. When `target.kind = "workflow"` lands
+ * later, it will get its own `createWorkflow` / `patchWorkflow`
+ * methods (plus matching URL-discriminated routes); reads stay
+ * polymorphic.
  */
 export class ScheduleService {
   private readonly repo: ScheduleRepository;
@@ -84,24 +94,28 @@ export class ScheduleService {
   // ─── Writes ───────────────────────────────────────────────
 
   /**
-   * Create a new schedule. Validates id, cron + tz, target shape,
-   * and (async) agent existence via the injected `agentValidator`.
+   * Create a new task-kind schedule. Validates id, cron + tz, target
+   * shape synchronously, then (async) agent existence via the injected
+   * `agentValidator`. The synchronous-first ordering means an invalid
+   * target shape (empty agent / brief, etc.) surfaces a schedule
+   * validation error rather than a misleading agent-existence error.
    *
-   * Note: the service does NOT default `trigger.tz` — callers (PR 3
-   * REST layer) must supply it. The user-facing default is `"UTC"`
-   * (passed in by the REST layer when the user didn't pick one).
+   * Note: the service does NOT default `trigger.tz` — callers (REST
+   * layer) must supply it. The user-facing default is `"UTC"` (passed
+   * in by the REST layer when the user didn't pick one).
    *
    * Computes `next_fire_at` immediately so the list endpoint's
    * ORDER BY can sort the freshly-created row alongside the rest;
    * arms the timer when `enabled === true`.
    */
-  async create(args: CreateScheduleArgs): Promise<Schedule> {
-    if (args.target.kind === "task") {
-      await this.assertAgentExists(args.target.agent);
-    }
+  async createTask(args: CreateTaskScheduleArgs): Promise<Schedule> {
     const id = this.randomUUID();
     const now = this.now();
+    // Synchronous shape validation first; only then the async agent lookup.
+    // An invalid target shape surfaces as a ScheduleError rather than a
+    // misleading AgentNotFoundError.
     let entity = ScheduleEntity.create(args, { id, now });
+    await this.assertAgentExists(args.target.agent);
     if (entity.enabled) {
       const [nextIso] = nextRuns(entity.trigger.expr, entity.trigger.tz, now, 1);
       entity = entity.withNextFireAt(nextIso);
@@ -111,20 +125,61 @@ export class ScheduleService {
     return entity.toDto();
   }
 
-  async patch(id: string, args: PatchScheduleArgs): Promise<Schedule> {
+  /**
+   * Patch a task-kind schedule. Composes
+   * {@link ScheduleEntity.withMetadata}, {@link ScheduleEntity.withTrigger}
+   * and {@link ScheduleEntity.withTaskTarget} with a single `now` so
+   * one logical patch produces exactly one `updatedAt` stamp.
+   *
+   * Maps an existing schedule whose `target.kind !== "task"` to
+   * `ScheduleKindMismatchError` — the route layer projects that to a
+   * standard 404 so the wire shape does not leak the actual kind.
+   *
+   * `agentValidator` is invoked only when the patch supplies a new
+   * `target.agent`, and only after the entity-side shape validation
+   * has succeeded (so a malformed agent never reaches the async
+   * lookup as an "agent not found" 404).
+   */
+  async patchTask(id: string, args: PatchTaskScheduleArgs): Promise<Schedule> {
     const existing = await this.repo.read(id);
     if (existing === null) throw new ScheduleNotFoundError(id);
-    if (args.target?.kind === "task") {
+    if (existing.target.kind !== "task") {
+      throw new ScheduleKindMismatchError(id, "task", existing.target.kind);
+    }
+
+    const now = this.now();
+    let patched = existing;
+    const hasMetadata = args.name !== undefined || args.enabled !== undefined;
+    if (hasMetadata) {
+      patched = patched.withMetadata(
+        {
+          ...(args.name !== undefined ? { name: args.name } : {}),
+          ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
+        },
+        now,
+      );
+    }
+    if (args.trigger !== undefined) {
+      patched = patched.withTrigger(args.trigger, now);
+    }
+    if (args.target !== undefined) {
+      patched = patched.withTaskTarget(args.target, now);
+    }
+
+    // Async agent existence lookup runs only when the patch supplied a
+    // new agent string, and only after the entity-side validation
+    // above accepted the merged shape.
+    if (args.target?.agent !== undefined) {
       await this.assertAgentExists(args.target.agent);
     }
-    let patched = existing.withPatched(args, this.now());
+
     const triggerChanged = args.trigger !== undefined;
     const enabledChanged = args.enabled !== undefined && args.enabled !== existing.enabled;
 
     if (triggerChanged || enabledChanged) {
       this.cancelTimer(id);
       if (patched.enabled) {
-        const [nextIso] = nextRuns(patched.trigger.expr, patched.trigger.tz, this.now(), 1);
+        const [nextIso] = nextRuns(patched.trigger.expr, patched.trigger.tz, now, 1);
         patched = patched.withNextFireAt(nextIso);
       } else {
         patched = patched.withNextFireAt(undefined);

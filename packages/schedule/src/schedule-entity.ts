@@ -2,11 +2,12 @@ import { assertValidCronExpr, assertValidTimezone } from "./cron.js";
 import { ScheduleError } from "./errors.js";
 import type { NewScheduleRow, ScheduleRow } from "./schema.js";
 import type {
-  CreateScheduleArgs,
-  PatchScheduleArgs,
+  CreateTaskScheduleArgs,
   Schedule,
   ScheduleTarget,
   ScheduleTrigger,
+  TaskScheduleTarget,
+  TaskTargetPatch,
 } from "./types.js";
 import { assertValidScheduleId } from "./validate.js";
 
@@ -15,7 +16,7 @@ import { assertValidScheduleId } from "./validate.js";
  * returns this; service maps it to the wire `Schedule` DTO.
  *
  * Invariants enforced (synchronously) at construction and on every
- * `withPatched`:
+ * `with*` mutation:
  *
  *   1. `id` matches `SCHEDULE_ID_RE` (UUID v4).
  *   2. `trigger.kind === 'cron'` → 5-field expression + valid IANA tz.
@@ -25,6 +26,21 @@ import { assertValidScheduleId } from "./validate.js";
  *
  * Agent existence is NOT an entity invariant — it requires async
  * catalog lookup, so it lives in {@link ScheduleService}.
+ *
+ * ## Mutation API
+ *
+ * Three composable methods split the old `withPatched`:
+ *
+ *   - {@link withMetadata} — scalar set of `name` / `enabled`.
+ *   - {@link withTrigger}  — atomic replace of the whole trigger object.
+ *   - {@link withTaskTarget} — RFC 7396 deep merge of the target's
+ *     flat record (only valid when the current entity has
+ *     `target.kind === "task"`); `null` on optional `details` /
+ *     `runtime` deletes the field.
+ *
+ * The service composes the three in order with a single `now`
+ * timestamp so one logical patch produces exactly one `updatedAt`
+ * stamp.
  *
  * Not re-exported from `index.ts`: external consumers see only the
  * `Schedule` DTO. The entity is the contract between the repository
@@ -44,19 +60,20 @@ export class ScheduleEntity {
   ) {}
 
   static create(
-    args: CreateScheduleArgs,
+    args: CreateTaskScheduleArgs,
     opts: { readonly id: string; readonly now: Date },
   ): ScheduleEntity {
     assertValidScheduleId(opts.id);
     assertValidName(args.name);
     assertValidTrigger(args.trigger);
-    assertValidTarget(args.target);
+    const target: TaskScheduleTarget = { kind: "task", ...args.target };
+    assertValidTarget(target);
     const nowIso = opts.now.toISOString();
     return new ScheduleEntity(
       opts.id,
       args.name,
       args.trigger,
-      args.target,
+      target,
       args.enabled ?? true,
       nowIso,
       nowIso,
@@ -117,23 +134,73 @@ export class ScheduleEntity {
   }
 
   /**
-   * Apply a patch and stamp `updatedAt`. Returns a new entity (no
-   * in-place mutation). Re-validates every changed field.
+   * Scalar set of `name` / `enabled`. Either field is optional; an
+   * empty patch is a no-op apart from the `updatedAt` stamp (callers
+   * skip the call entirely when the slice is absent).
    */
-  withPatched(patch: PatchScheduleArgs, now: Date): ScheduleEntity {
-    const name = patch.name !== undefined ? patch.name : this.name;
-    if (patch.name !== undefined) assertValidName(name);
-    const trigger = patch.trigger !== undefined ? patch.trigger : this.trigger;
-    if (patch.trigger !== undefined) assertValidTrigger(trigger);
-    const target = patch.target !== undefined ? patch.target : this.target;
-    if (patch.target !== undefined) assertValidTarget(target);
-    const enabled = patch.enabled !== undefined ? patch.enabled : this.enabled;
+  withMetadata(
+    args: { readonly name?: string; readonly enabled?: boolean },
+    now: Date,
+  ): ScheduleEntity {
+    const name = args.name !== undefined ? args.name : this.name;
+    if (args.name !== undefined) assertValidName(name);
+    const enabled = args.enabled !== undefined ? args.enabled : this.enabled;
     return new ScheduleEntity(
       this.id,
       name,
-      trigger,
-      target,
+      this.trigger,
+      this.target,
       enabled,
+      this.createdAt,
+      now.toISOString(),
+      this.lastFiredAt,
+      this.nextFireAt,
+    );
+  }
+
+  /** Replace the trigger atomically. Re-validates the new value. */
+  withTrigger(trigger: ScheduleTrigger, now: Date): ScheduleEntity {
+    assertValidTrigger(trigger);
+    return new ScheduleEntity(
+      this.id,
+      this.name,
+      trigger,
+      this.target,
+      this.enabled,
+      this.createdAt,
+      now.toISOString(),
+      this.lastFiredAt,
+      this.nextFireAt,
+    );
+  }
+
+  /**
+   * RFC 7396 deep-merge a task target. The current entity must already
+   * be a task; callers (service) guard this with
+   * {@link ScheduleKindMismatchError}.
+   *
+   *   - `agent` / `brief` set if present (validation rejects empty).
+   *   - `details` / `runtime` set if string; deleted if `null`; kept
+   *     if absent.
+   *
+   * Re-validates the merged target via {@link assertValidTarget} so
+   * trim + nonEmpty + brief-line / 200-char limits are enforced exactly
+   * as on create.
+   */
+  withTaskTarget(patch: TaskTargetPatch, now: Date): ScheduleEntity {
+    if (this.target.kind !== "task") {
+      throw new ScheduleError(
+        `Cannot apply task target patch to schedule "${this.id}" (target.kind="${this.target.kind}")`,
+      );
+    }
+    const merged = mergeTaskTarget(this.target, patch);
+    assertValidTarget(merged);
+    return new ScheduleEntity(
+      this.id,
+      this.name,
+      this.trigger,
+      merged,
+      this.enabled,
       this.createdAt,
       now.toISOString(),
       this.lastFiredAt,
@@ -158,9 +225,9 @@ export class ScheduleEntity {
 
   /**
    * Set or clear `nextFireAt` without touching `lastFiredAt`. Used by
-   * `ScheduleService.create` (pre-arm with no prior fire) and
-   * `ScheduleService.patch` (trigger / enabled change recomputes the
-   * next fire without faking a fire).
+   * `ScheduleService.createTask` (pre-arm with no prior fire) and
+   * `ScheduleService.patchTask` (trigger / enabled change recomputes
+   * the next fire without faking a fire).
    */
   withNextFireAt(nextFireAt: string | undefined): ScheduleEntity {
     return new ScheduleEntity(
@@ -175,6 +242,53 @@ export class ScheduleEntity {
       nextFireAt,
     );
   }
+}
+
+/**
+ * Apply the RFC 7396 merge rules for a task target patch.
+ *
+ * `kind` is fixed — callers cannot change it via patch. `agent` and
+ * `brief` may be set but not deleted (they are required-on-entity);
+ * the route layer rejects `null` for these with a 400 before we get
+ * here, but `assertValidTarget` is the entity-side belt-and-braces.
+ *
+ * `details` and `runtime` accept `string | null | undefined`:
+ *   - string  → set
+ *   - `null`  → delete the field on the merged record
+ *   - absent  → keep existing
+ */
+function mergeTaskTarget(
+  existing: TaskScheduleTarget,
+  patch: TaskTargetPatch,
+): TaskScheduleTarget {
+  const agent = patch.agent !== undefined ? patch.agent : existing.agent;
+  const brief = patch.brief !== undefined ? patch.brief : existing.brief;
+
+  let details: string | undefined;
+  if (patch.details === null) {
+    details = undefined;
+  } else if (patch.details !== undefined) {
+    details = patch.details;
+  } else {
+    details = existing.details;
+  }
+
+  let runtime: string | undefined;
+  if (patch.runtime === null) {
+    runtime = undefined;
+  } else if (patch.runtime !== undefined) {
+    runtime = patch.runtime;
+  } else {
+    runtime = existing.runtime;
+  }
+
+  return {
+    kind: "task",
+    agent,
+    brief,
+    ...(details !== undefined ? { details } : {}),
+    ...(runtime !== undefined ? { runtime } : {}),
+  };
 }
 
 function assertValidName(name: string): void {

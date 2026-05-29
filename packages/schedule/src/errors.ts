@@ -66,3 +66,26 @@ export class ScheduleHasInFlightError extends ScheduleError {
     super(`Schedule "${id}" cannot be deleted while a fired task is still in flight`);
   }
 }
+
+/**
+ * The schedule exists but does not have the kind required by the
+ * kind-discriminated route (e.g. `PATCH /schedules/task/:sid` invoked
+ * with a `:sid` whose `target.kind !== "task"`).
+ *
+ * The HTTP layer projects this to a plain `ScheduleNotFoundError`-
+ * envelope 404 so the wire shape does not leak whether the resource
+ * exists under another kind. The distinct class is retained so the
+ * server-side code path and tests can branch unambiguously.
+ */
+export class ScheduleKindMismatchError extends ScheduleError {
+  override readonly name = "ScheduleKindMismatchError";
+  constructor(
+    public readonly id: string,
+    public readonly expected: string,
+    public readonly actual: string,
+  ) {
+    super(
+      `Schedule "${id}" has target.kind="${actual}", expected "${expected}" for this route`,
+    );
+  }
+}
