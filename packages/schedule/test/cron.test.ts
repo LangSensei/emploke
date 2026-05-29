@@ -78,10 +78,11 @@ describe("cron.nextRuns", () => {
 });
 
 describe("cron.describeCron", () => {
-  it("returns a non-empty Chinese description for a valid cron", () => {
+  it("returns a non-empty English description for a valid cron (issue #224)", () => {
     const text = describeCron("0 9 * * *");
     expect(text.length).toBeGreaterThan(0);
-    // zh_CN locale output should contain Chinese characters
-    expect(/[\u4e00-\u9fa5]/.test(text)).toBe(true);
+    // English output must not leak the previously-hardcoded zh_CN locale.
+    expect(/[\u4e00-\u9fa5]/.test(text)).toBe(false);
+    expect(text.toLowerCase()).toContain("at 09:00");
   });
 });
