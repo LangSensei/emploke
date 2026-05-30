@@ -228,19 +228,18 @@ export interface ScheduleListQuery {
 }
 
 /**
- * POST /api/workspaces/:id/schedules body. Mirrors `CreateScheduleArgs`
- * from `@emploke/schedule` — the route validates the wire shape and
- * forwards to `ScheduleService.create`.
+ * POST /api/workspaces/:id/schedules/task body. Kind-discriminated
+ * by URL — the body carries no `target.kind` (the server injects
+ * `"task"` before forwarding to `ScheduleService.createTask`).
  *
  * `trigger.tz` is required at the wire layer (the schedule service
  * itself does NOT default a timezone — every fire is timezone-anchored,
  * so the user must commit to one explicitly). If callers want UTC,
  * they pass `"UTC"`.
  */
-export interface ScheduleCreateBody {
+export interface TaskScheduleCreateBody {
   readonly name: string;
   readonly target: {
-    readonly kind: "task";
     readonly agent: string;
     /** Single line, ≤ 200 chars. Mirrors `@emploke/task` `DispatchOpts.brief`. */
     readonly brief: string;
@@ -257,18 +256,28 @@ export interface ScheduleCreateBody {
 }
 
 /**
- * PATCH /api/workspaces/:id/schedules/:sid body. Every field optional;
- * server forwards the bag to `ScheduleService.patch` which applies a
- * shallow merge under the same validation rules as create.
+ * PATCH /api/workspaces/:id/schedules/task/:sid body — RFC 7396
+ * deep-merge for `target`, wholesale-replace for `trigger`,
+ * scalar-set for `name` / `enabled`.
  *
- * The full `target` / `trigger` subtree, if present, replaces the
- * existing one wholesale (no per-leaf merge under `target` / `trigger`
- * — keeps the shape unambiguous and matches `schedule-service.ts`).
+ * - `name` / `enabled` — set if present, otherwise keep existing.
+ * - `trigger` — wholesale replace if present (small atomic shape; no
+ *   partial trigger; `null` rejected).
+ * - `target` — RFC 7396 deep-merge per field:
+ *     - `agent` / `brief`: set if present; `null` rejected (required
+ *       fields — omit to keep existing).
+ *     - `details` / `runtime`: string sets, `null` deletes, absent keeps.
+ *   `target.kind` MUST NOT be set (URL discriminates).
  */
-export interface SchedulePatchBody {
+export interface TaskSchedulePatchBody {
   readonly name?: string;
-  readonly target?: ScheduleCreateBody["target"];
-  readonly trigger?: ScheduleCreateBody["trigger"];
+  readonly target?: {
+    readonly agent?: string;
+    readonly brief?: string;
+    readonly details?: string | null;
+    readonly runtime?: string | null;
+  };
+  readonly trigger?: TaskScheduleCreateBody["trigger"];
   readonly enabled?: boolean;
 }
 
@@ -559,18 +568,34 @@ export const ROUTES = {
     { params: WorkspacePathParams; query: ScheduleListQuery },
     readonly Schedule[]
   >("GET", "/api/workspaces/:id/schedules"),
-  "schedules.create": defineRoute<
-    { params: WorkspacePathParams; body: ScheduleCreateBody },
+  /**
+   * Create a task-kind schedule. URL-discriminated by `target.kind`
+   * so the body can omit `kind` (the URL declares it) — the server
+   * injects `kind: "task"` before forwarding to
+   * `ScheduleService.createTask`. When `workflow` target lands later
+   * it gets its own `schedules.workflow.create` route paired with
+   * `ScheduleService.createWorkflow`.
+   */
+  "schedules.task.create": defineRoute<
+    { params: WorkspacePathParams; body: TaskScheduleCreateBody },
     Schedule
-  >("POST", "/api/workspaces/:id/schedules"),
+  >("POST", "/api/workspaces/:id/schedules/task"),
   "schedules.get": defineRoute<{ params: SchedulePathParams }, ScheduleGetResponse>(
     "GET",
     "/api/workspaces/:id/schedules/:sid",
   ),
-  "schedules.patch": defineRoute<{ params: SchedulePathParams; body: SchedulePatchBody }, Schedule>(
-    "PATCH",
-    "/api/workspaces/:id/schedules/:sid",
-  ),
+  /**
+   * Patch a task-kind schedule with RFC 7396 deep-merge semantics
+   * on `target` (siblings preserved; `null` deletes optional fields),
+   * wholesale-replace on `trigger`, and scalar-set on
+   * `name` / `enabled`. URL-discriminated by `target.kind`: if `:sid`
+   * exists but its `target.kind !== "task"`, the server returns 404
+   * with a generic `ScheduleNotFoundError` envelope.
+   */
+  "schedules.task.patch": defineRoute<
+    { params: SchedulePathParams; body: TaskSchedulePatchBody },
+    Schedule
+  >("PATCH", "/api/workspaces/:id/schedules/task/:sid"),
   "schedules.delete": defineRoute<{ params: SchedulePathParams }, OkResponse>(
     "DELETE",
     "/api/workspaces/:id/schedules/:sid",

@@ -10,6 +10,25 @@
  * per-request context. The route file never touches workspace
  * resolution, only the schedule surface.
  *
+ * ## Mutation routes (URL-discriminated by target kind)
+ *
+ * `POST` and `PATCH` are split by `target.kind` so each kind can
+ * offer an honest, RFC 7396-style deep-merge contract on its body:
+ *
+ *   - `POST /task`        creates a task-kind schedule
+ *   - `PATCH /task/:sid`  patches a task-kind schedule (RFC 7396
+ *                         deep-merge on `target`; wholesale-replace
+ *                         on `trigger`; scalar-set on
+ *                         `name` / `enabled`)
+ *
+ * Reads (`GET /`, `GET /:sid`, `GET /:sid/preview`,
+ * `GET /preview-cron`) and lifecycle ops (`DELETE /:sid`,
+ * `POST /:sid/run`) stay polymorphic over kind.
+ *
+ * When a `workflow` target lands later it will get its own
+ * `POST /workflow` + `PATCH /workflow/:sid` pair plus matching
+ * service methods; no changes needed in the polymorphic routes.
+ *
  * Notes:
  *
  *   - `GET /:sid` — `ScheduleService.get(sid)` returns `Schedule | null`
@@ -35,12 +54,14 @@
  */
 
 import {
-  type CreateScheduleArgs,
   describeCron,
-  type PatchScheduleArgs,
   ScheduleError,
+  ScheduleKindMismatchError,
   ScheduleNotFoundError,
   type ScheduleService,
+  type ScheduleTrigger,
+  type TaskTargetData,
+  type TaskTargetPatch,
 } from "@emploke/schedule";
 // `ScheduleError` is used by both the `/:sid/preview` n-bound check
 // and the new `/preview-cron` n-bound check (issue #222) for a typed
@@ -56,6 +77,11 @@ export type ScheduleServiceResolver = (c: import("hono").Context) => ScheduleSer
  * route never throws catalog or task errors directly (those bubble
  * via the catalog-driven adapters in `@emploke/core`, not via the
  * `ScheduleService` surface).
+ *
+ * `ScheduleKindMismatchError` maps to 404 — the resource at the
+ * kind-discriminated URL is logically absent. The wire envelope is
+ * rewritten to mirror `ScheduleNotFoundError` so the response body
+ * does not leak whether the schedule exists under a different kind.
  */
 function statusForScheduleError(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
@@ -66,6 +92,7 @@ function statusForScheduleError(err: unknown): number | null {
     case "ScheduleError":
       return 400;
     case "ScheduleNotFoundError":
+    case "ScheduleKindMismatchError":
     case "AgentNotFoundError":
       return 404;
     case "ScheduleEnabledError":
@@ -79,6 +106,177 @@ function statusForScheduleError(err: unknown): number | null {
 function resolveErrorStatus(err: unknown): { status: number; isUnmapped: boolean } {
   const mapped = statusForScheduleError(err);
   return { status: mapped ?? 400, isUnmapped: mapped === null };
+}
+
+const ALLOWED_TASK_CREATE_KEYS = new Set(["name", "target", "trigger", "enabled"]);
+const ALLOWED_TASK_PATCH_KEYS = new Set(["name", "target", "trigger", "enabled"]);
+const ALLOWED_TASK_TARGET_KEYS = new Set(["agent", "brief", "details", "runtime"]);
+
+interface ValidationFail {
+  readonly ok: false;
+  readonly error: string;
+}
+interface ValidationOk<T> {
+  readonly ok: true;
+  readonly value: T;
+}
+type ValidationResult<T> = ValidationOk<T> | ValidationFail;
+
+/** Validate a raw value as a {@link TaskTargetData} for `POST /task`. */
+function validateTaskTargetData(raw: unknown): ValidationResult<TaskTargetData> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "target must be an object" };
+  }
+  const obj = raw as Record<string, unknown>;
+  // `kind` is URL-implied; reject if the caller sends it to avoid
+  // contradictions with the URL discriminator.
+  if ("kind" in obj) {
+    return {
+      ok: false,
+      error: "target.kind must not be set on POST /schedules/task (kind is implied by the URL)",
+    };
+  }
+  for (const k of Object.keys(obj)) {
+    if (!ALLOWED_TASK_TARGET_KEYS.has(k)) {
+      return { ok: false, error: `target has unknown key "${k}"` };
+    }
+  }
+  const { agent, brief, details, runtime } = obj;
+  if (typeof agent !== "string" || agent.trim().length === 0) {
+    return { ok: false, error: "target.agent must be a non-empty string" };
+  }
+  if (typeof brief !== "string" || brief.trim().length === 0) {
+    return { ok: false, error: "target.brief must be a non-empty string" };
+  }
+  if (brief.includes("\n") || brief.includes("\r")) {
+    return {
+      ok: false,
+      error: "target.brief must be a single line — pass long content via target.details",
+    };
+  }
+  if (brief.trim().length > 200) {
+    return { ok: false, error: "target.brief must be at most 200 chars" };
+  }
+  if (details !== undefined && typeof details !== "string") {
+    return { ok: false, error: "target.details, when set, must be a string" };
+  }
+  if (runtime !== undefined && (typeof runtime !== "string" || runtime.trim().length === 0)) {
+    return { ok: false, error: "target.runtime, when set, must be a non-empty string" };
+  }
+  return {
+    ok: true,
+    value: {
+      agent,
+      brief,
+      ...(details !== undefined ? { details } : {}),
+      ...(runtime !== undefined ? { runtime } : {}),
+    },
+  };
+}
+
+/**
+ * Validate a raw value as a {@link TaskTargetPatch} for
+ * `PATCH /task/:sid`. RFC 7396 semantics: `null` on optional
+ * `details`/`runtime` deletes; `null` on required `agent`/`brief` is
+ * rejected with a clear 400.
+ */
+function validateTaskTargetPatch(raw: unknown): ValidationResult<TaskTargetPatch> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "target must be an object" };
+  }
+  const obj = raw as Record<string, unknown>;
+  if ("kind" in obj) {
+    return {
+      ok: false,
+      error:
+        "target.kind must not be set on PATCH /schedules/task/:sid (kind is implied by the URL)",
+    };
+  }
+  for (const k of Object.keys(obj)) {
+    if (!ALLOWED_TASK_TARGET_KEYS.has(k)) {
+      return { ok: false, error: `target has unknown key "${k}"` };
+    }
+  }
+  const patch: {
+    agent?: string;
+    brief?: string;
+    details?: string | null;
+    runtime?: string | null;
+  } = {};
+  if ("agent" in obj) {
+    const v = obj.agent;
+    if (v === null) {
+      return { ok: false, error: "target.agent cannot be null (required field; omit to keep)" };
+    }
+    if (typeof v !== "string" || v.trim().length === 0) {
+      return { ok: false, error: "target.agent must be a non-empty string" };
+    }
+    patch.agent = v;
+  }
+  if ("brief" in obj) {
+    const v = obj.brief;
+    if (v === null) {
+      return { ok: false, error: "target.brief cannot be null (required field; omit to keep)" };
+    }
+    if (typeof v !== "string" || v.trim().length === 0) {
+      return { ok: false, error: "target.brief must be a non-empty string" };
+    }
+    if (v.includes("\n") || v.includes("\r")) {
+      return {
+        ok: false,
+        error: "target.brief must be a single line — pass long content via target.details",
+      };
+    }
+    if (v.trim().length > 200) {
+      return { ok: false, error: "target.brief must be at most 200 chars" };
+    }
+    patch.brief = v;
+  }
+  if ("details" in obj) {
+    const v = obj.details;
+    if (v === null) {
+      patch.details = null;
+    } else if (typeof v === "string") {
+      patch.details = v;
+    } else {
+      return {
+        ok: false,
+        error: "target.details must be a string (set), null (delete), or omitted (keep)",
+      };
+    }
+  }
+  if ("runtime" in obj) {
+    const v = obj.runtime;
+    if (v === null) {
+      patch.runtime = null;
+    } else if (typeof v === "string" && v.trim().length > 0) {
+      patch.runtime = v;
+    } else {
+      return {
+        ok: false,
+        error: "target.runtime must be a non-empty string (set), null (delete), or omitted (keep)",
+      };
+    }
+  }
+  return { ok: true, value: patch };
+}
+
+/** Validate a raw value as a full {@link ScheduleTrigger}. */
+function validateTrigger(raw: unknown): ValidationResult<ScheduleTrigger> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "trigger must be an object" };
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.kind !== "cron") {
+    return { ok: false, error: 'trigger.kind must be "cron"' };
+  }
+  if (typeof obj.expr !== "string" || obj.expr.trim().length === 0) {
+    return { ok: false, error: "trigger.expr must be a non-empty string" };
+  }
+  if (typeof obj.tz !== "string" || obj.tz.trim().length === 0) {
+    return { ok: false, error: "trigger.tz must be a non-empty string" };
+  }
+  return { ok: true, value: { kind: "cron", expr: obj.expr, tz: obj.tz } };
 }
 
 export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
@@ -110,74 +308,52 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
     }
   });
 
-  // ── POST / — create ───────────────────────────────────────────────
-  app.post("/", async (c) => {
-    const parsed = await parseJsonBody<{
-      name?: unknown;
-      target?: CreateScheduleArgs["target"];
-      trigger?: CreateScheduleArgs["trigger"];
-      enabled?: unknown;
-    }>(c);
+  // ── POST /task — create a task-kind schedule ──────────────────────
+  // URL-discriminated: the body carries no `target.kind` (the URL
+  // declares it). Server injects `kind: "task"` before forwarding
+  // to `ScheduleService.createTask`.
+  app.post("/task", async (c) => {
+    const parsed = await parseJsonBody<Record<string, unknown>>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const body = parsed.body;
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "request body must be an object" }, 400);
+    }
+    for (const k of Object.keys(body)) {
+      if (!ALLOWED_TASK_CREATE_KEYS.has(k)) {
+        return c.json({ error: `request body has unknown key "${k}"` }, 400);
+      }
+    }
+    const { name, target, trigger, enabled } = body;
 
-    const { name, target, trigger, enabled } = parsed.body;
     if (typeof name !== "string" || name.trim().length === 0) {
       return c.json({ error: "name must be a non-empty string" }, 400);
-    }
-    if (
-      target === undefined ||
-      target === null ||
-      typeof target !== "object" ||
-      target.kind !== "task" ||
-      typeof target.agent !== "string"
-    ) {
-      return c.json(
-        { error: "target must be { kind: 'task', agent, brief, details?, runtime? }" },
-        400,
-      );
-    }
-    const briefVal = (target as { brief?: unknown }).brief;
-    if (typeof briefVal !== "string" || briefVal.trim().length === 0) {
-      return c.json({ error: "target.brief must be a non-empty string" }, 400);
-    }
-    if (briefVal.includes("\n") || briefVal.includes("\r")) {
-      return c.json(
-        { error: "target.brief must be a single line — pass long content via target.details" },
-        400,
-      );
-    }
-    if (briefVal.trim().length > 200) {
-      return c.json({ error: "target.brief must be at most 200 chars" }, 400);
-    }
-    const detailsVal = (target as { details?: unknown }).details;
-    if (detailsVal !== undefined && typeof detailsVal !== "string") {
-      return c.json({ error: "target.details, when set, must be a string" }, 400);
-    }
-    if (
-      trigger === undefined ||
-      trigger === null ||
-      typeof trigger !== "object" ||
-      trigger.kind !== "cron"
-    ) {
-      return c.json({ error: "trigger must be { kind: 'cron', expr, tz }" }, 400);
     }
     if (enabled !== undefined && typeof enabled !== "boolean") {
       return c.json({ error: "enabled, when set, must be a boolean" }, 400);
     }
+    const targetResult = validateTaskTargetData(target);
+    if (!targetResult.ok) return c.json({ error: targetResult.error }, 400);
+    const triggerResult = validateTrigger(trigger);
+    if (!triggerResult.ok) return c.json({ error: triggerResult.error }, 400);
 
     try {
-      const created = await resolve(c).create({
+      const created = await resolve(c).createTask({
         name,
-        target,
-        trigger,
+        target: targetResult.value,
+        trigger: triggerResult.value,
         ...(enabled !== undefined ? { enabled } : {}),
       });
-      logEvent(c, "schedule.create", { scheduleId: created.id, agent: target.agent });
+      logEvent(c, "schedule.create", {
+        scheduleId: created.id,
+        agent: targetResult.value.agent,
+      });
       return c.json(created, 201);
     } catch (err) {
       const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.create: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.create: unmapped error fell through to 400");
+      if (status >= 500) logFault(c, err, "schedules.task.create: 5xx fault");
+      else if (isUnmapped)
+        logFault(c, err, "schedules.task.create: unmapped error fell through to 400");
       // biome-ignore lint/suspicious/noExplicitAny: see above
       return c.json(errorBody(err), status as any);
     }
@@ -254,47 +430,88 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
     }
   });
 
-  // ── PATCH /:sid ────────────────────────────────────────────────────
-  app.patch("/:sid", async (c) => {
+  // ── PATCH /task/:sid — patch a task-kind schedule ─────────────────
+  // Body semantics (RFC 7396 deep-merge for `target`):
+  //   - `name`, `enabled`           — scalar set if present
+  //   - `trigger`                   — wholesale replace if present
+  //                                   (small atomic shape)
+  //   - `target.agent` / `brief`    — set if present; `null` rejected
+  //                                   (required fields; omit to keep)
+  //   - `target.details` / `runtime` — string sets; `null` deletes;
+  //                                   absent keeps
+  //   - `target.kind`               — rejected (URL discriminates)
+  //
+  // Returns 404 (with a generic `ScheduleNotFoundError` envelope) if
+  // `:sid` exists but its `target.kind !== "task"` — the resource at
+  // this kind-discriminated URL is logically absent and the wire
+  // shape must not leak the actual kind.
+  app.patch("/task/:sid", async (c) => {
     const sid = c.req.param("sid");
-    const parsed = await parseJsonBody<Partial<PatchScheduleArgs>>(c);
+    const parsed = await parseJsonBody<Record<string, unknown>>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    // Route-layer brief/details validation for early-out friendliness;
-    // entity-layer `assertValidTarget` re-asserts the same invariants
-    // on the service path, but its messages are entity-flavoured.
-    const patchTarget = parsed.body.target as unknown;
-    if (patchTarget !== undefined && patchTarget !== null && typeof patchTarget === "object") {
-      const t = patchTarget as { kind?: unknown; brief?: unknown; details?: unknown };
-      if (t.kind === "task") {
-        if (t.brief !== undefined) {
-          if (typeof t.brief !== "string" || t.brief.trim().length === 0) {
-            return c.json({ error: "target.brief must be a non-empty string" }, 400);
-          }
-          if (t.brief.includes("\n") || t.brief.includes("\r")) {
-            return c.json(
-              {
-                error: "target.brief must be a single line — pass long content via target.details",
-              },
-              400,
-            );
-          }
-          if (t.brief.trim().length > 200) {
-            return c.json({ error: "target.brief must be at most 200 chars" }, 400);
-          }
-        }
-        if (t.details !== undefined && typeof t.details !== "string") {
-          return c.json({ error: "target.details, when set, must be a string" }, 400);
-        }
+    const body = parsed.body;
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "request body must be an object" }, 400);
+    }
+    for (const k of Object.keys(body)) {
+      if (!ALLOWED_TASK_PATCH_KEYS.has(k)) {
+        return c.json({ error: `request body has unknown key "${k}"` }, 400);
       }
     }
+
+    const patch: {
+      name?: string;
+      enabled?: boolean;
+      trigger?: ScheduleTrigger;
+      target?: TaskTargetPatch;
+    } = {};
+
+    if ("name" in body) {
+      const v = body.name;
+      if (typeof v !== "string" || v.trim().length === 0) {
+        return c.json({ error: "name must be a non-empty string" }, 400);
+      }
+      patch.name = v;
+    }
+    if ("enabled" in body) {
+      const v = body.enabled;
+      if (typeof v !== "boolean") {
+        return c.json({ error: "enabled must be a boolean" }, 400);
+      }
+      patch.enabled = v;
+    }
+    if ("trigger" in body) {
+      const r = validateTrigger(body.trigger);
+      if (!r.ok) return c.json({ error: r.error }, 400);
+      patch.trigger = r.value;
+    }
+    if ("target" in body) {
+      const r = validateTaskTargetPatch(body.target);
+      if (!r.ok) return c.json({ error: r.error }, 400);
+      patch.target = r.value;
+    }
+
     try {
-      const updated = await resolve(c).patch(sid, parsed.body);
+      const updated = await resolve(c).patchTask(sid, patch);
       logEvent(c, "schedule.patch", { scheduleId: sid });
       return c.json(updated);
     } catch (err) {
+      // Project `ScheduleKindMismatchError` to the standard
+      // `ScheduleNotFoundError` envelope so the wire shape does not
+      // leak whether the schedule exists under another kind. The
+      // server log still carries the original error for debugging.
+      if (err instanceof ScheduleKindMismatchError) {
+        logEvent(c, "schedule.patch.kind_mismatch", {
+          scheduleId: sid,
+          expected: err.expected,
+          actual: err.actual,
+        });
+        return c.json(errorBody(new ScheduleNotFoundError(sid)), 404);
+      }
       const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.patch: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.patch: unmapped error fell through to 400");
+      if (status >= 500) logFault(c, err, "schedules.task.patch: 5xx fault");
+      else if (isUnmapped)
+        logFault(c, err, "schedules.task.patch: unmapped error fell through to 400");
       // biome-ignore lint/suspicious/noExplicitAny: see above
       return c.json(errorBody(err), status as any);
     }

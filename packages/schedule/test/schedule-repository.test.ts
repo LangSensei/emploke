@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ScheduleEntity } from "../src/schedule-entity.js";
 import { ScheduleRepository } from "../src/schedule-repository.js";
 import { openTestScheduleDb } from "../src/testing.js";
-import type { CreateScheduleArgs } from "../src/types.js";
+import type { CreateTaskScheduleArgs } from "../src/types.js";
 
 /**
  * Smoke tests for the agent-filter list path post-RFC #61 v2: the
@@ -24,17 +24,17 @@ describe("ScheduleRepository.list({ agent }) — functional partial JSON-extract
     db.close();
   });
 
-  function args(name: string, agent: string): CreateScheduleArgs {
+  function args(name: string, agent: string): CreateTaskScheduleArgs {
     return {
       name,
       trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-      target: { kind: "task", agent, brief: `${name}-brief` },
+      target: { agent, brief: `${name}-brief` },
     };
   }
 
   function insert(
     id: string,
-    a: CreateScheduleArgs,
+    a: CreateTaskScheduleArgs,
     now: Date = new Date("2026-05-01T00:00:00.000Z"),
   ): Promise<void> {
     return repo.insert(ScheduleEntity.create(a, { id, now }));

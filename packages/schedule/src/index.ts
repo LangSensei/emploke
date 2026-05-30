@@ -25,16 +25,20 @@ export {
   ScheduleEnabledError,
   ScheduleError,
   ScheduleHasInFlightError,
+  ScheduleKindMismatchError,
   ScheduleNotFoundError,
 } from "./errors.js";
 export { ScheduleService } from "./schedule-service.js";
 export type {
-  CreateScheduleArgs,
+  CreateTaskScheduleArgs,
   ListScheduleOpts,
-  PatchScheduleArgs,
+  PatchTaskScheduleArgs,
   PreviewResult,
   Schedule,
   ScheduleTarget,
   ScheduleTrigger,
   TaskDispatcher,
+  TaskScheduleTarget,
+  TaskTargetData,
+  TaskTargetPatch,
 } from "./types.js";

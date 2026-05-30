@@ -468,7 +468,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
   withWorkspaceFlags(scheduleCmd.command("patch"))
     .argument("<sid>", "Schedule id")
     .description(
-      "Partially update a schedule (any subset of name / cron / tz / agent / brief / details / clear-details / runtime / enabled)",
+      "Partially update a schedule (any subset of name / cron / tz / agent / brief / details / clear-details / runtime / clear-runtime / enabled)",
     )
     .option("--name <text>", "New display name")
     .option(
@@ -493,6 +493,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
     )
     .option("--clear-details", "Remove existing details from the schedule's task target")
     .option("--runtime <kind>", "New runtime override")
+    .option("--clear-runtime", "Remove existing runtime override from the schedule's task target")
     .option("--enabled", "Re-arm timer (equivalent to `enable` subcommand)")
     .option("--no-enabled", "Cancel timer (equivalent to `disable` subcommand)")
     .action(async (sid: string, opts: Record<string, unknown>) => {
@@ -507,6 +508,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         ...optionalString(opts, "details"),
         ...(opts.clearDetails === true ? { clearDetails: true } : {}),
         ...optionalString(opts, "runtime"),
+        ...(opts.clearRuntime === true ? { clearRuntime: true } : {}),
         ...(opts.enabled !== undefined ? { enabled: Boolean(opts.enabled) } : {}),
       });
     });
@@ -1033,10 +1035,11 @@ function parseWorkspaceFlags(opts: Record<string, unknown>): WorkspaceFlagOpts {
  * would either cause server-side validation errors (`--name ""` creating
  * a workspace called "") or silently produce nonsense rows. The collapse
  * is applied uniformly across ~50 flag sites for predictability; per-flag
- * exceptions are explicitly rejected as ugly asymmetry. The one
- * "intentionally clear a string field" gesture in the CLI is
- * `schedule patch --clear-details`, which is a separate boolean flag
- * (not an overload of `--details`).
+ * exceptions are explicitly rejected as ugly asymmetry. The two
+ * "intentionally clear a string field" gestures in the CLI are
+ * `schedule patch --clear-details` and `schedule patch --clear-runtime`,
+ * which are separate boolean flags (not overloads of `--details` /
+ * `--runtime`).
  *
  * Tests: see `packages/cli/test/pick-string-empty-collapse.test.ts`.
  */

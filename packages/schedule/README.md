@@ -100,3 +100,93 @@ the only production composition path:
 - `agentValidator(fqn)` — async predicate; resolves on success,
   rejects on missing agent. Bound to `CatalogService` in production.
 - Optional `now` / `randomUUID` are deterministic-test seams.
+
+## HTTP mutation contract
+
+Mutations are **URL-discriminated by `target.kind`** so each route has an
+honest, kind-specific contract. Reads / delete / run / preview stay
+polymorphic (one resource view across kinds).
+
+| Operation                 | Route                                                | Body                          |
+|---------------------------|------------------------------------------------------|-------------------------------|
+| Create task schedule      | `POST   /api/workspaces/:id/schedules/task`          | `TaskScheduleCreateBody`      |
+| Patch task schedule       | `PATCH  /api/workspaces/:id/schedules/task/:sid`     | `TaskSchedulePatchBody`       |
+| List / get / delete / run / preview | `GET / DELETE / POST /api/workspaces/:id/schedules[/:sid][/run\|/preview]` | polymorphic |
+
+When `target.kind = "workflow"` lands, it adds `POST /schedules/workflow`
++ `PATCH /schedules/workflow/:sid` + matching service methods. Polymorphic
+reads do not need re-plumbing.
+
+### `POST /schedules/task` body
+
+```ts
+interface TaskScheduleCreateBody {
+  name: string;
+  enabled?: boolean;                              // default true
+  trigger: { kind: "cron"; expr: string; tz: string };
+  target: {                                       // no `kind` — URL implies it
+    agent: string;
+    brief: string;
+    details?: string;
+    runtime?: string;
+  };
+}
+```
+
+The route rejects `target.kind` (URL is authoritative), unknown nested
+keys, and empty/null `agent`/`brief`. The service injects
+`kind: "task"` before persistence.
+
+### `PATCH /schedules/task/:sid` body — RFC 7396 deep-merge for `target`
+
+```ts
+interface TaskSchedulePatchBody {
+  name?: string;                                  // shallow set
+  enabled?: boolean;                              // shallow set
+  trigger?: { kind: "cron"; expr: string; tz: string }; // wholesale replace
+  target?: {
+    agent?: string;                               // set; null rejected (required field)
+    brief?: string;                               // set; null rejected (required field)
+    details?: string | null;                      // string sets; null deletes
+    runtime?: string | null;                      // string sets; null deletes
+  };
+}
+```
+
+Semantics:
+
+- **`name` / `enabled`** — shallow set; absent means keep.
+- **`trigger`** — atomic shape (3 fields). If present, replace wholesale
+  and re-validate; absent means keep. Partial trigger is rejected (400).
+- **`target`** — RFC 7396 (JSON Merge Patch) deep merge. Each present key
+  is merged into the existing target:
+  - `agent` / `brief` — set; `null` is **rejected** (these are required
+    entity invariants).
+  - `details` / `runtime` — `string` sets, **`null` deletes the key**,
+    `undefined` (absent) keeps the existing value.
+- **404 envelope** — if `:sid` exists but its current `target.kind !==
+  "task"`, the route returns `ScheduleNotFoundError` (no
+  kind-information leak; from the task-route's perspective the resource
+  is absent).
+- **Single `updatedAt` stamp** — the three composed entity steps share
+  one `now` so a multi-field patch does not skew timestamps.
+
+The "wholesale-trigger" carve-out is intentional: `trigger` is small and
+its fields are interdependent (a cron expr only makes sense paired with
+its tz), so partial merges hide validation bugs.
+
+### CLI surface (`emploke schedule patch`)
+
+`schedule patch` issues a **single PATCH** for everything except partial
+trigger updates — when only `--cron` or only `--tz` is given the CLI
+first GETs the existing trigger to fill the missing field, because
+trigger is wholesale-replace.
+
+- `--name`, `--enabled` / `--no-enabled` — scalar set.
+- `--agent`, `--brief`, `--details`, `--runtime` — sparse `target` patch
+  in a single PATCH (server deep-merges).
+- `--clear-details`, `--clear-runtime` — ship `null` on the wire (delete
+  the optional field).
+- `--details ""` is treated as omitted (CLI norm; matches `pickString`
+  in `@emploke/task`). Empty-string set is only reachable through the
+  direct HTTP API.

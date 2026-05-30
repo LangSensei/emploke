@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { InvalidCronExprError, InvalidScheduleIdError, ScheduleError } from "../src/errors.js";
 import { ScheduleEntity } from "../src/schedule-entity.js";
 import type { ScheduleRow } from "../src/schema.js";
-import type { CreateScheduleArgs } from "../src/types.js";
+import type { CreateTaskScheduleArgs } from "../src/types.js";
 
 const VALID_ID = "550e8400-e29b-41d4-a716-446655440000";
 const FIXED_NOW = new Date("2026-05-01T00:00:00.000Z");
 
-function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
+function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
+    target: { agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }
@@ -86,7 +86,7 @@ describe("ScheduleEntity.create", () => {
 
   it("rejects empty agent in task target", () => {
     expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { kind: "task", agent: "", brief: "X" } }), {
+      ScheduleEntity.create(baseArgs({ target: { agent: "", brief: "X" } }), {
         id: VALID_ID,
         now: FIXED_NOW,
       }),
@@ -95,45 +95,45 @@ describe("ScheduleEntity.create", () => {
 
   it("rejects empty brief in task target", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief over 200 chars", () => {
     const longBrief = "x".repeat(201);
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { kind: "task", agent: "report-bot", brief: longBrief } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: longBrief } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief containing newline", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "foo\nbar" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\nbar" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief containing carriage return", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { kind: "task", agent: "report-bot", brief: "foo\rbar" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\rbar" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("accepts brief of exactly 200 chars (boundary)", () => {
     const boundary = "x".repeat(200);
     const e = ScheduleEntity.create(
-      baseArgs({ target: { kind: "task", agent: "report-bot", brief: boundary } }),
+      baseArgs({ target: { agent: "report-bot", brief: boundary } }),
       { id: VALID_ID, now: FIXED_NOW },
     );
     expect((e.target as { brief: string }).brief.length).toBe(200);
@@ -141,7 +141,7 @@ describe("ScheduleEntity.create", () => {
 
   it("accepts details as a string (including empty string — mirrors @emploke/task)", () => {
     const e = ScheduleEntity.create(
-      baseArgs({ target: { kind: "task", agent: "report-bot", brief: "B", details: "" } }),
+      baseArgs({ target: { agent: "report-bot", brief: "B", details: "" } }),
       { id: VALID_ID, now: FIXED_NOW },
     );
     expect((e.target as { details?: string }).details).toBe("");
@@ -150,7 +150,7 @@ describe("ScheduleEntity.create", () => {
   it("accepts details containing newlines (multi-line)", () => {
     const e = ScheduleEntity.create(
       baseArgs({
-        target: { kind: "task", agent: "report-bot", brief: "B", details: "line 1\nline 2" },
+        target: { agent: "report-bot", brief: "B", details: "line 1\nline 2" },
       }),
       { id: VALID_ID, now: FIXED_NOW },
     );
@@ -158,10 +158,10 @@ describe("ScheduleEntity.create", () => {
   });
 
   it("accepts target without details (optional, omitted)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({ target: { kind: "task", agent: "report-bot", brief: "B" } }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
+    const e = ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "B" } }), {
+      id: VALID_ID,
+      now: FIXED_NOW,
+    });
     expect((e.target as { details?: string }).details).toBeUndefined();
   });
 
@@ -170,7 +170,6 @@ describe("ScheduleEntity.create", () => {
       ScheduleEntity.create(
         baseArgs({
           target: {
-            kind: "task",
             agent: "report-bot",
             brief: "B",
             details: 123 as unknown as string,
@@ -201,7 +200,6 @@ describe("ScheduleEntity.toRow / fromStored round-trip", () => {
     const e = ScheduleEntity.create(
       baseArgs({
         target: {
-          kind: "task",
           agent: "report-bot",
           brief: "Hi",
           details: "Full body here.",
@@ -235,7 +233,7 @@ describe("ScheduleEntity.toRow / fromStored round-trip", () => {
   it("round-trips empty-string details (mirrors @emploke/task contract)", () => {
     const e = ScheduleEntity.create(
       baseArgs({
-        target: { kind: "task", agent: "report-bot", brief: "B", details: "" },
+        target: { agent: "report-bot", brief: "B", details: "" },
       }),
       { id: VALID_ID, now: FIXED_NOW },
     );
@@ -245,38 +243,122 @@ describe("ScheduleEntity.toRow / fromStored round-trip", () => {
   });
 });
 
-describe("ScheduleEntity.withPatched", () => {
-  it("stamps updatedAt", () => {
+describe("ScheduleEntity.withMetadata / withTrigger / withTaskTarget", () => {
+  const later = new Date("2026-05-02T00:00:00.000Z");
+
+  it("withMetadata sets name and stamps updatedAt", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    const later = new Date("2026-05-02T00:00:00.000Z");
-    const p = e.withPatched({ name: "renamed" }, later);
+    const p = e.withMetadata({ name: "renamed" }, later);
     expect(p.name).toBe("renamed");
     expect(p.updatedAt).toBe(later.toISOString());
     expect(p.createdAt).toBe(FIXED_NOW.toISOString());
-  });
-
-  it("re-validates changed fields (rejects bad trigger)", () => {
-    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    expect(() =>
-      e.withPatched({ trigger: { kind: "cron", expr: "garbage", tz: "UTC" } }, FIXED_NOW),
-    ).toThrow(InvalidCronExprError);
-  });
-
-  it("does not re-validate untouched fields", () => {
-    // Create with a valid trigger, then patch only `name`. If the
-    // implementation re-validated the original trigger that'd be
-    // fine but the test asserts no spurious side-effects.
-    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    const p = e.withPatched({ name: "renamed" }, FIXED_NOW);
+    expect(p.enabled).toBe(e.enabled);
     expect(p.trigger).toEqual(e.trigger);
     expect(p.target).toEqual(e.target);
   });
 
-  it("rejects bad target", () => {
+  it("withMetadata sets enabled independently of name", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    expect(() =>
-      e.withPatched({ target: { kind: "task", agent: "", brief: "X" } }, FIXED_NOW),
-    ).toThrow(ScheduleError);
+    const p = e.withMetadata({ enabled: false }, later);
+    expect(p.enabled).toBe(false);
+    expect(p.name).toBe(e.name);
+  });
+
+  it("withMetadata rejects empty name", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    expect(() => e.withMetadata({ name: "" }, later)).toThrow(ScheduleError);
+  });
+
+  it("withTrigger replaces wholesale and stamps updatedAt", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    const p = e.withTrigger({ kind: "cron", expr: "0 10 * * *", tz: "UTC" }, later);
+    expect(p.trigger.expr).toBe("0 10 * * *");
+    expect(p.updatedAt).toBe(later.toISOString());
+    expect(p.target).toEqual(e.target);
+  });
+
+  it("withTrigger rejects bad cron expr", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    expect(() => e.withTrigger({ kind: "cron", expr: "garbage", tz: "UTC" }, FIXED_NOW)).toThrow(
+      InvalidCronExprError,
+    );
+  });
+
+  it("withTaskTarget(sparse) preserves siblings (regression for #226)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: {
+          agent: "report-bot",
+          brief: "Run the daily report",
+          runtime: "node-22",
+        },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    const p = e.withTaskTarget({ details: "added context" }, later);
+    if (p.target.kind === "task") {
+      expect(p.target.agent).toBe("report-bot");
+      expect(p.target.brief).toBe("Run the daily report");
+      expect(p.target.runtime).toBe("node-22");
+      expect(p.target.details).toBe("added context");
+    }
+    expect(p.updatedAt).toBe(later.toISOString());
+  });
+
+  it("withTaskTarget(details: null) deletes details only (RFC 7396)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: {
+          agent: "report-bot",
+          brief: "B",
+          details: "old",
+          runtime: "node-22",
+        },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    const p = e.withTaskTarget({ details: null }, later);
+    if (p.target.kind === "task") {
+      expect(p.target.details).toBeUndefined();
+      expect(p.target.runtime).toBe("node-22");
+    }
+  });
+
+  it("withTaskTarget(runtime: null) deletes runtime only (RFC 7396)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: { agent: "report-bot", brief: "B", details: "keep", runtime: "node-22" },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    const p = e.withTaskTarget({ runtime: null }, later);
+    if (p.target.kind === "task") {
+      expect(p.target.runtime).toBeUndefined();
+      expect(p.target.details).toBe("keep");
+    }
+  });
+
+  it("withTaskTarget(details: '') sets to empty string (distinct from delete)", () => {
+    const e = ScheduleEntity.create(
+      baseArgs({
+        target: { agent: "report-bot", brief: "B", details: "old" },
+      }),
+      { id: VALID_ID, now: FIXED_NOW },
+    );
+    const p = e.withTaskTarget({ details: "" }, later);
+    if (p.target.kind === "task") {
+      expect(p.target.details).toBe("");
+    }
+  });
+
+  it("withTaskTarget re-validates merged result (rejects empty-agent override)", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    expect(() => e.withTaskTarget({ agent: "" }, FIXED_NOW)).toThrow(ScheduleError);
+  });
+
+  it("withTaskTarget re-validates brief constraints on merged result", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    expect(() => e.withTaskTarget({ brief: "foo\nbar" }, FIXED_NOW)).toThrow(ScheduleError);
   });
 });
 

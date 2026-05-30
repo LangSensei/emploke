@@ -239,7 +239,6 @@ export function CreateScheduleModal({
       const body: CreateScheduleBody = {
         name: name.trim(),
         target: {
-          kind: "task",
           agent,
           brief: brief.trim(),
           ...(details.trim() ? { details: details.trim() } : {}),

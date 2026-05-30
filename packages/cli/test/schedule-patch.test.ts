@@ -1,22 +1,25 @@
 /**
- * `emploke schedule patch` — general partial-update CLI surface
- * (issue #210; complements the thin `enable` / `disable` wrappers).
+ * `emploke schedule patch` — general partial-update CLI surface.
  *
  * Calls `schedulePatch(...)` directly with a `vi.spyOn(globalThis,
- * "fetch")` stub so the full action body — including the
- * fetch-merge-send round-trip for sparse trigger / target updates —
- * exercises real production code rather than an inline re-implementation.
- * `workspace` + `server` flags are passed explicitly so
- * `resolveWorkspace` / `resolveConnection` return deterministic values
- * without touching any test-env globals.
+ * "fetch")` stub so the full action body — including the one-remaining
+ * fetch-merge-send round-trip for partial trigger updates — exercises
+ * real production code rather than an inline re-implementation.
  *
- * Why this exists at all: the server-side PATCH replaces `trigger` /
- * `target` wholesale (see `schedule-entity.ts:withPatched` and
- * `schedule-service.ts:114-135`), so when the user supplies only a
- * subset of fields the CLI must GET the current schedule, merge in the
- * unspecified leaves, and PATCH the full object. The single-field
- * fast path (--name / --enabled / --no-enabled) skips the GET because
- * those fields don't require any merging.
+ * ## Why the GET-merge cycle is mostly gone
+ *
+ * After the kind-discriminated routes refactor (`PATCH
+ * /schedules/task/:sid`), the server deep-merges `target` per RFC
+ * 7396. That means sparse target updates (e.g. `--brief x`) ship a
+ * single PATCH with `{target:{brief:"x"}}` — no GET, no merge.
+ *
+ * `trigger` remains wholesale-replace (small atomic shape). The only
+ * remaining GET-merge case is a partial trigger update (--cron OR --tz,
+ * but not both) where the CLI must read the existing trigger to fill
+ * the missing field.
+ *
+ * `--clear-details` / `--clear-runtime` ship `null` on the wire (RFC
+ * 7396 delete) — distinct from `--details ""` (set to empty string).
  *
  * Pairs with: `task-cancel.test.ts` (mock-fetch verb pattern),
  * `api-contract.test.ts` (full-pipeline pattern via `runCli`).
@@ -58,12 +61,6 @@ interface MockResponse {
   contentType?: string;
 }
 
-/**
- * Install a fetch stub that returns the i-th response on the i-th call
- * (and records the URL + method + parsed JSON body). Any call beyond
- * the configured array returns a 500 so an unexpected extra request
- * surfaces loudly in assertions instead of silently 200-ing.
- */
 function stubFetchMulti(responses: readonly MockResponse[]): { calls: Call[] } {
   const calls: Call[] = [];
   let i = 0;
@@ -111,19 +108,17 @@ const sampleSchedule = {
   updatedAt: "2026-05-27T00:00:00.000Z",
 };
 
-// `schedules.get` returns the wire Schedule plus a derived `describe`
-// (zh_CN cron text). The patch path should NOT echo `describe` back
-// into the PATCH body — the assertions on `body` below enforce that.
 const sampleScheduleGet = { ...sampleSchedule, describe: "every day at 9" };
 
 function commonOpts() {
   return { workspace: WSID, server: SERVER_URL, home };
 }
 
-const PATCH_URL = `${SERVER_URL}/api/workspaces/${WSID}/schedules/${SID}`;
-const GET_URL = PATCH_URL;
+// PATCH is on the kind-discriminated URL; GET stays polymorphic.
+const PATCH_URL = `${SERVER_URL}/api/workspaces/${WSID}/schedules/task/${SID}`;
+const GET_URL = `${SERVER_URL}/api/workspaces/${WSID}/schedules/${SID}`;
 
-describe("schedulePatch — single-field fast path (no preceding GET)", () => {
+describe("schedulePatch — single-field fast path (one PATCH, no GET)", () => {
   it("--name issues exactly 1 PATCH with body={name}", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify({ ...sampleSchedule, name: "Renamed" }) },
@@ -143,6 +138,7 @@ describe("schedulePatch — single-field fast path (no preceding GET)", () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(PATCH_URL);
     expect(calls[0]?.body).toEqual({ enabled: true });
   });
 
@@ -158,7 +154,11 @@ describe("schedulePatch — single-field fast path (no preceding GET)", () => {
   });
 });
 
-describe("schedulePatch — sparse trigger updates (GET + merge + PATCH)", () => {
+describe("schedulePatch — sparse trigger updates", () => {
+  // Trigger is wholesale-replace server-side, so a partial trigger
+  // update (one of --cron / --tz) still requires a GET to fill the
+  // other field. This is the only remaining GET-merge case.
+
   it("--cron alone fetches GET and preserves existing tz", async () => {
     const { calls } = stubFetchMulti([
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
@@ -170,6 +170,7 @@ describe("schedulePatch — sparse trigger updates (GET + merge + PATCH)", () =>
     expect(calls[0]?.method).toBe("GET");
     expect(calls[0]?.url).toBe(GET_URL);
     expect(calls[1]?.method).toBe("PATCH");
+    expect(calls[1]?.url).toBe(PATCH_URL);
     expect(calls[1]?.body).toEqual({
       trigger: { kind: "cron", expr: "0 10 * * *", tz: "Asia/Shanghai" },
     });
@@ -201,104 +202,62 @@ describe("schedulePatch — sparse trigger updates (GET + merge + PATCH)", () =>
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(PATCH_URL);
     expect(calls[0]?.body).toEqual({
       trigger: { kind: "cron", expr: "*/5 * * * *", tz: "UTC" },
     });
   });
 });
 
-describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => {
-  it("--agent alone preserves existing brief/details/runtime", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+describe("schedulePatch — sparse target updates (single PATCH, server deep-merges)", () => {
+  // No GET: the server deep-merges target per field, so the CLI ships
+  // only the named fields.
+
+  it("--agent alone sends sparse target", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({ ...commonOpts(), sid: SID, agent: "emploke/qa" });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.method).toBe("GET");
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "emploke/qa",
-        brief: "do the thing",
-        details: "Long body for the daily brief task.",
-        runtime: "copilot",
-      },
-    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(PATCH_URL);
+    expect(calls[0]?.body).toEqual({ target: { agent: "emploke/qa" } });
   });
 
-  it("--brief alone preserves existing agent/details/runtime", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--brief alone sends sparse target with trimmed brief", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
       brief: "renamed brief",
     });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "emploke/dev",
-        brief: "renamed brief",
-        details: "Long body for the daily brief task.",
-        runtime: "copilot",
-      },
-    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { brief: "renamed brief" } });
   });
 
-  it("--details alone preserves existing agent/brief/runtime (multi-line value allowed)", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--details alone sends sparse target (multi-line value allowed)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
       details: "new details\n- a\n- b",
     });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "emploke/dev",
-        brief: "do the thing",
-        details: "new details\n- a\n- b",
-        runtime: "copilot",
-      },
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({
+      target: { details: "new details\n- a\n- b" },
     });
   });
 
-  it("--details with empty string sets details to '' (mirrors @emploke/task lax shape)", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
-    const r = await schedulePatch({ ...commonOpts(), sid: SID, details: "" });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    const body = calls[1]?.body as { target: { details: string } };
-    expect(body.target.details).toBe("");
-  });
-
-  it("--clear-details removes details from the patched target entirely (key absent on wire)", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--clear-details sends target.details: null (RFC 7396 delete)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({ ...commonOpts(), sid: SID, clearDetails: true });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    const body = calls[1]?.body as { target: Record<string, unknown> };
-    expect(Object.hasOwn(body.target, "details")).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { details: null } });
   });
 
   it("--details and --clear-details together → exit 2 (mutually exclusive)", async () => {
@@ -314,31 +273,39 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("--runtime alone preserves existing agent/brief/details", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--runtime alone sends sparse target", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({ ...commonOpts(), sid: SID, runtime: "echo" });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "emploke/dev",
-        brief: "do the thing",
-        details: "Long body for the daily brief task.",
-        runtime: "echo",
-      },
-    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { runtime: "echo" } });
   });
 
-  it("--agent + --brief still GETs the current schedule and preserves details/runtime", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--clear-runtime sends target.runtime: null (RFC 7396 delete)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
+    const r = await schedulePatch({ ...commonOpts(), sid: SID, clearRuntime: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { runtime: null } });
+  });
+
+  it("--runtime and --clear-runtime together → exit 2 (mutually exclusive)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      runtime: "x",
+      clearRuntime: true,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/mutually exclusive/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("--agent + --brief send a single PATCH with both fields (no GET)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
@@ -346,44 +313,42 @@ describe("schedulePatch — sparse target updates (GET + merge + PATCH)", () => 
       brief: "go",
     });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.method).toBe("GET");
-    expect(calls[0]?.url).toBe(GET_URL);
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "emploke/qa",
-        brief: "go",
-        details: "Long body for the daily brief task.",
-        runtime: "copilot",
-      },
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(PATCH_URL);
+    expect(calls[0]?.body).toEqual({
+      target: { agent: "emploke/qa", brief: "go" },
     });
   });
 
-  it("preserves existing target.runtime when --runtime is omitted (regression — was silently dropped pre-iter3)", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("--clear-details + --runtime combine into one sparse target body", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
-      agent: "new-agent",
-      brief: "new",
+      clearDetails: true,
+      runtime: "echo",
     });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.method).toBe("GET");
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toEqual({
-      target: {
-        kind: "task",
-        agent: "new-agent",
-        brief: "new",
-        details: "Long body for the daily brief task.",
-        runtime: "copilot",
-      },
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({
+      target: { details: null, runtime: "echo" },
+    });
+  });
+
+  it("--clear-details + --clear-runtime ships both nulls in one PATCH (deletes both optional fields)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      clearDetails: true,
+      clearRuntime: true,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({
+      target: { details: null, runtime: null },
     });
   });
 });
@@ -415,11 +380,8 @@ describe("schedulePatch — --brief content validation (no fetch)", () => {
 });
 
 describe("schedulePatch — combined fields", () => {
-  it("name + full trigger + full target → GET (for target merge) + PATCH preserves runtime", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify(sampleScheduleGet) },
-      { status: 200, body: JSON.stringify(sampleSchedule) },
-    ]);
+  it("name + full trigger + sparse target → one PATCH (no GET)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
     const r = await schedulePatch({
       ...commonOpts(),
       sid: SID,
@@ -430,19 +392,36 @@ describe("schedulePatch — combined fields", () => {
       brief: "go",
     });
     expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(PATCH_URL);
+    expect(calls[0]?.body).toEqual({
+      name: "All-At-Once",
+      trigger: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
+      target: { agent: "emploke/qa", brief: "go" },
+    });
+  });
+
+  it("name + partial trigger + sparse target → GET (for trigger) + PATCH", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify(sampleScheduleGet) },
+      { status: 200, body: JSON.stringify(sampleSchedule) },
+    ]);
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      name: "Renamed",
+      cron: "0 12 * * *",
+      brief: "go",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.method).toBe("GET");
     expect(calls[1]?.method).toBe("PATCH");
     expect(calls[1]?.body).toEqual({
-      name: "All-At-Once",
-      trigger: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
-      target: {
-        kind: "task",
-        agent: "emploke/qa",
-        brief: "go",
-        details: "Long body for the daily brief task.",
-        runtime: "copilot",
-      },
+      name: "Renamed",
+      trigger: { kind: "cron", expr: "0 12 * * *", tz: "Asia/Shanghai" },
+      target: { brief: "go" },
     });
   });
 
@@ -490,6 +469,7 @@ describe("schedulePatch — input validation (no fetch)", () => {
     expect(r.stderr).toContain("--details");
     expect(r.stderr).toContain("--clear-details");
     expect(r.stderr).toContain("--runtime");
+    expect(r.stderr).toContain("--clear-runtime");
     expect(r.stderr).toContain("--enabled");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -498,6 +478,7 @@ describe("schedulePatch — input validation (no fetch)", () => {
 describe("schedulePatch — server error envelopes", () => {
   it("PATCH 404 ScheduleNotFoundError → exit 4 with typed code in stderr", async () => {
     stubFetchMulti([
+      // For --cron alone, the GET runs first (to fill tz).
       { status: 200, body: JSON.stringify(sampleScheduleGet) },
       {
         status: 404,
@@ -600,5 +581,29 @@ describe("`emploke schedule patch` commander wiring (argv → action)", () => {
       name: "Renamed",
       trigger: { kind: "cron", expr: "0 10 * * *", tz: "UTC" },
     });
+  });
+
+  it("--clear-details routes through commander to a PATCH with target.details: null", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
+    const r = await runCli(
+      ["schedule", "patch", SID, "--workspace", WSID, "--clear-details"],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { details: null } });
+  });
+
+  it("--clear-runtime routes through commander to a PATCH with target.runtime: null", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
+    const r = await runCli(
+      ["schedule", "patch", SID, "--workspace", WSID, "--clear-runtime"],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({ target: { runtime: null } });
   });
 });

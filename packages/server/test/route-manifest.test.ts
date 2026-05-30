@@ -153,6 +153,9 @@ describe("route manifest", () => {
     // (split-out of the legacy `?origin=schedule` filter on `/tasks`).
     // Bumped 57 → 64 for #61 PR 3's seven `schedules.*` CRUD routes
     // (list, create, get, patch, delete, run, preview).
+    // Renamed (no count change) for #225–#229's URL-discriminated split:
+    // `schedules.create` → `schedules.task.create` on `/schedules/task`;
+    // `schedules.patch` → `schedules.task.patch` on `/schedules/task/:sid`.
     expect(listRoutes()).toHaveLength(65); // +1 schedules.previewCron (#222)
   });
 });

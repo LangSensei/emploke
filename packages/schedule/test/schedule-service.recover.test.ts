@@ -3,14 +3,14 @@ import { ScheduleEntity } from "../src/schedule-entity.js";
 import { ScheduleRepository } from "../src/schedule-repository.js";
 import { ScheduleService } from "../src/schedule-service.js";
 import { openTestScheduleDb } from "../src/testing.js";
-import type { CreateScheduleArgs } from "../src/types.js";
+import type { CreateTaskScheduleArgs } from "../src/types.js";
 import { acceptAgent, fixedRandomUUID, makeStubDispatcher, VALID_UUIDS } from "./_helpers.js";
 
-function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
+function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { kind: "task", agent: "report-bot", brief: "Run the daily report" },
+    target: { agent: "report-bot", brief: "Run the daily report" },
     ...over,
   };
 }

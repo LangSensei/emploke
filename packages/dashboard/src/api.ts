@@ -1,5 +1,5 @@
 import type { AgentEntry, Mcp, MissingDep, SkillEntry } from "@emploke/catalog";
-import type { PatchScheduleArgs, PreviewResult, Schedule } from "@emploke/schedule";
+import type { PreviewResult, Schedule } from "@emploke/schedule";
 
 export interface OverviewData {
   counts: {
@@ -1198,6 +1198,12 @@ export const subscribeTaskActivity = (
 // list + detail (read), enable-toggle + delete + run-now (narrow
 // mutation slice); create / cron edit stay CLI-only in v1 per the
 // #61 RFC.
+//
+// Mutation routes are URL-discriminated by `target.kind` (#225–#229):
+// `POST /schedules/task` + `PATCH /schedules/task/:sid` for the task
+// kind. The PATCH body uses RFC 7396 deep-merge semantics on
+// `target` (siblings preserved; `null` deletes `details` / `runtime`)
+// and wholesale-replace on `trigger`.
 
 /**
  * Wire-shape view of a schedule — re-exports `@emploke/schedule`'s
@@ -1218,8 +1224,32 @@ export interface ScheduleDetail extends ScheduleView {
   describe: string;
 }
 
-/** Body for `PATCH /schedules/:sid`. */
-export type PatchScheduleBody = PatchScheduleArgs;
+/**
+ * Body for `PATCH /schedules/task/:sid` — RFC 7396 deep-merge for
+ * `target`, wholesale-replace for `trigger`, scalar-set for
+ * `name` / `enabled`. Mirrors `TaskSchedulePatchBody` in the server
+ * manifest (`packages/server/src/routes/manifest.ts`). Declared
+ * locally rather than re-exported from `@emploke/schedule` because
+ * the dashboard imports types only.
+ *
+ * - `name` / `enabled` — set if present, otherwise keep.
+ * - `trigger` — wholesale replace; absent means keep.
+ * - `target.agent` / `brief` — set if present; `null` rejected by the
+ *   server (required fields; omit to keep).
+ * - `target.details` / `runtime` — string sets; `null` deletes;
+ *   absent keeps. `target.kind` MUST NOT be set (URL discriminates).
+ */
+export interface PatchScheduleBody {
+  name?: string;
+  enabled?: boolean;
+  trigger?: { kind: "cron"; expr: string; tz: string };
+  target?: {
+    agent?: string;
+    brief?: string;
+    details?: string | null;
+    runtime?: string | null;
+  };
+}
 
 /** Response shape for `GET /schedules/:sid/preview?n=N`. */
 export type SchedulePreview = PreviewResult;
@@ -1265,7 +1295,7 @@ export const previewSchedule = (
 
 export const patchSchedule = (sid: string, body: PatchScheduleBody): Promise<ScheduleView> =>
   mutateJson<ScheduleView>(
-    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`,
+    `${workspacePrefix()}/schedules/task/${encodeURIComponent(sid)}`,
     jsonInit("PATCH", body as object),
   );
 
@@ -1278,30 +1308,32 @@ export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
   });
 
 /**
- * Body for `POST /api/workspaces/:wsId/schedules` — mirrors the
- * server route's accepted shape (`packages/server/src/routes/schedules.ts`
- * `app.post("/")`). The dashboard's "New schedule" modal (issue #222)
- * is the first surface to use this; the CLI's `emploke schedule create`
- * sends the same wire shape directly. The `target.brief` + optional
+ * Body for `POST /api/workspaces/:wsId/schedules/task` — mirrors the
+ * server route's accepted shape
+ * (`packages/server/src/routes/schedules.ts` `app.post("/task")`).
+ * URL-discriminated by `target.kind` (no `kind` field on the body).
+ * The dashboard's "New schedule" modal (issue #222) is the first
+ * surface to use this; the CLI's `emploke schedule create` sends the
+ * same wire shape directly. The `target.brief` + optional
  * `target.details` pair mirrors `@emploke/task` `DispatchOpts` (RFC
  * #61 v2).
  */
 export interface CreateScheduleBody {
   name: string;
-  target: { kind: "task"; agent: string; brief: string; details?: string; runtime?: string };
+  target: { agent: string; brief: string; details?: string; runtime?: string };
   trigger: { kind: "cron"; expr: string; tz: string };
   enabled?: boolean;
 }
 
 /**
- * Create a schedule. Surfaces server-side validation errors verbatim
- * (typed envelope `{ error, code }`) via the shared `extractError`
- * helper — the modal renders these inline so the user sees, e.g.,
- * "Invalid cron expression: …" rather than a generic "schedule
- * create: 400".
+ * Create a task-kind schedule. Surfaces server-side validation errors
+ * verbatim (typed envelope `{ error, code }`) via the shared
+ * `extractError` helper — the modal renders these inline so the user
+ * sees, e.g., "Invalid cron expression: …" rather than a generic
+ * "schedule create: 400".
  */
 export const createSchedule = (body: CreateScheduleBody): Promise<ScheduleView> =>
-  mutateJson<ScheduleView>(`${workspacePrefix()}/schedules`, jsonInit("POST", body));
+  mutateJson<ScheduleView>(`${workspacePrefix()}/schedules/task`, jsonInit("POST", body));
 
 export interface PreviewCronArgs {
   expr: string;

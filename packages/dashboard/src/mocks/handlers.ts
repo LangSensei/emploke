@@ -204,12 +204,15 @@ export const handlers = [
     // `GET /` response shape (the describe enrichment is per-GET).
     return HttpResponse.json(rows.map(({ describe: _describe, ...rest }) => rest));
   }),
-  // POST /schedules — issue #222's "New schedule" modal lands here.
-  // Mirrors the server route's validation shape (name + target.kind=task
-  // + trigger.kind=cron). Synthesises ids, timestamps, and a hand-wavy
-  // describe — designer mode is intentionally rough on the describe
-  // accuracy; cronstrue is a server-side dep.
-  http.post(`/api/workspaces/${W}/schedules`, async ({ request }) => {
+  // POST /schedules/task — issue #222's "New schedule" modal lands
+  // here. URL-discriminated by `target.kind` (#225–#229): the body
+  // carries no `target.kind` and the mock injects `"task"` before
+  // storing. Mirrors the server route's validation shape (name +
+  // target with required agent/brief + trigger.kind=cron).
+  // Synthesises ids, timestamps, and a hand-wavy describe — designer
+  // mode is intentionally rough on the describe accuracy; cronstrue
+  // is a server-side dep.
+  http.post(`/api/workspaces/${W}/schedules/task`, async ({ request }) => {
     const body = (await request.json()) as CreateScheduleBody;
     if (typeof body.name !== "string" || body.name.trim() === "") {
       return HttpResponse.json({ error: "name must be a non-empty string" }, { status: 400 });
@@ -217,12 +220,11 @@ export const handlers = [
     if (
       body.target === undefined ||
       body.target === null ||
-      body.target.kind !== "task" ||
       typeof body.target.agent !== "string" ||
       typeof body.target.brief !== "string"
     ) {
       return HttpResponse.json(
-        { error: "target must be { kind: 'task', agent, brief, details?, runtime? }" },
+        { error: "target must be { agent, brief, details?, runtime? }" },
         { status: 400 },
       );
     }
@@ -243,7 +245,7 @@ export const handlers = [
     const created: ScheduleDetail = {
       id,
       name: body.name.trim(),
-      target: body.target,
+      target: { kind: "task", ...body.target },
       trigger: body.trigger,
       enabled: body.enabled ?? true,
       createdAt: now,
@@ -296,16 +298,33 @@ export const handlers = [
     );
     return HttpResponse.json({ describe: row.describe, nextRuns });
   }),
-  http.patch(`/api/workspaces/${W}/schedules/:sid`, async ({ params, request }) => {
+  // PATCH /schedules/task/:sid — URL-discriminated by `target.kind`
+  // (#225–#229). `target` uses RFC 7396 deep-merge semantics: present
+  // string sets, `null` deletes (`details` / `runtime`), absent keeps.
+  // `trigger` is wholesale-replace; `name` / `enabled` are scalar-set.
+  http.patch(`/api/workspaces/${W}/schedules/task/:sid`, async ({ params, request }) => {
     const idx = schedulesState.findIndex((s) => s.id === params.sid);
     if (idx === -1) return notFound("schedule not found");
     const body = (await request.json()) as PatchScheduleBody;
     const current = schedulesState[idx]!;
+    let nextTarget = current.target;
+    if (body.target !== undefined) {
+      // Deep-merge per RFC 7396: keep `kind` (URL discriminates),
+      // honour `null` on optional fields as delete, ignore absent.
+      const t = { ...current.target };
+      if (body.target.agent !== undefined) t.agent = body.target.agent;
+      if (body.target.brief !== undefined) t.brief = body.target.brief;
+      if (body.target.details === null) delete t.details;
+      else if (body.target.details !== undefined) t.details = body.target.details;
+      if (body.target.runtime === null) delete t.runtime;
+      else if (body.target.runtime !== undefined) t.runtime = body.target.runtime;
+      nextTarget = t;
+    }
     const merged: ScheduleDetail = {
       ...current,
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.trigger !== undefined ? { trigger: body.trigger } : {}),
-      ...(body.target !== undefined ? { target: body.target } : {}),
+      target: nextTarget,
       ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
       updatedAt: new Date().toISOString(),
     };
