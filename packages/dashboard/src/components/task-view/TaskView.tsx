@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { TaskActivity, TaskRecord } from "../../api";
 import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import { StatusBadge } from "../tasks/StatusBadge";
@@ -28,6 +28,19 @@ export interface TaskViewProps {
   activity: TaskActivity | null;
   activityError: string | null;
   onLoadOlder: () => Promise<void>;
+  /**
+   * Optional slot rendered in the title row's trailing edge, right of
+   * the `<h2>` title (wrapped in `.task-detail__title-actions`). Used by
+   * Schedules-page Mode B to host the compact `← Back · ‹ N/M ›` fire-
+   * navigation pill without consuming extra vertical space. Tasks page
+   * passes `undefined` -- the title row then renders just the heading.
+   *
+   * Presentational slot only: do not pass elements that own data
+   * fetching or URL state. Keep the contents narrow (a single pill or
+   * a small button cluster) so the title can still wrap on narrow
+   * viewports.
+   */
+  headerTrailing?: ReactNode;
 }
 
 type DetailTab = "overview" | "activity" | "artifacts";
@@ -57,6 +70,7 @@ export function TaskView({
   activity,
   activityError,
   onLoadOlder,
+  headerTrailing,
 }: TaskViewProps) {
   const [tab, setTab] = useState<DetailTab>("overview");
 
@@ -72,6 +86,7 @@ export function TaskView({
           <h2 className="task-detail__title" title={title}>
             {title}
           </h2>
+          {headerTrailing && <div className="task-detail__title-actions">{headerTrailing}</div>}
         </div>
 
         {task && (

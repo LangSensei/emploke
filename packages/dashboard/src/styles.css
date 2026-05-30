@@ -3740,6 +3740,7 @@ button {
   justify-content: space-between;
   gap: var(--space-3);
   padding: 0 0 var(--space-2);
+  flex-wrap: wrap;
 }
 .task-detail__title-row > .task-detail__title {
   flex: 1 1 auto;
@@ -3750,6 +3751,93 @@ button {
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+}
+
+/* Schedules-page Mode B fire-navigation pill, hosted by `TaskView`'s
+ * `headerTrailing` slot. Sits in the title row's trailing edge as a
+ * single compact chip cluster so prev/next/back don't consume their
+ * own vertical strip above the body. The fallback variant (loading /
+ * error / fire-not-found) collapses to just a back button rendered
+ * above the body, since prev/next are meaningless without a task. */
+.fire-task-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: 0.85rem;
+  line-height: 1;
+  flex-wrap: nowrap;
+}
+.fire-task-nav--fallback {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  flex: 0 0 auto;
+}
+.fire-task-nav__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 180px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+.fire-task-nav__back:hover {
+  background: var(--color-surface-hover);
+}
+.fire-task-nav__back-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.fire-task-nav__sep {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border);
+  margin: 0 2px;
+}
+.fire-task-nav__step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+.fire-task-nav__step:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+.fire-task-nav__step:disabled {
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.fire-task-nav__pos {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-subtle);
+  padding: 0 4px;
+  min-width: 36px;
+  text-align: center;
+  white-space: nowrap;
 }
 .task-detail__close {
   background: none;
