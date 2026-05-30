@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listScheduledTasks, type TaskRecord } from "../../api";
-import { formatAbsolute, formatRelative } from "../../utils/time";
+import { formatAbsolute, formatClockTime, formatDuration, formatRelative } from "../../utils/time";
 import { StatusBadge } from "../tasks/StatusBadge";
 import { STATUS_TONE } from "../tasks/shared";
 
@@ -106,21 +106,37 @@ interface ScheduleFireRowProps {
  * real `<button>` so keyboard and click semantics come for free; when
  * it isn't (early-mount or out-of-tree consumers) the row falls back
  * to a `<Link>` to the Tasks page so deep-linking still works.
+ *
+ * Layout is the **dense single-row** variant of `.task-list__item`:
+ * a CSS-Grid row with columns `[status badge] [wall-clock] [duration]
+ * [task id]`. The brief / agent / runtime aren't surfaced because
+ * they are constant across every row of a single schedule's fires
+ * (this list is already scoped to one schedule) — surfacing them
+ * would only burn vertical space. Duration is computed from
+ * `startedAt` → `endedAt`; for status='running' the missing endedAt
+ * is filled with `Date.now()` by `formatDuration`, yielding a static
+ * "elapsed so far" reading (refreshes whenever the row re-renders;
+ * intentionally not live-ticking).
  */
 function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFireRowProps) {
+  const durationLabel = formatDuration(task.startedAt, task.endedAt ?? null);
   const meta = (
     <>
-      <div className="task-list__item-head">
-        <StatusBadge
-          status={task.status}
-          tone={STATUS_TONE[task.status]}
-          pulse={task.status === "running"}
-        />
-      </div>
-      <div className="task-list__item-meta muted">
-        <span title={formatAbsolute(task.createdAt)}>{formatRelative(task.createdAt)}</span>
-      </div>
-      <code className="task-list__id task-list__id--muted" title={task.id}>
+      <StatusBadge
+        status={task.status}
+        tone={STATUS_TONE[task.status]}
+        pulse={task.status === "running"}
+      />
+      <span
+        className="task-list__row-clock"
+        title={`${formatAbsolute(task.createdAt)} · ${formatRelative(task.createdAt)}`}
+      >
+        {formatClockTime(task.createdAt)}
+      </span>
+      <span className="task-list__row-duration" title="Run duration">
+        {durationLabel}
+      </span>
+      <code className="task-list__row-id" title={task.id}>
         {task.id}
       </code>
     </>
@@ -130,7 +146,7 @@ function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFir
     return (
       <button
         type="button"
-        className="task-list__item task-list__item--button"
+        className="task-list__item task-list__item--button task-list__item--row"
         onClick={() => onSelectFire(task.id)}
         data-testid={`schedule-fire-row-${task.id}`}
         title="Open this fire's task detail"
@@ -145,7 +161,7 @@ function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFir
       to={`/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(
         task.id,
       )}`}
-      className="task-list__item task-list__item--button"
+      className="task-list__item task-list__item--button task-list__item--row"
       data-testid={`schedule-fire-row-${task.id}`}
       aria-label={`Open fire task ${task.id} in Tasks page`}
     >

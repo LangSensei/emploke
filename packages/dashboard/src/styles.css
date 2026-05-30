@@ -5121,3 +5121,55 @@ button {
   color: inherit;
   text-align: left;
 }
+
+/*
+ * Dense single-row variant of `.task-list__item` used by the schedules
+ * Recent fires panel — packs `[status] [clock] [duration] [id]` into
+ * one line so the latest 10 fires fit a viewport without an internal
+ * scrollbar. CSS Grid is used so the four columns line up perfectly
+ * across rows even when the contents differ in width (a `23s` row
+ * lines up with a `1h 12m` row). The base `.task-list__item` is a
+ * vertical flex column for the brief-led task rows used elsewhere
+ * (Tasks page, sessions, etc) so this variant explicitly resets the
+ * display + flex-direction.
+ *
+ * The id column uses `1fr` so it absorbs all leftover horizontal
+ * space and truncates with an ellipsis on narrow viewports — the
+ * full id stays available via `title=` for hover recovery.
+ */
+.task-list__item--row {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.task-list__row-clock {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-list__row-duration {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  /* Reserve a stable minimum so the id column doesn't jitter when
+     adjacent rows have very different duration widths (12s vs 1h 23m). */
+  min-width: 56px;
+}
+
+.task-list__row-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

@@ -134,7 +134,7 @@ describe("Schedule detail panel", () => {
     expect((await screen.findByTestId("schedule-detail-toggle")).textContent).toMatch(/Pause/);
   });
 
-  it("renders the recent-fires panel with mocked rows", async () => {
+  it("renders the recent-fires panel with status / clock / duration / id", async () => {
     mockListScheduledTasks.mockResolvedValue([
       {
         id: "task-1",
@@ -155,6 +155,13 @@ describe("Schedule detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("task-1")).toBeTruthy();
     });
+    // Dense row layout adds two new facts beyond the id: a status
+    // badge and a wall-clock duration. The duration column reads
+    // the difference between startedAt and endedAt — 59 seconds for
+    // this fixture, formatted by `formatDuration` as "59s".
+    expect(screen.getByText("59s")).toBeTruthy();
+    // Status badge label comes from STATUS_LABEL.succeeded.
+    expect(screen.getAllByText(/Succeeded/i).length).toBeGreaterThan(0);
   });
 
   it("calls runSchedule and surfaces errors when Run now is clicked", async () => {

@@ -44,6 +44,40 @@ export function formatAbsolute(iso: string): string {
 }
 
 /**
+ * Compact wall-clock format for log-style rows where readers want to
+ * scan "when did this happen". Three regimes:
+ *   - Same calendar day as now → `"HH:mm"` (just the time)
+ *   - Earlier this year       → `"MM-DD HH:mm"` (month-day + time)
+ *   - Earlier years           → `"YYYY-MM-DD HH:mm"` (full ISO-ish date + time)
+ *
+ * Uses local time / 24h zero-padded numerals (deliberately ignores
+ * locale here — the row is monospaced and meant to align across rows,
+ * so we want a fixed-width unambiguous shape regardless of the user's
+ * 12/24-hour preference). The relative-time string (`formatRelative`)
+ * is still surfaced as the `title=` tooltip by the caller for the
+ * "how long ago" reading.
+ */
+export function formatClockTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const d = new Date(t);
+  const now = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return `${hh}:${mm}`;
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  if (d.getFullYear() !== now.getFullYear()) {
+    return `${d.getFullYear()}-${MM}-${DD} ${hh}:${mm}`;
+  }
+  return `${MM}-${DD} ${hh}:${mm}`;
+}
+
+/**
  * Human-readable duration between two ISO timestamps (or a started
  * time + `null` end = "running, elapsed up to now"). Output is the
  * largest two units, e.g. `"1h 23m"`, `"4m 15s"`, `"22s"`. Negative
