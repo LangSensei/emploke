@@ -335,6 +335,22 @@ describe("schedulePatch — sparse target updates (single PATCH, server deep-mer
       target: { details: null, runtime: "echo" },
     });
   });
+
+  it("--clear-details + --clear-runtime ships both nulls in one PATCH (deletes both optional fields)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleSchedule) }]);
+    const r = await schedulePatch({
+      ...commonOpts(),
+      sid: SID,
+      clearDetails: true,
+      clearRuntime: true,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toEqual({
+      target: { details: null, runtime: null },
+    });
+  });
 });
 
 describe("schedulePatch — --brief content validation (no fetch)", () => {

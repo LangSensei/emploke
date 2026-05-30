@@ -178,6 +178,10 @@ export class ScheduleService {
 
     if (triggerChanged || enabledChanged) {
       this.cancelTimer(id);
+      // `withNextFireAt` is deliberately outside the single-`now` /
+      // single-`updatedAt` invariant above: re-arming is internal
+      // scheduler state, not a user-visible edit, so it must not
+      // re-stamp `updatedAt`. The method intentionally takes no `now`.
       if (patched.enabled) {
         const [nextIso] = nextRuns(patched.trigger.expr, patched.trigger.tz, now, 1);
         patched = patched.withNextFireAt(nextIso);
