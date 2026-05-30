@@ -18,15 +18,23 @@ export interface StubDispatcher extends TaskDispatcher {
   readonly calls: DispatchCall[];
   inFlightSet: Set<string>;
   nextTaskId: string;
+  /** Map of scheduleId → next-call return value. Defaults to `{ deletedCount: 0 }`. */
+  deleteForScheduleReturns: Map<string, { deletedCount: number }>;
+  /** Records of every `deleteForSchedule` invocation in order. */
+  readonly deleteForScheduleCalls: string[];
 }
 
 export function makeStubDispatcher(): StubDispatcher {
   const calls: DispatchCall[] = [];
   const inFlightSet = new Set<string>();
+  const deleteForScheduleReturns = new Map<string, { deletedCount: number }>();
+  const deleteForScheduleCalls: string[] = [];
   let nextTaskId = "task-1";
   const stub: StubDispatcher = {
     calls,
     inFlightSet,
+    deleteForScheduleReturns,
+    deleteForScheduleCalls,
     get nextTaskId() {
       return nextTaskId;
     },
@@ -39,6 +47,10 @@ export function makeStubDispatcher(): StubDispatcher {
     },
     async hasInFlightForSchedule(id) {
       return inFlightSet.has(id);
+    },
+    async deleteForSchedule(id) {
+      deleteForScheduleCalls.push(id);
+      return deleteForScheduleReturns.get(id) ?? { deletedCount: 0 };
     },
   };
   return stub;

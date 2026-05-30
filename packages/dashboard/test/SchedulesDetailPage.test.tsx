@@ -191,7 +191,7 @@ describe("Schedule detail panel", () => {
   });
 
   it("calls deleteSchedule when the delete modal is confirmed", async () => {
-    mockDeleteSchedule.mockResolvedValue(undefined);
+    mockDeleteSchedule.mockResolvedValue({ deletedTaskCount: 0 });
     renderDetail();
     const deleteBtn = await screen.findByTestId("schedule-detail-delete");
     fireEvent.click(deleteBtn);
@@ -200,6 +200,37 @@ describe("Schedule detail panel", () => {
     await waitFor(() => {
       expect(mockDeleteSchedule).toHaveBeenCalledWith("sched-x");
     });
+  });
+
+  it("shows a transient cascade-count notice after delete (count > 0)", async () => {
+    mockDeleteSchedule.mockResolvedValue({ deletedTaskCount: 3 });
+    renderDetail();
+    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
+    const notice = await screen.findByTestId("schedules-delete-notice");
+    expect(notice.textContent).toMatch(/Sample schedule/);
+    expect(notice.textContent).toMatch(/3 historical task runs also removed/);
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("singularises the cascade-count notice when exactly one task was removed", async () => {
+    mockDeleteSchedule.mockResolvedValue({ deletedTaskCount: 1 });
+    renderDetail();
+    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
+    const notice = await screen.findByTestId("schedules-delete-notice");
+    expect(notice.textContent).toMatch(/1 historical task run also removed/);
+  });
+
+  it("omits the cascade-count suffix when no tasks were removed", async () => {
+    mockDeleteSchedule.mockResolvedValue({ deletedTaskCount: 0 });
+    renderDetail();
+    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
+    const notice = await screen.findByTestId("schedules-delete-notice");
+    expect(notice.textContent).toMatch(/Sample schedule.*deleted\.?$/);
+    expect(notice.textContent).not.toMatch(/historical/);
   });
 
   it("surfaces a 'Last fired never' header line when lastFiredAt is null", async () => {

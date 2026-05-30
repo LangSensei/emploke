@@ -147,4 +147,22 @@ export interface TaskDispatcher {
     readonly metadata: { readonly scheduleId: string; readonly firedAt: string };
   }): Promise<{ readonly id: string }>;
   hasInFlightForSchedule(scheduleId: string): Promise<boolean>;
+  /**
+   * Cascade-delete historical task runs for `scheduleId`. The
+   * implementation (production binding: `TaskService.deleteForSchedule`)
+   * removes only TERMINAL tasks, never touching anything still running.
+   *
+   * Returns the count of DB rows actually removed so the caller can
+   * surface it in the API response / CLI output / audit log. Workdir
+   * cleanup is fire-and-forget on the implementation side (orphan dirs
+   * on a background-purge failure are an acknowledged failure mode per
+   * ADR-001 §3.5).
+   *
+   * Called from `ScheduleService.delete` AFTER the timer has been
+   * cancelled and the in-flight check has passed. The caller separately
+   * re-checks `hasInFlightForSchedule` after this method returns to
+   * defend against a racing manual `run()` that inserted a fresh
+   * running task between the original in-flight check and the cascade.
+   */
+  deleteForSchedule(scheduleId: string): Promise<{ readonly deletedCount: number }>;
 }

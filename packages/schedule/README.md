@@ -57,9 +57,22 @@ packages/schedule/
 3. **Catchup-once** — `recover()` collapses every missed fire into a
    single catchup dispatch with `metadata.firedAt` set to the planned
    (past) time, not `now`.
-4. **Hard delete with guards** — `delete()` throws
+4. **Cascade delete with guards** — `delete()` throws
    `ScheduleEnabledError` if `enabled === true`, and
    `ScheduleHasInFlightError` if a dispatched task is still running.
+   Otherwise it cancels the timer, removes every TERMINAL task the
+   schedule has ever fired (those rows would be unreachable once the
+   trigger is gone — there is no UI path to a task whose schedule no
+   longer exists), then drops the schedule row. In-flight tasks are
+   protected by the pre-flight 409 *and* by the terminal-only filter
+   inside the cascade — they are never touched. A second
+   `hasInFlightForSchedule` check runs after the cascade so a racing
+   manual `run()` between the original check and the cascade cannot
+   leave us with an orphan running task pointing to a dead schedule
+   (the call refuses with `ScheduleHasInFlightError`; the user can
+   retry once the racing task completes). Returns `{ deletedTaskCount
+   }` so callers can surface the cascade count (CLI suffix, audit
+   log).
 5. **Manual `run()` bypasses `enabled`** — manual fires are
    user-initiated and ignore the concurrency check.
 6. **Patch never affects in-flight tasks** — only the trigger / arm

@@ -439,6 +439,24 @@ export interface OkResponse {
   readonly ok: true;
 }
 
+/**
+ * DELETE /api/workspaces/:id/schedules/:sid response.
+ *
+ * Cascade-delete semantics (see `ScheduleService.delete`): the
+ * trigger is removed AND every TERMINAL task it ever fired is purged.
+ * `deletedTaskCount` is the number of historical task rows removed
+ * from the DB in the same operation. In-flight tasks are protected by
+ * the pre-flight 409 (`SCHEDULE_HAS_INFLIGHT`) — they are never
+ * touched by the cascade.
+ *
+ * Surfaced in: CLI suffix ("schedule X removed (and N historical
+ * tasks)"), dashboard confirm-modal post-delete toast.
+ */
+export interface ScheduleDeleteResponse {
+  readonly ok: true;
+  readonly deletedTaskCount: number;
+}
+
 /** Standard error envelope. Returned by handlers via `errorBody(err)`. */
 export interface ApiError {
   readonly error: string;
@@ -596,7 +614,7 @@ export const ROUTES = {
     { params: SchedulePathParams; body: TaskSchedulePatchBody },
     Schedule
   >("PATCH", "/api/workspaces/:id/schedules/task/:sid"),
-  "schedules.delete": defineRoute<{ params: SchedulePathParams }, OkResponse>(
+  "schedules.delete": defineRoute<{ params: SchedulePathParams }, ScheduleDeleteResponse>(
     "DELETE",
     "/api/workspaces/:id/schedules/:sid",
   ),

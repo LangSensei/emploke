@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, type SQL, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, notInArray, type SQL, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
@@ -13,6 +13,7 @@ import type {
   TaskStatus,
   TaskSuccess,
 } from "./types.js";
+import { TERMINAL_TASK_STATUSES } from "./types.js";
 import { TASK_ID_RE } from "./validate.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
@@ -97,11 +98,17 @@ export class TaskRepository {
 
   /**
    * True if any task with `origin='schedule'` and
-   * `metadata.scheduleId === scheduleId` is non-terminal (status =
-   * 'running'). Backed by the `tasks_schedule_id_idx` functional
-   * index added in PR 1 of #61; the partial WHERE on the index
-   * matches the `origin = 'schedule'` predicate here, so the planner
-   * can satisfy the query from the index without a full table scan.
+   * `metadata.scheduleId === scheduleId` is non-terminal (i.e. status
+   * is not in {@link TERMINAL_TASK_STATUSES}). Backed by the
+   * `tasks_schedule_id_idx` functional index added in PR 1 of #61; the
+   * partial WHERE on the index matches the `origin = 'schedule'`
+   * predicate here, so the planner can satisfy the query from the
+   * index without a full table scan.
+   *
+   * Non-terminal (rather than `status = 'running'`) is the right
+   * semantic for both the scheduler's concurrency=1 check and the
+   * schedule-delete guard: a future non-terminal status (e.g.
+   * `"queued"`) would otherwise silently slip past both checks.
    */
   async hasInFlightForSchedule(scheduleId: string): Promise<boolean> {
     const row = this.db
@@ -110,13 +117,63 @@ export class TaskRepository {
       .where(
         and(
           eq(tasks.origin, "schedule"),
-          eq(tasks.status, "running"),
+          notInArray(tasks.status, [...TERMINAL_TASK_STATUSES]),
           sql`json_extract(${tasks.metadata}, '$.scheduleId') = ${scheduleId}`,
         ),
       )
       .limit(1)
       .get();
     return row !== undefined;
+  }
+
+  /**
+   * Bulk-delete every TERMINAL task with `origin='schedule'` and
+   * `metadata.scheduleId === scheduleId`. Returns the deleted entities
+   * so the caller can enqueue per-task background work (e.g.
+   * `TaskService.scheduleBackgroundPurge`).
+   *
+   * Two-step (SELECT → DELETE) instead of `RETURNING` so that we can
+   * map rows to entities BEFORE removing them: if a corrupted row
+   * makes `rowToTask` throw, we warn-and-skip (matching `list()`'s
+   * behaviour) and still drop the DB rows in the same SQL statement.
+   * `RETURNING` would leave us with the rows already gone but no
+   * recovery if mapping threw partway.
+   *
+   * The DELETE uses the SAME predicate as the SELECT (not an `IN (id,
+   * id, …)` list) so we sidestep SQLite's bound-variable limit at
+   * large N — a schedule with thousands of historical fires is
+   * possible.
+   *
+   * Race window: between the SELECT and the DELETE another writer
+   * could have inserted or transitioned rows. In practice the caller
+   * (`ScheduleService.delete`) has already cancelled the schedule's
+   * timer and rejected the call if `hasInFlightForSchedule` returned
+   * true — so the only realistic insertion path is a concurrent
+   * manual `ScheduleService.run()`, which the caller separately
+   * defends against with a second `hasInFlightForSchedule` check
+   * after this method returns.
+   */
+  async deleteTerminalForSchedule(scheduleId: string): Promise<TaskEntity[]> {
+    const predicate = and(
+      eq(tasks.origin, "schedule"),
+      inArray(tasks.status, [...TERMINAL_TASK_STATUSES]),
+      sql`json_extract(${tasks.metadata}, '$.scheduleId') = ${scheduleId}`,
+    );
+    const rows = this.db.select().from(tasks).where(predicate).all();
+    if (rows.length === 0) return [];
+    const entities: TaskEntity[] = [];
+    for (const row of rows) {
+      try {
+        entities.push(rowToTask(row));
+      } catch (err) {
+        this.logger.warn(
+          { taskId: row.id ?? null, err },
+          "tasks: skipping corrupted task row during deleteTerminalForSchedule",
+        );
+      }
+    }
+    this.db.delete(tasks).where(predicate).run();
+    return entities;
   }
 }
 

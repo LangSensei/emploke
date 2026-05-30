@@ -198,7 +198,34 @@ export class ScheduleService {
     return patched.toDto();
   }
 
-  async delete(id: string): Promise<void> {
+  /**
+   * Cascade-delete the schedule along with every TERMINAL task it has
+   * fired. In-flight tasks are protected by two layers: (1) the
+   * pre-flight `hasInFlightForSchedule` guard rejects the delete with
+   * `ScheduleHasInFlightError` if a task is currently running, and (2)
+   * the cascade itself filters to terminal status only — even if
+   * something raced past the guard, it would be skipped, not destroyed.
+   *
+   * Ordering matters. We cancel the timer FIRST (so the croner clock
+   * can't dispatch another task while we cascade), then cascade
+   * historical tasks, then re-check `hasInFlightForSchedule` (defence
+   * against a racing manual `ScheduleService.run` that inserted a
+   * fresh running task between the original check and the cascade),
+   * then delete the schedule row.
+   *
+   * Failure modes (cross-table atomicity is impossible because the
+   * task and schedule modules each hold their own better-sqlite3
+   * connection to `workspace.db`):
+   *   - cascade throws: schedule row remains. Caller can retry; the
+   *     cascade is idempotent (already-deleted rows no-op).
+   *   - re-check finds new in-flight: throws ScheduleHasInFlightError;
+   *     schedule remains. Already-cascaded historical tasks are
+   *     gone (acceptable — the user committed to deletion).
+   *   - repo.delete throws after a successful cascade: schedule
+   *     remains, tasks gone. Retry succeeds (cascade no-ops, schedule
+   *     deletes). Net result is identical to a clean first attempt.
+   */
+  async delete(id: string): Promise<{ readonly deletedTaskCount: number }> {
     const existing = await this.repo.read(id);
     if (existing === null) throw new ScheduleNotFoundError(id);
     if (existing.enabled) throw new ScheduleEnabledError(id);
@@ -206,7 +233,17 @@ export class ScheduleService {
       throw new ScheduleHasInFlightError(id);
     }
     this.cancelTimer(id);
+    const { deletedCount } = await this.taskDispatcher.deleteForSchedule(id);
+    if (await this.taskDispatcher.hasInFlightForSchedule(id)) {
+      // TOCTOU: a concurrent manual `run()` slipped a fresh task in
+      // between our original check and the cascade. The cascade's
+      // terminal-only filter left it alone; refuse the schedule delete
+      // so the user can never observe an orphan task pointing at a
+      // dead schedule.
+      throw new ScheduleHasInFlightError(id);
+    }
     await this.repo.delete(id);
+    return { deletedTaskCount: deletedCount };
   }
 
   /**

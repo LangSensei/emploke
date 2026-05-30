@@ -51,7 +51,7 @@ function stubService(overrides: Partial<Record<keyof ScheduleService, unknown>>)
     createTask: vi.fn(async () => sampleSchedule),
     get: vi.fn(async () => sampleSchedule),
     patchTask: vi.fn(async () => sampleSchedule),
-    delete: vi.fn(async () => undefined),
+    delete: vi.fn(async () => ({ deletedTaskCount: 0 })),
     run: vi.fn(async () => ({ taskId: "task-001" })),
     // Stub mirrors the real service's contract: returns exactly `n`
     // entries (default 3) so the route-layer tests that exercise
@@ -663,13 +663,21 @@ describe("schedulesRoutes — patch", () => {
 });
 
 describe("schedulesRoutes — delete", () => {
-  it("DELETE /:sid returns { ok: true }", async () => {
-    const del = vi.fn(async () => undefined);
+  it("DELETE /:sid returns { ok: true, deletedTaskCount: 0 } when nothing to cascade", async () => {
+    const del = vi.fn(async () => ({ deletedTaskCount: 0 }));
     const svc = stubService({ delete: del });
     const res = await schedulesRoutes(() => svc).request("/sched-abc", { method: "DELETE" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, deletedTaskCount: 0 });
     expect(del).toHaveBeenCalledWith("sched-abc");
+  });
+
+  it("DELETE /:sid surfaces the cascade count from the service", async () => {
+    const del = vi.fn(async () => ({ deletedTaskCount: 7 }));
+    const svc = stubService({ delete: del });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, deletedTaskCount: 7 });
   });
 
   it("DELETE /:sid maps ScheduleEnabledError → 409", async () => {

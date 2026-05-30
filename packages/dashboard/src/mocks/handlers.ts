@@ -339,7 +339,7 @@ export const handlers = [
     const idx = schedulesState.findIndex((s) => s.id === params.sid);
     if (idx === -1) return notFound("schedule not found");
     schedulesState.splice(idx, 1);
-    return HttpResponse.json({ ok: true });
+    return HttpResponse.json({ ok: true, deletedTaskCount: 0 });
   }),
   http.post(`/api/workspaces/${W}/schedules/:sid/run`, ({ params }) => {
     const row = schedulesState.find((s) => s.id === params.sid);

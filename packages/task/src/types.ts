@@ -45,6 +45,24 @@ export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 export type TerminalStatus = "succeeded" | "failed" | "cancelled";
 
 /**
+ * Runtime list of every {@link TerminalStatus}. Kept in lock-step with the
+ * {@link TerminalStatus} type via the `satisfies` clause — adding a new
+ * status to the type without updating this list (or vice versa) is a
+ * type error.
+ *
+ * The repository / service layers use this to express "task is *not*
+ * terminal" without hard-coding the status name `"running"`. That keeps
+ * forward compatibility when a future non-terminal status (e.g.
+ * `"queued"`) is added: it will automatically be treated as in-flight by
+ * `hasInFlightForSchedule` and skipped by `deleteTerminalForSchedule`.
+ */
+export const TERMINAL_TASK_STATUSES = [
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const satisfies readonly TerminalStatus[];
+
+/**
  * Who launched this task. v4 first-class column (issue #119) — pre-
  * positioned for #118 (workflow-launched tasks) and future schedule /
  * agent-launched tasks. New dispatches default to `'standalone'` (a

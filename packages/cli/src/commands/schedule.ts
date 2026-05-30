@@ -218,8 +218,13 @@ export async function scheduleRm(opts: ScheduleRmOpts): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    await client.call("schedules.delete", { params: { id, sid: opts.sid } });
-    return { exitCode: 0, stdout: `schedule ${opts.sid} removed\n` };
+    const result = await client.call("schedules.delete", {
+      params: { id, sid: opts.sid },
+    });
+    const n = result.deletedTaskCount;
+    const suffix =
+      n === 0 ? "" : n === 1 ? " (and 1 historical task)" : ` (and ${n} historical tasks)`;
+    return { exitCode: 0, stdout: `schedule ${opts.sid} removed${suffix}\n` };
   } catch (err) {
     return formatError(err);
   }
