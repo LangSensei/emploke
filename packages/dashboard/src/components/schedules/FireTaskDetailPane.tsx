@@ -38,8 +38,9 @@ const MAX_ROWS = 10;
  * Back button is shown instead.
  *
  * The inner view is keyed on `fireTaskId` — every task switch remounts
- * the {@link useTaskDetail} hook with a fresh `inFlightRef`, side-
- * stepping the rapid-prev/next race the hook would otherwise hit.
+ * the {@link useTaskDetail} hook. This is now defence-in-depth (the
+ * hook is race-safe via its monotonic request id), but cheap and
+ * worth keeping to guarantee a clean React tree on every fire swap.
  *
  * Layout contract: returns a single `.tasks-pane__detail` aside (mirrors
  * the standalone `TaskDetail` smart container) so the Schedules-page
@@ -177,11 +178,18 @@ interface ModeBNavProps {
 /**
  * Mode B navigation row. Inline styles only (no new global CSS) so the
  * Schedules page stays self-contained for the schedule-UI overhaul PR.
+ *
+ * Layout note: deliberately uses a unique `fire-task-nav` class (NOT
+ * `task-detail__head`) so the `.tasks-pane__detail > .task-detail__head`
+ * flex rule applies only to the inner TaskView header. Two elements
+ * with that class would both receive `flex: 0 0 auto`, breaking the
+ * head-pinned / body-scrolls master-detail layout.
  */
 function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: ModeBNavProps) {
   return (
-    <div
-      className="task-detail__head"
+    <nav
+      className="fire-task-nav"
+      aria-label="Fire task navigation"
       style={{
         display: "flex",
         alignItems: "center",
@@ -190,6 +198,7 @@ function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: Mod
         flexWrap: "wrap",
         padding: "8px 12px",
         borderBottom: "1px solid var(--color-border)",
+        flex: "0 0 auto",
       }}
       data-testid="fire-task-nav"
     >
@@ -236,7 +245,7 @@ function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: Mod
           Open in Tasks ↗
         </Link>
       </div>
-    </div>
+    </nav>
   );
 }
 
@@ -246,10 +255,12 @@ interface FireTaskViewProps {
 }
 
 /**
- * Inner remount-keyed view that owns the `useTaskDetail` hook. Remounting
- * on every `fireTaskId` change (via React `key` from the parent) yields a
- * fresh `inFlightRef`, which sidesteps the rapid-prev/next race in
- * {@link useTaskDetail} (line 51 `if (inFlightRef.current) return`).
+ * Inner remount-keyed view that owns the `useTaskDetail` hook. The
+ * hook is now race-safe on its own (monotonic `requestSeqRef` drops
+ * stale responses), so the `key={fireTaskId}` remount from the parent
+ * is defence-in-depth: it guarantees a clean React tree on every task
+ * switch even if some future refactor reintroduces a closure-captured
+ * stale state in the hook.
  */
 function FireTaskView({ fireTaskId, pollIntervalMs }: FireTaskViewProps) {
   const { task, activity, activityError, loadOlder } = useTaskDetail(fireTaskId, pollIntervalMs);

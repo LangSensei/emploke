@@ -7,6 +7,7 @@ import {
   listSchedules,
   type ScheduleDetail as ScheduleDetailType,
   type ScheduleView,
+  type ServerConfig,
 } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
 import { PlusIcon } from "../components/Icons";
@@ -29,9 +30,16 @@ export interface SchedulesPageProps {
   agents: AgentEntry[];
   /** UUID of the workspace currently in scope (from the URL); null = no workspace. */
   currentWorkspaceId: string | null;
+  /**
+   * Server-supplied config; null while still being fetched. Used to
+   * source the Mode B per-task poll interval so the value matches the
+   * Tasks page (`config.tasks.pollIntervalMs`) instead of drifting on
+   * a Schedules-local constant.
+   */
+  config?: ServerConfig | null;
 }
 
-const FIRE_TASK_POLL_INTERVAL_MS = 4000;
+const DEFAULT_FIRE_TASK_POLL_INTERVAL_MS = 4000;
 
 /**
  * Schedules page (PR 4/4 of #61) — workspace-scoped cron-trigger
@@ -48,7 +56,9 @@ const FIRE_TASK_POLL_INTERVAL_MS = 4000;
  *   - `?enabled=true|false` — enabled-state filter
  *   - `?scheduleId=<sid>` — master-detail selection
  */
-export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps) {
+export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesPageProps) {
+  const fireTaskPollIntervalMs =
+    config?.tasks?.pollIntervalMs ?? DEFAULT_FIRE_TASK_POLL_INTERVAL_MS;
   const navigate = useNavigate();
   const location = useLocation();
   const [agentFilter, setAgentFilter] = useUrlSearchValue("agent", ALL_AGENTS);
@@ -388,7 +398,7 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
                 scheduleName={visible.find((s) => s.id === effectiveSelectedId)?.name ?? "schedule"}
                 fireTaskId={effectiveFireTaskId}
                 currentWorkspaceId={currentWorkspaceId}
-                pollIntervalMs={FIRE_TASK_POLL_INTERVAL_MS}
+                pollIntervalMs={fireTaskPollIntervalMs}
                 onBack={handleBackFromFire}
                 onNavigate={handleNavigateFire}
               />

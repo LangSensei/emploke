@@ -40,6 +40,13 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
   }, []);
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
+  // Monotonic request id — incremented on every refresh() call. The
+  // current value is captured at call time and re-checked before each
+  // setState so a slow response from a previous task swap cannot
+  // overwrite the latest task's state. Fixes the rapid-task-switch
+  // race where the original `inFlightRef` early-return blocked the
+  // new task's fetch while the old response still passed token check.
+  const requestSeqRef = useRef(0);
   const loadingOlderRef = useRef(false);
   const activityRef = useRef<TaskActivity | null>(null);
   useEffect(() => {
@@ -48,10 +55,14 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
 
   const refresh = useCallback(async () => {
     if (!taskId) return;
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+    // Coalesce overlapping polls FOR THE SAME TASK, but always allow a
+    // task switch to start a fresh request — the seq check below drops
+    // any stale response that comes back from the prior task.
+    if (inFlightRef.current && taskTokenRef.current === taskId) return;
+    const seq = ++requestSeqRef.current;
     const token = taskId;
     taskTokenRef.current = token;
+    inFlightRef.current = true;
     try {
       const known = activityRef.current;
       const lastSeq =
@@ -60,12 +71,12 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
           : undefined;
       await Promise.all([
         getTask(taskId).then((t) => {
-          if (!mountedRef.current || token !== taskTokenRef.current) return;
+          if (!mountedRef.current || seq !== requestSeqRef.current) return;
           setTask(t);
         }),
         fetchTaskActivity(taskId, lastSeq !== undefined ? { after: lastSeq } : { limit: 50 })
           .then((a) => {
-            if (!mountedRef.current || token !== taskTokenRef.current) return;
+            if (!mountedRef.current || seq !== requestSeqRef.current) return;
             if (a === null) {
               setActivity(null);
               setActivityError(null);
@@ -79,16 +90,19 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
             setActivityError(null);
           })
           .catch((e) => {
-            if (!mountedRef.current || token !== taskTokenRef.current) return;
+            if (!mountedRef.current || seq !== requestSeqRef.current) return;
             setActivityError((e as Error).message);
           }),
       ]);
     } catch (e) {
-      if (!mountedRef.current || token !== taskTokenRef.current) return;
+      if (!mountedRef.current || seq !== requestSeqRef.current) return;
       setTask(null);
       setActivityError((e as Error).message);
     } finally {
-      inFlightRef.current = false;
+      // Only clear inFlight if WE are still the latest request; a newer
+      // task switch may have already started another fetch that owns
+      // the flag now.
+      if (seq === requestSeqRef.current) inFlightRef.current = false;
     }
   }, [taskId]);
 

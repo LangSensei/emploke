@@ -134,6 +134,7 @@ function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFir
         onClick={() => onSelectFire(task.id)}
         data-testid={`schedule-fire-row-${task.id}`}
         title="Open this fire's task detail"
+        aria-label={`Open fire task ${task.id}`}
       >
         {meta}
       </button>
@@ -146,6 +147,7 @@ function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFir
       )}`}
       className="task-list__item task-list__item--button"
       data-testid={`schedule-fire-row-${task.id}`}
+      aria-label={`Open fire task ${task.id} in Tasks page`}
     >
       {meta}
     </Link>
