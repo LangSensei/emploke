@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listScheduledTasks, type TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
 import { TaskView } from "../task-view";
@@ -11,8 +10,6 @@ export interface FireTaskDetailPaneProps {
   scheduleName: string;
   /** Task id requested via `?fireTaskId=`. May be stale (aged out of top-10). */
   fireTaskId: string;
-  /** Workspace UUID — used to deep-link the "Open in Tasks ↗" escape hatch. */
-  currentWorkspaceId: string;
   /** Per-task auto-poll interval (passed through to {@link useTaskDetail}). */
   pollIntervalMs: number;
   /** Called when the user clicks ← Back; parent clears `?fireTaskId=`. */
@@ -45,12 +42,17 @@ const MAX_ROWS = 10;
  * Layout contract: returns a single `.tasks-pane__detail` aside (mirrors
  * the standalone `TaskDetail` smart container) so the Schedules-page
  * 2-column grid keeps its existing scroll / flex semantics.
+ *
+ * Navigation chrome: success-path navigation (← Back · ‹ N/M ›) lives
+ * inside the `TaskView` title row via the `headerTrailing` slot, costing
+ * zero extra vertical space. Loading / error / not-found states fall back
+ * to a small back-only row above the body, since prev/next have no
+ * meaning without a selected task.
  */
 export function FireTaskDetailPane({
   scheduleId,
   scheduleName,
   fireTaskId,
-  currentWorkspaceId,
   pollIntervalMs,
   onBack,
   onNavigate,
@@ -92,22 +94,24 @@ export function FireTaskDetailPane({
   }, [rows, fireTaskId]);
 
   const confirmed = confirmedIndex !== -1;
-  const prevId =
+  // `rows` is sorted newest-first, so `confirmedIndex` is 0-based with
+  // 0 = newest and `length - 1` = oldest. The pill's chevrons follow the
+  // visual list direction (and the position counter `N / total`):
+  //   `‹` decreases the displayed position -> moves to a newer fire
+  //        (index - 1, smaller index in the newest-first array)
+  //   `›` increases the displayed position -> moves to an older fire
+  //        (index + 1, larger index)
+  // This matches how users scroll through email / commit / chat lists.
+  const prevId = confirmed && confirmedIndex > 0 ? (rows![confirmedIndex - 1]?.id ?? null) : null;
+  const nextId =
     confirmed && confirmedIndex < (rows?.length ?? 0) - 1
       ? (rows![confirmedIndex + 1]?.id ?? null)
       : null;
-  const nextId = confirmed && confirmedIndex > 0 ? (rows![confirmedIndex - 1]?.id ?? null) : null;
 
   if (rows === null) {
     return (
       <aside className="tasks-pane__detail">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <FallbackBackRow scheduleName={scheduleName} onBack={onBack} />
         <p className="muted" style={{ padding: 16 }}>
           Loading…
         </p>
@@ -118,13 +122,7 @@ export function FireTaskDetailPane({
   if (error) {
     return (
       <aside className="tasks-pane__detail">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <FallbackBackRow scheduleName={scheduleName} onBack={onBack} />
         <div className="alert alert--error" style={{ margin: 16 }}>
           ⚠️ {error}
         </div>
@@ -135,13 +133,7 @@ export function FireTaskDetailPane({
   if (!confirmed) {
     return (
       <aside className="tasks-pane__detail" data-testid="fire-task-not-found">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <FallbackBackRow scheduleName={scheduleName} onBack={onBack} />
         <div className="empty" style={{ padding: 16 }}>
           <p className="empty__title">Fire not found</p>
           <p className="empty__hint">
@@ -153,53 +145,51 @@ export function FireTaskDetailPane({
     );
   }
 
+  const total = rows.length;
+  // Position counter uses the user's mental model: row 1 is the newest
+  // fire. `confirmedIndex` is 0-based with 0 = newest, so the displayed
+  // position is `index + 1`.
+  const position = confirmedIndex + 1;
+
+  const pill = (
+    <FireNavPill
+      scheduleName={scheduleName}
+      position={position}
+      total={total}
+      onBack={onBack}
+      onPrev={prevId ? () => onNavigate(prevId) : null}
+      onNext={nextId ? () => onNavigate(nextId) : null}
+    />
+  );
+
   return (
     <aside className="tasks-pane__detail">
-      <ModeBNav
-        scheduleName={scheduleName}
-        onBack={onBack}
-        onPrev={prevId ? () => onNavigate(prevId) : null}
-        onNext={nextId ? () => onNavigate(nextId) : null}
-        openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
+      <FireTaskView
+        key={fireTaskId}
+        fireTaskId={fireTaskId}
+        pollIntervalMs={pollIntervalMs}
+        headerTrailing={pill}
       />
-      <FireTaskView key={fireTaskId} fireTaskId={fireTaskId} pollIntervalMs={pollIntervalMs} />
     </aside>
   );
 }
 
-interface ModeBNavProps {
+interface FallbackBackRowProps {
   scheduleName: string;
   onBack: () => void;
-  onPrev: (() => void) | null;
-  onNext: (() => void) | null;
-  openInTasksHref: string;
 }
 
 /**
- * Mode B navigation row. Inline styles only (no new global CSS) so the
- * Schedules page stays self-contained for the schedule-UI overhaul PR.
- *
- * Layout note: deliberately uses a unique `fire-task-nav` class (NOT
- * `task-detail__head`) so the `.tasks-pane__detail > .task-detail__head`
- * flex rule applies only to the inner TaskView header. Two elements
- * with that class would both receive `flex: 0 0 auto`, breaking the
- * head-pinned / body-scrolls master-detail layout.
+ * Minimal back-only row used when there is no task in scope to navigate
+ * within (loading, fetch error, or fire-not-found). The success path
+ * uses the {@link FireNavPill} inside the title row instead, so this
+ * fallback row only ever shows during transient or error states.
  */
-function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: ModeBNavProps) {
+function FallbackBackRow({ scheduleName, onBack }: FallbackBackRowProps) {
   return (
     <nav
-      className="fire-task-nav"
+      className="fire-task-nav fire-task-nav--fallback"
       aria-label="Fire task navigation"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        flexDirection: "row",
-        flexWrap: "wrap",
-        padding: "8px 12px",
-        borderBottom: "1px solid var(--color-border)",
-        flex: "0 0 auto",
-      }}
       data-testid="fire-task-nav"
     >
       <button
@@ -211,40 +201,71 @@ function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: Mod
       >
         ← Back to {scheduleName}
       </button>
-      <div style={{ display: "flex", gap: 4 }}>
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={onPrev ?? undefined}
-          disabled={onPrev === null}
-          data-testid="fire-task-prev"
-          aria-label="Previous fire"
-          title="Previous fire (older)"
-        >
-          ‹ prev
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={onNext ?? undefined}
-          disabled={onNext === null}
-          data-testid="fire-task-next"
-          aria-label="Next fire"
-          title="Next fire (newer)"
-        >
-          next ›
-        </button>
-      </div>
-      <div style={{ marginLeft: "auto" }}>
-        <Link
-          to={openInTasksHref}
-          className="btn btn--ghost btn--sm"
-          data-testid="fire-task-open-in-tasks"
-          title="Open this task in the Tasks page"
-        >
-          Open in Tasks ↗
-        </Link>
-      </div>
+    </nav>
+  );
+}
+
+interface FireNavPillProps {
+  scheduleName: string;
+  position: number;
+  total: number;
+  onBack: () => void;
+  onPrev: (() => void) | null;
+  onNext: (() => void) | null;
+}
+
+/**
+ * Compact navigation pill rendered in the TaskView title row's trailing
+ * slot. Shape: `[← {scheduleName}] · [‹ N/M ›]`. The back chip and the
+ * sibling-nav cluster are visually separated by a hairline divider but
+ * share one container so screenreaders see a single group.
+ *
+ * The position indicator `N / M` reflects rank in the in-memory recent-
+ * fires array at query time. When new fires arrive at the top via
+ * polling, the same selected fire can silently shift from `3 / 10` to
+ * `4 / 11`. We use `aria-label="position N of latest M"` instead of
+ * `aria-live` to avoid jarring announcements; users can re-orient by
+ * clicking ← Back to refresh the list.
+ */
+function FireNavPill({ scheduleName, position, total, onBack, onPrev, onNext }: FireNavPillProps) {
+  return (
+    <nav className="fire-task-nav" aria-label="Fire task navigation" data-testid="fire-task-nav">
+      <button
+        type="button"
+        className="fire-task-nav__back"
+        onClick={onBack}
+        data-testid="fire-task-back"
+        title={`Back to ${scheduleName}`}
+      >
+        <span aria-hidden="true">← </span>
+        <span className="fire-task-nav__back-label">{scheduleName}</span>
+      </button>
+      <span className="fire-task-nav__sep" aria-hidden="true" />
+      <button
+        type="button"
+        className="fire-task-nav__step"
+        onClick={onPrev ?? undefined}
+        disabled={onPrev === null}
+        data-testid="fire-task-prev"
+        aria-label={`Previous fire (newer; currently ${position} of latest ${total})`}
+        title="Previous fire (newer)"
+      >
+        ‹
+      </button>
+      <span className="fire-task-nav__pos" data-testid="fire-task-position">
+        {position} / {total}
+      </span>
+      <button
+        type="button"
+        className="fire-task-nav__step"
+        onClick={onNext ?? undefined}
+        disabled={onNext === null}
+        data-testid="fire-task-next"
+        aria-label={`Next fire (older; currently ${position} of latest ${total})`}
+        title="Next fire (older)"
+      >
+        ›
+      </button>
     </nav>
   );
 }
@@ -252,6 +273,7 @@ function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: Mod
 interface FireTaskViewProps {
   fireTaskId: string;
   pollIntervalMs: number;
+  headerTrailing?: ReactNode;
 }
 
 /**
@@ -262,7 +284,7 @@ interface FireTaskViewProps {
  * switch even if some future refactor reintroduces a closure-captured
  * stale state in the hook.
  */
-function FireTaskView({ fireTaskId, pollIntervalMs }: FireTaskViewProps) {
+function FireTaskView({ fireTaskId, pollIntervalMs, headerTrailing }: FireTaskViewProps) {
   const { task, activity, activityError, loadOlder } = useTaskDetail(fireTaskId, pollIntervalMs);
   const handleLoadOlder = useCallback(() => loadOlder(), [loadOlder]);
   return (
@@ -272,10 +294,7 @@ function FireTaskView({ fireTaskId, pollIntervalMs }: FireTaskViewProps) {
       activity={activity}
       activityError={activityError}
       onLoadOlder={handleLoadOlder}
+      headerTrailing={headerTrailing}
     />
   );
-}
-
-function openInTasksHref(workspaceId: string, taskId: string): string {
-  return `/workspaces/${encodeURIComponent(workspaceId)}/runtime/tasks?taskId=${encodeURIComponent(taskId)}`;
 }

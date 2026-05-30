@@ -438,7 +438,6 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
                 scheduleId={effectiveSelectedId}
                 scheduleName={visible.find((s) => s.id === effectiveSelectedId)?.name ?? "schedule"}
                 fireTaskId={effectiveFireTaskId}
-                currentWorkspaceId={currentWorkspaceId}
                 pollIntervalMs={fireTaskPollIntervalMs}
                 onBack={handleBackFromFire}
                 onNavigate={handleNavigateFire}

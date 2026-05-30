@@ -130,8 +130,12 @@ describe("SchedulesPage list", () => {
     renderSchedules("/workspaces/ws-1/runtime/schedules", agents);
 
     await waitFor(() => {
-      expect(screen.getByText("Schedule A")).toBeTruthy();
-      expect(screen.getByText("Schedule B")).toBeTruthy();
+      // Scope to the list rows (unique by testid) instead of `getByText`,
+      // which would match both the row name and the auto-selected detail
+      // pane's <h2> when the GET resolves before this assertion settles
+      // (flaky on slow runners; see issue surfaced on macOS CI).
+      expect(screen.getByTestId("schedule-row-sched-a")).toBeTruthy();
+      expect(screen.getByTestId("schedule-row-sched-b")).toBeTruthy();
     });
 
     // Sorted ascending by nextFireAt: B (May 30) before A (June 1).

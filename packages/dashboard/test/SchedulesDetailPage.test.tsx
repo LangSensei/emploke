@@ -101,13 +101,14 @@ describe("Schedule detail panel", () => {
     expect(screen.getByText(/every day at 09:00/)).toBeTruthy();
   });
 
-  it("renders the next-fire preview list (3 entries)", async () => {
+  it("renders the next-fire header fact (single line) and previews n=1", async () => {
     renderDetail();
-    await waitFor(() => {
-      expect(screen.getByText(/Next 3 fires/)).toBeTruthy();
-    });
-    // Preview should request n=3
-    expect(mockPreviewSchedule).toHaveBeenCalledWith("sched-x", { n: 3 });
+    // The next-fire fact lives in the header right column as a "Next fire X" line.
+    const nextFireLine = await screen.findByTestId("schedule-detail-next-fire");
+    expect(nextFireLine.textContent).toMatch(/Next fire/);
+    // Preview only needs the very next run now that the body's "Next N fires"
+    // section was removed — surfacing more than one would be wasted output.
+    expect(mockPreviewSchedule).toHaveBeenCalledWith("sched-x", { n: 1 });
   });
 
   it("patches enabled=false when the Pause button is clicked", async () => {
@@ -133,7 +134,7 @@ describe("Schedule detail panel", () => {
     expect((await screen.findByTestId("schedule-detail-toggle")).textContent).toMatch(/Pause/);
   });
 
-  it("renders the recent-fires panel with mocked rows", async () => {
+  it("renders the recent-fires panel with status / clock / duration / id", async () => {
     mockListScheduledTasks.mockResolvedValue([
       {
         id: "task-1",
@@ -154,6 +155,13 @@ describe("Schedule detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("task-1")).toBeTruthy();
     });
+    // Dense row layout adds two new facts beyond the id: a status
+    // badge and a wall-clock duration. The duration column reads
+    // the difference between startedAt and endedAt — 59 seconds for
+    // this fixture, formatted by `formatDuration` as "59s".
+    expect(screen.getByText("59s")).toBeTruthy();
+    // Status badge label comes from STATUS_LABEL.succeeded.
+    expect(screen.getAllByText(/Succeeded/i).length).toBeGreaterThan(0);
   });
 
   it("calls runSchedule and surfaces errors when Run now is clicked", async () => {
@@ -225,11 +233,12 @@ describe("Schedule detail panel", () => {
     expect(notice.textContent).not.toMatch(/historical/);
   });
 
-  it("surfaces a 'Has not fired yet.' header line when lastFiredAt is null", async () => {
+  it("surfaces a 'Last fired never' header line when lastFiredAt is null", async () => {
     // Sanity: the default SAMPLE_DETAIL above has no lastFiredAt set.
     renderDetail();
     const line = await screen.findByTestId("schedule-detail-last-fired");
-    expect(line.textContent).toMatch(/Has not fired yet/);
+    expect(line.textContent).toMatch(/Last fired/);
+    expect(line.textContent).toMatch(/never/);
   });
 
   it("surfaces a 'Last fired …' header line when lastFiredAt is set", async () => {
