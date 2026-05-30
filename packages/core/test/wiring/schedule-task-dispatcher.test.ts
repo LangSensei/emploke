@@ -20,12 +20,18 @@ import { makeScheduleTaskDispatcher } from "../../src/wiring/schedule-task-dispa
 function stubTaskService(dispatchReturn: { id: string } = { id: "task-xyz" }): {
   dispatch: ReturnType<typeof vi.fn>;
   hasInFlightForSchedule: ReturnType<typeof vi.fn>;
+  deleteForSchedule: ReturnType<typeof vi.fn>;
   service: TaskService;
 } {
   const dispatch = vi.fn(async () => dispatchReturn);
   const hasInFlightForSchedule = vi.fn(async () => false);
-  const service = { dispatch, hasInFlightForSchedule } as unknown as TaskService;
-  return { dispatch, hasInFlightForSchedule, service };
+  const deleteForSchedule = vi.fn(async () => ({ deletedCount: 0 }));
+  const service = {
+    dispatch,
+    hasInFlightForSchedule,
+    deleteForSchedule,
+  } as unknown as TaskService;
+  return { dispatch, hasInFlightForSchedule, deleteForSchedule, service };
 }
 
 describe("makeScheduleTaskDispatcher", () => {
@@ -150,5 +156,15 @@ describe("makeScheduleTaskDispatcher", () => {
     expect(out).toBe(true);
     expect(hasInFlightForSchedule).toHaveBeenCalledTimes(1);
     expect(hasInFlightForSchedule).toHaveBeenCalledWith("sched-abc");
+  });
+
+  it("deleteForSchedule passes through (one stub call, one arg, count preserved)", async () => {
+    const { deleteForSchedule, service } = stubTaskService();
+    deleteForSchedule.mockResolvedValue({ deletedCount: 17 });
+    const adapter = makeScheduleTaskDispatcher(service);
+    const out = await adapter.deleteForSchedule("sched-abc");
+    expect(out).toEqual({ deletedCount: 17 });
+    expect(deleteForSchedule).toHaveBeenCalledTimes(1);
+    expect(deleteForSchedule).toHaveBeenCalledWith("sched-abc");
   });
 });

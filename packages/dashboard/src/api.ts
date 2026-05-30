@@ -1299,8 +1299,11 @@ export const patchSchedule = (sid: string, body: PatchScheduleBody): Promise<Sch
     jsonInit("PATCH", body as object),
   );
 
-export const deleteSchedule = (sid: string): Promise<void> =>
-  mutate(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`, { method: "DELETE" });
+export const deleteSchedule = (sid: string): Promise<{ deletedTaskCount: number }> =>
+  mutateJson<{ deletedTaskCount: number }>(
+    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`,
+    { method: "DELETE" },
+  );
 
 export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
   mutateJson<{ taskId: string }>(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/run`, {

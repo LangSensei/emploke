@@ -577,6 +577,38 @@ export class TaskService {
     return this.repository.hasInFlightForSchedule(scheduleId);
   }
 
+  // ─── deleteForSchedule ──────────────────────────────────────
+
+  /**
+   * Cascade-delete every TERMINAL task `origin='schedule'` and
+   * `metadata.scheduleId === scheduleId`. Called by `ScheduleService.delete`
+   * when the user removes a schedule, so historical fires don't outlive
+   * the trigger that produced them (otherwise they'd be unreachable
+   * orphans — there's no UI path to a task whose schedule no longer
+   * exists).
+   *
+   * Workdir cleanup follows the same fire-and-forget semantics as
+   * `delete(id, { purge: true })`: each task's workdir is enqueued on
+   * the existing serialised `purgeQueue` and the HTTP response returns
+   * as soon as the DB rows are gone. Failures during background purge
+   * leave orphan dirs that are recoverable per ADR-001 §3.5.
+   *
+   * In-flight tasks are NEVER touched by this method — the terminal
+   * filter inside `deleteTerminalForSchedule` ignores them. The caller
+   * is responsible for separately ensuring no in-flight tasks exist
+   * (and for re-checking after this method returns, to defend against
+   * a racing `ScheduleService.run` that inserted a fresh running task
+   * between checks).
+   */
+  async deleteForSchedule(scheduleId: string): Promise<{ deletedCount: number }> {
+    const deleted = await this.repository.deleteTerminalForSchedule(scheduleId);
+    for (const task of deleted) {
+      const workdir = safeJoinUnderRoot(this.tasksDir, task.id);
+      this.scheduleBackgroundPurge(task.id, task, workdir);
+    }
+    return { deletedCount: deleted.length };
+  }
+
   // ─── get ─────────────────────────────────────────────────
 
   async get(id: string): Promise<TaskEntity | null> {

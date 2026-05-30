@@ -252,8 +252,41 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
 
   it("delete succeeds when disabled and no in-flight", async () => {
     await h.service.createTask(baseArgs({ enabled: false }));
-    await h.service.delete(VALID_UUIDS[0]!);
+    const result = await h.service.delete(VALID_UUIDS[0]!);
+    expect(result).toEqual({ deletedTaskCount: 0 });
     expect(await h.service.get(VALID_UUIDS[0]!)).toBeNull();
+  });
+
+  it("delete cascades historical tasks via dispatcher and surfaces the count", async () => {
+    await h.service.createTask(baseArgs({ enabled: false }));
+    h.dispatcher.deleteForScheduleReturns.set(VALID_UUIDS[0]!, { deletedCount: 5 });
+    const result = await h.service.delete(VALID_UUIDS[0]!);
+    expect(result).toEqual({ deletedTaskCount: 5 });
+    expect(h.dispatcher.deleteForScheduleCalls).toEqual([VALID_UUIDS[0]]);
+    expect(await h.service.get(VALID_UUIDS[0]!)).toBeNull();
+  });
+
+  it("delete refuses if a manual run() races a fresh task in between checks (TOCTOU)", async () => {
+    // Simulate: original `hasInFlight` returns false, cascade runs,
+    // then a concurrent run() inserts a new task → second
+    // `hasInFlight` returns true → service must refuse the row
+    // delete so we never orphan a running task pointing to a dead
+    // schedule.
+    await h.service.createTask(baseArgs({ enabled: false }));
+    const sid = VALID_UUIDS[0]!;
+    let hasInFlightCalls = 0;
+    h.dispatcher.hasInFlightForSchedule = async () => {
+      hasInFlightCalls += 1;
+      // First call (pre-flight): clean. Second call (post-cascade):
+      // a racing manual run snuck a fresh running task in.
+      return hasInFlightCalls > 1;
+    };
+    h.dispatcher.deleteForScheduleReturns.set(sid, { deletedCount: 2 });
+    await expect(h.service.delete(sid)).rejects.toThrow(ScheduleHasInFlightError);
+    expect(hasInFlightCalls).toBe(2);
+    expect(h.dispatcher.deleteForScheduleCalls).toEqual([sid]);
+    // Schedule row must still exist — we refused to commit.
+    expect(await h.service.get(sid)).not.toBeNull();
   });
 
   it("delete on missing id throws ScheduleNotFoundError", async () => {

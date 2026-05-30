@@ -109,6 +109,17 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
   const [deleteTarget, setDeleteTarget] = useState<ScheduleDetailType | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Transient outcome banner shown after a successful delete so the
+  // user sees the cascade count (parity with the CLI suffix
+  // "schedule X removed (and N historical task(s))"). The dashboard
+  // has no toast layer, so we render an `.alert--info` strip above
+  // the page content and auto-clear it after a few seconds. Cleared
+  // immediately when another delete starts so the user never sees
+  // stale outcome text.
+  const [deleteNotice, setDeleteNotice] = useState<{
+    name: string;
+    deletedTaskCount: number;
+  } | null>(null);
 
   const [editTarget, setEditTarget] = useState<ScheduleDetailType | null>(null);
 
@@ -224,8 +235,11 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     if (!deleteTarget) return;
     setDeleteBusy(true);
     setDeleteError(null);
+    // Clear any prior outcome notice so the user never sees stale text
+    // while the new delete is in flight.
+    setDeleteNotice(null);
     try {
-      await deleteSchedule(deleteTarget.id);
+      const { deletedTaskCount } = await deleteSchedule(deleteTarget.id);
       if (!mounted.current) return;
       if (selectedId === deleteTarget.id) {
         // Atomic clear so a stale fireTaskId can't outlive the
@@ -233,6 +247,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
         setMasterDetailUrl({ scheduleId: null, fireTaskId: null });
       }
       setSchedules((prev) => prev.filter((s) => s.id !== deleteTarget.id));
+      setDeleteNotice({ name: deleteTarget.name, deletedTaskCount });
       setDeleteTarget(null);
       setRefreshToken((n) => n + 1);
     } catch (e) {
@@ -242,6 +257,17 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       if (mounted.current) setDeleteBusy(false);
     }
   }, [deleteTarget, selectedId, setMasterDetailUrl]);
+
+  // Auto-dismiss the post-delete outcome banner after ~6 seconds.
+  // Long enough for the user to read it, short enough that it doesn't
+  // linger across navigations.
+  useEffect(() => {
+    if (!deleteNotice) return;
+    const t = setTimeout(() => {
+      if (mounted.current) setDeleteNotice(null);
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [deleteNotice]);
 
   // Timezones already present on the workspace's existing schedules,
   // surfaced as quick-pick options in the modal's tz dropdown
@@ -346,6 +372,21 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
 
       <div className="tasks-page">
         {error && <div className="alert alert--error">⚠️ {error}</div>}
+        {deleteNotice && (
+          <div
+            className="alert alert--info"
+            role="status"
+            aria-live="polite"
+            data-testid="schedules-delete-notice"
+          >
+            Schedule <code>{deleteNotice.name}</code> deleted
+            {deleteNotice.deletedTaskCount > 0
+              ? ` (${deleteNotice.deletedTaskCount} historical task ${
+                  deleteNotice.deletedTaskCount === 1 ? "run" : "runs"
+                } also removed).`
+              : "."}
+          </div>
+        )}
         {loaded && schedules.length === 0 && !filtersActive ? (
           <div className="tasks-pane tasks-pane--with-detail tasks-pane--zero">
             <div className="empty tasks-pane__zero" data-testid="schedules-empty-zero">

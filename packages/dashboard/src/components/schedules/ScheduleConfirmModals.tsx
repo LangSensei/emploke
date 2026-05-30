@@ -11,10 +11,13 @@ export interface DeleteScheduleModalProps {
 
 /**
  * Delete-confirm modal — invoked from the schedule detail panel's
- * Delete button. Deleting is destructive (cron stops firing
- * immediately and the row vanishes from the list); we keep the copy
- * explicit about that. Already-fired tasks the schedule launched are
- * preserved — only the trigger entity is removed.
+ * Delete button. Deleting is destructive: the trigger stops firing
+ * immediately AND every historical task this schedule produced is
+ * removed from the workspace (a schedule's history is unreachable
+ * once the trigger is gone — there's no UI path to an orphaned task
+ * — so we cascade rather than leak rows). Tasks currently in flight
+ * are protected by the server's 409 pre-flight check; they are never
+ * touched by the cascade.
  */
 export function DeleteScheduleModal({
   target,
@@ -33,8 +36,8 @@ export function DeleteScheduleModal({
         )}
         <p>
           Delete schedule <code>{target.name}</code>? The trigger stops firing immediately and the
-          entry is removed from the list. Tasks the schedule already produced stay in the workspace
-          history.
+          entry is removed from the list. All historical task runs from this schedule will also be
+          removed. This cannot be undone.
         </p>
         <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
           {target.trigger.expr} · {target.target.agent}

@@ -521,9 +521,9 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
   app.delete("/:sid", async (c) => {
     const sid = c.req.param("sid");
     try {
-      await resolve(c).delete(sid);
-      logEvent(c, "schedule.delete", { scheduleId: sid });
-      return c.json({ ok: true });
+      const { deletedTaskCount } = await resolve(c).delete(sid);
+      logEvent(c, "schedule.delete", { scheduleId: sid, deletedTaskCount });
+      return c.json({ ok: true as const, deletedTaskCount });
     } catch (err) {
       const { status, isUnmapped } = resolveErrorStatus(err);
       if (status >= 500) logFault(c, err, "schedules.delete: 5xx fault");

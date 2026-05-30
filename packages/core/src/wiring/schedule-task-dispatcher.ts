@@ -28,5 +28,8 @@ export function makeScheduleTaskDispatcher(tasks: TaskService): TaskDispatcher {
     hasInFlightForSchedule(scheduleId) {
       return tasks.hasInFlightForSchedule(scheduleId);
     },
+    deleteForSchedule(scheduleId) {
+      return tasks.deleteForSchedule(scheduleId);
+    },
   };
 }
