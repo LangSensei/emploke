@@ -95,38 +95,38 @@ describe("ScheduleEntity.create", () => {
 
   it("rejects empty brief in task target", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { agent: "report-bot", brief: "" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief over 200 chars", () => {
     const longBrief = "x".repeat(201);
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { agent: "report-bot", brief: longBrief } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: longBrief } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief containing newline", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { agent: "report-bot", brief: "foo\nbar" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\nbar" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
   it("rejects brief containing carriage return", () => {
     expect(() =>
-      ScheduleEntity.create(
-        baseArgs({ target: { agent: "report-bot", brief: "foo\rbar" } }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
+      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\rbar" } }), {
+        id: VALID_ID,
+        now: FIXED_NOW,
+      }),
     ).toThrow(ScheduleError);
   });
 
@@ -158,10 +158,10 @@ describe("ScheduleEntity.create", () => {
   });
 
   it("accepts target without details (optional, omitted)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({ target: { agent: "report-bot", brief: "B" } }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
+    const e = ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "B" } }), {
+      id: VALID_ID,
+      now: FIXED_NOW,
+    });
     expect((e.target as { details?: string }).details).toBeUndefined();
   });
 
@@ -279,9 +279,9 @@ describe("ScheduleEntity.withMetadata / withTrigger / withTaskTarget", () => {
 
   it("withTrigger rejects bad cron expr", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    expect(() =>
-      e.withTrigger({ kind: "cron", expr: "garbage", tz: "UTC" }, FIXED_NOW),
-    ).toThrow(InvalidCronExprError);
+    expect(() => e.withTrigger({ kind: "cron", expr: "garbage", tz: "UTC" }, FIXED_NOW)).toThrow(
+      InvalidCronExprError,
+    );
   });
 
   it("withTaskTarget(sparse) preserves siblings (regression for #226)", () => {

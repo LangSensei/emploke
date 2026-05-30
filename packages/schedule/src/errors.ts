@@ -84,8 +84,6 @@ export class ScheduleKindMismatchError extends ScheduleError {
     public readonly expected: string,
     public readonly actual: string,
   ) {
-    super(
-      `Schedule "${id}" has target.kind="${actual}", expected "${expected}" for this route`,
-    );
+    super(`Schedule "${id}" has target.kind="${actual}", expected "${expected}" for this route`);
   }
 }

@@ -257,10 +257,7 @@ export class ScheduleEntity {
  *   - `null`  → delete the field on the merged record
  *   - absent  → keep existing
  */
-function mergeTaskTarget(
-  existing: TaskScheduleTarget,
-  patch: TaskTargetPatch,
-): TaskScheduleTarget {
+function mergeTaskTarget(existing: TaskScheduleTarget, patch: TaskTargetPatch): TaskScheduleTarget {
   const agent = patch.agent !== undefined ? patch.agent : existing.agent;
   const brief = patch.brief !== undefined ? patch.brief : existing.brief;
 
