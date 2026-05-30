@@ -3741,6 +3741,10 @@ button {
   gap: var(--space-3);
   padding: 0 0 var(--space-2);
 }
+.task-detail__title-row > .task-detail__title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .task-detail__title-actions {
   display: flex;
   align-items: center;
@@ -4105,39 +4109,6 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* F7 (right pane): the detail header title is a button so it can
-   toggle between clamped and full. Drop the default button chrome. */
-.task-detail__title-btn {
-  background: none;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  cursor: pointer;
-  text-align: left;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.task-detail__title-caret {
-  flex: 0 0 auto;
-  color: var(--color-text-subtle);
-  font-size: 12px;
-  margin-top: 6px;
-}
-.task-detail__title--clamp {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-.task-detail__title--expanded {
-  white-space: normal;
-  word-break: break-word;
 }
 
 /* Iter-2 B1: Overview tab — removed the `.overview-tab__failure` flex

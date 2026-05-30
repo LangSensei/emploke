@@ -82,35 +82,4 @@ describe("TaskView (dumb shared task-detail view)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Artifacts \(\d+\)/ }));
     expect(screen.queryByText("Summary")).toBeNull();
   });
-
-  it("collapses the title back to clamp mode when requestedTaskId changes", () => {
-    const taskA = makeTask({ id: "task-A", brief: "A long brief that the user expanded" });
-    const { rerender } = render(
-      <TaskView
-        task={taskA}
-        requestedTaskId="task-A"
-        activity={null}
-        activityError={null}
-        onLoadOlder={vi.fn(() => Promise.resolve())}
-      />,
-    );
-    // Expand the title.
-    const titleBtn = screen.getByRole("button", { name: "Expand title" });
-    fireEvent.click(titleBtn);
-    expect(screen.getByRole("button", { name: "Collapse title" })).toBeTruthy();
-
-    // Swap to a different requested task id — title should re-clamp.
-    const taskB = makeTask({ id: "task-B", brief: "Second task" });
-    rerender(
-      <TaskView
-        task={taskB}
-        requestedTaskId="task-B"
-        activity={null}
-        activityError={null}
-        onLoadOlder={vi.fn(() => Promise.resolve())}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Expand title" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Collapse title" })).toBeNull();
-  });
 });
