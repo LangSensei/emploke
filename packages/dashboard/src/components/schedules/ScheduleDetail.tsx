@@ -24,22 +24,28 @@ export interface ScheduleDetailProps {
   onSelectFire: (taskId: string) => void;
 }
 
-const PREVIEW_COUNT = 3;
+const PREVIEW_COUNT = 1;
 
 /**
  * Right-pane detail view for a single schedule.
  *
- * Header: name (h2), cron expression (mono code badge), tz, the
- * server-computed describe, next-N fire times via `previewSchedule`,
- * Enabled toggle (optimistic patch with rollback), Run-now button
- * (deep-links to the new task), Delete (opens confirm modal).
+ * Header: two-column row — left side carries the schedule's identity
+ * (name + enabled badge, cron expr + tz + describe, agent + runtime),
+ * right side carries the temporal facts (next fire, last fired). The
+ * action row (Edit / Pause-Resume / Run-now / Delete) spans the full
+ * width below. The two-column split exists so the right edge of the
+ * header isn't dead space — schedule identity is short, the temporal
+ * facts are the user's other primary anchor.
+ *
+ * Body: brief, optional details, recent fires. We do NOT render a
+ * "Next N fires" list anymore — the single next-fire fact lives in
+ * the header where users actually look for it, and the body stays
+ * focused on "what is this schedule for" + "what has it produced".
  *
  * The next-fire preview is fetched on schedule change and on each
- * successful patch (in case the trigger changed) — currently the
- * only patch surfaced by the UI is the enabled toggle (cron edits
- * stay CLI-only in v1), but the preview is still re-fetched because
- * the `nextFireAt` advances as time passes and a re-fetch keeps the
- * tooltip honest.
+ * successful patch (in case the trigger changed). We still ask the
+ * server for `n=1` rather than computing locally because cron parsing
+ * + tz handling is the server's job; the dashboard just renders.
  */
 export function ScheduleDetail({
   scheduleId,
@@ -175,48 +181,46 @@ export function ScheduleDetail({
           ⚠️ {error}
         </div>
       )}
-      <header className="task-detail__head" style={{ flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>{detail.name}</h2>
-          <span
-            className={`badge ${detail.enabled ? "badge--success" : "badge--warn"} badge--with-dot`}
-          >
-            <span className="badge__dot" aria-hidden="true" />
-            {detail.enabled ? "Enabled" : "Paused"}
-          </span>
-        </div>
-        <div className="task-list__item-meta muted">
-          <code className="schedule-cron" title={`Cron expression in ${detail.trigger.tz}`}>
-            {detail.trigger.expr}
-          </code>
-          <span className="task-list__sep">·</span>
-          <span>{detail.trigger.tz}</span>
-          <span className="task-list__sep">·</span>
-          <span title="cronstrue (zh_CN, server-rendered)">{detail.describe}</span>
-        </div>
-        <div className="task-list__item-meta muted">
-          <span>
-            Agent: <strong style={{ fontWeight: 600 }}>{detail.target.agent}</strong>
-          </span>
-          {detail.target.runtime ? (
-            <>
+      <header className="task-detail__head schedule-detail__head">
+        <div className="schedule-detail__head-row">
+          <div className="schedule-detail__head-left">
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0, fontSize: 18 }}>{detail.name}</h2>
+              <span
+                className={`badge ${
+                  detail.enabled ? "badge--success" : "badge--warn"
+                } badge--with-dot`}
+              >
+                <span className="badge__dot" aria-hidden="true" />
+                {detail.enabled ? "Enabled" : "Paused"}
+              </span>
+            </div>
+            <div className="task-list__item-meta muted">
+              <code className="schedule-cron" title={`Cron expression in ${detail.trigger.tz}`}>
+                {detail.trigger.expr}
+              </code>
               <span className="task-list__sep">·</span>
-              <span>Runtime: {detail.target.runtime}</span>
-            </>
-          ) : null}
+              <span>{detail.trigger.tz}</span>
+              <span className="task-list__sep">·</span>
+              <span title="cronstrue (server-rendered)">{detail.describe}</span>
+            </div>
+            <div className="task-list__item-meta muted">
+              <span>
+                Agent: <strong style={{ fontWeight: 600 }}>{detail.target.agent}</strong>
+              </span>
+              {detail.target.runtime ? (
+                <>
+                  <span className="task-list__sep">·</span>
+                  <span>Runtime: {detail.target.runtime}</span>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <div className="schedule-detail__head-right" data-testid="schedule-detail-temporal">
+            <ScheduleNextFire preview={preview} enabled={detail.enabled} />
+            <ScheduleLastFired lastFiredAt={detail.lastFiredAt} />
+          </div>
         </div>
-        {detail.lastFiredAt ? (
-          <div className="schedule-detail__last-fired" data-testid="schedule-detail-last-fired">
-            Last fired{" "}
-            <strong title={formatAbsolute(detail.lastFiredAt)}>
-              {formatRelative(detail.lastFiredAt)}
-            </strong>
-          </div>
-        ) : (
-          <div className="schedule-detail__last-fired" data-testid="schedule-detail-last-fired">
-            Has not fired yet.
-          </div>
-        )}
         <div className="schedule-detail__actions">
           <button
             type="button"
@@ -269,32 +273,6 @@ export function ScheduleDetail({
         className="task-detail__body"
         style={{ display: "flex", flexDirection: "column", gap: 16 }}
       >
-        <section aria-label="Next fires">
-          <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px 0" }}>
-            Next {PREVIEW_COUNT} fires
-          </h3>
-          {preview === null ? (
-            <p className="muted" style={{ fontSize: 12 }}>
-              Loading…
-            </p>
-          ) : preview.nextRuns.length === 0 ? (
-            <p className="muted" style={{ fontSize: 12 }}>
-              No upcoming fires (the schedule may be paused or the cron expression yielded nothing).
-            </p>
-          ) : (
-            <ul className="schedule-next-fires">
-              {preview.nextRuns.map((iso) => (
-                <li key={iso} className="schedule-next-fires__row">
-                  <span className="schedule-next-fires__primary" title={formatAbsolute(iso)}>
-                    {formatRelative(iso)}
-                  </span>
-                  <span className="schedule-next-fires__secondary">{formatAbsolute(iso)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
         <section aria-label="Brief">
           <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px 0" }}>Brief</h3>
           <p
@@ -325,5 +303,75 @@ export function ScheduleDetail({
         />
       </div>
     </aside>
+  );
+}
+
+/**
+ * Header right-column primitive — the single next-fire fact. Renders
+ * a relative time ("in 5m") as primary with the absolute time as the
+ * tooltip, mirroring the dashboard's "relative is the headline,
+ * absolute is the proof" convention. When the schedule is paused or
+ * the preview hasn't loaded yet, surfaces a one-line placeholder so
+ * the right column never collapses to nothing (which would re-create
+ * the empty-right-side imbalance the two-column header was added to
+ * fix).
+ */
+function ScheduleNextFire({
+  preview,
+  enabled,
+}: {
+  preview: SchedulePreview | null;
+  enabled: boolean;
+}) {
+  if (!enabled) {
+    return (
+      <div className="schedule-detail__temporal-line" data-testid="schedule-detail-next-fire">
+        <span className="muted">Next fire</span> <strong>paused</strong>
+      </div>
+    );
+  }
+  if (preview === null) {
+    return (
+      <div className="schedule-detail__temporal-line" data-testid="schedule-detail-next-fire">
+        <span className="muted">Next fire</span> <strong>…</strong>
+      </div>
+    );
+  }
+  const next = preview.nextRuns[0];
+  if (next === undefined) {
+    return (
+      <div className="schedule-detail__temporal-line" data-testid="schedule-detail-next-fire">
+        <span className="muted">Next fire</span> <strong>none upcoming</strong>
+      </div>
+    );
+  }
+  return (
+    <div className="schedule-detail__temporal-line" data-testid="schedule-detail-next-fire">
+      <span className="muted">Next fire</span>{" "}
+      <strong title={formatAbsolute(next)}>{formatRelative(next)}</strong>
+    </div>
+  );
+}
+
+/**
+ * Header right-column primitive — the last-fired fact. Mirrors
+ * {@link ScheduleNextFire}'s layout so the two stack as a compact
+ * "temporal facts" block. When the schedule has never fired we keep
+ * the same line shape ("Last fired — never") rather than collapsing,
+ * for the same right-column-balance reason.
+ */
+function ScheduleLastFired({ lastFiredAt }: { lastFiredAt: string | null | undefined }) {
+  if (!lastFiredAt) {
+    return (
+      <div className="schedule-detail__temporal-line" data-testid="schedule-detail-last-fired">
+        <span className="muted">Last fired</span> <strong>never</strong>
+      </div>
+    );
+  }
+  return (
+    <div className="schedule-detail__temporal-line" data-testid="schedule-detail-last-fired">
+      <span className="muted">Last fired</span>{" "}
+      <strong title={formatAbsolute(lastFiredAt)}>{formatRelative(lastFiredAt)}</strong>
+    </div>
   );
 }

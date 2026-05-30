@@ -1758,6 +1758,23 @@ button {
   min-height: 0;
 }
 
+/*
+ * Form-wrapper bridge: when callers wrap `.modal__body` + `.modal__footer`
+ * inside a `<form>` (DispatchModal, CreateScheduleModal, EditScheduleModal),
+ * the form becomes the lone non-header child of `.modal__inner` and breaks
+ * the flex chain unless it propagates flex sizing through itself. Without
+ * this rule the form shrink-wraps its content, the body's `overflow-y:
+ * auto` never triggers, and tall modals (Schedules: 8 fields + cron
+ * preview + 5 next-runs) overflow the viewport with no scrollbar.
+ */
+.modal__inner > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .modal__body--scroll {
   /* Editor and form variant: tighter top padding because content is dense. */
   padding: var(--space-4) var(--space-5);
@@ -5002,19 +5019,27 @@ button {
 
 
 /* ====================================================================
-   Schedule polish (designer pass on PR #221).
+   Schedule polish (designer pass on PR #221, refined for the schedules
+   UI iteration after #234).
    Surgical additions on top of the schedules surface:
      - .schedule-cron: a chip-style treatment for inline cron expressions
        so they read as code in both the list rows and the detail header.
-     - .schedule-next-fires: two-column rhythm for the Next-N-fires list
-       so the relative time (primary) and absolute time (secondary) sit
-       at distinct visual weights instead of running on as muted prose.
-     - .schedule-detail__last-fired: a one-line meta entry surfacing the
-       schedule's lastFiredAt so users know "when did this last run"
-       without scrolling to the Recent fires panel.
+     - .schedule-detail__head + __head-row + __head-left/right: two-column
+       header so the temporal facts (Next fire / Last fired) sit on the
+       right instead of leaving that edge dead. Identity (name, badge,
+       cron, agent) stays on the left where users scan from.
+     - .schedule-detail__temporal-line: shared "muted label : strong
+       value" line shape used by both Next fire and Last fired so they
+       stack as a compact, consistent temporal block.
      - .schedule-detail__actions: bottom of the header action row, pushes
        the destructive Delete button to the right edge so it's visually
        separated from the safe Pause/Resume + Run-now actions.
+     - .task-list__item--button: makes the <button> variant of a task-list
+       row span the full width of its <li>. Buttons default to shrink-to-
+       fit even with `display: flex`, so without this the Recent fires
+       rows render as narrow tabs against the left edge. The properties
+       reset all the chrome a native <button> ships with so it looks and
+       behaves like the <Link> sibling.
    No tokens or palette additions; everything reuses existing CSS vars. */
 .schedule-cron {
   font-family: var(--font-mono);
@@ -5026,44 +5051,43 @@ button {
   letter-spacing: -0.01em;
 }
 
-.schedule-next-fires {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.schedule-detail__head {
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-.schedule-next-fires__row {
+.schedule-detail__head-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
-  padding: 4px 0;
-  border-bottom: 1px dashed var(--color-border);
-  font-size: 13px;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
-.schedule-next-fires__row:last-child {
-  border-bottom: 0;
+.schedule-detail__head-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.schedule-next-fires__primary {
-  font-weight: 500;
-  color: var(--color-text);
+.schedule-detail__head-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 0 auto;
+  text-align: right;
 }
 
-.schedule-next-fires__secondary {
-  font-family: var(--font-mono);
-  font-size: 11px;
+.schedule-detail__temporal-line {
+  font-size: 12px;
   color: var(--color-text-muted);
   white-space: nowrap;
 }
 
-.schedule-detail__last-fired {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.schedule-detail__last-fired strong {
+.schedule-detail__temporal-line strong {
   font-weight: 500;
   color: var(--color-text);
 }
@@ -5078,4 +5102,22 @@ button {
 
 .schedule-detail__actions .schedule-detail__delete {
   margin-left: auto;
+}
+
+/*
+ * Button variant of `.task-list__item`. Native <button> shrink-wraps
+ * its content even with `display: flex`, so without `width: 100%` the
+ * Recent fires rows render as a narrow column against the left edge
+ * instead of filling the panel. The other resets (background, border,
+ * font, color, text-align) make it visually indistinguishable from the
+ * <Link> sibling so the two-row-shape contract holds whether the row
+ * is button-driven (Mode B swap) or link-driven (fallback deep-link).
+ */
+.task-list__item--button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
 }

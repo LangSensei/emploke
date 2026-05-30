@@ -7,24 +7,28 @@
 
 /**
  * Compact relative time string, e.g. `"just now"`, `"4m ago"`,
- * `"3h ago"`, `"2d ago"`. After 30 days falls back to a locale date
- * string (the "this happened a long time ago, exact date matters
- * more than how-long-ago" cutoff). Returns `"—"` for unparseable
- * input, matching the dashboard's "missing field" placeholder.
+ * `"3h ago"`, `"2d ago"` for past timestamps, and `"in 4m"`,
+ * `"in 3h"`, `"in 2d"` for future ones (next-fire previews, etc).
+ * After 30 days falls back to a locale date string (the "this
+ * happened a long time ago, exact date matters more than how-long-
+ * ago" cutoff). Returns `"—"` for unparseable input, matching the
+ * dashboard's "missing field" placeholder.
  */
 export function formatRelative(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
   const diff = Date.now() - t;
-  if (diff < 5_000) return "just now";
-  const sec = Math.round(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
+  if (Math.abs(diff) < 5_000) return "just now";
+  const past = diff > 0;
+  const abs = Math.abs(diff);
+  const sec = Math.round(abs / 1000);
+  if (sec < 60) return past ? `${sec}s ago` : `in ${sec}s`;
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return past ? `${min}m ago` : `in ${min}m`;
   const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return past ? `${hr}h ago` : `in ${hr}h`;
   const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
+  if (d < 30) return past ? `${d}d ago` : `in ${d}d`;
   return new Date(t).toLocaleDateString();
 }
 

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { listScheduledTasks, type TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
 import { TaskView } from "../task-view";
@@ -11,8 +10,6 @@ export interface FireTaskDetailPaneProps {
   scheduleName: string;
   /** Task id requested via `?fireTaskId=`. May be stale (aged out of top-10). */
   fireTaskId: string;
-  /** Workspace UUID — used to deep-link the "Open in Tasks ↗" escape hatch. */
-  currentWorkspaceId: string;
   /** Per-task auto-poll interval (passed through to {@link useTaskDetail}). */
   pollIntervalMs: number;
   /** Called when the user clicks ← Back; parent clears `?fireTaskId=`. */
@@ -50,7 +47,6 @@ export function FireTaskDetailPane({
   scheduleId,
   scheduleName,
   fireTaskId,
-  currentWorkspaceId,
   pollIntervalMs,
   onBack,
   onNavigate,
@@ -101,13 +97,7 @@ export function FireTaskDetailPane({
   if (rows === null) {
     return (
       <aside className="tasks-pane__detail">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <ModeBNav scheduleName={scheduleName} onBack={onBack} onPrev={null} onNext={null} />
         <p className="muted" style={{ padding: 16 }}>
           Loading…
         </p>
@@ -118,13 +108,7 @@ export function FireTaskDetailPane({
   if (error) {
     return (
       <aside className="tasks-pane__detail">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <ModeBNav scheduleName={scheduleName} onBack={onBack} onPrev={null} onNext={null} />
         <div className="alert alert--error" style={{ margin: 16 }}>
           ⚠️ {error}
         </div>
@@ -135,13 +119,7 @@ export function FireTaskDetailPane({
   if (!confirmed) {
     return (
       <aside className="tasks-pane__detail" data-testid="fire-task-not-found">
-        <ModeBNav
-          scheduleName={scheduleName}
-          onBack={onBack}
-          onPrev={null}
-          onNext={null}
-          openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
-        />
+        <ModeBNav scheduleName={scheduleName} onBack={onBack} onPrev={null} onNext={null} />
         <div className="empty" style={{ padding: 16 }}>
           <p className="empty__title">Fire not found</p>
           <p className="empty__hint">
@@ -160,7 +138,6 @@ export function FireTaskDetailPane({
         onBack={onBack}
         onPrev={prevId ? () => onNavigate(prevId) : null}
         onNext={nextId ? () => onNavigate(nextId) : null}
-        openInTasksHref={openInTasksHref(currentWorkspaceId, fireTaskId)}
       />
       <FireTaskView key={fireTaskId} fireTaskId={fireTaskId} pollIntervalMs={pollIntervalMs} />
     </aside>
@@ -172,7 +149,6 @@ interface ModeBNavProps {
   onBack: () => void;
   onPrev: (() => void) | null;
   onNext: (() => void) | null;
-  openInTasksHref: string;
 }
 
 /**
@@ -184,8 +160,15 @@ interface ModeBNavProps {
  * flex rule applies only to the inner TaskView header. Two elements
  * with that class would both receive `flex: 0 0 auto`, breaking the
  * head-pinned / body-scrolls master-detail layout.
+ *
+ * The previous "Open in Tasks ↗" escape-hatch link was removed: this
+ * pane already renders the full task surface (TaskHeaderCard + activity
+ * timeline + artifacts + output) via {@link FireTaskView}, so deep-
+ * linking to the Tasks page would only navigate the user away from
+ * richer context to identical content. The ← Back button remains the
+ * sole exit point.
  */
-function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: ModeBNavProps) {
+function ModeBNav({ scheduleName, onBack, onPrev, onNext }: ModeBNavProps) {
   return (
     <nav
       className="fire-task-nav"
@@ -235,16 +218,6 @@ function ModeBNav({ scheduleName, onBack, onPrev, onNext, openInTasksHref }: Mod
           next ›
         </button>
       </div>
-      <div style={{ marginLeft: "auto" }}>
-        <Link
-          to={openInTasksHref}
-          className="btn btn--ghost btn--sm"
-          data-testid="fire-task-open-in-tasks"
-          title="Open this task in the Tasks page"
-        >
-          Open in Tasks ↗
-        </Link>
-      </div>
     </nav>
   );
 }
@@ -274,8 +247,4 @@ function FireTaskView({ fireTaskId, pollIntervalMs }: FireTaskViewProps) {
       onLoadOlder={handleLoadOlder}
     />
   );
-}
-
-function openInTasksHref(workspaceId: string, taskId: string): string {
-  return `/workspaces/${encodeURIComponent(workspaceId)}/runtime/tasks?taskId=${encodeURIComponent(taskId)}`;
 }
