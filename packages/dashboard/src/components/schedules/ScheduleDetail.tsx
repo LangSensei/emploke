@@ -18,6 +18,10 @@ export interface ScheduleDetailProps {
   refreshToken: number;
   onPatched: (next: ScheduleDetailType) => void;
   onRequestDelete: (target: ScheduleDetailType) => void;
+  /** Opens the Edit modal at the page level. */
+  onRequestEdit: (target: ScheduleDetailType) => void;
+  /** Swaps the right pane into Mode B (fire's task detail) via the parent's atomic URL writer. */
+  onSelectFire: (taskId: string) => void;
 }
 
 const PREVIEW_COUNT = 3;
@@ -43,6 +47,8 @@ export function ScheduleDetail({
   refreshToken,
   onPatched,
   onRequestDelete,
+  onRequestEdit,
+  onSelectFire,
 }: ScheduleDetailProps) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<ScheduleDetailType | null>(null);
@@ -214,6 +220,15 @@ export function ScheduleDetail({
         <div className="schedule-detail__actions">
           <button
             type="button"
+            className="btn btn--ghost"
+            onClick={() => onRequestEdit(detail)}
+            disabled={busyAction !== null}
+            data-testid="schedule-detail-edit"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
             className={`btn ${detail.enabled ? "btn--ghost" : "btn--primary"}`}
             onClick={() => void handleToggleEnabled()}
             disabled={busyAction !== null}
@@ -306,6 +321,7 @@ export function ScheduleDetail({
           scheduleId={scheduleId}
           currentWorkspaceId={currentWorkspaceId}
           refreshToken={recentRefresh}
+          onSelectFire={onSelectFire}
         />
       </div>
     </aside>
