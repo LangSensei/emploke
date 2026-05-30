@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { ALL_AGENTS, ALL_ENABLED, ENABLED_FILTERS, type EnabledFilter } from "./shared";
+import { ALL_AGENTS, ENABLED_FILTERS, type EnabledFilter } from "./shared";
 
 export interface SchedulesFiltersProps {
   agentFilter: string;
@@ -16,6 +16,10 @@ export interface SchedulesFiltersProps {
  * Paused). Mirrors `TaskFilters` layout but skips search and time
  * preset — schedules are a small set and the `nextFireAt` ordering
  * already foregrounds the most relevant rows.
+ *
+ * Both affordances are trivially resettable by the user themselves
+ * (pick "All agents" / click "All"), so no "Clear filters" button is
+ * rendered — extra button noise without a real win.
  */
 export function SchedulesFilters({
   agentFilter,
@@ -72,19 +76,6 @@ export function SchedulesFilters({
             </button>
           ))}
         </fieldset>
-        <div style={{ flex: 1 }} />
-        {agentFilter !== ALL_AGENTS || enabledFilter !== ALL_ENABLED ? (
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={() => {
-              onAgentFilterChange(ALL_AGENTS);
-              onEnabledFilterChange(ALL_ENABLED);
-            }}
-          >
-            Clear filters
-          </button>
-        ) : null}
       </div>
     </div>
   );

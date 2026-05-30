@@ -17,6 +17,14 @@ export interface ScheduleRecentFiresProps {
    * page already auto-refreshes on tab visibility.
    */
   refreshToken: number;
+  /**
+   * Callback fired when the user clicks a recent-fire row. The parent
+   * page swaps the detail-pane into Mode B (the fire's task detail)
+   * by writing `?fireTaskId=<id>` to the URL atomically with
+   * `?scheduleId=`. Falls back to a deep-link to the Tasks page when
+   * not provided (early-mount or out-of-tree consumers).
+   */
+  onSelectFire?: (taskId: string) => void;
 }
 
 const MAX_ROWS = 10;
@@ -24,14 +32,16 @@ const MAX_ROWS = 10;
 /**
  * "Recent fires" panel rendered inside the schedule detail panel.
  * Lists the latest 10 schedule-launched tasks scoped to the current
- * schedule id; each row drills into the Tasks page at
- * `?taskId=<id>` so users can read the full activity / artifacts
- * surface without leaving the dashboard.
+ * schedule id; clicking a row swaps the right-pane into Mode B (the
+ * fire's full task detail) by calling `onSelectFire` — no navigation,
+ * the schedule list stays visible. When `onSelectFire` isn't wired
+ * the row falls back to a deep-link into the Tasks page.
  */
 export function ScheduleRecentFires({
   scheduleId,
   currentWorkspaceId,
   refreshToken,
+  onSelectFire,
 }: ScheduleRecentFiresProps) {
   const [rows, setRows] = useState<TaskRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,32 +81,75 @@ export function ScheduleRecentFires({
       ) : (
         <ul className="task-list" style={{ borderTop: "1px solid var(--color-border)" }}>
           {rows.map((t) => (
-            <li key={t.id} className="task-list__item">
-              <div className="task-list__item-head">
-                <StatusBadge
-                  status={t.status}
-                  tone={STATUS_TONE[t.status]}
-                  pulse={t.status === "running"}
-                />
-              </div>
-              <div className="task-list__item-meta muted">
-                <span title={formatAbsolute(t.createdAt)}>{formatRelative(t.createdAt)}</span>
-                <span className="task-list__sep">·</span>
-                <Link
-                  to={`/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(
-                    t.id,
-                  )}`}
-                >
-                  View task →
-                </Link>
-              </div>
-              <code className="task-list__id task-list__id--muted" title={t.id}>
-                {t.id}
-              </code>
+            <li key={t.id}>
+              <ScheduleFireRow
+                task={t}
+                currentWorkspaceId={currentWorkspaceId}
+                onSelectFire={onSelectFire}
+              />
             </li>
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+interface ScheduleFireRowProps {
+  task: TaskRecord;
+  currentWorkspaceId: string;
+  onSelectFire?: (taskId: string) => void;
+}
+
+/**
+ * Single recent-fire row. When `onSelectFire` is set the row is a
+ * real `<button>` so keyboard and click semantics come for free; when
+ * it isn't (early-mount or out-of-tree consumers) the row falls back
+ * to a `<Link>` to the Tasks page so deep-linking still works.
+ */
+function ScheduleFireRow({ task, currentWorkspaceId, onSelectFire }: ScheduleFireRowProps) {
+  const meta = (
+    <>
+      <div className="task-list__item-head">
+        <StatusBadge
+          status={task.status}
+          tone={STATUS_TONE[task.status]}
+          pulse={task.status === "running"}
+        />
+      </div>
+      <div className="task-list__item-meta muted">
+        <span title={formatAbsolute(task.createdAt)}>{formatRelative(task.createdAt)}</span>
+      </div>
+      <code className="task-list__id task-list__id--muted" title={task.id}>
+        {task.id}
+      </code>
+    </>
+  );
+
+  if (onSelectFire) {
+    return (
+      <button
+        type="button"
+        className="task-list__item task-list__item--button"
+        onClick={() => onSelectFire(task.id)}
+        data-testid={`schedule-fire-row-${task.id}`}
+        title="Open this fire's task detail"
+        aria-label={`Open fire task ${task.id}`}
+      >
+        {meta}
+      </button>
+    );
+  }
+  return (
+    <Link
+      to={`/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(
+        task.id,
+      )}`}
+      className="task-list__item task-list__item--button"
+      data-testid={`schedule-fire-row-${task.id}`}
+      aria-label={`Open fire task ${task.id} in Tasks page`}
+    >
+      {meta}
+    </Link>
   );
 }

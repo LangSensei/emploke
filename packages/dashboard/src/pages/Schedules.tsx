@@ -1,15 +1,19 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   deleteSchedule,
   listRuntimes,
   listSchedules,
   type ScheduleDetail as ScheduleDetailType,
   type ScheduleView,
+  type ServerConfig,
 } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
 import { PlusIcon } from "../components/Icons";
 import { CreateScheduleModal } from "../components/schedules/CreateScheduleModal";
+import { EditScheduleModal } from "../components/schedules/EditScheduleModal";
+import { FireTaskDetailPane } from "../components/schedules/FireTaskDetailPane";
 import { DeleteScheduleModal } from "../components/schedules/ScheduleConfirmModals";
 import { ScheduleDetail } from "../components/schedules/ScheduleDetail";
 import { ScheduleList } from "../components/schedules/ScheduleList";
@@ -26,7 +30,16 @@ export interface SchedulesPageProps {
   agents: AgentEntry[];
   /** UUID of the workspace currently in scope (from the URL); null = no workspace. */
   currentWorkspaceId: string | null;
+  /**
+   * Server-supplied config; null while still being fetched. Used to
+   * source the Mode B per-task poll interval so the value matches the
+   * Tasks page (`config.tasks.pollIntervalMs`) instead of drifting on
+   * a Schedules-local constant.
+   */
+  config?: ServerConfig | null;
 }
+
+const DEFAULT_FIRE_TASK_POLL_INTERVAL_MS = 4000;
 
 /**
  * Schedules page (PR 4/4 of #61) — workspace-scoped cron-trigger
@@ -43,10 +56,15 @@ export interface SchedulesPageProps {
  *   - `?enabled=true|false` — enabled-state filter
  *   - `?scheduleId=<sid>` — master-detail selection
  */
-export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps) {
+export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesPageProps) {
+  const fireTaskPollIntervalMs =
+    config?.tasks?.pollIntervalMs ?? DEFAULT_FIRE_TASK_POLL_INTERVAL_MS;
+  const navigate = useNavigate();
+  const location = useLocation();
   const [agentFilter, setAgentFilter] = useUrlSearchValue("agent", ALL_AGENTS);
   const [enabledFilterRaw, setEnabledFilterRaw] = useUrlSearchValue("enabled", ALL_ENABLED);
-  const [selectedIdRaw, setSelectedIdRaw] = useUrlSearchValue("scheduleId", "");
+  const [selectedIdRaw] = useUrlSearchValue("scheduleId", "");
+  const [fireTaskIdRaw] = useUrlSearchValue("fireTaskId", "");
 
   const enabledFilter = coerceEnabledFilter(enabledFilterRaw);
   const setEnabledFilter = useCallback(
@@ -54,9 +72,33 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
     [setEnabledFilterRaw],
   );
   const selectedId = selectedIdRaw === "" ? null : selectedIdRaw;
-  const setSelectedId = useCallback(
-    (id: string | null) => setSelectedIdRaw(id ?? ""),
-    [setSelectedIdRaw],
+  const fireTaskId = fireTaskIdRaw === "" ? null : fireTaskIdRaw;
+
+  // Atomic URL writer: updates `scheduleId` and `fireTaskId` in a
+  // single `navigate()` call so two sequential single-key setters
+  // can't race via stale `location.search` snapshots (see
+  // hooks/useUrlState.ts — each setter captures `location.search` at
+  // hook-call time, so two back-to-back setValue calls in the same
+  // handler would both reseed from the same snapshot and the second
+  // would overwrite the first). Pass `undefined` to leave a key
+  // untouched, empty string to delete it.
+  const setMasterDetailUrl = useCallback(
+    (next: { scheduleId?: string | null; fireTaskId?: string | null }) => {
+      const params = new URLSearchParams(location.search);
+      if (next.scheduleId !== undefined) {
+        if (next.scheduleId === null || next.scheduleId === "") params.delete("scheduleId");
+        else params.set("scheduleId", next.scheduleId);
+      }
+      if (next.fireTaskId !== undefined) {
+        if (next.fireTaskId === null || next.fireTaskId === "") params.delete("fireTaskId");
+        else params.set("fireTaskId", next.fireTaskId);
+      }
+      const search = params.toString();
+      navigate(`${location.pathname}${search === "" ? "" : `?${search}`}${location.hash}`, {
+        replace: true,
+      });
+    },
+    [navigate, location.pathname, location.search, location.hash],
   );
 
   const [schedules, setSchedules] = useState<ScheduleView[]>([]);
@@ -67,6 +109,8 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
   const [deleteTarget, setDeleteTarget] = useState<ScheduleDetailType | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [editTarget, setEditTarget] = useState<ScheduleDetailType | null>(null);
 
   // Issue #222 — "New schedule" modal state + supporting fetches.
   // `runtimes` is fetched here (mirroring Sessions.tsx) because
@@ -155,7 +199,26 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
     setSchedules((prev) =>
       sortByNextFire(prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s))),
     );
+    // Bump so the detail pane re-fetches preview / recent-fires when
+    // an Edit-modal patch lands; toggle/run-now don't need this since
+    // ScheduleDetail does its own optimistic merge.
+    setRefreshToken((n) => n + 1);
   }, []);
+
+  // Close the Edit modal when the user switches to a different
+  // schedule (URL flip clears the modal's target so it doesn't fight
+  // ScheduleDetail's incoming new selection). Idempotent: no-op when
+  // editTarget is already null.
+  useEffect(() => {
+    if (editTarget !== null && editTarget.id !== effectiveSelectedId) {
+      setEditTarget(null);
+    }
+  }, [effectiveSelectedId, editTarget]);
+
+  // Only honour `?fireTaskId=` when a schedule is actually selected.
+  // Without this guard, a deep link with `?fireTaskId=` but no
+  // `?scheduleId=` would render Mode B against a null schedule.
+  const effectiveFireTaskId = effectiveSelectedId !== null ? fireTaskId : null;
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -164,7 +227,11 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
     try {
       await deleteSchedule(deleteTarget.id);
       if (!mounted.current) return;
-      if (selectedId === deleteTarget.id) setSelectedId(null);
+      if (selectedId === deleteTarget.id) {
+        // Atomic clear so a stale fireTaskId can't outlive the
+        // schedule it belonged to.
+        setMasterDetailUrl({ scheduleId: null, fireTaskId: null });
+      }
       setSchedules((prev) => prev.filter((s) => s.id !== deleteTarget.id));
       setDeleteTarget(null);
       setRefreshToken((n) => n + 1);
@@ -174,7 +241,7 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
     } finally {
       if (mounted.current) setDeleteBusy(false);
     }
-  }, [deleteTarget, selectedId, setSelectedId]);
+  }, [deleteTarget, selectedId, setMasterDetailUrl]);
 
   // Timezones already present on the workspace's existing schedules,
   // surfaced as quick-pick options in the modal's tz dropdown
@@ -197,7 +264,9 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
   const handleCreated = useCallback(
     (created: ScheduleView) => {
       setSchedules((prev) => sortByNextFire([created, ...prev]));
-      setSelectedId(created.id);
+      // Atomic write — clear any leftover fireTaskId from a prior
+      // selection while moving to the newly-created row.
+      setMasterDetailUrl({ scheduleId: created.id, fireTaskId: null });
       setRefreshToken((n) => n + 1);
       setCreateOpen(false);
       const hiddenByAgent = agentFilter !== ALL_AGENTS && created.target.agent !== agentFilter;
@@ -207,7 +276,41 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
       if (hiddenByAgent) setAgentFilter(ALL_AGENTS);
       if (hiddenByEnabled) setEnabledFilter(ALL_ENABLED);
     },
-    [agentFilter, enabledFilter, setSelectedId, setAgentFilter, setEnabledFilter],
+    [agentFilter, enabledFilter, setMasterDetailUrl, setAgentFilter, setEnabledFilter],
+  );
+
+  // Selection-from-list handler: atomically updates `?scheduleId=`
+  // and clears `?fireTaskId=` so leaving Mode B is implicit when you
+  // pick a different schedule.
+  const handleSelectSchedule = useCallback(
+    (id: string | null) => {
+      setMasterDetailUrl({ scheduleId: id, fireTaskId: null });
+    },
+    [setMasterDetailUrl],
+  );
+
+  // Mode-B entry handler — atomically writes the click target's
+  // `fireTaskId` alongside the pinned `scheduleId`.
+  const handleSelectFire = useCallback(
+    (taskId: string) => {
+      if (!effectiveSelectedId) return;
+      setMasterDetailUrl({ scheduleId: effectiveSelectedId, fireTaskId: taskId });
+    },
+    [effectiveSelectedId, setMasterDetailUrl],
+  );
+
+  // Mode-B exit handler — drops `fireTaskId` only, keeps schedule.
+  const handleBackFromFire = useCallback(() => {
+    setMasterDetailUrl({ fireTaskId: null });
+  }, [setMasterDetailUrl]);
+
+  // Mode-B navigation — used by prev/next inside FireTaskDetailPane.
+  const handleNavigateFire = useCallback(
+    (nextTaskId: string) => {
+      if (!effectiveSelectedId) return;
+      setMasterDetailUrl({ scheduleId: effectiveSelectedId, fireTaskId: nextTaskId });
+    },
+    [effectiveSelectedId, setMasterDetailUrl],
   );
 
   if (currentWorkspaceId === null) {
@@ -282,13 +385,24 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
                   <ScheduleList
                     schedules={visible}
                     selectedId={effectiveSelectedId}
-                    onSelect={setSelectedId}
+                    onSelect={handleSelectSchedule}
                   />
                 )}
               </div>
             </div>
 
-            {effectiveSelectedId ? (
+            {effectiveSelectedId && effectiveFireTaskId ? (
+              <FireTaskDetailPane
+                key={effectiveSelectedId}
+                scheduleId={effectiveSelectedId}
+                scheduleName={visible.find((s) => s.id === effectiveSelectedId)?.name ?? "schedule"}
+                fireTaskId={effectiveFireTaskId}
+                currentWorkspaceId={currentWorkspaceId}
+                pollIntervalMs={fireTaskPollIntervalMs}
+                onBack={handleBackFromFire}
+                onNavigate={handleNavigateFire}
+              />
+            ) : effectiveSelectedId ? (
               <ScheduleDetail
                 key={effectiveSelectedId}
                 scheduleId={effectiveSelectedId}
@@ -296,6 +410,8 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
                 refreshToken={refreshToken}
                 onPatched={handlePatched}
                 onRequestDelete={setDeleteTarget}
+                onRequestEdit={setEditTarget}
+                onSelectFire={handleSelectFire}
               />
             ) : visible.length === 0 ? null : (
               <aside className="tasks-pane__detail tasks-pane__detail--empty">
@@ -331,6 +447,21 @@ export function SchedulesPage({ agents, currentWorkspaceId }: SchedulesPageProps
           existingTimezones={existingTimezones}
           onClose={() => setCreateOpen(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {editTarget && (
+        <EditScheduleModal
+          open={editTarget !== null}
+          schedule={editTarget}
+          agents={agents}
+          runtimes={runtimes}
+          existingTimezones={existingTimezones}
+          onClose={() => setEditTarget(null)}
+          onPatched={(next) => {
+            handlePatched(next);
+            setEditTarget(null);
+          }}
         />
       )}
     </>

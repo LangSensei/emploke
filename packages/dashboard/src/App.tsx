@@ -894,9 +894,9 @@ function RuntimeTasksRoute() {
  * back-button / share-link all reproduce the same view.
  */
 function RuntimeSchedulesRoute() {
-  const { wsId, data } = useWorkspaceShell();
+  const { wsId, data, config } = useWorkspaceShell();
   useBreadcrumb("Schedules", ["Runtime", "Schedules"]);
-  return <SchedulesPage agents={data.agents} currentWorkspaceId={wsId} />;
+  return <SchedulesPage agents={data.agents} currentWorkspaceId={wsId} config={config} />;
 }
 
 function capitalize(s: string): string {

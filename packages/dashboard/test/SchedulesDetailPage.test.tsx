@@ -213,4 +213,35 @@ describe("Schedule detail panel", () => {
     // the test resilient to rounding at the 5-second boundary.
     expect(line.textContent).toMatch(/h ago|m ago/);
   });
+
+  it("opens the EditScheduleModal when the Edit button is clicked", async () => {
+    renderDetail();
+    const editBtn = await screen.findByTestId("schedule-detail-edit");
+    fireEvent.click(editBtn);
+    expect(await screen.findByTestId("edit-schedule-form")).toBeTruthy();
+    expect((screen.getByTestId("edit-schedule-name") as HTMLInputElement).value).toBe(
+      "Sample schedule",
+    );
+  });
+
+  it("swaps to Mode B (fire-task detail pane) when a recent fire row is clicked", async () => {
+    mockListScheduledTasks.mockResolvedValue([
+      {
+        id: "task-1",
+        agent: "emploke/dev",
+        brief: "fire 1",
+        origin: "schedule",
+        status: "succeeded",
+        metadata: { scheduleId: "sched-x" },
+        createdAt: "2026-05-28T09:00:00Z",
+        startedAt: "2026-05-28T09:00:01Z",
+        endedAt: "2026-05-28T09:01:00Z",
+      },
+    ]);
+    renderDetail();
+    const fireRow = await screen.findByTestId("schedule-fire-row-task-1");
+    fireEvent.click(fireRow);
+    expect(await screen.findByTestId("fire-task-nav")).toBeTruthy();
+    expect(screen.getByTestId("fire-task-back")).toBeTruthy();
+  });
 });
