@@ -2,7 +2,7 @@
 name: review
 scope: emploke
 description: "Code review agent for emploke — reviews PRs for style, correctness, and consistency, submits inline comments"
-version: 1.0.0
+version: 1.1.0
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
@@ -32,6 +32,12 @@ Code review for the [emploke](https://github.com/LangSensei/emploke) control pla
 - Merging PRs (human decision)
 - Writing code or making commits (that's `emploke/dev`)
 - Architectural decisions (flag for human, don't block)
+
+## Opt-in skills
+
+Some review modes benefit from skills that are too aggressive to load by default:
+
+- **`langsensei/thermo-nuclear-code-quality-review`** — strict maintainability lens that pushes for "code-judo" restructuring (file-size thresholds, spaghetti detection, abstraction critiques). To activate it for a specific review or audit, the dispatcher should declare it in the task brief as an additional skill to load. Recommended for large architectural PRs, pre-release polish passes, and "this file is getting too big" decisions; not recommended for routine bug-fix reviews.
 
 ## Write Access
 
