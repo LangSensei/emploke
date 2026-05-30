@@ -94,11 +94,19 @@ export function FireTaskDetailPane({
   }, [rows, fireTaskId]);
 
   const confirmed = confirmedIndex !== -1;
-  const prevId =
+  // `rows` is sorted newest-first, so `confirmedIndex` is 0-based with
+  // 0 = newest and `length - 1` = oldest. The pill's chevrons follow the
+  // visual list direction (and the position counter `N / total`):
+  //   `‹` decreases the displayed position -> moves to a newer fire
+  //        (index - 1, smaller index in the newest-first array)
+  //   `›` increases the displayed position -> moves to an older fire
+  //        (index + 1, larger index)
+  // This matches how users scroll through email / commit / chat lists.
+  const prevId = confirmed && confirmedIndex > 0 ? (rows![confirmedIndex - 1]?.id ?? null) : null;
+  const nextId =
     confirmed && confirmedIndex < (rows?.length ?? 0) - 1
       ? (rows![confirmedIndex + 1]?.id ?? null)
       : null;
-  const nextId = confirmed && confirmedIndex > 0 ? (rows![confirmedIndex - 1]?.id ?? null) : null;
 
   if (rows === null) {
     return (
@@ -239,8 +247,8 @@ function FireNavPill({ scheduleName, position, total, onBack, onPrev, onNext }: 
         onClick={onPrev ?? undefined}
         disabled={onPrev === null}
         data-testid="fire-task-prev"
-        aria-label={`Previous fire (currently ${position} of latest ${total})`}
-        title="Previous fire (older)"
+        aria-label={`Previous fire (newer; currently ${position} of latest ${total})`}
+        title="Previous fire (newer)"
       >
         ‹
       </button>
@@ -253,8 +261,8 @@ function FireNavPill({ scheduleName, position, total, onBack, onPrev, onNext }: 
         onClick={onNext ?? undefined}
         disabled={onNext === null}
         data-testid="fire-task-next"
-        aria-label={`Next fire (currently ${position} of latest ${total})`}
-        title="Next fire (newer)"
+        aria-label={`Next fire (older; currently ${position} of latest ${total})`}
+        title="Next fire (older)"
       >
         ›
       </button>
