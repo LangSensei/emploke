@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { TaskActivity, TaskRecord } from "../../api";
 import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import { StatusBadge } from "../tasks/StatusBadge";
@@ -28,6 +28,19 @@ export interface TaskViewProps {
   activity: TaskActivity | null;
   activityError: string | null;
   onLoadOlder: () => Promise<void>;
+  /**
+   * Optional slot rendered in the title row's trailing edge, right of
+   * the `<h2>` title (wrapped in `.task-detail__title-actions`). Used by
+   * Schedules-page Mode B to host the compact `← Back · ‹ N/M ›` fire-
+   * navigation pill without consuming extra vertical space. Tasks page
+   * passes `undefined` -- the title row then renders just the heading.
+   *
+   * Presentational slot only: do not pass elements that own data
+   * fetching or URL state. Keep the contents narrow (a single pill or
+   * a small button cluster) so the title can still wrap on narrow
+   * viewports.
+   */
+  headerTrailing?: ReactNode;
 }
 
 type DetailTab = "overview" | "activity" | "artifacts";
@@ -57,16 +70,9 @@ export function TaskView({
   activity,
   activityError,
   onLoadOlder,
+  headerTrailing,
 }: TaskViewProps) {
   const [tab, setTab] = useState<DetailTab>("overview");
-  // F7: header title is clamped to 2 lines; clicking expands to the
-  // full brief. Re-clamp whenever the visible task changes so a long
-  // brief from a previous selection doesn't leak into the next one.
-  const [titleExpanded, setTitleExpanded] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: collapse on task swap; effect re-runs when requestedTaskId changes
-  useEffect(() => {
-    setTitleExpanded(false);
-  }, [requestedTaskId]);
 
   const runtime = task ? readRuntime(task) : null;
   const isRunning = task?.status === "running";
@@ -77,25 +83,10 @@ export function TaskView({
     <>
       <header className="task-detail__head">
         <div className="task-detail__title-row">
-          <button
-            type="button"
-            className={`task-detail__title-btn${titleExpanded ? " task-detail__title-btn--expanded" : ""}`}
-            onClick={() => setTitleExpanded((v) => !v)}
-            aria-expanded={titleExpanded}
-            aria-label={titleExpanded ? "Collapse title" : "Expand title"}
-            title={titleExpanded ? "Collapse" : title}
-          >
-            <h2
-              className={`task-detail__title${
-                titleExpanded ? " task-detail__title--expanded" : " task-detail__title--clamp"
-              }`}
-            >
-              {title}
-            </h2>
-            <span className="task-detail__title-caret" aria-hidden="true">
-              {titleExpanded ? "▾" : "▸"}
-            </span>
-          </button>
+          <h2 className="task-detail__title" title={title}>
+            {title}
+          </h2>
+          {headerTrailing && <div className="task-detail__title-actions">{headerTrailing}</div>}
         </div>
 
         {task && (

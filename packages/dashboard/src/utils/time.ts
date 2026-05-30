@@ -7,24 +7,28 @@
 
 /**
  * Compact relative time string, e.g. `"just now"`, `"4m ago"`,
- * `"3h ago"`, `"2d ago"`. After 30 days falls back to a locale date
- * string (the "this happened a long time ago, exact date matters
- * more than how-long-ago" cutoff). Returns `"—"` for unparseable
- * input, matching the dashboard's "missing field" placeholder.
+ * `"3h ago"`, `"2d ago"` for past timestamps, and `"in 4m"`,
+ * `"in 3h"`, `"in 2d"` for future ones (next-fire previews, etc).
+ * After 30 days falls back to a locale date string (the "this
+ * happened a long time ago, exact date matters more than how-long-
+ * ago" cutoff). Returns `"—"` for unparseable input, matching the
+ * dashboard's "missing field" placeholder.
  */
 export function formatRelative(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
   const diff = Date.now() - t;
-  if (diff < 5_000) return "just now";
-  const sec = Math.round(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
+  if (Math.abs(diff) < 5_000) return "just now";
+  const past = diff > 0;
+  const abs = Math.abs(diff);
+  const sec = Math.round(abs / 1000);
+  if (sec < 60) return past ? `${sec}s ago` : `in ${sec}s`;
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return past ? `${min}m ago` : `in ${min}m`;
   const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return past ? `${hr}h ago` : `in ${hr}h`;
   const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
+  if (d < 30) return past ? `${d}d ago` : `in ${d}d`;
   return new Date(t).toLocaleDateString();
 }
 
@@ -37,6 +41,40 @@ export function formatAbsolute(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   return new Date(t).toLocaleString();
+}
+
+/**
+ * Compact wall-clock format for log-style rows where readers want to
+ * scan "when did this happen". Three regimes:
+ *   - Same calendar day as now → `"HH:mm"` (just the time)
+ *   - Earlier this year       → `"MM-DD HH:mm"` (month-day + time)
+ *   - Earlier years           → `"YYYY-MM-DD HH:mm"` (full ISO-ish date + time)
+ *
+ * Uses local time / 24h zero-padded numerals (deliberately ignores
+ * locale here — the row is monospaced and meant to align across rows,
+ * so we want a fixed-width unambiguous shape regardless of the user's
+ * 12/24-hour preference). The relative-time string (`formatRelative`)
+ * is still surfaced as the `title=` tooltip by the caller for the
+ * "how long ago" reading.
+ */
+export function formatClockTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const d = new Date(t);
+  const now = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return `${hh}:${mm}`;
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  if (d.getFullYear() !== now.getFullYear()) {
+    return `${d.getFullYear()}-${MM}-${DD} ${hh}:${mm}`;
+  }
+  return `${MM}-${DD} ${hh}:${mm}`;
 }
 
 /**
