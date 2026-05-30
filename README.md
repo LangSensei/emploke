@@ -137,7 +137,7 @@ emploke task activity <tid>   # runtime-parsed activity timeline (JSON)
 emploke catalog overview
 emploke catalog skill list
 emploke catalog skill install path/to/skill
-emploke catalog agent install github://org/repo/agents/foo
+emploke catalog agent install https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev
 emploke catalog mcp install <origin> --name namespace/short
 ```
 
