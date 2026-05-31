@@ -27,11 +27,22 @@
  * schedule-package classes first, then task-package classes; both
  * `AgentNotFoundError` rows fire correctly because each row matches
  * only its own class via `instanceof`.
+ *
+ * Both `AgentResolutionFailedError` classes (schedule's own and
+ * task's) are listed:
+ *   - schedule's covers CREATE / PATCH / DELETE paths whose
+ *     agentValidator can surface a catalog system fault.
+ *   - task's covers `POST /:sid/run` which delegates to
+ *     `TaskService.dispatch`; without the task-package entry, a
+ *     task-side resolution fault on schedule-run would fall through
+ *     to 400 'unmapped' instead of the intended 500. Both carry the
+ *     same opaque body builder.
  */
 
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   InvalidCronExprError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
@@ -49,10 +60,16 @@ import {
   ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
   AgentNotFoundError as TaskAgentNotFoundError,
+  AgentResolutionFailedError as TaskAgentResolutionFailedError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
 } from "@emploke/task";
 import type { ErrorPolicy } from "../_respond-error.js";
+
+const opaqueAgentResolutionBody = (_err: Error) => ({
+  error: "internal error",
+  code: "AgentResolutionFailedError",
+});
 
 export const schedulesErrorPolicy: ErrorPolicy = {
   name: "schedules",
@@ -61,6 +78,7 @@ export const schedulesErrorPolicy: ErrorPolicy = {
     [InvalidCronExprError, 400],
     [InvalidTimezoneError, 400],
     [AgentNotFoundError, 400],
+    [AgentResolutionFailedError, 500, opaqueAgentResolutionBody],
     [ScheduleNotFoundError, 404],
     [ScheduleKindMismatchError, 404],
     [ScheduleEnabledError, 409],
@@ -74,6 +92,7 @@ export const schedulesErrorPolicy: ErrorPolicy = {
     [InvalidTaskIdError, 400],
     [TaskNotFoundError, 404],
     [TaskAgentNotFoundError, 400],
+    [TaskAgentResolutionFailedError, 500, opaqueAgentResolutionBody],
     [RuntimeDoesNotSupportTasksError, 400],
     [
       EntryNotReadyError,

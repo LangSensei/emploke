@@ -11,6 +11,14 @@
  * — the dashboard's `formatEntryNotReadyHint` CTA branches on `reason`,
  * so the structured envelope MUST be preserved.
  *
+ * `AgentResolutionFailedError` carries a deliberately opaque
+ * class-stable body — its `cause` may contain DB host paths, stack
+ * frames, or other internals. The real diagnostics land in the
+ * server log via `logFault()`; the wire response is collapsed to
+ * `{ error: "internal error", code: "AgentResolutionFailedError" }`
+ * so dashboards can differentiate it from a generic 500 without
+ * depending on the message.
+ *
  * `InvalidTransition`'s status is here but its body is route-dependent
  * (`{ ..., transition: "cancel" | "delete" }`) and is built per-call
  * via `RespondErrorOpts.customBody`.
@@ -19,6 +27,7 @@
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
@@ -30,12 +39,18 @@ import {
 } from "@emploke/task";
 import type { ErrorPolicy } from "../_respond-error.js";
 
+const opaqueAgentResolutionBody = (_err: Error) => ({
+  error: "internal error",
+  code: "AgentResolutionFailedError",
+});
+
 export const tasksErrorPolicy: ErrorPolicy = {
   name: "tasks",
   statuses: [
     [InvalidTaskIdError, 400],
     [TaskNotFoundError, 404],
     [AgentNotFoundError, 400],
+    [AgentResolutionFailedError, 500, opaqueAgentResolutionBody],
     [RuntimeDoesNotSupportTasksError, 400],
     [
       EntryNotReadyError,
