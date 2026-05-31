@@ -6,6 +6,7 @@ import {
   presetToSinceMs,
   type TimePreset,
 } from "../components/tasks/shared";
+import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
 
 export interface UseTasksOpts {
@@ -55,13 +56,7 @@ export function useTasks({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   const wsTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
@@ -83,18 +78,18 @@ export function useTasks({
       if (runtimeFilter !== ALL_RUNTIMES) opts.runtime = runtimeFilter;
       if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
       const next = await listTasks(opts);
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       if (token !== currentWorkspaceId) return;
       setError(null);
       next.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       setTasks(next);
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       if (token !== currentWorkspaceId) return;
       setError((e as Error).message);
     } finally {
       inFlightRef.current = false;
-      if (mountedRef.current && token === currentWorkspaceId) {
+      if (mounted.current && token === currentWorkspaceId) {
         setLoaded(true);
       }
     }

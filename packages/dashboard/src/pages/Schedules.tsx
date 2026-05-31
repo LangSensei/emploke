@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   deleteSchedule,
@@ -24,6 +24,7 @@ import {
   type EnabledFilter,
   sortByNextFire,
 } from "../components/schedules/shared";
+import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 
 export interface SchedulesPageProps {
@@ -143,13 +144,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     };
   }, []);
 
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   const refresh = useCallback(async () => {
     if (!currentWorkspaceId) {

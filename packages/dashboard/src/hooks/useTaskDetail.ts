@@ -7,6 +7,7 @@ import {
   type TaskActivity,
   type TaskRecord,
 } from "../api";
+import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
 
 export interface TaskDetailData {
@@ -31,13 +32,7 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
   const [activity, setActivity] = useState<TaskActivity | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
   const taskTokenRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   // Monotonic request id — incremented on every refresh() call. The
@@ -71,12 +66,12 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
           : undefined;
       await Promise.all([
         getTask(taskId).then((t) => {
-          if (!mountedRef.current || seq !== requestSeqRef.current) return;
+          if (!mounted.current || seq !== requestSeqRef.current) return;
           setTask(t);
         }),
         fetchTaskActivity(taskId, lastSeq !== undefined ? { after: lastSeq } : { limit: 50 })
           .then((a) => {
-            if (!mountedRef.current || seq !== requestSeqRef.current) return;
+            if (!mounted.current || seq !== requestSeqRef.current) return;
             if (a === null) {
               setActivity(null);
               setActivityError(null);
@@ -90,12 +85,12 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
             setActivityError(null);
           })
           .catch((e) => {
-            if (!mountedRef.current || seq !== requestSeqRef.current) return;
+            if (!mounted.current || seq !== requestSeqRef.current) return;
             setActivityError((e as Error).message);
           }),
       ]);
     } catch (e) {
-      if (!mountedRef.current || seq !== requestSeqRef.current) return;
+      if (!mounted.current || seq !== requestSeqRef.current) return;
       setTask(null);
       setActivityError((e as Error).message);
     } finally {
@@ -116,11 +111,11 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
     loadingOlderRef.current = true;
     try {
       const next = await fetchTaskActivity(taskId, { before: oldestSeq, limit: 50 });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       if (next === null) return;
       setActivity((prev) => mergePrev(prev, next));
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setActivityError((e as Error).message);
     } finally {
       loadingOlderRef.current = false;
@@ -148,7 +143,7 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
     if (!taskId || !pollEnabled) return;
     const handle = subscribeTaskActivity(taskId, {
       onItem: (item) => {
-        if (!mountedRef.current) return;
+        if (!mounted.current) return;
         setActivity((prev) => mergeStreamItem(prev, item));
       },
       onError: (err) => {

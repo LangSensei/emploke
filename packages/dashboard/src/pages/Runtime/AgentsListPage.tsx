@@ -6,6 +6,7 @@ import { AgentAvatar } from "../../components/agents/AgentAvatar";
 import { AgentFqn } from "../../components/agents/AgentFqn";
 import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
 import { useClickOutside } from "../../hooks/useClickOutside";
+import { useMounted } from "../../hooks/useMounted";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
 import { splitFqnForDisplay } from "../../utils/fqn";
@@ -86,13 +87,7 @@ export function AgentsListPage() {
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionView[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   useBreadcrumb("Runtime", ["Runtime", "Agents"]);
 
@@ -127,11 +122,11 @@ export function AgentsListPage() {
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     try {
       const next = await listTasks({ createdSince: since });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setTasks(next);
       setTasksError(null);
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setTasksError(e instanceof Error ? e.message : String(e));
       setTasks((prev) => (prev === null ? [] : prev));
     }
@@ -224,7 +219,7 @@ export function AgentsListPage() {
     if (effectiveSelectedFqn === null) return;
     try {
       const s = await listSessions({ agent: effectiveSelectedFqn });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       s.sort((a, b) => {
         const al = a.lastActiveAt ?? a.createdAt;
         const bl = b.lastActiveAt ?? b.createdAt;
@@ -233,7 +228,7 @@ export function AgentsListPage() {
       setSessions(s);
       setSessionsError(null);
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setSessionsError(e instanceof Error ? e.message : String(e));
       setSessions((prev) => (prev === null ? [] : prev));
     }
