@@ -9,7 +9,7 @@ dependency edge tables.
 
 What this package **does**:
 
-- Read `AGENTS.md` / `SKILL.md` frontmatter and project five fields:
+- Read `AGENTS.md` / `SKILL.md` frontmatter and project six fields:
   required `name` / `description` / `version`, optional `scope`
   (defaults to `public`), optional `prereqs`, optional
   `dependencies.{skills,mcps}`. Other frontmatter fields

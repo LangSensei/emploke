@@ -109,18 +109,6 @@ function blockedSummaryTooltip(reason: BlockedReason | undefined): string {
   return lines.join("\n");
 }
 
-/**
- * Phase G2 (TN-B F1-4): the EntryGrid split helper that lived here
- * was one of 5 incompatible reinventions of `splitFqn`. It now lives
- * in `utils/fqn.ts` as `splitFqnForDisplay`, which delegates its
- * boundary semantics to `@emploke/catalog`'s canonical `splitFqn`
- * (indexOf, exactly one `/`). The trailing-slash gluing the old
- * local helper did (`"a/b/"`) is intentionally not preserved — the
- * namespace cell now carries `<scope>/` for normal single-slash
- * FQNs and renders empty when scope is absent, so the existing
- * row-height contract still holds.
- */
-
 function EntryCard({
   kind,
   item,

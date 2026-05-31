@@ -1,4 +1,5 @@
 import { cleanup, render } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useMounted } from "../../src/hooks/useMounted";
 
@@ -32,16 +33,26 @@ describe("useMounted", () => {
     expect(captured?.current).toBe(false);
   });
 
-  it("re-initialises to true if the same ref is observed across two mount cycles", () => {
-    // Lock-in for the StrictMode-safe form: a fresh mount of the same
-    // component class invokes the effect again, which must set current
-    // back to true even if a prior cleanup left it false. Tests the
-    // exact bug the in-effect re-init defends against.
+  it("re-initialises to true under React StrictMode's mount→cleanup→mount double-invoke", () => {
+    // Load-bearing guard for the in-effect `mountedRef.current = true`
+    // line in `useMounted.ts`. React's dev-mode StrictMode runs the
+    // useEffect cycle mount → cleanup → mount on the SAME component
+    // instance, reusing the same ref object across the cycle. Without
+    // the in-effect re-init, the first pass's cleanup leaves the ref
+    // at false and the second mount never resets it, breaking every
+    // post-await `if (!mounted.current) return;` guard in the app.
+    //
+    // Two independent render() calls cannot reproduce this (each gets
+    // a freshly-initialised useRef(true) ref). Wrapping the probe in
+    // <StrictMode> is what actually exercises the dev double-invoke,
+    // so this assertion fails iff the load-bearing line is removed.
     let captured: { current: boolean | null } | null = null;
-    const first = render(<Probe capture={(ref) => (captured = ref)} />);
-    first.unmount();
-    expect(captured?.current).toBe(false);
-    render(<Probe capture={(ref) => (captured = ref)} />);
+    render(
+      <StrictMode>
+        <Probe capture={(ref) => (captured = ref)} />
+      </StrictMode>,
+    );
+    expect(captured).not.toBeNull();
     expect(captured?.current).toBe(true);
   });
 });
