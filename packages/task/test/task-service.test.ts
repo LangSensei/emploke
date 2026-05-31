@@ -696,6 +696,28 @@ describe("dispatch — error paths", () => {
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
+  it("re-throws a foreign AgentNotFoundError (matched by name) without re-wrapping it", async () => {
+    // Simulates a sibling `AgentNotFoundError` thrown from `@emploke/schedule`
+    // or `@emploke/session`: same constructor name, but not an instance of
+    // the task-package class. The dispatch guard must match by name string
+    // so the typed boundary survives across packages (TODO(#tier-b): hoist
+    // AgentNotFoundError to @emploke/catalog so the name guard isn't needed).
+    const foreign = new Error("agent not found in schedule package");
+    foreign.name = "AgentNotFoundError";
+    const { m } = await makeManager({
+      catalog: stubCatalog({ resolveError: foreign }),
+    });
+    const err = await m.dispatch(dispatchOf()).then(
+      () => null,
+      (e) => e,
+    );
+    // Original foreign error surfaces unchanged — not wrapped in the
+    // task-package AgentNotFoundError.
+    expect(err).toBe(foreign);
+    expect((err as Error).name).toBe("AgentNotFoundError");
+    expect(err instanceof AgentNotFoundError).toBe(false);
+  });
+
   it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatch", async () => {
     const rt = new StubRuntime();
     rt.dispatchSupported = false;
