@@ -58,14 +58,6 @@ export function agentDetailUrl(wsId: string, scope: string, short: string): stri
   return `/workspaces/${encodeURIComponent(wsId)}/runtime/agents?selected=${encodeURIComponent(fqn)}`;
 }
 
-/**
- * Phase G2 (TN-B F1-4): `splitFqn` used to live here as a fourth
- * dashboard-side reinvention. The canonical helper lives at
- * `src/utils/fqn.ts` (strict variant delegates to `@emploke/catalog`'s
- * `splitFqn`; the display variant has the never-throw fallback).
- * Callers import from there directly.
- */
-
 interface StatusPillProps {
   status: AgentRuntimeStatus;
 }
@@ -78,19 +70,3 @@ export function AgentStatusPill({ status }: StatusPillProps) {
     </span>
   );
 }
-
-/**
- * Phase 1.5 §3.4 / Block I — the per-agent SubTabBar (Overview / Sessions
- * / Tasks) is replaced by a single Overview view. The companion
- * Sessions/Tasks pages with `?agent=<fqn>` carry the per-agent shortcut
- * via the Overview "View all" links; the SubTabBar export was removed to
- * eliminate dead chrome.
- *
- * PR #189 polish v3 — the avatar helpers that lived here
- * (`avatarColorFor`, `avatarInitialsFor`) were retired in favour of the
- * shared {@link components/agents/AgentAvatar} component. The new
- * primitive's contract differs (8-colour hex palette, full-FQN hash,
- * monogram rule documented inline), so it's not a like-for-like move;
- * callers migrate by replacing inline `<div .agent-detail__avatar>`
- * markup with `<AgentAvatar fqn={fqn} label={short} size="…" />`.
- */
