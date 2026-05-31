@@ -16,6 +16,7 @@
  */
 
 import {
+  AgentNotFoundError,
   InvalidCronExprError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
@@ -27,6 +28,11 @@ import {
   ScheduleNotFoundError,
   type ScheduleService,
 } from "@emploke/schedule";
+import {
+  EntryNotReadyError,
+  ManagerShuttingDownError,
+  AgentNotFoundError as TaskAgentNotFoundError,
+} from "@emploke/task";
 import { describe, expect, it, vi } from "vitest";
 import { schedulesRoutes } from "../src/routes/schedules.js";
 
@@ -347,6 +353,30 @@ describe("schedulesRoutes — create", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("InvalidTimezoneError");
   });
+
+  it("POST /task maps schedule.AgentNotFoundError → 400 with typed code", async () => {
+    // schedule-package `AgentNotFoundError` (declared in
+    // `packages/schedule/src/errors.ts`) is caller-fixable input —
+    // the user pointed at a non-existent agent. Mirrors how the
+    // task-package class of the same name is mapped via
+    // `statusForError` in `_shared.ts`. Pre-PR this was 404; the
+    // brief calls this a user-visible behavior change.
+    const createTask = vi.fn(async () => {
+      throw new AgentNotFoundError("ghost-agent");
+    });
+    const svc = stubService({ createTask });
+    const res = await schedulesRoutes(() => svc).request("/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "x",
+        target: { agent: "ghost-agent", brief: "ok" },
+        trigger: sampleSchedule.trigger,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("AgentNotFoundError");
+  });
 });
 
 describe("schedulesRoutes — get", () => {
@@ -455,6 +485,23 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("InvalidCronExprError");
+  });
+
+  it("PATCH /task/:sid maps schedule.AgentNotFoundError → 400 with typed code", async () => {
+    // Mirrors the POST counterpart — schedule-package
+    // `AgentNotFoundError` is caller-fixable input (target.agent
+    // doesn't exist in the catalog), so 400, not 404.
+    const patchTask = vi.fn(async () => {
+      throw new AgentNotFoundError("ghost-agent");
+    });
+    const svc = stubService({ patchTask });
+    const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: { agent: "ghost-agent" } }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("AgentNotFoundError");
   });
 
   it("PATCH /task/:sid rejects target.kind in body (URL discriminates)", async () => {
@@ -719,6 +766,49 @@ describe("schedulesRoutes — run", () => {
     const res = await schedulesRoutes(() => svc).request("/ghost/run", { method: "POST" });
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBe("ScheduleNotFoundError");
+  });
+
+  it("POST /:sid/run on task.EntryNotReadyError → 409 with typed code", async () => {
+    // Inner `TaskService.dispatch` (called transitively by
+    // `ScheduleService.run`) throws when the target agent is
+    // `blocked`. Per ADR-001 this is a 409 — the dashboard's
+    // `formatEntryNotReadyHint` CTA keys off the 409 body, so a
+    // collapse to 400 would silently disable that affordance.
+    const run = vi.fn(async () => {
+      throw new EntryNotReadyError("writer", undefined);
+    });
+    const svc = stubService({ run });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/run", { method: "POST" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("EntryNotReadyError");
+  });
+
+  it("POST /:sid/run on task.ManagerShuttingDownError → 503 with typed code", async () => {
+    // ADR-001: dispatch refuses during graceful shutdown so the
+    // caller can show a "server restarting" toast and retry. Before
+    // the fall-through to `statusForError` landed, this leaked as a
+    // 400 and lied about the cause.
+    const run = vi.fn(async () => {
+      throw new ManagerShuttingDownError();
+    });
+    const svc = stubService({ run });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/run", { method: "POST" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("ManagerShuttingDownError");
+  });
+
+  it("POST /:sid/run on task.AgentNotFoundError → 400 with typed code", async () => {
+    // Distinct class from `@emploke/schedule`'s `AgentNotFoundError`
+    // (same `name`, different `instanceof`). Pinned separately so a
+    // future refactor that confuses the two cannot silently regress
+    // either mapping.
+    const run = vi.fn(async () => {
+      throw new TaskAgentNotFoundError("ghost-agent");
+    });
+    const svc = stubService({ run });
+    const res = await schedulesRoutes(() => svc).request("/sched-abc/run", { method: "POST" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("AgentNotFoundError");
   });
 });
 
