@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { splitFqnForDisplay } from "../../utils/fqn";
 
 /**
  * Shared `scope/short` two-tone display primitive.
@@ -37,29 +38,15 @@ export interface AgentFqnProps {
   as?: "span" | "div";
 }
 
-/**
- * Split an FQN into its `[scope, short]` halves. Mirrors the behaviour
- * of `splitFqn` in `pages/Runtime/agentRuntime.tsx` but inlined here so
- * the component has no upward import from `pages/`. Falls back to
- * `["", fqn]` for malformed input so we still render something.
- */
-function splitForDisplay(fqn: string): [string, string] {
-  const ix = fqn.indexOf("/");
-  if (ix <= 0) return ["", fqn];
-  // Multi-slash payloads keep the first slash as the boundary so the
-  // scope is the leading segment and the short collects the rest.
-  return [fqn.slice(0, ix), fqn.slice(ix + 1)];
-}
-
 export function AgentFqn({ fqn, truncateScope = true, as = "span" }: AgentFqnProps): ReactElement {
-  const [scope, short] = splitForDisplay(fqn);
+  const { scope, shortName } = splitFqnForDisplay(fqn);
   const className = `agent-fqn${truncateScope ? " agent-fqn--truncate-scope" : ""}`;
   const Tag = as;
   return (
     <Tag className={className} title={fqn} data-testid={`agent-fqn-${fqn}`}>
       <span className="agent-fqn__scope">{scope}</span>
       <span className="agent-fqn__sep">/</span>
-      <span className="agent-fqn__short">{short}</span>
+      <span className="agent-fqn__short">{shortName}</span>
     </Tag>
   );
 }

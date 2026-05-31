@@ -59,15 +59,12 @@ export function agentDetailUrl(wsId: string, scope: string, short: string): stri
 }
 
 /**
- * Split an agent fqn (`scope/short`) into its two parts. Returns null
- * for malformed input (no slash, or extra slashes) so callers can
- * decide whether to render an "unknown agent" placeholder.
+ * Phase G2 (TN-B F1-4): `splitFqn` used to live here as a fourth
+ * dashboard-side reinvention. The canonical helper lives at
+ * `src/utils/fqn.ts` (strict variant delegates to `@emploke/catalog`'s
+ * `splitFqn`; the display variant has the never-throw fallback).
+ * Callers import from there directly.
  */
-export function splitFqn(fqn: string): { scope: string; short: string } | null {
-  const ix = fqn.indexOf("/");
-  if (ix <= 0 || ix !== fqn.lastIndexOf("/")) return null;
-  return { scope: fqn.slice(0, ix), short: fqn.slice(ix + 1) };
-}
 
 interface StatusPillProps {
   status: AgentRuntimeStatus;

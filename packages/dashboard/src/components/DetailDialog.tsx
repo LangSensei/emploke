@@ -19,6 +19,7 @@ import {
   type SkillDetail,
 } from "../api";
 import { type EntityKind, KIND_ICON, KIND_TAG, KIND_TITLE } from "../kindMeta";
+import { splitFqnForDisplay } from "../utils/fqn";
 import { Modal } from "./Modal";
 import { ResolveTree } from "./ResolveTree";
 
@@ -382,7 +383,7 @@ interface DetailHeroProps {
  * namespace breadcrumb beneath, and a status pill on the right.
  */
 function DetailHero({ target, detail, hideStatus }: DetailHeroProps) {
-  const { namespace, short } = splitFqn(target.name);
+  const { scope, shortName } = splitFqnForDisplay(target.name);
   return (
     <div className="detail-hero">
       <span className="detail-hero__icon" aria-hidden="true">
@@ -391,7 +392,7 @@ function DetailHero({ target, detail, hideStatus }: DetailHeroProps) {
       <div className="detail-hero__text">
         <div className="detail-hero__kind">{KIND_TAG[target.kind]}</div>
         <div className="detail-hero__title">
-          <span className="detail-hero__name">{short}</span>
+          <span className="detail-hero__name">{shortName}</span>
           {!hideStatus && (
             <span
               className={`detail-hero__status detail-hero__status--${detail.status}`}
@@ -410,7 +411,7 @@ function DetailHero({ target, detail, hideStatus }: DetailHeroProps) {
             </span>
           )}
         </div>
-        {namespace && <div className="detail-hero__namespace">{namespace}</div>}
+        {scope && <div className="detail-hero__namespace">{scope}</div>}
       </div>
     </div>
   );
@@ -561,18 +562,6 @@ function hrefForOrigin(origin: string): string {
   // npm:/oci:) goes through href="#" so the link is informational.
   if (origin.startsWith("https://") || origin.startsWith("http://")) return origin;
   return "#";
-}
-
-/**
- * Split a fqn like `langsensei/emploke-dev` into namespace + short
- * name so the hero can render them on two visually distinct lines.
- * Unscoped entries (no slash) return `namespace = ""` — caller hides
- * the second line.
- */
-function splitFqn(fqn: string): { namespace: string; short: string } {
-  const slash = fqn.lastIndexOf("/");
-  if (slash <= 0) return { namespace: "", short: fqn };
-  return { namespace: fqn.slice(0, slash), short: fqn.slice(slash + 1) };
 }
 
 function projectSkill(d: SkillDetail): LoadedDetail {

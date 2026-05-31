@@ -1,6 +1,7 @@
 import type { BlockedReason, MissingDep } from "@emploke/catalog";
 import type { ReactNode } from "react";
 import { type EntityKind, KIND_ICON, KIND_TAG } from "../kindMeta";
+import { splitFqnForDisplay } from "../utils/fqn";
 import { TrashIcon } from "./Icons";
 
 export interface EntryCardItem {
@@ -109,14 +110,16 @@ function blockedSummaryTooltip(reason: BlockedReason | undefined): string {
 }
 
 /**
- * Split `<scope>/<short>` into namespace prefix + bold short name.
- * Names without `/` (legacy / unscoped) render entirely as short.
+ * Phase G2 (TN-B F1-4): the EntryGrid split helper that lived here
+ * was one of 5 incompatible reinventions of `splitFqn`. It now lives
+ * in `utils/fqn.ts` as `splitFqnForDisplay`, which delegates its
+ * boundary semantics to `@emploke/catalog`'s canonical `splitFqn`
+ * (indexOf, exactly one `/`). The trailing-slash gluing the old
+ * local helper did (`"a/b/"`) is intentionally not preserved — the
+ * namespace cell now carries `<scope>/` for normal single-slash
+ * FQNs and renders empty when scope is absent, so the existing
+ * row-height contract still holds.
  */
-function splitFqn(fqn: string): { namespace: string; short: string } {
-  const slash = fqn.lastIndexOf("/");
-  if (slash < 0) return { namespace: "", short: fqn };
-  return { namespace: fqn.slice(0, slash + 1), short: fqn.slice(slash + 1) };
-}
 
 function EntryCard({
   kind,
@@ -131,7 +134,7 @@ function EntryCard({
 }) {
   const isBlocked = item.status === "blocked";
   const summary = isBlocked ? blockedSummary(item.blockedReason) : null;
-  const { namespace, short } = splitFqn(item.name);
+  const { scope, shortName } = splitFqnForDisplay(item.name);
   const showVersion = item.version !== "";
   // mcp callers pass negative counts to opt out of the meta chips
   // (mcps have no deps). agents/skills always show counts including 0.
@@ -174,9 +177,11 @@ function EntryCard({
       <div className="card-grid__title" title={item.name}>
         {/* Namespace row is always rendered (empty span when absent)
          * so cards with and without a `<scope>/` prefix line up to
-         * the same total height across the grid. */}
-        <span className="card-grid__namespace">{namespace}</span>
-        <span className="card-grid__short">{short}</span>
+         * the same total height across the grid. The trailing `/` is
+         * appended here in the render path so the consolidated
+         * `splitFqnForDisplay` stays slash-free (see utils/fqn.ts). */}
+        <span className="card-grid__namespace">{scope === "" ? "" : `${scope}/`}</span>
+        <span className="card-grid__short">{shortName}</span>
       </div>
       {/* Description block reserves its 2-line min-height even when
        * empty (mcp cards) so the footer stays at the same y-offset. */}

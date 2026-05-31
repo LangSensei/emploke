@@ -8,12 +8,12 @@ import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShel
 import { useClickOutside } from "../../hooks/useClickOutside";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
+import { splitFqnForDisplay } from "../../utils/fqn";
 import { AgentDetailPane } from "./AgentDetailPane";
 import {
   type AgentRuntimeView,
   AgentStatusPill,
   computeAgentRuntimeViews,
-  splitFqn,
 } from "./agentRuntime";
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
@@ -171,8 +171,8 @@ export function AgentsListPage() {
       if (listFilter === "active" && v.runningTasks <= 0) return false;
       if (listFilter === "idle" && v.runningTasks > 0) return false;
       if (q !== "") {
-        const [scope, short] = splitForDisplay(v.entry.agent.fqn);
-        const haystack = `${short} ${scope} ${v.entry.agent.fqn}`.toLowerCase();
+        const { scope, shortName } = splitFqnForDisplay(v.entry.agent.fqn);
+        const haystack = `${shortName} ${scope} ${v.entry.agent.fqn}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -467,7 +467,7 @@ interface AgentRowProps {
  */
 function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
   const { agent } = view.entry;
-  const [, short] = splitForDisplay(agent.fqn);
+  const { shortName } = splitFqnForDisplay(agent.fqn);
   return (
     <li
       className={`agents-list__item${selected ? " agents-list__item--selected" : ""}`}
@@ -485,7 +485,7 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
       aria-current={selected ? "true" : undefined}
       data-testid={`agent-row-${agent.fqn}`}
     >
-      <AgentAvatar fqn={agent.fqn} label={short} size="md" />
+      <AgentAvatar fqn={agent.fqn} label={shortName} size="md" />
       <div className="agents-list__identity">
         <AgentFqn fqn={agent.fqn} />
         <span className="agents-list__subline muted">v{agent.version}</span>
@@ -512,14 +512,6 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
       </div>
     </li>
   );
-}
-
-function splitForDisplay(fqn: string): [string, string] {
-  const parts = splitFqn(fqn);
-  if (parts !== null) return [parts.scope, parts.short];
-  const ix = fqn.indexOf("/");
-  if (ix <= 0) return ["", fqn];
-  return [fqn.slice(0, ix), fqn.slice(ix + 1)];
 }
 
 interface AgentsFilterMenuProps {
