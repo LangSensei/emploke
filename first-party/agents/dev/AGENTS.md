@@ -42,7 +42,7 @@ Development and maintenance of the [emploke](https://github.com/LangSensei/emplo
 
 ### Setup
 
-1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory (see issue #7).
+1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory.
 2. Set up worktree using git-pr skill: bare clone to `$(repos_dir)/emploke/`, worktree into `repo/`
 3. Repository: `https://github.com/LangSensei/emploke`
 4. For emploke-marketplace tasks: bare clone to `$(repos_dir)/emploke-marketplace/`, worktree into `repo/`
