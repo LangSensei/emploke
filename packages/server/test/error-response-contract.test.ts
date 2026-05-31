@@ -47,6 +47,7 @@ import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
 import { schedulesRoutes } from "../src/routes/schedules.js";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 import { tasksRoutes } from "../src/routes/tasks.js";
+import { workspacesRoutes } from "../src/routes/workspaces.js";
 import { captureLogger } from "./_capture-logger.js";
 
 const sampleTask: Task = {
@@ -230,6 +231,42 @@ describe("respondError contract — unmapped-fault observability gap-closes", ()
     const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
     expect(fault).toBeDefined();
     expect(fault?.msg).toBe("sessions.list: unmapped error fell through to 400");
+  });
+
+  it("workspaces route unmapped error → 400 + structured log line", async () => {
+    // Mirrors the sessions POST-path unmapped test above for the
+    // workspaces domain. PR #241 left workspaces.ts behind on the
+    // unmapped-fault log seam alongside sessions.ts; PR-G2a closed
+    // both. The earlier revision of this file only pinned the
+    // sessions side of that gap-close — without a workspaces twin, a
+    // future regression that silently drops the log line from a
+    // workspaces route would slip past the contract suite (which is
+    // exactly the half-completion PR #241 left for G2a to repair).
+    const registerWorkspace = vi.fn(async () => {
+      throw new Error("ENOSPC: workspace dir mkdir failed");
+    });
+    const workspacesCtx = {
+      workspaceService: {} as never,
+      registerWorkspace,
+    };
+    const { app, cap } = await buildAppWithLogger((a) => {
+      a.route("/", workspacesRoutes(workspacesCtx as never));
+    });
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "demo" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("internal error");
+
+    const fault = cap.entries.find((e) => e.msg?.includes("unmapped"));
+    expect(fault).toBeDefined();
+    expect(fault?.level).toBe(50);
+    expect(fault?.msg).toBe("workspaces.create: unmapped error fell through to 400");
+    expect(fault?.name).toBe("Error");
+    expect(fault?.message).toContain("ENOSPC");
   });
 
   it("scheduled-tasks unmapped error → 400 + log line (sanity check)", async () => {
