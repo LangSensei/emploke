@@ -8,6 +8,7 @@ import {
 } from "../components/tasks/shared";
 import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
+import { errorMessage } from "../utils/errors";
 
 export interface UseTasksOpts {
   currentWorkspaceId: string | null;
@@ -86,7 +87,7 @@ export function useTasks({
     } catch (e) {
       if (!mounted.current) return;
       if (token !== currentWorkspaceId) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       inFlightRef.current = false;
       if (mounted.current && token === currentWorkspaceId) {

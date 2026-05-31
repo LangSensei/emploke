@@ -22,6 +22,7 @@ import { type EntityKind, KIND_ICON, KIND_TAG, KIND_TITLE } from "../kindMeta";
 import { splitFqnForDisplay } from "../utils/fqn";
 import { Modal } from "./Modal";
 import { ResolveTree } from "./ResolveTree";
+import { errorMessage } from "../utils/errors";
 
 /**
  * Read-only detail view for an installed catalog entry.
@@ -116,7 +117,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
     };
     load()
       .catch((e) => {
-        if (!cancelled) setError((e as Error).message);
+        if (!cancelled) setError(errorMessage(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -139,7 +140,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
       setSyncManifest(manifest);
       setSyncStage("preview");
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
       setSyncStage("idle");
     }
   };
@@ -168,7 +169,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
       else await applyMcpSync(target.name, planToken);
       onSynced();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
       setSyncStage("preview");
     }
   };
@@ -182,7 +183,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
       else await acknowledgeAgentPrereqs(target.name);
       onSynced();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setActionBusy(false);
     }
@@ -197,7 +198,7 @@ export function DetailDialog({ target, onClose, onSynced }: DetailDialogProps) {
       else await disableAgent(target.name);
       onSynced();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setActionBusy(false);
     }

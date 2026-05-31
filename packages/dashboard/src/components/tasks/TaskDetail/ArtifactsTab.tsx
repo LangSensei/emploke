@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type TaskRecord, taskArtifactUrl } from "../../../api";
 import { FileViewer } from "../../viewers/FileViewer";
 import { viewerNeedsBlob } from "../../viewers/index";
+import { isAbortError } from "../../../utils/errors";
 
 export interface ArtifactsTabProps {
   task: TaskRecord;
@@ -98,7 +99,7 @@ export function ArtifactsTab({ task }: ArtifactsTabProps) {
           setFetchState({ status: "loaded", content: text, size: text.length });
         }
       } catch (err) {
-        if ((err as { name?: string } | null)?.name === "AbortError") return;
+        if (isAbortError(err)) return;
         setFetchState({
           status: "error",
           message: err instanceof Error ? err.message : "Failed to load artifact",

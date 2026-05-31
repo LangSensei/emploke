@@ -12,6 +12,7 @@ import { Modal } from "../Modal";
 import { type Preset, presetToCron, validatePreset } from "./cronPresets";
 import { PresetEditor } from "./PresetEditor";
 import { buildTimezoneOptions } from "./scheduleFormShared";
+import { errorMessage, isAbortError } from "../../utils/errors";
 
 export interface EditScheduleModalProps {
   open: boolean;
@@ -141,10 +142,10 @@ export function EditScheduleModal({
           setPreviewError(null);
         })
         .catch((e: unknown) => {
-          if ((e as { name?: string }).name === "AbortError") return;
+          if (isAbortError(e)) return;
           if (ctrl.signal.aborted) return;
           setPreview(null);
-          setPreviewError((e as Error).message);
+          setPreviewError(errorMessage(e));
         })
         .finally(() => {
           if (!ctrl.signal.aborted) setPreviewLoading(false);
@@ -212,7 +213,7 @@ export function EditScheduleModal({
       onPatched(merged);
       onClose();
     } catch (err) {
-      setSubmitError((err as Error).message);
+      setSubmitError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }

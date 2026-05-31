@@ -11,6 +11,7 @@ import {
 import { useMounted } from "../../hooks/useMounted";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { ScheduleRecentFires } from "./ScheduleRecentFires";
+import { errorMessage } from "../../utils/errors";
 
 export interface ScheduleDetailProps {
   scheduleId: string;
@@ -91,7 +92,7 @@ export function ScheduleDetail({
       },
       (e: unknown) => {
         if (cancelled) return;
-        setError((e as Error).message);
+        setError(errorMessage(e));
       },
     );
     return () => {
@@ -127,7 +128,7 @@ export function ScheduleDetail({
     } catch (e) {
       if (!mounted.current) return;
       setDetail(previous);
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }
@@ -146,7 +147,7 @@ export function ScheduleDetail({
       );
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }

@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { listScheduledTasks, type TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
 import { TaskView } from "../task-view";
+import { errorMessage } from "../../utils/errors";
 
 export interface FireTaskDetailPaneProps {
   /** Schedule whose recent-fires list owns the navigation set. */
@@ -80,7 +81,7 @@ export function FireTaskDetailPane({
       })
       .catch((e) => {
         if (localCancelled || cancelledRef.current) return;
-        setError((e as Error).message);
+        setError(errorMessage(e));
         setRows([]);
       });
     return () => {

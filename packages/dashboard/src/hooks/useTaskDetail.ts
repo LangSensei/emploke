@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
+import { errorMessage } from "../utils/errors";
 
 export interface TaskDetailData {
   task: TaskRecord | null;
@@ -86,13 +87,13 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
           })
           .catch((e) => {
             if (!mounted.current || seq !== requestSeqRef.current) return;
-            setActivityError((e as Error).message);
+            setActivityError(errorMessage(e));
           }),
       ]);
     } catch (e) {
       if (!mounted.current || seq !== requestSeqRef.current) return;
       setTask(null);
-      setActivityError((e as Error).message);
+      setActivityError(errorMessage(e));
     } finally {
       // Only clear inFlight if WE are still the latest request; a newer
       // task switch may have already started another fetch that owns
@@ -116,7 +117,7 @@ export function useTaskDetail(taskId: string | null, pollIntervalMs: number): Ta
       setActivity((prev) => mergePrev(prev, next));
     } catch (e) {
       if (!mounted.current) return;
-      setActivityError((e as Error).message);
+      setActivityError(errorMessage(e));
     } finally {
       loadingOlderRef.current = false;
     }

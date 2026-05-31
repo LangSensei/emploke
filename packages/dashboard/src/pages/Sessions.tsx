@@ -28,6 +28,7 @@ import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
 import { formatRelative } from "../utils/time";
+import { errorMessage } from "../utils/errors";
 
 interface SessionsProps {
   agents: AgentEntry[];
@@ -193,7 +194,7 @@ export function SessionsPage({
       setSessions(next);
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) {
         setLoaded(true);
@@ -258,7 +259,7 @@ export function SessionsPage({
       await refresh();
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -290,7 +291,7 @@ export function SessionsPage({
       }
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setLaunchingId(null);
     }
@@ -307,7 +308,7 @@ export function SessionsPage({
       await refresh();
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusy(false);
     }

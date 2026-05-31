@@ -50,6 +50,7 @@ import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
 import { startClockSync } from "./serverClock";
 import { formatRelative } from "./utils/time";
+import { errorMessage } from "./utils/errors";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },
@@ -166,7 +167,7 @@ function LandingPage() {
       setWorkspaces(list);
       setRecent(sc.id);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
       setWorkspaces([]);
     }
   }, []);
@@ -371,7 +372,7 @@ function AddWorkspaceModal({ open, onClose, onCreated }: AddWorkspaceModalProps)
       });
       onCreated(created.id);
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -463,7 +464,7 @@ function RemoveWorkspaceModal({ target, onClose, onRemoved }: RemoveWorkspaceMod
       await removeWorkspace(target.id);
       await onRemoved();
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
       setBusy(false);
     }
   };
@@ -654,7 +655,7 @@ function WorkspaceShell() {
       const list = await listWorkspaces();
       setWorkspaces(list);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
       setWorkspaces([]);
     }
   }, []);
@@ -665,7 +666,7 @@ function WorkspaceShell() {
       const next = await fetchAll();
       setData(next);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     }
   }, []);
 
