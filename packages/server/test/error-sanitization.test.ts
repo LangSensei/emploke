@@ -5,6 +5,7 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
   CyclicDependencyError,
+  FetchError,
   HasDependentsError,
   ImmutableOriginError,
   McpInvalidJsonError,
@@ -25,7 +26,8 @@ import {
   RuntimeStateDeletionFailed,
 } from "@emploke/runtime";
 import { describe, expect, it } from "vitest";
-import { errorBody, statusForCatalogError } from "../src/routes/_shared.js";
+import { catalogErrorPolicy } from "../src/routes/_error-policies/catalog.js";
+import { errorBody } from "../src/routes/_shared.js";
 
 // These tests pin the security-critical behavior of `errorBody`: only
 // emploke's own typed errors leak their `.message` to the client. Any
@@ -33,12 +35,27 @@ import { errorBody, statusForCatalogError } from "../src/routes/_shared.js";
 // flattens to the opaque "internal error" so host paths and stack
 // traces never reach the dashboard.
 //
-// The `statusForCatalogError` block below MUST instantiate REAL catalog
-// errors (not `new Error(); err.name = "..."`). The catalog's abstract
-// base class sets `this.name = new.target.name`, so an instance carries
-// `.name === "SkillNotFoundError"` not `"NotFound"`. Earlier versions
-// of this suite faked the name and silently passed while production
-// fell through every case to 500 — see #52 review.
+// The catalog-policy status block below MUST instantiate REAL catalog
+// errors (not `new Error(); err.name = "..."`). PR-G2a replaced the
+// pre-existing `statusForCatalogError` name-string switch with the
+// instanceof-based `catalogErrorPolicy`, so faking `err.name` will no
+// longer match — every faked-name test now correctly falls through to
+// null, exactly the property the original test was guarding against.
+
+/**
+ * Walks `catalogErrorPolicy.statuses` like respondError does, returning
+ * the first matching status or `null` if no entry matches. Used here
+ * to keep the pre-refactor `statusForCatalogError(err)` test surface
+ * working against the new policy data without coupling the tests to
+ * the full respondError + Hono mount.
+ */
+function catalogPolicyStatus(err: unknown): number | null {
+  if (!(err instanceof Error)) return null;
+  for (const [klass, status] of catalogErrorPolicy.statuses) {
+    if (err instanceof klass) return status;
+  }
+  return null;
+}
 
 describe("errorBody", () => {
   it("exposes message + code for known typed catalog errors", () => {
@@ -148,12 +165,12 @@ describe("errorBody", () => {
   });
 });
 
-describe("statusForCatalogError", () => {
-  // Real instances only — mapping must work against `err.name` as set by
-  // the catalog's abstract base class (`this.name = new.target.name`).
-  // Tests that fake `err.name` would silently pass while production fell
-  // through every case to 500 — that's exactly the regression this suite
-  // is here to catch.
+describe("catalogErrorPolicy mapping (replacement for statusForCatalogError)", () => {
+  // Real instances only — mapping must work against `instanceof`
+  // checks against the catalog-package classes. PR-G2a switched the
+  // name-string switch to per-class instanceof entries so adding a
+  // new typed error class becomes a TypeScript-visible change (the
+  // policy file's imports won't compile against a missing class).
   const cases: Array<[label: string, err: Error, status: number]> = [
     ["SkillNameInvalidError", new SkillNameInvalidError("bad", "must be kebab"), 400],
     ["AgentNameInvalidError", new AgentNameInvalidError("bad", "must be kebab"), 400],
@@ -195,38 +212,46 @@ describe("statusForCatalogError", () => {
   ];
 
   it.each(cases)("maps real %s to %d", (_label, err, status) => {
-    expect(statusForCatalogError(err)).toBe(status);
+    expect(catalogPolicyStatus(err)).toBe(status);
   });
 
-  it("maps FetchError name to 502", () => {
-    // FetchError is exported from @emploke/catalog (originally lived in
-    // the separate @emploke/catalog/fetcher pkg; folded into catalog).
-    // We synthesize one to keep the test isolated from the network.
+  it("maps a real FetchError instance to 502", () => {
+    // Real-instance check preserves the pre-refactor mapping while
+    // staying compatible with the new instanceof-based policy.
+    expect(catalogPolicyStatus(new FetchError("https://example", "connect ECONNREFUSED"))).toBe(
+      502,
+    );
+  });
+
+  it("returns null for a fabricated FetchError name (instanceof check now)", () => {
+    // Pre-refactor the name-string switch would map a fake-named
+    // `Error` with `.name === "FetchError"` to 502. The new policy
+    // is instanceof-based — fake names don't match. This intentional
+    // tightening makes the policy harder to fool with name spoofing.
     const e = new Error("connect ECONNREFUSED");
     e.name = "FetchError";
-    expect(statusForCatalogError(e)).toBe(502);
+    expect(catalogPolicyStatus(e)).toBeNull();
   });
 
   it("returns null for unknown error class names", () => {
     const e = new Error("x");
     e.name = "WeirdoError";
-    expect(statusForCatalogError(e)).toBeNull();
+    expect(catalogPolicyStatus(e)).toBeNull();
   });
 
   it("returns null for non-Error values", () => {
-    expect(statusForCatalogError("string")).toBeNull();
-    expect(statusForCatalogError(null)).toBeNull();
-    expect(statusForCatalogError(undefined)).toBeNull();
+    expect(catalogPolicyStatus("string")).toBeNull();
+    expect(catalogPolicyStatus(null)).toBeNull();
+    expect(catalogPolicyStatus(undefined)).toBeNull();
   });
 
   it("returns null for legacy phantom names that no real class ever produces", () => {
-    // These names lived in the switch from earlier drafts but no class
-    // in the catalog actually carries them at runtime. Keeping the
-    // switch keyed off them risked masking the addition of a new real
-    // class with one of those names without operators noticing the
-    // mapping was already silently in place. Pin that they fall
-    // through to null (→ 500) so a future contributor wiring up a new
-    // class has to make a deliberate decision.
+    // These names lived in the pre-refactor switch from earlier
+    // drafts but no class in the catalog actually carries them at
+    // runtime. The new instanceof-based policy CAN'T accept them
+    // even by accident (no class with that .name is in the
+    // statuses array), which is the structural guard upgrade over
+    // the old name-string switch.
     for (const name of [
       "CatalogError",
       "CatalogStateError",
@@ -236,14 +261,15 @@ describe("statusForCatalogError", () => {
     ]) {
       const e = new Error("x");
       e.name = name;
-      expect(statusForCatalogError(e)).toBeNull();
+      expect(catalogPolicyStatus(e)).toBeNull();
     }
   });
 
   it("rejects legacy alias names (regression guard for #52 review)", () => {
-    // Pre-#52 the switch keyed off these aliases. Real instances never
-    // matched. Pin that we do NOT accept them so nobody silently brings
-    // the bug back.
+    // Pre-#52 the switch keyed off these aliases. Real instances
+    // never matched. The post-PR-G2a policy is instanceof-based so
+    // alias names can't match by construction; this test pins the
+    // same null fall-through for parity.
     for (const alias of [
       "NotFound",
       "NameInvalid",
@@ -254,7 +280,7 @@ describe("statusForCatalogError", () => {
     ]) {
       const e = new Error("x");
       e.name = alias;
-      expect(statusForCatalogError(e)).toBeNull();
+      expect(catalogPolicyStatus(e)).toBeNull();
     }
   });
 });
