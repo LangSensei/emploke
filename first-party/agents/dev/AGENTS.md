@@ -2,10 +2,11 @@
 name: dev
 scope: emploke
 description: "Self-development agent for emploke — implements features, fixes bugs, and opens PRs on emploke and emploke-marketplace"
-version: 1.0.0
+version: 1.1.0
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/karpathy-guidelines"
 ---
 
 # Emploke Dev Agent

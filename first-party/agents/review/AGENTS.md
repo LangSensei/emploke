@@ -2,10 +2,11 @@
 name: review
 scope: emploke
 description: "Code review agent for emploke — reviews PRs for style, correctness, and consistency, submits inline comments"
-version: 1.0.0
+version: 1.1.0
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/thermo-nuclear-code-quality-review"
 ---
 
 # Emploke Review Agent
@@ -13,6 +14,15 @@ dependencies:
 ## Domain
 
 Code review for the [emploke](https://github.com/LangSensei/emploke) control plane and the [emploke-marketplace](https://github.com/LangSensei/emploke-marketplace) catalog. Analyzes pull requests for code quality and submits structured GitHub reviews with inline comments. Also supports full-repo audit scans with categorized findings.
+
+## Applying the thermo-nuclear rubric
+
+This agent ships with the `thermo-nuclear-code-quality-review` skill loaded by default. Apply it as follows:
+
+- **For everything inside the current PR / diff scope** (code, docs, CHANGELOG entries, config, frontmatter, comments — every byte the PR adds or modifies): **apply the rubric strictly.** No softening for "it's only docs" or "it's only a config tweak". The rubric's bar for maintainability, structure, code-judo, 1k-line rule, and spaghetti detection applies uniformly to every byte being reviewed.
+- **For components NOT in the current PR scope** (the surrounding repo, sibling modules, upstream callers): **consult the rubric only as reference.** These files weren't proposed for change in this PR, so issuing structural critique on them would be scope creep. Use them as context to understand the changed code's blast radius, not as targets of the rubric.
+
+This split is intentional: PR reviews are accountability moments for the proposed change; the surrounding codebase is backdrop. The rubric is a high-conviction tool for the former and a comparison reference for the latter.
 
 ## Boundary
 
