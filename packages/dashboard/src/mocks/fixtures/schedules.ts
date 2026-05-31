@@ -27,7 +27,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
   {
     id: "sched-nightly-cleanup",
     name: "Nightly cleanup",
-    trigger: { kind: "cron", expr: "0 0 3 * * *", tz: "Asia/Shanghai" },
+    trigger: { kind: "cron", expr: "0 3 * * *", tz: "Asia/Shanghai" },
     target: {
       kind: "task",
       agent: "emploke/dev",
@@ -46,7 +46,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
   {
     id: "sched-hourly-report",
     name: "Hourly health report",
-    trigger: { kind: "cron", expr: "0 0 * * * *", tz: "Asia/Shanghai" },
+    trigger: { kind: "cron", expr: "0 * * * *", tz: "Asia/Shanghai" },
     target: {
       kind: "task",
       agent: "emploke/review",
@@ -64,7 +64,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
   {
     id: "sched-weekly-digest",
     name: "Weekly digest (paused)",
-    trigger: { kind: "cron", expr: "0 0 9 * * 1", tz: "Asia/Shanghai" },
+    trigger: { kind: "cron", expr: "0 9 * * 1", tz: "Asia/Shanghai" },
     target: {
       kind: "task",
       agent: "emploke/dev",
@@ -81,7 +81,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
   {
     id: "sched-paused-experiment",
     name: "Paused experiment",
-    trigger: { kind: "cron", expr: "*/15 * * * * *", tz: "UTC" },
+    trigger: { kind: "cron", expr: "*/15 * * * *", tz: "UTC" },
     target: {
       kind: "task",
       agent: "emploke/designer",
@@ -93,6 +93,6 @@ export const fixtureSchedules: ScheduleDetail[] = [
     createdAt: "2026-05-18T08:00:00.000Z",
     updatedAt: "2026-05-26T08:00:00.000Z",
     nextFireAt: isoOffsetHours(0.25),
-    describe: "每隔15秒",
+    describe: "每隔15分钟",
   },
 ];

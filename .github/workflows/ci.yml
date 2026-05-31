@@ -81,6 +81,16 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # `pnpm bundle` only ran as part of `prepublishOnly` before this
+      # step landed, so a bundle break only surfaced at release time
+      # (see RELEASING.md recovery dance). Run it on every matrix entry
+      # — bundling is platform-independent but esbuild + the
+      # dashboard / migrations copy steps have hit Windows-specific
+      # path bugs in the past, so adding the cost on all three OSes
+      # buys cheap regression coverage.
+      - name: Bundle
+        run: pnpm bundle
+
   links:
     runs-on: ubuntu-latest
     steps:

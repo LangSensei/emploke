@@ -41,7 +41,7 @@ const SAMPLE_VIEW: ScheduleView = {
   id: "sched-x",
   name: "Sample schedule",
   enabled: true,
-  trigger: { kind: "cron", expr: "0 0 9 * * *", tz: "UTC" },
+  trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
   target: {
     kind: "task",
     agent: "emploke/dev",
@@ -96,7 +96,7 @@ describe("Schedule detail panel", () => {
     });
     // The cron expression also appears in the list row on the left; the
     // detail header includes it at least once.
-    expect(screen.getAllByText("0 0 9 * * *").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("0 9 * * *").length).toBeGreaterThan(0);
     expect(screen.getByText("UTC")).toBeTruthy();
     expect(screen.getByText(/every day at 09:00/)).toBeTruthy();
   });

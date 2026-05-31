@@ -67,7 +67,7 @@ import {
 // and the new `/preview-cron` n-bound check (issue #222) for a typed
 // envelope on rejection.
 import { Hono } from "hono";
-import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
+import { errorBody, logEvent, logFault, parseJsonBody, statusForError } from "./_shared.js";
 
 export type ScheduleServiceResolver = (c: import("hono").Context) => ScheduleService;
 
@@ -90,16 +90,32 @@ function statusForScheduleError(err: unknown): number | null {
     case "InvalidCronExprError":
     case "InvalidTimezoneError":
     case "ScheduleError":
+    // `AgentNotFoundError` is caller-fixable input (they pointed at a
+    // non-existent agent), mirroring `statusForError` in `_shared.ts`
+    // for the sibling task-package class of the same name. Kept here
+    // as an explicit case (rather than falling through to `default`)
+    // so this schedule-package class avoids the `isUnmapped=true`
+    // logging path — both name-equal classes now resolve to 400 via a
+    // typed branch, not via the unmapped fallback.
+    case "AgentNotFoundError":
       return 400;
     case "ScheduleNotFoundError":
     case "ScheduleKindMismatchError":
-    case "AgentNotFoundError":
       return 404;
     case "ScheduleEnabledError":
     case "ScheduleHasInFlightError":
       return 409;
     default:
-      return null;
+      // Fall through to the canonical task-layer mapping for errors
+      // that leak out of the inner `TaskService.dispatch` call on the
+      // `POST /:sid/run` path: `EntryNotReadyError` (409),
+      // `ManagerShuttingDownError` (503), task-package
+      // `AgentNotFoundError` (400 — distinct class from the
+      // schedule-package one matched above), `CorruptedTaskError`
+      // (500), etc. Without this, those statuses collapse to 400 via
+      // `resolveErrorStatus.mapped ?? 400` and the dashboard's
+      // `formatEntryNotReadyHint` CTA can't fire.
+      return statusForError(err);
   }
 }
 
