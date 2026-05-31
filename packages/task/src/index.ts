@@ -9,6 +9,7 @@
 export { composeTaskModule, type TaskModule, type TaskModuleOptions } from "./compose.js";
 export {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,

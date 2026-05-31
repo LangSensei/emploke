@@ -53,6 +53,30 @@ export class AgentNotFoundError extends ScheduleError {
   }
 }
 
+/**
+ * Thrown by `ScheduleService.assertAgentExists` when the injected
+ * `agentValidator` raises an error that is NOT an instance of
+ * `@emploke/schedule`'s own {@link AgentNotFoundError} — i.e. the
+ * underlying catalog returned a parser failure, DB corruption, or any
+ * other system-level fault. Distinct from {@link AgentNotFoundError}:
+ *   - `AgentNotFoundError` → 400 (user passed a bad agent name)
+ *   - `AgentResolutionFailedError` → 500 (catalog itself misbehaved)
+ *
+ * The original cause is attached via the options bag for the server's
+ * `5xx fault` log line; the route layer collapses the body to an
+ * opaque `{ error: "internal error", code: "AgentResolutionFailedError" }`
+ * so internal diagnostics never reach the wire.
+ */
+export class AgentResolutionFailedError extends ScheduleError {
+  override readonly name = "AgentResolutionFailedError";
+  constructor(
+    public readonly agent: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`Agent "${agent}" resolution failed`, options);
+  }
+}
+
 export class ScheduleEnabledError extends ScheduleError {
   override readonly name = "ScheduleEnabledError";
   constructor(public readonly id: string) {

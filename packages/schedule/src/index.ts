@@ -19,6 +19,7 @@ export {
 export { describeCron } from "./cron.js";
 export {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   InvalidCronExprError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
