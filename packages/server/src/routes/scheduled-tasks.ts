@@ -1,6 +1,7 @@
 import type { ListTaskOpts, TaskService, TaskStatus } from "@emploke/task";
 import { Hono } from "hono";
-import { errorBody, logFault, resolveErrorStatus, unmappedFaultMeta } from "./_shared.js";
+import { tasksErrorPolicy } from "./_error-policies/tasks.js";
+import { respondError } from "./_respond-error.js";
 
 /**
  * Resolver passed in by the mount point so route handlers pull the
@@ -93,19 +94,14 @@ export function scheduledTasksRoutes(resolveTaskService: TaskServiceResolver): H
       const list = await getManager(c).list(opts);
       return c.json(list);
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) {
-        logFault(c, err, "scheduled-tasks.list: 5xx fault");
-      } else if (isUnmapped) {
-        logFault(
-          c,
-          err,
-          "scheduled-tasks.list: unmapped error fell through to 400",
-          unmappedFaultMeta(err),
-        );
-      }
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's c.json status type is a finite union; mirrors the same cast in routes/tasks.ts.
-      return c.json(errorBody(err), status as any);
+      // scheduled-tasks shares the canonical task error policy — same
+      // TaskService surface, same error classes, no schedule-package
+      // errors leak through this route (the listing operation never
+      // touches the schedule layer).
+      return respondError(c, err, {
+        route: "scheduled-tasks.list",
+        policy: tasksErrorPolicy,
+      });
     }
   });
 

@@ -1,6 +1,8 @@
 import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
-import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
+import { catalogErrorPolicy } from "../_error-policies/catalog.js";
+import { respondError } from "../_respond-error.js";
+import { logEvent } from "../_shared.js";
 import {
   readContentBody,
   readMetadataBody,
@@ -20,6 +22,10 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  *
  * Dashboard's two-phase flow uses `/resolve` to show the user what
  * will happen, then `/` to commit.
+ *
+ * Status mapping + body shaping flows through `respondError` against
+ * `catalogErrorPolicy`. See `routes/catalog/agents.ts` for the same
+ * pattern.
  */
 export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
@@ -34,9 +40,11 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
     try {
       const plan = await catalog.resolveSkill(parsed.origin);
       return c.json(planToManifest(plan));
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.resolve",
+        policy: catalogErrorPolicy,
+      });
     }
   });
 
@@ -46,9 +54,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
     try {
       const content = await catalog.getSkillContent(name);
       return c.json({ content });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.anchor",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -60,9 +71,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       if (!entry) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getSkillContent(name);
       return c.json({ ...entry, content });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.get",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -82,9 +96,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.install",
+        policy: catalogErrorPolicy,
+        meta: { origin: parsed.origin },
+      });
     }
   });
 
@@ -101,9 +118,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       // silently differ).
       const planToken = catalog.cachePlan(plan);
       return c.json(planToManifest(plan, planToken));
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.sync.resolve",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -136,9 +156,11 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.sync",
+        policy: catalogErrorPolicy,
+      });
     }
   });
 
@@ -149,9 +171,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       const skill = await catalog.acknowledgeSkillPrereqs(name);
       logEvent(c, "catalog: skill prereqs acknowledged", { kind: "skill", fqn: name });
       return c.json(skill);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.acknowledgePrereqs",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -164,9 +189,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       const skill = await catalog.updateSkillContent(name, parsed.content);
       logEvent(c, "catalog: skill content updated", { kind: "skill", fqn: name });
       return c.json(skill);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.updateContent",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -182,9 +210,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       );
       logEvent(c, "catalog: skill metadata updated", { kind: "skill", fqn: name });
       return c.json(skill);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.updateMetadata",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -195,9 +226,12 @@ export function skillsRoutes(arg: CatalogResolver | CatalogService): Hono {
       await catalog.deleteSkill(name);
       logEvent(c, "catalog: skill removed", { kind: "skill", fqn: name });
       return c.json({ ok: true });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.skills.delete",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 

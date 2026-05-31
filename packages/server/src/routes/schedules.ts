@@ -67,62 +67,11 @@ import {
 // and the new `/preview-cron` n-bound check (issue #222) for a typed
 // envelope on rejection.
 import { Hono } from "hono";
-import { errorBody, logEvent, logFault, parseJsonBody, statusForError } from "./_shared.js";
+import { schedulesErrorPolicy } from "./_error-policies/schedules.js";
+import { respondError } from "./_respond-error.js";
+import { errorBody, logEvent, parseJsonBody } from "./_shared.js";
 
 export type ScheduleServiceResolver = (c: import("hono").Context) => ScheduleService;
-
-/**
- * Map schedule-layer errors to HTTP status. Mirrors the structure of
- * `statusForCatalogError` in `_shared.ts`; kept local because the
- * route never throws catalog or task errors directly (those bubble
- * via the catalog-driven adapters in `@emploke/core`, not via the
- * `ScheduleService` surface).
- *
- * `ScheduleKindMismatchError` maps to 404 — the resource at the
- * kind-discriminated URL is logically absent. The wire envelope is
- * rewritten to mirror `ScheduleNotFoundError` so the response body
- * does not leak whether the schedule exists under a different kind.
- */
-function statusForScheduleError(err: unknown): number | null {
-  if (!(err instanceof Error)) return null;
-  switch (err.name) {
-    case "InvalidScheduleIdError":
-    case "InvalidCronExprError":
-    case "InvalidTimezoneError":
-    case "ScheduleError":
-    // `AgentNotFoundError` is caller-fixable input (they pointed at a
-    // non-existent agent), mirroring `statusForError` in `_shared.ts`
-    // for the sibling task-package class of the same name. Kept here
-    // as an explicit case (rather than falling through to `default`)
-    // so this schedule-package class avoids the `isUnmapped=true`
-    // logging path — both name-equal classes now resolve to 400 via a
-    // typed branch, not via the unmapped fallback.
-    case "AgentNotFoundError":
-      return 400;
-    case "ScheduleNotFoundError":
-    case "ScheduleKindMismatchError":
-      return 404;
-    case "ScheduleEnabledError":
-    case "ScheduleHasInFlightError":
-      return 409;
-    default:
-      // Fall through to the canonical task-layer mapping for errors
-      // that leak out of the inner `TaskService.dispatch` call on the
-      // `POST /:sid/run` path: `EntryNotReadyError` (409),
-      // `ManagerShuttingDownError` (503), task-package
-      // `AgentNotFoundError` (400 — distinct class from the
-      // schedule-package one matched above), `CorruptedTaskError`
-      // (500), etc. Without this, those statuses collapse to 400 via
-      // `resolveErrorStatus.mapped ?? 400` and the dashboard's
-      // `formatEntryNotReadyHint` CTA can't fire.
-      return statusForError(err);
-  }
-}
-
-function resolveErrorStatus(err: unknown): { status: number; isUnmapped: boolean } {
-  const mapped = statusForScheduleError(err);
-  return { status: mapped ?? 400, isUnmapped: mapped === null };
-}
 
 const ALLOWED_TASK_CREATE_KEYS = new Set(["name", "target", "trigger", "enabled"]);
 const ALLOWED_TASK_PATCH_KEYS = new Set(["name", "target", "trigger", "enabled"]);
@@ -316,11 +265,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       });
       return c.json(list);
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.list: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.list: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: same cast pattern as tasks/scheduled-tasks routes
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.list",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -366,12 +314,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       });
       return c.json(created, 201);
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.task.create: 5xx fault");
-      else if (isUnmapped)
-        logFault(c, err, "schedules.task.create: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.task.create",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -411,12 +357,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       const preview = await resolve(c).preview(expr, tz, n);
       return c.json(preview);
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.previewCron: 5xx fault");
-      else if (isUnmapped)
-        logFault(c, err, "schedules.previewCron: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.previewCron",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -438,11 +382,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       // source of truth.
       return c.json({ ...found, describe: describeCron(found.trigger.expr) });
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.get: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.get: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.get",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -524,12 +467,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
         });
         return c.json(errorBody(new ScheduleNotFoundError(sid)), 404);
       }
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.task.patch: 5xx fault");
-      else if (isUnmapped)
-        logFault(c, err, "schedules.task.patch: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.task.patch",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -541,11 +482,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       logEvent(c, "schedule.delete", { scheduleId: sid, deletedTaskCount });
       return c.json({ ok: true as const, deletedTaskCount });
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.delete: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.delete: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.delete",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -557,11 +497,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       logEvent(c, "schedule.run", { scheduleId: sid, taskId });
       return c.json({ taskId });
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.run: 5xx fault");
-      else if (isUnmapped) logFault(c, err, "schedules.run: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.run",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
@@ -592,12 +531,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       const preview = await service.preview(entity.trigger.expr, entity.trigger.tz, n ?? 3);
       return c.json(preview);
     } catch (err) {
-      const { status, isUnmapped } = resolveErrorStatus(err);
-      if (status >= 500) logFault(c, err, "schedules.preview: 5xx fault");
-      else if (isUnmapped)
-        logFault(c, err, "schedules.preview: unmapped error fell through to 400");
-      // biome-ignore lint/suspicious/noExplicitAny: see above
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "schedules.preview",
+        policy: schedulesErrorPolicy,
+      });
     }
   });
 
