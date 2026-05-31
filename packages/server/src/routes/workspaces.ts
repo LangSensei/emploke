@@ -1,30 +1,13 @@
-import { type Application, WorkspaceHasLiveTasksError } from "@emploke/core";
-import {
-  RegistryError,
-  WorkspaceError,
-  WorkspaceIdConflictError,
-  WorkspaceIdInvalidError,
-  WorkspaceNameInvalidError,
-  WorkspaceNotRegisteredError,
-  WorkspacePathConflictError,
-} from "@emploke/workspace";
-import type { Context } from "hono";
+import type { Application } from "@emploke/core";
 import { Hono } from "hono";
-import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
+import { workspacesErrorPolicy } from "./_error-policies/workspaces.js";
+import { respondError } from "./_respond-error.js";
+import { logEvent, parseJsonBody } from "./_shared.js";
 import type {
   WorkspaceCreateBody,
   WorkspaceCurrentPutBody,
   WorkspacePatchBody,
 } from "./manifest.js";
-
-function wsErrorJson(c: Context, err: unknown, fallback: number) {
-  const status = workspaceErrorStatus(err) ?? fallback;
-  if (status >= 500) {
-    logFault(c, err, "workspaces: 5xx fault");
-  }
-  // biome-ignore lint/suspicious/noExplicitAny: Hono status type is a union literal.
-  return c.json(errorBody(err), status as any);
-}
 
 type CreateBodyRaw = { [K in keyof WorkspaceCreateBody]?: unknown };
 type PutCurrentBodyRaw = { [K in keyof WorkspaceCurrentPutBody]?: unknown };
@@ -49,7 +32,11 @@ export function workspacesRoutes(application: Application): Hono {
     try {
       return c.json(await service.list());
     } catch (err) {
-      return wsErrorJson(c, err, 500);
+      return respondError(c, err, {
+        route: "workspaces.list",
+        policy: workspacesErrorPolicy,
+        defaultStatus: 500,
+      });
     }
   });
 
@@ -81,7 +68,10 @@ export function workspacesRoutes(application: Application): Hono {
       });
       return c.json(view, 201);
     } catch (err) {
-      return wsErrorJson(c, err, 400);
+      return respondError(c, err, {
+        route: "workspaces.create",
+        policy: workspacesErrorPolicy,
+      });
     }
   });
 
@@ -90,7 +80,11 @@ export function workspacesRoutes(application: Application): Hono {
     try {
       return c.json({ id: await service.getLastOpenedId() });
     } catch (err) {
-      return wsErrorJson(c, err, 500);
+      return respondError(c, err, {
+        route: "workspaces.getCurrent",
+        policy: workspacesErrorPolicy,
+        defaultStatus: 500,
+      });
     }
   });
 
@@ -104,7 +98,10 @@ export function workspacesRoutes(application: Application): Hono {
     try {
       await service.open(parsed.body.id);
     } catch (err) {
-      return wsErrorJson(c, err, 400);
+      return respondError(c, err, {
+        route: "workspaces.setCurrent",
+        policy: workspacesErrorPolicy,
+      });
     }
     logEvent(c, "workspace selected as current", { workspaceId: parsed.body.id });
     return c.json({ id: parsed.body.id });
@@ -117,7 +114,12 @@ export function workspacesRoutes(application: Application): Hono {
     try {
       view = await service.getById(id);
     } catch (err) {
-      return wsErrorJson(c, err, 500);
+      return respondError(c, err, {
+        route: "workspaces.get",
+        policy: workspacesErrorPolicy,
+        meta: { workspaceId: id },
+        defaultStatus: 500,
+      });
     }
     if (!view) {
       return c.json(
@@ -151,7 +153,12 @@ export function workspacesRoutes(application: Application): Hono {
       logEvent(c, "workspace updated", { workspaceId: id, newName: body.name });
       return c.json(view);
     } catch (err) {
-      return wsErrorJson(c, err, 500);
+      return respondError(c, err, {
+        route: "workspaces.patch",
+        policy: workspacesErrorPolicy,
+        meta: { workspaceId: id },
+        defaultStatus: 500,
+      });
     }
   });
 
@@ -163,7 +170,11 @@ export function workspacesRoutes(application: Application): Hono {
     try {
       await application.unregisterWorkspace(id, { purge });
     } catch (err) {
-      return wsErrorJson(c, err, 400);
+      return respondError(c, err, {
+        route: "workspaces.delete",
+        policy: workspacesErrorPolicy,
+        meta: { workspaceId: id, purge },
+      });
     }
     logEvent(c, "workspace deleted", { workspaceId: id, purge });
     return c.body(null, 204);
@@ -189,24 +200,18 @@ export function workspacesRoutes(application: Application): Hono {
       logEvent(c, "workspace reload requested via API", { workspaceId: id });
       return c.body(null, 204);
     } catch (err) {
-      if (err instanceof WorkspaceHasLiveTasksError) {
-        return c.json(errorBody(err), 409);
-      }
-      return wsErrorJson(c, err, 500);
+      // WorkspaceHasLiveTasksError → 409 lives in the workspaces
+      // policy now; any other failure falls back to 500 to preserve
+      // the pre-refactor `wsErrorJson(c, err, 500)` behavior on this
+      // route.
+      return respondError(c, err, {
+        route: "workspaces.reload",
+        policy: workspacesErrorPolicy,
+        meta: { workspaceId: id },
+        defaultStatus: 500,
+      });
     }
   });
 
   return app;
-}
-
-/** Map workspace errors to HTTP status codes; null falls back to caller default. */
-function workspaceErrorStatus(err: unknown): number | null {
-  if (err instanceof WorkspaceNameInvalidError) return 400;
-  if (err instanceof WorkspaceIdInvalidError) return 400;
-  if (err instanceof WorkspaceNotRegisteredError) return 404;
-  if (err instanceof WorkspaceIdConflictError) return 409;
-  if (err instanceof WorkspacePathConflictError) return 409;
-  if (err instanceof RegistryError) return 500;
-  if (err instanceof WorkspaceError) return 500;
-  return null;
 }

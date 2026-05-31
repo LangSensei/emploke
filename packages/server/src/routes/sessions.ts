@@ -1,17 +1,8 @@
 import type { WorkspaceContext } from "@emploke/core";
-import {
-  AgentNotFoundError,
-  InvalidSessionIdError,
-  RuntimeDoesNotSupportRemoteError,
-  RuntimeProvisionFailed,
-  RuntimeStateDeletionFailed,
-  SessionIdAllocationFailedError,
-  SessionNotFoundError,
-  TrustRegistrationFailed,
-  UnknownRuntimeError,
-} from "@emploke/session";
 import { Hono } from "hono";
-import { errorBody, logEvent, logFault, parseJsonBody } from "./_shared.js";
+import { sessionsErrorPolicy } from "./_error-policies/sessions.js";
+import { respondError } from "./_respond-error.js";
+import { logEvent, parseJsonBody } from "./_shared.js";
 import type { SessionCreateBody } from "./manifest.js";
 
 /**
@@ -25,22 +16,6 @@ import type { SessionCreateBody } from "./manifest.js";
 export type WorkspaceContextResolver = (c: import("hono").Context) => WorkspaceContext;
 
 type SessionCreateBodyRaw = { [K in keyof SessionCreateBody]?: unknown };
-
-function statusForError(err: unknown): number | null {
-  if (err instanceof InvalidSessionIdError) return 400;
-  if (err instanceof SessionNotFoundError) return 404;
-  if (err instanceof AgentNotFoundError) return 400;
-  if (err instanceof UnknownRuntimeError) return 400;
-  if (err instanceof RuntimeDoesNotSupportRemoteError) return 400;
-  if (err instanceof RuntimeStateDeletionFailed) return 409;
-  if (err instanceof SessionIdAllocationFailedError) return 500;
-  // Provisioning / trust failures are host-side faults — well-formed
-  // request, broken host environment. 500 distinguishes from 4xx user
-  // errors so dashboards can render them differently.
-  if (err instanceof RuntimeProvisionFailed) return 500;
-  if (err instanceof TrustRegistrationFailed) return 500;
-  return null;
-}
 
 /**
  * Routes for `/api/workspaces/:id/sessions/*`. Pure transport — every
@@ -86,7 +61,14 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
     try {
       return c.json(await resolve(c).sessions.list(opts));
     } catch (err) {
-      return c.json(errorBody(err), 400);
+      // Pre-refactor this route silently downgraded every error to
+      // 400 with no log line. The post-refactor respondError call
+      // closes the unmapped-fault observability gap (sessions.ts now
+      // matches sibling routes' five-line treatment).
+      return respondError(c, err, {
+        route: "sessions.list",
+        policy: sessionsErrorPolicy,
+      });
     }
   });
 
@@ -112,10 +94,14 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
       });
       return c.json(rec, 201);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "sessions: 5xx fault");
-      // biome-ignore lint/suspicious/noExplicitAny: Hono status type.
-      return c.json(errorBody(err), status as any);
+      // Route label "sessions" (not "sessions.create") preserves the
+      // pre-refactor log message that the existing test suite asserts
+      // on. New behavior: unmapped errors now log via respondError's
+      // isUnmapped path — the gap PR #241 left open for this file.
+      return respondError(c, err, {
+        route: "sessions",
+        policy: sessionsErrorPolicy,
+      });
     }
   });
 
@@ -132,10 +118,11 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
       if (!rec) return c.json({ error: "not found", code: "SessionNotFoundError" }, 404);
       return c.json(rec);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "sessions: 5xx fault");
-      // biome-ignore lint/suspicious/noExplicitAny: Hono status type.
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "sessions",
+        policy: sessionsErrorPolicy,
+        meta: { sessionId: id },
+      });
     }
   });
 
@@ -150,10 +137,11 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
       logEvent(c, "session deleted", { sessionId: id, purge });
       return c.body(null, 204);
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "sessions: 5xx fault");
-      // biome-ignore lint/suspicious/noExplicitAny: Hono status type.
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "sessions",
+        policy: sessionsErrorPolicy,
+        meta: { sessionId: id, purge },
+      });
     }
   });
 
@@ -179,10 +167,11 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
     try {
       result = await resolve(c).spawnSession(id, { remote });
     } catch (err) {
-      const status = statusForError(err) ?? 400;
-      if (status >= 500) logFault(c, err, "sessions: 5xx fault");
-      // biome-ignore lint/suspicious/noExplicitAny: Hono status type.
-      return c.json(errorBody(err), status as any);
+      return respondError(c, err, {
+        route: "sessions",
+        policy: sessionsErrorPolicy,
+        meta: { sessionId: id, remote },
+      });
     }
 
     if (result.ok) {

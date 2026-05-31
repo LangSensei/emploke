@@ -1,6 +1,8 @@
 import type { CatalogService } from "@emploke/catalog";
 import { Hono } from "hono";
-import { errorBody, logEvent, statusForCatalogError } from "../_shared.js";
+import { catalogErrorPolicy } from "../_error-policies/catalog.js";
+import { respondError } from "../_respond-error.js";
+import { logEvent } from "../_shared.js";
 import { readContentBody, readMcpInstallBody, readPlanTokenBody } from "./helpers.js";
 import { planToManifest } from "./plan-to-manifest.js";
 import { type CatalogResolver, resolveCatalog } from "./resolver.js";
@@ -12,6 +14,10 @@ import { type CatalogResolver, resolveCatalog } from "./resolver.js";
  * `POST /` body: `{ origin: string, name: string }`. The `name` is the
  * full MCP-spec FQN (`<namespace>/<short>`, e.g. `azure/mcp`). MCPs
  * have no deps, so the install is a single fetch + write.
+ *
+ * Status mapping + body shaping flows through `respondError` against
+ * `catalogErrorPolicy`. See `routes/catalog/agents.ts` for the same
+ * pattern.
  */
 export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
   const app = new Hono();
@@ -37,9 +43,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       if (meta === null) return c.json({ error: "not found", code: "NotFound" }, 404);
       const content = await catalog.getMcpContent(name);
       return c.json({ ...meta, content });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.get",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -59,9 +68,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.install",
+        policy: catalogErrorPolicy,
+        meta: { origin: parsed.origin },
+      });
     }
   });
 
@@ -74,9 +86,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       const plan = await catalog.resolveSyncMcp(name);
       const planToken = catalog.cachePlan(plan);
       return c.json(planToManifest(plan, planToken));
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.sync.resolve",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -105,9 +120,11 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       });
       // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
       return c.json(result, status as any);
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.sync",
+        policy: catalogErrorPolicy,
+      });
     }
   });
 
@@ -120,9 +137,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       await catalog.updateMcpContent(name, parsed.content);
       logEvent(c, "catalog: mcp content updated", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.updateContent",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
@@ -133,9 +153,12 @@ export function mcpsRoutes(arg: CatalogResolver | CatalogService): Hono {
       await catalog.deleteMcp(name);
       logEvent(c, "catalog: mcp removed", { kind: "mcp", fqn: name });
       return c.json({ ok: true });
-    } catch (e: unknown) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's status type is a finite union.
-      return c.json(errorBody(e), (statusForCatalogError(e) ?? 500) as any);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "catalog.mcps.delete",
+        policy: catalogErrorPolicy,
+        meta: { fqn: name },
+      });
     }
   });
 
