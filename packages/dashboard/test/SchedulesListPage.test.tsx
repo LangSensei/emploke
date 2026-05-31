@@ -110,7 +110,7 @@ describe("SchedulesPage list", () => {
         id: "sched-a",
         name: "Schedule A",
         enabled: true,
-        trigger: { kind: "cron", expr: "0 0 1 * * *", tz: "UTC" },
+        trigger: { kind: "cron", expr: "0 1 * * *", tz: "UTC" },
         target: { kind: "task", agent: "emploke/dev", brief: "do a" },
         nextFireAt: "2026-06-01T01:00:00.000Z",
       }),
@@ -118,7 +118,7 @@ describe("SchedulesPage list", () => {
         id: "sched-b",
         name: "Schedule B",
         enabled: false,
-        trigger: { kind: "cron", expr: "0 0 2 * * *", tz: "UTC" },
+        trigger: { kind: "cron", expr: "0 2 * * *", tz: "UTC" },
         target: { kind: "task", agent: "emploke/review", brief: "do b" },
         nextFireAt: "2026-05-30T02:00:00.000Z",
       }),
@@ -150,7 +150,7 @@ describe("SchedulesPage list", () => {
         id: "s-on",
         name: "Live",
         enabled: true,
-        trigger: { kind: "cron", expr: "*/5 * * * * *", tz: "UTC" },
+        trigger: { kind: "cron", expr: "*/5 * * * *", tz: "UTC" },
         target: { kind: "task", agent: "emploke/dev", brief: "x" },
         nextFireAt: "2026-06-01T01:00:00.000Z",
       }),
@@ -158,13 +158,13 @@ describe("SchedulesPage list", () => {
         id: "s-off",
         name: "Paused one",
         enabled: false,
-        trigger: { kind: "cron", expr: "0 0 9 * * 1", tz: "UTC" },
+        trigger: { kind: "cron", expr: "0 9 * * 1", tz: "UTC" },
         target: { kind: "task", agent: "emploke/dev", brief: "x" },
         nextFireAt: "2026-06-02T09:00:00.000Z",
       }),
     ];
     mockListSchedules.mockResolvedValue(rows);
-    mockGetSchedule.mockResolvedValue(makeDetail(rows[0]!, "every 5 sec"));
+    mockGetSchedule.mockResolvedValue(makeDetail(rows[0]!, "every 5 min"));
 
     renderSchedules("/workspaces/ws-1/runtime/schedules", agents);
 
