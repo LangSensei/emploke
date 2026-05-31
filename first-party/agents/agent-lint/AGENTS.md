@@ -56,7 +56,7 @@ If the catalog directory does not look like an emploke catalog (missing `agents/
 
 **Remote catalog (resolution rule 2 — only when the brief gives a GitHub URL):**
 
-1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory (see issue #7).
+1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory.
 2. Use git-pr **Mode C (read-only)** against the user-supplied catalog repo URL: bare clone to `$(repos_dir)/<repo-name>/`, worktree into `repo/`.
 3. Lint the worktree at `<workDir>/repo`.
 4. Clean up the worktree at the end (see Delivery).

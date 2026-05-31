@@ -44,6 +44,7 @@ import { ResolveTree } from "../components/ResolveTree";
 import { useClickOutside } from "../hooks/useClickOutside";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 import { KIND_TITLE } from "../kindMeta";
+import { errorMessage } from "../utils/errors";
 
 export type CatalogTab = "agents" | "skills" | "mcps";
 
@@ -186,7 +187,7 @@ export function CatalogPage({
       setInstallOpen(false);
       onChanged();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -202,7 +203,7 @@ export function CatalogPage({
       setConfirmRemove(null);
       onChanged();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -221,7 +222,7 @@ export function CatalogPage({
             // HasDependentsError shouldn't happen by definition (orphans
             // have zero reverse-deps), but if it does, surface and continue
             // — best-effort bulk delete shouldn't abort halfway.
-            setError(`failed to remove ${s.skill.fqn}: ${(e as Error).message}`);
+            setError(`failed to remove ${s.skill.fqn}: ${errorMessage(e)}`);
           }
         }
       } else if (tab === "mcps") {
@@ -230,7 +231,7 @@ export function CatalogPage({
           try {
             await deleteMcp(m.fqn);
           } catch (e) {
-            setError(`failed to remove ${m.fqn}: ${(e as Error).message}`);
+            setError(`failed to remove ${m.fqn}: ${errorMessage(e)}`);
           }
         }
       }
@@ -506,7 +507,7 @@ function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: InstallDi
       setManifest(m);
       setStage("preview");
     } catch (err) {
-      setResolveError((err as Error).message);
+      setResolveError(errorMessage(err));
       setStage("input");
     }
   };
@@ -885,7 +886,7 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
     };
     load()
       .catch((e) => {
-        if (!cancelled) setError((e as Error).message);
+        if (!cancelled) setError(errorMessage(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -933,7 +934,7 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
       }
       onSaved();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -955,7 +956,7 @@ function EditDialog({ target, availableSkills, availableMcps, onClose, onSaved }
       // continue editing. The catalog list doesn't refresh until Save
       // or Close, so flag stays consistent with the displayed state.
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setToggling(false);
     }

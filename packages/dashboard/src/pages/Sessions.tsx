@@ -24,8 +24,10 @@ import {
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
 import { Modal } from "../components/Modal";
 import { CreateModal } from "../components/sessions/CreateModal";
+import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
+import { errorMessage } from "../utils/errors";
 import { formatRelative } from "../utils/time";
 
 interface SessionsProps {
@@ -171,19 +173,10 @@ export function SessionsPage({
     navigate(location.pathname + location.search, { replace: true, state: null });
   }, []);
 
-  // Tracks whether the component is still mounted so async handlers can skip
-  // setState calls on a tombstoned instance. CRITICAL: the effect must reset
-  // mountedRef to true on EVERY mount, not just the first — otherwise React 18
-  // StrictMode (which runs mount→unmount→mount in dev) leaves it stuck at
-  // false after the first cleanup, silently swallowing all post-await state
-  // updates (e.g. setBusy(false) never fires and the button stays "Creating…").
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Tracks whether the component is still mounted so async handlers can
+  // skip setState calls on a tombstoned instance. See `useMounted` for the
+  // StrictMode-safe re-init rationale.
+  const mounted = useMounted();
 
   const refresh = async () => {
     if (!currentWorkspaceId) {
@@ -196,14 +189,14 @@ export function SessionsPage({
         agent: filter === ALL_AGENTS ? undefined : filter,
         activeSince: presetToActiveSince(timeFilter),
       });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setError(null);
       setSessions(next);
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) {
+      if (mounted.current) {
         setLoaded(true);
       }
     }
@@ -261,14 +254,14 @@ export function SessionsPage({
     setError(null);
     try {
       await createSession(agent, runtime);
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setCreateOpen(false);
       await refresh();
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -285,7 +278,7 @@ export function SessionsPage({
       // unsupported (defensive — disabled buttons in the UI are the
       // first line of defence).
       const result = await spawnSession(s.id, opts);
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       if (!result.ok) {
         // Server returned 200 but couldn't spawn a terminal — show the
         // command so the user can paste it into their own shell.
@@ -293,14 +286,14 @@ export function SessionsPage({
       }
       // Refresh after a successful launch so lastActiveAt/preview update.
       if (result.ok) {
-        if (!mountedRef.current) return;
+        if (!mounted.current) return;
         await refresh();
       }
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) setLaunchingId(null);
+      if (mounted.current) setLaunchingId(null);
     }
   };
 
@@ -310,14 +303,14 @@ export function SessionsPage({
     setError(null);
     try {
       await deleteSession(deleteModal.session.id, { purge: deleteModal.purge });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setDeleteModal(null);
       await refresh();
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 

@@ -41,7 +41,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
     updatedAt: "2026-05-20T08:00:00.000Z",
     lastFiredAt: "2026-05-27T19:00:00.000Z",
     nextFireAt: isoOffsetHours(3),
-    describe: "每天 凌晨3:00",
+    describe: "Daily at 3:00 AM",
   },
   {
     id: "sched-hourly-report",
@@ -59,7 +59,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
     updatedAt: "2026-05-22T09:00:00.000Z",
     lastFiredAt: "2026-05-27T23:00:00.000Z",
     nextFireAt: isoOffsetHours(1),
-    describe: "每小时整点",
+    describe: "Every hour on the hour",
   },
   {
     id: "sched-weekly-digest",
@@ -76,7 +76,7 @@ export const fixtureSchedules: ScheduleDetail[] = [
     createdAt: "2026-04-15T08:00:00.000Z",
     updatedAt: "2026-05-24T08:00:00.000Z",
     nextFireAt: isoOffsetHours(33),
-    describe: "每周一 上午9:00",
+    describe: "Mondays at 9:00 AM",
   },
   {
     id: "sched-paused-experiment",
@@ -93,6 +93,6 @@ export const fixtureSchedules: ScheduleDetail[] = [
     createdAt: "2026-05-18T08:00:00.000Z",
     updatedAt: "2026-05-26T08:00:00.000Z",
     nextFireAt: isoOffsetHours(0.25),
-    describe: "每隔15分钟",
+    describe: "Every 15 minutes",
   },
 ];

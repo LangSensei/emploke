@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   deleteSchedule,
@@ -24,7 +24,9 @@ import {
   type EnabledFilter,
   sortByNextFire,
 } from "../components/schedules/shared";
+import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
+import { errorMessage } from "../utils/errors";
 
 export interface SchedulesPageProps {
   agents: AgentEntry[];
@@ -143,13 +145,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     };
   }, []);
 
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   const refresh = useCallback(async () => {
     if (!currentWorkspaceId) {
@@ -167,7 +163,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       setError(null);
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setLoaded(true);
     }
@@ -252,7 +248,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       setRefreshToken((n) => n + 1);
     } catch (e) {
       if (!mounted.current) return;
-      setDeleteError((e as Error).message);
+      setDeleteError(errorMessage(e));
     } finally {
       if (mounted.current) setDeleteBusy(false);
     }

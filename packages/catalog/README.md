@@ -9,11 +9,11 @@ dependency edge tables.
 
 What this package **does**:
 
-- Read `AGENTS.md` / `SKILL.md` frontmatter and project the four
-  required fields: `name`, `description`, `version`, optional `type`,
-  optional `dependencies.{skills,mcps}`. Other frontmatter fields
-  (`prereq`, `license`, ) are preserved on disk but **not
-  interpreted**.
+- Read `AGENTS.md` / `SKILL.md` frontmatter and project five fields:
+  required `name` / `description` / `version`, optional `scope`
+  (defaults to `public`), optional `prereqs`, optional
+  `dependencies.{skills,mcps}`. Other frontmatter fields
+  (`license`, ) are preserved on disk but **not interpreted**.
 - Track the names of MCP server JSON files (`mcps/<name>.json`). The
   contents of those files are **never read** by emploke beyond
   recording metadata.
@@ -27,7 +27,7 @@ What this package **does**:
 
 What this package **does not** do:
 
-- Interpret business fields (`prereq`, semantic version checks,
+- Interpret business fields (`prereqs`, semantic version checks,
   signature verification, ). That belongs in install tools layered
   on top.
 - Read or interpret MCP JSON contents. Substrates parse the file

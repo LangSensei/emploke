@@ -228,7 +228,18 @@ export class TaskService {
       }
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
-      if (err instanceof AgentNotFoundError || err instanceof EntryNotReadyError) {
+      // Three sibling classes are literally named `AgentNotFoundError`
+      // (`@emploke/task`, `@emploke/schedule`, `@emploke/session`). The
+      // `instanceof` check below only matches the task-package variant,
+      // so a foreign sibling propagating up from the catalog would lose
+      // its typed boundary and get re-wrapped — the route layer would
+      // then 500 instead of 400. The name-string fallback covers all
+      // three until the class is hoisted to `@emploke/catalog`.
+      // TODO(#tier-b): hoist AgentNotFoundError to @emploke/catalog so this name-string guard isn't needed.
+      const isAgentNotFound =
+        err instanceof AgentNotFoundError ||
+        (err instanceof Error && err.name === "AgentNotFoundError");
+      if (isAgentNotFound || err instanceof EntryNotReadyError) {
         throw err;
       }
       throw new AgentNotFoundError(agentName, err as Error);

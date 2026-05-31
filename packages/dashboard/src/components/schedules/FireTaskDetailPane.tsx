@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listScheduledTasks, type TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
+import { errorMessage } from "../../utils/errors";
 import { TaskView } from "../task-view";
 
 export interface FireTaskDetailPaneProps {
@@ -80,7 +81,7 @@ export function FireTaskDetailPane({
       })
       .catch((e) => {
         if (localCancelled || cancelledRef.current) return;
-        setError((e as Error).message);
+        setError(errorMessage(e));
         setRows([]);
       });
     return () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listScheduledTasks, type TaskRecord } from "../../api";
+import { errorMessage } from "../../utils/errors";
 import { formatAbsolute, formatClockTime, formatDuration, formatRelative } from "../../utils/time";
 import { StatusBadge } from "../tasks/StatusBadge";
 import { STATUS_TONE } from "../tasks/shared";
@@ -58,7 +59,7 @@ export function ScheduleRecentFires({
       })
       .catch((e) => {
         if (cancelled) return;
-        setError((e as Error).message);
+        setError(errorMessage(e));
         setRows([]);
       });
     return () => {

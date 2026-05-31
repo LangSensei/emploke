@@ -6,15 +6,12 @@ import { AgentAvatar } from "../../components/agents/AgentAvatar";
 import { AgentFqn } from "../../components/agents/AgentFqn";
 import { useBreadcrumb, useWorkspaceShell } from "../../components/WorkspaceShellContext";
 import { useClickOutside } from "../../hooks/useClickOutside";
+import { useMounted } from "../../hooks/useMounted";
 import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
+import { splitFqnForDisplay } from "../../utils/fqn";
 import { AgentDetailPane } from "./AgentDetailPane";
-import {
-  type AgentRuntimeView,
-  AgentStatusPill,
-  computeAgentRuntimeViews,
-  splitFqn,
-} from "./agentRuntime";
+import { type AgentRuntimeView, AgentStatusPill, computeAgentRuntimeViews } from "./agentRuntime";
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 
@@ -86,13 +83,7 @@ export function AgentsListPage() {
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionView[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   useBreadcrumb("Runtime", ["Runtime", "Agents"]);
 
@@ -127,11 +118,11 @@ export function AgentsListPage() {
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     try {
       const next = await listTasks({ createdSince: since });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setTasks(next);
       setTasksError(null);
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setTasksError(e instanceof Error ? e.message : String(e));
       setTasks((prev) => (prev === null ? [] : prev));
     }
@@ -171,8 +162,8 @@ export function AgentsListPage() {
       if (listFilter === "active" && v.runningTasks <= 0) return false;
       if (listFilter === "idle" && v.runningTasks > 0) return false;
       if (q !== "") {
-        const [scope, short] = splitForDisplay(v.entry.agent.fqn);
-        const haystack = `${short} ${scope} ${v.entry.agent.fqn}`.toLowerCase();
+        const { scope, shortName } = splitFqnForDisplay(v.entry.agent.fqn);
+        const haystack = `${shortName} ${scope} ${v.entry.agent.fqn}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -224,7 +215,7 @@ export function AgentsListPage() {
     if (effectiveSelectedFqn === null) return;
     try {
       const s = await listSessions({ agent: effectiveSelectedFqn });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       s.sort((a, b) => {
         const al = a.lastActiveAt ?? a.createdAt;
         const bl = b.lastActiveAt ?? b.createdAt;
@@ -233,7 +224,7 @@ export function AgentsListPage() {
       setSessions(s);
       setSessionsError(null);
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setSessionsError(e instanceof Error ? e.message : String(e));
       setSessions((prev) => (prev === null ? [] : prev));
     }
@@ -467,7 +458,7 @@ interface AgentRowProps {
  */
 function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
   const { agent } = view.entry;
-  const [, short] = splitForDisplay(agent.fqn);
+  const { shortName } = splitFqnForDisplay(agent.fqn);
   return (
     <li
       className={`agents-list__item${selected ? " agents-list__item--selected" : ""}`}
@@ -485,7 +476,7 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
       aria-current={selected ? "true" : undefined}
       data-testid={`agent-row-${agent.fqn}`}
     >
-      <AgentAvatar fqn={agent.fqn} label={short} size="md" />
+      <AgentAvatar fqn={agent.fqn} label={shortName} size="md" />
       <div className="agents-list__identity">
         <AgentFqn fqn={agent.fqn} />
         <span className="agents-list__subline muted">v{agent.version}</span>
@@ -512,14 +503,6 @@ function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
       </div>
     </li>
   );
-}
-
-function splitForDisplay(fqn: string): [string, string] {
-  const parts = splitFqn(fqn);
-  if (parts !== null) return [parts.scope, parts.short];
-  const ix = fqn.indexOf("/");
-  if (ix <= 0) return ["", fqn];
-  return [fqn.slice(0, ix), fqn.slice(ix + 1)];
 }
 
 interface AgentsFilterMenuProps {

@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/catalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecord } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
 import { LegacyMovedBanner } from "../components/LegacyMovedBanner";
@@ -20,9 +20,11 @@ import {
   TasksToolbar,
   TasksZeroState,
 } from "../components/tasks/TasksChrome";
+import { useMounted } from "../hooks/useMounted";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
 import { useUrlSearchValue } from "../hooks/useUrlState";
+import { errorMessage } from "../utils/errors";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -106,13 +108,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [rerunFrom, setRerunFrom] = useState<TaskRecord | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   const onDispatched = async (
     agent: string,
@@ -124,16 +120,16 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     setError(null);
     try {
       const created = await dispatchTask(agent, brief, details, runtime);
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setDispatchOpen(false);
       setRerunFrom(null);
       setSelectedId(created.id);
       await refresh();
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -143,16 +139,16 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     setError(null);
     try {
       await deleteTask(deleteTarget.id, { purge: deletePurge });
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       if (selectedId === deleteTarget.id) setSelectedId(null);
       setDeleteTarget(null);
       setDeletePurge(false);
       await refresh();
     } catch (e) {
-      if (!mountedRef.current) return;
-      setError((e as Error).message);
+      if (!mounted.current) return;
+      setError(errorMessage(e));
     } finally {
-      if (mountedRef.current) setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -179,12 +175,12 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
     setCancelError(null);
     try {
       await cancelTask(target.id);
-      if (!mountedRef.current) return;
+      if (!mounted.current) return;
       setCancelTarget(null);
       await refresh();
     } catch (e) {
-      if (!mountedRef.current) return;
-      const msg = (e as Error).message;
+      if (!mounted.current) return;
+      const msg = errorMessage(e);
       // 409 = already terminal; benign race — next refresh re-syncs.
       if (/409/.test(msg)) {
         setCancelTarget(null);
@@ -193,7 +189,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
       }
       setCancelError(msg);
     } finally {
-      if (mountedRef.current) setCancelBusy(false);
+      if (mounted.current) setCancelBusy(false);
     }
   }, [cancelTarget, cancelBusy, refresh]);
 

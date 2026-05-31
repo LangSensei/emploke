@@ -78,4 +78,4 @@ This skill was imported into the emploke marketplace from an external open-sourc
 - **Forked at**: 6a62d0441753157ca6ca50479e490c2948033adb  (use the SHA the file was fetched at)
 - **Marketplace entry maintained at**: https://github.com/LangSensei/emploke-marketplace/tree/main/skills/karpathy-guidelines
 
-Frontmatter has been adapted to the emploke catalog schema (`scope: langsensei`, `version: 1.0.0` added). No semantic change to the skill body.
+Frontmatter has been adapted to the emploke catalog schema (`scope: emploke`, `version: 1.0.0` added). No semantic change to the skill body.

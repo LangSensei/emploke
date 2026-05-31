@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getSchedule,
@@ -8,6 +8,8 @@ import {
   type ScheduleDetail as ScheduleDetailType,
   type SchedulePreview,
 } from "../../api";
+import { useMounted } from "../../hooks/useMounted";
+import { errorMessage } from "../../utils/errors";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { ScheduleRecentFires } from "./ScheduleRecentFires";
 
@@ -63,13 +65,7 @@ export function ScheduleDetail({
   const [busyAction, setBusyAction] = useState<"toggle" | "run" | null>(null);
   const [recentRefresh, setRecentRefresh] = useState(0);
 
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
 
   // Fetch detail + preview together so the header always renders with
   // a consistent describe / next-fire pair.
@@ -96,7 +92,7 @@ export function ScheduleDetail({
       },
       (e: unknown) => {
         if (cancelled) return;
-        setError((e as Error).message);
+        setError(errorMessage(e));
       },
     );
     return () => {
@@ -132,7 +128,7 @@ export function ScheduleDetail({
     } catch (e) {
       if (!mounted.current) return;
       setDetail(previous);
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }
@@ -151,7 +147,7 @@ export function ScheduleDetail({
       );
     } catch (e) {
       if (!mounted.current) return;
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }

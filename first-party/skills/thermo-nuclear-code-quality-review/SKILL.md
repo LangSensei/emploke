@@ -203,4 +203,4 @@ This skill was imported into the emploke marketplace from an external open-sourc
 - **Forked at**: ac76a2bc88bb2d895e83ab1788aa584a82346cfc  (use the SHA the file was fetched at)
 - **Marketplace entry maintained at**: https://github.com/LangSensei/emploke-marketplace/tree/main/skills/thermo-nuclear-code-quality-review
 
-Frontmatter has been adapted to the emploke catalog schema (`scope: langsensei`, `version: 1.0.0` added). No semantic change to the skill body.
+Frontmatter has been adapted to the emploke catalog schema (`scope: emploke`, `version: 1.0.0` added). No semantic change to the skill body.

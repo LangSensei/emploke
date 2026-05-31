@@ -13,8 +13,9 @@ import { AgentFqn } from "../../components/agents/AgentFqn";
 import { CreateModal } from "../../components/sessions/CreateModal";
 import { DispatchModal } from "../../components/tasks/DispatchModal";
 import { useWorkspaceShell } from "../../components/WorkspaceShellContext";
+import { splitFqnForDisplay } from "../../utils/fqn";
 import { AgentOverviewTab } from "./AgentOverviewTab";
-import { type AgentRuntimeStatus, AgentStatusPill, splitFqn } from "./agentRuntime";
+import { type AgentRuntimeStatus, AgentStatusPill } from "./agentRuntime";
 
 export interface AgentDetailPaneProps {
   /** Canonical agent identifier (`scope/short`). */
@@ -81,17 +82,7 @@ export function AgentDetailPane({
 }: AgentDetailPaneProps) {
   const { data, config } = useWorkspaceShell();
 
-  const { scope, short } = useMemo(() => {
-    const parts = splitFqn(fqn);
-    if (parts !== null) return parts;
-    // Defensive fallback for a malformed `?selected=` value — split on the
-    // first slash so the avatar/title still render something sensible while
-    // the "not installed" alert below explains the missing entry.
-    const ix = fqn.indexOf("/");
-    return ix <= 0
-      ? { scope: "", short: fqn }
-      : { scope: fqn.slice(0, ix), short: fqn.slice(ix + 1) };
-  }, [fqn]);
+  const { scope, shortName } = useMemo(() => splitFqnForDisplay(fqn), [fqn]);
 
   const status: AgentRuntimeStatus = tasks?.some((t) => t.status === "running")
     ? "running"
@@ -208,7 +199,7 @@ export function AgentDetailPane({
     >
       <header className="agent-detail__header">
         <div className="agent-detail__title-row">
-          <AgentAvatar fqn={fqn} label={short} size="lg" />
+          <AgentAvatar fqn={fqn} label={shortName} size="lg" />
           <div className="agent-detail__name-block">
             <h2 className="agent-detail__title">
               <AgentFqn fqn={fqn} as="span" />

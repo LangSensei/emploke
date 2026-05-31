@@ -67,7 +67,7 @@ Resolve the target agent's source paths and run history paths from the runtime t
 
 **Remote mode (only when the user named a catalog repo):**
 
-1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory (see issue #7).
+1. **Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory.
 2. Set up the worktree using git-pr skill against the user-supplied catalog repo URL: bare clone to `$(repos_dir)/<repo-name>/`, worktree into `repo/`. The output root is now `<workDir>/repo`.
 3. If the repo URL is unreachable or you don't have push rights, fall back to Local mode and report it.
 

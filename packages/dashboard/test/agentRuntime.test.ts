@@ -1,11 +1,7 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { describe, expect, it } from "vitest";
 import type { TaskRecord } from "../src/api";
-import {
-  agentDetailUrl,
-  computeAgentRuntimeViews,
-  splitFqn,
-} from "../src/pages/Runtime/agentRuntime";
+import { agentDetailUrl, computeAgentRuntimeViews } from "../src/pages/Runtime/agentRuntime";
 
 function makeAgent(fqn: string): AgentEntry {
   return {
@@ -63,17 +59,8 @@ describe("computeAgentRuntimeViews", () => {
   });
 });
 
-describe("splitFqn", () => {
-  it("splits a well-formed fqn", () => {
-    expect(splitFqn("emploke/dev")).toEqual({ scope: "emploke", short: "dev" });
-  });
-  it("returns null for input without a slash", () => {
-    expect(splitFqn("nope")).toBeNull();
-  });
-  it("returns null for input with multiple slashes", () => {
-    expect(splitFqn("a/b/c")).toBeNull();
-  });
-});
+// splitFqn used to live here; it's now in `src/utils/fqn.ts` and is
+// covered by `test/utils/fqn.test.ts` (strict + display variants).
 
 describe("agentDetailUrl", () => {
   it("emits the master-detail ?selected= shape (PR #189 polish v2)", () => {

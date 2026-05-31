@@ -38,7 +38,7 @@ Strategic analysis and improvement proposals for the [emploke](https://github.co
 
 ### Setup
 
-**Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory (see issue #7).
+**Load the `git-pr` skill body in full** before any `git` command. Its Repository Setup, Anti-pattern callout, and Worktree Workflow are mandatory; do not improvise from memory.
 
 Clone two repos using git-pr skill **Mode C** (read-only):
 
