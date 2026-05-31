@@ -2,8 +2,8 @@ import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  AgentNotFoundError as CatalogAgentNotFoundError,
   type AgentResolveResult,
+  AgentNotFoundError as CatalogAgentNotFoundError,
   type CatalogService,
 } from "@emploke/catalog";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";

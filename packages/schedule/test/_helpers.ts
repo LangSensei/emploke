@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import pino from "pino";
+import { AgentNotFoundError } from "../src/errors.js";
 import { ScheduleRepository } from "../src/schedule-repository.js";
 import { ScheduleService } from "../src/schedule-service.js";
 import { openTestScheduleDb } from "../src/testing.js";
@@ -61,9 +62,27 @@ export const acceptAgent = async (_fqn: string): Promise<void> => {
   void _fqn;
 };
 
-/** Rejecting agent validator (used in negative tests). */
-export const rejectAgent = async (fqn: string): Promise<void> => {
-  throw new Error(`stub: agent "${fqn}" not found`);
+/**
+ * Rejecting validator that mimics the production
+ * `makeScheduleAgentValidator` shape: throws schedule's own typed
+ * `AgentNotFoundError(fqn)` so `ScheduleService.assertAgentExists`
+ * recognises it and re-throws untouched (→ 400 user error).
+ */
+export const rejectAgentAsNotFound = async (fqn: string): Promise<void> => {
+  throw new AgentNotFoundError(fqn);
+};
+
+/**
+ * Rejecting validator that throws an arbitrary fault (e.g. a generic
+ * `Error("DB exploded")`) — used to assert the catalog-system-fault
+ * branch in `ScheduleService.assertAgentExists`, which now wraps any
+ * non-`AgentNotFoundError` as `AgentResolutionFailedError` (→ 500).
+ */
+export const rejectAgentWithFault = (cause: Error): ((fqn: string) => Promise<void>) => {
+  return async (_fqn: string): Promise<void> => {
+    void _fqn;
+    throw cause;
+  };
 };
 
 export interface ScheduleTestHandle {

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
+import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
 import type { LaunchCommand, Runtime } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
@@ -12,6 +13,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   InvalidSessionIdError,
   SessionNotFoundError,
   SessionRepository,
@@ -281,13 +283,51 @@ describe("create()", () => {
     await expect(m.create({ agent: "" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  it("throws AgentNotFoundError when catalog rejects", async () => {
+  it("wraps a CatalogAgentNotFoundError from resolveAgent as session's AgentNotFoundError", async () => {
+    // The catalog's typed not-found marker MUST be preserved as a
+    // session-package AgentNotFoundError (400). Without the
+    // `instanceof CatalogAgentNotFoundError` branch in
+    // session-service.ts, this would wrap as AgentResolutionFailedError
+    // (500) and surface to users as 'internal error'.
+    const catalogErr = new CatalogAgentNotFoundError("missing");
     const m = await buildManager({
-      catalog: stubCatalog(),
+      catalog: stubCatalog({ resolveError: catalogErr }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
-    await expect(m.create({ agent: "missing" })).rejects.toBeInstanceOf(AgentNotFoundError);
+    const err = await m.create({ agent: "missing" }).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(AgentNotFoundError);
+    expect(err).not.toBeInstanceOf(AgentResolutionFailedError);
+    expect((err as AgentNotFoundError).cause).toBe(catalogErr);
+  });
+
+  it("wraps a generic catalog error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
+    // A non-typed catalog failure (DB exploded, parser blew up, etc.)
+    // is a system fault, not a user error. The previous behaviour
+    // wrapped every catalog throw as AgentNotFoundError (400),
+    // masking real bugs behind a misleading 'agent not found'
+    // response. Destructive validation for the
+    // `instanceof CatalogAgentNotFoundError` branch in
+    // session-service.ts: removing the AgentResolutionFailedError
+    // throw collapses this back to AgentNotFoundError and this
+    // assertion must fail.
+    const foreign = new Error("DB exploded");
+    const m = await buildManager({
+      catalog: stubCatalog({ resolveError: foreign }),
+      runtimeRegistry: makeRegistry(new StubRuntime()),
+      workspaceDir: scratch,
+    });
+    const err = await m.create({ agent: "missing" }).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(AgentResolutionFailedError);
+    expect(err).not.toBeInstanceOf(AgentNotFoundError);
+    expect((err as AgentResolutionFailedError).agent).toBe("missing");
+    expect((err as AgentResolutionFailedError).cause).toBe(foreign);
   });
 
   it("throws UnknownRuntimeError when runtime kind is not registered", async () => {

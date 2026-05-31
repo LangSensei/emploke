@@ -28,13 +28,20 @@
  */
 
 import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
-import { AgentNotFoundError as ScheduleAgentNotFoundError } from "@emploke/schedule";
-import { AgentNotFoundError as SessionAgentNotFoundError } from "@emploke/session";
+import {
+  AgentNotFoundError as ScheduleAgentNotFoundError,
+  AgentResolutionFailedError as ScheduleAgentResolutionFailedError,
+} from "@emploke/schedule";
+import {
+  AgentNotFoundError as SessionAgentNotFoundError,
+  AgentResolutionFailedError as SessionAgentResolutionFailedError,
+} from "@emploke/session";
 import {
   EntryNotReadyError,
   InvalidTransition,
   type Task,
   AgentNotFoundError as TaskAgentNotFoundError,
+  AgentResolutionFailedError as TaskAgentResolutionFailedError,
   TaskIdAllocationFailedError,
   type TaskService,
 } from "@emploke/task";
@@ -381,6 +388,165 @@ describe("respondError contract — 5xx fault log separation", () => {
 
     const fivexx = cap.entries.find((e) => e.msg === "tasks: 5xx fault");
     expect(fivexx).toBeDefined();
+    const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
+    expect(unmapped).toBeUndefined();
+  });
+});
+
+describe("respondError contract — AgentResolutionFailedError 500 path", () => {
+  // The four AgentResolutionFailedError flows (task / session /
+  // schedule's-own / schedule-run-delegated-to-task) all collapse to
+  // the SAME opaque wire envelope: `{ error: "internal error", code:
+  // "AgentResolutionFailedError" }`. The shape is the contract.
+  // Each test pins:
+  //   - response status === 500
+  //   - body.toEqual({ error: "internal error", code: "AgentResolutionFailedError" })
+  //     (status-only assertions are explicitly rejected by the brief)
+  //   - the `5xx fault` log line fires (so the operator-visible
+  //     diagnostic channel still has the cause)
+  //
+  // Destructive validation:
+  //   - tasks/sessions/schedules-create: removing the
+  //     `[AgentResolutionFailedError, 500, opaqueAgentResolutionBody]`
+  //     row from the corresponding policy makes the assertion fall
+  //     through to AgentResolutionFailedError's base-class default
+  //     (TaskError → not in policy → 400 unmapped; SessionError → not
+  //     in policy → 400 unmapped; ScheduleError → 400 base). The body
+  //     code field also disappears (errorBody fallback collapses it
+  //     to `{ error: "internal error" }` with no `code`).
+  //   - schedules-run: removing the
+  //     `[TaskAgentResolutionFailedError, 500, opaqueAgentResolutionBody]`
+  //     row from schedules.ts policy causes the task-side
+  //     AgentResolutionFailedError to fall through to 400 'unmapped'
+  //     (the policy's base class ScheduleError doesn't match the
+  //     task-package class). This test will fail with status 400 +
+  //     the unmapped log line instead of 500 + the 5xx-fault one.
+
+  const OPAQUE_BODY = {
+    error: "internal error",
+    code: "AgentResolutionFailedError",
+  };
+
+  it("tasks route AgentResolutionFailedError → 500 + opaque body + 5xx fault log", async () => {
+    const m = stubTaskService({
+      dispatch: vi.fn(async () => {
+        throw new TaskAgentResolutionFailedError("public/writer", new Error("DB exploded"));
+      }),
+    });
+    const { app, cap } = await buildAppWithLogger((a) => {
+      a.route(
+        "/",
+        tasksRoutes(() => m),
+      );
+    });
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/writer", brief: "go" }),
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual(OPAQUE_BODY);
+
+    const fivexx = cap.entries.find((e) => e.msg === "tasks: 5xx fault");
+    expect(fivexx).toBeDefined();
+    expect(fivexx?.level).toBe(50);
+    const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
+    expect(unmapped).toBeUndefined();
+  });
+
+  it("sessions route AgentResolutionFailedError → 500 + opaque body + 5xx fault log", async () => {
+    const create = vi.fn(async () => {
+      throw new SessionAgentResolutionFailedError("public/demo", new Error("DB exploded"));
+    });
+    const sessionsCtx = {
+      sessions: { list: vi.fn(async () => []), create, get: vi.fn(), delete: vi.fn() },
+      spawnSession: vi.fn(),
+    };
+    const { app, cap } = await buildAppWithLogger((a) => {
+      a.route(
+        "/",
+        sessionsRoutes(() => sessionsCtx as never),
+      );
+    });
+    const res = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "public/demo" }),
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual(OPAQUE_BODY);
+
+    const fivexx = cap.entries.find((e) => e.msg === "sessions: 5xx fault");
+    expect(fivexx).toBeDefined();
+    expect(fivexx?.level).toBe(50);
+    const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
+    expect(unmapped).toBeUndefined();
+  });
+
+  it("schedules CREATE AgentResolutionFailedError (schedule package) → 500 + opaque body + 5xx fault log", async () => {
+    const createTask = vi.fn(async () => {
+      throw new ScheduleAgentResolutionFailedError("public/writer", {
+        cause: new Error("DB exploded"),
+      });
+    });
+    const stub = { list: vi.fn(async () => []), createTask } as never;
+    const { app, cap } = await buildAppWithLogger((a) => {
+      a.route(
+        "/",
+        schedulesRoutes(() => stub),
+      );
+    });
+    const res = await app.request("/task", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "S",
+        target: { agent: "public/writer", brief: "go" },
+        trigger: { kind: "cron", expr: "* * * * *", tz: "UTC" },
+      }),
+    });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual(OPAQUE_BODY);
+
+    const fivexx = cap.entries.find((e) => e.msg?.endsWith(": 5xx fault"));
+    expect(fivexx).toBeDefined();
+    expect(fivexx?.level).toBe(50);
+    const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
+    expect(unmapped).toBeUndefined();
+  });
+
+  it("schedules-run AgentResolutionFailedError (task package, delegated) → 500 + opaque body + 5xx fault log", async () => {
+    // POST /schedules/:sid/run invokes TaskService.dispatch under
+    // the hood, so a task-side resolution fault must surface as 500
+    // via the schedules policy's task-fallthrough entry. Without
+    // the `[TaskAgentResolutionFailedError, 500, ...]` row in
+    // schedules.ts, this would fall through to 400 'unmapped'.
+    const sid = "550e8400-e29b-41d4-a716-446655440000";
+    const run = vi.fn(async () => {
+      throw new TaskAgentResolutionFailedError("public/writer", new Error("DB exploded"));
+    });
+    const stub = {
+      list: vi.fn(async () => []),
+      get: vi.fn(async () => ({ id: sid, target: { kind: "task" } })),
+      run,
+    } as never;
+    const { app, cap } = await buildAppWithLogger((a) => {
+      a.route(
+        "/",
+        schedulesRoutes(() => stub),
+      );
+    });
+    const res = await app.request(`/${sid}/run`, { method: "POST" });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual(OPAQUE_BODY);
+
+    const fivexx = cap.entries.find((e) => e.msg?.endsWith(": 5xx fault"));
+    expect(fivexx).toBeDefined();
+    expect(fivexx?.level).toBe(50);
     const unmapped = cap.entries.find((e) => e.msg?.includes("unmapped"));
     expect(unmapped).toBeUndefined();
   });
