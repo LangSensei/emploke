@@ -25,6 +25,7 @@ import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
 import { requestLogger } from "./middleware/request-logger.js";
+import { errorBody } from "./routes/_shared.js";
 import { catalogRoutes } from "./routes/catalog/index.js";
 import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
@@ -485,8 +486,13 @@ function workspaceContextMiddleware(
     try {
       context = await application.getContext(id);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message, code: (err as Error)?.name }, 500);
+      // Use the canonical `errorBody` envelope so the 500 body goes
+      // through the same `SAFE_ERROR_NAMES` allow-list every other 5xx
+      // response uses. Echoing raw `err.message` here would bypass the
+      // gate and leak host paths / Node fs error strings behind a
+      // reverse proxy (loopback bind mitigates exploitability today,
+      // not tomorrow).
+      return c.json(errorBody(err), 500);
     }
     if (!context) {
       return c.json(
