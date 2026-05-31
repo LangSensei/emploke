@@ -49,8 +49,8 @@ import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
 import { startClockSync } from "./serverClock";
-import { formatRelative } from "./utils/time";
 import { errorMessage } from "./utils/errors";
+import { formatRelative } from "./utils/time";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },

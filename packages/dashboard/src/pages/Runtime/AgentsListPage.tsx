@@ -11,11 +11,7 @@ import { usePollWithBackoff } from "../../hooks/usePollWithBackoff";
 import { useUrlSearchValue } from "../../hooks/useUrlState";
 import { splitFqnForDisplay } from "../../utils/fqn";
 import { AgentDetailPane } from "./AgentDetailPane";
-import {
-  type AgentRuntimeView,
-  AgentStatusPill,
-  computeAgentRuntimeViews,
-} from "./agentRuntime";
+import { type AgentRuntimeView, AgentStatusPill, computeAgentRuntimeViews } from "./agentRuntime";
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 

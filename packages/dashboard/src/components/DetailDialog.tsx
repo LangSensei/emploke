@@ -19,10 +19,10 @@ import {
   type SkillDetail,
 } from "../api";
 import { type EntityKind, KIND_ICON, KIND_TAG, KIND_TITLE } from "../kindMeta";
+import { errorMessage } from "../utils/errors";
 import { splitFqnForDisplay } from "../utils/fqn";
 import { Modal } from "./Modal";
 import { ResolveTree } from "./ResolveTree";
-import { errorMessage } from "../utils/errors";
 
 /**
  * Read-only detail view for an installed catalog entry.

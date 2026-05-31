@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type TaskRecord, taskArtifactUrl } from "../../../api";
+import { isAbortError } from "../../../utils/errors";
 import { FileViewer } from "../../viewers/FileViewer";
 import { viewerNeedsBlob } from "../../viewers/index";
-import { isAbortError } from "../../../utils/errors";
 
 export interface ArtifactsTabProps {
   task: TaskRecord;

@@ -9,9 +9,9 @@ import {
   type SchedulePreview,
 } from "../../api";
 import { useMounted } from "../../hooks/useMounted";
+import { errorMessage } from "../../utils/errors";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { ScheduleRecentFires } from "./ScheduleRecentFires";
-import { errorMessage } from "../../utils/errors";
 
 export interface ScheduleDetailProps {
   scheduleId: string;

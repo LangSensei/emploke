@@ -27,8 +27,8 @@ import { CreateModal } from "../components/sessions/CreateModal";
 import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 import { serverNow } from "../serverClock";
-import { formatRelative } from "../utils/time";
 import { errorMessage } from "../utils/errors";
+import { formatRelative } from "../utils/time";
 
 interface SessionsProps {
   agents: AgentEntry[];

@@ -7,9 +7,9 @@ import {
   type TaskActivity,
   type TaskRecord,
 } from "../api";
+import { errorMessage } from "../utils/errors";
 import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
-import { errorMessage } from "../utils/errors";
 
 export interface TaskDetailData {
   task: TaskRecord | null;

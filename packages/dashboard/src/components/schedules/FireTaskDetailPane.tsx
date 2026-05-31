@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listScheduledTasks, type TaskRecord } from "../../api";
 import { useTaskDetail } from "../../hooks/useTaskDetail";
-import { TaskView } from "../task-view";
 import { errorMessage } from "../../utils/errors";
+import { TaskView } from "../task-view";
 
 export interface FireTaskDetailPaneProps {
   /** Schedule whose recent-fires list owns the navigation set. */
