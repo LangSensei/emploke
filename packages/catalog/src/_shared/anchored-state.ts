@@ -68,10 +68,7 @@ export function buildInitialAnchoredState<K extends string>(
     version: meta.version,
     prereqs: meta.prereqs,
     dependencies: emptyDeps(cfg.depSpecs),
-    depsRefs: metaDepsToOriginDeps(
-      cfg.depSpecs.map((s) => s.kind),
-      meta,
-    ),
+    depsRefs: metaDepsToOriginDeps(cfg.depSpecs, meta),
     prereqsAck: initialPrereqsAck(meta.prereqs),
     installedAt: now,
     updatedAt: now,
@@ -138,10 +135,7 @@ export function applyAnchorPatch<K extends string>(
     description: meta.description,
     version: meta.version,
     prereqs: meta.prereqs,
-    depsRefs: metaDepsToOriginDeps(
-      cfg.depSpecs.map((s) => s.kind),
-      meta,
-    ),
+    depsRefs: metaDepsToOriginDeps(cfg.depSpecs, meta),
     updatedAt: nowIso(),
   };
 }

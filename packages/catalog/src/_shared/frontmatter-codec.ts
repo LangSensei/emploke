@@ -1,5 +1,5 @@
 import yaml from "js-yaml";
-import type { OriginDeps } from "./dep-keys.js";
+import type { DepSpec, OriginDeps } from "./dep-keys.js";
 
 /**
  * Shared YAML-frontmatter parser used by `agent/agent-frontmatter.ts`
@@ -19,7 +19,7 @@ import type { OriginDeps } from "./dep-keys.js";
  * The codec is generic over the per-kind dep-key union `K` — e.g.
  * agent passes `"skills" | "mcps"`. A future per-kind divergence
  * (agent gains a `tools` dep) only adds to the calling shadow's
- * `depKeys`; this module stays untouched.
+ * `depSpecs`; this module stays untouched.
  *
  * Behavior note (F2-1): the agent-side legacy `{ origin: "…" }` object
  * form for `dependencies.<kind>[*]` is NOT supported here — only
@@ -72,8 +72,13 @@ export interface FrontmatterCodecConfig<K extends string> {
     options?: { cause?: unknown },
   ) => Error;
   readonly validators: FrontmatterCodecValidators;
-  /** The full dep-kind union recognised by this codec (e.g. `["skills", "mcps"]`). */
-  readonly depKeys: readonly K[];
+  /**
+   * The full per-kind dep-spec set recognised by this codec (e.g.
+   * `[{ kind: "skills" }, { kind: "mcps" }]`). The codec derives its
+   * accepted dep-key set from `specs.map(s => s.kind)` internally — the
+   * caller never derives or passes the key list itself.
+   */
+  readonly depSpecs: readonly DepSpec<K>[];
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
@@ -81,7 +86,8 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
 export function makeFrontmatterCodec<K extends string>(
   config: FrontmatterCodecConfig<K>,
 ): FrontmatterCodec<K> {
-  const { anchorFilename, ErrorClass, depKeys } = config;
+  const { anchorFilename, ErrorClass, depSpecs } = config;
+  const depKeys = depSpecs.map((s) => s.kind) as readonly K[];
   // `asserts` calls require a directly-typed reference (lost on
   // destructuring), so keep the explicit cast through `config.validators`.
   const validators: FrontmatterCodecValidators = config.validators;
@@ -227,12 +233,12 @@ export function makeFrontmatterCodec<K extends string>(
  * anchored-state builders.
  */
 export function metaDepsToOriginDeps<K extends string>(
-  depKeys: readonly K[],
+  depSpecs: readonly DepSpec<K>[],
   meta: AnchoredFrontmatter<K>,
 ): OriginDeps<K> {
   const out = {} as Record<K, readonly string[]>;
-  for (const k of depKeys) {
-    out[k] = meta.dependencies?.[k] ?? [];
+  for (const s of depSpecs) {
+    out[s.kind] = meta.dependencies?.[s.kind] ?? [];
   }
   return out;
 }

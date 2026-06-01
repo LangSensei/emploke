@@ -46,24 +46,35 @@ export type SkillDepKind = "skills" | "mcps";
 
 /**
  * Per-kind dep-spec set — the single source of truth for the skill
- * kind. See `agent-frontmatter.ts`'s `AGENT_DEP_SPECS` for the
- * rationale on why this lives in the frontmatter module rather than
- * the entity module. `skipSelf: true` on the `skills` bucket means a
- * skill that lists itself as a skill-dep silently drops the self-edge
- * at write time (a typo, not a graph cycle to honour).
+ * kind. The entity, repository, and service files all import this
+ * directly; nothing redeclares the `{skills, mcps}` shape elsewhere.
+ *
+ * Lives in `skill-frontmatter.ts` (not `skill-entity.ts`) because the
+ * frontmatter codec already needs these specs to derive its accepted
+ * dep-key set. Moving the spec set into the entity would require
+ * `skill-frontmatter.ts` to import a value from `skill-entity.ts`,
+ * which would create a runtime import cycle (entity already imports
+ * `parse` / `writeFrontmatter` from this file).
+ *
+ * DO NOT move this constant to `skill-entity.ts` or to a sibling
+ * `skill-deps.ts` file — either reintroduces the cycle
+ * (entity ↔ frontmatter), and the third-file split adds a module
+ * for no semantic gain.
+ *
+ * `skipSelf: true` on the `skills` bucket means a skill that lists
+ * itself as a skill-dep silently drops the self-edge at write time
+ * (a typo, not a graph cycle to honour).
  */
 export const SKILL_DEP_SPECS: readonly DepSpec<SkillDepKind>[] = defineDepSpecs<SkillDepKind>(
   { kind: "skills", skipSelf: true },
   { kind: "mcps" },
 );
 
-const SKILL_DEP_KEYS = SKILL_DEP_SPECS.map((s) => s.kind) as readonly SkillDepKind[];
-
 const codec = makeFrontmatterCodec<SkillDepKind>({
   anchorFilename: "SKILL.md",
   ErrorClass: SkillFrontmatterError,
   validators: { validateScope, validateShortName, DEFAULT_SCOPE },
-  depKeys: SKILL_DEP_KEYS,
+  depSpecs: SKILL_DEP_SPECS,
 });
 
 export type SkillDependencyRef = AnchoredDependencyRef;

@@ -30,24 +30,27 @@ export type AgentDepKind = "skills" | "mcps";
  * directly; nothing redeclares the `{skills, mcps}` shape elsewhere.
  *
  * Lives in `agent-frontmatter.ts` (not `agent-entity.ts`) because the
- * frontmatter codec already needs the derived `AGENT_DEP_KEYS`. Moving
- * the spec set into the entity would require `agent-frontmatter.ts` to
- * import a value from `agent-entity.ts`, which would create a runtime
- * import cycle (entity already imports `parse` / `writeFrontmatter`
- * from this file).
+ * frontmatter codec already needs these specs to derive its accepted
+ * dep-key set. Moving the spec set into the entity would require
+ * `agent-frontmatter.ts` to import a value from `agent-entity.ts`,
+ * which would create a runtime import cycle (entity already imports
+ * `parse` / `writeFrontmatter` from this file).
+ *
+ * DO NOT move this constant to `agent-entity.ts` or to a sibling
+ * `agent-deps.ts` file — either reintroduces the cycle
+ * (entity ↔ frontmatter), and the third-file split adds a module
+ * for no semantic gain.
  */
 export const AGENT_DEP_SPECS: readonly DepSpec<AgentDepKind>[] = defineDepSpecs<AgentDepKind>(
   { kind: "skills" },
   { kind: "mcps" },
 );
 
-const AGENT_DEP_KEYS = AGENT_DEP_SPECS.map((s) => s.kind) as readonly AgentDepKind[];
-
 const codec = makeFrontmatterCodec<AgentDepKind>({
   anchorFilename: "AGENTS.md",
   ErrorClass: AgentFrontmatterError,
   validators: { validateScope, validateShortName, DEFAULT_SCOPE },
-  depKeys: AGENT_DEP_KEYS,
+  depSpecs: AGENT_DEP_SPECS,
 });
 
 export type AgentDependencyRef = AnchoredDependencyRef;
