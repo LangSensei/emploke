@@ -2,7 +2,7 @@ import type { AgentEntry, McpItem, SkillEntry } from "@emploke/catalog";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CatalogPage } from "../src/pages/Catalog";
+import { CatalogPage } from "../../src/pages/Catalog";
 
 /**
  * Lock-in coverage for the PR #189 polish v3 `?agent=<fqn>` deep-link

@@ -6,12 +6,12 @@ import type { Application } from "@emploke/core";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { catalogRoutes } from "../src/routes/catalog/index.js";
+import { catalogRoutes } from "../../../src/routes/catalog/index.js";
 import {
   type ServerTestSubsystem,
   setupTestSubsystem,
   teardownTestSubsystem,
-} from "./_test-support.js";
+} from "../../_test-support.js";
 
 /**
  * End-to-end tests for the sync / acknowledge / enable / disable

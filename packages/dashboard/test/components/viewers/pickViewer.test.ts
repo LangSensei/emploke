@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickViewer, viewerNeedsBlob } from "../src/components/viewers/index";
+import { pickViewer, viewerNeedsBlob } from "../../../src/components/viewers/index";
 
 describe("pickViewer", () => {
   it("returns 'markdown' for .md / .markdown", () => {

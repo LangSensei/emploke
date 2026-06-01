@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { FileViewer } from "../src/components/viewers/FileViewer";
-import HtmlViewer from "../src/components/viewers/HtmlViewer";
+import { FileViewer } from "../../../src/components/viewers/FileViewer";
+import HtmlViewer from "../../../src/components/viewers/HtmlViewer";
 
 afterEach(() => cleanup());
 

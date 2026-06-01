@@ -5,7 +5,7 @@ import {
   type Preset,
   presetToCron,
   validatePreset,
-} from "../src/components/schedules/cronPresets";
+} from "../../../src/components/schedules/cronPresets";
 
 // Table-driven unit tests for the pure preset → cron mapping. The
 // constraint is that every preset kind round-trips to the cron

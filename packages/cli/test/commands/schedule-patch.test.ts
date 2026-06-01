@@ -29,8 +29,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { schedulePatch } from "../src/commands/schedule.js";
-import { runCli } from "./_helpers/run-cli.js";
+import { schedulePatch } from "../../src/commands/schedule.js";
+import { runCli } from "../_helpers/run-cli.js";
 
 const SERVER_URL = "http://stub.local";
 const WSID = "ws-abc";

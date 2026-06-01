@@ -34,7 +34,7 @@ import {
   AgentNotFoundError as TaskAgentNotFoundError,
 } from "@emploke/task";
 import { describe, expect, it, vi } from "vitest";
-import { schedulesRoutes } from "../src/routes/schedules.js";
+import { schedulesRoutes } from "../../src/routes/schedules.js";
 
 const sampleSchedule: Schedule = {
   id: "sched-abc",

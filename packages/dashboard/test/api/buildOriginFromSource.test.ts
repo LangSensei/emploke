@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildOriginFromSource } from "../src/api/catalog";
+import { buildOriginFromSource } from "../../src/api/catalog";
 
 describe("buildOriginFromSource", () => {
   it("url provider passes through https URLs verbatim", () => {

@@ -26,8 +26,8 @@ import {
   RuntimeStateDeletionFailed,
 } from "@emploke/runtime";
 import { describe, expect, it } from "vitest";
-import { catalogErrorPolicy } from "../src/routes/_error-policies/catalog.js";
-import { errorBody } from "../src/routes/_shared.js";
+import { catalogErrorPolicy } from "../../src/routes/_error-policies/catalog.js";
+import { errorBody } from "../../src/routes/_shared.js";
 
 // These tests pin the security-critical behavior of `errorBody`: only
 // emploke's own typed errors leak their `.message` to the client. Any

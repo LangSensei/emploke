@@ -20,7 +20,7 @@ import {
   UnsupportedPlatformError,
 } from "@emploke/terminal";
 import { describe, expect, it, vi } from "vitest";
-import { sessionsRoutes } from "../src/routes/sessions.js";
+import { sessionsRoutes } from "../../src/routes/sessions.js";
 
 const sampleRecord: Session = {
   id: "20260508-9dfbdf05",

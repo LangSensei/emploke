@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TaskRecord } from "../src/api";
-import { TaskView } from "../src/components/task-view";
+import type { TaskRecord } from "../../../src/api";
+import { TaskView } from "../../../src/components/task-view";
 
 function makeTask(overrides: Partial<TaskRecord>): TaskRecord {
   return {

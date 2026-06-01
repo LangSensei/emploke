@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type HealthResponse, healthRoutes } from "../src/routes/health.js";
+import { type HealthResponse, healthRoutes } from "../../src/routes/health.js";
 
 describe("healthRoutes", () => {
   it("GET / returns status, name, version, startedAt, uptimeSec, serverNow", async () => {

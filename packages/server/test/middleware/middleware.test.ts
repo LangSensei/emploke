@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { accessLog } from "../src/middleware/access-log.js";
-import { requestId } from "../src/middleware/request-id.js";
-import { requestLogger } from "../src/middleware/request-logger.js";
-import { captureLogger } from "./_capture-logger.js";
+import { accessLog } from "../../src/middleware/access-log.js";
+import { requestId } from "../../src/middleware/request-id.js";
+import { requestLogger } from "../../src/middleware/request-logger.js";
+import { captureLogger } from "../_capture-logger.js";
 
 /**
  * Tests for the observability middleware chain (issue #58):

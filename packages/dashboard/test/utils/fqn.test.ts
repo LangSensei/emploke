@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { splitFqn, splitFqnForDisplay } from "../src/utils/fqn";
+import { splitFqn, splitFqnForDisplay } from "../../src/utils/fqn";
 
 describe("splitFqn (strict)", () => {
   // --- valid -----------------------------------------------------------

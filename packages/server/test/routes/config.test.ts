@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configRoutes, type ServerConfig } from "../src/routes/config.js";
+import { configRoutes, type ServerConfig } from "../../src/routes/config.js";
 
 describe("configRoutes", () => {
   it("GET / returns the resolved server config with default tasks tunables", async () => {

@@ -89,59 +89,7 @@ const ALLOWED_FLAT_EXCEPTIONS: readonly FlatException[] = [
       "subdirected by area (facade/); imports span agent + skill + mcp sibling subdirs of src/ — rule says flat. Pre-existing layout, deferred to a separate review pass.",
   },
   // cli
-  {
-    file: "packages/cli/test/schedule-patch.test.ts",
-    rationale: "auto-added in commit 1; moves to test/commands/ in commit 2.",
-  },
   // dashboard
-  {
-    file: "packages/dashboard/test/AgentAvatar.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/agents/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/AgentFqn.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/agents/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/CatalogAgentHint.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/pages/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/FileViewer.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/viewers/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/OverviewTab.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/tasks/TaskDetail/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/SidebarNav.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/TaskView.test.tsx",
-    rationale: "auto-added in commit 1; moves to test/components/task-view/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/agentRuntime.test.ts",
-    rationale: "auto-added in commit 1; moves to test/pages/Runtime/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/buildOriginFromSource.test.ts",
-    rationale: "auto-added in commit 1; moves to test/api/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/cronPresets.test.ts",
-    rationale: "auto-added in commit 1; moves to test/components/schedules/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/fqn.test.ts",
-    rationale: "auto-added in commit 1; moves to test/utils/ in commit 2.",
-  },
-  {
-    file: "packages/dashboard/test/pickViewer.test.ts",
-    rationale: "auto-added in commit 1; moves to test/components/viewers/ in commit 2.",
-  },
   // e2e
   {
     file: "packages/e2e/test/cli/integration-smoke.test.ts",
@@ -186,49 +134,9 @@ const ALLOWED_FLAT_EXCEPTIONS: readonly FlatException[] = [
   },
   // server
   {
-    file: "packages/server/test/catalog-sync.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/catalog/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/config.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/error-sanitization.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/health.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/middleware.test.ts",
-    rationale: "auto-added in commit 1; moves to test/middleware/ in commit 2.",
-  },
-  {
     file: "packages/server/test/route-manifest.test.ts",
     rationale:
       "umbrella reflection test that mounts every route group + middleware to compare Hono's app.routes against ROUTES. Imports happen to share subdir 'routes' but the test is the manifest's umbrella, not a route subject — kept flat to mirror its scope.",
-  },
-  {
-    file: "packages/server/test/runtimes.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/scheduled-tasks.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/schedules.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/sessions.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/ in commit 2.",
-  },
-  {
-    file: "packages/server/test/workspace-catalog.test.ts",
-    rationale: "auto-added in commit 1; moves to test/routes/catalog/ in commit 2.",
   },
   // terminal
   {

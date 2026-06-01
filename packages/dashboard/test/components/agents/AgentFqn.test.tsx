@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentFqn } from "../src/components/agents/AgentFqn";
+import { AgentFqn } from "../../../src/components/agents/AgentFqn";
 
 /**
  * Lock-in coverage for the shared {@link AgentFqn} two-tone primitive

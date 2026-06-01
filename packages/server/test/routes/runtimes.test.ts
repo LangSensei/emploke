@@ -1,7 +1,7 @@
 import { RuntimeRegistry } from "@emploke/runtime";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { runtimesRoutes } from "../src/routes/runtimes.js";
+import { runtimesRoutes } from "../../src/routes/runtimes.js";
 
 function buildApp(registry: RuntimeRegistry): Hono {
   const app = new Hono();

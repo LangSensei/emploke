@@ -13,7 +13,7 @@
 
 import type { Task, TaskService } from "@emploke/task";
 import { describe, expect, it, vi } from "vitest";
-import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
+import { scheduledTasksRoutes } from "../../src/routes/scheduled-tasks.js";
 
 const sampleScheduledTask: Task = {
   id: "20260601-sched0001",

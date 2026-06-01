@@ -6,7 +6,7 @@ import {
   hashFqn,
   monogramForLabel,
   readableTextOn,
-} from "../src/components/agents/AgentAvatar";
+} from "../../../src/components/agents/AgentAvatar";
 
 /**
  * Lock-in coverage for the shared {@link AgentAvatar} primitive

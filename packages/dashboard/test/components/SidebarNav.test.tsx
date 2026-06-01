@@ -7,7 +7,7 @@ import {
   type SectionId,
   Sidebar,
   type SidebarItemId,
-} from "../src/components/Sidebar";
+} from "../../src/components/Sidebar";
 
 const SECTIONS: SectionDef[] = [
   { id: "overview", label: "Overview" },

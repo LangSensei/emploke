@@ -1,7 +1,7 @@
 import type { AgentEntry } from "@emploke/catalog";
 import { describe, expect, it } from "vitest";
-import type { TaskRecord } from "../src/api";
-import { agentDetailUrl, computeAgentRuntimeViews } from "../src/pages/Runtime/agentRuntime";
+import type { TaskRecord } from "../../../src/api";
+import { agentDetailUrl, computeAgentRuntimeViews } from "../../../src/pages/Runtime/agentRuntime";
 
 function makeAgent(fqn: string): AgentEntry {
   return {
