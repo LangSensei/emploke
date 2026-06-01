@@ -1,4 +1,4 @@
-import type { ScheduleDetail } from "../../api.js";
+import type { ScheduleDetail } from "../../api/index.js";
 
 /**
  * Hand-authored schedule fixtures (PR 4/4 of #61). Stored in the

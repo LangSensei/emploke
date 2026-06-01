@@ -1,4 +1,4 @@
-import type { TaskRecord } from "../../api.js";
+import type { TaskRecord } from "../../api/index.js";
 
 // Absolute paths are what the server stores in `success.artifacts`; the
 // dashboard's ArtifactsTab extracts the basename (after `/` or `\`) as the

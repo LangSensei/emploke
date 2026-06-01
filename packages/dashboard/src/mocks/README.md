@@ -30,8 +30,8 @@ mocks/
 ## Adding a fixture
 
 1. Add the data to the relevant file under `fixtures/`. Import types
-   from `../../api.js` (not `@emploke/server`) — the dashboard's wire
-   contract is canonical there.
+   from `../../api/index.js` (not `@emploke/server`) — the dashboard's
+   wire contract is canonical there.
 2. If your route needs a new URL pattern, add the matching handler
    in `handlers.ts`. The catch-all at the bottom turns any unhandled
    `/api/*` mutation into a 501; unmatched GETs log a console warning
