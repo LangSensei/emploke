@@ -1,13 +1,8 @@
+import matter from "gray-matter";
 import { normaliseOriginDeps, type OriginDeps } from "../_shared/dep-keys.js";
-import {
-  applyFrontmatterPatch,
-  assertOriginMutable,
-  FORBIDDEN_METADATA_PATCH_KEYS,
-  readFetcherTree,
-  sameOrigin,
-} from "../_shared/service-helpers.js";
-import type { EntryFile } from "../fetcher/index.js";
+import { type EntryFile, sameOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
+import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import type { SkillRepository } from "../skill/skill-repository.js";
 import { AgentEntity } from "./agent-entity.js";
 import { AGENT_DEP_SPECS, type AgentDepKind } from "./agent-frontmatter.js";
@@ -18,6 +13,9 @@ import {
   AgentOriginConflictError,
   AgentPlanStaleError,
 } from "./errors.js";
+
+/** FQN-immutable patch keys — never accepted by `updateMetadata`. */
+const FORBIDDEN_METADATA_PATCH_KEYS: ReadonlySet<string> = new Set(["name", "scope", "fqn"]);
 
 export interface AgentFetcher {
   fetchAnchor(origin: string): Promise<string>;
@@ -175,7 +173,14 @@ export class AgentService {
       node = planOrOrigin;
     }
 
-    const { files, anchorContent } = await readFetcherTree(this.fetcher, node.origin, "AGENTS.md");
+    const files = new Map<string, Buffer>();
+    let anchorContent: string | null = null;
+    for await (const file of this.fetcher.fetchTree(node.origin)) {
+      files.set(file.relPath, file.content);
+      if (file.relPath === "AGENTS.md") {
+        anchorContent = file.content.toString("utf8");
+      }
+    }
     if (anchorContent === null) {
       throw new AgentFrontmatterError(
         `install:${node.origin}`,
@@ -234,7 +239,7 @@ export class AgentService {
   async updateAnchor(fqn: string, newAgentMd: string): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    assertOriginMutable(fqn, existing.origin);
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const updated = existing.withAnchor(newAgentMd, `update:${fqn}`);
     const files = new Map<string, Buffer>();
     for await (const f of this.repo.streamFiles(fqn)) {
@@ -258,9 +263,14 @@ export class AgentService {
     }
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    assertOriginMutable(fqn, existing.origin);
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const currentAnchor = await this.repo.getAnchor(fqn);
-    const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
+    const file = matter(currentAnchor);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined || v === null) delete file.data[k];
+      else file.data[k] = v;
+    }
+    const newAnchor = matter.stringify(file.content, file.data);
     return this.updateAnchor(fqn, newAnchor);
   }
 

@@ -8,14 +8,27 @@ import {
   type OriginDeps,
 } from "../_shared/dep-keys.js";
 import {
-  hasNonEmptyPrereqs,
-  initialPrereqsAck,
-  nowIso,
-  requireNonEmptyOrigin,
-} from "../_shared/entity-helpers.js";
-import { metaDepsToOriginDeps } from "../_shared/frontmatter-codec.js";
-import { parse, SKILL_DEP_SPECS, type SkillDepKind } from "./skill-frontmatter.js";
+  parse,
+  SKILL_DEP_SPECS,
+  type SkillDepKind,
+  type SkillFrontmatter,
+} from "./skill-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
+
+/**
+ * File-private: pull `meta.dependencies` into a dense
+ * `OriginDeps<SkillDepKind>` with every dep-kind present (empty array
+ * when absent). Per-kind inline — the only shared module across kinds
+ * is `_shared/dep-keys.ts`, which is parametric and names no
+ * skill-specific concept.
+ */
+function depsAsOrigins(meta: SkillFrontmatter): OriginDeps<SkillDepKind> {
+  const out = {} as Record<SkillDepKind, readonly string[]>;
+  for (const s of SKILL_DEP_SPECS) {
+    out[s.kind] = meta.dependencies?.[s.kind] ?? [];
+  }
+  return out;
+}
 
 /**
  * Rich domain entity representing a single installed skill.
@@ -61,10 +74,12 @@ function buildInitialSkillState(
   origin: string,
   sourceLabel: string,
 ): SkillEntityState {
-  requireNonEmptyOrigin(origin, "SkillEntity.create");
+  if (typeof origin !== "string" || origin.length === 0) {
+    throw new TypeError("SkillEntity.create requires a non-empty origin string");
+  }
   const { meta } = parse(raw, sourceLabel);
   const fqn = makeFqn(meta.scope, meta.shortName);
-  const now = nowIso();
+  const now = new Date().toISOString();
   return {
     fqn,
     origin,
@@ -72,8 +87,8 @@ function buildInitialSkillState(
     version: meta.version,
     prereqs: meta.prereqs,
     dependencies: emptyDeps(SKILL_DEP_SPECS),
-    depsRefs: metaDepsToOriginDeps(SKILL_DEP_SPECS, meta),
-    prereqsAck: initialPrereqsAck(meta.prereqs),
+    depsRefs: depsAsOrigins(meta),
+    prereqsAck: (meta.prereqs ?? "").trim().length === 0,
     installedAt: now,
     updatedAt: now,
   };
@@ -135,8 +150,8 @@ function applySkillAnchorPatch(
     description: meta.description,
     version: meta.version,
     prereqs: meta.prereqs,
-    depsRefs: metaDepsToOriginDeps(SKILL_DEP_SPECS, meta),
-    updatedAt: nowIso(),
+    depsRefs: depsAsOrigins(meta),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -246,7 +261,3 @@ export class SkillEntity {
     });
   }
 }
-
-// Compat re-exports preserved as named exports off this module so
-// callers (catalog index.ts, skill index.ts) keep their import shape.
-export { hasNonEmptyPrereqs };

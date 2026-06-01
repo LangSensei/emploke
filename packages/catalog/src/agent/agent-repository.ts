@@ -2,24 +2,19 @@ import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { emptyDeps } from "../_shared/dep-keys.js";
-import { nowIso } from "../_shared/entity-helpers.js";
-import {
-  aggregateDepsForFqn,
-  coerceToBuffer,
-  dedupedDepEdges,
-  groupDepRowsBySource,
-} from "../_shared/repo-helpers.js";
-import type { AnchoredFile } from "../_shared/service-helpers.js";
 import type * as schema from "../schema.js";
 import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
 import { type AgentDependencies, AgentEntity } from "./agent-entity.js";
-import { AGENT_DEP_SPECS, type AgentDepKind } from "./agent-frontmatter.js";
+import { AGENT_DEP_SPECS } from "./agent-frontmatter.js";
 import { AgentNotFoundError } from "./errors.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
 /** One file inside an agent, as yielded by {@link AgentRepository.streamFiles}. */
-export type AgentFile = AnchoredFile;
+export interface AgentFile {
+  readonly relPath: string;
+  readonly content: Buffer;
+}
 
 /** Resolved fqn-form dependencies passed to {@link AgentRepository.add}. */
 export interface AgentRepoAddDeps {
@@ -33,9 +28,11 @@ type Db = BetterSQLite3Database<typeof schema>;
  * Drizzle-backed `AgentRepository`. Multi-table writes are wrapped in
  * `db.transaction(...)` so the row + files + dep rows commit atomically.
  *
- * Composition: this class wires the agent-specific drizzle tables; the
- * cross-kind plumbing (dep dedupe, blob coercion, dep-rows aggregation)
- * comes from `_shared/repo-helpers.ts`. No inheritance.
+ * Owned entirely by `agent/` per the decoupling-over-abstraction axiom.
+ * Dep dedupe, blob coercion, and dep-rows aggregation are inlined per
+ * kind (see {@link toBuf}, the `add`'s skipSelf-dedupe loop, and
+ * {@link loadAllDeps}) — no shared helper module. Skill mirrors the
+ * same shape by intent. See agent-entity.ts header for the principle.
  */
 export class AgentRepository {
   private readonly db: Db;
@@ -60,7 +57,7 @@ export class AgentRepository {
         `AgentRepository.add requires AGENTS.md in the files map (got: ${[...files.keys()].join(", ")})`,
       );
     }
-    const now = nowIso();
+    const now = new Date().toISOString();
     this.db.transaction((tx) => {
       const existing = tx
         .select({ fqn: agents.fqn })
@@ -89,13 +86,23 @@ export class AgentRepository {
       }
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, agent.fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
-      for (const edge of dedupedDepEdges(AGENT_DEP_SPECS, deps, agent.fqn)) {
-        if (edge.kind === "skills") {
-          tx.insert(agentSkillDeps)
-            .values({ sourceFqn: agent.fqn, targetFqn: edge.targetFqn })
-            .run();
-        } else {
-          tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn: edge.targetFqn }).run();
+      // Per-kind dedupe + skipSelf-apply, fanned out to the typed
+      // dep tables. The `skipSelf` branch is dead for agent today
+      // (no AGENT_DEP_SPEC sets `skipSelf`), but it's kept here to
+      // preserve behavioural equivalence with the deleted shared
+      // helper and to future-proof against agents gaining the flag.
+      for (const spec of AGENT_DEP_SPECS) {
+        const list = (spec.kind === "skills" ? deps.skills : deps.mcps) ?? [];
+        const seen = new Set<string>();
+        for (const targetFqn of list) {
+          if (spec.skipSelf === true && targetFqn === agent.fqn) continue;
+          if (seen.has(targetFqn)) continue;
+          seen.add(targetFqn);
+          if (spec.kind === "skills") {
+            tx.insert(agentSkillDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
+          } else {
+            tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
+          }
         }
       }
     });
@@ -151,7 +158,7 @@ export class AgentRepository {
   async *streamFiles(fqn: string): AsyncIterable<AgentFile> {
     const rows = this.db.select().from(agentFiles).where(eq(agentFiles.agentFqn, fqn)).all();
     for (const row of rows) {
-      yield { relPath: row.relPath, content: coerceToBuffer(row.content) };
+      yield { relPath: row.relPath, content: toBuf(row.content) };
     }
   }
 
@@ -162,7 +169,7 @@ export class AgentRepository {
       .where(and(eq(agentFiles.agentFqn, fqn), eq(agentFiles.relPath, "AGENTS.md")))
       .get();
     if (row === undefined) throw new AgentNotFoundError(fqn);
-    return coerceToBuffer(row.content).toString("utf8");
+    return toBuf(row.content).toString("utf8");
   }
 
   async listDependencies(fqn: string): Promise<AgentDependencies> {
@@ -178,10 +185,10 @@ export class AgentRepository {
       .where(eq(agentMcpDeps.sourceFqn, fqn))
       .orderBy(agentMcpDeps.targetFqn)
       .all();
-    return aggregateDepsForFqn<AgentDepKind>(AGENT_DEP_SPECS, {
-      skills: skillRows,
-      mcps: mcpRows,
-    });
+    return {
+      skills: skillRows.map((r) => ({ fqn: r.targetFqn })),
+      mcps: mcpRows.map((r) => ({ fqn: r.targetFqn })),
+    };
   }
 
   async setFlags(
@@ -192,7 +199,7 @@ export class AgentRepository {
     if (flags.prereqsAck !== undefined) patch.prereqsAck = flags.prereqsAck ? 1 : 0;
     if (flags.disabledByUser !== undefined) patch.disabledByUser = flags.disabledByUser ? 1 : 0;
     if (Object.keys(patch).length === 0) return;
-    patch.updatedAt = nowIso();
+    patch.updatedAt = new Date().toISOString();
     this.db.update(agents).set(patch).where(eq(agents.fqn, fqn)).run();
   }
 
@@ -213,11 +220,28 @@ export class AgentRepository {
       .from(agentMcpDeps)
       .orderBy(agentMcpDeps.sourceFqn, agentMcpDeps.targetFqn)
       .all();
-    return groupDepRowsBySource<AgentDepKind>(AGENT_DEP_SPECS, {
-      skills: skillRows,
-      mcps: mcpRows,
-    });
+    // Aggregate flat dep rows into `Map<sourceFqn, AgentDependencies>`.
+    // Per-kind inlining (groupBy-style) — the only shared module is
+    // `_shared/dep-keys.ts` which names no agent-specific concept.
+    // Both source lists are already ordered by (sourceFqn, targetFqn),
+    // so the per-source arrays stay sorted.
+    const out = new Map<string, { skills: { fqn: string }[]; mcps: { fqn: string }[] }>();
+    function ensure(sourceFqn: string): { skills: { fqn: string }[]; mcps: { fqn: string }[] } {
+      const existing = out.get(sourceFqn);
+      if (existing !== undefined) return existing;
+      const fresh = { skills: [] as { fqn: string }[], mcps: [] as { fqn: string }[] };
+      out.set(sourceFqn, fresh);
+      return fresh;
+    }
+    for (const r of skillRows) ensure(r.sourceFqn).skills.push({ fqn: r.targetFqn });
+    for (const r of mcpRows) ensure(r.sourceFqn).mcps.push({ fqn: r.targetFqn });
+    return out as Map<string, AgentDependencies>;
   }
+}
+
+/** Normalise the drizzle blob shape — `better-sqlite3` may surface `Uint8Array`. */
+function toBuf(content: Uint8Array | Buffer): Buffer {
+  return Buffer.isBuffer(content) ? content : Buffer.from(content);
 }
 
 function rowToAgent(row: typeof agents.$inferSelect, deps: AgentDependencies): AgentEntity {

@@ -8,14 +8,27 @@ import {
   type OriginDeps,
 } from "../_shared/dep-keys.js";
 import {
-  hasNonEmptyPrereqs,
-  initialPrereqsAck,
-  nowIso,
-  requireNonEmptyOrigin,
-} from "../_shared/entity-helpers.js";
-import { metaDepsToOriginDeps } from "../_shared/frontmatter-codec.js";
-import { AGENT_DEP_SPECS, type AgentDepKind, parse } from "./agent-frontmatter.js";
+  AGENT_DEP_SPECS,
+  type AgentDepKind,
+  type AgentFrontmatter,
+  parse,
+} from "./agent-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
+
+/**
+ * File-private: pull `meta.dependencies` into a dense
+ * `OriginDeps<AgentDepKind>` with every dep-kind present (empty array
+ * when absent). Per-kind inline — the only shared module across kinds
+ * is `_shared/dep-keys.ts`, which is parametric and names no
+ * agent-specific concept.
+ */
+function depsAsOrigins(meta: AgentFrontmatter): OriginDeps<AgentDepKind> {
+  const out = {} as Record<AgentDepKind, readonly string[]>;
+  for (const s of AGENT_DEP_SPECS) {
+    out[s.kind] = meta.dependencies?.[s.kind] ?? [];
+  }
+  return out;
+}
 
 /**
  * Rich domain entity representing a single installed agent.
@@ -61,10 +74,12 @@ function buildInitialAgentState(
   origin: string,
   sourceLabel: string,
 ): AgentEntityState {
-  requireNonEmptyOrigin(origin, "AgentEntity.create");
+  if (typeof origin !== "string" || origin.length === 0) {
+    throw new TypeError("AgentEntity.create requires a non-empty origin string");
+  }
   const { meta } = parse(raw, sourceLabel);
   const fqn = makeFqn(meta.scope, meta.shortName);
-  const now = nowIso();
+  const now = new Date().toISOString();
   return {
     fqn,
     origin,
@@ -72,8 +87,8 @@ function buildInitialAgentState(
     version: meta.version,
     prereqs: meta.prereqs,
     dependencies: emptyDeps(AGENT_DEP_SPECS),
-    depsRefs: metaDepsToOriginDeps(AGENT_DEP_SPECS, meta),
-    prereqsAck: initialPrereqsAck(meta.prereqs),
+    depsRefs: depsAsOrigins(meta),
+    prereqsAck: (meta.prereqs ?? "").trim().length === 0,
     installedAt: now,
     updatedAt: now,
   };
@@ -135,8 +150,8 @@ function applyAgentAnchorPatch(
     description: meta.description,
     version: meta.version,
     prereqs: meta.prereqs,
-    depsRefs: metaDepsToOriginDeps(AGENT_DEP_SPECS, meta),
-    updatedAt: nowIso(),
+    depsRefs: depsAsOrigins(meta),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -296,7 +311,3 @@ export class AgentEntity {
     );
   }
 }
-
-// Compat re-exports preserved as named exports off this module so
-// callers (catalog index.ts, agent index.ts) keep their import shape.
-export { hasNonEmptyPrereqs };
