@@ -7,15 +7,18 @@ import {
 } from "../_shared/anchored-state.js";
 import {
   type DependencyRef,
-  type DepSpec,
-  defineDepSpecs,
   depsToJSON,
   type FqnDeps,
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
 import { hasNonEmptyPrereqs } from "../_shared/entity-helpers.js";
-import { parse, type SkillDepKind, writeFrontmatter } from "./skill-frontmatter.js";
+import {
+  parse,
+  SKILL_DEP_SPECS,
+  type SkillDepKind,
+  writeFrontmatter,
+} from "./skill-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
@@ -37,17 +40,8 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  * only), so the class has fewer fields than `AgentEntity`.
  */
 
-const SKILL_DEP_SPECS: readonly DepSpec<SkillDepKind>[] = defineDepSpecs<SkillDepKind>(
-  // Skills can declare dep on other skills; self-deps are silently
-  // dropped at write time (a skill that lists itself is a frontmatter
-  // typo, not a graph cycle to honour).
-  { kind: "skills", skipSelf: true },
-  { kind: "mcps" },
-);
-
 const SKILL_CONFIG: AnchoredStateBuilderConfig<SkillDepKind> = {
   label: "SkillEntity",
-  anchorFilename: "SKILL.md",
   depSpecs: SKILL_DEP_SPECS,
   codec: { parse, writeFrontmatter },
   validators: { makeFqn, splitFqn, validateFqn },
@@ -165,6 +159,3 @@ export class SkillEntity {
 // Compat re-exports preserved as named exports off this module so
 // callers (catalog index.ts, skill index.ts) keep their import shape.
 export { hasNonEmptyPrereqs };
-
-/** Per-kind dep-spec set — exported so the repository file can reuse it. */
-export const SKILL_DEP_SPECS_EXPORT = SKILL_DEP_SPECS;

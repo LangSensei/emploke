@@ -16,8 +16,8 @@ import {
 import type { EntryFile } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import type { SkillRepository } from "../skill/skill-repository.js";
-import { AGENT_DEP_SPECS_EXPORT, AgentEntity } from "./agent-entity.js";
-import type { AgentDepKind } from "./agent-frontmatter.js";
+import { AgentEntity } from "./agent-entity.js";
+import { AGENT_DEP_SPECS, type AgentDepKind } from "./agent-frontmatter.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 import {
   AgentFrontmatterError,
@@ -73,7 +73,7 @@ export class AgentService {
       depsOf: (e) => e.depsRefs,
       identityOf: (e) => ({ fqn: e.fqn, origin: e.origin, version: e.version }),
       originOf: (e) => e.origin,
-      depSpecs: AGENT_DEP_SPECS_EXPORT,
+      depSpecs: AGENT_DEP_SPECS,
     });
   }
 

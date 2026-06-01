@@ -6,6 +6,8 @@
  * Extends native `Error` directly — no shared abstract base.
  */
 
+import type { CatalogKind } from "../types.js";
+
 /**
  * Thrown when deleting an entity that other entities still depend on.
  * The facade detects this by scanning all skills/agents for refs to
@@ -16,7 +18,7 @@ export class HasDependentsError extends Error {
 
   constructor(
     public readonly targetName: string,
-    public readonly dependents: readonly { kind: "skill" | "agent"; name: string }[],
+    public readonly dependents: readonly { kind: CatalogKind; name: string }[],
   ) {
     super(
       `cannot delete "${targetName}" — still referenced by ${dependents

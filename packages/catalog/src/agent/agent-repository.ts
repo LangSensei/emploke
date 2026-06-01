@@ -1,27 +1,25 @@
 import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { emptyDeps } from "../_shared/dep-keys.js";
 import { nowIso } from "../_shared/entity-helpers.js";
 import {
   aggregateDepsForFqn,
   coerceToBuffer,
   dedupedDepEdges,
-  emptyFqnDeps,
   groupDepRowsBySource,
 } from "../_shared/repo-helpers.js";
+import type { AnchoredFile } from "../_shared/service-helpers.js";
 import type * as schema from "../schema.js";
 import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
-import { AGENT_DEP_SPECS_EXPORT, type AgentDependencies, AgentEntity } from "./agent-entity.js";
-import type { AgentDepKind } from "./agent-frontmatter.js";
+import { type AgentDependencies, AgentEntity } from "./agent-entity.js";
+import { AGENT_DEP_SPECS, type AgentDepKind } from "./agent-frontmatter.js";
 import { AgentNotFoundError } from "./errors.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
 /** One file inside an agent, as yielded by {@link AgentRepository.streamFiles}. */
-export interface AgentFile {
-  readonly relPath: string;
-  readonly content: Buffer;
-}
+export type AgentFile = AnchoredFile;
 
 /** Resolved fqn-form dependencies passed to {@link AgentRepository.add}. */
 export interface AgentRepoAddDeps {
@@ -91,7 +89,7 @@ export class AgentRepository {
       }
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, agent.fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
-      for (const edge of dedupedDepEdges(AGENT_DEP_SPECS_EXPORT, deps, agent.fqn)) {
+      for (const edge of dedupedDepEdges(AGENT_DEP_SPECS, deps, agent.fqn)) {
         if (edge.kind === "skills") {
           tx.insert(agentSkillDeps)
             .values({ sourceFqn: agent.fqn, targetFqn: edge.targetFqn })
@@ -123,7 +121,7 @@ export class AgentRepository {
     const out: AgentEntity[] = [];
     for (const row of rows) {
       try {
-        const deps = depsByFqn.get(row.fqn) ?? emptyFqnDeps(AGENT_DEP_SPECS_EXPORT);
+        const deps = depsByFqn.get(row.fqn) ?? emptyDeps(AGENT_DEP_SPECS);
         out.push(rowToAgent(row, deps));
       } catch (cause) {
         this.logger.warn(
@@ -180,7 +178,7 @@ export class AgentRepository {
       .where(eq(agentMcpDeps.sourceFqn, fqn))
       .orderBy(agentMcpDeps.targetFqn)
       .all();
-    return aggregateDepsForFqn<AgentDepKind>(AGENT_DEP_SPECS_EXPORT, {
+    return aggregateDepsForFqn<AgentDepKind>(AGENT_DEP_SPECS, {
       skills: skillRows,
       mcps: mcpRows,
     });
@@ -215,7 +213,7 @@ export class AgentRepository {
       .from(agentMcpDeps)
       .orderBy(agentMcpDeps.sourceFqn, agentMcpDeps.targetFqn)
       .all();
-    return groupDepRowsBySource<AgentDepKind>(AGENT_DEP_SPECS_EXPORT, {
+    return groupDepRowsBySource<AgentDepKind>(AGENT_DEP_SPECS, {
       skills: skillRows,
       mcps: mcpRows,
     });

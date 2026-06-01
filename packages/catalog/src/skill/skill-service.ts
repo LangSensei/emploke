@@ -20,8 +20,8 @@ import {
   SkillNotFoundError,
   SkillOriginConflictError,
 } from "./errors.js";
-import { SKILL_DEP_SPECS_EXPORT, SkillEntity } from "./skill-entity.js";
-import type { SkillDepKind } from "./skill-frontmatter.js";
+import { SkillEntity } from "./skill-entity.js";
+import { SKILL_DEP_SPECS, type SkillDepKind } from "./skill-frontmatter.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
 
 export interface SkillFetcher {
@@ -67,7 +67,7 @@ export class SkillService {
       depsOf: (e) => e.depsRefs,
       identityOf: (e) => ({ fqn: e.fqn, origin: e.origin, version: e.version }),
       originOf: (e) => e.origin,
-      depSpecs: SKILL_DEP_SPECS_EXPORT,
+      depSpecs: SKILL_DEP_SPECS,
     });
   }
 

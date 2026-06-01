@@ -1,4 +1,4 @@
-import type { DepSpec, FqnDeps } from "./dep-keys.js";
+import { type DepSpec, emptyDeps, type FqnDeps } from "./dep-keys.js";
 
 /**
  * Drizzle-CRUD helpers shared between `agent/agent-repository.ts` and
@@ -57,18 +57,6 @@ export function dedupedDepEdges<K extends string>(
 }
 
 /**
- * Build an empty `FqnDeps<K>` value. Re-export of {@link
- * emptyDeps} from `dep-keys.ts` would also work but keeping the
- * import shape stable here avoids each repo file importing two
- * modules to assemble the same starting shape.
- */
-export function emptyFqnDeps<K extends string>(specs: readonly DepSpec<K>[]): FqnDeps<K> {
-  const out = {} as Record<K, readonly { fqn: string }[]>;
-  for (const s of specs) out[s.kind] = [];
-  return out;
-}
-
-/**
  * Aggregate a per-kind iterable of `{sourceFqn, targetFqn}` rows into
  * a `Map<sourceFqn, FqnDeps<K>>`. Used by the `findAll` path which
  * loads every dep table in one pass instead of N queries per row.
@@ -90,7 +78,7 @@ export function groupDepRowsBySource<K extends string>(
       // cast away readonly only at the local mutation seam.
       return existing as Record<K, readonly { fqn: string }[]>;
     }
-    const fresh = emptyFqnDeps(specs) as Record<K, readonly { fqn: string }[]>;
+    const fresh = emptyDeps(specs) as Record<K, readonly { fqn: string }[]>;
     out.set(sourceFqn, fresh);
     return fresh;
   }

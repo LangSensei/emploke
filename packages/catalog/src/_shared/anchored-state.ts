@@ -28,8 +28,6 @@ import type { AnchoredValidators } from "./validate-shared.js";
 export interface AnchoredStateBuilderConfig<K extends string> {
   /** Class-method label used in diagnostics (e.g. `"AgentEntity"`). */
   readonly label: string;
-  /** Anchor filename for use in error messages. */
-  readonly anchorFilename: string;
   /** The dep-spec set this kind recognises. */
   readonly depSpecs: readonly DepSpec<K>[];
   readonly codec: FrontmatterCodec<K>;

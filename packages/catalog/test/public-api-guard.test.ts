@@ -12,6 +12,7 @@
  * its canonical signature; making sure constructors don't drift.
  */
 
+import { describe, expectTypeOf, it } from "vitest";
 import {
   type Agent,
   type AgentEntry,
@@ -50,8 +51,7 @@ import {
   validateFqn,
   validateScope,
   validateShortName,
-} from "@emploke/catalog";
-import { describe, expectTypeOf, it } from "vitest";
+} from "../src/index.js";
 
 describe("@emploke/catalog public API guard", () => {
   it("exports the 15 concrete error classes with their canonical constructor signatures", () => {

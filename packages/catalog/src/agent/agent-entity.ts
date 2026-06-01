@@ -7,15 +7,18 @@ import {
 } from "../_shared/anchored-state.js";
 import {
   type DependencyRef,
-  type DepSpec,
-  defineDepSpecs,
   depsToJSON,
   type FqnDeps,
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
 import { hasNonEmptyPrereqs } from "../_shared/entity-helpers.js";
-import { type AgentDepKind, parse, writeFrontmatter } from "./agent-frontmatter.js";
+import {
+  AGENT_DEP_SPECS,
+  type AgentDepKind,
+  parse,
+  writeFrontmatter,
+} from "./agent-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
@@ -40,14 +43,8 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  * wrapper that doesn't know about this flag.
  */
 
-const AGENT_DEP_SPECS: readonly DepSpec<AgentDepKind>[] = defineDepSpecs<AgentDepKind>(
-  { kind: "skills" },
-  { kind: "mcps" },
-);
-
 const AGENT_CONFIG: AnchoredStateBuilderConfig<AgentDepKind> = {
   label: "AgentEntity",
-  anchorFilename: "AGENTS.md",
   depSpecs: AGENT_DEP_SPECS,
   codec: { parse, writeFrontmatter },
   validators: { makeFqn, splitFqn, validateFqn },
@@ -215,6 +212,3 @@ export class AgentEntity {
 // Compat re-exports preserved as named exports off this module so
 // callers (catalog index.ts, agent index.ts) keep their import shape.
 export { hasNonEmptyPrereqs };
-
-/** Per-kind dep-spec set — exported so the repository file can reuse it. */
-export const AGENT_DEP_SPECS_EXPORT = AGENT_DEP_SPECS;

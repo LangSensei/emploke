@@ -1,3 +1,4 @@
+import { type DepSpec, defineDepSpecs } from "../_shared/dep-keys.js";
 import {
   type AnchoredDependencyRef,
   type AnchoredFrontmatter,
@@ -43,7 +44,20 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
 
 export type SkillDepKind = "skills" | "mcps";
 
-const SKILL_DEP_KEYS = ["skills", "mcps"] as const satisfies readonly SkillDepKind[];
+/**
+ * Per-kind dep-spec set — the single source of truth for the skill
+ * kind. See `agent-frontmatter.ts`'s `AGENT_DEP_SPECS` for the
+ * rationale on why this lives in the frontmatter module rather than
+ * the entity module. `skipSelf: true` on the `skills` bucket means a
+ * skill that lists itself as a skill-dep silently drops the self-edge
+ * at write time (a typo, not a graph cycle to honour).
+ */
+export const SKILL_DEP_SPECS: readonly DepSpec<SkillDepKind>[] = defineDepSpecs<SkillDepKind>(
+  { kind: "skills", skipSelf: true },
+  { kind: "mcps" },
+);
+
+const SKILL_DEP_KEYS = SKILL_DEP_SPECS.map((s) => s.kind) as readonly SkillDepKind[];
 
 const codec = makeFrontmatterCodec<SkillDepKind>({
   anchorFilename: "SKILL.md",

@@ -1,27 +1,25 @@
 import { and, count, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { emptyDeps } from "../_shared/dep-keys.js";
 import { nowIso } from "../_shared/entity-helpers.js";
 import {
   aggregateDepsForFqn,
   coerceToBuffer,
   dedupedDepEdges,
-  emptyFqnDeps,
   groupDepRowsBySource,
 } from "../_shared/repo-helpers.js";
+import type { AnchoredFile } from "../_shared/service-helpers.js";
 import type * as schema from "../schema.js";
 import { agentSkillDeps, skillFiles, skillMcpDeps, skillSkillDeps, skills } from "../schema.js";
 import { SkillNotFoundError } from "./errors.js";
-import { SKILL_DEP_SPECS_EXPORT, type SkillDependencies, SkillEntity } from "./skill-entity.js";
-import type { SkillDepKind } from "./skill-frontmatter.js";
+import { type SkillDependencies, SkillEntity } from "./skill-entity.js";
+import { SKILL_DEP_SPECS, type SkillDepKind } from "./skill-frontmatter.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
 /** One file inside a skill, as yielded by {@link SkillRepository.streamFiles}. */
-export interface SkillFile {
-  readonly relPath: string;
-  readonly content: Buffer;
-}
+export type SkillFile = AnchoredFile;
 
 export interface SkillRepoAddDeps {
   readonly skills: readonly string[];
@@ -89,7 +87,7 @@ export class SkillRepository {
       }
       tx.delete(skillSkillDeps).where(eq(skillSkillDeps.sourceFqn, skill.fqn)).run();
       tx.delete(skillMcpDeps).where(eq(skillMcpDeps.sourceFqn, skill.fqn)).run();
-      for (const edge of dedupedDepEdges(SKILL_DEP_SPECS_EXPORT, deps, skill.fqn)) {
+      for (const edge of dedupedDepEdges(SKILL_DEP_SPECS, deps, skill.fqn)) {
         if (edge.kind === "skills") {
           tx.insert(skillSkillDeps)
             .values({ sourceFqn: skill.fqn, targetFqn: edge.targetFqn })
@@ -121,7 +119,7 @@ export class SkillRepository {
     const out: SkillEntity[] = [];
     for (const row of rows) {
       try {
-        const deps = depsByFqn.get(row.fqn) ?? emptyFqnDeps(SKILL_DEP_SPECS_EXPORT);
+        const deps = depsByFqn.get(row.fqn) ?? emptyDeps(SKILL_DEP_SPECS);
         out.push(rowToSkill(row, deps));
       } catch (cause) {
         this.logger.warn(
@@ -196,7 +194,7 @@ export class SkillRepository {
       .where(eq(skillMcpDeps.sourceFqn, fqn))
       .orderBy(skillMcpDeps.targetFqn)
       .all();
-    return aggregateDepsForFqn<SkillDepKind>(SKILL_DEP_SPECS_EXPORT, {
+    return aggregateDepsForFqn<SkillDepKind>(SKILL_DEP_SPECS, {
       skills: skillRows,
       mcps: mcpRows,
     });
@@ -248,7 +246,7 @@ export class SkillRepository {
       .from(skillMcpDeps)
       .orderBy(skillMcpDeps.sourceFqn, skillMcpDeps.targetFqn)
       .all();
-    return groupDepRowsBySource<SkillDepKind>(SKILL_DEP_SPECS_EXPORT, {
+    return groupDepRowsBySource<SkillDepKind>(SKILL_DEP_SPECS, {
       skills: skillRows,
       mcps: mcpRows,
     });
