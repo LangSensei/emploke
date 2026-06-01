@@ -21,7 +21,10 @@ packages/task/src/
   validate.ts              id regex + assertValidTaskId + generators
   task-repository.ts       Drizzle CRUD (private; never exported)
   task-entity.ts           TaskEntity  state machine (private)
-  task-service.ts          TaskService  dispatch/get/list/cancel/delete/getTaskActivity
+  task-service.ts          TaskService facade — dispatch/get/list/cancel/delete/getTaskActivity
+  task-service/            Internal concern modules (queries, mutations, agent-resolver,
+                           activity-stream, shutdown) composed by the facade; see
+                           docs/pkg-template.md § Splitting big files via facade + sibling subdir
   task-meta.ts             readTaskRuntimeMetadata (runtime hook)
   framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
   paths.ts                 safeJoinUnderRoot path-traversal guard
@@ -32,6 +35,8 @@ packages/task/src/
 drizzle/                   generated SQL migrations (committed)
 drizzle.config.ts          drizzle-kit config
 ```
+
+`task-service/` is the **SPLIT sub-layout** — present here because `task-service.ts` outgrew the 600 LOC / 3-concern thresholds. Most packages should stay flat (no sibling subdir); see [`docs/pkg-template.md § Splitting big files via facade + sibling subdir`](../../docs/pkg-template.md#splitting-big-files-via-facade--sibling-subdir) for the trigger criteria and the hard rules that apply once a split is taken. A self-contained, fully-rule-compliant illustration with placeholder names lives at [`packages/_template/_examples/split-layout/`](../_template/_examples/split-layout/README.md).
 
 ## On-disk
 
