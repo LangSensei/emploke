@@ -1,10 +1,23 @@
-import matter from "gray-matter";
+import {
+  type AnchoredFetcher,
+  type AnchoredResolveConflict,
+  type AnchoredResolvedNode,
+  type AnchoredResolveEvent,
+  type AnchoredResolveOptions,
+  type AnchoredResolvePlan,
+  applyFrontmatterPatch,
+  assertOriginMutable,
+  FORBIDDEN_METADATA_PATCH_KEYS,
+  readFetcherTree,
+  resolveAnchoredOrigin,
+  resolveSiblingOrigins,
+  sameOrigin,
+} from "../_shared/service-helpers.js";
 import type { EntryFile } from "../fetcher/index.js";
-import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
-import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import type { SkillRepository } from "../skill/skill-repository.js";
-import { AgentEntity } from "./agent-entity.js";
+import { AGENT_DEP_SPECS_EXPORT, AgentEntity } from "./agent-entity.js";
+import type { AgentDepKind } from "./agent-frontmatter.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 import {
   AgentFrontmatterError,
@@ -13,69 +26,32 @@ import {
   AgentPlanStaleError,
 } from "./errors.js";
 
-/**
- * Apply a partial patch to the YAML frontmatter of a markdown document.
- * `null` / `undefined` patch values DELETE the key. Body bytes preserved
- * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
- * original key order are NOT preserved (gray-matter / js-yaml limitation).
- */
-function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
-  const file = matter(raw);
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined || v === null) delete file.data[k];
-    else file.data[k] = v;
-  }
-  return matter.stringify(file.content, file.data);
-}
-
 export interface AgentFetcher {
   fetchAnchor(origin: string): Promise<string>;
   fetchTree(origin: string): AsyncIterable<EntryFile>;
 }
 
-export interface AgentResolveOptions {
-  signal?: AbortSignal;
-  onProgress?: (event: AgentResolveEvent) => void;
-}
-
-export type AgentResolveEvent =
-  | { type: "fetching"; origin: string }
-  | { type: "fetched"; origin: string; fqn: string }
-  | { type: "alreadyInstalled"; fqn: string }
-  | { type: "failed"; origin: string; error: unknown };
-
-export interface AgentResolvePlan {
-  readonly node: AgentResolvedNode | null;
-  readonly conflict: AgentResolveConflict | null;
-}
-
-export interface AgentResolvedNode {
-  readonly fqn: string;
-  readonly origin: string;
-  readonly anchorContent: string;
-  readonly version: string;
-  readonly depsRefs: {
-    readonly skills: readonly string[];
-    readonly mcps: readonly string[];
-  };
-}
-
-export type AgentResolveConflict = {
-  readonly origin: string;
-  readonly fqn: string | null;
-  readonly reason:
-    | { kind: "fetch-failed"; cause: unknown }
-    | { kind: "parse-failed"; cause: unknown }
-    | { kind: "origin-conflict"; existingOrigin: string };
-};
+// Type aliases preserved as part of the public API surface — they are
+// re-exported from `agent/index.ts` and consumed by `catalog/index.ts`
+// (which in turn re-exports them under their kind-prefixed names).
+export type AgentResolveOptions = AnchoredResolveOptions;
+export type AgentResolveEvent = AnchoredResolveEvent;
+export type AgentResolvedNode = AnchoredResolvedNode<AgentDepKind>;
+export type AgentResolveConflict = AnchoredResolveConflict;
+export type AgentResolvePlan = AnchoredResolvePlan<AgentDepKind>;
 
 /**
- * Application-layer service for agent operations. The constructor
- * accepts sibling repos so the install path can resolve the
- * frontmatter-declared dep origins to local fqns before writing dep
- * rows. Sibling repos are optional in legacy callers; when omitted,
- * dep refs that cannot be resolved are silently dropped (mirrors the
- * v1 catalog's tolerant behaviour).
+ * Application-layer service for agent operations. Composition over
+ * inheritance: the cross-kind resolve/install workflow lives in
+ * `_shared/service-helpers.ts`; this class wires the agent-specific
+ * fetcher, entity factory, error classes, and sibling lookup.
+ *
+ * Sibling repos are optional in legacy callers; when omitted, dep
+ * refs that cannot be resolved are silently dropped (mirrors the v1
+ * catalog's tolerant behaviour).
+ *
+ * The agent-only `disableByUser` / `enableByUser` methods live here
+ * (skills cannot be user-disabled).
  */
 export class AgentService {
   constructor(
@@ -87,56 +63,18 @@ export class AgentService {
     } = {},
   ) {}
 
-  async resolve(origin: string, opts: AgentResolveOptions = {}): Promise<AgentResolvePlan> {
-    const onProgress = opts.onProgress ?? (() => {});
-
-    onProgress({ type: "fetching", origin });
-    let anchorBytes: string;
-    try {
-      anchorBytes = await this.fetcher.fetchAnchor(origin);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
-      };
-    }
-
-    let entity: AgentEntity;
-    try {
-      entity = AgentEntity.create(anchorBytes, origin, `resolve:${origin}`);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
-      };
-    }
-
-    const byFqn = await this.repo.findByFqn(entity.fqn);
-    if (byFqn !== null && !sameOrigin(byFqn.origin, entity.origin)) {
-      return {
-        node: null,
-        conflict: {
-          origin,
-          fqn: entity.fqn,
-          reason: { kind: "origin-conflict", existingOrigin: byFqn.origin },
-        },
-      };
-    }
-
-    const node: AgentResolvedNode = {
-      fqn: entity.fqn,
-      origin: entity.origin,
-      anchorContent: anchorBytes,
-      version: entity.version,
-      depsRefs: {
-        skills: [...entity.depsRefs.skills],
-        mcps: [...entity.depsRefs.mcps],
-      },
-    };
-    onProgress({ type: "fetched", origin, fqn: node.fqn });
-    return { node, conflict: null };
+  resolve(origin: string, opts: AgentResolveOptions = {}): Promise<AgentResolvePlan> {
+    return resolveAnchoredOrigin<AgentEntity, AgentDepKind>({
+      origin,
+      fetcher: this.fetcher as AnchoredFetcher,
+      repo: this.repo,
+      createEntity: (raw, o, label) => AgentEntity.create(raw, o, label),
+      options: opts,
+      depsOf: (e) => e.depsRefs,
+      identityOf: (e) => ({ fqn: e.fqn, origin: e.origin, version: e.version }),
+      originOf: (e) => e.origin,
+      depSpecs: AGENT_DEP_SPECS_EXPORT,
+    });
   }
 
   async install(planOrOrigin: AgentResolvedNode | string): Promise<AgentEntity> {
@@ -152,14 +90,11 @@ export class AgentService {
       node = planOrOrigin;
     }
 
-    const files = new Map<string, Buffer>();
-    let anchorContent: string | null = null;
-    for await (const file of this.fetcher.fetchTree(node.origin)) {
-      files.set(file.relPath, file.content);
-      if (file.relPath === "AGENTS.md") {
-        anchorContent = file.content.toString("utf8");
-      }
-    }
+    const { files, anchorContent } = await readFetcherTree(
+      this.fetcher as AnchoredFetcher,
+      node.origin,
+      "AGENTS.md",
+    );
     if (anchorContent === null) {
       throw new AgentFrontmatterError(
         `install:${node.origin}`,
@@ -218,9 +153,7 @@ export class AgentService {
   async updateAnchor(fqn: string, newAgentMd: string): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    assertOriginMutable(fqn, existing.origin);
     const updated = existing.withAnchor(newAgentMd, `update:${fqn}`);
     const files = new Map<string, Buffer>();
     for await (const f of this.repo.streamFiles(fqn)) {
@@ -244,9 +177,7 @@ export class AgentService {
     }
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    assertOriginMutable(fqn, existing.origin);
     const currentAnchor = await this.repo.getAnchor(fqn);
     const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
     return this.updateAnchor(fqn, newAnchor);
@@ -303,39 +234,27 @@ export class AgentService {
    * Resolve frontmatter dep origins to local sibling fqns. Origins
    * that don't resolve to an installed sibling are silently skipped —
    * matches v1 tolerant behaviour, lets the resolve pipeline surface
-   * MissingDep separately if the consumer cares.
+   * `MissingDep` separately if the consumer cares.
    */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];
     readonly mcps: readonly string[];
   }): Promise<{ skills: string[]; mcps: string[] }> {
-    const skillFqns: string[] = [];
-    const mcpFqns: string[] = [];
+    const lookups: Partial<
+      Record<AgentDepKind, (origin: string) => Promise<{ fqn: string } | null>>
+    > = {};
     if (this.siblings.skills !== undefined) {
-      for (const origin of refs.skills) {
-        const sib = await this.siblings.skills.findByOrigin(origin);
-        if (sib !== null) skillFqns.push(sib.fqn);
-      }
+      const repo = this.siblings.skills;
+      lookups.skills = (origin) => repo.findByOrigin(origin);
     }
     if (this.siblings.mcps !== undefined) {
-      for (const origin of refs.mcps) {
-        const sib = await this.siblings.mcps.findByOrigin(origin);
-        if (sib !== null) mcpFqns.push(sib.fqn);
-      }
+      const repo = this.siblings.mcps;
+      lookups.mcps = (origin) => repo.findByOrigin(origin);
     }
-    return { skills: skillFqns, mcps: mcpFqns };
+    const out = await resolveSiblingOrigins<AgentDepKind>(refs, lookups);
+    return { skills: out.skills, mcps: out.mcps };
   }
 }
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
-  } catch {
-    return a === b;
-  }
-}
-
-const FORBIDDEN_METADATA_PATCH_KEYS = new Set<string>(["name", "scope", "fqn"]);
 
 function conflictToError(c: AgentResolveConflict): Error {
   if (c.reason.kind === "fetch-failed" || c.reason.kind === "parse-failed") {

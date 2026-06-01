@@ -1,18 +1,14 @@
 /**
- * MCP-specific error types. All errors in this package extend `Error`
- * with a stable `name` so HTTP transport layers can map them to status
- * codes without instanceof imports.
+ * MCP-specific error types. All errors extend native `Error` with a
+ * stable `name` field so HTTP transport layers can map them to status
+ * codes without instanceof imports across package boundaries.
+ *
+ * No shared abstract base — each class sets `name` in its own field
+ * initialiser.
  */
 
-abstract class McpError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options as ErrorOptions);
-    this.name = new.target.name;
-  }
-}
-
 /** Thrown when an MCP spec name violates the format rules. */
-export class McpNameInvalidError extends McpError {
+export class McpNameInvalidError extends Error {
   override readonly name = "McpNameInvalidError";
 
   constructor(
@@ -24,7 +20,7 @@ export class McpNameInvalidError extends McpError {
 }
 
 /** Thrown when looking up an MCP that doesn't exist. */
-export class McpNotFoundError extends McpError {
+export class McpNotFoundError extends Error {
   override readonly name = "McpNotFoundError";
 
   constructor(public readonly mcpName: string) {
@@ -37,7 +33,7 @@ export class McpNotFoundError extends McpError {
  * Identity (name) collisions across origins are rejected — to switch
  * origins, the caller must explicitly delete then reinstall.
  */
-export class McpOriginConflictError extends McpError {
+export class McpOriginConflictError extends Error {
   override readonly name = "McpOriginConflictError";
 
   constructor(
@@ -54,7 +50,7 @@ export class McpOriginConflictError extends McpError {
 }
 
 /** Thrown when raw bytes can't be parsed as a valid MCP JSON file. */
-export class McpInvalidJsonError extends McpError {
+export class McpInvalidJsonError extends Error {
   override readonly name = "McpInvalidJsonError";
 
   constructor(
@@ -62,6 +58,6 @@ export class McpInvalidJsonError extends McpError {
     reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`invalid MCP JSON (${sourceLabel}): ${reason}`, options);
+    super(`invalid MCP JSON (${sourceLabel}): ${reason}`, options as ErrorOptions);
   }
 }

@@ -1,18 +1,15 @@
 /**
- * Agent-specific error types. All errors in this package extend `Error`
- * with a stable `name` so HTTP transport layers can map them to status
- * codes without instanceof imports.
+ * Agent-specific error types. All errors extend native `Error` with a
+ * stable `name` field so HTTP transport layers can map them to status
+ * codes without instanceof imports across package boundaries.
+ *
+ * No shared abstract base — each class sets `name` in its own field
+ * initialiser. Bundler-rename-safe (the assignment survives minifiers
+ * that rewrite class names) and dead-simple.
  */
 
-abstract class AgentError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options as ErrorOptions);
-    this.name = new.target.name;
-  }
-}
-
 /** Thrown when an agent name (FQN, scope, or short name) violates format rules. */
-export class AgentNameInvalidError extends AgentError {
+export class AgentNameInvalidError extends Error {
   override readonly name = "AgentNameInvalidError";
 
   constructor(
@@ -24,7 +21,7 @@ export class AgentNameInvalidError extends AgentError {
 }
 
 /** Thrown when looking up an agent that doesn't exist. */
-export class AgentNotFoundError extends AgentError {
+export class AgentNotFoundError extends Error {
   override readonly name = "AgentNotFoundError";
 
   constructor(public readonly agentName: string) {
@@ -37,7 +34,7 @@ export class AgentNotFoundError extends AgentError {
  * Identity (FQN) collisions across origins are rejected — to switch
  * origins, the caller must explicitly delete then reinstall.
  */
-export class AgentOriginConflictError extends AgentError {
+export class AgentOriginConflictError extends Error {
   override readonly name = "AgentOriginConflictError";
 
   constructor(
@@ -57,7 +54,7 @@ export class AgentOriginConflictError extends AgentError {
  * Thrown when AGENTS.md frontmatter can't be parsed or violates the
  * schema (missing required fields, wrong types, malformed deps, ...).
  */
-export class AgentFrontmatterError extends AgentError {
+export class AgentFrontmatterError extends Error {
   override readonly name = "AgentFrontmatterError";
 
   constructor(
@@ -65,7 +62,7 @@ export class AgentFrontmatterError extends AgentError {
     reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`invalid AGENTS.md frontmatter (${sourceLabel}): ${reason}`, options);
+    super(`invalid AGENTS.md frontmatter (${sourceLabel}): ${reason}`, options as ErrorOptions);
   }
 }
 
@@ -76,7 +73,7 @@ export class AgentFrontmatterError extends AgentError {
  * PlanStaleError} (skill counterpart) for the version-not-hash
  * rationale.
  */
-export class AgentPlanStaleError extends AgentError {
+export class AgentPlanStaleError extends Error {
   override readonly name = "AgentPlanStaleError";
 
   constructor(

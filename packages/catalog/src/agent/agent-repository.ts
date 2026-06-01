@@ -1,12 +1,22 @@
 import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { nowIso } from "../_shared/entity-helpers.js";
+import {
+  aggregateDepsForFqn,
+  coerceToBuffer,
+  dedupedDepEdges,
+  emptyFqnDeps,
+  groupDepRowsBySource,
+} from "../_shared/repo-helpers.js";
 import type * as schema from "../schema.js";
 import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
-import { type AgentDependencies, AgentEntity } from "./agent-entity.js";
+import { AGENT_DEP_SPECS_EXPORT, type AgentDependencies, AgentEntity } from "./agent-entity.js";
+import type { AgentDepKind } from "./agent-frontmatter.js";
 import { AgentNotFoundError } from "./errors.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
+
 /** One file inside an agent, as yielded by {@link AgentRepository.streamFiles}. */
 export interface AgentFile {
   readonly relPath: string;
@@ -24,6 +34,10 @@ type Db = BetterSQLite3Database<typeof schema>;
 /**
  * Drizzle-backed `AgentRepository`. Multi-table writes are wrapped in
  * `db.transaction(...)` so the row + files + dep rows commit atomically.
+ *
+ * Composition: this class wires the agent-specific drizzle tables; the
+ * cross-kind plumbing (dep dedupe, blob coercion, dep-rows aggregation)
+ * comes from `_shared/repo-helpers.ts`. No inheritance.
  */
 export class AgentRepository {
   private readonly db: Db;
@@ -35,7 +49,7 @@ export class AgentRepository {
   }
 
   close(): void {
-    // intentionally empty
+    // intentionally empty — `compose.ts` owns the sqlite handle lifecycle
   }
 
   async add(
@@ -48,7 +62,7 @@ export class AgentRepository {
         `AgentRepository.add requires AGENTS.md in the files map (got: ${[...files.keys()].join(", ")})`,
       );
     }
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.db.transaction((tx) => {
       const existing = tx
         .select({ fqn: agents.fqn })
@@ -77,17 +91,14 @@ export class AgentRepository {
       }
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, agent.fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
-      const seenSkill = new Set<string>();
-      for (const targetFqn of deps.skills) {
-        if (seenSkill.has(targetFqn)) continue;
-        seenSkill.add(targetFqn);
-        tx.insert(agentSkillDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
-      }
-      const seenMcp = new Set<string>();
-      for (const targetFqn of deps.mcps) {
-        if (seenMcp.has(targetFqn)) continue;
-        seenMcp.add(targetFqn);
-        tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
+      for (const edge of dedupedDepEdges(AGENT_DEP_SPECS_EXPORT, deps, agent.fqn)) {
+        if (edge.kind === "skills") {
+          tx.insert(agentSkillDeps)
+            .values({ sourceFqn: agent.fqn, targetFqn: edge.targetFqn })
+            .run();
+        } else {
+          tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn: edge.targetFqn }).run();
+        }
       }
     });
   }
@@ -112,7 +123,7 @@ export class AgentRepository {
     const out: AgentEntity[] = [];
     for (const row of rows) {
       try {
-        const deps = depsByFqn.get(row.fqn) ?? { skills: [], mcps: [] };
+        const deps = depsByFqn.get(row.fqn) ?? emptyFqnDeps(AGENT_DEP_SPECS_EXPORT);
         out.push(rowToAgent(row, deps));
       } catch (cause) {
         this.logger.warn(
@@ -142,12 +153,7 @@ export class AgentRepository {
   async *streamFiles(fqn: string): AsyncIterable<AgentFile> {
     const rows = this.db.select().from(agentFiles).where(eq(agentFiles.agentFqn, fqn)).all();
     for (const row of rows) {
-      yield {
-        relPath: row.relPath,
-        content: Buffer.isBuffer(row.content)
-          ? row.content
-          : Buffer.from(row.content as Uint8Array),
-      };
+      yield { relPath: row.relPath, content: coerceToBuffer(row.content) };
     }
   }
 
@@ -158,27 +164,26 @@ export class AgentRepository {
       .where(and(eq(agentFiles.agentFqn, fqn), eq(agentFiles.relPath, "AGENTS.md")))
       .get();
     if (row === undefined) throw new AgentNotFoundError(fqn);
-    const buf = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array);
-    return buf.toString("utf8");
+    return coerceToBuffer(row.content).toString("utf8");
   }
 
   async listDependencies(fqn: string): Promise<AgentDependencies> {
     const skillRows = this.db
-      .select()
+      .select({ targetFqn: agentSkillDeps.targetFqn })
       .from(agentSkillDeps)
       .where(eq(agentSkillDeps.sourceFqn, fqn))
       .orderBy(agentSkillDeps.targetFqn)
       .all();
     const mcpRows = this.db
-      .select()
+      .select({ targetFqn: agentMcpDeps.targetFqn })
       .from(agentMcpDeps)
       .where(eq(agentMcpDeps.sourceFqn, fqn))
       .orderBy(agentMcpDeps.targetFqn)
       .all();
-    return {
-      skills: skillRows.map((r) => ({ fqn: r.targetFqn })),
-      mcps: mcpRows.map((r) => ({ fqn: r.targetFqn })),
-    };
+    return aggregateDepsForFqn<AgentDepKind>(AGENT_DEP_SPECS_EXPORT, {
+      skills: skillRows,
+      mcps: mcpRows,
+    });
   }
 
   async setFlags(
@@ -189,31 +194,31 @@ export class AgentRepository {
     if (flags.prereqsAck !== undefined) patch.prereqsAck = flags.prereqsAck ? 1 : 0;
     if (flags.disabledByUser !== undefined) patch.disabledByUser = flags.disabledByUser ? 1 : 0;
     if (Object.keys(patch).length === 0) return;
-    patch.updatedAt = new Date().toISOString();
+    patch.updatedAt = nowIso();
     this.db.update(agents).set(patch).where(eq(agents.fqn, fqn)).run();
   }
 
   private loadAllDeps(): Map<string, AgentDependencies> {
-    const out = new Map<string, AgentDependencies>();
     const skillRows = this.db
-      .select()
+      .select({
+        sourceFqn: agentSkillDeps.sourceFqn,
+        targetFqn: agentSkillDeps.targetFqn,
+      })
       .from(agentSkillDeps)
       .orderBy(agentSkillDeps.sourceFqn, agentSkillDeps.targetFqn)
       .all();
     const mcpRows = this.db
-      .select()
+      .select({
+        sourceFqn: agentMcpDeps.sourceFqn,
+        targetFqn: agentMcpDeps.targetFqn,
+      })
       .from(agentMcpDeps)
       .orderBy(agentMcpDeps.sourceFqn, agentMcpDeps.targetFqn)
       .all();
-    for (const r of skillRows) {
-      const e = out.get(r.sourceFqn) ?? { skills: [], mcps: [] };
-      out.set(r.sourceFqn, { skills: [...e.skills, { fqn: r.targetFqn }], mcps: e.mcps });
-    }
-    for (const r of mcpRows) {
-      const e = out.get(r.sourceFqn) ?? { skills: [], mcps: [] };
-      out.set(r.sourceFqn, { skills: e.skills, mcps: [...e.mcps, { fqn: r.targetFqn }] });
-    }
-    return out;
+    return groupDepRowsBySource<AgentDepKind>(AGENT_DEP_SPECS_EXPORT, {
+      skills: skillRows,
+      mcps: mcpRows,
+    });
   }
 }
 

@@ -1,9 +1,16 @@
-import yaml from "js-yaml";
+import {
+  type AnchoredDependencyRef,
+  type AnchoredFrontmatter,
+  makeFrontmatterCodec,
+  type ParsedAnchoredMd,
+} from "../_shared/frontmatter-codec.js";
 import { SkillFrontmatterError } from "./errors.js";
 import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
 
 /**
- * SKILL.md frontmatter codec — pure, side-effect-free, I/O-free.
+ * SKILL.md frontmatter codec. Thin shadow over the shared
+ * `_shared/frontmatter-codec.ts` factory — see that module for the
+ * grammar and the rationale for the dep-ref list schema.
  *
  * Format: a YAML frontmatter block delimited by `---` lines at the top
  * of a markdown document, followed by the body. Example:
@@ -32,172 +39,27 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
  * Dep refs are bare origin strings. The dep's identity is computed at
  * resolve time by fetching the referenced anchor; the author writes
  * only the URI ("where to find it"), not the FQN ("how to call it").
- * This is the de-centralised model — origins are URLs (globally
- * unique by URL), so no extra naming coordination is required.
  */
 
-/** A dep reference is just an origin URI string. */
-export type SkillDependencyRef = string;
+export type SkillDepKind = "skills" | "mcps";
 
-export interface SkillFrontmatter {
-  /** Short kebab-case name (NOT the FQN). */
-  readonly shortName: string;
-  /** Scope segment. Defaults to `DEFAULT_SCOPE` ("public") when omitted. */
-  readonly scope: string;
-  readonly description: string;
-  readonly version: string;
-  readonly prereqs?: string;
-  readonly dependencies?: {
-    readonly skills?: readonly SkillDependencyRef[];
-    readonly mcps?: readonly SkillDependencyRef[];
-  };
-}
+const SKILL_DEP_KEYS = ["skills", "mcps"] as const satisfies readonly SkillDepKind[];
 
-export interface ParsedSkillMd {
-  readonly meta: SkillFrontmatter;
-  /** The markdown body after the frontmatter block (verbatim). */
-  readonly body: string;
-}
+const codec = makeFrontmatterCodec<SkillDepKind>({
+  anchorFilename: "SKILL.md",
+  ErrorClass: SkillFrontmatterError,
+  validators: { validateScope, validateShortName, DEFAULT_SCOPE },
+  depKeys: SKILL_DEP_KEYS,
+});
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
+export type SkillDependencyRef = AnchoredDependencyRef;
 
-export function parse(content: string, sourceLabel: string): ParsedSkillMd {
-  const match = content.match(FRONTMATTER_RE);
-  if (!match) {
-    throw new SkillFrontmatterError(
-      sourceLabel,
-      "missing frontmatter block (SKILL.md must start with `---` ... `---`)",
-    );
-  }
-  const yamlText = match[1] ?? "";
-  const body = content.slice(match[0].length);
+export type SkillFrontmatter = AnchoredFrontmatter<SkillDepKind>;
+export type ParsedSkillMd = ParsedAnchoredMd<SkillDepKind>;
 
-  let parsed: unknown;
-  try {
-    parsed = yaml.load(yamlText);
-  } catch (cause) {
-    throw new SkillFrontmatterError(sourceLabel, (cause as Error).message, { cause });
-  }
-  if (parsed === null || parsed === undefined) {
-    throw new SkillFrontmatterError(sourceLabel, "frontmatter block is empty");
-  }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new SkillFrontmatterError(sourceLabel, "frontmatter must be a YAML mapping");
-  }
-  const data = parsed as Record<string, unknown>;
-  const meta = projectFrontmatter(data, sourceLabel);
-  return { meta, body };
-}
-
-function projectFrontmatter(data: Record<string, unknown>, sourceLabel: string): SkillFrontmatter {
-  const { name, scope, description, version, prereqs, dependencies } = data;
-
-  if (typeof name !== "string" || name.length === 0) {
-    throw new SkillFrontmatterError(sourceLabel, "missing or non-string `name`");
-  }
-  validateShortName(name);
-
-  const resolvedScope = scope === undefined ? DEFAULT_SCOPE : scope;
-  validateScope(resolvedScope);
-
-  if (typeof description !== "string") {
-    throw new SkillFrontmatterError(sourceLabel, "missing or non-string `description`");
-  }
-  if (typeof version !== "string" || version.length === 0) {
-    throw new SkillFrontmatterError(sourceLabel, "missing or empty `version`");
-  }
-  if (prereqs !== undefined && typeof prereqs !== "string") {
-    throw new SkillFrontmatterError(sourceLabel, "`prereqs` must be a string when present");
-  }
-  const deps = parseDependencies(dependencies, sourceLabel);
-
-  return {
-    shortName: name,
-    scope: resolvedScope,
-    description,
-    version,
-    ...(prereqs !== undefined ? { prereqs } : {}),
-    ...(deps !== undefined ? { dependencies: deps } : {}),
-  };
-}
-
-function parseDependencies(
-  raw: unknown,
-  sourceLabel: string,
-): { skills?: SkillDependencyRef[]; mcps?: SkillDependencyRef[] } | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new SkillFrontmatterError(sourceLabel, "`dependencies` must be a mapping");
-  }
-  const obj = raw as Record<string, unknown>;
-  const out: { skills?: SkillDependencyRef[]; mcps?: SkillDependencyRef[] } = {};
-  if (obj.skills !== undefined) {
-    out.skills = parseDependencyList(obj.skills, "skills", sourceLabel);
-  }
-  if (obj.mcps !== undefined) {
-    out.mcps = parseDependencyList(obj.mcps, "mcps", sourceLabel);
-  }
-  return out;
-}
-
-/**
- * Parse a `dependencies.skills` / `dependencies.mcps` list. Each item
- * must be a non-empty origin URI string:
- *
- *     dependencies:
- *       skills:
- *         - "file:/abs/path"
- *         - "github:owner/repo/tree/main/skills/foo"
- */
-function parseDependencyList(
-  raw: unknown,
-  field: string,
-  sourceLabel: string,
-): SkillDependencyRef[] {
-  if (!Array.isArray(raw)) {
-    throw new SkillFrontmatterError(sourceLabel, `\`dependencies.${field}\` must be an array`);
-  }
-  return raw.map((item, idx) => {
-    if (typeof item !== "string") {
-      throw new SkillFrontmatterError(
-        sourceLabel,
-        `\`dependencies.${field}[${idx}]\` must be an origin URI string ` +
-          '(e.g. "github:owner/repo/tree/main/skills/foo")',
-      );
-    }
-    if (item.length === 0) {
-      throw new SkillFrontmatterError(
-        sourceLabel,
-        `\`dependencies.${field}[${idx}]\` must be a non-empty origin URI`,
-      );
-    }
-    return item;
-  });
-}
-
-/**
- * Replace the frontmatter block of a SKILL.md document with the given
- * `meta`, preserving the body byte-for-byte.
- */
-export function writeFrontmatter(
+export const parse: (content: string, sourceLabel: string) => ParsedSkillMd = codec.parse;
+export const writeFrontmatter: (
   content: string,
   meta: SkillFrontmatter,
-  _sourceLabel: string,
-): string {
-  const match = content.match(FRONTMATTER_RE);
-  const body = match ? content.slice(match[0].length) : content;
-  const yamlText = serializeFrontmatter(meta);
-  return `---\n${yamlText}---\n${body}`;
-}
-
-function serializeFrontmatter(meta: SkillFrontmatter): string {
-  const obj: Record<string, unknown> = {
-    name: meta.shortName,
-    scope: meta.scope,
-    description: meta.description,
-    version: meta.version,
-  };
-  if (meta.prereqs !== undefined) obj.prereqs = meta.prereqs;
-  if (meta.dependencies !== undefined) obj.dependencies = meta.dependencies;
-  return yaml.dump(obj, { lineWidth: -1, noRefs: true });
-}
+  sourceLabel: string,
+) => string = codec.writeFrontmatter;

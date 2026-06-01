@@ -1,18 +1,14 @@
 /**
- * Skill-specific error types. All errors in this package extend `Error`
- * with a stable `name` so HTTP transport layers can map them to status
- * codes without instanceof imports.
+ * Skill-specific error types. All errors extend native `Error` with a
+ * stable `name` field so HTTP transport layers can map them to status
+ * codes without instanceof imports across package boundaries.
+ *
+ * No shared abstract base — each class sets `name` in its own field
+ * initialiser.
  */
 
-abstract class SkillError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options as ErrorOptions);
-    this.name = new.target.name;
-  }
-}
-
 /** Thrown when a skill name (FQN, scope, or short name) violates format rules. */
-export class SkillNameInvalidError extends SkillError {
+export class SkillNameInvalidError extends Error {
   override readonly name = "SkillNameInvalidError";
 
   constructor(
@@ -24,7 +20,7 @@ export class SkillNameInvalidError extends SkillError {
 }
 
 /** Thrown when looking up a skill that doesn't exist. */
-export class SkillNotFoundError extends SkillError {
+export class SkillNotFoundError extends Error {
   override readonly name = "SkillNotFoundError";
 
   constructor(public readonly skillName: string) {
@@ -37,7 +33,7 @@ export class SkillNotFoundError extends SkillError {
  * Identity (FQN) collisions across origins are rejected — to switch
  * origins, the caller must explicitly delete then reinstall.
  */
-export class SkillOriginConflictError extends SkillError {
+export class SkillOriginConflictError extends Error {
   override readonly name = "SkillOriginConflictError";
 
   constructor(
@@ -57,7 +53,7 @@ export class SkillOriginConflictError extends SkillError {
  * Thrown when SKILL.md frontmatter can't be parsed or violates the
  * schema (missing required fields, wrong types, malformed deps, ...).
  */
-export class SkillFrontmatterError extends SkillError {
+export class SkillFrontmatterError extends Error {
   override readonly name = "SkillFrontmatterError";
 
   constructor(
@@ -65,33 +61,33 @@ export class SkillFrontmatterError extends SkillError {
     reason: string,
     options?: { cause?: unknown },
   ) {
-    super(`invalid SKILL.md frontmatter (${sourceLabel}): ${reason}`, options);
+    super(`invalid SKILL.md frontmatter (${sourceLabel}): ${reason}`, options as ErrorOptions);
   }
 }
 
 /**
- * Thrown by the resolve walker (`walkSkill`) when the upstream
- * skill graph contains a back-edge — i.e. some skill transitively
- * depends on itself. Emploke does not support cyclic catalog deps;
- * the user must break the cycle in the upstream frontmatter.
+ * Thrown by the resolve walker when the upstream skill graph contains
+ * a back-edge — i.e. some skill transitively depends on itself.
+ * Emploke does not support cyclic catalog deps; the user must break
+ * the cycle in the upstream frontmatter.
  *
- * Why we reject at install/sync time rather than tolerate at
- * runtime: the cascade-status pass (`computeSkillStatus` in the
- * facade) uses recursive memoisation to compute "this entry is
- * blocked because its dep is blocked". With cycles, the inner
- * recursive call sees the outer node mid-computation and has to
- * short-circuit — but caching that short-circuited result poisons
- * downstream callers that asked from outside the cycle. Refusing
- * cycles up-front is cheaper than handling that correctly.
+ * Why we reject at install/sync time rather than tolerate at runtime:
+ * the cascade-status pass (`computeSkillStatus` in the facade) uses
+ * recursive memoisation to compute "this entry is blocked because its
+ * dep is blocked". With cycles, the inner recursive call sees the
+ * outer node mid-computation and has to short-circuit — but caching
+ * that short-circuited result poisons downstream callers that asked
+ * from outside the cycle. Refusing cycles up-front is cheaper than
+ * handling that correctly.
  *
- * `cycle` is the back-edge path from the cycle's entry point
- * through to the offending repeat: e.g. `[fileA, fileB, fileA]`
- * means fileA depends on fileB which depends on fileA. Origins
- * (not fqns) are used because the back-edge may be detected
- * before the upstream anchor at the repeat origin has been
- * parsed (so its fqn isn't known at throw time).
+ * `cycle` is the back-edge path from the cycle's entry point through
+ * to the offending repeat: e.g. `[fileA, fileB, fileA]` means fileA
+ * depends on fileB which depends on fileA. Origins (not fqns) are
+ * used because the back-edge may be detected before the upstream
+ * anchor at the repeat origin has been parsed (so its fqn isn't
+ * known at throw time).
  */
-export class CyclicDependencyError extends SkillError {
+export class CyclicDependencyError extends Error {
   override readonly name = "CyclicDependencyError";
 
   constructor(public readonly cycle: readonly string[]) {
@@ -115,7 +111,7 @@ export class CyclicDependencyError extends SkillError {
  * edited the file without bumping is, by contract, not making a
  * change emploke needs to react to.
  */
-export class PlanStaleError extends SkillError {
+export class PlanStaleError extends Error {
   override readonly name = "PlanStaleError";
 
   constructor(

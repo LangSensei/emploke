@@ -1,4 +1,21 @@
-import * as SkillFormat from "./skill-frontmatter.js";
+import {
+  type AnchoredEntityState,
+  type AnchoredStateBuilderConfig,
+  applyAnchorPatch,
+  buildInitialAnchoredState,
+  buildStoredAnchoredState,
+} from "../_shared/anchored-state.js";
+import {
+  type DependencyRef,
+  type DepSpec,
+  defineDepSpecs,
+  depsToJSON,
+  type FqnDeps,
+  normaliseFqnDeps,
+  type OriginDeps,
+} from "../_shared/dep-keys.js";
+import { hasNonEmptyPrereqs } from "../_shared/entity-helpers.js";
+import { parse, type SkillDepKind, writeFrontmatter } from "./skill-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
@@ -13,41 +30,41 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *   - `dependencies` is the fqn-form view (populated by `fromStored`
  *     from the dep-tables join); `depsRefs` carries the frontmatter
  *     origins for the install pipeline's lookup.
+ *
+ * Composition: this class wraps an `AnchoredEntityState<SkillDepKind>`
+ * built by the `_shared/anchored-state.ts` helpers. No inheritance —
+ * skills carry no kind-specific extras (`disabledByUser` is agent-
+ * only), so the class has fewer fields than `AgentEntity`.
  */
+
+const SKILL_DEP_SPECS: readonly DepSpec<SkillDepKind>[] = defineDepSpecs<SkillDepKind>(
+  // Skills can declare dep on other skills; self-deps are silently
+  // dropped at write time (a skill that lists itself is a frontmatter
+  // typo, not a graph cycle to honour).
+  { kind: "skills", skipSelf: true },
+  { kind: "mcps" },
+);
+
+const SKILL_CONFIG: AnchoredStateBuilderConfig<SkillDepKind> = {
+  label: "SkillEntity",
+  anchorFilename: "SKILL.md",
+  depSpecs: SKILL_DEP_SPECS,
+  codec: { parse, writeFrontmatter },
+  validators: { makeFqn, splitFqn, validateFqn },
+};
+
+/** A resolved fqn-form dep reference. */
+export type SkillDependencyRef = DependencyRef;
+
+export type SkillDependencies = FqnDeps<SkillDepKind>;
+export type SkillDepRefs = OriginDeps<SkillDepKind>;
+
 export class SkillEntity {
-  private constructor(
-    private readonly _fqn: string,
-    private readonly _origin: string,
-    private readonly _description: string,
-    private readonly _version: string,
-    private readonly _prereqs: string | undefined,
-    private readonly _dependencies: SkillDependencies,
-    private readonly _depsRefs: SkillDepRefs,
-    private readonly _prereqsAck: boolean,
-    private readonly _installedAt: string,
-    private readonly _updatedAt: string,
-  ) {}
+  private constructor(private readonly _state: AnchoredEntityState<SkillDepKind>) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): SkillEntity {
-    if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("SkillEntity.create requires a non-empty origin string");
-    }
-    const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
-    const fqn = makeFqn(meta.scope, meta.shortName);
-    const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
-    const now = new Date().toISOString();
-    return new SkillEntity(
-      fqn,
-      origin,
-      meta.description,
-      meta.version,
-      meta.prereqs,
-      { skills: [], mcps: [] },
-      normaliseDepRefs(meta.dependencies),
-      prereqsAck,
-      now,
-      now,
-    );
+    const state = buildInitialAnchoredState(rawSkillMd, origin, sourceLabel, SKILL_CONFIG);
+    return new SkillEntity(state);
   }
 
   static fromStored(args: {
@@ -61,178 +78,93 @@ export class SkillEntity {
     installedAt: string;
     updatedAt: string;
   }): SkillEntity {
-    validateFqn(args.fqn);
-    return new SkillEntity(
-      args.fqn,
-      args.origin,
-      args.description,
-      args.version,
-      args.prereqs,
-      normaliseDeps(args.dependencies),
-      { skills: [], mcps: [] },
-      args.prereqsAck,
-      args.installedAt,
-      args.updatedAt,
-    );
+    const state = buildStoredAnchoredState<SkillDepKind>(args, SKILL_CONFIG);
+    return new SkillEntity(state);
   }
 
   /** Canonical FQN — the entity's identity. */
   get id(): string {
-    return this._fqn;
+    return this._state.fqn;
   }
   get fqn(): string {
-    return this._fqn;
+    return this._state.fqn;
   }
   get origin(): string {
-    return this._origin;
+    return this._state.origin;
   }
   /** Derived from `fqn` — first segment. */
   get scope(): string {
-    return splitFqn(this._fqn).scope;
+    return splitFqn(this._state.fqn).scope;
   }
   /** Derived from `fqn` — second segment. */
   get shortName(): string {
-    return splitFqn(this._fqn).shortName;
+    return splitFqn(this._state.fqn).shortName;
   }
   get description(): string {
-    return this._description;
+    return this._state.description;
   }
   get version(): string {
-    return this._version;
+    return this._state.version;
   }
   get prereqs(): string | undefined {
-    return this._prereqs;
+    return this._state.prereqs;
   }
-  /** See {@link Agent.dependencies}. */
+  /** See {@link AgentEntity.dependencies}. */
   get dependencies(): SkillDependencies {
-    return this._dependencies;
+    return this._state.dependencies;
   }
-  /** See {@link Agent.depsRefs}. */
+  /** See {@link AgentEntity.depsRefs}. */
   get depsRefs(): SkillDepRefs {
-    return this._depsRefs;
+    return this._state.depsRefs;
   }
   get prereqsAck(): boolean {
-    return this._prereqsAck;
+    return this._state.prereqsAck;
   }
   get installedAt(): string {
-    return this._installedAt;
+    return this._state.installedAt;
   }
   get updatedAt(): string {
-    return this._updatedAt;
+    return this._state.updatedAt;
   }
 
   toJSON(): Record<string, unknown> {
-    return {
-      fqn: this._fqn,
-      origin: this._origin,
-      description: this._description,
-      version: this._version,
-      prereqsAck: this._prereqsAck,
-      installedAt: this._installedAt,
-      updatedAt: this._updatedAt,
-      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
-      ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
-        ? {
-            dependencies: {
-              ...(this._dependencies.skills.length > 0
-                ? { skills: this._dependencies.skills }
-                : {}),
-              ...(this._dependencies.mcps.length > 0 ? { mcps: this._dependencies.mcps } : {}),
-            },
-          }
-        : {}),
+    const out: Record<string, unknown> = {
+      fqn: this._state.fqn,
+      origin: this._state.origin,
+      description: this._state.description,
+      version: this._state.version,
+      prereqsAck: this._state.prereqsAck,
+      installedAt: this._state.installedAt,
+      updatedAt: this._state.updatedAt,
     };
+    if (this._state.prereqs !== undefined) out.prereqs = this._state.prereqs;
+    const depsJson = depsToJSON(SKILL_DEP_SPECS, this._state.dependencies);
+    if (depsJson !== undefined) out.dependencies = depsJson;
+    return out;
   }
 
   withAnchor(rawSkillMd: string, sourceLabel: string): SkillEntity {
-    const { meta } = SkillFormat.parse(rawSkillMd, sourceLabel);
-    const newFqn = makeFqn(meta.scope, meta.shortName);
-    if (newFqn !== this._fqn) {
-      throw new TypeError(
-        `SkillEntity.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
-          "Delete and reinstall to rename.",
-      );
-    }
-    return new SkillEntity(
-      this._fqn,
-      this._origin,
-      meta.description,
-      meta.version,
-      meta.prereqs,
-      this._dependencies,
-      normaliseDepRefs(meta.dependencies),
-      this._prereqsAck,
-      this._installedAt,
-      new Date().toISOString(),
-    );
+    return new SkillEntity(applyAnchorPatch(this._state, rawSkillMd, sourceLabel, SKILL_CONFIG));
   }
 
   withState(state: { prereqsAck?: boolean }): SkillEntity {
-    return new SkillEntity(
-      this._fqn,
-      this._origin,
-      this._description,
-      this._version,
-      this._prereqs,
-      this._dependencies,
-      this._depsRefs,
-      state.prereqsAck ?? this._prereqsAck,
-      this._installedAt,
-      this._updatedAt,
-    );
+    return new SkillEntity({
+      ...this._state,
+      prereqsAck: state.prereqsAck ?? this._state.prereqsAck,
+    });
   }
 
   withDependencies(deps: SkillDependencies): SkillEntity {
-    return new SkillEntity(
-      this._fqn,
-      this._origin,
-      this._description,
-      this._version,
-      this._prereqs,
-      normaliseDeps(deps),
-      this._depsRefs,
-      this._prereqsAck,
-      this._installedAt,
-      this._updatedAt,
-    );
+    return new SkillEntity({
+      ...this._state,
+      dependencies: normaliseFqnDeps(SKILL_DEP_SPECS, deps),
+    });
   }
 }
 
-export interface SkillDependencyRef {
-  readonly fqn: string;
-}
+// Compat re-exports preserved as named exports off this module so
+// callers (catalog index.ts, skill index.ts) keep their import shape.
+export { hasNonEmptyPrereqs };
 
-export interface SkillDependencies {
-  readonly skills: readonly SkillDependencyRef[];
-  readonly mcps: readonly SkillDependencyRef[];
-}
-
-export interface SkillDepRefs {
-  readonly skills: readonly string[];
-  readonly mcps: readonly string[];
-}
-
-function normaliseDeps(
-  deps:
-    | { skills?: readonly SkillDependencyRef[]; mcps?: readonly SkillDependencyRef[] }
-    | undefined,
-): SkillDependencies {
-  return {
-    skills: deps?.skills ?? [],
-    mcps: deps?.mcps ?? [],
-  };
-}
-
-function normaliseDepRefs(
-  deps: { skills?: readonly string[]; mcps?: readonly string[] } | undefined,
-): SkillDepRefs {
-  return {
-    skills: deps?.skills ?? [],
-    mcps: deps?.mcps ?? [],
-  };
-}
-
-/** True iff `prereqs` is a non-empty, non-whitespace-only string. */
-export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
-  return prereqs !== undefined && prereqs.trim().length > 0;
-}
+/** Per-kind dep-spec set — exported so the repository file can reuse it. */
+export const SKILL_DEP_SPECS_EXPORT = SKILL_DEP_SPECS;

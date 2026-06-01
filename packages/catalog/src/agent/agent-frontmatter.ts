@@ -1,165 +1,45 @@
-import yaml from "js-yaml";
+import {
+  type AnchoredDependencyRef,
+  type AnchoredFrontmatter,
+  makeFrontmatterCodec,
+  type ParsedAnchoredMd,
+} from "../_shared/frontmatter-codec.js";
 import { AgentFrontmatterError } from "./errors.js";
 import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
 
 /**
- * AGENTS.md frontmatter codec. See SKILL.md format for the general
- * shape; the structure is identical (including the optional `prereqs`
- * field — agents accept it for the same reason skills do: declare
- * setup steps the operator must complete before the entry is allowed
- * to run).
+ * AGENTS.md frontmatter codec. Thin shadow over the shared
+ * `_shared/frontmatter-codec.ts` factory — see that module for the
+ * grammar and the rationale for the dep-ref list schema.
+ *
+ * Behavior change (F2-1 disclosed in PR body): the legacy
+ * `{ origin: "…" }` object form for `dependencies.skills[*]` /
+ * `dependencies.mcps[*]` is no longer accepted. Only string items
+ * are valid, matching skill-frontmatter's existing schema. No
+ * first-party or marketplace agent uses the object form; third-party
+ * authors that do will receive a clear AgentFrontmatterError on
+ * first install attempt.
  */
 
-/** A dep reference is just an origin URI string. */
-export type AgentDependencyRef = string;
+export type AgentDepKind = "skills" | "mcps";
 
-export interface AgentFrontmatter {
-  readonly shortName: string;
-  readonly scope: string;
-  readonly description: string;
-  readonly version: string;
-  readonly prereqs?: string;
-  readonly dependencies?: {
-    readonly skills?: readonly AgentDependencyRef[];
-    readonly mcps?: readonly AgentDependencyRef[];
-  };
-}
+const AGENT_DEP_KEYS = ["skills", "mcps"] as const satisfies readonly AgentDepKind[];
 
-export interface ParsedAgentMd {
-  readonly meta: AgentFrontmatter;
-  readonly body: string;
-}
+const codec = makeFrontmatterCodec<AgentDepKind>({
+  anchorFilename: "AGENTS.md",
+  ErrorClass: AgentFrontmatterError,
+  validators: { validateScope, validateShortName, DEFAULT_SCOPE },
+  depKeys: AGENT_DEP_KEYS,
+});
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
+export type AgentDependencyRef = AnchoredDependencyRef;
 
-export function parse(content: string, sourceLabel: string): ParsedAgentMd {
-  const match = content.match(FRONTMATTER_RE);
-  if (!match) {
-    throw new AgentFrontmatterError(
-      sourceLabel,
-      "missing frontmatter block (AGENTS.md must start with `---` ... `---`)",
-    );
-  }
-  const yamlText = match[1] ?? "";
-  const body = content.slice(match[0].length);
+export type AgentFrontmatter = AnchoredFrontmatter<AgentDepKind>;
+export type ParsedAgentMd = ParsedAnchoredMd<AgentDepKind>;
 
-  let parsed: unknown;
-  try {
-    parsed = yaml.load(yamlText);
-  } catch (cause) {
-    throw new AgentFrontmatterError(sourceLabel, (cause as Error).message, { cause });
-  }
-  if (parsed === null || parsed === undefined) {
-    throw new AgentFrontmatterError(sourceLabel, "frontmatter block is empty");
-  }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new AgentFrontmatterError(sourceLabel, "frontmatter must be a YAML mapping");
-  }
-  const data = parsed as Record<string, unknown>;
-  const meta = projectFrontmatter(data, sourceLabel);
-  return { meta, body };
-}
-
-function projectFrontmatter(data: Record<string, unknown>, sourceLabel: string): AgentFrontmatter {
-  const { name, scope, description, version, prereqs, dependencies } = data;
-
-  if (typeof name !== "string" || name.length === 0) {
-    throw new AgentFrontmatterError(sourceLabel, "missing or non-string `name`");
-  }
-  validateShortName(name);
-
-  const resolvedScope = scope === undefined ? DEFAULT_SCOPE : scope;
-  validateScope(resolvedScope);
-
-  if (typeof description !== "string") {
-    throw new AgentFrontmatterError(sourceLabel, "missing or non-string `description`");
-  }
-  if (typeof version !== "string" || version.length === 0) {
-    throw new AgentFrontmatterError(sourceLabel, "missing or empty `version`");
-  }
-  if (prereqs !== undefined && typeof prereqs !== "string") {
-    throw new AgentFrontmatterError(sourceLabel, "`prereqs` must be a string when present");
-  }
-  const deps = parseDependencies(dependencies, sourceLabel);
-
-  return {
-    shortName: name,
-    scope: resolvedScope,
-    description,
-    version,
-    ...(prereqs !== undefined ? { prereqs } : {}),
-    ...(deps !== undefined ? { dependencies: deps } : {}),
-  };
-}
-
-function parseDependencies(
-  raw: unknown,
-  sourceLabel: string,
-): { skills?: AgentDependencyRef[]; mcps?: AgentDependencyRef[] } | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new AgentFrontmatterError(sourceLabel, "`dependencies` must be a mapping");
-  }
-  const obj = raw as Record<string, unknown>;
-  const out: { skills?: AgentDependencyRef[]; mcps?: AgentDependencyRef[] } = {};
-  if (obj.skills !== undefined) {
-    out.skills = parseDependencyList(obj.skills, "skills", sourceLabel);
-  }
-  if (obj.mcps !== undefined) {
-    out.mcps = parseDependencyList(obj.mcps, "mcps", sourceLabel);
-  }
-  return out;
-}
-
-function parseDependencyList(
-  raw: unknown,
-  field: string,
-  sourceLabel: string,
-): AgentDependencyRef[] {
-  if (!Array.isArray(raw)) {
-    throw new AgentFrontmatterError(sourceLabel, `\`dependencies.${field}\` must be an array`);
-  }
-  return raw.map((item, idx) => {
-    if (typeof item === "string") {
-      if (item.length === 0) {
-        throw new AgentFrontmatterError(
-          sourceLabel,
-          `\`dependencies.${field}[${idx}]\` must be a non-empty origin URI`,
-        );
-      }
-      return item;
-    }
-    if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-      const obj = item as Record<string, unknown>;
-      if (typeof obj.origin === "string" && obj.origin.length > 0) return obj.origin;
-    }
-    throw new AgentFrontmatterError(
-      sourceLabel,
-      `\`dependencies.${field}[${idx}]\` must be an origin URI string ` +
-        '(e.g. "github:owner/repo/tree/main/skills/foo")',
-    );
-  });
-}
-
-export function writeFrontmatter(
+export const parse: (content: string, sourceLabel: string) => ParsedAgentMd = codec.parse;
+export const writeFrontmatter: (
   content: string,
   meta: AgentFrontmatter,
-  _sourceLabel: string,
-): string {
-  const match = content.match(FRONTMATTER_RE);
-  const body = match ? content.slice(match[0].length) : content;
-  const yamlText = serializeFrontmatter(meta);
-  return `---\n${yamlText}---\n${body}`;
-}
-
-function serializeFrontmatter(meta: AgentFrontmatter): string {
-  const obj: Record<string, unknown> = {
-    name: meta.shortName,
-    scope: meta.scope,
-    description: meta.description,
-    version: meta.version,
-  };
-  if (meta.prereqs !== undefined) obj.prereqs = meta.prereqs;
-  if (meta.dependencies !== undefined) obj.dependencies = meta.dependencies;
-  return yaml.dump(obj, { lineWidth: -1, noRefs: true });
-}
+  sourceLabel: string,
+) => string = codec.writeFrontmatter;
