@@ -356,7 +356,7 @@ export class TaskService {
       metadata: initialMeta,
     });
     try {
-      await this.persist(workdir, initial);
+      await this.repository.save(initial);
     } catch (err) {
       await safeRm(workdir, this.logger);
       throw err;
@@ -455,7 +455,7 @@ export class TaskService {
         ...initial.metadata,
         runtimeSessionId: handle.runtimeSessionId,
       });
-      await this.persist(workdir, running);
+      await this.repository.save(running);
     }
 
     // 7. Wire post-spawn background work: watch for exit and persist
@@ -627,8 +627,7 @@ export class TaskService {
 
   async get(id: string): Promise<TaskEntity | null> {
     assertValidTaskId(id);
-    const workdir = safeJoinUnderRoot(this.tasksDir, id);
-    const task = await this.loadTask(id, workdir);
+    const task = await this.repository.read(id);
     if (task === null) return null;
     // ADR-002: only running tasks have a meaningful
     // `lastActiveAtRuntime`. For terminal tasks the runtime state
@@ -779,7 +778,7 @@ export class TaskService {
     }
 
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
-    const existing = await this.loadTask(id, workdir);
+    const existing = await this.repository.read(id);
     if (existing === null) throw new TaskNotFoundError(id);
     if (
       existing.status === "succeeded" ||
@@ -832,7 +831,7 @@ export class TaskService {
       });
     }
 
-    const final = await this.loadTask(id, workdir);
+    const final = await this.repository.read(id);
     if (final === null) throw new TaskNotFoundError(id);
     return final;
   }
@@ -877,7 +876,7 @@ export class TaskService {
     assertValidTaskId(id);
     const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
-    const existing = await this.loadTask(id, workdir);
+    const existing = await this.repository.read(id);
     if (existing === null) {
       throw new TaskNotFoundError(id);
     }
@@ -1029,7 +1028,6 @@ export class TaskService {
     await Promise.all(
       candidates.map(async (task) => {
         const id = task.id;
-        const workdir = safeJoinUnderRoot(this.tasksDir, id);
 
         try {
           const failed = task.fail(
@@ -1041,7 +1039,7 @@ export class TaskService {
               now: this.now().toISOString(),
             },
           );
-          await this.persist(workdir, failed);
+          await this.repository.save(failed);
         } catch (err) {
           this.logger.warn(
             {
@@ -1146,37 +1144,6 @@ export class TaskService {
   // ─── internals ───────────────────────────────────────────
 
   /**
-   * Read + validate the persisted task at `workdir`, or null when no
-   * row exists for `id`.
-   *
-   * `CorruptedTaskError` from the repository is **propagated**, not
-   * swallowed. The route layer maps it to 5xx so operators see the
-   * corruption (a silent 404 would let the dashboard render "task
-   * gone" for what is really tampered/bit-rotted metadata, hiding the
-   * problem until next save round-trips an empty `{}` over the corrupt
-   * blob). The `delete --purge` caller catches the propagated error
-   * and falls through to the stat-based escape hatch — see `delete()`
-   * above. The `list()` path does NOT go through this method; it
-   * skip+warns at the repo layer (see `TaskRepository.list`).
-   */
-  private async loadTask(id: string, _workdir: string): Promise<TaskEntity | null> {
-    const task = await this.repository.read(id);
-    if (task === null) return null;
-    if (task.id !== id) {
-      // Defensive: directory name and id-in-row disagree. Trust the
-      // directory name (it's how we found this) and surface a warning.
-      this.logger.warn(
-        {
-          taskId: id,
-          persistedId: task.id,
-        },
-        "tasks: id mismatch between dir and persisted row",
-      );
-    }
-    return task;
-  }
-
-  /**
    * Fold runtime-supplied display metadata (lastActiveAtRuntime)
    * into a loaded task. Returns the same task object when:
    *   - the runtime is unknown / unregistered (silent)
@@ -1242,11 +1209,6 @@ export class TaskService {
     return task.withMetadata(enriched);
   }
 
-  /** Atomic write of the persisted record. */
-  private async persist(_workdir: string, task: TaskEntity): Promise<void> {
-    await this.repository.save(task);
-  }
-
   /**
    * Apply the terminal event to a running task and persist. v4
    * (issue #119) dropped the convention of mirroring `exitCode` /
@@ -1291,7 +1253,7 @@ export class TaskService {
           });
           break;
       }
-      await this.persist(workdir, next);
+      await this.repository.save(next);
     } catch (err) {
       this.logger.warn(
         {

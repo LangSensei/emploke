@@ -33,7 +33,21 @@ export class TaskRepository {
     if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
     const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (row === undefined) return null;
-    return rowToTask(row);
+    const task = rowToTask(row);
+    if (task.id !== id) {
+      // Defensive: row's stored id disagrees with the primary-key id
+      // we just selected by. Under SQLite this should be impossible
+      // (the PK constraint on `tasks.id` plus the `WHERE tasks.id = id`
+      // filter together rule it out), so a fire here means either the
+      // schema changed under our feet or someone tampered with the DB
+      // out-of-band. We surface a warn and trust the caller's id so the
+      // dashboard doesn't silently route a task under the wrong key.
+      this.logger.warn(
+        { taskId: id, persistedId: task.id },
+        "tasks: id mismatch between dir and persisted row",
+      );
+    }
+    return task;
   }
 
   async save(task: TaskEntity): Promise<void> {
