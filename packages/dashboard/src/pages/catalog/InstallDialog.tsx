@@ -30,9 +30,9 @@ export function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: In
   const verbs = CATALOG_VERBS[kind];
   const supportsPreview = verbs.resolveInstall !== null;
 
-  const [provider, setProvider] = useState<InstallProvider>("github");
+  const [provider, setProvider] = useState<InstallProvider>("url");
   // Per-provider input value. Provider-switching clears it so a half-typed
-  // github URL doesn't accidentally submit when the user flips to local.
+  // URL doesn't accidentally submit when the user flips to file.
   const [input, setInput] = useState("");
   const [stage, setStage] = useState<InstallStage>("input");
   const [manifest, setManifest] = useState<ResolveManifest | null>(null);
@@ -45,7 +45,7 @@ export function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: In
       setManifest(null);
       setResolveError(null);
       setInput("");
-      setProvider("github");
+      setProvider("url");
     }
   }, [open]);
 
@@ -126,8 +126,8 @@ export function InstallDialog({ kind, open, busy, error, onClose, onSubmit }: In
               onChange={(e) => handleProviderChange(e.target.value as InstallProvider)}
               disabled={stageBusy || showPreview}
             >
-              <option value="github">GitHub</option>
-              <option value="file">Local file</option>
+              <option value="url">URL</option>
+              <option value="file">File</option>
             </select>
           </div>
 
@@ -211,10 +211,10 @@ interface InputMeta {
 
 /**
  * Per-(provider × catalog kind) input field metadata. The user types
- * ONE thing — a github URL or a local path — and we tell them exactly
+ * ONE thing — a URL or an absolute path — and we tell them exactly
  * what we expect to find at that location.
  *
- * GitHub URLs go through verbatim; local paths get the `file:` prefix
+ * URLs go through verbatim; absolute paths get the `file:` prefix
  * added on submit (see {@link InstallSource} and `buildOriginFromSource`).
  * The label never says "Origin URI" because users shouldn't need to know
  * the underlying URI grammar.
@@ -222,23 +222,33 @@ interface InputMeta {
 function inputMetaFor(provider: InstallProvider, kind: CatalogKind): InputMeta {
   const what = WHAT[kind];
 
-  if (provider === "github") {
+  if (provider === "url") {
+    // Today the catalog accepts GitHub tree URLs; future fetchers
+    // (npm, oci, etc.) will join without UI changes. We surface a
+    // GitHub example because that's the only scheme that works today.
     return {
-      label: "GitHub URL",
-      placeholder: GITHUB_EXAMPLE[kind],
+      label: "URL",
+      placeholder: URL_EXAMPLE[kind],
       hint: (
         <>
           URL to the {what}. Paste the exact URL from your browser when viewing the folder/file on
-          github.com.
+          github.com. (Other URL schemes — npm, oci — are not yet supported.)
         </>
       ),
     };
   }
 
+  // File (always means the **server's** filesystem; the dashboard
+  // talks to the server, not the local machine).
   return {
-    label: "Absolute path",
+    label: "Path",
     placeholder: LOCAL_EXAMPLE[kind],
-    hint: <>Absolute path on the server's filesystem to the {what}.</>,
+    hint: (
+      <>
+        Absolute path on the <strong>emploke server's</strong> filesystem to the {what}. Relative
+        paths are not accepted (origins must be stable across cwd).
+      </>
+    ),
   };
 }
 
@@ -249,7 +259,7 @@ const WHAT: Record<CatalogKind, string> = {
   mcp: "MCP JSON file",
 };
 
-const GITHUB_EXAMPLE: Record<CatalogKind, string> = {
+const URL_EXAMPLE: Record<CatalogKind, string> = {
   skill: "https://github.com/owner/repo/tree/main/skills/my-skill",
   agent: "https://github.com/owner/repo/tree/main/agents/my-agent",
   mcp: "https://github.com/owner/repo/tree/main/mcps/my-mcp.json",

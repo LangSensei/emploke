@@ -13,8 +13,8 @@ For community-maintained catalog entries, see [emploke-marketplace](https://gith
 Same mechanism as marketplace. Use any of:
 
 ```
-emploke catalog agent install https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev
-emploke catalog skill install https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli
+emploke catalog agent install --url https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev
+emploke catalog skill install --url https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli
 ```
 
 The emploke dashboard's "Install from URL" field also accepts these.

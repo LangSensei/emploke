@@ -70,7 +70,7 @@ Detailed playbooks live in `references/workflows.md`. Quick index:
 - **Sync (re-resolve) an installed entry against its upstream origin** — preview-then-apply with `planToken`.
 - **Clean up failed / stale tasks** — list, filter, archive vs purge.
 - **Set up a fresh workspace with a standard agent set** — atomic onboarding script.
-- **Create a local agent on the fly** — write `AGENTS.md`, `catalog agent install file://...`, dispatch.
+- **Create a local agent on the fly** — write `AGENTS.md`, `catalog agent install --file /abs/path`, dispatch.
 
 ## Exit codes
 

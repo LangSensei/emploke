@@ -14,7 +14,7 @@ need an agent for work X
   ├─→ 2. INSTALL FROM MARKETPLACE: relevant agent exists upstream?
   │        browse: https://github.com/LangSensei/emploke-marketplace/tree/main/agents/
   │        OR ask the user "is there an agent for X you know about?"
-  │        ┌─→ YES → INSTALL via emploke catalog agent install <origin>
+  │        ┌─→ YES → INSTALL via emploke catalog agent install --url <url> | --file <path>
   │        │         then PROBE (see probe-tasks.md)
   │        │         on probe success → DISPATCH the real work
   │        └─→ NO → continue
@@ -64,7 +64,7 @@ Install via:
 
 ```sh
 ORIGIN="https://github.com/LangSensei/emploke-marketplace/tree/main/agents/<name>"
-emploke catalog agent install "$ORIGIN" --json
+emploke catalog agent install --url "$ORIGIN" --json
 ```
 
 Then handle the install per `emploke/cli` skill's "Install an agent and make sure it's ready to dispatch" workflow (handle blocked-state branches, ack prereqs if appropriate, etc.).

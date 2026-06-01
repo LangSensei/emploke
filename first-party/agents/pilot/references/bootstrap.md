@@ -29,7 +29,7 @@ mkdir -p local-agents
 touch .pilot/decisions.log .pilot/lessons.md .pilot/CHANGELOG.md .pilot/hires.md .pilot/org-chart.md
 ```
 
-`.pilot/` is your institutional memory (state-management.md). `local-agents/` lives at the workspace root (sibling of `.pilot/`) so it can be `catalog agent install file://...`-ed; it's NOT under `.pilot/`.
+`.pilot/` is your institutional memory (state-management.md). `local-agents/` lives at the workspace root (sibling of `.pilot/`) so it can be `catalog agent install --file /abs/path`-ed; it's NOT under `.pilot/`.
 
 ## Identity (one-time)
 

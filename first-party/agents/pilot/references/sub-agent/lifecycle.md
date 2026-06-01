@@ -21,7 +21,7 @@ Set `version: 1.0.0`.
 
 ```sh
 DIR="<workspace>/local-agents/<name>"
-emploke catalog agent install "file://$DIR" --json
+emploke catalog agent install --file "$DIR" --json
 ```
 
 Verify it installed cleanly:
@@ -95,7 +95,7 @@ If the agent's outputs need calibration but the agent is fundamentally good:
 3. Bump version (e.g. `1.0.0` → `1.1.0` for a behavioral change, `1.0.1` for a wording fix)
 4. Re-install:
    ```sh
-   emploke catalog agent install "file://$DIR" --json
+   emploke catalog agent install --file "$DIR" --json
    ```
 5. Probe again with a focused task that tests the new rule
 6. Update `hires.md` with the iteration outcome
