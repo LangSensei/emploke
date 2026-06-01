@@ -59,6 +59,15 @@ export async function fetchAll(): Promise<CatalogData> {
  * latter, CLI install was 100% broken). Single wire shape removes
  * the gap class entirely.
  *
+ * The dashboard never asks the user "what kind of URL is this?" —
+ * the user picks `url` or `file`. `url` means "the server's
+ * `parseOrigin` sniffs the URL grammar and routes to the right
+ * fetcher" (today: only `https://github.com/...`; tomorrow: npm /
+ * oci / etc., with no UI change required). `file` always means the
+ * local-file fetcher; the dashboard appends the `file:` scheme
+ * transparently. Server semantics are unchanged — only the UX
+ * vocabulary changed.
+ *
  * The server then fetches via the registered fetcher (file:,
  * https://github.com/...), recursively resolves dependencies, and
  * returns a manifest. Returns 207 on partial failure — caller
@@ -68,16 +77,30 @@ export async function fetchAll(): Promise<CatalogData> {
  * frontmatter (or default `public`). Forking under a different scope =
  * editing upstream's frontmatter, not a per-install flag.
  */
-export type InstallProvider = "github" | "file";
+/**
+ * User-facing install source. `"url"` covers every fetcher whose origin is
+ * a URL (today: GitHub; future: npm, oci, etc.) — the catalog's `parseOrigin`
+ * sniffs the URL grammar to pick the right fetcher. `"file"` always means
+ * the local file fetcher (server-side `file:` scheme).
+ *
+ * The dashboard never asks the user "what kind of URL"; that's the
+ * server's job. Picking the wrong fetcher would surface as a clear
+ * "unsupported scheme" error from `parseOrigin`.
+ */
+export type InstallProvider = "url" | "file";
 
 export interface InstallSource {
-  /** Pick the provider whose grammar matches your URL/path. */
+  /** Pick the source kind whose grammar matches your input. */
   provider: InstallProvider;
   /**
-   * Canonical input string for the chosen provider:
-   *  - `github`: full https://github.com/owner/repo/tree/ref/path URL
-   *  - `file`:   absolute filesystem path on the server
-   * Whitespace is trimmed; clients never need to add scheme prefixes.
+   * What the user typed:
+   *  - `url`:  full URL (e.g. `https://github.com/owner/repo/tree/ref/path`).
+   *            Pass-through to the wire — the server's `parseOrigin` picks the
+   *            fetcher from the URL grammar.
+   *  - `file`: absolute path on the **server's** filesystem (the dashboard
+   *            and CLI both target the server, not the local machine).
+   *            The client adds the `file:` prefix transparently.
+   * Whitespace is trimmed.
    */
   location: string;
 }
@@ -97,20 +120,34 @@ export interface InstallBody {
 /**
  * Assemble a canonical origin URI from the dashboard's UI form.
  *
- *   - `github` + `https://github.com/owner/repo/tree/ref/path` →
- *     pass-through (the URL is already the canonical github origin)
- *   - `file`   + `/abs/path`            → `file:/abs/path`
- *   - `file`   + `file:/abs/path`       → `file:/abs/path` (tolerate
+ *   - `url`  + `https://github.com/owner/repo/tree/ref/path` →
+ *     pass-through (the server's `parseOrigin` picks the fetcher
+ *     from the URL grammar)
+ *   - `file` + `/abs/path`            → `file:/abs/path`
+ *   - `file` + `file:/abs/path`       → `file:/abs/path` (tolerate
  *     paste with prefix; trim and re-emit)
  *
- * Mirrors the assembly the CLI never had to do (CLI users always
- * type the canonical URI directly). Tests in `dashboard/test/`
- * (added in PR #96) pin the contract.
+ * Smuggling guard: `url` + a `file:` URI is rejected — the user
+ * almost certainly meant to pick `file`. The mirror lives in the
+ * CLI's `buildInstallOrigin` so both layers reject the same shape.
+ *
+ * Mirrors the assembly the CLI never had to do until the parallel
+ * `--url` / `--file` flag refactor (PR #?). Tests in
+ * `dashboard/test/buildOriginFromSource.test.ts` pin the contract.
  */
 export function buildOriginFromSource(src: InstallSource): string {
   const trimmed = src.location.trim();
   switch (src.provider) {
-    case "github":
+    case "url":
+      // Smuggling guard: if the user picked URL but typed a `file:` URI,
+      // they almost certainly meant to pick File. Reject with a clear
+      // error so we don't silently route a "file" install through a
+      // mis-labelled provider. The mirror exists in CLI's flag validator.
+      if (trimmed.startsWith("file:")) {
+        throw new Error(
+          'URL source cannot be a "file:" URI. Pick "File" and enter the path instead.',
+        );
+      }
       return trimmed;
     case "file":
       return trimmed.startsWith("file:") ? trimmed : `file:${trimmed}`;

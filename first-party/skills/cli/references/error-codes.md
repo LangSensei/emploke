@@ -52,17 +52,17 @@ Both are stable wire contracts. The distinction matters only if you're maintaini
 | `RuntimeHeadlessLaunchFailed` | 500 | Runtime headless launch failed | Same as above |
 | `RuntimeRefreshFailed` | 500 | Runtime metadata refresh failed | Often transient; retry |
 | `EntryNotReadyError` | 409 | Agent is blocked — see `reason` | See "EntryNotReadyError reasons" below |
-| `AgentNotFoundError` | 400 / 404 | Agent FQN not installed | `emploke catalog agent install <origin>` |
+| `AgentNotFoundError` | 400 / 404 | Agent FQN not installed | `emploke catalog agent install --url <url>` or `--file <path>` |
 | `AgentNameInvalidError` | 400 | Bad agent name | Check `[a-z0-9-]+` and matching folder name |
 | `AgentFrontmatterError` | 400 | Agent frontmatter validation failed | Read message; fix the YAML in upstream |
 | `AgentOriginConflictError` | 409 | Two agents with same FQN, different origins | Decide which to keep, remove the other |
 | `AgentPlanStaleError` | 400 | `planToken` expired (5-min TTL) or already used | Re-run `agent sync-resolve` |
-| `SkillNotFoundError` | 404 | Skill FQN not installed | `emploke catalog skill install <origin>` |
+| `SkillNotFoundError` | 404 | Skill FQN not installed | `emploke catalog skill install --url <url>` or `--file <path>` |
 | `SkillNameInvalidError` | 400 | Bad skill name | Same as agent |
 | `SkillFrontmatterError` | 400 | Skill frontmatter validation failed | Read message; fix YAML upstream |
 | `SkillOriginConflictError` | 409 | Two skills with same FQN, different origins | Pick one |
 | `PlanStaleError` | 400 | Skill plan token expired/used | Re-run `skill sync-resolve` |
-| `McpNotFoundError` | 404 | MCP not installed | `emploke catalog mcp install <origin> --name <fqn>` |
+| `McpNotFoundError` | 404 | MCP not installed | `emploke catalog mcp install --url <url>` or `--file <path>` |
 | `McpNameInvalidError` | 400 | Bad MCP FQN | Use `<namespace>/<short>` |
 | `McpInvalidJsonError` | 400 | MCP JSON failed schema validation | Read message; fix the JSON |
 | `McpOriginConflictError` | 409 | Two MCPs with same FQN, different origins | Pick one |

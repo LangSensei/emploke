@@ -41,7 +41,7 @@ This directory IS the company. It survives session restarts, encodes institution
   letters/<date>-*.md      # Letters to your future self
 ```
 
-NOTE: local agent definitions live at `<workspace>/local-agents/<name>/AGENTS.md` (sibling of `.pilot/`, NOT under it) so they can be installed via `catalog agent install file://...`. Don't put them under `.pilot/`.
+NOTE: local agent definitions live at `<workspace>/local-agents/<name>/AGENTS.md` (sibling of `.pilot/`, NOT under it) so they can be installed via `catalog agent install --file <abs-path>`. Don't put them under `.pilot/`.
 
 ## Read/write conventions
 

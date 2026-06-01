@@ -62,6 +62,7 @@ import {
 } from "../commands/catalog.js";
 import type { CommandResult } from "../result.js";
 import {
+  optionalString,
   parseWorkspaceFlags,
   pickString,
   type Slot,
@@ -75,16 +76,30 @@ import {
  * into a single uniform call signature, so the loop body below can
  * dispatch without casts or per-kind switches. Optional members map
  * 1:1 to the asymmetries documented at the top of the file.
+ *
+ * `install` / `resolve` take the user's `--url` / `--file` source via
+ * an opaque {@link InstallSourceFlags} bag instead of a positional
+ * `origin` — the per-impl closure spreads it into the kind's opts
+ * shape. Origin canonicalisation (file: prefix, smuggling guard)
+ * happens once inside the impl (`buildInstallOrigin`).
  */
+interface InstallSourceFlags {
+  readonly url?: string;
+  readonly file?: string;
+}
+
 interface KindImpls {
   readonly list: (opts: WorkspaceFlagOpts) => Promise<CommandResult>;
-  readonly resolve?: (origin: string, opts: WorkspaceFlagOpts) => Promise<CommandResult>;
+  readonly resolve?: (
+    source: InstallSourceFlags,
+    opts: WorkspaceFlagOpts,
+  ) => Promise<CommandResult>;
   readonly show: (
     ident: string,
     anchor: boolean | undefined,
     opts: WorkspaceFlagOpts,
   ) => Promise<CommandResult>;
-  readonly install: (origin: string, opts: WorkspaceFlagOpts) => Promise<CommandResult>;
+  readonly install: (source: InstallSourceFlags, opts: WorkspaceFlagOpts) => Promise<CommandResult>;
   readonly update: (
     ident: string,
     content: string | undefined,
@@ -118,10 +133,6 @@ interface KindSpec {
   readonly identPlaceholder: string;
   /** Help text for the ident argument. */
   readonly identDesc: string;
-  /** Help text for the `<origin>` argument of `resolve` (when present). */
-  readonly resolveOriginDesc?: string;
-  /** Help text for the `<origin>` argument of `install`. */
-  readonly installOriginDesc: string;
   /** Filename for the `--anchor` flag description; `undefined` ⇒ no anchor flag. */
   readonly anchorDoc?: string;
   /** Per-action descriptions; optional ones gate registration of that command. */
@@ -169,19 +180,29 @@ function metadataFragment(
   return out;
 }
 
+/**
+ * Read the install-source flag pair (`--url` / `--file`) from a
+ * commander opts bag. Returns a spread-friendly fragment ({} when
+ * neither is set) so the impl bag gets `url?` / `file?` cleanly.
+ * Validation (exactly-one, smuggling guard) lives inside the impl
+ * (`buildInstallOrigin`) so the rule is enforced uniformly across
+ * all 5 install/resolve commands.
+ */
+function installSourceFlags(opts: Record<string, unknown>): { url?: string; file?: string } {
+  return { ...optionalString(opts, "url"), ...optionalString(opts, "file") };
+}
+
 const KIND_SPECS: readonly KindSpec[] = [
   {
     name: "skill",
     parentDesc: "Skill operations",
     identPlaceholder: "<name>",
     identDesc: "Skill name (FQN)",
-    resolveOriginDesc: "Skill origin (path / git / npm)",
-    installOriginDesc: "Skill origin",
     anchorDoc: "SKILL.md",
     descriptions: {
       list: "List installed skills",
       show: "Show one skill's entry (or just the anchor with --anchor)",
-      install: "Install a skill",
+      install: "Install a skill from a URL or absolute server path",
       update: "Replace skill content",
       patch: "Patch skill metadata",
       rm: "Remove a skill",
@@ -189,9 +210,9 @@ const KIND_SPECS: readonly KindSpec[] = [
     },
     impls: {
       list: (opts) => catalogSkillList(opts),
-      resolve: (origin, opts) => catalogSkillResolve({ ...opts, origin }),
+      resolve: (source, opts) => catalogSkillResolve({ ...opts, ...source }),
       show: (name, anchor, opts) => catalogSkillShow({ ...opts, name, anchor: anchor === true }),
-      install: (origin, opts) => catalogSkillInstall({ ...opts, origin }),
+      install: (source, opts) => catalogSkillInstall({ ...opts, ...source }),
       update: (name, content, contentFile, opts) =>
         catalogSkillUpdate({ ...opts, name, ...contentFragment(content, contentFile) }),
       patch: (name, metadata, metadataFile, opts) =>
@@ -207,13 +228,11 @@ const KIND_SPECS: readonly KindSpec[] = [
     parentDesc: "Agent operations",
     identPlaceholder: "<name>",
     identDesc: "Agent name (FQN)",
-    resolveOriginDesc: "Agent origin",
-    installOriginDesc: "Agent origin",
     anchorDoc: "AGENTS.md",
     descriptions: {
       list: "List installed agents",
       show: "Show one agent's entry (or just the anchor with --anchor)",
-      install: "Install an agent",
+      install: "Install an agent from a URL or absolute server path",
       update: "Replace agent content",
       patch: "Patch agent metadata",
       rm: "Remove an agent",
@@ -223,9 +242,9 @@ const KIND_SPECS: readonly KindSpec[] = [
     },
     impls: {
       list: (opts) => catalogAgentList(opts),
-      resolve: (origin, opts) => catalogAgentResolve({ ...opts, origin }),
+      resolve: (source, opts) => catalogAgentResolve({ ...opts, ...source }),
       show: (name, anchor, opts) => catalogAgentShow({ ...opts, name, anchor: anchor === true }),
-      install: (origin, opts) => catalogAgentInstall({ ...opts, origin }),
+      install: (source, opts) => catalogAgentInstall({ ...opts, ...source }),
       update: (name, content, contentFile, opts) =>
         catalogAgentUpdate({ ...opts, name, ...contentFragment(content, contentFile) }),
       patch: (name, metadata, metadataFile, opts) =>
@@ -243,18 +262,18 @@ const KIND_SPECS: readonly KindSpec[] = [
     parentDesc: "MCP operations",
     identPlaceholder: "<fqn>",
     identDesc: "MCP FQN (<namespace>/<short>)",
-    installOriginDesc: "MCP origin",
     descriptions: {
       list: "List installed MCPs",
       show: "Show one MCP's content",
-      install: "Install an MCP (fqn is derived from the JSON's `_meta.name`)",
+      install:
+        "Install an MCP from a URL or absolute server path (fqn is derived from the JSON's `_meta.name`)",
       update: "Replace MCP JSON content",
       rm: "Remove an MCP",
     },
     impls: {
       list: (opts) => catalogMcpList(opts),
       show: (fqn, _anchor, opts) => catalogMcpShow({ ...opts, fqn }),
-      install: (origin, opts) => catalogMcpInstall({ ...opts, origin }),
+      install: (source, opts) => catalogMcpInstall({ ...opts, ...source }),
       update: (fqn, content, contentFile, opts) =>
         catalogMcpUpdate({ ...opts, fqn, ...contentFragment(content, contentFile) }),
       rm: (fqn, opts) => catalogMcpRm({ ...opts, fqn }),
@@ -292,13 +311,14 @@ export function registerCatalogCommands(program: Command, slot: Slot): void {
         slot.result = await spec.impls.list(parseWorkspaceFlags(opts));
       });
 
-    if (spec.impls.resolve && spec.resolveOriginDesc !== undefined) {
+    if (spec.impls.resolve) {
       const resolve = spec.impls.resolve;
       withWorkspaceFlags(sub.command("resolve"))
-        .argument("<origin>", spec.resolveOriginDesc)
         .description("Preview an install plan")
-        .action(async (origin: string, opts: Record<string, unknown>) => {
-          slot.result = await resolve(origin, parseWorkspaceFlags(opts));
+        .option("--url <value>", "Origin URL (e.g. https://github.com/owner/repo/tree/ref/path)")
+        .option("--file <path>", "Absolute path on the emploke server's filesystem")
+        .action(async (opts: Record<string, unknown>) => {
+          slot.result = await resolve(installSourceFlags(opts), parseWorkspaceFlags(opts));
         });
     }
 
@@ -320,10 +340,11 @@ export function registerCatalogCommands(program: Command, slot: Slot): void {
     }
 
     withWorkspaceFlags(sub.command("install"))
-      .argument("<origin>", spec.installOriginDesc)
       .description(spec.descriptions.install)
-      .action(async (origin: string, opts: Record<string, unknown>) => {
-        slot.result = await spec.impls.install(origin, parseWorkspaceFlags(opts));
+      .option("--url <value>", "Origin URL (e.g. https://github.com/owner/repo/tree/ref/path)")
+      .option("--file <path>", "Absolute path on the emploke server's filesystem")
+      .action(async (opts: Record<string, unknown>) => {
+        slot.result = await spec.impls.install(installSourceFlags(opts), parseWorkspaceFlags(opts));
       });
 
     withWorkspaceFlags(sub.command("update"))

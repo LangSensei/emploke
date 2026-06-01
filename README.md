@@ -136,9 +136,9 @@ emploke task activity <tid>   # runtime-parsed activity timeline (JSON)
 # catalog
 emploke catalog overview
 emploke catalog skill list
-emploke catalog skill install path/to/skill
-emploke catalog agent install https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev
-emploke catalog mcp install <origin> --name namespace/short
+emploke catalog skill install --file /abs/path/to/skill
+emploke catalog agent install --url https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev
+emploke catalog mcp install --url https://github.com/LangSensei/emploke/tree/main/first-party/mcps/example.json
 ```
 
 Common flags on every API command:

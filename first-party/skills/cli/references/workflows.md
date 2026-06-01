@@ -14,7 +14,7 @@ Goal: a fresh agent (e.g. `langsensei/writer`) installed and dispatchable. Handl
 ORIGIN="https://github.com/LangSensei/emploke-marketplace/tree/main/agents/writer"
 
 # 1. Preview what the install will do (network fetch, read prereqs, see deps).
-emploke catalog agent resolve "$ORIGIN" > /tmp/plan.json
+emploke catalog agent resolve --url "$ORIGIN" > /tmp/plan.json
 PREREQS=$(jq -r '.entry.prereqs // ""' /tmp/plan.json)
 
 # 2. If there are prereqs, surface them to the user BEFORE installing.
@@ -26,7 +26,7 @@ if [ -n "$PREREQS" ]; then
 fi
 
 # 3. Install. Returns the installed entry; we read its FQN.
-INSTALL=$(emploke catalog agent install "$ORIGIN" --json)
+INSTALL=$(emploke catalog agent install --url "$ORIGIN" --json)
 FQN=$(echo "$INSTALL" | jq -r '.installed[] | select(.kind=="agent") | .fqn')
 
 # 4. Verify status. If blocked, branch on cause.
@@ -217,7 +217,7 @@ for ORIGIN in \
     "https://github.com/LangSensei/emploke-marketplace/tree/main/agents/writer" \
     "https://github.com/LangSensei/emploke-marketplace/tree/main/agents/coder" \
   ; do
-  emploke catalog agent install "$ORIGIN"
+  emploke catalog agent install --url "$ORIGIN"
 done
 
 # Verify nothing's blocked.
@@ -230,7 +230,7 @@ If `counts.blocked > 0`, run `emploke catalog agent list --json | jq '[.[] | sel
 
 ## Create a local agent on the fly
 
-When you need a specialist that doesn't exist in the marketplace yet, write the agent definition locally and install via `file://` origin.
+When you need a specialist that doesn't exist in the marketplace yet, write the agent definition locally and install via `--file` (the CLI prepends the `file:` scheme on the wire).
 
 ```sh
 # 1. Pick a name and a directory under the workspace.
@@ -264,8 +264,8 @@ Keep it under 300 words. Use plain language. Never invent data — if an
 activity isn't actionable as a report item, drop it.
 EOF
 
-# 3. Install via file:// origin (absolute path).
-emploke catalog agent install "file://$DIR" --json
+# 3. Install via --file (absolute path; CLI prepends `file:` on the wire).
+emploke catalog agent install --file "$DIR" --json
 
 # 4. Verify status. Local agents are mutable (origin starts with file:),
 #    so you can edit AGENTS.md and re-install to iterate.
@@ -283,4 +283,4 @@ emploke task dispatch \
   --json
 ```
 
-To iterate on a local agent: edit the file, re-install (the install is idempotent for `file://` origins and bumps the version pointer), dispatch again to test.
+To iterate on a local agent: edit the file, re-install with `--file` (the install is idempotent for `file:` origins and bumps the version pointer), dispatch again to test.

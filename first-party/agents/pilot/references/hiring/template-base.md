@@ -67,7 +67,7 @@ dependencies:
 ```sh
 NAME="<name>"
 DIR="$EMPLOKE_WORKSPACE_DIR/local-agents/$NAME"
-emploke catalog agent install "file://$DIR" --json
+emploke catalog agent install --file "$DIR" --json
 ```
 
 The CLI returns the installed entry; verify the FQN is `local/$NAME`:
@@ -80,13 +80,13 @@ If `.status != "ok"`, see `references/error-codes.md` in the `emploke/cli` skill
 
 ## Iterating
 
-`file://` origins are mutable. To revise the agent:
+`file:` origins are mutable. To revise the agent:
 
 1. Edit `<workspace>/local-agents/<name>/AGENTS.md`.
 2. Bump `version:` in the frontmatter (semver).
 3. Re-install:
    ```sh
-   emploke catalog agent install "file://$DIR" --json
+   emploke catalog agent install --file "$DIR" --json
    ```
 4. Probe again with a fresh probe task.
 5. If the probe passes, update `.pilot/hires.md` with the new version's outcome.

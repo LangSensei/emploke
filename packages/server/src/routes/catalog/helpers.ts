@@ -48,8 +48,9 @@ export async function readAgentInstallBody(
 }
 
 /**
- * POST /catalog/mcps body: `{ origin: string, name: string }`. `name` is
- * the full MCP-spec FQN (`<namespace>/<short>`). The spec name IS the
+ * POST /catalog/mcps body: `{ origin: string }`. The spec FQN is
+ * derived server-side from the fetched JSON's `_meta.name` field — clients
+ * never supply it. The spec name IS the
  * catalog identity — no scope, no derivation, no mapping.
  */
 export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | { error: string }> {
