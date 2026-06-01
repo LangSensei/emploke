@@ -24,7 +24,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ROUTES, type RouteKey } from "@emploke/server";
+import { ROUTES, type RouteKey } from "@emploke/api-types";
 import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

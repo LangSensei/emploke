@@ -46,10 +46,10 @@ import type { ActivityItem, TruncationInfo } from "@emploke/runtime";
 import type { PreviewResult, Schedule } from "@emploke/schedule";
 import type { Session } from "@emploke/session";
 import type { Task, TaskStatus } from "@emploke/task";
-import type { ResolveManifest } from "./catalog/plan-to-manifest.js";
-import type { ServerConfig } from "./config.js";
 import type { HealthResponse } from "./health.js";
+import type { ResolveManifest } from "./plan-to-manifest.js";
 import type { RuntimeInfo } from "./runtimes.js";
+import type { ServerConfig } from "./server-config.js";
 
 // ──────────────────────────────────────────────────────────────────────
 // Route spec primitives

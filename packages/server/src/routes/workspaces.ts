@@ -1,13 +1,13 @@
+import type {
+  WorkspaceCreateBody,
+  WorkspaceCurrentPutBody,
+  WorkspacePatchBody,
+} from "@emploke/api-types";
 import type { Application } from "@emploke/core";
 import { Hono } from "hono";
 import { workspacesErrorPolicy } from "./_error-policies/workspaces.js";
 import { respondError } from "./_respond-error.js";
 import { logEvent, parseJsonBody } from "./_shared.js";
-import type {
-  WorkspaceCreateBody,
-  WorkspaceCurrentPutBody,
-  WorkspacePatchBody,
-} from "./manifest.js";
 
 type CreateBodyRaw = { [K in keyof WorkspaceCreateBody]?: unknown };
 type PutCurrentBodyRaw = { [K in keyof WorkspaceCurrentPutBody]?: unknown };

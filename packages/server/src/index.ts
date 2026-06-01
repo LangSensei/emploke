@@ -37,50 +37,11 @@ import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
-// Re-export the route manifest so downstream packages (@emploke/cli,
-// future @emploke/mcp) can build typed clients against the same source
-// of truth the server's reflection test enforces.
-export {
-  type AgentWithContent,
-  type ApiError,
-  type CatalogOverview,
-  type CatalogResourcePathParams,
-  type ContentUpdateBody,
-  defineRoute,
-  type HttpMethod,
-  listRoutes,
-  type McpWithContent,
-  type MetadataPatchBody,
-  type OkResponse,
-  ROUTES,
-  type RouteKey,
-  type RouteReq,
-  type RouteRequest,
-  type RouteRes,
-  type RouteSpec,
-  type ScheduleListQuery,
-  type SchedulePathParams,
-  type SchedulePreviewQuery,
-  type SessionCreateBody,
-  type SessionDeleteQuery,
-  type SessionListQuery,
-  type SessionPathParams,
-  type SessionSpawnBody,
-  type SessionSpawnRes,
-  type SkillWithContent,
-  type TaskDeleteQuery,
-  type TaskDispatchBody,
-  type TaskListQuery,
-  type TaskPathParams,
-  type TaskScheduleCreateBody,
-  type TaskSchedulePatchBody,
-  type WorkspaceCreateBody,
-  type WorkspaceCurrentPutBody,
-  type WorkspaceCurrentRes,
-  type WorkspacePatchBody,
-  type WorkspacePathParams,
-  type WorkspaceSummary,
-} from "./routes/manifest.js";
+// Route manifest and wire types now live in `@emploke/api-types`; CLI
+// and dashboard import them directly from there. `@emploke/server`
+// no longer re-exports them — see Issue #255 and the C3 commit body
+// for the rationale. Server's public surface is now strictly its
+// transport (`runServer`, `RunServerOpts`) + the auth helpers below.
 
 /**
  * Per-request variables stashed on the Hono context by `workspaceContextMiddleware`.

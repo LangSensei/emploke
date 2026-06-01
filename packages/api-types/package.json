@@ -1,7 +1,7 @@
 {
   "name": "@emploke/api-types",
   "version": "0.0.1",
-  "description": "Out-of-band IPC contracts shared by emploke server + CLI. Today: EMPLOKE_HOME resolution + runtime.json shape. Future: HTTP route manifest types.",
+  "description": "Out-of-band IPC contracts shared by emploke server + CLI: EMPLOKE_HOME resolution, runtime.json shape, HTTP route manifest, and wire types.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -23,7 +23,13 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@emploke/catalog": "workspace:*",
+    "@emploke/runtime": "workspace:*",
+    "@emploke/schedule": "workspace:*",
+    "@emploke/session": "workspace:*",
+    "@emploke/task": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

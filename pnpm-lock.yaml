@@ -45,6 +45,22 @@ importers:
         version: 5.9.3
 
   packages/api-types:
+    dependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@emploke/schedule':
+        specifier: workspace:*
+        version: link:../schedule
+      '@emploke/session':
+        specifier: workspace:*
+        version: link:../session
+      '@emploke/task':
+        specifier: workspace:*
+        version: link:../task
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

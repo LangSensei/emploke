@@ -1,9 +1,9 @@
+import type { SessionCreateBody } from "@emploke/api-types";
 import type { WorkspaceContext } from "@emploke/core";
 import { Hono } from "hono";
 import { sessionsErrorPolicy } from "./_error-policies/sessions.js";
 import { respondError } from "./_respond-error.js";
 import { logEvent, parseJsonBody } from "./_shared.js";
-import type { SessionCreateBody } from "./manifest.js";
 
 /**
  * Resolver passed into `sessionsRoutes` so the routes can pull the
