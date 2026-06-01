@@ -42,6 +42,48 @@ packages/<pkg>/
   vitest.config.ts
 ```
 
+## Test layout convention
+
+Every `packages/<pkg>/test/**/*.test.{ts,tsx}` file's location is
+determined mechanically by its source imports. Enforced by
+`packages/task/test/test-layout-convention.test.ts`.
+
+**The rule**: for each test file, collect every non-type value-import
+that resolves to a file under the same package's `src/` tree (resolve
+relative to the test file's directory; exclude type-only imports,
+`vi.mock(...)`, `vi.importActual(...)`, and imports of other workspace
+packages or node builtins).
+
+1. **Zero in-pkg value-imports** → flat at `test/<name>.test.{ts,tsx}`
+   (cross-cutting / e2e / fs-walk audits).
+2. **All value-imports share a common subdirectory under `src/`
+   strictly deeper than `src/` itself** → MUST live at
+   `test/<that-subdir>/<name>.test.{ts,tsx}`.
+3. **Multiple value-imports with no common subdir below `src/`** →
+   flat at `test/<name>.test.{ts,tsx}`.
+
+Type-only imports (`import type { Foo } from "..."` and the `type`
+modifier inside mixed `import { type Foo, bar }` specifiers) compile
+away and do NOT count. `vi.mock("...")` and `vi.importActual("...")`
+are harness, not subject, and do NOT count. Side-effect-only
+`import "x"` DOES count — it executes top-level code.
+
+**When source moves, tests move.** If `src/utils/x.ts` is relocated
+to `src/x.ts`, the rule's verdict changes and the test must be
+relocated in the same PR. The enforcement test fails until both
+halves are in sync.
+
+**Allowlisting**: a test whose actual location diverges from the
+rule's required location but has a documented reason (umbrella
+reflection test, in-flight migration, pre-existing per-area subdir
+whose imports happen to span sibling top-level src files) may be
+added to `ALLOWED_FLAT_EXCEPTIONS` with a one-line rationale. The
+audit asserts the allowlist contains no stale entries (file gone)
+and no idle entries (test the rule already passes for).
+
+For worked-out classification examples and the parser self-tests, see
+`packages/task/test/test-layout-convention.test.ts`.
+
 ## File naming convention
 
 > See [docs/architecture.md § Per-package src layout](./architecture.md#per-package-src-layout) for the full rationale.

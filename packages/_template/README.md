@@ -36,6 +36,21 @@ example with placeholder names you can rename when applying, see
 — new packages start with one `<entity>-service.ts` file and only
 split later if the file actually outgrows the thresholds.
 
+### Test layout
+
+Test files mirror src files. A test that directly value-imports
+`src/<a>/<b>/file.ts` lives at `test/<a>/<b>/<name>.test.ts`.
+Cross-cutting tests (multiple imports with no common src subdir, or
+fs-walk audits) stay flat at `test/`.
+
+For new packages scaffolded from this template: the template's tests
+are flat because the template's src is flat. As you add subdirectories
+under `src/`, add corresponding subdirectories under `test/` and place
+new tests there.
+
+Full rule + audit: `docs/pkg-template.md § Test layout convention` and
+`packages/task/test/test-layout-convention.test.ts`.
+
 ### Catch-block convention
 
 Do NOT create `src/utils/errors.ts` or any helper file for catch-block
