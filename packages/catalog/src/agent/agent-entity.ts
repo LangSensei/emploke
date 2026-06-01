@@ -1,24 +1,20 @@
 import {
-  type AnchoredEntityState,
-  type AnchoredStateBuilderConfig,
-  applyAnchorPatch,
-  buildInitialAnchoredState,
-  buildStoredAnchoredState,
-} from "../_shared/anchored-state.js";
-import {
   type DependencyRef,
   depsToJSON,
+  emptyDeps,
+  emptyOriginDeps,
   type FqnDeps,
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
-import { hasNonEmptyPrereqs } from "../_shared/entity-helpers.js";
 import {
-  AGENT_DEP_SPECS,
-  type AgentDepKind,
-  parse,
-  writeFrontmatter,
-} from "./agent-frontmatter.js";
+  hasNonEmptyPrereqs,
+  initialPrereqsAck,
+  nowIso,
+  requireNonEmptyOrigin,
+} from "../_shared/entity-helpers.js";
+import { metaDepsToOriginDeps } from "../_shared/frontmatter-codec.js";
+import { AGENT_DEP_SPECS, type AgentDepKind, parse } from "./agent-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
@@ -36,19 +32,113 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     origins to fqns yet. The frontmatter-declared origins live on
  *     {@link depsRefs} and drive that resolution.
  *
- * Composition: this class wraps an `AnchoredEntityState<AgentDepKind>`
- * built by the `_shared/anchored-state.ts` helpers, plus an agent-only
- * `_disabledByUser` flag. No inheritance — the `Skill` DTO MUST NOT
- * grow `disabledByUser` so skill carries its own (smaller) state
- * wrapper that doesn't know about this flag.
+ * Agent owns its `AgentEntityState` interface + state builders inline
+ * below, plus an agent-only `_disabledByUser` flag. There is
+ * intentionally no shared per-installation-state abstraction — agent
+ * and skill are independent kinds that happen to look structurally
+ * similar today, and a shared abstraction forces coordinated changes
+ * the moment they diverge on any field. Skill mirrors the same shape
+ * in its own file by intent; duplication beats domain coupling.
  */
 
-const AGENT_CONFIG: AnchoredStateBuilderConfig<AgentDepKind> = {
-  label: "AgentEntity",
-  depSpecs: AGENT_DEP_SPECS,
-  codec: { parse, writeFrontmatter },
-  validators: { makeFqn, splitFqn, validateFqn },
-};
+/** Per-installation state for a single agent. */
+interface AgentEntityState {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<AgentDepKind>;
+  readonly depsRefs: OriginDeps<AgentDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
+
+/** Build the initial state from raw AGENTS.md bytes. Used by `AgentEntity.create`. */
+function buildInitialAgentState(
+  raw: string,
+  origin: string,
+  sourceLabel: string,
+): AgentEntityState {
+  requireNonEmptyOrigin(origin, "AgentEntity.create");
+  const { meta } = parse(raw, sourceLabel);
+  const fqn = makeFqn(meta.scope, meta.shortName);
+  const now = nowIso();
+  return {
+    fqn,
+    origin,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    dependencies: emptyDeps(AGENT_DEP_SPECS),
+    depsRefs: metaDepsToOriginDeps(AGENT_DEP_SPECS, meta),
+    prereqsAck: initialPrereqsAck(meta.prereqs),
+    installedAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Build state from a stored row. `depsRefs` defaults to empty (origins
+ * aren't persisted past install — only the resolved fqns are).
+ */
+function buildStoredAgentState(args: {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<AgentDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly depsRefs?: OriginDeps<AgentDepKind>;
+}): AgentEntityState {
+  validateFqn(args.fqn);
+  return {
+    fqn: args.fqn,
+    origin: args.origin,
+    description: args.description,
+    version: args.version,
+    prereqs: args.prereqs,
+    dependencies: normaliseFqnDeps(AGENT_DEP_SPECS, args.dependencies),
+    depsRefs: args.depsRefs ?? emptyOriginDeps(AGENT_DEP_SPECS),
+    prereqsAck: args.prereqsAck,
+    installedAt: args.installedAt,
+    updatedAt: args.updatedAt,
+  };
+}
+
+/**
+ * Apply a new anchor's bytes to existing state. Identity (`fqn`) MUST
+ * NOT change — throws `TypeError` otherwise (caller must delete and
+ * reinstall to rename). Body bytes are NOT held on the state; the
+ * repository's `getAnchor(fqn)` is the canonical fetch path.
+ */
+function applyAgentAnchorPatch(
+  state: AgentEntityState,
+  raw: string,
+  sourceLabel: string,
+): AgentEntityState {
+  const { meta } = parse(raw, sourceLabel);
+  const newFqn = makeFqn(meta.scope, meta.shortName);
+  if (newFqn !== state.fqn) {
+    throw new TypeError(
+      `AgentEntity.withAnchor cannot change identity: ` +
+        `existing "${state.fqn}" vs new "${newFqn}". ` +
+        "Delete and reinstall to rename.",
+    );
+  }
+  return {
+    ...state,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    depsRefs: metaDepsToOriginDeps(AGENT_DEP_SPECS, meta),
+    updatedAt: nowIso(),
+  };
+}
 
 /** A resolved fqn-form dep reference. */
 export type AgentDependencyRef = DependencyRef;
@@ -61,13 +151,12 @@ export type AgentDepRefs = OriginDeps<AgentDepKind>;
 
 export class AgentEntity {
   private constructor(
-    private readonly _state: AnchoredEntityState<AgentDepKind>,
+    private readonly _state: AgentEntityState,
     private readonly _disabledByUser: boolean,
   ) {}
 
   static create(rawAgentMd: string, origin: string, sourceLabel: string): AgentEntity {
-    const state = buildInitialAnchoredState(rawAgentMd, origin, sourceLabel, AGENT_CONFIG);
-    return new AgentEntity(state, false);
+    return new AgentEntity(buildInitialAgentState(rawAgentMd, origin, sourceLabel), false);
   }
 
   static fromStored(args: {
@@ -82,8 +171,8 @@ export class AgentEntity {
     installedAt: string;
     updatedAt: string;
   }): AgentEntity {
-    const state = buildStoredAnchoredState<AgentDepKind>(
-      {
+    return new AgentEntity(
+      buildStoredAgentState({
         fqn: args.fqn,
         origin: args.origin,
         description: args.description,
@@ -93,10 +182,9 @@ export class AgentEntity {
         prereqsAck: args.prereqsAck,
         installedAt: args.installedAt,
         updatedAt: args.updatedAt,
-      },
-      AGENT_CONFIG,
+      }),
+      args.disabledByUser,
     );
-    return new AgentEntity(state, args.disabledByUser);
   }
 
   /** Canonical FQN — the entity's identity. */
@@ -184,7 +272,7 @@ export class AgentEntity {
    */
   withAnchor(rawAgentMd: string, sourceLabel: string): AgentEntity {
     return new AgentEntity(
-      applyAnchorPatch(this._state, rawAgentMd, sourceLabel, AGENT_CONFIG),
+      applyAgentAnchorPatch(this._state, rawAgentMd, sourceLabel),
       this._disabledByUser,
     );
   }

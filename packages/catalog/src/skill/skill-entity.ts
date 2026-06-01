@@ -1,24 +1,20 @@
 import {
-  type AnchoredEntityState,
-  type AnchoredStateBuilderConfig,
-  applyAnchorPatch,
-  buildInitialAnchoredState,
-  buildStoredAnchoredState,
-} from "../_shared/anchored-state.js";
-import {
   type DependencyRef,
   depsToJSON,
+  emptyDeps,
+  emptyOriginDeps,
   type FqnDeps,
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
-import { hasNonEmptyPrereqs } from "../_shared/entity-helpers.js";
 import {
-  parse,
-  SKILL_DEP_SPECS,
-  type SkillDepKind,
-  writeFrontmatter,
-} from "./skill-frontmatter.js";
+  hasNonEmptyPrereqs,
+  initialPrereqsAck,
+  nowIso,
+  requireNonEmptyOrigin,
+} from "../_shared/entity-helpers.js";
+import { metaDepsToOriginDeps } from "../_shared/frontmatter-codec.js";
+import { parse, SKILL_DEP_SPECS, type SkillDepKind } from "./skill-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
 
 /**
@@ -34,18 +30,115 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     from the dep-tables join); `depsRefs` carries the frontmatter
  *     origins for the install pipeline's lookup.
  *
- * Composition: this class wraps an `AnchoredEntityState<SkillDepKind>`
- * built by the `_shared/anchored-state.ts` helpers. No inheritance —
- * skills carry no kind-specific extras (`disabledByUser` is agent-
- * only), so the class has fewer fields than `AgentEntity`.
+ * Skill owns its `SkillEntityState` interface + state builders inline
+ * below. There is intentionally no shared per-installation-state
+ * abstraction — agent and skill are independent kinds that happen to
+ * look structurally similar today, and a shared abstraction forces
+ * coordinated changes the moment they diverge on any field. Agent
+ * mirrors the same shape in its own file by intent; duplication beats
+ * domain coupling. Skill carries no kind-specific extras
+ * (`disabledByUser` is agent-only), so the class has fewer fields
+ * than `AgentEntity`.
  */
 
-const SKILL_CONFIG: AnchoredStateBuilderConfig<SkillDepKind> = {
-  label: "SkillEntity",
-  depSpecs: SKILL_DEP_SPECS,
-  codec: { parse, writeFrontmatter },
-  validators: { makeFqn, splitFqn, validateFqn },
-};
+/** Per-installation state for a single skill. */
+interface SkillEntityState {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<SkillDepKind>;
+  readonly depsRefs: OriginDeps<SkillDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
+
+/** Build the initial state from raw SKILL.md bytes. Used by `SkillEntity.create`. */
+function buildInitialSkillState(
+  raw: string,
+  origin: string,
+  sourceLabel: string,
+): SkillEntityState {
+  requireNonEmptyOrigin(origin, "SkillEntity.create");
+  const { meta } = parse(raw, sourceLabel);
+  const fqn = makeFqn(meta.scope, meta.shortName);
+  const now = nowIso();
+  return {
+    fqn,
+    origin,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    dependencies: emptyDeps(SKILL_DEP_SPECS),
+    depsRefs: metaDepsToOriginDeps(SKILL_DEP_SPECS, meta),
+    prereqsAck: initialPrereqsAck(meta.prereqs),
+    installedAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Build state from a stored row. `depsRefs` defaults to empty (origins
+ * aren't persisted past install — only the resolved fqns are).
+ */
+function buildStoredSkillState(args: {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<SkillDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly depsRefs?: OriginDeps<SkillDepKind>;
+}): SkillEntityState {
+  validateFqn(args.fqn);
+  return {
+    fqn: args.fqn,
+    origin: args.origin,
+    description: args.description,
+    version: args.version,
+    prereqs: args.prereqs,
+    dependencies: normaliseFqnDeps(SKILL_DEP_SPECS, args.dependencies),
+    depsRefs: args.depsRefs ?? emptyOriginDeps(SKILL_DEP_SPECS),
+    prereqsAck: args.prereqsAck,
+    installedAt: args.installedAt,
+    updatedAt: args.updatedAt,
+  };
+}
+
+/**
+ * Apply a new anchor's bytes to existing state. Identity (`fqn`) MUST
+ * NOT change — throws `TypeError` otherwise (caller must delete and
+ * reinstall to rename). Body bytes are NOT held on the state; the
+ * repository's `getAnchor(fqn)` is the canonical fetch path.
+ */
+function applySkillAnchorPatch(
+  state: SkillEntityState,
+  raw: string,
+  sourceLabel: string,
+): SkillEntityState {
+  const { meta } = parse(raw, sourceLabel);
+  const newFqn = makeFqn(meta.scope, meta.shortName);
+  if (newFqn !== state.fqn) {
+    throw new TypeError(
+      `SkillEntity.withAnchor cannot change identity: ` +
+        `existing "${state.fqn}" vs new "${newFqn}". ` +
+        "Delete and reinstall to rename.",
+    );
+  }
+  return {
+    ...state,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    depsRefs: metaDepsToOriginDeps(SKILL_DEP_SPECS, meta),
+    updatedAt: nowIso(),
+  };
+}
 
 /** A resolved fqn-form dep reference. */
 export type SkillDependencyRef = DependencyRef;
@@ -54,11 +147,10 @@ export type SkillDependencies = FqnDeps<SkillDepKind>;
 export type SkillDepRefs = OriginDeps<SkillDepKind>;
 
 export class SkillEntity {
-  private constructor(private readonly _state: AnchoredEntityState<SkillDepKind>) {}
+  private constructor(private readonly _state: SkillEntityState) {}
 
   static create(rawSkillMd: string, origin: string, sourceLabel: string): SkillEntity {
-    const state = buildInitialAnchoredState(rawSkillMd, origin, sourceLabel, SKILL_CONFIG);
-    return new SkillEntity(state);
+    return new SkillEntity(buildInitialSkillState(rawSkillMd, origin, sourceLabel));
   }
 
   static fromStored(args: {
@@ -72,8 +164,7 @@ export class SkillEntity {
     installedAt: string;
     updatedAt: string;
   }): SkillEntity {
-    const state = buildStoredAnchoredState<SkillDepKind>(args, SKILL_CONFIG);
-    return new SkillEntity(state);
+    return new SkillEntity(buildStoredSkillState(args));
   }
 
   /** Canonical FQN — the entity's identity. */
@@ -138,7 +229,7 @@ export class SkillEntity {
   }
 
   withAnchor(rawSkillMd: string, sourceLabel: string): SkillEntity {
-    return new SkillEntity(applyAnchorPatch(this._state, rawSkillMd, sourceLabel, SKILL_CONFIG));
+    return new SkillEntity(applySkillAnchorPatch(this._state, rawSkillMd, sourceLabel));
   }
 
   withState(state: { prereqsAck?: boolean }): SkillEntity {

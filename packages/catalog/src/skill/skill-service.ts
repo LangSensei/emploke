@@ -1,15 +1,9 @@
+import { normaliseOriginDeps, type OriginDeps } from "../_shared/dep-keys.js";
 import {
-  type AnchoredFetcher,
-  type AnchoredResolveConflict,
-  type AnchoredResolvedNode,
-  type AnchoredResolveEvent,
-  type AnchoredResolveOptions,
-  type AnchoredResolvePlan,
   applyFrontmatterPatch,
   assertOriginMutable,
   FORBIDDEN_METADATA_PATCH_KEYS,
   readFetcherTree,
-  resolveAnchoredOrigin,
   sameOrigin,
 } from "../_shared/service-helpers.js";
 import type { EntryFile } from "../fetcher/index.js";
@@ -29,19 +23,117 @@ export interface SkillFetcher {
   fetchTree(origin: string): AsyncIterable<EntryFile>;
 }
 
-// Type aliases preserved as part of the public API surface — they are
-// re-exported from `skill/index.ts` and consumed by `catalog/index.ts`.
-export type SkillResolveOptions = AnchoredResolveOptions;
-export type SkillResolveEvent = AnchoredResolveEvent;
-export type SkillResolvedNode = AnchoredResolvedNode<SkillDepKind>;
-export type SkillResolveConflict = AnchoredResolveConflict;
-export type SkillResolvePlan = AnchoredResolvePlan<SkillDepKind>;
+// Per-kind resolve types. Mirrored from the agent side by intent —
+// see the maintainer principle in skill-entity.ts's header JSDoc: there
+// is no shared `Anchored*` abstraction because agent and skill are
+// independent kinds. Duplication beats domain coupling.
+
+export type SkillResolveEvent =
+  | { type: "fetching"; origin: string }
+  | { type: "fetched"; origin: string; fqn: string }
+  | { type: "alreadyInstalled"; fqn: string }
+  | { type: "failed"; origin: string; error: unknown };
+
+export interface SkillResolveOptions {
+  signal?: AbortSignal;
+  onProgress?: (event: SkillResolveEvent) => void;
+}
+
+export interface SkillResolvedNode {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly anchorContent: string;
+  readonly version: string;
+  readonly depsRefs: OriginDeps<SkillDepKind>;
+}
+
+export type SkillResolveConflict = {
+  readonly origin: string;
+  readonly fqn: string | null;
+  readonly reason:
+    | { kind: "fetch-failed"; cause: unknown }
+    | { kind: "parse-failed"; cause: unknown }
+    | { kind: "origin-conflict"; existingOrigin: string };
+};
+
+export interface SkillResolvePlan {
+  readonly node: SkillResolvedNode | null;
+  readonly conflict: SkillResolveConflict | null;
+}
 
 /**
- * Application-layer service for skill operations. Composition over
- * inheritance: the cross-kind resolve/install workflow lives in
- * `_shared/service-helpers.ts`; this class wires the skill-specific
- * fetcher, entity factory, error classes, and sibling lookup.
+ * Pure resolve workflow: fetch the anchor bytes, parse them into a
+ * `SkillEntity`, check for origin conflicts against the local repo,
+ * build the resolved-node payload. Returns `{node, conflict}` — the
+ * caller maps the conflict to `SkillOriginConflictError`.
+ *
+ * Mirrors `resolveAgentOrigin` in `agent/agent-service.ts` by intent;
+ * the two copies are independent and must NOT be re-factored into a
+ * shared helper (see the skill-entity.ts header JSDoc for the
+ * principle).
+ */
+async function resolveSkillOrigin(args: {
+  readonly origin: string;
+  readonly fetcher: SkillFetcher;
+  readonly repo: SkillRepository;
+  readonly options?: SkillResolveOptions;
+}): Promise<SkillResolvePlan> {
+  const { origin, fetcher, repo } = args;
+  const onProgress = args.options?.onProgress ?? (() => {});
+
+  onProgress({ type: "fetching", origin });
+  let anchorBytes: string;
+  try {
+    anchorBytes = await fetcher.fetchAnchor(origin);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
+    };
+  }
+
+  let entity: SkillEntity;
+  try {
+    entity = SkillEntity.create(anchorBytes, origin, `resolve:${origin}`);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
+    };
+  }
+
+  const existing = await repo.findByFqn(entity.fqn);
+  if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
+    return {
+      node: null,
+      conflict: {
+        origin,
+        fqn: entity.fqn,
+        reason: { kind: "origin-conflict", existingOrigin: existing.origin },
+      },
+    };
+  }
+
+  const depsRefs = normaliseOriginDeps(SKILL_DEP_SPECS, entity.depsRefs);
+  const node: SkillResolvedNode = {
+    fqn: entity.fqn,
+    origin: entity.origin,
+    anchorContent: anchorBytes,
+    version: entity.version,
+    depsRefs,
+  };
+  onProgress({ type: "fetched", origin, fqn: node.fqn });
+  return { node, conflict: null };
+}
+
+/**
+ * Application-layer service for skill operations. Skill owns its
+ * resolve workflow inline (see `resolveSkillOrigin` above) plus its
+ * resolve-result types declared in this file. Agent mirrors the same
+ * shape in `agent/agent-service.ts` by intent — agent and skill are
+ * independent kinds with no shared domain methods.
  *
  * Skill dep resolution looks up sibling skills in THIS repo (skills
  * may depend on other skills); MCP deps go through the injected
@@ -58,16 +150,11 @@ export class SkillService {
   ) {}
 
   resolve(origin: string, opts: SkillResolveOptions = {}): Promise<SkillResolvePlan> {
-    return resolveAnchoredOrigin<SkillEntity, SkillDepKind>({
+    return resolveSkillOrigin({
       origin,
-      fetcher: this.fetcher as AnchoredFetcher,
+      fetcher: this.fetcher,
       repo: this.repo,
-      createEntity: (raw, o, label) => SkillEntity.create(raw, o, label),
       options: opts,
-      depsOf: (e) => e.depsRefs,
-      identityOf: (e) => ({ fqn: e.fqn, origin: e.origin, version: e.version }),
-      originOf: (e) => e.origin,
-      depSpecs: SKILL_DEP_SPECS,
     });
   }
 
@@ -84,11 +171,7 @@ export class SkillService {
       node = planOrOrigin;
     }
 
-    const { files, anchorContent } = await readFetcherTree(
-      this.fetcher as AnchoredFetcher,
-      node.origin,
-      "SKILL.md",
-    );
+    const { files, anchorContent } = await readFetcherTree(this.fetcher, node.origin, "SKILL.md");
     if (anchorContent === null) {
       throw new SkillFrontmatterError(
         `install:${node.origin}`,
@@ -208,10 +291,9 @@ export class SkillService {
    * MCP deps go through `siblings.mcps`. Origins that don't resolve
    * are silently skipped — matches v1 tolerant behaviour.
    *
-   * Not factored through `resolveSiblingOrigins` because the skill
-   * bucket points at THIS service's repo, not an injected sibling;
-   * inlining the loop is one line per kind and keeps the lookup
-   * source obvious.
+   * Inlined per kind (skill owns this lookup loop) — the skill bucket
+   * points at THIS service's repo, not an injected sibling, so the
+   * loop reads cleanly without indirection.
    */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];

@@ -229,8 +229,9 @@ export function makeFrontmatterCodec<K extends string>(
 
 /**
  * Convenience: pull `meta.dependencies` into a dense `OriginDeps<K>`
- * with every dep-kind present (empty array when absent). Used by the
- * anchored-state builders.
+ * with every dep-kind present (empty array when absent). Used by each
+ * per-kind state builder (`buildInitialAgentState` /
+ * `buildInitialSkillState` and the matching anchor-patch helpers).
  */
 export function metaDepsToOriginDeps<K extends string>(
   depSpecs: readonly DepSpec<K>[],
