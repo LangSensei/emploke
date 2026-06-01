@@ -1,4 +1,4 @@
-import type { WorkspaceListItem } from "../../api.js";
+import type { WorkspaceListItem } from "../../api/index.js";
 
 /**
  * Hand-authored workspace fixtures. The first entry's id is the one the

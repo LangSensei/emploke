@@ -1,4 +1,4 @@
-import type { SessionView } from "../../api.js";
+import type { SessionView } from "../../api/index.js";
 
 export const fixtureSessions: SessionView[] = [
   {

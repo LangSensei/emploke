@@ -21,7 +21,7 @@ import type {
   PatchScheduleBody,
   ScheduleDetail,
   ScheduleView,
-} from "../api.js";
+} from "../api/index.js";
 import {
   artifactBodies,
   fixtureActiveWorkspaceId,

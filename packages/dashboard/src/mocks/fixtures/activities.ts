@@ -1,4 +1,4 @@
-import type { TaskActivity } from "../../api.js";
+import type { TaskActivity } from "../../api/index.js";
 
 /**
  * Per-task activity timelines for `/api/workspaces/:wsId/tasks/:tid/activity`.
