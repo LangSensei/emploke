@@ -1,6 +1,6 @@
 import matter from "gray-matter";
-import type { EntryFile } from "../fetcher/index.js";
-import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
+import { normaliseOriginDeps, type OriginDeps } from "../_shared/dep-keys.js";
+import { type EntryFile, sameOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import {
@@ -10,32 +10,21 @@ import {
   SkillOriginConflictError,
 } from "./errors.js";
 import { SkillEntity } from "./skill-entity.js";
+import { SKILL_DEP_SPECS, type SkillDepKind } from "./skill-frontmatter.js";
 import type { SkillFile, SkillRepository } from "./skill-repository.js";
 
-/**
- * Apply a partial patch to the YAML frontmatter of a markdown document.
- * `null` / `undefined` patch values DELETE the key. Body bytes preserved
- * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
- * original key order are NOT preserved (gray-matter / js-yaml limitation).
- */
-function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
-  const file = matter(raw);
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined || v === null) delete file.data[k];
-    else file.data[k] = v;
-  }
-  return matter.stringify(file.content, file.data);
-}
+/** FQN-immutable patch keys — never accepted by `updateMetadata`. */
+const FORBIDDEN_METADATA_PATCH_KEYS: ReadonlySet<string> = new Set(["name", "scope", "fqn"]);
 
 export interface SkillFetcher {
   fetchAnchor(origin: string): Promise<string>;
   fetchTree(origin: string): AsyncIterable<EntryFile>;
 }
 
-export interface SkillResolveOptions {
-  signal?: AbortSignal;
-  onProgress?: (event: SkillResolveEvent) => void;
-}
+// Per-kind resolve types. Mirrored from the agent side by intent —
+// see the maintainer principle in skill-entity.ts's header JSDoc: there
+// is no shared `Anchored*` abstraction because agent and skill are
+// independent kinds. Duplication beats domain coupling.
 
 export type SkillResolveEvent =
   | { type: "fetching"; origin: string }
@@ -43,9 +32,9 @@ export type SkillResolveEvent =
   | { type: "alreadyInstalled"; fqn: string }
   | { type: "failed"; origin: string; error: unknown };
 
-export interface SkillResolvePlan {
-  readonly node: SkillResolvedNode | null;
-  readonly conflict: SkillResolveConflict | null;
+export interface SkillResolveOptions {
+  signal?: AbortSignal;
+  onProgress?: (event: SkillResolveEvent) => void;
 }
 
 export interface SkillResolvedNode {
@@ -53,10 +42,7 @@ export interface SkillResolvedNode {
   readonly origin: string;
   readonly anchorContent: string;
   readonly version: string;
-  readonly depsRefs: {
-    readonly skills: readonly string[];
-    readonly mcps: readonly string[];
-  };
+  readonly depsRefs: OriginDeps<SkillDepKind>;
 }
 
 export type SkillResolveConflict = {
@@ -68,6 +54,90 @@ export type SkillResolveConflict = {
     | { kind: "origin-conflict"; existingOrigin: string };
 };
 
+export interface SkillResolvePlan {
+  readonly node: SkillResolvedNode | null;
+  readonly conflict: SkillResolveConflict | null;
+}
+
+/**
+ * Pure resolve workflow: fetch the anchor bytes, parse them into a
+ * `SkillEntity`, check for origin conflicts against the local repo,
+ * build the resolved-node payload. Returns `{node, conflict}` — the
+ * caller maps the conflict to `SkillOriginConflictError`.
+ *
+ * Mirrors `resolveAgentOrigin` in `agent/agent-service.ts` by intent;
+ * the two copies are independent and must NOT be re-factored into a
+ * shared helper (see the skill-entity.ts header JSDoc for the
+ * principle).
+ */
+async function resolveSkillOrigin(args: {
+  readonly origin: string;
+  readonly fetcher: SkillFetcher;
+  readonly repo: SkillRepository;
+  readonly options?: SkillResolveOptions;
+}): Promise<SkillResolvePlan> {
+  const { origin, fetcher, repo } = args;
+  const onProgress = args.options?.onProgress ?? (() => {});
+
+  onProgress({ type: "fetching", origin });
+  let anchorBytes: string;
+  try {
+    anchorBytes = await fetcher.fetchAnchor(origin);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
+    };
+  }
+
+  let entity: SkillEntity;
+  try {
+    entity = SkillEntity.create(anchorBytes, origin, `resolve:${origin}`);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
+    };
+  }
+
+  const existing = await repo.findByFqn(entity.fqn);
+  if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
+    return {
+      node: null,
+      conflict: {
+        origin,
+        fqn: entity.fqn,
+        reason: { kind: "origin-conflict", existingOrigin: existing.origin },
+      },
+    };
+  }
+
+  const depsRefs = normaliseOriginDeps(SKILL_DEP_SPECS, entity.depsRefs);
+  const node: SkillResolvedNode = {
+    fqn: entity.fqn,
+    origin: entity.origin,
+    anchorContent: anchorBytes,
+    version: entity.version,
+    depsRefs,
+  };
+  onProgress({ type: "fetched", origin, fqn: node.fqn });
+  return { node, conflict: null };
+}
+
+/**
+ * Application-layer service for skill operations. Skill owns its
+ * resolve workflow inline (see `resolveSkillOrigin` above) plus its
+ * resolve-result types declared in this file. Agent mirrors the same
+ * shape in `agent/agent-service.ts` by intent — agent and skill are
+ * independent kinds with no shared domain methods.
+ *
+ * Skill dep resolution looks up sibling skills in THIS repo (skills
+ * may depend on other skills); MCP deps go through the injected
+ * `siblings.mcps` repo. Skills cannot be user-disabled — no
+ * `disable/enable` methods live here.
+ */
 export class SkillService {
   constructor(
     private readonly repo: SkillRepository,
@@ -77,56 +147,13 @@ export class SkillService {
     } = {},
   ) {}
 
-  async resolve(origin: string, opts: SkillResolveOptions = {}): Promise<SkillResolvePlan> {
-    const onProgress = opts.onProgress ?? (() => {});
-
-    onProgress({ type: "fetching", origin });
-    let anchorBytes: string;
-    try {
-      anchorBytes = await this.fetcher.fetchAnchor(origin);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
-      };
-    }
-
-    let entity: SkillEntity;
-    try {
-      entity = SkillEntity.create(anchorBytes, origin, `resolve:${origin}`);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
-      };
-    }
-
-    const byFqn = await this.repo.findByFqn(entity.fqn);
-    if (byFqn !== null && !sameOrigin(byFqn.origin, entity.origin)) {
-      return {
-        node: null,
-        conflict: {
-          origin,
-          fqn: entity.fqn,
-          reason: { kind: "origin-conflict", existingOrigin: byFqn.origin },
-        },
-      };
-    }
-
-    const node: SkillResolvedNode = {
-      fqn: entity.fqn,
-      origin: entity.origin,
-      anchorContent: anchorBytes,
-      version: entity.version,
-      depsRefs: {
-        skills: [...entity.depsRefs.skills],
-        mcps: [...entity.depsRefs.mcps],
-      },
-    };
-    onProgress({ type: "fetched", origin, fqn: node.fqn });
-    return { node, conflict: null };
+  resolve(origin: string, opts: SkillResolveOptions = {}): Promise<SkillResolvePlan> {
+    return resolveSkillOrigin({
+      origin,
+      fetcher: this.fetcher,
+      repo: this.repo,
+      options: opts,
+    });
   }
 
   async install(planOrOrigin: SkillResolvedNode | string): Promise<SkillEntity> {
@@ -208,9 +235,7 @@ export class SkillService {
   async updateAnchor(fqn: string, newSkillMd: string): Promise<SkillEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const updated = existing.withAnchor(newSkillMd, `update:${fqn}`);
     const files = new Map<string, Buffer>();
     for await (const f of this.repo.streamFiles(fqn)) {
@@ -234,11 +259,14 @@ export class SkillService {
     }
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new SkillNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const currentAnchor = await this.repo.getAnchor(fqn);
-    const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
+    const file = matter(currentAnchor);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined || v === null) delete file.data[k];
+      else file.data[k] = v;
+    }
+    const newAnchor = matter.stringify(file.content, file.data);
     return this.updateAnchor(fqn, newAnchor);
   }
 
@@ -267,6 +295,16 @@ export class SkillService {
     this.repo.close?.();
   }
 
+  /**
+   * Resolve frontmatter dep origins to local sibling fqns. Skill deps
+   * are looked up in THIS repo (skills can depend on other skills);
+   * MCP deps go through `siblings.mcps`. Origins that don't resolve
+   * are silently skipped — matches v1 tolerant behaviour.
+   *
+   * Inlined per kind (skill owns this lookup loop) — the skill bucket
+   * points at THIS service's repo, not an injected sibling, so the
+   * loop reads cleanly without indirection.
+   */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];
     readonly mcps: readonly string[];
@@ -286,16 +324,6 @@ export class SkillService {
     return { skills: skillFqns, mcps: mcpFqns };
   }
 }
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
-  } catch {
-    return a === b;
-  }
-}
-
-const FORBIDDEN_METADATA_PATCH_KEYS = new Set<string>(["name", "scope", "fqn"]);
 
 function conflictToError(c: SkillResolveConflict): Error {
   if (c.reason.kind === "fetch-failed" || c.reason.kind === "parse-failed") {

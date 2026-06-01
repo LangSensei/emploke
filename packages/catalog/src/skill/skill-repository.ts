@@ -1,12 +1,15 @@
 import { and, count, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { emptyDeps } from "../_shared/dep-keys.js";
 import type * as schema from "../schema.js";
 import { agentSkillDeps, skillFiles, skillMcpDeps, skillSkillDeps, skills } from "../schema.js";
 import { SkillNotFoundError } from "./errors.js";
 import { type SkillDependencies, SkillEntity } from "./skill-entity.js";
+import { SKILL_DEP_SPECS } from "./skill-frontmatter.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
+
 /** One file inside a skill, as yielded by {@link SkillRepository.streamFiles}. */
 export interface SkillFile {
   readonly relPath: string;
@@ -20,6 +23,16 @@ export interface SkillRepoAddDeps {
 
 type Db = BetterSQLite3Database<typeof schema>;
 
+/**
+ * Drizzle-backed `SkillRepository`. Multi-table writes are wrapped in
+ * `db.transaction(...)` so the row + files + dep rows commit atomically.
+ *
+ * Owned entirely by `skill/` per the decoupling-over-abstraction axiom.
+ * Dep dedupe, blob coercion, and dep-rows aggregation are inlined per
+ * kind (see {@link toBuf}, the `add`'s skipSelf-dedupe loop, and
+ * {@link loadAllDeps}) — no shared helper module. Agent mirrors the
+ * same shape by intent. See skill-entity.ts header for the principle.
+ */
 export class SkillRepository {
   private readonly db: Db;
   private readonly logger: Logger;
@@ -30,7 +43,7 @@ export class SkillRepository {
   }
 
   close(): void {
-    // intentionally empty
+    // intentionally empty — `compose.ts` owns the sqlite handle lifecycle
   }
 
   async add(
@@ -71,18 +84,22 @@ export class SkillRepository {
       }
       tx.delete(skillSkillDeps).where(eq(skillSkillDeps.sourceFqn, skill.fqn)).run();
       tx.delete(skillMcpDeps).where(eq(skillMcpDeps.sourceFqn, skill.fqn)).run();
-      const seenSkill = new Set<string>();
-      for (const targetFqn of deps.skills) {
-        if (targetFqn === skill.fqn) continue;
-        if (seenSkill.has(targetFqn)) continue;
-        seenSkill.add(targetFqn);
-        tx.insert(skillSkillDeps).values({ sourceFqn: skill.fqn, targetFqn }).run();
-      }
-      const seenMcp = new Set<string>();
-      for (const targetFqn of deps.mcps) {
-        if (seenMcp.has(targetFqn)) continue;
-        seenMcp.add(targetFqn);
-        tx.insert(skillMcpDeps).values({ sourceFqn: skill.fqn, targetFqn }).run();
+      // Per-kind dedupe + skipSelf-apply, fanned out to the typed
+      // dep tables. `skipSelf: true` on the `skills` bucket silently
+      // drops a self-edge (a typo, not a cycle to honour).
+      for (const spec of SKILL_DEP_SPECS) {
+        const list = (spec.kind === "skills" ? deps.skills : deps.mcps) ?? [];
+        const seen = new Set<string>();
+        for (const targetFqn of list) {
+          if (spec.skipSelf === true && targetFqn === skill.fqn) continue;
+          if (seen.has(targetFqn)) continue;
+          seen.add(targetFqn);
+          if (spec.kind === "skills") {
+            tx.insert(skillSkillDeps).values({ sourceFqn: skill.fqn, targetFqn }).run();
+          } else {
+            tx.insert(skillMcpDeps).values({ sourceFqn: skill.fqn, targetFqn }).run();
+          }
+        }
       }
     });
   }
@@ -107,7 +124,7 @@ export class SkillRepository {
     const out: SkillEntity[] = [];
     for (const row of rows) {
       try {
-        const deps = depsByFqn.get(row.fqn) ?? { skills: [], mcps: [] };
+        const deps = depsByFqn.get(row.fqn) ?? emptyDeps(SKILL_DEP_SPECS);
         out.push(rowToSkill(row, deps));
       } catch (cause) {
         this.logger.warn(
@@ -155,12 +172,7 @@ export class SkillRepository {
   async *streamFiles(fqn: string): AsyncIterable<SkillFile> {
     const rows = this.db.select().from(skillFiles).where(eq(skillFiles.skillFqn, fqn)).all();
     for (const row of rows) {
-      yield {
-        relPath: row.relPath,
-        content: Buffer.isBuffer(row.content)
-          ? row.content
-          : Buffer.from(row.content as Uint8Array),
-      };
+      yield { relPath: row.relPath, content: toBuf(row.content) };
     }
   }
 
@@ -171,19 +183,18 @@ export class SkillRepository {
       .where(and(eq(skillFiles.skillFqn, fqn), eq(skillFiles.relPath, "SKILL.md")))
       .get();
     if (row === undefined) throw new SkillNotFoundError(fqn);
-    const buf = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content as Uint8Array);
-    return buf.toString("utf8");
+    return toBuf(row.content).toString("utf8");
   }
 
   async listDependencies(fqn: string): Promise<SkillDependencies> {
     const skillRows = this.db
-      .select()
+      .select({ targetFqn: skillSkillDeps.targetFqn })
       .from(skillSkillDeps)
       .where(eq(skillSkillDeps.sourceFqn, fqn))
       .orderBy(skillSkillDeps.targetFqn)
       .all();
     const mcpRows = this.db
-      .select()
+      .select({ targetFqn: skillMcpDeps.targetFqn })
       .from(skillMcpDeps)
       .where(eq(skillMcpDeps.sourceFqn, fqn))
       .orderBy(skillMcpDeps.targetFqn)
@@ -196,7 +207,7 @@ export class SkillRepository {
 
   async findDependentAgents(targetFqn: string): Promise<string[]> {
     const rows = this.db
-      .select()
+      .select({ sourceFqn: agentSkillDeps.sourceFqn })
       .from(agentSkillDeps)
       .where(eq(agentSkillDeps.targetFqn, targetFqn))
       .orderBy(agentSkillDeps.sourceFqn)
@@ -206,7 +217,7 @@ export class SkillRepository {
 
   async findDependentSkills(targetFqn: string): Promise<string[]> {
     const rows = this.db
-      .select()
+      .select({ sourceFqn: skillSkillDeps.sourceFqn })
       .from(skillSkillDeps)
       .where(eq(skillSkillDeps.targetFqn, targetFqn))
       .orderBy(skillSkillDeps.sourceFqn)
@@ -224,27 +235,44 @@ export class SkillRepository {
   }
 
   private loadAllDeps(): Map<string, SkillDependencies> {
-    const out = new Map<string, SkillDependencies>();
     const skillRows = this.db
-      .select()
+      .select({
+        sourceFqn: skillSkillDeps.sourceFqn,
+        targetFqn: skillSkillDeps.targetFqn,
+      })
       .from(skillSkillDeps)
       .orderBy(skillSkillDeps.sourceFqn, skillSkillDeps.targetFqn)
       .all();
     const mcpRows = this.db
-      .select()
+      .select({
+        sourceFqn: skillMcpDeps.sourceFqn,
+        targetFqn: skillMcpDeps.targetFqn,
+      })
       .from(skillMcpDeps)
       .orderBy(skillMcpDeps.sourceFqn, skillMcpDeps.targetFqn)
       .all();
-    for (const r of skillRows) {
-      const e = out.get(r.sourceFqn) ?? { skills: [], mcps: [] };
-      out.set(r.sourceFqn, { skills: [...e.skills, { fqn: r.targetFqn }], mcps: e.mcps });
+    // Aggregate flat dep rows into `Map<sourceFqn, SkillDependencies>`.
+    // Per-kind inlining (groupBy-style) — the only shared module is
+    // `_shared/dep-keys.ts` which names no skill-specific concept.
+    // Both source lists are already ordered by (sourceFqn, targetFqn),
+    // so the per-source arrays stay sorted.
+    const out = new Map<string, { skills: { fqn: string }[]; mcps: { fqn: string }[] }>();
+    function ensure(sourceFqn: string): { skills: { fqn: string }[]; mcps: { fqn: string }[] } {
+      const existing = out.get(sourceFqn);
+      if (existing !== undefined) return existing;
+      const fresh = { skills: [] as { fqn: string }[], mcps: [] as { fqn: string }[] };
+      out.set(sourceFqn, fresh);
+      return fresh;
     }
-    for (const r of mcpRows) {
-      const e = out.get(r.sourceFqn) ?? { skills: [], mcps: [] };
-      out.set(r.sourceFqn, { skills: e.skills, mcps: [...e.mcps, { fqn: r.targetFqn }] });
-    }
-    return out;
+    for (const r of skillRows) ensure(r.sourceFqn).skills.push({ fqn: r.targetFqn });
+    for (const r of mcpRows) ensure(r.sourceFqn).mcps.push({ fqn: r.targetFqn });
+    return out as Map<string, SkillDependencies>;
   }
+}
+
+/** Normalise the drizzle blob shape — `better-sqlite3` may surface `Uint8Array`. */
+function toBuf(content: Uint8Array | Buffer): Buffer {
+  return Buffer.isBuffer(content) ? content : Buffer.from(content);
 }
 
 function rowToSkill(row: typeof skills.$inferSelect, deps: SkillDependencies): SkillEntity {

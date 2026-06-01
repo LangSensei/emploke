@@ -1,5 +1,34 @@
-import * as AgentFormat from "./agent-frontmatter.js";
+import {
+  type DependencyRef,
+  depsToJSON,
+  emptyDeps,
+  emptyOriginDeps,
+  type FqnDeps,
+  normaliseFqnDeps,
+  type OriginDeps,
+} from "../_shared/dep-keys.js";
+import {
+  AGENT_DEP_SPECS,
+  type AgentDepKind,
+  type AgentFrontmatter,
+  parse,
+} from "./agent-frontmatter.js";
 import { makeFqn, splitFqn, validateFqn } from "./validate.js";
+
+/**
+ * File-private: pull `meta.dependencies` into a dense
+ * `OriginDeps<AgentDepKind>` with every dep-kind present (empty array
+ * when absent). Per-kind inline — the only shared module across kinds
+ * is `_shared/dep-keys.ts`, which is parametric and names no
+ * agent-specific concept.
+ */
+function depsAsOrigins(meta: AgentFrontmatter): OriginDeps<AgentDepKind> {
+  const out = {} as Record<AgentDepKind, readonly string[]>;
+  for (const s of AGENT_DEP_SPECS) {
+    out[s.kind] = meta.dependencies?.[s.kind] ?? [];
+  }
+  return out;
+}
 
 /**
  * Rich domain entity representing a single installed agent.
@@ -15,43 +44,134 @@ import { makeFqn, splitFqn, validateFqn } from "./validate.js";
  *     `dependencies` because the install pipeline hasn't resolved
  *     origins to fqns yet. The frontmatter-declared origins live on
  *     {@link depsRefs} and drive that resolution.
+ *
+ * Agent owns its `AgentEntityState` interface + state builders inline
+ * below, plus an agent-only `_disabledByUser` flag. There is
+ * intentionally no shared per-installation-state abstraction — agent
+ * and skill are independent kinds that happen to look structurally
+ * similar today, and a shared abstraction forces coordinated changes
+ * the moment they diverge on any field. Skill mirrors the same shape
+ * in its own file by intent; duplication beats domain coupling.
  */
+
+/** Per-installation state for a single agent. */
+interface AgentEntityState {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<AgentDepKind>;
+  readonly depsRefs: OriginDeps<AgentDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
+
+/** Build the initial state from raw AGENTS.md bytes. Used by `AgentEntity.create`. */
+function buildInitialAgentState(
+  raw: string,
+  origin: string,
+  sourceLabel: string,
+): AgentEntityState {
+  if (typeof origin !== "string" || origin.length === 0) {
+    throw new TypeError("AgentEntity.create requires a non-empty origin string");
+  }
+  const { meta } = parse(raw, sourceLabel);
+  const fqn = makeFqn(meta.scope, meta.shortName);
+  const now = new Date().toISOString();
+  return {
+    fqn,
+    origin,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    dependencies: emptyDeps(AGENT_DEP_SPECS),
+    depsRefs: depsAsOrigins(meta),
+    prereqsAck: (meta.prereqs ?? "").trim().length === 0,
+    installedAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Build state from a stored row. `depsRefs` defaults to empty (origins
+ * aren't persisted past install — only the resolved fqns are).
+ */
+function buildStoredAgentState(args: {
+  readonly fqn: string;
+  readonly origin: string;
+  readonly description: string;
+  readonly version: string;
+  readonly prereqs: string | undefined;
+  readonly dependencies: FqnDeps<AgentDepKind>;
+  readonly prereqsAck: boolean;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly depsRefs?: OriginDeps<AgentDepKind>;
+}): AgentEntityState {
+  validateFqn(args.fqn);
+  return {
+    fqn: args.fqn,
+    origin: args.origin,
+    description: args.description,
+    version: args.version,
+    prereqs: args.prereqs,
+    dependencies: normaliseFqnDeps(AGENT_DEP_SPECS, args.dependencies),
+    depsRefs: args.depsRefs ?? emptyOriginDeps(AGENT_DEP_SPECS),
+    prereqsAck: args.prereqsAck,
+    installedAt: args.installedAt,
+    updatedAt: args.updatedAt,
+  };
+}
+
+/**
+ * Apply a new anchor's bytes to existing state. Identity (`fqn`) MUST
+ * NOT change — throws `TypeError` otherwise (caller must delete and
+ * reinstall to rename). Body bytes are NOT held on the state; the
+ * repository's `getAnchor(fqn)` is the canonical fetch path.
+ */
+function applyAgentAnchorPatch(
+  state: AgentEntityState,
+  raw: string,
+  sourceLabel: string,
+): AgentEntityState {
+  const { meta } = parse(raw, sourceLabel);
+  const newFqn = makeFqn(meta.scope, meta.shortName);
+  if (newFqn !== state.fqn) {
+    throw new TypeError(
+      `AgentEntity.withAnchor cannot change identity: ` +
+        `existing "${state.fqn}" vs new "${newFqn}". ` +
+        "Delete and reinstall to rename.",
+    );
+  }
+  return {
+    ...state,
+    description: meta.description,
+    version: meta.version,
+    prereqs: meta.prereqs,
+    depsRefs: depsAsOrigins(meta),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** A resolved fqn-form dep reference. */
+export type AgentDependencyRef = DependencyRef;
+
+/** Resolved fqn-form deps view (catalog-side projection). */
+export type AgentDependencies = FqnDeps<AgentDepKind>;
+
+/** Frontmatter-declared dep origins (install-pipeline side). */
+export type AgentDepRefs = OriginDeps<AgentDepKind>;
+
 export class AgentEntity {
   private constructor(
-    private readonly _fqn: string,
-    private readonly _origin: string,
-    private readonly _description: string,
-    private readonly _version: string,
-    private readonly _prereqs: string | undefined,
-    private readonly _dependencies: AgentDependencies,
-    private readonly _depsRefs: AgentDepRefs,
-    private readonly _prereqsAck: boolean,
+    private readonly _state: AgentEntityState,
     private readonly _disabledByUser: boolean,
-    private readonly _installedAt: string,
-    private readonly _updatedAt: string,
   ) {}
 
   static create(rawAgentMd: string, origin: string, sourceLabel: string): AgentEntity {
-    if (typeof origin !== "string" || origin.length === 0) {
-      throw new TypeError("AgentEntity.create requires a non-empty origin string");
-    }
-    const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
-    const fqn = makeFqn(meta.scope, meta.shortName);
-    const prereqsAck = !hasNonEmptyPrereqs(meta.prereqs);
-    const now = new Date().toISOString();
-    return new AgentEntity(
-      fqn,
-      origin,
-      meta.description,
-      meta.version,
-      meta.prereqs,
-      { skills: [], mcps: [] },
-      normaliseDepRefs(meta.dependencies),
-      prereqsAck,
-      false,
-      now,
-      now,
-    );
+    return new AgentEntity(buildInitialAgentState(rawAgentMd, origin, sourceLabel), false);
   }
 
   static fromStored(args: {
@@ -66,48 +186,48 @@ export class AgentEntity {
     installedAt: string;
     updatedAt: string;
   }): AgentEntity {
-    validateFqn(args.fqn);
     return new AgentEntity(
-      args.fqn,
-      args.origin,
-      args.description,
-      args.version,
-      args.prereqs,
-      normaliseDeps(args.dependencies),
-      { skills: [], mcps: [] },
-      args.prereqsAck,
+      buildStoredAgentState({
+        fqn: args.fqn,
+        origin: args.origin,
+        description: args.description,
+        version: args.version,
+        prereqs: args.prereqs,
+        dependencies: args.dependencies,
+        prereqsAck: args.prereqsAck,
+        installedAt: args.installedAt,
+        updatedAt: args.updatedAt,
+      }),
       args.disabledByUser,
-      args.installedAt,
-      args.updatedAt,
     );
   }
 
   /** Canonical FQN — the entity's identity. */
   get id(): string {
-    return this._fqn;
+    return this._state.fqn;
   }
   get fqn(): string {
-    return this._fqn;
+    return this._state.fqn;
   }
   get origin(): string {
-    return this._origin;
+    return this._state.origin;
   }
   /** Derived from `fqn` — first segment. */
   get scope(): string {
-    return splitFqn(this._fqn).scope;
+    return splitFqn(this._state.fqn).scope;
   }
   /** Derived from `fqn` — second segment. */
   get shortName(): string {
-    return splitFqn(this._fqn).shortName;
+    return splitFqn(this._state.fqn).shortName;
   }
   get description(): string {
-    return this._description;
+    return this._state.description;
   }
   get version(): string {
-    return this._version;
+    return this._state.version;
   }
   get prereqs(): string | undefined {
-    return this._prereqs;
+    return this._state.prereqs;
   }
   /**
    * Local-catalog dependency view: each entry is an fqn of an installed
@@ -116,7 +236,7 @@ export class AgentEntity {
    * pipeline writes the dep rows.
    */
   get dependencies(): AgentDependencies {
-    return this._dependencies;
+    return this._state.dependencies;
   }
   /**
    * Origin URIs declared in the frontmatter `dependencies` block.
@@ -125,43 +245,37 @@ export class AgentEntity {
    * install — only the resolved fqns are).
    */
   get depsRefs(): AgentDepRefs {
-    return this._depsRefs;
+    return this._state.depsRefs;
   }
   get prereqsAck(): boolean {
-    return this._prereqsAck;
+    return this._state.prereqsAck;
   }
+  /** True iff the user has explicitly disabled this agent. Skills cannot be user-disabled. */
   get disabledByUser(): boolean {
     return this._disabledByUser;
   }
   get installedAt(): string {
-    return this._installedAt;
+    return this._state.installedAt;
   }
   get updatedAt(): string {
-    return this._updatedAt;
+    return this._state.updatedAt;
   }
 
   toJSON(): Record<string, unknown> {
-    return {
-      fqn: this._fqn,
-      origin: this._origin,
-      description: this._description,
-      version: this._version,
-      prereqsAck: this._prereqsAck,
+    const out: Record<string, unknown> = {
+      fqn: this._state.fqn,
+      origin: this._state.origin,
+      description: this._state.description,
+      version: this._state.version,
+      prereqsAck: this._state.prereqsAck,
       disabledByUser: this._disabledByUser,
-      installedAt: this._installedAt,
-      updatedAt: this._updatedAt,
-      ...(this._prereqs !== undefined ? { prereqs: this._prereqs } : {}),
-      ...(this._dependencies.skills.length > 0 || this._dependencies.mcps.length > 0
-        ? {
-            dependencies: {
-              ...(this._dependencies.skills.length > 0
-                ? { skills: this._dependencies.skills }
-                : {}),
-              ...(this._dependencies.mcps.length > 0 ? { mcps: this._dependencies.mcps } : {}),
-            },
-          }
-        : {}),
+      installedAt: this._state.installedAt,
+      updatedAt: this._state.updatedAt,
     };
+    if (this._state.prereqs !== undefined) out.prereqs = this._state.prereqs;
+    const depsJson = depsToJSON(AGENT_DEP_SPECS, this._state.dependencies);
+    if (depsJson !== undefined) out.dependencies = depsJson;
+    return out;
   }
 
   /**
@@ -172,26 +286,9 @@ export class AgentEntity {
    * and dep refs back onto the entity.
    */
   withAnchor(rawAgentMd: string, sourceLabel: string): AgentEntity {
-    const { meta } = AgentFormat.parse(rawAgentMd, sourceLabel);
-    const newFqn = makeFqn(meta.scope, meta.shortName);
-    if (newFqn !== this._fqn) {
-      throw new TypeError(
-        `AgentEntity.withAnchor cannot change identity: existing "${this._fqn}" vs new "${newFqn}". ` +
-          "Delete and reinstall to rename.",
-      );
-    }
     return new AgentEntity(
-      this._fqn,
-      this._origin,
-      meta.description,
-      meta.version,
-      meta.prereqs,
-      this._dependencies,
-      normaliseDepRefs(meta.dependencies),
-      this._prereqsAck,
+      applyAgentAnchorPatch(this._state, rawAgentMd, sourceLabel),
       this._disabledByUser,
-      this._installedAt,
-      new Date().toISOString(),
     );
   }
 
@@ -201,75 +298,16 @@ export class AgentEntity {
    */
   withState(state: { prereqsAck?: boolean; disabledByUser?: boolean }): AgentEntity {
     return new AgentEntity(
-      this._fqn,
-      this._origin,
-      this._description,
-      this._version,
-      this._prereqs,
-      this._dependencies,
-      this._depsRefs,
-      state.prereqsAck ?? this._prereqsAck,
+      { ...this._state, prereqsAck: state.prereqsAck ?? this._state.prereqsAck },
       state.disabledByUser ?? this._disabledByUser,
-      this._installedAt,
-      this._updatedAt,
     );
   }
 
   /** Return a new entity carrying the given resolved fqn dependencies. */
   withDependencies(deps: AgentDependencies): AgentEntity {
     return new AgentEntity(
-      this._fqn,
-      this._origin,
-      this._description,
-      this._version,
-      this._prereqs,
-      normaliseDeps(deps),
-      this._depsRefs,
-      this._prereqsAck,
+      { ...this._state, dependencies: normaliseFqnDeps(AGENT_DEP_SPECS, deps) },
       this._disabledByUser,
-      this._installedAt,
-      this._updatedAt,
     );
   }
-}
-
-/** A resolved fqn-form dep reference. */
-export interface AgentDependencyRef {
-  readonly fqn: string;
-}
-
-export interface AgentDependencies {
-  readonly skills: readonly AgentDependencyRef[];
-  readonly mcps: readonly AgentDependencyRef[];
-}
-
-/** Origin URIs as declared in the frontmatter (pre-resolution). */
-export interface AgentDepRefs {
-  readonly skills: readonly string[];
-  readonly mcps: readonly string[];
-}
-
-function normaliseDeps(
-  deps:
-    | { skills?: readonly AgentDependencyRef[]; mcps?: readonly AgentDependencyRef[] }
-    | undefined,
-): AgentDependencies {
-  return {
-    skills: deps?.skills ?? [],
-    mcps: deps?.mcps ?? [],
-  };
-}
-
-function normaliseDepRefs(
-  deps: { skills?: readonly string[]; mcps?: readonly string[] } | undefined,
-): AgentDepRefs {
-  return {
-    skills: deps?.skills ?? [],
-    mcps: deps?.mcps ?? [],
-  };
-}
-
-/** True iff `prereqs` is a non-empty, non-whitespace-only string. */
-export function hasNonEmptyPrereqs(prereqs: string | undefined): boolean {
-  return prereqs !== undefined && prereqs.trim().length > 0;
 }

@@ -1,4 +1,4 @@
-import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
+import { sameOrigin } from "../fetcher/index.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import { McpNotFoundError, McpOriginConflictError } from "./errors.js";
 import { McpEntity } from "./mcp-entity.js";
@@ -77,13 +77,5 @@ export class McpService {
 
   close(): void {
     this.repo.close?.();
-  }
-}
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
-  } catch {
-    return a === b;
   }
 }

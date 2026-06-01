@@ -1,11 +1,28 @@
 import { AgentNameInvalidError } from "./errors.js";
 
+/**
+ * FQN / scope / short-name grammar for agents. Owned entirely by
+ * `agent/` per the decoupling-over-abstraction axiom — skill mirrors
+ * this file by intent. MCP has its own grammar (see `mcp/validate.ts`)
+ * and correctly opts out — mcp names have no scope/short split, a
+ * different length cap, and no kebab-case constraint.
+ *
+ * Grammar:
+ *   - short name: lowercase kebab-case, max 64 chars, no `/`
+ *   - scope:      lowercase kebab + reverse-DNS dots allowed, max 64
+ *   - FQN:        `<scope>/<short>` exactly (single `/`)
+ */
+
 const MAX_SEGMENT_LEN = 64;
 const SHORT_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SCOPE_SEGMENT = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)*$/;
 
 /** Default scope when frontmatter omits `scope:`. */
 export const DEFAULT_SCOPE = "public";
+
+/** Examples used in error messages. */
+const SHORT_EXAMPLES: readonly [string, string] = ["researcher", "web-builder"];
+const FQN_EXAMPLE = "public/researcher";
 
 /** Validate an agent's short name (the kebab-case identifier in `frontmatter.name`). */
 export function validateShortName(name: unknown): asserts name is string {
@@ -27,7 +44,7 @@ export function validateShortName(name: unknown): asserts name is string {
   if (!SHORT_NAME.test(name)) {
     throw new AgentNameInvalidError(
       name,
-      "short name must be lowercase kebab-case (e.g. 'researcher', 'web-builder')",
+      `short name must be lowercase kebab-case (e.g. '${SHORT_EXAMPLES[0]}', '${SHORT_EXAMPLES[1]}')`,
     );
   }
 }
@@ -57,7 +74,7 @@ export function validateFqn(fqn: unknown): asserts fqn is string {
   if (slashIdx === -1) {
     throw new AgentNameInvalidError(
       fqn,
-      "FQN must be of the form '<scope>/<short>' (e.g. 'public/researcher')",
+      `FQN must be of the form '<scope>/<short>' (e.g. '${FQN_EXAMPLE}')`,
     );
   }
   if (fqn.indexOf("/", slashIdx + 1) !== -1) {

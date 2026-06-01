@@ -1,10 +1,11 @@
 import matter from "gray-matter";
-import type { EntryFile } from "../fetcher/index.js";
-import { normalizeOrigin, parseOrigin } from "../fetcher/index.js";
+import { normaliseOriginDeps, type OriginDeps } from "../_shared/dep-keys.js";
+import { type EntryFile, sameOrigin } from "../fetcher/index.js";
 import type { McpRepository } from "../mcp/mcp-repository.js";
 import { ImmutableOriginError, isOriginMutable } from "../origin-mutability.js";
 import type { SkillRepository } from "../skill/skill-repository.js";
 import { AgentEntity } from "./agent-entity.js";
+import { AGENT_DEP_SPECS, type AgentDepKind } from "./agent-frontmatter.js";
 import type { AgentFile, AgentRepository } from "./agent-repository.js";
 import {
   AgentFrontmatterError,
@@ -13,30 +14,18 @@ import {
   AgentPlanStaleError,
 } from "./errors.js";
 
-/**
- * Apply a partial patch to the YAML frontmatter of a markdown document.
- * `null` / `undefined` patch values DELETE the key. Body bytes preserved
- * verbatim. Output: `---\n<yaml>\n---\n<body>`. YAML comments and
- * original key order are NOT preserved (gray-matter / js-yaml limitation).
- */
-function applyFrontmatterPatch(raw: string, patch: Record<string, unknown>): string {
-  const file = matter(raw);
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined || v === null) delete file.data[k];
-    else file.data[k] = v;
-  }
-  return matter.stringify(file.content, file.data);
-}
+/** FQN-immutable patch keys — never accepted by `updateMetadata`. */
+const FORBIDDEN_METADATA_PATCH_KEYS: ReadonlySet<string> = new Set(["name", "scope", "fqn"]);
 
 export interface AgentFetcher {
   fetchAnchor(origin: string): Promise<string>;
   fetchTree(origin: string): AsyncIterable<EntryFile>;
 }
 
-export interface AgentResolveOptions {
-  signal?: AbortSignal;
-  onProgress?: (event: AgentResolveEvent) => void;
-}
+// Per-kind resolve types. Mirrored from the skill side by intent —
+// see the maintainer principle in agent-entity.ts's header JSDoc: there
+// is no shared `Anchored*` abstraction because agent and skill are
+// independent kinds. Duplication beats domain coupling.
 
 export type AgentResolveEvent =
   | { type: "fetching"; origin: string }
@@ -44,9 +33,9 @@ export type AgentResolveEvent =
   | { type: "alreadyInstalled"; fqn: string }
   | { type: "failed"; origin: string; error: unknown };
 
-export interface AgentResolvePlan {
-  readonly node: AgentResolvedNode | null;
-  readonly conflict: AgentResolveConflict | null;
+export interface AgentResolveOptions {
+  signal?: AbortSignal;
+  onProgress?: (event: AgentResolveEvent) => void;
 }
 
 export interface AgentResolvedNode {
@@ -54,10 +43,7 @@ export interface AgentResolvedNode {
   readonly origin: string;
   readonly anchorContent: string;
   readonly version: string;
-  readonly depsRefs: {
-    readonly skills: readonly string[];
-    readonly mcps: readonly string[];
-  };
+  readonly depsRefs: OriginDeps<AgentDepKind>;
 }
 
 export type AgentResolveConflict = {
@@ -69,13 +55,91 @@ export type AgentResolveConflict = {
     | { kind: "origin-conflict"; existingOrigin: string };
 };
 
+export interface AgentResolvePlan {
+  readonly node: AgentResolvedNode | null;
+  readonly conflict: AgentResolveConflict | null;
+}
+
 /**
- * Application-layer service for agent operations. The constructor
- * accepts sibling repos so the install path can resolve the
- * frontmatter-declared dep origins to local fqns before writing dep
- * rows. Sibling repos are optional in legacy callers; when omitted,
- * dep refs that cannot be resolved are silently dropped (mirrors the
- * v1 catalog's tolerant behaviour).
+ * Pure resolve workflow: fetch the anchor bytes, parse them into an
+ * `AgentEntity`, check for origin conflicts against the local repo,
+ * build the resolved-node payload. Returns `{node, conflict}` — the
+ * caller maps the conflict to `AgentOriginConflictError`.
+ *
+ * Mirrors `resolveSkillOrigin` in `skill/skill-service.ts` by intent;
+ * the two copies are independent and must NOT be re-factored into a
+ * shared helper (see the agent-entity.ts header JSDoc for the
+ * principle).
+ */
+async function resolveAgentOrigin(args: {
+  readonly origin: string;
+  readonly fetcher: AgentFetcher;
+  readonly repo: AgentRepository;
+  readonly options?: AgentResolveOptions;
+}): Promise<AgentResolvePlan> {
+  const { origin, fetcher, repo } = args;
+  const onProgress = args.options?.onProgress ?? (() => {});
+
+  onProgress({ type: "fetching", origin });
+  let anchorBytes: string;
+  try {
+    anchorBytes = await fetcher.fetchAnchor(origin);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
+    };
+  }
+
+  let entity: AgentEntity;
+  try {
+    entity = AgentEntity.create(anchorBytes, origin, `resolve:${origin}`);
+  } catch (cause) {
+    onProgress({ type: "failed", origin, error: cause });
+    return {
+      node: null,
+      conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
+    };
+  }
+
+  const existing = await repo.findByFqn(entity.fqn);
+  if (existing !== null && !sameOrigin(existing.origin, entity.origin)) {
+    return {
+      node: null,
+      conflict: {
+        origin,
+        fqn: entity.fqn,
+        reason: { kind: "origin-conflict", existingOrigin: existing.origin },
+      },
+    };
+  }
+
+  const depsRefs = normaliseOriginDeps(AGENT_DEP_SPECS, entity.depsRefs);
+  const node: AgentResolvedNode = {
+    fqn: entity.fqn,
+    origin: entity.origin,
+    anchorContent: anchorBytes,
+    version: entity.version,
+    depsRefs,
+  };
+  onProgress({ type: "fetched", origin, fqn: node.fqn });
+  return { node, conflict: null };
+}
+
+/**
+ * Application-layer service for agent operations. Agent owns its
+ * resolve workflow inline (see `resolveAgentOrigin` above) plus its
+ * resolve-result types declared in this file. Skill mirrors the same
+ * shape in `skill/skill-service.ts` by intent — agent and skill are
+ * independent kinds with no shared domain methods.
+ *
+ * Sibling repos are optional in legacy callers; when omitted, dep
+ * refs that cannot be resolved are silently dropped (mirrors the v1
+ * catalog's tolerant behaviour).
+ *
+ * The agent-only `disableByUser` / `enableByUser` methods live here
+ * (skills cannot be user-disabled).
  */
 export class AgentService {
   constructor(
@@ -87,56 +151,13 @@ export class AgentService {
     } = {},
   ) {}
 
-  async resolve(origin: string, opts: AgentResolveOptions = {}): Promise<AgentResolvePlan> {
-    const onProgress = opts.onProgress ?? (() => {});
-
-    onProgress({ type: "fetching", origin });
-    let anchorBytes: string;
-    try {
-      anchorBytes = await this.fetcher.fetchAnchor(origin);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "fetch-failed", cause } },
-      };
-    }
-
-    let entity: AgentEntity;
-    try {
-      entity = AgentEntity.create(anchorBytes, origin, `resolve:${origin}`);
-    } catch (cause) {
-      onProgress({ type: "failed", origin, error: cause });
-      return {
-        node: null,
-        conflict: { origin, fqn: null, reason: { kind: "parse-failed", cause } },
-      };
-    }
-
-    const byFqn = await this.repo.findByFqn(entity.fqn);
-    if (byFqn !== null && !sameOrigin(byFqn.origin, entity.origin)) {
-      return {
-        node: null,
-        conflict: {
-          origin,
-          fqn: entity.fqn,
-          reason: { kind: "origin-conflict", existingOrigin: byFqn.origin },
-        },
-      };
-    }
-
-    const node: AgentResolvedNode = {
-      fqn: entity.fqn,
-      origin: entity.origin,
-      anchorContent: anchorBytes,
-      version: entity.version,
-      depsRefs: {
-        skills: [...entity.depsRefs.skills],
-        mcps: [...entity.depsRefs.mcps],
-      },
-    };
-    onProgress({ type: "fetched", origin, fqn: node.fqn });
-    return { node, conflict: null };
+  resolve(origin: string, opts: AgentResolveOptions = {}): Promise<AgentResolvePlan> {
+    return resolveAgentOrigin({
+      origin,
+      fetcher: this.fetcher,
+      repo: this.repo,
+      options: opts,
+    });
   }
 
   async install(planOrOrigin: AgentResolvedNode | string): Promise<AgentEntity> {
@@ -218,9 +239,7 @@ export class AgentService {
   async updateAnchor(fqn: string, newAgentMd: string): Promise<AgentEntity> {
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const updated = existing.withAnchor(newAgentMd, `update:${fqn}`);
     const files = new Map<string, Buffer>();
     for await (const f of this.repo.streamFiles(fqn)) {
@@ -244,11 +263,14 @@ export class AgentService {
     }
     const existing = await this.repo.findByFqn(fqn);
     if (existing === null) throw new AgentNotFoundError(fqn);
-    if (!isOriginMutable(existing.origin)) {
-      throw new ImmutableOriginError(fqn, existing.origin);
-    }
+    if (!isOriginMutable(existing.origin)) throw new ImmutableOriginError(fqn, existing.origin);
     const currentAnchor = await this.repo.getAnchor(fqn);
-    const newAnchor = applyFrontmatterPatch(currentAnchor, patch);
+    const file = matter(currentAnchor);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined || v === null) delete file.data[k];
+      else file.data[k] = v;
+    }
+    const newAnchor = matter.stringify(file.content, file.data);
     return this.updateAnchor(fqn, newAnchor);
   }
 
@@ -303,39 +325,36 @@ export class AgentService {
    * Resolve frontmatter dep origins to local sibling fqns. Origins
    * that don't resolve to an installed sibling are silently skipped —
    * matches v1 tolerant behaviour, lets the resolve pipeline surface
-   * MissingDep separately if the consumer cares.
+   * `MissingDep` separately if the consumer cares.
+   *
+   * Inlined per kind (agent owns this lookup loop) by intent — no
+   * shared sibling-lookup helper exists, by design, as part of the
+   * structural-only sharing refactor; see agent-entity.ts header
+   * JSDoc for the principle.
    */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];
     readonly mcps: readonly string[];
   }): Promise<{ skills: string[]; mcps: string[] }> {
-    const skillFqns: string[] = [];
-    const mcpFqns: string[] = [];
+    const skills: string[] = [];
     if (this.siblings.skills !== undefined) {
+      const repo = this.siblings.skills;
       for (const origin of refs.skills) {
-        const sib = await this.siblings.skills.findByOrigin(origin);
-        if (sib !== null) skillFqns.push(sib.fqn);
+        const sib = await repo.findByOrigin(origin);
+        if (sib !== null) skills.push(sib.fqn);
       }
     }
+    const mcps: string[] = [];
     if (this.siblings.mcps !== undefined) {
+      const repo = this.siblings.mcps;
       for (const origin of refs.mcps) {
-        const sib = await this.siblings.mcps.findByOrigin(origin);
-        if (sib !== null) mcpFqns.push(sib.fqn);
+        const sib = await repo.findByOrigin(origin);
+        if (sib !== null) mcps.push(sib.fqn);
       }
     }
-    return { skills: skillFqns, mcps: mcpFqns };
+    return { skills, mcps };
   }
 }
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
-  } catch {
-    return a === b;
-  }
-}
-
-const FORBIDDEN_METADATA_PATCH_KEYS = new Set<string>(["name", "scope", "fqn"]);
 
 function conflictToError(c: AgentResolveConflict): Error {
   if (c.reason.kind === "fetch-failed" || c.reason.kind === "parse-failed") {

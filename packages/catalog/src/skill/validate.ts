@@ -1,14 +1,28 @@
 import { SkillNameInvalidError } from "./errors.js";
 
-const MAX_SEGMENT_LEN = 64;
+/**
+ * FQN / scope / short-name grammar for skills. Owned entirely by
+ * `skill/` per the decoupling-over-abstraction axiom — agent mirrors
+ * this file by intent. MCP has its own grammar (see `mcp/validate.ts`)
+ * and correctly opts out — mcp names have no scope/short split, a
+ * different length cap, and no kebab-case constraint.
+ *
+ * Grammar:
+ *   - short name: lowercase kebab-case, max 64 chars, no `/`
+ *   - scope:      lowercase kebab + reverse-DNS dots allowed, max 64
+ *   - FQN:        `<scope>/<short>` exactly (single `/`)
+ */
 
-// Short name: lowercase kebab-case, no dots
+const MAX_SEGMENT_LEN = 64;
 const SHORT_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-// Scope: lowercase kebab + reverse-DNS (dots allowed)
 const SCOPE_SEGMENT = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)*$/;
 
 /** Default scope when frontmatter omits `scope:`. */
 export const DEFAULT_SCOPE = "public";
+
+/** Examples used in error messages. */
+const SHORT_EXAMPLES: readonly [string, string] = ["tool-use", "web-search"];
+const FQN_EXAMPLE = "public/tool-use";
 
 /**
  * Validate a skill's short name (the kebab-case identifier authored
@@ -33,7 +47,7 @@ export function validateShortName(name: unknown): asserts name is string {
   if (!SHORT_NAME.test(name)) {
     throw new SkillNameInvalidError(
       name,
-      "short name must be lowercase kebab-case (e.g. 'tool-use', 'web-search')",
+      `short name must be lowercase kebab-case (e.g. '${SHORT_EXAMPLES[0]}', '${SHORT_EXAMPLES[1]}')`,
     );
   }
 }
@@ -63,16 +77,14 @@ export function validateFqn(fqn: unknown): asserts fqn is string {
   if (slashIdx === -1) {
     throw new SkillNameInvalidError(
       fqn,
-      "FQN must be of the form '<scope>/<short>' (e.g. 'public/tool-use')",
+      `FQN must be of the form '<scope>/<short>' (e.g. '${FQN_EXAMPLE}')`,
     );
   }
   if (fqn.indexOf("/", slashIdx + 1) !== -1) {
     throw new SkillNameInvalidError(fqn, "FQN must contain exactly one '/'");
   }
-  const scope = fqn.slice(0, slashIdx);
-  const shortName = fqn.slice(slashIdx + 1);
-  validateScope(scope);
-  validateShortName(shortName);
+  validateScope(fqn.slice(0, slashIdx));
+  validateShortName(fqn.slice(slashIdx + 1));
 }
 
 /** Compose a validated FQN from its parts. */

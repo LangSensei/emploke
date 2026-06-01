@@ -149,3 +149,22 @@ export function normalizeOrigin(origin: ParsedOrigin): string {
       return `file:///${origin.path.replace(/^\/+/, "")}`;
   }
 }
+
+/**
+ * Returns true iff `a` and `b` are equivalent after origin
+ * normalisation. Pure: throws nothing, falls back to byte-equality
+ * when either input fails to parse (defensive for unmigrated callers
+ * that may pass a malformed origin string).
+ *
+ * This is the canonical origin-equality predicate; callers in
+ * `agent/agent-service.ts`, `skill/skill-service.ts`, and
+ * `mcp/mcp-service.ts` import it from `fetcher/index.js`. The fetcher
+ * module owns origin grammar, so the equality check lives here.
+ */
+export function sameOrigin(a: string, b: string): boolean {
+  try {
+    return normalizeOrigin(parseOrigin(a)) === normalizeOrigin(parseOrigin(b));
+  } catch {
+    return a === b;
+  }
+}
