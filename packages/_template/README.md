@@ -26,6 +26,14 @@ if the BC has non-trivial state transitions or invariants to
 encapsulate. The template ships without one because most BCs don't
 need it.
 
+**When a service file grows beyond ~600 LOC AND ~3 cohesive
+concerns**, split it via the **facade + sibling subdir** convention.
+See `docs/pkg-template.md § Splitting big files via facade + sibling
+subdir`. Canonical reference: `packages/task/src/task-service.ts` +
+`packages/task/src/task-service/`. The scaffold stays flat — new
+packages start with one `<entity>-service.ts` file and only split
+later if the file actually outgrows the thresholds.
+
 ### Catch-block convention
 
 Do NOT create `src/utils/errors.ts` or any helper file for catch-block

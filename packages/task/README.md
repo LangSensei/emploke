@@ -21,7 +21,10 @@ packages/task/src/
   validate.ts              id regex + assertValidTaskId + generators
   task-repository.ts       Drizzle CRUD (private; never exported)
   task-entity.ts           TaskEntity  state machine (private)
-  task-service.ts          TaskService  dispatch/get/list/cancel/delete/getTaskActivity
+  task-service.ts          TaskService facade — dispatch/get/list/cancel/delete/getTaskActivity
+  task-service/            Internal concern modules (queries, mutations, agent-resolver,
+                           activity-stream, shutdown) composed by the facade; see
+                           docs/pkg-template.md § Splitting big files via facade + sibling subdir
   task-meta.ts             readTaskRuntimeMetadata (runtime hook)
   framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
   paths.ts                 safeJoinUnderRoot path-traversal guard

@@ -87,6 +87,54 @@ This rule prevents the "where do I find the `Workspace` interface" drift
 that plagued emploke before (DTOs scattered across `service.ts`,
 `schema.ts`, separate `dto.ts`).
 
+## Splitting big files via facade + sibling subdir
+
+### When to split
+
+Default: keep one file per `<entity>-<role>.ts` (see naming convention above).
+
+Split a single file ONLY when BOTH conditions hold:
+
+1. The file is **≥ 600 LOC**.
+2. The file genuinely contains **≥ 3 cohesive sub-concerns** (e.g. queries vs mutations vs lifecycle vs streaming).
+
+A pure 800-LOC validator (one concern) does NOT split. A 400-LOC service touching 5 concerns does NOT split (too small). A 700-LOC service with reads / writes / lifecycle / streaming DOES split.
+
+### Layout: facade + sibling subdir
+
+```
+packages/<pkg>/src/
+  <entity>-<role>.ts          ← facade (public entry, ≤ ~250 LOC)
+  <entity>-<role>/            ← subdir; basename MUST equal facade basename
+    <concern-1>.ts            ← bare concern name; no entity prefix needed
+    <concern-2>.ts
+    …
+```
+
+Canonical reference implementation: `packages/task/src/task-service.ts` +
+`packages/task/src/task-service/` introduced in PR #250 — the same PR
+that introduces this convention.
+
+### Hard rules
+
+1. **Subdir basename equals facade basename.** `task-service.ts` ↔ `task-service/`. Enforced mechanically — see the structural test in `packages/task/test/split-convention.test.ts`.
+2. **No barrel re-export** inside the subdir (no `<entity>-<role>/index.ts`). The facade composes via direct relative imports (`./task-service/queries.js` etc.). Enforced by the same structural test.
+3. **Subdir files are package-private.** They MUST NOT appear in the package's top-level `src/index.ts` barrel. The facade is the only public surface.
+4. **Concern files use bare names** (`queries.ts`, `mutations.ts`, `shutdown.ts`) — the subdir name already supplies the entity context. Do NOT prefix (`task-queries.ts` inside `task-service/` is wrong).
+5. **Each concern file ≤ ~450 LOC.** If a single concern grows beyond that, that concern itself needs further decomposition — but always keep at one level of nesting (do NOT nest `task-service/queries/by-id.ts`).
+6. **Facade stays ≤ ~250 LOC** and contains only: constructor, ctx-object construction, and 1-line delegates to internals.
+7. **Shared context.** The facade builds a `<Entity>ServiceCtx` (or similar) once and passes it to every internal — no `this`-casting, no widening of class field visibility. Each internal exports plain functions taking `(ctx, …args)` OR a small object that consumes ctx.
+
+### When NOT to use this pattern
+
+- **Cross-entity shared infrastructure** → use a `_shared/` subdir (no sibling file at the parent level). See `packages/catalog/src/_shared/`. The structural test skips any directory whose name starts with `_`.
+- **Component organisation** (e.g. a page + its sub-components) → `packages/dashboard/src/components/tasks/TaskDetail.tsx` + `TaskDetail/` already does this; it is a related but distinct pattern (the subdir contains presentational sub-components, not concern splits of one class). The same structural rules (no `index.tsx` barrel, exact-case sibling) apply.
+- **Different concerns belonging to different services** in the same package → keep them as separate top-level `<entity>-<role>.ts` files (current convention).
+
+### Migration of existing big files
+
+Pre-existing big files do NOT need preemptive splitting. Apply this convention WHEN a refactor of that file is otherwise needed (e.g. a feature change, a bug fix that touches many sections, an audit-flagged improvement). PRs that opportunistically split should reference this section in the PR body.
+
 ## Test file naming
 
 Test files mirror the source file they test, with `.test.ts` appended.
