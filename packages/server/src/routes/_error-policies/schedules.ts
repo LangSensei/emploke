@@ -65,11 +65,7 @@ import {
   TaskNotFoundError,
 } from "@emploke/task";
 import type { ErrorPolicy } from "../_respond-error.js";
-
-const opaqueAgentResolutionBody = (_err: Error) => ({
-  error: "internal error",
-  code: "AgentResolutionFailedError",
-});
+import { opaqueAgentResolutionBody } from "./_shared-bodies.js";
 
 export const schedulesErrorPolicy: ErrorPolicy = {
   name: "schedules",

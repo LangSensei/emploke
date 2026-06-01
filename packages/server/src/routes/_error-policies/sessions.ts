@@ -31,11 +31,7 @@ import {
   UnknownRuntimeError,
 } from "@emploke/session";
 import type { ErrorPolicy } from "../_respond-error.js";
-
-const opaqueAgentResolutionBody = (_err: Error) => ({
-  error: "internal error",
-  code: "AgentResolutionFailedError",
-});
+import { opaqueAgentResolutionBody } from "./_shared-bodies.js";
 
 export const sessionsErrorPolicy: ErrorPolicy = {
   name: "sessions",
