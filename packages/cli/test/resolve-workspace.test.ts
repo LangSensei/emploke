@@ -78,7 +78,7 @@ describe("resolveWorkspace", () => {
       await resolveWorkspace({});
       expect.fail("expected throw");
     } catch (err) {
-      const msg = (err as Error).message;
+      const msg = err instanceof Error ? err.message : String(err);
       expect(msg).toContain("--workspace");
       expect(msg).toContain("EMPLOKE_WORKSPACE");
       expect(msg).toContain("workspace list");

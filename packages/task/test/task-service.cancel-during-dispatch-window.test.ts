@@ -32,8 +32,8 @@ describe("TaskService.cancel — during-dispatch window (R-1)", () => {
     // window where workdir has been reserved + row persisted but
     // `live.set` has not yet executed. ADR-001 §3.4 specifies the
     // check order assertValidTaskId → shuttingDown → dispatchInProgress
-    // → loadTask, so we do NOT need a real row on disk — the
-    // dispatchInProgress check fires before loadTask runs.
+    // → repository.read, so we do NOT need a real row on disk — the
+    // dispatchInProgress check fires before repository.read runs.
     const privateState = fx.m as unknown as { dispatchInProgress: Set<string> };
     privateState.dispatchInProgress.add(id);
     try {

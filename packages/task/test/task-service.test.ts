@@ -394,7 +394,7 @@ class StubRuntime implements Runtime {
         resolveExit(info);
         // Yield enough times that the manager's exit handler can persist
         // the terminal status. The handler does:
-        //   `await handle.exit` → `await applyTerminal()` → `await persist`.
+        //   `await handle.exit` → `await applyTerminal()` → `await repository.save`.
         // 8 microtask flushes covers that path even with macrotask hops.
         await flushMicrotasks(8);
         resolvePersisted();
@@ -966,7 +966,7 @@ describe("get / list", () => {
 
   it("list() silently skips rows that fail validation and warns via the repo's logger", async () => {
     // The repo emits the corruption-skip warn now (was the manager
-    // before, when each list iteration went through loadTask). Inject
+    // before, when each list iteration went through repository.read). Inject
     // the recorder logger into the repo and bypass the public save()
     // by reaching into the underlying DatabaseSync to forge a row
     // with an invalid status enum that rowToTask rejects.
@@ -1187,7 +1187,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     );
   });
 
-  // Default mode reads via loadTask which throws CorruptedTaskError;
+  // Default mode reads via repository.read which throws CorruptedTaskError;
   // ADR-001 removed the previous purge-tolerance for corrupted rows,
   // so both default AND purge propagate the error now.
   it("propagates CorruptedTaskError (operator sees the corruption)", async () => {

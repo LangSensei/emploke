@@ -605,7 +605,7 @@ function buildProgram(slot: { result: CommandResult | null }, argv: string[]): C
         } catch (err) {
           slot.result = {
             exitCode: 2,
-            stderr: `failed to read --details-file: ${(err as Error).message}\n`,
+            stderr: `failed to read --details-file: ${err instanceof Error ? err.message : String(err)}\n`,
           };
           return;
         }

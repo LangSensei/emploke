@@ -26,6 +26,25 @@ if the BC has non-trivial state transitions or invariants to
 encapsulate. The template ships without one because most BCs don't
 need it.
 
+### Catch-block convention
+
+Do NOT create `src/utils/errors.ts` or any helper file for catch-block
+error normalization (`errorMessage`, `isAbortError`, etc.). Use the
+inline form at each `catch (e) { ... }` site:
+
+    const msg = e instanceof Error ? e.message : String(e);
+
+For abort-error detection:
+
+    if (e instanceof Error && e.name === "AbortError") return;
+
+Rationale: these checks are tiny, stateless, and benefit from local
+readability over a shared abstraction. Backend packages do not use a
+`src/utils/` subfolder — keep `src/` flat. (Dashboard's `src/utils/`
+is a frontend convention with multiple files like `fqn.ts`, `time.ts`;
+that pattern is fine for the dashboard, but error normalization stays
+inline there too.)
+
 ## Naming
 
 ### Public (exported from `index.ts`)

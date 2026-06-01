@@ -9,7 +9,6 @@ import {
   type SchedulePreview,
 } from "../../api";
 import { useMounted } from "../../hooks/useMounted";
-import { errorMessage } from "../../utils/errors";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { ScheduleRecentFires } from "./ScheduleRecentFires";
 
@@ -92,7 +91,7 @@ export function ScheduleDetail({
       },
       (e: unknown) => {
         if (cancelled) return;
-        setError(errorMessage(e));
+        setError(e instanceof Error ? e.message : String(e));
       },
     );
     return () => {
@@ -128,7 +127,7 @@ export function ScheduleDetail({
     } catch (e) {
       if (!mounted.current) return;
       setDetail(previous);
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }
@@ -147,7 +146,7 @@ export function ScheduleDetail({
       );
     } catch (e) {
       if (!mounted.current) return;
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }

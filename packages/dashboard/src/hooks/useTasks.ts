@@ -6,7 +6,6 @@ import {
   presetToSinceMs,
   type TimePreset,
 } from "../components/tasks/shared";
-import { errorMessage } from "../utils/errors";
 import { useMounted } from "./useMounted";
 import { usePollWithBackoff } from "./usePollWithBackoff";
 
@@ -87,7 +86,7 @@ export function useTasks({
     } catch (e) {
       if (!mounted.current) return;
       if (token !== currentWorkspaceId) return;
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       inFlightRef.current = false;
       if (mounted.current && token === currentWorkspaceId) {

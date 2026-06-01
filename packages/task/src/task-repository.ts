@@ -33,7 +33,21 @@ export class TaskRepository {
     if (!TASK_ID_RE.test(id)) throw new InvalidTaskIdError(id);
     const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (row === undefined) return null;
-    return rowToTask(row);
+    const task = rowToTask(row);
+    if (task.id !== id) {
+      // Defensive: row's stored id disagrees with the primary-key id
+      // we just selected by. Under SQLite this should be impossible
+      // (the PK constraint on `tasks.id` plus the `WHERE tasks.id = id`
+      // filter together rule it out), so a fire here means either the
+      // schema changed under our feet or someone tampered with the DB
+      // out-of-band. We surface a warn and trust the caller's id so the
+      // dashboard doesn't silently route a task under the wrong key.
+      this.logger.warn(
+        { taskId: id, persistedId: task.id },
+        "tasks: id mismatch between dir and persisted row",
+      );
+    }
+    return task;
   }
 
   async save(task: TaskEntity): Promise<void> {
@@ -226,7 +240,7 @@ function rowToTask(row: TaskRow): TaskEntity {
   } catch (err) {
     throw new CorruptedTaskError(
       row.id,
-      `task.metadata is not valid JSON: ${(err as Error).message}`,
+      `task.metadata is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   if (metaParsed === null || typeof metaParsed !== "object" || Array.isArray(metaParsed)) {
@@ -264,7 +278,10 @@ function parseJsonColumn<T>(id: string, name: string, raw: string | null): T | u
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new CorruptedTaskError(id, `task.${name} is not valid JSON: ${(err as Error).message}`);
+    throw new CorruptedTaskError(
+      id,
+      `task.${name} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new CorruptedTaskError(id, `task.${name} must decode to an object`);

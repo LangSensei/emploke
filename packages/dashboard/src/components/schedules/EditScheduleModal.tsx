@@ -8,7 +8,6 @@ import {
   type ScheduleDetail,
   type SchedulePreview,
 } from "../../api";
-import { errorMessage, isAbortError } from "../../utils/errors";
 import { Modal } from "../Modal";
 import { type Preset, presetToCron, validatePreset } from "./cronPresets";
 import { PresetEditor } from "./PresetEditor";
@@ -142,10 +141,10 @@ export function EditScheduleModal({
           setPreviewError(null);
         })
         .catch((e: unknown) => {
-          if (isAbortError(e)) return;
+          if (e instanceof Error && e.name === "AbortError") return;
           if (ctrl.signal.aborted) return;
           setPreview(null);
-          setPreviewError(errorMessage(e));
+          setPreviewError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => {
           if (!ctrl.signal.aborted) setPreviewLoading(false);
@@ -213,7 +212,7 @@ export function EditScheduleModal({
       onPatched(merged);
       onClose();
     } catch (err) {
-      setSubmitError(errorMessage(err));
+      setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }

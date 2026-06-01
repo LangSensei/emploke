@@ -80,7 +80,7 @@ describe("McpFormat.parse", () => {
     try {
       McpFormat.parse("{garbage", "mcps:foo/bar");
     } catch (e) {
-      expect((e as Error).message).toContain("mcps:foo/bar");
+      expect(e instanceof Error ? e.message : String(e)).toContain("mcps:foo/bar");
       return;
     }
     throw new Error("expected throw");
