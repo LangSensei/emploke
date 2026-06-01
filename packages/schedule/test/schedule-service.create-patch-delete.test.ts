@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   ScheduleEnabledError,
   ScheduleHasInFlightError,
   ScheduleNotFoundError,
@@ -9,7 +10,8 @@ import type { CreateTaskScheduleArgs } from "../src/types.js";
 import {
   fixedRandomUUID,
   makeScheduleTestHandle,
-  rejectAgent,
+  rejectAgentAsNotFound,
+  rejectAgentWithFault,
   type ScheduleTestHandle,
   VALID_UUIDS,
 } from "./_helpers.js";
@@ -59,11 +61,42 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
 
   it("createTask surfaces the agentValidator rejection as AgentNotFoundError", async () => {
     const handle = makeScheduleTestHandle({
-      agentValidator: rejectAgent,
+      agentValidator: rejectAgentAsNotFound,
       randomUUID: fixedRandomUUID(VALID_UUIDS),
     });
     try {
-      await expect(handle.service.createTask(baseArgs())).rejects.toThrow(AgentNotFoundError);
+      await expect(handle.service.createTask(baseArgs())).rejects.toBeInstanceOf(
+        AgentNotFoundError,
+      );
+    } finally {
+      await handle.service.shutdown();
+      handle.close();
+    }
+  });
+
+  it("createTask wraps a non-not-found validator fault as AgentResolutionFailedError (500)", async () => {
+    // The schedule-agent-validator throws schedule's own typed
+    // AgentNotFoundError on null catalog lookup; anything else (DB
+    // exploded, parser crashed) must surface as a system fault,
+    // NOT a misleading 400 'agent not found'. Destructive
+    // validation for the `instanceof AgentNotFoundError` branch in
+    // schedule-service.ts: removing it collapses this back to
+    // AgentNotFoundError and the assertions below must fail.
+    const cause = new Error("DB exploded");
+    const handle = makeScheduleTestHandle({
+      agentValidator: rejectAgentWithFault(cause),
+      randomUUID: fixedRandomUUID(VALID_UUIDS),
+    });
+    try {
+      const err = await handle.service.createTask(baseArgs()).then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(AgentResolutionFailedError);
+      expect(err).not.toBeInstanceOf(AgentNotFoundError);
+      expect((err as AgentResolutionFailedError).agent).toBe("report-bot");
+      expect((err as AgentResolutionFailedError).cause).toBeInstanceOf(Error);
+      expect(((err as AgentResolutionFailedError).cause as Error).message).toBe("DB exploded");
     } finally {
       await handle.service.shutdown();
       handle.close();
@@ -213,7 +246,7 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
   it("patchTask without target.agent does not invoke agentValidator", async () => {
     await h.service.createTask(baseArgs());
     const rejectingHandle = makeScheduleTestHandle({
-      agentValidator: rejectAgent,
+      agentValidator: rejectAgentAsNotFound,
       randomUUID: fixedRandomUUID(VALID_UUIDS),
     });
     try {
@@ -224,7 +257,7 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
       const svc = new Svc({
         repo: repoBacked,
         taskDispatcher: h.dispatcher,
-        agentValidator: rejectAgent,
+        agentValidator: rejectAgentAsNotFound,
         now: () => h.nowRef.value,
         randomUUID: fixedRandomUUID(VALID_UUIDS),
       });
@@ -301,7 +334,7 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
     // shares the same DB so the patched record exists.
     await h.service.createTask(baseArgs());
     const rejectingHandle = makeScheduleTestHandle({
-      agentValidator: rejectAgent,
+      agentValidator: rejectAgentAsNotFound,
       randomUUID: fixedRandomUUID(VALID_UUIDS),
     });
     try {
@@ -315,7 +348,7 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
       const svc = new Svc({
         repo: repoBacked,
         taskDispatcher: h.dispatcher,
-        agentValidator: rejectAgent,
+        agentValidator: rejectAgentAsNotFound,
         now: () => h.nowRef.value,
         randomUUID: fixedRandomUUID(VALID_UUIDS),
       });
@@ -323,7 +356,7 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
         svc.patchTask(VALID_UUIDS[0]!, {
           target: { agent: "missing-bot" },
         }),
-      ).rejects.toThrow(AgentNotFoundError);
+      ).rejects.toBeInstanceOf(AgentNotFoundError);
       await svc.shutdown();
     } finally {
       await rejectingHandle.service.shutdown();

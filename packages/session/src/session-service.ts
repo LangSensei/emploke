@@ -1,11 +1,15 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { CatalogService } from "@emploke/catalog";
+import {
+  AgentNotFoundError as CatalogAgentNotFoundError,
+  type CatalogService,
+} from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
 import pino, { type Logger } from "pino";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
@@ -75,7 +79,13 @@ export class SessionService {
     try {
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
-      throw new AgentNotFoundError(agentName, err as Error);
+      // Catalog said "agent does not exist" → present as user error (400).
+      if (err instanceof CatalogAgentNotFoundError) {
+        throw new AgentNotFoundError(agentName, err);
+      }
+      // Any other catalog failure is a system fault, NOT user input —
+      // surface as 500 with the cause preserved for `5xx fault` logs.
+      throw new AgentResolutionFailedError(agentName, err);
     }
 
     const runtimeKind = opts.runtime ?? DEFAULT_RUNTIME;

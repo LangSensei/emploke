@@ -10,10 +10,17 @@
  * policy `instanceof`-matches the session-package class so the four
  * realm-specific status mappings stay independent (see the
  * commit-3 contract test).
+ *
+ * `AgentResolutionFailedError` carries a deliberately opaque
+ * class-stable body — its `cause` may contain DB host paths, stack
+ * frames, or other internals. The real diagnostics land in the
+ * server log via `logFault()`; the wire response is collapsed to
+ * `{ error: "internal error", code: "AgentResolutionFailedError" }`.
  */
 
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   InvalidSessionIdError,
   RuntimeDoesNotSupportRemoteError,
   RuntimeProvisionFailed,
@@ -24,6 +31,7 @@ import {
   UnknownRuntimeError,
 } from "@emploke/session";
 import type { ErrorPolicy } from "../_respond-error.js";
+import { opaqueAgentResolutionBody } from "./_shared-bodies.js";
 
 export const sessionsErrorPolicy: ErrorPolicy = {
   name: "sessions",
@@ -31,6 +39,7 @@ export const sessionsErrorPolicy: ErrorPolicy = {
     [InvalidSessionIdError, 400],
     [SessionNotFoundError, 404],
     [AgentNotFoundError, 400],
+    [AgentResolutionFailedError, 500, opaqueAgentResolutionBody],
     [UnknownRuntimeError, 400],
     [RuntimeDoesNotSupportRemoteError, 400],
     [RuntimeStateDeletionFailed, 409],

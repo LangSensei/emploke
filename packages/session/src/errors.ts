@@ -58,3 +58,28 @@ export class AgentNotFoundError extends SessionError {
     if (cause) this.cause = cause;
   }
 }
+
+/**
+ * Thrown by `SessionService.create` when the catalog raises an error
+ * that is NOT "agent does not exist" — e.g. parser failure or any
+ * other system-level fault while resolving the agent. Distinct from
+ * {@link AgentNotFoundError}:
+ *   - `AgentNotFoundError` → 400 (user passed a bad agent name)
+ *   - `AgentResolutionFailedError` → 500 (catalog itself misbehaved)
+ *
+ * The original cause is attached as `this.cause` for the server's
+ * `5xx fault` log line; the route layer collapses the body to an
+ * opaque `{ error: "internal error", code: "AgentResolutionFailedError" }`
+ * so internal diagnostics never reach the wire.
+ */
+export class AgentResolutionFailedError extends SessionError {
+  override readonly name = "AgentResolutionFailedError";
+
+  constructor(
+    public readonly agent: string,
+    cause?: unknown,
+  ) {
+    super(`agent resolution failed: ${JSON.stringify(agent)}`);
+    if (cause !== undefined) this.cause = cause;
+  }
+}

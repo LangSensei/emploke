@@ -1,11 +1,16 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
+import {
+  type AgentResolveResult,
+  AgentNotFoundError as CatalogAgentNotFoundError,
+  type CatalogService,
+} from "@emploke/catalog";
 import type { Runtime, RuntimeHandle, RuntimeRegistry } from "@emploke/runtime";
 import pino, { type Logger } from "pino";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   EntryNotReadyError,
   InvalidTransition,
   ManagerShuttingDownError,
@@ -228,21 +233,19 @@ export class TaskService {
       }
       resolveResult = await this.catalog.resolveAgent(agentName);
     } catch (err) {
-      // Three sibling classes are literally named `AgentNotFoundError`
-      // (`@emploke/task`, `@emploke/schedule`, `@emploke/session`). The
-      // `instanceof` check below only matches the task-package variant,
-      // so a foreign sibling propagating up from the catalog would lose
-      // its typed boundary and get re-wrapped — the route layer would
-      // then 500 instead of 400. The name-string fallback covers all
-      // three until the class is hoisted to `@emploke/catalog`.
-      // TODO(#tier-b): hoist AgentNotFoundError to @emploke/catalog so this name-string guard isn't needed.
-      const isAgentNotFound =
-        err instanceof AgentNotFoundError ||
-        (err instanceof Error && err.name === "AgentNotFoundError");
-      if (isAgentNotFound || err instanceof EntryNotReadyError) {
+      // Pass through THIS service's own throws (lines above for the
+      // empty-name guard, the null-entry guard, and the blocked-entry
+      // guard). Each is already shaped for the route layer.
+      if (err instanceof AgentNotFoundError || err instanceof EntryNotReadyError) {
         throw err;
       }
-      throw new AgentNotFoundError(agentName, err as Error);
+      // Catalog said "agent does not exist" → present as user error (400).
+      if (err instanceof CatalogAgentNotFoundError) {
+        throw new AgentNotFoundError(agentName, err);
+      }
+      // Any other catalog failure is a system fault, NOT user input —
+      // surface as 500 with the cause preserved for `5xx fault` logs.
+      throw new AgentResolutionFailedError(agentName, err);
     }
 
     // 2. Pick the runtime + verify it supports tasks. We do this before

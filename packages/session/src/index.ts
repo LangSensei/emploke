@@ -26,6 +26,7 @@ export {
 } from "./compose.js";
 export {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   InvalidSessionIdError,
   SessionError,
   SessionIdAllocationFailedError,

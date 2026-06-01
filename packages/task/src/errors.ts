@@ -62,6 +62,30 @@ export class AgentNotFoundError extends TaskError {
 }
 
 /**
+ * Thrown by `TaskService.dispatch` when the catalog raises an error
+ * that is NOT "agent does not exist" — e.g. parser failure, DB-corruption,
+ * or any other system-level fault while resolving the agent. The
+ * original cause is attached as `this.cause` for the server's `5xx
+ * fault` log line; the route layer collapses the body to an opaque
+ * `{ error: "internal error", code: "AgentResolutionFailedError" }`
+ * so internal diagnostics never reach the wire.
+ *
+ * This is structurally distinct from {@link AgentNotFoundError}:
+ *   - `AgentNotFoundError` → 400 (user passed a bad agent name)
+ *   - `AgentResolutionFailedError` → 500 (catalog itself misbehaved)
+ */
+export class AgentResolutionFailedError extends TaskError {
+  override readonly name = "AgentResolutionFailedError";
+
+  constructor(
+    public readonly agent: string,
+    cause?: unknown,
+  ) {
+    super(`agent resolution failed: ${JSON.stringify(agent)}`, { cause });
+  }
+}
+
+/**
  * Thrown by `TaskService.get` / `delete` when the requested id has no
  * persisted record (no row in the workspace's `tasks` table and, in
  * default-archive mode, the row is unparseable; in `purge: true` mode,

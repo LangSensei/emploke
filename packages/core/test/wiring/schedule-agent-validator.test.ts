@@ -6,6 +6,7 @@
  */
 
 import type { CatalogService } from "@emploke/catalog";
+import { AgentNotFoundError } from "@emploke/schedule";
 import { describe, expect, it, vi } from "vitest";
 import { makeScheduleAgentValidator } from "../../src/wiring/schedule-agent-validator.js";
 
@@ -27,10 +28,15 @@ describe("makeScheduleAgentValidator", () => {
     expect(getAgent).toHaveBeenCalledWith("writer");
   });
 
-  it("throws when catalog returns null", async () => {
+  it("throws `@emploke/schedule`'s AgentNotFoundError when catalog returns null", async () => {
+    // The typed-marker contract: `ScheduleService.assertAgentExists`
+    // uses `instanceof` against this exact class to distinguish
+    // 'agent missing' (400) from 'catalog system fault' (500).
+    // A plain `Error` here would re-introduce the catch-wrap bug
+    // that the G2b PR was written to fix.
     const { service } = stubCatalog(null);
     const validate = makeScheduleAgentValidator(service);
-    await expect(validate("ghost")).rejects.toThrow();
+    await expect(validate("ghost")).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
   it("error message includes the FQN (useful for cause-chain inspection)", async () => {
@@ -42,7 +48,8 @@ describe("makeScheduleAgentValidator", () => {
     } catch (err) {
       captured = err;
     }
-    expect(captured).toBeInstanceOf(Error);
+    expect(captured).toBeInstanceOf(AgentNotFoundError);
+    expect((captured as AgentNotFoundError).agent).toBe("acme/ghost-agent");
     expect((captured as Error).message).toContain("acme/ghost-agent");
   });
 

@@ -2,6 +2,7 @@ import pino, { type Logger } from "pino";
 import { assertValidCronExpr, assertValidTimezone, describeCron, nextRuns } from "./cron.js";
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   ScheduleEnabledError,
   ScheduleError,
   ScheduleHasInFlightError,
@@ -340,7 +341,12 @@ export class ScheduleService {
     try {
       await this.agentValidator(agent);
     } catch (err) {
-      throw new AgentNotFoundError(agent, { cause: err });
+      // The schedule-agent-validator (packages/core/src/wiring/
+      // schedule-agent-validator.ts) throws schedule's own
+      // `AgentNotFoundError` on null catalog lookup. Anything else
+      // from the validator is a catalog-system fault.
+      if (err instanceof AgentNotFoundError) throw err;
+      throw new AgentResolutionFailedError(agent, { cause: err });
     }
   }
 

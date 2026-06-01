@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
+import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
 import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import {
   AgentNotFoundError,
+  AgentResolutionFailedError,
   assertFramingPromptIsSafe,
   CorruptedTaskError,
   type DispatchOpts,
@@ -681,14 +683,49 @@ describe("formatTaskMd", () => {
 });
 
 describe("dispatch — error paths", () => {
-  it("AgentNotFoundError when catalog cannot resolve the agent", async () => {
+  it("wraps a generic catalog Error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
+    // A non-typed catalog failure (DB exploded, parser blew up, etc.)
+    // is a system fault, not a user error. The previous behaviour
+    // wrapped every catalog throw as AgentNotFoundError (400),
+    // masking real bugs behind a misleading 'agent not found'
+    // response. Destructive validation for the
+    // `instanceof CatalogAgentNotFoundError` branch in
+    // task-service.ts: removing the AgentResolutionFailedError
+    // throw collapses this back to AgentNotFoundError and this
+    // assertion must fail.
+    const foreign = new Error("nope");
     const { m } = await makeManager({
-      catalog: stubCatalog({ resolveError: new Error("nope") }),
+      catalog: stubCatalog({ resolveError: foreign }),
     });
-    await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(AgentNotFoundError);
+    const err = await m.dispatch(dispatchOf()).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(AgentResolutionFailedError);
+    expect(err).not.toBeInstanceOf(AgentNotFoundError);
+    expect((err as AgentResolutionFailedError).cause).toBe(foreign);
     // No directory should have been created.
     const entries = await safeReaddir(tasksDir);
     expect(entries).toEqual([]);
+  });
+
+  it("wraps a CatalogAgentNotFoundError from resolveAgent as task's AgentNotFoundError", async () => {
+    // The catalog's typed not-found marker MUST be preserved as a
+    // task-package AgentNotFoundError (400). Without the
+    // `instanceof CatalogAgentNotFoundError` branch in
+    // task-service.ts, this would wrap as AgentResolutionFailedError
+    // (500) and surface to users as 'internal error'.
+    const catalogErr = new CatalogAgentNotFoundError("demo");
+    const { m } = await makeManager({
+      catalog: stubCatalog({ resolveError: catalogErr }),
+    });
+    const err = await m.dispatch(dispatchOf({ agent: "demo" })).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(AgentNotFoundError);
+    expect(err).not.toBeInstanceOf(AgentResolutionFailedError);
+    expect((err as AgentNotFoundError).cause).toBe(catalogErr);
   });
 
   it("AgentNotFoundError when caller passes empty/invalid agent name", async () => {
@@ -696,12 +733,17 @@ describe("dispatch — error paths", () => {
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  it("re-throws a foreign AgentNotFoundError (matched by name) without re-wrapping it", async () => {
-    // Simulates a sibling `AgentNotFoundError` thrown from `@emploke/schedule`
-    // or `@emploke/session`: same constructor name, but not an instance of
-    // the task-package class. The dispatch guard must match by name string
-    // so the typed boundary survives across packages (TODO(#tier-b): hoist
-    // AgentNotFoundError to @emploke/catalog so the name guard isn't needed).
+  it("wraps a foreign Error (even with name='AgentNotFoundError') as AgentResolutionFailedError — only catalog's class counts as a not-found marker", async () => {
+    // Previously the dispatch catch used a name-string fallback
+    // (`err.name === 'AgentNotFoundError'`) so that sibling
+    // AgentNotFoundError instances from `@emploke/schedule` or
+    // `@emploke/session` would propagate. That fallback was a
+    // hazard: any caller-controlled object that happened to set
+    // `.name = 'AgentNotFoundError'` could spoof a 400 user-error
+    // path and mask a real catalog system fault. The Tier-B fix
+    // restricts the not-found branch to the catalog's typed class
+    // only; everything else, including a name-spoofed foreign
+    // Error, surfaces as 500 via AgentResolutionFailedError.
     const foreign = new Error("agent not found in schedule package");
     foreign.name = "AgentNotFoundError";
     const { m } = await makeManager({
@@ -711,11 +753,8 @@ describe("dispatch — error paths", () => {
       () => null,
       (e) => e,
     );
-    // Original foreign error surfaces unchanged — not wrapped in the
-    // task-package AgentNotFoundError.
-    expect(err).toBe(foreign);
-    expect((err as Error).name).toBe("AgentNotFoundError");
-    expect(err instanceof AgentNotFoundError).toBe(false);
+    expect(err).toBeInstanceOf(AgentResolutionFailedError);
+    expect((err as AgentResolutionFailedError).cause).toBe(foreign);
   });
 
   it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatch", async () => {
