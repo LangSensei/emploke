@@ -24,7 +24,6 @@ import { useMounted } from "../hooks/useMounted";
 import { useSelectedTask } from "../hooks/useSelectedTask";
 import { useTasks } from "../hooks/useTasks";
 import { useUrlSearchValue } from "../hooks/useUrlState";
-import { errorMessage } from "../utils/errors";
 
 interface TasksProps {
   agents: AgentEntry[];
@@ -127,7 +126,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
       await refresh();
     } catch (e) {
       if (!mounted.current) return;
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -146,7 +145,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
       await refresh();
     } catch (e) {
       if (!mounted.current) return;
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -180,7 +179,7 @@ export function TasksPage({ agents, currentWorkspaceId, config, fixedAgentFqn }:
       await refresh();
     } catch (e) {
       if (!mounted.current) return;
-      const msg = errorMessage(e);
+      const msg = e instanceof Error ? e.message : String(e);
       // 409 = already terminal; benign race — next refresh re-syncs.
       if (/409/.test(msg)) {
         setCancelTarget(null);

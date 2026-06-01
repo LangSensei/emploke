@@ -56,7 +56,7 @@ export async function stop(opts: StopOpts = {}): Promise<CommandResult> {
     if (code !== "ESRCH") {
       return {
         exitCode: 1,
-        stderr: `failed to send SIGTERM to pid ${existing.pid}: ${(err as Error).message}\n`,
+        stderr: `failed to send SIGTERM to pid ${existing.pid}: ${err instanceof Error ? err.message : String(err)}\n`,
       };
     }
     // Race: process exited between isPidAlive and kill — fine, fall through.

@@ -7,7 +7,6 @@ import {
   type SchedulePreview,
   type ScheduleView,
 } from "../../api";
-import { errorMessage, isAbortError } from "../../utils/errors";
 import { Modal } from "../Modal";
 import { type Preset, presetToCron, validatePreset } from "./cronPresets";
 import { PresetEditor } from "./PresetEditor";
@@ -149,10 +148,10 @@ export function CreateScheduleModal({
           // cleanup runs `ctrl.abort()`; silently swallow it so the
           // modal doesn't flash a misleading "preview failed" on
           // every keystroke.
-          if (isAbortError(e)) return;
+          if (e instanceof Error && e.name === "AbortError") return;
           if (ctrl.signal.aborted) return;
           setPreview(null);
-          setPreviewError(errorMessage(e));
+          setPreviewError(e instanceof Error ? e.message : String(e));
         })
         .finally(() => {
           if (!ctrl.signal.aborted) setPreviewLoading(false);
@@ -206,7 +205,7 @@ export function CreateScheduleModal({
       onCreated(created);
       onClose();
     } catch (err) {
-      setSubmitError(errorMessage(err));
+      setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }

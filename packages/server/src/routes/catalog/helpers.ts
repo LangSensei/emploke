@@ -30,7 +30,7 @@ export async function readSkillInstallBody(
   try {
     return validateSkillInstallInput(parsed.body);
   } catch (e) {
-    return { error: (e as Error).message };
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -43,7 +43,7 @@ export async function readAgentInstallBody(
   try {
     return validateAgentInstallInput(parsed.body);
   } catch (e) {
-    return { error: (e as Error).message };
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -58,7 +58,7 @@ export async function readMcpInstallBody(c: Context): Promise<McpInstallBody | {
   try {
     return validateMcpInstallInput(parsed.body);
   } catch (e) {
-    return { error: (e as Error).message };
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 

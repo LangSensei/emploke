@@ -369,7 +369,7 @@ function parseTargetRow(row: ScheduleRow): ScheduleTarget {
     parsed = JSON.parse(row.targetJson);
   } catch (err) {
     throw new ScheduleError(
-      `Schedule "${row.id}" corrupted: target_json is not valid JSON: ${(err as Error).message}`,
+      `Schedule "${row.id}" corrupted: target_json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {

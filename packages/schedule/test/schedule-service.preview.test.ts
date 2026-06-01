@@ -60,7 +60,9 @@ describe("ScheduleService.preview", () => {
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(InvalidCronExprError);
-      expect((err as Error).message).toContain("6-field cron not supported in v1");
+      expect(err instanceof Error ? err.message : String(err)).toContain(
+        "6-field cron not supported in v1",
+      );
     }
   });
 

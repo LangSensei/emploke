@@ -240,7 +240,7 @@ function rowToTask(row: TaskRow): TaskEntity {
   } catch (err) {
     throw new CorruptedTaskError(
       row.id,
-      `task.metadata is not valid JSON: ${(err as Error).message}`,
+      `task.metadata is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   if (metaParsed === null || typeof metaParsed !== "object" || Array.isArray(metaParsed)) {
@@ -278,7 +278,10 @@ function parseJsonColumn<T>(id: string, name: string, raw: string | null): T | u
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new CorruptedTaskError(id, `task.${name} is not valid JSON: ${(err as Error).message}`);
+    throw new CorruptedTaskError(
+      id,
+      `task.${name} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new CorruptedTaskError(id, `task.${name} must decode to an object`);

@@ -59,7 +59,9 @@ async function readContentPayload(opts: {
   try {
     return await readFile(opts.contentFile as string, "utf8");
   } catch (err) {
-    return { error: `--content-file read failed: ${(err as Error).message}` };
+    return {
+      error: `--content-file read failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
@@ -84,14 +86,18 @@ async function readMetadataPayload(opts: {
     try {
       raw = await readFile(opts.metadataFile as string, "utf8");
     } catch (err) {
-      return { error: `--metadata-file read failed: ${(err as Error).message}` };
+      return {
+        error: `--metadata-file read failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    return { error: `--metadata JSON parse error: ${(err as Error).message}` };
+    return {
+      error: `--metadata JSON parse error: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { error: "--metadata must be a JSON object" };

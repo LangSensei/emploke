@@ -26,7 +26,6 @@ import {
 } from "../components/schedules/shared";
 import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
-import { errorMessage } from "../utils/errors";
 
 export interface SchedulesPageProps {
   agents: AgentEntry[];
@@ -163,7 +162,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       setError(null);
     } catch (e) {
       if (!mounted.current) return;
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setLoaded(true);
     }
@@ -248,7 +247,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       setRefreshToken((n) => n + 1);
     } catch (e) {
       if (!mounted.current) return;
-      setDeleteError(errorMessage(e));
+      setDeleteError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setDeleteBusy(false);
     }
