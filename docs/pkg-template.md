@@ -117,7 +117,9 @@ that introduces this convention.
 
 ### Hard rules
 
-1. **Subdir basename equals facade basename.** `task-service.ts` ↔ `task-service/`. Enforced mechanically — see the structural test in `packages/task/test/split-convention.test.ts`.
+> **Scope.** These 7 rules apply ONLY when a subdir has a sibling `.ts` / `.tsx` file at the parent level (the SPLIT pattern — e.g. `task-service.ts` next to `task-service/`). Subdirs without a sibling file (CATEGORY dirs — e.g. `packages/catalog/src/agent/`, `packages/catalog/src/facade/`, `packages/server/src/routes/`) are a separate, pre-existing organisational pattern and are unaffected by these rules; they MAY contain an `index.ts` barrel and follow the multi-entity / per-route conventions documented elsewhere on this page.
+
+1. **Subdir basename equals facade basename AND is a direct sibling.** `task-service.ts` ↔ `task-service/` in the same directory. Enforced mechanically — see the structural test in `packages/task/test/split-convention.test.ts`. The subdir MUST sit next to its facade; a subdir at any other path (e.g. `src/internal/<role>/`) is not a recognised SPLIT and forfeits the no-barrel and package-private guarantees this convention provides.
 2. **No barrel re-export** inside the subdir (no `<entity>-<role>/index.ts`). The facade composes via direct relative imports (`./task-service/queries.js` etc.). Enforced by the same structural test.
 3. **Subdir files are package-private.** They MUST NOT appear in the package's top-level `src/index.ts` barrel. The facade is the only public surface.
 4. **Concern files use bare names** (`queries.ts`, `mutations.ts`, `shutdown.ts`) — the subdir name already supplies the entity context. Do NOT prefix (`task-queries.ts` inside `task-service/` is wrong).
@@ -127,13 +129,20 @@ that introduces this convention.
 
 ### When NOT to use this pattern
 
-- **Cross-entity shared infrastructure** → use a `_shared/` subdir (no sibling file at the parent level). See `packages/catalog/src/_shared/`. The structural test skips any directory whose name starts with `_`.
+- **Cross-entity shared infrastructure** → use a `_shared.ts` file (or a `_*` subdir) — the structural test skips any directory whose name starts with `_`, and treats `_`-prefixed files as ordinary peer modules outside any SPLIT registry. In-tree examples: `packages/server/src/routes/_shared.ts`, `packages/terminal/src/_shared.ts`, `packages/server/src/routes/_error-policies/` (`_shared-bodies.ts` inside it). The leading underscore signals "package-private utility, not a facade-split peer".
 - **Component organisation** (e.g. a page + its sub-components) → `packages/dashboard/src/components/tasks/TaskDetail.tsx` + `TaskDetail/` already does this; it is a related but distinct pattern (the subdir contains presentational sub-components, not concern splits of one class). The same structural rules (no `index.tsx` barrel, exact-case sibling) apply.
 - **Different concerns belonging to different services** in the same package → keep them as separate top-level `<entity>-<role>.ts` files (current convention).
 
 ### Migration of existing big files
 
 Pre-existing big files do NOT need preemptive splitting. Apply this convention WHEN a refactor of that file is otherwise needed (e.g. a feature change, a bug fix that touches many sections, an audit-flagged improvement). PRs that opportunistically split should reference this section in the PR body.
+
+**Registry maintenance (mandatory).** When you split a previously-flat file under this convention, also update `packages/task/test/split-convention.test.ts`:
+
+- Add the new subdir's repo-relative path to `REQUIRED_SPLITS` so future PRs cannot silently delete the facade (the structural test asserts every entry still classifies as SPLIT). If you remove or collapse a SPLIT, drop the entry in the same PR — the test treats `REQUIRED_SPLITS` as the *exact* set of on-disk SPLITs and will fail on either drift direction.
+- Remove the subdir from `EXPECTED_CATEGORY_DIRS_AT_CONVENTION_INTRODUCTION` if it was previously a CATEGORY (the SPLIT promotion turns the same path into a SPLIT, so leaving it in the snapshot would trip the "must still be CATEGORY" assertion).
+
+The two registries together are the mechanical record of every applied SPLIT and every surveyed CATEGORY; they must move in lock-step with the source tree.
 
 ## Test file naming
 

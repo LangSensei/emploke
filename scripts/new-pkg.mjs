@@ -78,7 +78,21 @@ if (await exists(dest)) {
   process.exit(1);
 }
 
-await cp(TEMPLATE, dest, { recursive: true });
+// Skip the `_examples/` directory tree when copying. It holds documentation
+// shapes (e.g. `_examples/split-layout/` — the facade + sibling subdir
+// reference) that exist for contributors reading the template; new packages
+// must not inherit them, or every scaffolded pkg would carry the example as
+// dead weight. We match the path segment (not a substring) so an unrelated
+// file/dir that merely contains "_examples" in its name is not affected.
+const EXAMPLES_DIR_NAME = "_examples";
+await cp(TEMPLATE, dest, {
+  recursive: true,
+  filter: (src) => {
+    const rel = path.relative(TEMPLATE, src);
+    if (rel === "") return true; // the template root itself
+    return !rel.split(path.sep).includes(EXAMPLES_DIR_NAME);
+  },
+});
 
 async function walk(dir) {
   const out = [];

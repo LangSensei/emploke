@@ -30,9 +30,11 @@ need it.
 concerns**, split it via the **facade + sibling subdir** convention.
 See `docs/pkg-template.md § Splitting big files via facade + sibling
 subdir`. Canonical reference: `packages/task/src/task-service.ts` +
-`packages/task/src/task-service/`. The scaffold stays flat — new
-packages start with one `<entity>-service.ts` file and only split
-later if the file actually outgrows the thresholds.
+`packages/task/src/task-service/`. For a self-contained illustrated
+example with placeholder names you can rename when applying, see
+`packages/_template/_examples/split-layout/`. The scaffold stays flat
+— new packages start with one `<entity>-service.ts` file and only
+split later if the file actually outgrows the thresholds.
 
 ### Catch-block convention
 
