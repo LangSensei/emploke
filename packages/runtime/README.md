@@ -3,26 +3,26 @@
 Runtime adapter contract + Copilot CLI implementation.
 
 A *runtime* adapts a third-party CLI (GitHub Copilot today; Gemini,
-Claude Code,  in future) for use by emploke. The interface is
-**domain-agnostic**  it doesn''t know about emploke''s `Session` /
+Claude Code planned) for use by emploke. The interface is
+**domain-agnostic** - it doesn't know about emploke's `Session` /
 `Task` value types. It exposes two execution modes (interactive vs
 headless) plus a uniform observability + maintenance surface that
 works against either:
 
-- **Interactive**  `provision` (bake an agent into a workdir) +
+- **Interactive** - `provision` (bake an agent into a workdir) +
   `buildInteractiveLaunch` (build the shell command the user runs to
   drop into the CLI).
-- **Headless**  `launchHeadless` (spawn the CLI as a detached worker
+- **Headless** - `launchHeadless` (spawn the CLI as a detached worker
   that consumes a prompt and exits).
-- **Observability**  `readMetadata` (title / lastActiveAt) +
+- **Observability** - `readMetadata` (title / lastActiveAt) +
   `readActivity` (paginated parsed timeline) + `streamActivity`
   (live SSE tail). All keyed by an opaque `runtimeSessionId`.
-- **Maintenance**  `deleteState` (rm the runtime''s recorded state
+- **Maintenance** - `deleteState` (rm the runtime's recorded state
   for one `runtimeSessionId`).
 
 Per-runtime preconditions (folder-trust setup, credential refresh,
-license checks, ) live **inside the adapter**, executed lazily at
-the moment they''re needed.
+license checks, ...) live **inside the adapter**, executed lazily at
+the moment they're needed.
 
 ## Layout
 

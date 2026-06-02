@@ -26,9 +26,12 @@ export class UnknownRuntimeError extends Error {
  * Class name is pinned to `RuntimeRefreshFailed` (rather than
  * `RuntimeReadMetadataFailed`) because consumers in the dashboard
  * error-toast registry pattern-match on `instanceof
- * RuntimeRefreshFailed`; the actual call site is
- * `CopilotRuntime.readMetadata`. The `.message` and `.name` carry
- * "refresh failed" for the same `instanceof`-adjacent reason.
+ * RuntimeRefreshFailed`. The actual call site — the only thrower —
+ * is `CopilotRuntime.readMetadata`. `.message` (templated as
+ * `runtime "<kind>" refresh failed`) and `.name`
+ * (`"RuntimeRefreshFailed"`) carry the legacy wording for the same
+ * backwards-compat reason: any consumer that string-matched on
+ * either field would also break on rename.
  */
 export class RuntimeRefreshFailed extends Error {
   constructor(
