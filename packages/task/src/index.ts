@@ -29,6 +29,13 @@ export {
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
 export { safeJoinUnderRoot } from "./paths.js";
+export type {
+  AgentEntry,
+  AgentResolverPort,
+  BlockedDep,
+  BlockedReason,
+  MissingDep,
+} from "./ports.js";
 export type { TaskRuntimeMetadata } from "./task-meta.js";
 export { readTaskRuntimeMetadata } from "./task-meta.js";
 export { TaskService } from "./task-service.js";

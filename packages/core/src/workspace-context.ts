@@ -262,7 +262,8 @@ export class WorkspaceContextRegistry {
       cleanup.push(() => catalogModule.close());
       sessionModule = await composeSessionModule({
         dbFile,
-        catalog: catalogModule.service,
+        agentResolver: catalogModule.service,
+        contentSource: catalogModule.service,
         runtimeRegistry: this.runtimeRegistry,
         workspaceDir: workspace.workspaceDir,
         workspaceId: id,
@@ -271,7 +272,8 @@ export class WorkspaceContextRegistry {
       cleanup.push(() => sessionModule.close());
       taskModule = await composeTaskModule({
         dbFile,
-        catalog: catalogModule.service,
+        agentResolver: catalogModule.service,
+        contentSource: catalogModule.service,
         runtimeRegistry: this.runtimeRegistry,
         workspaceDir: workspace.workspaceDir,
         workspaceId: id,

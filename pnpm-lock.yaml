@@ -396,9 +396,6 @@ importers:
 
   packages/session:
     dependencies:
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
@@ -430,9 +427,6 @@ importers:
 
   packages/task:
     dependencies:
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime

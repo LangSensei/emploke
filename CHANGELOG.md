@@ -7,6 +7,51 @@ breaking changes ship without semver-major bumps.
 
 ### Breaking
 
+#### task + session: structural decoupling from @emploke/catalog via AgentResolverPort
+
+`@emploke/task` and `@emploke/session` no longer import from
+`@emploke/catalog`. Both services now accept structural ports
+(`AgentResolverPort`, `AgentContentSource`) at compose time;
+`@emploke/catalog`'s `CatalogService` satisfies them via structural
+typing, so the composition root in `@emploke/core` continues to pass
+the catalog instance through as-is — no adapter layer.
+
+- `@emploke/task`:
+  - `composeTaskModule` option `catalog: CatalogService` REMOVED;
+    replaced by `agentResolver: AgentResolverPort` AND
+    `contentSource: AgentContentSource`. `TaskServiceConfig` /
+    `TaskServiceCtx` change in the same shape.
+  - `BlockedReason`, `MissingDep`, `BlockedDep`, `AgentEntry`,
+    `AgentResolverPort` are now defined in
+    `packages/task/src/ports.ts` and re-exported from the public
+    surface. The runtime value flowing through
+    `EntryNotReadyError.reason` is byte-identical; consumers can
+    import `BlockedReason` from either `@emploke/task` or
+    `@emploke/catalog` (the two are structurally compatible).
+  - `@emploke/catalog` removed from `dependencies`.
+- `@emploke/session`:
+  - `composeSessionModule` option `catalog: CatalogService` REMOVED;
+    same `agentResolver` + `contentSource` shape as task.
+    `SessionServiceConfig` follows.
+  - `create()` discriminates "agent not found" via `null` return
+    from `agentResolver.getAgentEntry(...)` (Option II). The old
+    `instanceof CatalogAgentNotFoundError` branch is gone. Any
+    failure of `resolveAgent(...)` is classified as
+    `AgentResolutionFailedError` (500). TOCTOU note: an agent that
+    disappears between the two calls surfaces as 500 rather than
+    400 — accepted as vanishingly rare in practice.
+  - `@emploke/catalog` removed from `dependencies`.
+- `@emploke/runtime`: now re-exports the structural type aliases
+  `AgentContentSource` and `ResolvedAgent` from its public surface
+  so downstream packages (task, session) can name them without a
+  catalog import. Runtime behaviour unchanged.
+- Cross-pkg audit (`packages/task/test/inter-service-imports.test.ts`)
+  gained a stricter assertion: every TS/TSX file under
+  `packages/task/src/**` and `packages/session/src/**` must
+  reference `@emploke/catalog` ZERO times — including type-only
+  imports, re-exports, and `import("@emploke/catalog")` type nodes.
+  Regression-prevention for accidental re-introductions.
+
 #### schedule: open registerKind handler registry (substrate ⇄ kind separation)
 
 Replaces the previous task-specific `ScheduleService` surface with an

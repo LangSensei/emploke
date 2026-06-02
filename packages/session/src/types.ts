@@ -1,7 +1,7 @@
-import type { CatalogService } from "@emploke/catalog";
-import type { RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
+import type { AgentResolverPort } from "./ports.js";
 import type * as schema from "./schema.js";
 
 /** Re-export `LaunchCommand` so call sites only need one import. */
@@ -32,8 +32,15 @@ export interface Session {
  * workspace, owned by the @emploke/core orchestrator).
  */
 export interface SessionServiceConfig {
-  /** Catalog used to resolve agents at create() time. */
-  readonly catalog: CatalogService;
+  /** Resolves agents at create() time (structural — catalog satisfies it). */
+  readonly agentResolver: AgentResolverPort;
+  /**
+   * Provides agent / skill / mcp bytes for `runtime.provision` to
+   * materialise into the workdir. Catalog satisfies this structurally;
+   * the type lives in `@emploke/runtime` so this package depends on
+   * catalog only via structural typing.
+   */
+  readonly contentSource: AgentContentSource;
   /** Registry of runtime adapters; must contain at least the default runtime. */
   readonly runtimeRegistry: RuntimeRegistry;
   /** Absolute path of the workspace this manager belongs to. */

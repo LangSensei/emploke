@@ -1,10 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  type AgentResolveResult,
-  AgentNotFoundError as CatalogAgentNotFoundError,
-} from "@emploke/catalog";
-import type { Runtime, RuntimeHandle } from "@emploke/runtime";
+import type { ResolvedAgent, Runtime, RuntimeHandle } from "@emploke/runtime";
 import type { Logger } from "pino";
 import {
   AgentNotFoundError,
@@ -123,38 +119,36 @@ export async function safeRm(p: string, logger: Logger): Promise<void> {
 }
 
 /**
- * Resolve an agent name to a runnable `AgentResolveResult` via the
- * catalog. Performs the cascade-aware status check — refuses dispatch
- * on blocked agents (prereqs not acknowledged, agent disabled, or
- * any transitive skill missing/blocked). Throws `AgentNotFoundError`
- * for unknown agents, `EntryNotReadyError` for blocked entries, and
- * `AgentResolutionFailedError` (500) for unexpected catalog faults.
+ * Resolve an agent name to a runnable `ResolvedAgent` via the agent
+ * resolver port. Performs the cascade-aware status check — refuses
+ * dispatch on blocked agents (prereqs not acknowledged, agent
+ * disabled, or any transitive skill missing/blocked). Throws
+ * `AgentNotFoundError` for unknown agents (`getAgentEntry` returns
+ * null), `EntryNotReadyError` for blocked entries, and
+ * `AgentResolutionFailedError` (500) for unexpected resolver faults.
+ *
+ * Discrimination is via `null` return from `getAgentEntry` + generic
+ * catch on `resolveAgent`; the port deliberately does NOT expose an
+ * "agent not found" error class (see `ports.ts` Decision #9). TOCTOU
+ * note: an agent disappearing between `getAgentEntry` and
+ * `resolveAgent` surfaces as `AgentResolutionFailedError` (500)
+ * rather than `AgentNotFoundError` (400) — accepted as vanishingly
+ * rare in practice.
  */
 export async function resolveDispatchAgent(
   ctx: TaskServiceCtx,
   agentName: string,
-): Promise<AgentResolveResult> {
+): Promise<ResolvedAgent> {
+  const entry = await ctx.agentResolver.getAgentEntry(agentName);
+  if (entry === null) {
+    throw new AgentNotFoundError(agentName);
+  }
+  if (entry.status === "blocked") {
+    throw new EntryNotReadyError(agentName, entry.blockedReason);
+  }
   try {
-    const entry = await ctx.catalog.getAgentEntry(agentName);
-    if (entry === null) {
-      throw new AgentNotFoundError(agentName);
-    }
-    if (entry.status === "blocked") {
-      throw new EntryNotReadyError(agentName, entry.blockedReason);
-    }
-    return await ctx.catalog.resolveAgent(agentName);
+    return await ctx.agentResolver.resolveAgent(agentName);
   } catch (err) {
-    // Pass through this layer's own throws (each is already shaped
-    // for the route layer).
-    if (err instanceof AgentNotFoundError || err instanceof EntryNotReadyError) {
-      throw err;
-    }
-    // Catalog said "agent does not exist" → present as user error (400).
-    if (err instanceof CatalogAgentNotFoundError) {
-      throw new AgentNotFoundError(agentName, err);
-    }
-    // Any other catalog failure is a system fault — surface as 500
-    // with the cause preserved for `5xx fault` logs.
     throw new AgentResolutionFailedError(agentName, err);
   }
 }
@@ -181,7 +175,7 @@ interface RunDispatchArgs {
   readonly details: string | undefined;
   readonly origin: TaskOrigin;
   readonly runtime: Runtime;
-  readonly resolveResult: AgentResolveResult;
+  readonly resolveResult: ResolvedAgent;
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
@@ -265,7 +259,7 @@ export async function runDispatch(ctx: TaskServiceCtx, args: RunDispatchArgs): P
     handle = await runtime.launchHeadless({
       workdir,
       agent: resolveResult,
-      catalog: ctx.catalog,
+      catalog: ctx.contentSource,
       // Fixed single-line ASCII framing prompt. `brief` + `details`
       // are NOT passed via argv — they live byte-for-byte in
       // `<workdir>/TASK.md` and the framing prompt tells the agent

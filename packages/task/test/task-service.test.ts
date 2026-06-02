@@ -1,9 +1,13 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
-import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
-import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
+import type {
+  AgentContentSource,
+  LaunchCommand,
+  ResolvedAgent,
+  Runtime,
+  RuntimeHandle,
+} from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,7 +36,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import {
   AgentNotFoundError,
   AgentResolutionFailedError,
+  type AgentResolverPort,
   assertFramingPromptIsSafe,
+  type BlockedReason,
   CorruptedTaskError,
   type DispatchOpts,
   EntryNotReadyError,
@@ -86,10 +92,11 @@ afterEach(async () => {
   await rm(workspaceDir, { recursive: true, force: true });
 });
 
-// ───── catalog stub ─────────────────────────────────────────
+// ───── agent resolver stub ─────────────────────────────────
 
-interface StubCatalogOpts {
-  agents?: Record<string, AgentResolveResult>;
+interface StubResolverOpts {
+  agents?: Record<string, ResolvedAgent>;
+  /** Forces `resolveAgent(...)` to throw — used to test 500 mapping. */
   resolveError?: Error;
   /**
    * Map of agent name → blockedReason. When `getAgentEntry` is called
@@ -97,52 +104,61 @@ interface StubCatalogOpts {
    * surfaces `EntryNotReadyError`. Used to test the status guard added
    * in the issue #57 rework.
    */
-  blockedAgents?: Record<string, import("@emploke/catalog").BlockedReason>;
+  blockedAgents?: Record<string, BlockedReason>;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): CatalogService {
+function stubAgentResolver(opts: StubResolverOpts = {}): AgentResolverPort {
   const agents = opts.agents ?? {};
   const blocked = opts.blockedAgents ?? {};
   return {
-    catalogDir: "/tmp/catalog",
-    async resolveAgent(name: string): Promise<AgentResolveResult> {
+    async resolveAgent(name: string): Promise<ResolvedAgent> {
       if (opts.resolveError) throw opts.resolveError;
       const a = agents[name];
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-    // Status guard added in PR #57: dispatch refuses blocked agents.
-    // Stub returns a `ready` entry for known agents and `null` for
-    // unknown ones (which dispatch translates to AgentNotFoundError).
+    // Mirrors catalog.getAgentEntry: returns null for unknown agents
+    // (catalog's real behaviour — never throws `AgentNotFoundError`
+    // from this path). Returns a `blocked` entry when the agent is
+    // listed in `blockedAgents`.
     async getAgentEntry(name: string) {
-      if (opts.resolveError) throw opts.resolveError;
       if (!(name in agents)) return null;
       const reason = blocked[name];
       if (reason !== undefined) {
-        return {
-          agent: { fqn: name } as unknown,
-          status: "blocked" as const,
-          blockedReason: reason,
-        } as unknown as ReturnType<CatalogService["getAgentEntry"]> extends Promise<infer T>
-          ? T
-          : never;
+        return { status: "blocked" as const, blockedReason: reason };
       }
-      return { agent: { fqn: name } as unknown, status: "ready" as const } as unknown as ReturnType<
-        CatalogService["getAgentEntry"]
-      > extends Promise<infer T>
-        ? T
-        : never;
+      return { status: "ready" as const };
     },
-  } as unknown as CatalogService;
+  };
 }
 
-const fakeAgentResolve = (name: string): AgentResolveResult =>
-  ({
-    agent: { name, description: "x", version: "0.0.1" },
-    agentPath: `/tmp/catalog/agents/${name}`,
-    skills: [],
-    mcps: [],
-  }) as unknown as AgentResolveResult;
+/**
+ * Minimal `AgentContentSource` stub. The task-service tests' stub
+ * runtime ignores the content source (its `launchHeadless` never
+ * touches it), so the methods just need to satisfy the type.
+ */
+function stubContentSource(): AgentContentSource {
+  return {
+    async resolveAgent(_name: string): Promise<ResolvedAgent> {
+      return { agent: { fqn: "stub" }, skills: [], mcps: [] };
+    },
+    async *agentEntries(_fqn: string) {
+      // no entries
+    },
+    async *skillEntries(_fqn: string) {
+      // no entries
+    },
+    async getMcpRuntimeConfig(_fqn: string) {
+      return {};
+    },
+  };
+}
+
+const fakeAgentResolve = (name: string): ResolvedAgent => ({
+  agent: { fqn: name },
+  skills: [],
+  mcps: [],
+});
 
 // ───── runtime stub ─────────────────────────────────────────
 
@@ -461,7 +477,8 @@ const dispatchOf = (overrides: Partial<DispatchOpts> = {}): DispatchOpts => ({
 
 const makeManager = async (
   overrides: {
-    catalog?: CatalogService;
+    agentResolver?: AgentResolverPort;
+    contentSource?: AgentContentSource;
     runtime?: Runtime;
     registry?: RuntimeRegistry;
     now?: () => Date;
@@ -489,7 +506,9 @@ const makeManager = async (
     repo = built.repo;
   }
   const m = new TaskService({
-    catalog: overrides.catalog ?? stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+    agentResolver:
+      overrides.agentResolver ?? stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+    contentSource: overrides.contentSource ?? stubContentSource(),
     runtimeRegistry: registry,
     workspaceDir,
     workspaceId: overrides.workspaceId ?? "default-ws-id",
@@ -683,19 +702,19 @@ describe("formatTaskMd", () => {
 });
 
 describe("dispatch — error paths", () => {
-  it("wraps a generic catalog Error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
-    // A non-typed catalog failure (DB exploded, parser blew up, etc.)
-    // is a system fault, not a user error. The previous behaviour
-    // wrapped every catalog throw as AgentNotFoundError (400),
-    // masking real bugs behind a misleading 'agent not found'
-    // response. Destructive validation for the
-    // `instanceof CatalogAgentNotFoundError` branch in
-    // task-service.ts: removing the AgentResolutionFailedError
-    // throw collapses this back to AgentNotFoundError and this
-    // assertion must fail.
+  it("wraps a generic resolver Error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
+    // A non-typed resolver failure (DB exploded, parser blew up, etc.)
+    // is a system fault, not a user error. Option II's contract: any
+    // throw from `agentResolver.resolveAgent(...)` is classified as a
+    // 500. The not-found path only fires when `getAgentEntry` returns
+    // null. Destructive validation for the AgentResolutionFailedError
+    // throw site in agent-resolver.ts.
     const foreign = new Error("nope");
     const { m } = await makeManager({
-      catalog: stubCatalog({ resolveError: foreign }),
+      agentResolver: stubAgentResolver({
+        agents: { demo: fakeAgentResolve("demo") },
+        resolveError: foreign,
+      }),
     });
     const err = await m.dispatch(dispatchOf()).then(
       () => null,
@@ -709,23 +728,26 @@ describe("dispatch — error paths", () => {
     expect(entries).toEqual([]);
   });
 
-  it("wraps a CatalogAgentNotFoundError from resolveAgent as task's AgentNotFoundError", async () => {
-    // The catalog's typed not-found marker MUST be preserved as a
-    // task-package AgentNotFoundError (400). Without the
-    // `instanceof CatalogAgentNotFoundError` branch in
-    // task-service.ts, this would wrap as AgentResolutionFailedError
-    // (500) and surface to users as 'internal error'.
-    const catalogErr = new CatalogAgentNotFoundError("demo");
+  it("throws AgentNotFoundError when getAgentEntry returns null (unknown agent)", async () => {
+    // Option II discrimination: the resolver port reports "unknown"
+    // by returning null from getAgentEntry, NOT by throwing a typed
+    // not-found error. Tests the entry === null check in
+    // agent-resolver.ts. Destructive validation: deleting that check
+    // would let dispatch sail past into resolveAgent and surface a
+    // generic 500 instead of the user-facing 400.
     const { m } = await makeManager({
-      catalog: stubCatalog({ resolveError: catalogErr }),
+      agentResolver: stubAgentResolver(),
     });
-    const err = await m.dispatch(dispatchOf({ agent: "demo" })).then(
+    const err = await m.dispatch(dispatchOf({ agent: "missing" })).then(
       () => null,
       (e) => e,
     );
     expect(err).toBeInstanceOf(AgentNotFoundError);
     expect(err).not.toBeInstanceOf(AgentResolutionFailedError);
-    expect((err as AgentNotFoundError).cause).toBe(catalogErr);
+    expect((err as AgentNotFoundError).agent).toBe("missing");
+    // No `cause` — the resolver just said "not here", no upstream
+    // error to chain.
+    expect((err as AgentNotFoundError).cause).toBeUndefined();
   });
 
   it("AgentNotFoundError when caller passes empty/invalid agent name", async () => {
@@ -733,21 +755,19 @@ describe("dispatch — error paths", () => {
     await expect(m.dispatch(dispatchOf({ agent: "" }))).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  it("wraps a foreign Error (even with name='AgentNotFoundError') as AgentResolutionFailedError — only catalog's class counts as a not-found marker", async () => {
-    // Previously the dispatch catch used a name-string fallback
-    // (`err.name === 'AgentNotFoundError'`) so that sibling
-    // AgentNotFoundError instances from `@emploke/schedule` or
-    // `@emploke/session` would propagate. That fallback was a
-    // hazard: any caller-controlled object that happened to set
-    // `.name = 'AgentNotFoundError'` could spoof a 400 user-error
-    // path and mask a real catalog system fault. The Tier-B fix
-    // restricts the not-found branch to the catalog's typed class
-    // only; everything else, including a name-spoofed foreign
-    // Error, surfaces as 500 via AgentResolutionFailedError.
+  it("wraps a foreign Error (even with name='AgentNotFoundError') from resolveAgent as AgentResolutionFailedError", async () => {
+    // Option II locked: the only signal for "agent does not exist" is
+    // a null return from getAgentEntry. ANY throw from resolveAgent
+    // (including a foreign Error spoofing `.name = 'AgentNotFoundError'`)
+    // is classified as a 500 system fault. This prevents name-spoofed
+    // foreign errors from masquerading as user-facing 400s.
     const foreign = new Error("agent not found in schedule package");
     foreign.name = "AgentNotFoundError";
     const { m } = await makeManager({
-      catalog: stubCatalog({ resolveError: foreign }),
+      agentResolver: stubAgentResolver({
+        agents: { demo: fakeAgentResolve("demo") },
+        resolveError: foreign,
+      }),
     });
     const err = await m.dispatch(dispatchOf()).then(
       () => null,
@@ -778,7 +798,7 @@ describe("dispatch — error paths", () => {
 
   it("EntryNotReadyError when the agent is blocked due to prereqs", async () => {
     const { m } = await makeManager({
-      catalog: stubCatalog({
+      agentResolver: stubAgentResolver({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { needsPrereqsAck: true } },
       }),
@@ -797,7 +817,7 @@ describe("dispatch — error paths", () => {
 
   it("EntryNotReadyError when the agent is blocked because it was disabled by user", async () => {
     const { m } = await makeManager({
-      catalog: stubCatalog({
+      agentResolver: stubAgentResolver({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: { demo: { disabledByUser: true } },
       }),
@@ -809,10 +829,10 @@ describe("dispatch — error paths", () => {
 
   it("EntryNotReadyError when a transitive dep is blocked (cascade)", async () => {
     const { m } = await makeManager({
-      catalog: stubCatalog({
+      agentResolver: stubAgentResolver({
         agents: { demo: fakeAgentResolve("demo") },
         blockedAgents: {
-          demo: { blockedDeps: [{ kind: "skill", fqn: "public/tool" }] },
+          demo: { blockedDeps: [{ fqn: "public/tool" }] },
         },
       }),
     });
@@ -821,9 +841,7 @@ describe("dispatch — error paths", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(EntryNotReadyError);
-    expect((err as EntryNotReadyError).reason?.blockedDeps).toEqual([
-      { kind: "skill", fqn: "public/tool" },
-    ]);
+    expect((err as EntryNotReadyError).reason?.blockedDeps).toEqual([{ fqn: "public/tool" }]);
   });
 });
 
@@ -1052,7 +1070,7 @@ describe("get / list", () => {
       const rt = new StubRuntime();
       const { m } = await makeManager({
         runtime: rt,
-        catalog: stubCatalog({
+        agentResolver: stubAgentResolver({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
         }),
       });
@@ -1126,7 +1144,7 @@ describe("get / list", () => {
       const rt = new StubRuntime();
       const { m } = await makeManager({
         runtime: rt,
-        catalog: stubCatalog({
+        agentResolver: stubAgentResolver({
           agents: { writer: fakeAgentResolve("writer"), reviewer: fakeAgentResolve("reviewer") },
         }),
       });

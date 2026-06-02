@@ -11,9 +11,15 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
-import type { LaunchCommand, Runtime, RuntimeHandle } from "@emploke/runtime";
+import type {
+  AgentContentSource,
+  LaunchCommand,
+  ResolvedAgent,
+  Runtime,
+  RuntimeHandle,
+} from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
+import type { AgentResolverPort } from "../src/index.js";
 import { TaskService } from "../src/index.js";
 import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
@@ -100,7 +106,8 @@ export async function setupCancelFixture(
   reg.register(rt);
   const repo = new TaskRepository({ db: orm.db });
   const m = new TaskService({
-    catalog: fakeCatalog(),
+    agentResolver: fakeAgentResolver(),
+    contentSource: fakeContentSource(),
     runtimeRegistry: reg,
     workspaceDir,
     workspaceId: "cancel-fx-ws",
@@ -120,26 +127,40 @@ export async function teardownCancelFixture(fx: CancelFixture): Promise<void> {
   await rm(fx.tasksDir, { recursive: true, force: true });
 }
 
-export function fakeCatalog(): CatalogService {
+export function fakeAgentResolver(): AgentResolverPort {
   return {
-    catalogDir: "/tmp/catalog",
-    async resolveAgent(_name: string): Promise<AgentResolveResult> {
+    async resolveAgent(_name: string): Promise<ResolvedAgent> {
       return {
-        agent: { name: "demo", description: "d", version: "0.0.1" },
-        agentPath: "/tmp/catalog/agents/demo",
+        agent: { fqn: "demo" },
         skills: [],
         mcps: [],
-      } as unknown as AgentResolveResult;
+      };
     },
     async getAgentEntry(_name: string) {
-      return {
-        agent: { fqn: "demo" } as unknown,
-        status: "ready" as const,
-      } as unknown as ReturnType<CatalogService["getAgentEntry"]> extends Promise<infer T>
-        ? T
-        : never;
+      return { status: "ready" as const };
     },
-  } as unknown as CatalogService;
+  };
+}
+
+export function fakeContentSource(): AgentContentSource {
+  return {
+    async resolveAgent(_name: string): Promise<ResolvedAgent> {
+      return {
+        agent: { fqn: "demo" },
+        skills: [],
+        mcps: [],
+      };
+    },
+    async *agentEntries(_fqn: string) {
+      // no entries — tests using cancel-fixture never call provision
+    },
+    async *skillEntries(_fqn: string) {
+      // no entries
+    },
+    async getMcpRuntimeConfig(_fqn: string) {
+      return {};
+    },
+  };
 }
 
 /**

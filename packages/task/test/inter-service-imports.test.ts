@@ -96,42 +96,20 @@ interface Violation {
  * (file, importedPkg) pair that the audit would otherwise flag, with
  * a non-empty rationale.
  *
- * Initial seeding (PR #256 amendment):
- *
- * Two value-imports of `AgentNotFoundError` from `@emploke/catalog`
- * survive into the seeded audit. Both are runtime `instanceof`
- * discriminators that translate a catalog-thrown error into the
- * caller BC's local error type. The mature fix is documented in
- * `docs/pkg-template.md § Type placement convention` corollary
- * "Errors that cross the wire": promote the error's `name` literal
- * to `@emploke/api-types` and branch on `err.name === "AgentNotFoundError"`
- * instead of `instanceof CatalogAgentNotFoundError`. That migration is
- * out of scope for this audit's introduction (it would mix structural
- * enforcement with error-shape refactoring across two BCs); it is
- * tracked as a follow-up for 0.5.8.
- *
- * These two entries are seeded with that rationale rather than left
- * to fail the audit. The brief writer's `grep` pre-check missed them
- * because the lines read `import { type X, AgentNotFoundError as ... }
- * from "@emploke/catalog";` — the line contains the substring `type`
- * but the `type` modifier applies only to `X`, leaving the class as a
- * runtime value import. The AST-correct extractor in this file
- * catches the mixed form (see `extractCrossDomainImports`).
+ * Empty after P1 (arch/agent-resolver-port): the two seeded
+ * `instanceof CatalogAgentNotFoundError` entries — one in
+ * `packages/session/src/session-service.ts`, one in
+ * `packages/task/src/task-service/agent-resolver.ts` — are gone. Both
+ * call sites now discriminate "agent not found" via a `null` return
+ * from the local `AgentResolverPort.getAgentEntry(...)` (Option II;
+ * see `packages/task/src/ports.ts` and Decision #9 in P1's brief), so
+ * neither file imports anything from `@emploke/catalog` anymore. The
+ * stronger no-catalog-imports assertion below (see
+ * `task and session src/** has zero @emploke/catalog imports`)
+ * supersedes rule 5 for the catalog → task and catalog → session
+ * edges.
  */
-const ALLOWED_VIOLATIONS: readonly Violation[] = [
-  {
-    file: "packages/session/src/session-service.ts",
-    importedPkg: "catalog",
-    rationale:
-      "Runtime `instanceof CatalogAgentNotFoundError` discrimination — `SessionService` re-throws catalog's AgentNotFoundError as session's own SessionAgentNotFoundError to map a 400 user-error. Tracked for 0.5.8: promote the error name literal to @emploke/api-types per docs/pkg-template.md § Type placement convention corollary 'Errors that cross the wire' and switch to err.name discrimination.",
-  },
-  {
-    file: "packages/task/src/task-service/agent-resolver.ts",
-    importedPkg: "catalog",
-    rationale:
-      "Runtime `instanceof CatalogAgentNotFoundError` discrimination — agent-resolver re-throws catalog's AgentNotFoundError as task's own AgentNotFoundError to attach the upstream cause. Tracked for 0.5.8: promote the error name literal to @emploke/api-types per docs/pkg-template.md § Type placement convention corollary 'Errors that cross the wire' and switch to err.name discrimination.",
-  },
-];
+const ALLOWED_VIOLATIONS: readonly Violation[] = [];
 
 // ── helpers ────────────────────────────────────────────────────────────
 
@@ -410,9 +388,76 @@ describe("inter-service value-imports are forbidden", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// Parser self-tests — pin behaviour against hand-crafted source strings
-// so a TS version bump doesn't silently change classification.
+// Strict no-catalog-imports rule for the task and session src trees.
+// Strictly stronger than rule 5 above: forbids ALL `@emploke/catalog`
+// references — value imports, type imports, namespace imports,
+// re-exports, side-effect imports, and `import("@emploke/catalog")`
+// type nodes alike. Pins P1's outcome (arch/agent-resolver-port):
+// task + session now consume catalog only via the structural
+// `AgentResolverPort` / `AgentContentSource` ports that the
+// composition root (`@emploke/core`) supplies; the catalog package
+// must never appear in either tree's source again. Future PRs that
+// accidentally reintroduce a catalog import will fail this assertion.
 // ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Count every reference to `@emploke/catalog` reachable from a TS
+ * source file: import declarations (regardless of value/type-only),
+ * export-from declarations, and `import("@emploke/catalog")` type
+ * nodes. Comments + string literals are excluded automatically by
+ * the AST walk.
+ */
+function countCatalogReferences(source: string, fileName: string): number {
+  const scriptKind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, scriptKind);
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === "@emploke/catalog"
+    ) {
+      count++;
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === "@emploke/catalog"
+    ) {
+      count++;
+    } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteral(node.argument.literal) &&
+      node.argument.literal.text === "@emploke/catalog"
+    ) {
+      count++;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return count;
+}
+
+describe("task and session src/** has zero @emploke/catalog references (P1: structural decoupling)", () => {
+  for (const dom of ["task", "session"] as const) {
+    it(`packages/${dom}/src/** never references "@emploke/catalog"`, () => {
+      const srcDir = path.join(PACKAGES_DIR, dom, "src");
+      const offenders: { file: string; count: number }[] = [];
+      if (safeIsDir(srcDir)) {
+        for (const absFile of walkTsFiles(srcDir)) {
+          const source = readFileSync(absFile, "utf8");
+          const n = countCatalogReferences(source, absFile);
+          if (n > 0) offenders.push({ file: relPosix(absFile), count: n });
+        }
+      }
+      expect(
+        offenders,
+        `Found ${offenders.length} file(s) under packages/${dom}/src/** that reference @emploke/catalog:\n${offenders.map((o) => `  ${o.file} (${o.count} reference${o.count === 1 ? "" : "s"})`).join("\n")}\n\nP1 (arch/agent-resolver-port) decoupled @emploke/${dom} from @emploke/catalog. Pass a value satisfying the local AgentResolverPort + AgentContentSource at compose time instead of importing from catalog directly.`,
+      ).toEqual([]);
+    });
+  }
+});
 
 describe("inter-service-imports parser self-tests", () => {
   function classify(src: string): readonly ImportClassification[] {
@@ -471,6 +516,48 @@ describe("inter-service-imports parser self-tests", () => {
     const cs = classify('import { Foo } from "@emploke/catalog";');
     expect(cs).toHaveLength(1);
     expect(cs[0]?.isValueImport).toBe(true);
+  });
+});
+
+describe("countCatalogReferences self-tests", () => {
+  function count(src: string): number {
+    return countCatalogReferences(src, "virtual.ts");
+  }
+
+  it("counts a plain value import", () => {
+    expect(count('import { Foo } from "@emploke/catalog";')).toBe(1);
+  });
+
+  it("counts a type-only import", () => {
+    expect(count('import type { Foo } from "@emploke/catalog";')).toBe(1);
+  });
+
+  it("counts a per-specifier type-only import (mixed all-type)", () => {
+    expect(count('import { type Foo, type Bar } from "@emploke/catalog";')).toBe(1);
+  });
+
+  it("counts a namespace import", () => {
+    expect(count('import * as Ns from "@emploke/catalog";')).toBe(1);
+  });
+
+  it("counts a side-effect-only import", () => {
+    expect(count('import "@emploke/catalog";')).toBe(1);
+  });
+
+  it("counts a re-export", () => {
+    expect(count('export { Foo } from "@emploke/catalog";')).toBe(1);
+  });
+
+  it('counts an `import("@emploke/catalog")` type node', () => {
+    expect(count('type X = import("@emploke/catalog").Foo;')).toBe(1);
+  });
+
+  it("ignores comments that mention @emploke/catalog", () => {
+    expect(count("// @emploke/catalog mentioned in a comment\nexport const x = 1;")).toBe(0);
+  });
+
+  it("ignores string literals (no AST node)", () => {
+    expect(count('const s = "@emploke/catalog";')).toBe(0);
   });
 });
 

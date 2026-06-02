@@ -19,8 +19,8 @@
  *    archive — emploke "stores but never reads" runtime metadata.
  */
 
-import type { CatalogService } from "@emploke/catalog";
-import type { RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
+import type { AgentResolverPort } from "./ports.js";
 
 /**
  * Status lifecycle: `running → succeeded | failed | cancelled` (issue #119).
@@ -178,7 +178,8 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 /** Constructor options for `TaskService`. */
 export interface TaskServiceConfig {
-  readonly catalog: CatalogService;
+  readonly agentResolver: AgentResolverPort;
+  readonly contentSource: AgentContentSource;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly workspaceDir: string;
   readonly workspaceId: string;
