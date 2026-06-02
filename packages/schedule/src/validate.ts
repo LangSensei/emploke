@@ -9,8 +9,9 @@ import { randomUUID } from "node:crypto";
 import { InvalidScheduleIdError } from "./errors.js";
 
 // UUID v4 — same shape as workspace ids, NOT the YYYYMMDD-xxxxxxxx form
-// task/session/workflow use. RFC §"Id format": schedule has no FS workdir
-// so the ls-grouping benefit doesn't apply.
+// task/session/workflow use. Those pkgs have an FS workdir whose
+// ls-grouping benefits from the date prefix; schedule has no workdir so
+// plain UUID v4 is enough.
 export const SCHEDULE_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

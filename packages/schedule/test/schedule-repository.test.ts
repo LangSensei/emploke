@@ -6,10 +6,9 @@ import { openTestScheduleDb } from "../src/testing.js";
 import type { CreateScheduleArgs } from "../src/types.js";
 
 /**
- * Repository smoke tests covering the new generic `dataEquals` list
- * filter (replaces the pre-W3 `agent` filter) AND the partial
- * JSON-extract index that engages when `dataEquals.path = "$.agent"`
- * + `kind = "task"` are both present.
+ * Repository smoke tests for the generic `dataEquals` list filter
+ * + the partial JSON-extract index that engages when
+ * `dataEquals.path = "$.agent"` + `kind = "task"` are both present.
  */
 describe("ScheduleRepository.list({ kind, dataEquals }) — generic JSON-extract filter", () => {
   let db: ReturnType<typeof openTestScheduleDb>;

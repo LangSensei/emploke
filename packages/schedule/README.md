@@ -22,7 +22,7 @@ Adding a new kind requires **zero edits** to `packages/schedule/src/`.
 Only:
 
 1. Define a `ScheduleKindHandler` somewhere the kind's deps live
-   (typically `core/src/wiring/`).
+   (typically `packages/api/src/wiring/`).
 2. Call `service.registerKind("<kind>", handler)` before
    `service.recover()`.
 3. (For server-exposed kinds) add per-kind URL routes + wire DTOs in
@@ -64,6 +64,7 @@ packages/schedule/
 ├── package.json
 ├── README.md
 ├── tsconfig.json
+├── tsconfig.test.json       Test-scope typecheck (includes test/**/*, noEmit)
 ├── vitest.config.ts
 ├── drizzle/0000_*.sql       Drizzle-kit generated migration (committed)
 ├── drizzle/0001_*.sql       Hand-written: drops target_agent + adds
@@ -72,7 +73,8 @@ packages/schedule/
     ├── _helpers.ts           kind-name / JSON-path / name / trigger validators
     ├── compose.ts            composeScheduleModule({ dbFile | db, logger, now, randomUUID })
     ├── cron.ts               croner + cronstrue wrapper (validate / nextRuns / describe)
-    ├── errors.ts             ScheduleError + 10 named subclasses
+    ├── cronstrue-i18n.d.ts   Ambient decl for `cronstrue/i18n.js` (no `exports` field upstream)
+    ├── errors.ts             ScheduleError + 11 named subclasses
     ├── index.ts              public barrel
     ├── migrations.ts         AUTO-GENERATED inlined SQL
     ├── schedule-entity.ts    ScheduleEntity (kind-agnostic envelope container)
@@ -134,9 +136,12 @@ packages/schedule/
   would let the column disagree with the JSON, and would force every
   read to pay for a redundant parse).
 
-Legacy rows containing a redundant `kind` key inside `target_json`
-(written by code that pre-dates `1ef5335`) are read transparently and
-the key is silently dropped on the first patch — no migration needed.
+Legacy rows that pre-date the `kind`-in-column convention may have a
+redundant `kind` field inside `target_json`. The substrate reads them
+transparently; handlers whose `mergePatch` reconstructs the typed
+shape (the production task handler does) implicitly drop the field on
+the first patch. Handlers that follow a shallow-merge pattern must
+explicitly delete the key.
 
 **Indexes.** `schedules_target_agent_idx` is a **functional partial
 index** on `json_extract(target_json, '$.agent')` filtered
@@ -246,9 +251,7 @@ interface ScheduleDeleteResponse {
 ```
 
 `deletedDispatchCount` is the number of historical units-of-work
-(typically tasks) removed by the handler's cascade. Pre-existing
-clients reading `deletedTaskCount` need a rename — there is no
-backwards-compat alias (pre-1.0).
+(typically tasks) removed by the handler's cascade.
 
 ### Manual run response
 
@@ -259,4 +262,4 @@ interface ScheduleRunResponse {
 ```
 
 `dispatchId` is the handler's substrate-side id (task id, workflow
-run id, …) — same rename rationale as above.
+run id, …).

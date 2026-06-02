@@ -73,7 +73,7 @@ describe("ScheduleService.run + private fire flow", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(h.taskHandler.dispatchCalls).toHaveLength(0);
     // recordFired must NOT have been invoked (no lastFiredAt write
-    // on a skip per RFC).
+    // on a skip).
     const after = await h.service.get(VALID_UUIDS[0]!);
     expect(after?.lastFiredAt).toBeUndefined();
   });

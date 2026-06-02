@@ -60,7 +60,7 @@ interface ScheduleServiceOpts {
  * orphan-disabled-row failure mode where a kind drops out of the
  * compose code but its rows linger.
  *
- * ## Behaviour locks (per RFC §"Behaviour decisions")
+ * ## Behaviour locks
  *
  *   - concurrency = 1 (skip-and-warn on overlap, no `last_fired_at`
  *     write on a skip)
@@ -99,7 +99,7 @@ export class ScheduleService {
    *   - the same `kind` was already registered on this service
    *
    * MUST be called BEFORE `recover()`. The wiring in
-   * `core/src/workspace-context.ts` does
+   * `packages/api/src/workspace-context.ts` does
    * `registerKind("task", handler)` then `recover()` in that order.
    */
   registerKind(kind: string, handler: ScheduleKindHandler): void {
@@ -350,9 +350,9 @@ export class ScheduleService {
    * before-preflight prevents registry mutation while recovery is
    * verifying persisted rows and arming timers — callers must
    * complete all `registerKind()` calls BEFORE `recover()` starts.
-   * Canonical wiring at `packages/core/src/workspace-context.ts:309-313`
-   * handles this correctly by running `teardown()` on any error and
-   * rebuilding from scratch.
+   * Canonical wiring at `packages/api/src/workspace-context.ts`
+   * (the `WorkspaceContextRegistry.load` method) handles this correctly
+   * by running `teardown()` on any error and rebuilding from scratch.
    */
   async recover(): Promise<void> {
     if (this.registryFrozen) return;
@@ -369,7 +369,6 @@ export class ScheduleService {
         );
       }
     }
-    this.shutdownCalled = false;
     const all = await this.repo.list();
     const now = this.now();
     for (const entity of all) {
@@ -442,7 +441,7 @@ export class ScheduleService {
       await this.dispatch(entity, firedAt);
     } catch (err) {
       this.logger.warn({ scheduleId: entity.id, err }, "schedule fire: dispatch failed");
-      // Per RFC: no failure retry — record the fire and re-arm.
+      // No failure retry: record the fire and re-arm.
     }
     const [nextIso] = nextRuns(entity.trigger.expr, entity.trigger.tz, this.now(), 1);
     await this.repo.recordFired(entity.id, firedAt, nextIso ?? null);

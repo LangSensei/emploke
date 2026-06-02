@@ -2,8 +2,9 @@
  * Pkg-internal helpers shared between service / repository / entity.
  * Pure functions; throw `ScheduleError` subclasses on invalid input.
  *
- * Kept out of `validate.ts` so the public surface (`generateScheduleId`,
- * `assertValidScheduleId`) stays narrowly scoped to the id grammar.
+ * Kept out of `validate.ts` so that module's surface
+ * (`generateScheduleId`, `assertValidScheduleId`) stays narrowly
+ * scoped to the id grammar.
  */
 
 import { assertValidCronExpr, assertValidTimezone } from "./cron.js";

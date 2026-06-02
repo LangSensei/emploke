@@ -41,8 +41,7 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
  * Each entity pkg owns its own journal table so multiple pkgs sharing
  * the same `workspace.db` file don't trip drizzle's global
  * `folderMillis` watermark check. Naming convention locked: every
- * emploke pkg uses `__drizzle_migrations_<pkg>`, no exceptions. See
- * `docs/architecture.md` Migrations section.
+ * emploke pkg uses `__drizzle_migrations_<pkg>`, no exceptions.
  */
 export function applyScheduleMigrations<T extends Record<string, unknown>>(
   db: BetterSQLite3Database<T>,

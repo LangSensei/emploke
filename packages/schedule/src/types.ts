@@ -10,8 +10,9 @@
  * built-in knowledge of "task", "workflow", or any other concrete
  * kind — adding one requires zero edits to `packages/schedule/src/`.
  *
- * See `core/src/wiring/schedule-task-handler.ts` for the production
- * task-kind handler and `README.md` for the composition snippet.
+ * See `packages/api/src/wiring/schedule-task-handler.ts` for the
+ * production task-kind handler and `README.md` for the composition
+ * snippet.
  */
 
 /**
@@ -34,8 +35,8 @@ export interface ScheduleTargetEnvelope {
 /**
  * Per-kind handler registered at compose time. Implementations live
  * wherever the kind is integrated — e.g. the production task handler
- * lives in `core/src/wiring/schedule-task-handler.ts` because it
- * knows about `@emploke/schedule`, `@emploke/task`, AND
+ * lives in `packages/api/src/wiring/schedule-task-handler.ts` because
+ * it knows about `@emploke/schedule`, `@emploke/task`, AND
  * `@emploke/catalog`. The schedule pkg itself never imports any of
  * its callers.
  *

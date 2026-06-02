@@ -1,6 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import pino, { type Logger } from "pino";
 import { assertValidJsonPath } from "./_helpers.js";
 import { ScheduleNotFoundError } from "./errors.js";
 import { ScheduleEntity } from "./schedule-entity.js";
@@ -8,8 +7,6 @@ import type * as schema from "./schema.js";
 import { type ScheduleRow, schedules } from "./schema.js";
 import type { ListScheduleOpts } from "./types.js";
 import { assertValidScheduleId } from "./validate.js";
-
-const silentLogger: Logger = pino({ level: "silent" });
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -33,12 +30,9 @@ type Db = BetterSQLite3Database<typeof schema>;
  */
 export class ScheduleRepository {
   private readonly db: Db;
-  private readonly logger: Logger;
 
-  constructor(opts: { db: Db; logger?: Logger }) {
+  constructor(opts: { db: Db }) {
     this.db = opts.db;
-    this.logger = opts.logger ?? silentLogger;
-    void this.logger;
   }
 
   async read(id: string): Promise<ScheduleEntity | null> {
@@ -73,7 +67,7 @@ export class ScheduleRepository {
     const whereQuery = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
     // ORDER BY next_fire_at ASC NULLS LAST. SQLite sorts NULLs first
     // by default; the raw `sql` modifier covers the wire contract
-    // from the RFC (newest-armed first, never-armed last).
+    // (newest-armed first, never-armed last).
     const rows = whereQuery.orderBy(sql`${schedules.nextFireAt} ASC NULLS LAST`).all();
     return rows.map(rowToEntity);
   }

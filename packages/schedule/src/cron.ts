@@ -9,9 +9,9 @@ const FIVE_FIELD_RE = /^\s*\S+\s+\S+\s+\S+\s+\S+\s+\S+\s*$/;
  * service.create / service.patch / service.preview. Throws
  * `InvalidCronExprError` or `InvalidTimezoneError` on bad input.
  *
- * v1 hard-rejects 6-field (sub-minute) cron — the RFC locks the
- * dialect to POSIX/Vixie/Kubernetes/GH Actions standard so users get
- * a predictable surface across editors. Future `trigger.kind='interval'`
+ * v1 hard-rejects 6-field (sub-minute) cron — the dialect is locked
+ * to POSIX/Vixie/Kubernetes/GH Actions standard so users get a
+ * predictable surface across editors. Future `trigger.kind='interval'`
  * can cover sub-minute when it lands.
  */
 export function assertValidCronExpr(expr: string): void {
@@ -64,7 +64,7 @@ export function nextRuns(expr: string, tz: string, after: Date, n: number): stri
  * `PreviewResult`. The library default (English) is the right choice for
  * consumers that don't carry locale context (server JSON, CLI). When
  * full dashboard i18n lands, locale negotiation should happen at the
- * presentation layer — not be plumbed through this seam (see #224).
+ * presentation layer — not be plumbed through this seam.
  */
 export function describeCron(expr: string): string {
   return cronstrue.toString(expr, { locale: "en" });

@@ -25,7 +25,7 @@ export interface ScheduleModule {
    * and preflights every persisted row's `target_kind` against it,
    * throwing if any are unregistered.
    *
-   * Production wiring is in `core/src/workspace-context.ts`:
+   * Production wiring is in `packages/api/src/workspace-context.ts`:
    *
    * ```ts
    * const scheduleModule = await composeScheduleModule({ dbFile, logger });
@@ -70,10 +70,7 @@ export async function composeScheduleModule(opts: ScheduleModuleOptions): Promis
       throw err;
     }
   }
-  const repo = new ScheduleRepository({
-    db,
-    ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-  });
+  const repo = new ScheduleRepository({ db });
   const service = new ScheduleService({
     repo,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
