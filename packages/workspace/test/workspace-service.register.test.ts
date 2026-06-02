@@ -102,4 +102,23 @@ describe("WorkspaceService.register", () => {
     // (per the README catch-block recipe) must miss it.
     await expect(promise).rejects.not.toBeInstanceOf(WorkspaceError);
   });
+
+  it("throws InputValidationError when workspaceDir is empty", async () => {
+    // Exercises RegisterWorkspaceInput's `z.string().min(1)` branch —
+    // distinct from the missing-field path above.
+    await expect(
+      sys.service.register({ id: UUID_A, workspaceDir: "", name: "Project" }),
+    ).rejects.toBeInstanceOf(InputValidationError);
+  });
+
+  it("throws InputValidationError when workspaceDir is relative", async () => {
+    // Exercises RegisterWorkspaceInput's `.refine(path.isAbsolute)`
+    // branch. The rejection has to surface here, before
+    // normalizeWorkspaceDir's `path.resolve` would silently absolutize
+    // the input — losing this test would let a future pipeline reorder
+    // accept relative paths without tripping a regression.
+    await expect(
+      sys.service.register({ id: UUID_A, workspaceDir: "relative/p", name: "Project" }),
+    ).rejects.toBeInstanceOf(InputValidationError);
+  });
 });
