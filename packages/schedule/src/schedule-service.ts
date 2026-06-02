@@ -351,7 +351,7 @@ export class ScheduleService {
    * verifying persisted rows and arming timers — callers must
    * complete all `registerKind()` calls BEFORE `recover()` starts.
    * Canonical wiring at `packages/api/src/workspace-context.ts`
-   * (the `composeWorkspaceContext` factory) handles this correctly
+   * (the `WorkspaceContextRegistry.load` method) handles this correctly
    * by running `teardown()` on any error and rebuilding from scratch.
    */
   async recover(): Promise<void> {
