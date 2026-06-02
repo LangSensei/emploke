@@ -1,42 +1,45 @@
 # @emploke/api
 
-The **T2 Application layer** — emploke's single composition root and
-public type surface. Both the cross-package *contracts* (HTTP wire
-shapes, out-of-band IPC files, `EMPLOKE_HOME` resolution) and the
-*orchestration* that wires T0 / T1 packages (`workspace`, `catalog`,
-`session`, `task`, `runtime`, `schedule`) into per-workspace runtime
-contexts live here. Pairs with `@emploke/server` (HTTP transport) and
-the surfaces (`@emploke/terminal`, `@emploke/dashboard`,
+The **T2 Application layer (orchestration)** — emploke's composition
+root that wires T0 / T1 packages (`workspace`, `catalog`, `session`,
+`task`, `runtime`, `schedule`) into per-workspace runtime contexts.
+Cross-package wire contracts (HTTP route catalog, request / response
+DTOs, out-of-band IPC files, `EMPLOKE_HOME` resolution) live in the
+sibling T2 package `@emploke/contracts`; `@emploke/api` re-exports
+the whole `@emploke/contracts` barrel so the in-process server boot
+path (`@emploke/server`) imports both halves from a single
+specifier. Pairs with `@emploke/server` (HTTP transport) and the
+surfaces (`@emploke/terminal`, `@emploke/dashboard`,
 `@emploke/cli`).
 
-This package was formed in 0.6.0 by merging emploke's legacy
-orchestration-root and HTTP wire-contract packages into a single T2
-package. See [`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)
+`@emploke/dashboard` and `@emploke/cli` must NOT import from
+`@emploke/api` — they go directly through `@emploke/contracts` (the
+structural fence is enforced by
+`packages/e2e/test/architecture/tier-invisibility.test.ts`).
+
+This package was reshaped in 0.6.0: the legacy orchestration-root and
+wire-contracts packages were first merged into `@emploke/api`, then
+the wire contracts were extracted back out into a separate
+`@emploke/contracts` package to give the surfaces structural
+isolation from orchestration code. See
+[`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)
 for the rationale.
 
 ## Internal layout
 
 ```
 packages/api/src/
-├── contracts/                ← types that cross the public boundary
-│   ├── emploke-home.ts       (EMPLOKE_HOME + runtime.json + logs/ paths)
-│   ├── health.ts             (GET /api/health response)
-│   ├── plan-to-manifest.ts   (catalog install/sync ResolveManifest)
-│   ├── routes.ts             (ROUTES table + RouteSpec primitives)
-│   ├── runtimes.ts           (GET /api/runtimes wire shape)
-│   ├── schedules.ts          (per-kind wire shapes for /schedules)
-│   └── server-config.ts      (GET /api/config wire shape)
 ├── application.ts            ← Application interface + composeApplication
 ├── workspace-context.ts      ← WorkspaceContext + WorkspaceContextRegistry
 ├── wiring/                   ← per-kind handler wiring (cross-BC glue)
 │   └── schedule-task-handler.ts
-└── index.ts                  ← public barrel (union of both subsystems)
+└── index.ts                  ← public barrel (orchestration + re-exports
+                                of @emploke/contracts)
 ```
 
-The `contracts/` vs root-of-`src/` split is purely for code
-organisation. External consumers see one barrel
-(`import { ... } from "@emploke/api"`); the split is not exposed via
-separate subpath exports.
+Wire contracts (routes, response shapes, path helpers, etc.) live in
+`packages/contracts/src/` — see `@emploke/contracts/README.md` for
+that package's internal layout.
 
 ## Public API
 
@@ -110,16 +113,19 @@ through `Application` methods.
 
 ## Tier
 
-`@emploke/api` is the **T2 Application layer** in emploke's tier model
+`@emploke/api` is the **T2 Application layer (orchestration)** in
+emploke's tier model
 (see [`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)).
-T0 (foundations: `catalog`, `runtime`, `schedule`, `workspace`) and
-T1 (modes: `session`, `task`) sit below; T3 (`server`) and T_top
+Its sibling at T2 is `@emploke/contracts` (wire types). T0
+(foundations: `catalog`, `runtime`, `schedule`, `workspace`) and T1
+(modes: `session`, `task`) sit below; T3 (`server`) and T_top
 (`terminal`, `dashboard`, `cli`) sit above.
 
 ## Layering
 
 `@emploke/api` MAY import (value or type):
 
+- `@emploke/contracts` (re-exported from the public barrel).
 - `@emploke/workspace`, `@emploke/catalog`, `@emploke/session`,
   `@emploke/task`, `@emploke/runtime`, `@emploke/schedule`,
   `@emploke/terminal` (the last for `spawnTerminal` during session
@@ -128,13 +134,8 @@ T1 (modes: `session`, `task`) sit below; T3 (`server`) and T_top
 `@emploke/api` MUST NOT import:
 
 - `@emploke/server` — server depends on api, not the reverse.
-- `@emploke/dashboard`, `@emploke/cli` — surfaces depend on api, not
-  the reverse.
-
-**`src/contracts/` internal sub-rule:** prefer `import type` over
-value imports; the contracts directory is a tree-shake-friendly leaf
-so dashboard / cli can pull wire types without dragging in
-orchestration code paths.
+- `@emploke/dashboard`, `@emploke/cli` — surfaces depend on api
+  (via `@emploke/contracts`), not the reverse.
 
 ## Testing
 

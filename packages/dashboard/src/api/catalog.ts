@@ -1,4 +1,12 @@
-import type { AgentEntry, Mcp, MissingDep, SkillEntry } from "@emploke/catalog";
+import type {
+  Agent,
+  AgentEntry,
+  BlockedReason,
+  Mcp,
+  MissingDep,
+  Skill,
+  SkillEntry,
+} from "@emploke/contracts";
 import { fetchJson, jsonInit, mutate, mutateJson, workspacePrefix } from "./http.js";
 
 export interface OverviewData {
@@ -405,9 +413,9 @@ export interface MarkdownDetail {
 }
 
 export interface SkillDetail {
-  skill: import("@emploke/catalog").Skill;
+  skill: Skill;
   status: "ready" | "blocked";
-  blockedReason?: import("@emploke/catalog").BlockedReason;
+  blockedReason?: BlockedReason;
   missingDeps?: MissingDep[];
   content: string;
 }
@@ -436,9 +444,9 @@ export const patchSkillMetadata = (name: string, patch: SkillMetadataPatch) =>
   mutate(`${catalogPrefix()}/skills/${encodeURIComponent(name)}`, jsonInit("PATCH", patch));
 
 export interface AgentDetail {
-  agent: import("@emploke/catalog").Agent;
+  agent: Agent;
   status: "ready" | "blocked";
-  blockedReason?: import("@emploke/catalog").BlockedReason;
+  blockedReason?: BlockedReason;
   missingDeps?: MissingDep[];
   content: string;
 }

@@ -1,8 +1,7 @@
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
-import type { LaunchCommand } from "@emploke/runtime";
-import type { SpawnHandle, SpawnOpts } from "./types.js";
+import type { LaunchCommand, SpawnHandle, SpawnOpts } from "./types.js";
 
 /** Reject paths with control characters that could break shell/AppleScript quoting. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: detecting control chars is the explicit purpose.

@@ -256,30 +256,27 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
     // names (no `..` possible), so this is defense-in-depth â€” but a
     // malicious / corrupted SQLite-backed catalog row could still
     // hand back `relPath: "../escape"`. provision must refuse.
+    //
+    // Built from the real `makeFakeContentSource` fake so the port
+    // shape is enforced by TypeScript; we then override `agentEntries`
+    // to inject the adversarial `relPath`. The previous shape declared
+    // an inline `as any` stub that drifted from the real
+    // `AgentContentSource` port (carrying a stale `getMcpContent`
+    // method name) and silently allowed the drift to live.
     const t = targetDir();
-    const fakeAgent = { name: "demo", description: "d", version: "0.0.1" };
-    const malicious = {
-      resolveAgent: async (_n: string) => ({ agent: fakeAgent, skills: [], mcps: [] }),
+    const { source: baseSource } = makeFakeContentSource({
+      agents: { demo: { files: { "AGENTS.md": "ok" } } },
+    });
+    const malicious: AgentContentSource = {
+      ...baseSource,
       agentEntries: async function* (_n: string) {
         yield { relPath: "AGENTS.md", content: Buffer.from("ok") };
         yield { relPath: "../escape.txt", content: Buffer.from("PWNED") };
       },
-      skillEntries: async function* (_n: string) {
-        // empty
-      },
-      getMcpContent: async (_n: string) => {
-        throw new Error("not used");
-      },
     };
+    const resolved = await malicious.resolveAgent("demo");
     await expect(
-      provisionCopilotWorkdir(
-        t,
-        // biome-ignore lint/suspicious/noExplicitAny: stub injected as ResolvedAgent surface
-        (await malicious.resolveAgent("x")) as any,
-        // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentContentSource surface
-        malicious as any,
-        TEST_PLACEHOLDERS,
-      ),
+      provisionCopilotWorkdir(t, resolved, malicious, TEST_PLACEHOLDERS),
     ).rejects.toMatchObject({ message: expect.stringContaining("outside workdir") });
     // No file written outside the workdir.
     expect(await exists(path.join(scratch, "escape.txt"))).toBe(false);

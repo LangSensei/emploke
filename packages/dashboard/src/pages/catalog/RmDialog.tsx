@@ -1,4 +1,4 @@
-import type { CatalogKind } from "@emploke/catalog";
+import type { CatalogKind } from "@emploke/contracts";
 import { Modal } from "../../components/Modal";
 import { CATALOG_VERBS } from "./CATALOG_VERBS";
 

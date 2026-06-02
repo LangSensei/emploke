@@ -1,10 +1,9 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { existsLike, realSpawn, validateLaunchCommand, whichSyncDefault } from "./_shared.js";
 import { UnsupportedPlatformError } from "./errors.js";
 import { spawnLinux } from "./platforms/linux.js";
 import { spawnMacOS } from "./platforms/macos.js";
 import { spawnWindows } from "./platforms/windows.js";
-import type { SpawnTerminalDeps, SpawnTerminalResult } from "./types.js";
+import type { LaunchCommand, SpawnTerminalDeps, SpawnTerminalResult } from "./types.js";
 
 /**
  * Dependency-injected dispatch entry. Used directly by tests to drive any

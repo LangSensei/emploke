@@ -1,19 +1,23 @@
 /**
- * `emploke serve` — run the HTTP server in the foreground (current
- * pre-CLI behaviour, kept for dev workflows). Delegates to `runServer`
- * from `@emploke/server` with `--serve-static` defaulted ON, mirroring
- * what the historical `bundle/emploke.js` bin did.
+ * `emploke serve` — run the HTTP server in the foreground.
+ *
+ * The `emploke` binary is *both* the client CLI and the server bundle:
+ * client subcommands (`task list`, `agent install`, …) speak HTTP to a
+ * running server, and `serve` is the entry point that boots that
+ * server in-process. `emploke start` is just `spawn("emploke serve",
+ * { detached: true })` plus a `/api/health` wait — same bin, different
+ * lifecycle.
+ *
+ * That's why this file is the one place in `@emploke/cli` allowed to
+ * value-import from `@emploke/server`: this *is* the server boot path.
+ * Every other cli↔server interaction goes over HTTP through
+ * `api-client.ts` using wire contracts from `@emploke/contracts`.
  *
  * This function does NOT return — once the server is listening, the
  * process stays alive on the open http handle until SIGTERM / SIGINT
  * triggers `runServer`'s graceful shutdown.
  */
 
-// XXX(issue-255): cli should NOT value-import from @emploke/server. The
-// remaining `runServer` import here is the single allowed exception
-// pending the subprocess-spawn refactor tracked in #255. Do NOT add new
-// value-imports from @emploke/server in this file or anywhere else in cli —
-// every other cli↔server wire contract goes through @emploke/api.
 import { type RunServerOpts, runServer } from "@emploke/server";
 
 export interface ServeOpts {

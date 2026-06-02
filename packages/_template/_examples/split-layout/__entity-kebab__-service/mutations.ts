@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Write-side concern. Owns id minting, input validation, and any cross-pkg
 // coordination a write triggers. Shares ctx with queries.ts / lifecycle.ts;

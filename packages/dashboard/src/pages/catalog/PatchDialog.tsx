@@ -1,4 +1,4 @@
-import type { CatalogKind } from "@emploke/catalog";
+import type { CatalogKind } from "@emploke/contracts";
 import { useEffect, useState } from "react";
 import { CodeEditor } from "../../components/CodeEditor";
 import { MetadataForm, type MetadataFormValues } from "../../components/MetadataForm";

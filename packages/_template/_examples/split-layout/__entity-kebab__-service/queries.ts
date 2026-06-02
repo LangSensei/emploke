@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Read-side concern. Pure data fetches; never mutates state. Each exported
 // function takes `ctx` as its first argument (rule #7 from docs/pkg-template.md

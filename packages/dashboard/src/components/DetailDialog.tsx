@@ -1,3 +1,4 @@
+import type { BlockedReason } from "@emploke/contracts";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   type AgentDetail,
@@ -67,7 +68,7 @@ interface LoadedDetail {
   /** Status from the catalog — drives which CTA buttons show. */
   status: "ready" | "blocked";
   /** Reason fields when status is "blocked"; undefined when ready. */
-  blockedReason?: import("@emploke/catalog").BlockedReason;
+  blockedReason?: BlockedReason;
   prereqsAck: boolean;
   /** Agents only; undefined for skills/mcps. */
   disabledByUser?: boolean;
@@ -525,7 +526,7 @@ function StatusLine({ detail }: { detail: LoadedDetail }): ReactNode {
   );
 }
 
-function summariseReason(r: import("@emploke/catalog").BlockedReason): string {
+function summariseReason(r: BlockedReason): string {
   const parts: string[] = [];
   if (r.disabledByUser) parts.push("disabled by user");
   if (r.needsPrereqsAck) parts.push("prereqs not acknowledged");

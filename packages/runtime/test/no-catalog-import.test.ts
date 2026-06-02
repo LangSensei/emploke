@@ -35,7 +35,7 @@
  * is warranted.
  *
  * The extractor pattern mirrors
- * `packages/task/test/inter-service-imports.test.ts`; cycle through
+ * `packages/e2e/test/architecture/inter-service-imports.test.ts`; cycle through
  * that file if you need to extend the AST coverage.
  */
 

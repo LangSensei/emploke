@@ -43,7 +43,7 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const PACKAGES_DIR = path.join(REPO_ROOT, "packages");
 
 const SKIP_DIR_NAMES = new Set(["node_modules", "dist", "drizzle"]);
@@ -91,6 +91,26 @@ const ALLOWED_FLAT_EXCEPTIONS: readonly FlatException[] = [
   // cli
   // dashboard
   // e2e
+  {
+    file: "packages/e2e/test/architecture/inter-service-imports.test.ts",
+    rationale:
+      "subdirected by area (architecture/); zero in-pkg src value-imports — rule says flat. Cross-cutting repo-wide audit grouped with siblings, retained.",
+  },
+  {
+    file: "packages/e2e/test/architecture/split-convention.test.ts",
+    rationale:
+      "subdirected by area (architecture/); zero in-pkg src value-imports — rule says flat. Cross-cutting repo-wide audit grouped with siblings, retained.",
+  },
+  {
+    file: "packages/e2e/test/architecture/test-layout-convention.test.ts",
+    rationale:
+      "subdirected by area (architecture/); zero in-pkg src value-imports — rule says flat. Cross-cutting repo-wide audit grouped with siblings, retained.",
+  },
+  {
+    file: "packages/e2e/test/architecture/tier-invisibility.test.ts",
+    rationale:
+      "subdirected by area (architecture/); zero in-pkg src value-imports — rule says flat. Cross-cutting repo-wide audit grouped with siblings, retained.",
+  },
   {
     file: "packages/e2e/test/cli/integration-smoke.test.ts",
     rationale:
@@ -405,9 +425,9 @@ function classifyTest(absPath: string): ClassifiedTest {
 function findAllTests(): readonly string[] {
   const out: string[] = [];
   function walk(dir: string): void {
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: import("node:fs").Dirent<string>[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
     } catch {
       return;
     }
@@ -423,7 +443,7 @@ function findAllTests(): readonly string[] {
     }
   }
   // Walk each package's test/ dir.
-  const pkgs = readdirSync(PACKAGES_DIR, { withFileTypes: true });
+  const pkgs = readdirSync(PACKAGES_DIR, { withFileTypes: true, encoding: "utf8" });
   for (const pkg of pkgs) {
     if (!pkg.isDirectory()) continue;
     const testRoot = path.join(PACKAGES_DIR, pkg.name, "test");

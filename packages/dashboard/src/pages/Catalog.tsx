@@ -1,4 +1,4 @@
-import type { AgentEntry, SkillEntry } from "@emploke/catalog";
+import type { AgentEntry, CatalogKind, SkillEntry } from "@emploke/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { InstallSource, McpItem } from "../api";
 import { DetailDialog } from "../components/DetailDialog";
@@ -25,7 +25,7 @@ interface CatalogProps {
   onChanged: () => void;
 }
 
-type EditTarget = { kind: import("@emploke/catalog").CatalogKind; name: string; mutable: boolean };
+type EditTarget = { kind: CatalogKind; name: string; mutable: boolean };
 
 export function CatalogPage({
   tab,

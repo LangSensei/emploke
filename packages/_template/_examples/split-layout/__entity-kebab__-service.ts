@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Illustrative facade for the "split a service that outgrew the 600 LOC / 3-concern
 // thresholds" recipe. Mirrors `packages/task/src/task-service.ts` in shape: build a

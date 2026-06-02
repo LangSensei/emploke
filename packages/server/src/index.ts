@@ -7,13 +7,7 @@ process.env.UV_THREADPOOL_SIZE ??= "16";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import {
-  type Application,
-  composeApplication,
-  logsDir,
-  resolveEmplokeHome,
-  type WorkspaceContext,
-} from "@emploke/api";
+import { type Application, composeApplication, type WorkspaceContext } from "@emploke/api";
 import {
   assertCopilotSdkResolvable,
   CopilotRuntime,
@@ -25,6 +19,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
+import { logsDir, resolveEmplokeHome } from "./emploke-home.js";
 import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
@@ -45,7 +40,14 @@ import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-
 // and dashboard import them directly from there. `@emploke/server`
 // no longer re-exports them — see Issue #255 and the C3 commit body
 // for the rationale. Server's public surface is now strictly its
-// transport (`runServer`, `RunServerOpts`) + the auth helpers below.
+// transport (`runServer`, `RunServerOpts`) + the auth helpers below
+// + the CLI lifecycle breadcrumb helpers (`resolveEmplokeHome`,
+// `logsDir`, `runtimeFilePath`, the `RuntimeFile` shape) re-exported
+// here for the CLI process-management commands (`emploke start`,
+// `status`, `stop`, `logs`, `connect`). Those helpers cannot live in
+// `@emploke/contracts` because they value-import `node:os` /
+// `node:path`, and the contracts pkg is the SPA-safe surface.
+export * from "./emploke-home.js";
 
 /**
  * Per-request variables stashed on the Hono context by `workspaceContextMiddleware`.

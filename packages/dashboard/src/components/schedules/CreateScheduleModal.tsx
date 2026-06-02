@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { type CreateScheduleBody, createSchedule, type ScheduleView } from "../../api";
 import { Modal } from "../Modal";

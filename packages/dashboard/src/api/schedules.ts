@@ -11,8 +11,7 @@
 // `target` (siblings preserved; `null` deletes `details` / `runtime`)
 // and wholesale-replace on `trigger`.
 
-import type { TaskScheduleTargetWire } from "@emploke/api";
-import type { PreviewResult, Schedule } from "@emploke/schedule";
+import type { PreviewResult, Schedule, TaskScheduleTargetWire } from "@emploke/contracts";
 import {
   fetchJson,
   fetchJsonWithErrorBody,

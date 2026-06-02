@@ -1,6 +1,5 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { describe, expect, it } from "vitest";
-import { NoTerminalFoundError, spawnTerminalWith } from "../../src/index.js";
+import { type LaunchCommand, NoTerminalFoundError, spawnTerminalWith } from "../../src/index.js";
 import { makeDeps, sample } from "../_helpers.js";
 
 describe("spawnTerminalWith > linux", () => {

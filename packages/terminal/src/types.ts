@@ -9,6 +9,48 @@
  * spawn so unit tests can drive every code path without touching the host.
  */
 
+/**
+ * Shell-runnable launch command, as the terminal package needs it.
+ *
+ * **Consumer port.** Terminal defines the shape it needs to spawn a
+ * process into a platform terminal emulator. Producers — currently
+ * `@emploke/runtime`'s `Runtime.buildInteractiveLaunch`, but anything
+ * structurally compatible would work — own their own definition; the
+ * wiring (in `@emploke/api`'s `application.ts`, where the producer's
+ * output is handed to `spawnTerminal`) relies on TypeScript's
+ * structural typing to confirm compatibility at the call site. Keeping
+ * this type local removes terminal's workspace dep on any specific
+ * producer pkg and makes terminal a pure infrastructure leaf
+ * consumable by anything that can produce a command of this shape.
+ *
+ * The `cmd`/`args`/`cwd` triple is suitable for `child_process.spawn`;
+ * `display` is a single-line string suitable for showing to the user
+ * or copying to the clipboard.
+ */
+export interface LaunchCommand {
+  readonly cmd: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly display: string;
+  /**
+   * Optional env vars the spawned terminal session should inherit.
+   *
+   * Most platform terminal emulators (Windows Terminal, Terminal.app,
+   * gnome-terminal, …) run as long-lived daemons that do NOT see the
+   * env handed to the launcher process. Reliably propagating env to
+   * the shell that ends up exec'ing this command therefore requires
+   * INLINING the env into the shell command itself (`export K='v' &&
+   * exec foo args` on POSIX, `$env:K='v'; & foo args` for pwsh).
+   * This package does that work; see the per-platform impls in
+   * `src/platforms/`.
+   *
+   * Values must be plain strings — no `undefined` (semantically
+   * meaningless when inlining), no `null`, no arrays. `undefined`
+   * upstream should be filtered before assembling this map.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 export type Launcher =
   | "wt"
   | "cmd"

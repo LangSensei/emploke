@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import type { TaskRecord } from "../../api";
 import { Modal } from "../Modal";

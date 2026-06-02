@@ -1,4 +1,4 @@
-import type { BlockedReason, MissingDep } from "@emploke/catalog";
+import type { BlockedReason, MissingDep } from "@emploke/contracts";
 import type { ReactNode } from "react";
 import { type EntityKind, KIND_ICON, KIND_TAG } from "../kindMeta";
 import { splitFqnForDisplay } from "../utils/fqn";

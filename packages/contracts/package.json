@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/cli",
+  "name": "@emploke/contracts",
   "version": "0.0.1",
-  "description": "Command-line interface for emploke (lifecycle commands + HTTP API client)",
+  "description": "Wire contracts and leaf path helpers for emploke. The strict-isolation entrypoint for dashboard + CLI: pure types plus pure-function path helpers, with no orchestration code in the runtime graph.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -23,24 +23,24 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/contracts": "workspace:*",
-    "@emploke/server": "workspace:*",
-    "commander": "^12.1.0",
-    "write-file-atomic": "^5.0.1"
+    "@emploke/catalog": "workspace:*",
+    "@emploke/runtime": "workspace:*",
+    "@emploke/schedule": "workspace:*",
+    "@emploke/session": "workspace:*",
+    "@emploke/task": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/write-file-atomic": "^4.0.3",
     "typescript": "^5.7.0",
     "vitest": "^4.1.5"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/cli"
+    "directory": "packages/contracts"
   }
 }

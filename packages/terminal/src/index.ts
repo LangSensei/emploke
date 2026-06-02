@@ -8,6 +8,7 @@ export {
   UnsupportedPlatformError,
 } from "./errors.js";
 export type {
+  LaunchCommand,
   Launcher,
   SpawnHandle,
   SpawnTerminalDeps,

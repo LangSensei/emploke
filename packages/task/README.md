@@ -36,7 +36,7 @@ drizzle/                   generated SQL migrations (committed)
 drizzle.config.ts          drizzle-kit config
 ```
 
-`task-service/` is the **SPLIT sub-layout** — present here because `task-service.ts` outgrew the 600 LOC / 3-concern thresholds. Most packages should stay flat (no sibling subdir); see [`docs/pkg-template.md § Splitting big files via facade + sibling subdir`](../../docs/pkg-template.md#splitting-big-files-via-facade--sibling-subdir) for the trigger criteria and the hard rules that apply once a split is taken. A self-contained, fully-rule-compliant illustration with placeholder names lives at [`packages/_template/_examples/split-layout/`](../_template/_examples/split-layout/README.md).
+`task-service/` is the **SPLIT sub-layout** — present here because `task-service.ts` outgrew the 600 LOC / 3-concern thresholds. Most packages should stay flat (no sibling subdir); see [`docs/pkg-template.md § Splitting big files via facade + sibling subdir`](../../docs/pkg-template.md#splitting-big-files-via-facade--sibling-subdir) for the trigger criteria, the hard rules that apply once a split is taken, and the on-disk reference example at [`packages/_template/_examples/split-layout/`](../_template/_examples/split-layout/) (which the spec doc now documents inline under "On-disk reference example").
 
 ## On-disk
 

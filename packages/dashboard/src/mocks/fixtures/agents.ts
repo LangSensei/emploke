@@ -1,4 +1,4 @@
-import type { Agent, AgentEntry } from "@emploke/catalog";
+import type { Agent, AgentEntry } from "@emploke/contracts";
 
 const NOW = "2026-05-20T08:00:00.000Z";
 
