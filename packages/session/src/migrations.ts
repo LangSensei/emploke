@@ -26,12 +26,11 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
  * touches) so consumers don't repeat the cast.
  *
  * **Per-pkg `migrationsTable`**: `__drizzle_migrations_session`.
- * Each entity pkg owns its own journal table so multiple pkgs sharing
- * the same `workspace.db` file don't trip drizzle's global
- * `folderMillis` watermark check — drizzle's own bookkeeping is
- * namespaced by table, so per-pkg tables let migrations apply
- * independently. Every emploke pkg follows the
- * `__drizzle_migrations_<pkg>` convention; deviating from it would
+ * Each entity pkg owns its own journal table so co-tenant pkgs in the
+ * same SQLite file don't trip drizzle's global `folderMillis` watermark
+ * check — drizzle's own bookkeeping is namespaced by table, so per-pkg
+ * tables let migrations apply independently. Every emploke pkg follows
+ * the `__drizzle_migrations_<pkg>` convention; deviating from it would
  * silently re-apply migrations or skip them.
  */
 export function applySessionMigrations<T extends Record<string, unknown>>(
