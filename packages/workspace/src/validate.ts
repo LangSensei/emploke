@@ -77,6 +77,14 @@ export const RegisterWorkspaceInput = z.object({
     .refine((p) => path.isAbsolute(p), "workspaceDir must be an absolute path"),
 });
 
+/**
+ * Thrown by `WorkspaceService.register` when the input fails the zod
+ * shape check (presence + types). Extends `Error` directly, NOT
+ * `WorkspaceError` — an `instanceof WorkspaceError` filter will miss
+ * it. The other writes (`open`, `rename`, `unregister`) bypass zod
+ * and instead throw the typed `WorkspaceError` subclasses via the
+ * `assertValid*` helpers.
+ */
 export class InputValidationError extends Error {
   constructor(scope: string, issues: readonly { path: readonly PropertyKey[]; message: string }[]) {
     super(

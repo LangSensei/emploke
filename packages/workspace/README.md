@@ -87,19 +87,19 @@ Per-workspace metadata (`name`, `createdAt`) lives in the same
 
 ```
 WorkspaceError
-├── WorkspaceNameInvalidError      400 — name failed validation
-├── WorkspaceIdInvalidError        400 — id is not a valid UUID
-├── WorkspaceNotRegisteredError    404 — id has no entry in the registry
-├── WorkspaceIdConflictError       409 — register({id}) collision
-├── WorkspacePathConflictError     409 — workspaceDir already registered
-└── RegistryError                  500 — registry-level failure (base)
+├── WorkspaceNameInvalidError          400 — name failed validation
+└── RegistryError                      500 — registry-level failure (base)
+    ├── WorkspaceIdInvalidError        400 — id is not a valid UUID
+    ├── WorkspaceNotRegisteredError    404 — id has no entry in the registry
+    ├── WorkspaceIdConflictError       409 — register({id}) collision
+    └── WorkspacePathConflictError     409 — workspaceDir already registered
 
 // Separate hierarchy — extends Error directly, NOT WorkspaceError:
-InputValidationError               400 — register() input failed zod shape check
-                                         (only register validates shape today;
-                                          open/rename/unregister go through the
-                                          assertValid* helpers and throw the
-                                          typed WorkspaceError subclasses above)
+InputValidationError                   400 — register() input failed zod shape check
+                                             (only register validates shape today;
+                                              open/rename/unregister go through the
+                                              assertValid* helpers and throw the
+                                              typed WorkspaceError subclasses above)
 ```
 
 A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss

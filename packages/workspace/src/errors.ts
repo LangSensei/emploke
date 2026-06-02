@@ -1,8 +1,15 @@
 /**
- * Error hierarchy for `@emploke/workspace`. Every public throw extends
- * `WorkspaceError` so callers can `instanceof WorkspaceError` for a
- * coarse "is this from workspace?" check; specific subclasses below
- * carry typed context (the offending id / name / path).
+ * Error hierarchy for `@emploke/workspace` registry/domain failures.
+ * Every error class defined in this file extends `WorkspaceError`, so
+ * callers can `instanceof WorkspaceError` for a coarse "is this a
+ * registry/domain error?" check; specific subclasses below carry
+ * typed context (the offending id / name / path).
+ *
+ * Note: `InputValidationError` (defined in `validate.ts`, also
+ * exported from the public barrel) is a separate hierarchy that
+ * extends `Error` directly — `instanceof WorkspaceError` will NOT
+ * catch it. See the "Errors" section of the README for the
+ * catch-block contract.
  *
  * `RegistryError` is a sub-base for errors originating in the registry
  * table itself (id / path conflicts, missing rows, raw constraint
