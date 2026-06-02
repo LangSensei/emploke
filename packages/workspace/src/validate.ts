@@ -62,7 +62,7 @@ export function normalizeWorkspaceDir(value: unknown): string {
   return path.resolve(value);
 }
 
-// ─── Zod shape guards (presence + types) ──────────────────────
+// ─── Zod schema (presence + types; plus workspaceDir-must-be-absolute) ──
 
 export const RegisterWorkspaceInput = z.object({
   id: z.string(),
@@ -74,6 +74,12 @@ export const RegisterWorkspaceInput = z.object({
   workspaceDir: z
     .string()
     .min(1, "workspaceDir cannot be empty")
+    // The absolute-path check stays in zod (rather than mirroring the
+    // assertValid* pattern) for two reasons: there is no typed
+    // `WorkspacePathInvalidError` to throw, and the downstream
+    // `normalizeWorkspaceDir`'s `path.resolve` would silently
+    // absolutize a relative input — so the rejection has to happen
+    // here, before resolve masks the problem.
     .refine((p) => path.isAbsolute(p), "workspaceDir must be an absolute path"),
 });
 

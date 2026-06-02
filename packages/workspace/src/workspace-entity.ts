@@ -20,10 +20,11 @@
  * pkg, so they share the entity type internally.
  *
  * No class wrapper: workspace has no state machine and no invariants
- * beyond what Drizzle + zod enforce at the row boundary. A class with
- * only fields and no methods would just add boilerplate. If workspace
- * ever grows domain behaviour (e.g. a `markArchived` transition),
- * convert this file to a class with that behaviour.
+ * beyond what Drizzle + SQLite enforce at the row boundary (zod
+ * lives one layer up at the service input boundary, not on the row).
+ * A class with only fields and no methods would just add boilerplate.
+ * If workspace ever grows domain behaviour (e.g. a `markArchived`
+ * transition), convert this file to a class with that behaviour.
  */
 export interface WorkspaceEntity {
   readonly id: string;

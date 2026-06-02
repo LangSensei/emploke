@@ -38,17 +38,28 @@ const silentLogger: Logger = pino({ level: "silent" });
  *   Drizzle Row → WorkspaceEntity (repo boundary) → Workspace (wire)
  *
  * The repository hides ORM specifics; the service hides nullability
- * normalisation and any cross-pkg composition (none for workspace,
- * but session adds workdir + runtime metadata at this same layer).
+ * normalisation, and would also be the place to fold in cross-pkg
+ * composition if any were needed (none for workspace today).
  *
  * Write methods that touch the filesystem (`register`;
- * `unregister({ purge: true })`) do FS work BEFORE the DB write.
- * The FS-then-DB ordering is deliberate: FS work is the side-effect
- * we cannot rollback, so doing it before the DB write means a crash
- * mid-register at worst leaves an empty directory (idempotent
- * retry-friendly) rather than a registry row pointing at a directory
- * that doesn't exist. The pure-DB writes (`open`, `rename`,
- * `unregister({ purge: false })`) skip the FS step entirely.
+ * `unregister({ purge: true })`) do FS work BEFORE the DB write, but
+ * the rationale differs per method:
+ *
+ *   - `register` mkdir-then-insert: FS work is the side-effect we
+ *     cannot rollback, so doing it before the DB write means a crash
+ *     mid-register at worst leaves an empty directory (idempotent
+ *     retry-friendly) rather than a registry row pointing at a
+ *     directory that doesn't exist.
+ *
+ *   - `unregister({ purge: true })` rm-then-delete: the row is the
+ *     only thing that tells us *which* dirs to clean up, so deleting
+ *     it first would orphan the directories; rm-first means a crash
+ *     leaves the row in place and a re-run of `unregister` finishes
+ *     the cleanup (`findById` returning the still-present row drives
+ *     the second rm attempt).
+ *
+ * The pure-DB writes (`open`, `rename`, `unregister({ purge: false })`)
+ * skip the FS step entirely.
  *
  * Concurrency: register's pre-flight `findById` / `findByPath` checks
  * are best-effort UX. Two concurrent registers can race past them;

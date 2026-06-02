@@ -36,6 +36,25 @@ export class WorkspaceRepository {
     this.db = opts.db;
   }
 
+  /**
+   * ORDER BY chain shared by all "last opened" reads
+   * (`findAllByLastOpened`, `findLastOpened`, `findLastOpenedId`).
+   *
+   * - `lastOpenedAt DESC` is the primary sort and matches what
+   *   `getLastOpened` exposes.
+   * - `createdAt DESC` is the secondary tiebreaker for ISO-8601-ms
+   *   collisions (two registers landing in the same millisecond).
+   * - `id ASC` is the final deterministic fallback.
+   *
+   * Tests that need "second register wins" insert a small `setTimeout`
+   * between back-to-back registers to guarantee a strictly greater
+   * `lastOpenedAt`, because identical millisecond stamps collapse to
+   * id-ASC ordering — which returns the *first* registered id.
+   */
+  private static lastOpenedOrderBy() {
+    return [desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id];
+  }
+
   async findById(id: string): Promise<WorkspaceEntity | undefined> {
     return this.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
   }
@@ -48,7 +67,7 @@ export class WorkspaceRepository {
     return this.db
       .select()
       .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
+      .orderBy(...WorkspaceRepository.lastOpenedOrderBy())
       .all();
   }
 
@@ -56,24 +75,16 @@ export class WorkspaceRepository {
     return this.db
       .select()
       .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
+      .orderBy(...WorkspaceRepository.lastOpenedOrderBy())
       .limit(1)
       .get();
   }
 
   async findLastOpenedId(): Promise<string | undefined> {
-    // ORDER BY chain — `lastOpenedAt DESC` is the primary sort
-    // (matches what `getLastOpened` exposes); `createdAt DESC` is the
-    // secondary tiebreaker for ISO-8601-ms collisions; `id ASC` is
-    // the final deterministic fallback. Tests that need "second
-    // register wins" insert a small `setTimeout` between back-to-back
-    // registers to guarantee a strictly greater `lastOpenedAt`,
-    // because identical millisecond stamps collapse to id-ASC
-    // ordering — which returns the *first* registered id.
     const row = this.db
       .select({ id: workspaces.id })
       .from(workspaces)
-      .orderBy(desc(workspaces.lastOpenedAt), desc(workspaces.createdAt), workspaces.id)
+      .orderBy(...WorkspaceRepository.lastOpenedOrderBy())
       .limit(1)
       .get();
     return row?.id;

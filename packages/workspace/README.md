@@ -95,11 +95,14 @@ WorkspaceError
     └── WorkspacePathConflictError     409 — workspaceDir already registered
 
 // Separate hierarchy — extends Error directly, NOT WorkspaceError:
-InputValidationError                   400 — register() input failed zod shape check
-                                             (only register validates shape today;
-                                              open/rename/unregister go through the
-                                              assertValid* helpers and throw the
-                                              typed WorkspaceError subclasses above)
+InputValidationError                   400 — register() input failed the zod schema
+                                             (missing/wrong-typed field, or
+                                              workspaceDir not absolute; only
+                                              register validates input through zod
+                                              today — open/rename/unregister go
+                                              through the assertValid* helpers and
+                                              throw the typed WorkspaceError
+                                              subclasses above)
 ```
 
 A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
@@ -107,10 +110,12 @@ A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
 arm if you need to surface zod shape failures distinctly from typed
 domain errors.
 
-`list()` returns workspaces ordered by `lastOpenedAt DESC`. `getById(id)`
-returns `null` for unknown ids AND malformed ids alike — reads do not
-validate the id. Only write methods (`register`, `open`, `rename`,
-`unregister`) validate and throw `WorkspaceIdInvalidError`.
+`list()` returns workspaces ordered by `lastOpenedAt DESC`, with ties
+broken by `createdAt DESC` then `id ASC` (so identical-ms timestamps
+resolve to the lowest UUID). `getById(id)` returns `null` for unknown
+ids AND malformed ids alike — reads do not validate the id. Only
+write methods (`register`, `open`, `rename`, `unregister`) validate
+and throw `WorkspaceIdInvalidError`.
 
 Concurrency: `register`'s pre-flight conflict checks are best-effort
 UX. Two concurrent registers can race past them; the UNIQUE / PRIMARY
@@ -120,6 +125,13 @@ errors back into typed domain errors.
 
 ## Layout helper
 
+The `workflow` slot is currently unused inside this package:
+`register` does not allocate it and `unregister({ purge: true })`
+does not remove it. The slot is retained only because the
+`WorkspaceLayout` type is in the public barrel and narrowing it
+would be a breaking change. Do not add new in-pkg consumers; route
+to `@emploke/workflow` instead.
+
 ```ts
 import { workspaceLayout, globalDbPath, workspacesParentDir } from "@emploke/workspace";
 
@@ -127,7 +139,7 @@ workspaceLayout("/abs/workspace-dir");
 // {
 //   sessions: "/abs/workspace-dir/sessions",
 //   tasks:    "/abs/workspace-dir/tasks",
-//   workflow: "/abs/workspace-dir/workflows",
+//   workflow: "/abs/workspace-dir/workflows", // vestigial — see note above; do not consume
 // }
 
 globalDbPath("/abs/home");        // "/abs/home/global.db"
@@ -139,18 +151,12 @@ this pkg's `WorkspaceService` for the `register` /
 `unregister({ purge: true })` FS work; it is exported so downstream
 pkgs can compute the same paths without importing the service, but
 today no sibling consumes it directly (`@emploke/workflow` owns its
-`workflows/` subdir via its own `workflowRoot()` helper, and
-session/task/catalog compute their paths independently).
-`globalDbPath` and `workspacesParentDir` are consumed by
-`@emploke/server` to locate the global DB and the auto-allocation
+`workflows/` subdir via its own `workflowRoot()` helper, session/task
+compute their paths independently, and catalog stores its data
+inside the per-workspace `workspace.db` rather than under a
+subdirectory). `globalDbPath` and `workspacesParentDir` are consumed
+by `@emploke/server` to locate the global DB and the auto-allocation
 parent for new workspaces.
-
-The `workflow` slot is currently unused inside this package:
-`register` does not allocate it and `unregister({ purge: true })`
-does not remove it. The slot is retained only because the
-`WorkspaceLayout` type is in the public barrel and narrowing it
-would be a breaking change. Do not add new in-pkg consumers; route
-to `@emploke/workflow` instead.
 
 ## Testing
 
