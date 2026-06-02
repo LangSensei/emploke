@@ -15,8 +15,9 @@ works against either:
 - **Headless** - `launchHeadless` (spawn the CLI as a detached worker
   that consumes a prompt and exits).
 - **Observability** - `readMetadata` (title / lastActiveAt) +
-  `readActivity` (paginated parsed timeline) + `streamActivity`
-  (live SSE tail). All keyed by an opaque `runtimeSessionId`.
+  `readActivity` (paginated parsed timeline) + `getLastAgentActivity`
+  (last assistant utterance) + `streamActivity` (live SSE tail).
+  All keyed by an opaque `runtimeSessionId`.
 - **Maintenance** - `deleteState` (rm the runtime's recorded state
   for one `runtimeSessionId`).
 
