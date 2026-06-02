@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import type { ReactNode } from "react";
 import type { SchedulePreview } from "../../api";
 import { PresetEditor } from "./PresetEditor";

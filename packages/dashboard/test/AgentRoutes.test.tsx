@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import {
   MemoryRouter,

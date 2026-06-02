@@ -43,6 +43,24 @@ let home: string;
 let port: number;
 let sharedEnv: NodeJS.ProcessEnv;
 
+/**
+ * `runBin` does `env: { ...process.env, ...env }`. Without explicit
+ * clears, env vars left in the developer's shell (`EMPLOKE_SERVER`,
+ * `PORT`, `EMPLOKE_WORKSPACE`, `EMPLOKE_HOME`) leak into every spawn
+ * and break tests in surprising ways — e.g. `EMPLOKE_SERVER` set
+ * from a previous `pnpm dev` makes `emploke health` connect to the
+ * dev port (41817) instead of the test's freshly-spawned port. Pass
+ * `undefined` for each to delete the inherited entry before the
+ * test's own `EMPLOKE_HOME` is merged on top.
+ */
+const SCRUBBED_ENV: NodeJS.ProcessEnv = {
+  EMPLOKE_SERVER: undefined,
+  EMPLOKE_WORKSPACE: undefined,
+  EMPLOKE_HOME: undefined,
+  PORT: undefined,
+  EMPLOKE_HOST: undefined,
+};
+
 describe.sequential("integration smoke", () => {
   beforeAll(async () => {
     if (!existsSync(CLI_BIN)) {
@@ -52,7 +70,7 @@ describe.sequential("integration smoke", () => {
     }
     home = await mkdtemp(path.join(tmpdir(), "emploke-cli-smoke-"));
     port = pickPort();
-    sharedEnv = { EMPLOKE_HOME: home };
+    sharedEnv = { ...SCRUBBED_ENV, EMPLOKE_HOME: home };
     const startRes = await run(["start", "--port", String(port), "--no-serve-static"], sharedEnv);
     if (startRes.exitCode !== 0) {
       throw new Error(`server failed to start (exit ${startRes.exitCode}): ${startRes.stderr}`);

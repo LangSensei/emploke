@@ -54,10 +54,15 @@ export interface FakeAgentFixture {
 
 /**
  * Fixture for a single skill. `files` is a map of relative path →
- * file content; `SKILL.md` MUST be one of the keys. Skill-to-skill
- * cycles via `deps.skills` are detected and surfaced as an `Error`
- * with message prefix `"skill dep cycle: "` followed by the FQN
- * chain that closes the cycle.
+ * file content; `SKILL.md` MUST be one of the keys. Cyclic
+ * `deps.skills` graphs are NOT a fixture authoring concern: the
+ * production catalog rejects cycles at install/sync time (see
+ * `CyclicDependencyError` in `@emploke/catalog`) so by the time a
+ * resolve walker runs, the graph is acyclic by construction. The
+ * fake mirrors that contract — `walkSkills` uses visited-set
+ * dedupe as a safety net against accidental back-edges and never
+ * throws on them. Tests that need to exercise install-time cycle
+ * rejection belong in `@emploke/catalog`, not here.
  */
 export interface FakeSkillFixture {
   readonly files: Record<string, string>;
@@ -95,11 +100,17 @@ function reKey<T>(input: Record<string, T> | undefined): Map<string, T> {
  * Recursive DFS that emits skill FQNs in topological order — every
  * skill appears AFTER all skills it depends on. The `visited` set
  * keys on FQN so a skill reachable via both a direct and a
- * transitive path is emitted exactly once. The `stack` array tracks
- * the active recursion stack for cycle detection; revisiting any
- * FQN already on the stack throws an `Error` whose message starts
- * with `"skill dep cycle: "` and lists the closing chain in
- * insertion-to-cycle order.
+ * transitive path is emitted exactly once.
+ *
+ * Cycle handling MIRRORS the production catalog's resolve-time
+ * walker (`buildLocalClosure` in
+ * `packages/catalog/src/facade/resolve-pipeline.ts`): the
+ * `visited.has(fqn)` guard fires on the second visit to any node,
+ * so a back-edge is silently absorbed rather than thrown.
+ * Catalog rejects cyclic graphs at install/sync time via
+ * `CyclicDependencyError`, so by the time `resolveAgent` runs in
+ * production the graph is acyclic by construction; the visited
+ * dedupe is a termination safety net only.
  *
  * MCP edges discovered while walking skills are accumulated into
  * `mcpFqns` (a set keyed by FQN) so the caller can union them with
@@ -112,31 +123,20 @@ function walkSkills(
 ): string[] {
   const order: string[] = [];
   const visited = new Set<string>();
-  const stack: string[] = [];
 
   function visit(fqn: string): void {
     if (visited.has(fqn)) return;
-    if (stack.includes(fqn)) {
-      // The cycle closes from the existing occurrence of `fqn` on
-      // the stack back to itself; report the chain so the test can
-      // pinpoint the bad edge without inspecting the fixture map.
-      const start = stack.indexOf(fqn);
-      const chain = [...stack.slice(start), fqn];
-      throw new Error(`skill dep cycle: ${chain.join(" -> ")}`);
-    }
+    visited.add(fqn);
     const fixture = skills.get(fqn);
     if (fixture === undefined) {
       throw new Error(`skill not found: ${fqn}`);
     }
-    stack.push(fqn);
     for (const dep of fixture.deps?.skills ?? []) {
       visit(toFqn(dep));
     }
-    stack.pop();
     for (const mcp of fixture.deps?.mcps ?? []) {
       mcpFqns.add(toFqn(mcp));
     }
-    visited.add(fqn);
     order.push(fqn);
   }
 

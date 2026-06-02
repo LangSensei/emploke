@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listSessions, listTasks, type SessionView, type TaskRecord } from "../../api";

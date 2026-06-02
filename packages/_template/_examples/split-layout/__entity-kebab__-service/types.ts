@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Shared types passed across concern files via the ctx object. Defining the ctx
 // shape (and the public DTOs it produces / accepts) in this peer module lets every

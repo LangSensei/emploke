@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { ALL_AGENTS, ENABLED_FILTERS, type EnabledFilter } from "./shared";
 
 export interface SchedulesFiltersProps {

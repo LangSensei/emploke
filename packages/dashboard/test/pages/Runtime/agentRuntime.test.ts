@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { describe, expect, it } from "vitest";
 import type { TaskRecord } from "../../../src/api";
 import { agentDetailUrl, computeAgentRuntimeViews } from "../../../src/pages/Runtime/agentRuntime";

@@ -1,7 +1,7 @@
 {
   "name": "@emploke/terminal",
   "version": "0.0.1",
-  "description": "Terminal — host a runtime LaunchCommand inside a per-platform terminal emulator (wt/cmd, Terminal.app, gnome-terminal, …)",
+  "description": "Terminal — host a structurally-compatible LaunchCommand inside a per-platform terminal emulator (wt/cmd, Terminal.app, gnome-terminal, …)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -25,9 +25,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
-  },
-  "dependencies": {
-    "@emploke/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

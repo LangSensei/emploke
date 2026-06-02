@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import type { TaskRecord } from "../../api";
 
 export type AgentRuntimeStatus = "running" | "idle";

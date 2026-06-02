@@ -9,20 +9,23 @@ Tests whose subject under test is the **interaction between two or
 more packages** (or between emploke and the OS). Tests for a single
 package's internals stay in that package's `test/` directory.
 
-Today this is the CLI smoke layer:
-
 ```
 test/
+  architecture/
+    inter-service-imports.test.ts    # rule 5: domain pkgs only type-import siblings
+    split-convention.test.ts         # facade + sibling-subdir split discipline
+    test-layout-convention.test.ts   # test path mirrors src path
+    tier-invisibility.test.ts        # T_top fence: dashboard/cli ⊆ {contracts(, server)}
   cli/
-    integration-smoke.test.ts   # CLI → real HTTP server round-trips
-    spawn-smoke.test.ts         # CLI subprocess lifecycle + bundle smoke
+    integration-smoke.test.ts        # CLI → real HTTP server round-trips
+    spawn-smoke.test.ts              # CLI subprocess lifecycle + bundle smoke
   _helpers/
-    cli-bundle.ts               # shared spawn / port / CLI_BIN resolver
+    cli-bundle.ts                    # shared spawn / port / CLI_BIN resolver
 ```
 
-Tests are grouped by the **subject** of the test (`test/cli/`,
-future `test/runtime/`, future `test/task/`), not by their origin
-package.
+Tests are grouped by the **subject** of the test (`test/architecture/`
+for repo-wide source-tree audits, `test/cli/` for CLI lifecycle,
+future `test/runtime/`, ...) — not by their origin package.
 
 ## Why a separate package
 
@@ -38,8 +41,8 @@ pure argv parsing. With the e2e split:
 
 ## How to run
 
-The tests spawn the bundled CLI at `packages/cli/dist/bin.js`, so a
-build is required first:
+The `test/cli/` smoke tests spawn the bundled CLI at
+`packages/cli/dist/bin.js`, so a build is required first:
 
 ```bash
 pnpm --filter @emploke/cli build
@@ -49,11 +52,16 @@ pnpm --filter @emploke/e2e test
 `pnpm -r build && pnpm -r test` (the repo-wide command) runs the
 build first so this just works.
 
+The `test/architecture/` audits read source files directly via
+`node:fs` walk — they do NOT need a build to run.
+
 ## Expected runtime
 
-On Windows, this package's vitest pass is ~10–12 s (two test files,
-each pays one real server boot). On Linux/macOS it's typically faster
-because the spawn + SQLite startup paths are cheaper there.
+On Windows, this package's vitest pass is ~10–12 s — the CLI smoke
+files each pay one real server boot. On Linux/macOS it's typically
+faster because the spawn + SQLite startup paths are cheaper there.
+The `test/architecture/` audits add < 1 s each (pure file-tree
+walks).
 
 ## Future work
 

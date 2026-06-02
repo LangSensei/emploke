@@ -1,6 +1,5 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { describe, expect, it } from "vitest";
-import { spawnTerminalWith, UnsupportedPlatformError } from "../src/index.js";
+import { type LaunchCommand, spawnTerminalWith, UnsupportedPlatformError } from "../src/index.js";
 import { makeDeps, sample } from "./_helpers.js";
 
 describe("spawnTerminalWith — dispatch + validation", () => {

@@ -1,6 +1,9 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { describe, expect, it } from "vitest";
-import { spawnTerminalWith, TerminalSpawnFailedError } from "../../src/index.js";
+import {
+  type LaunchCommand,
+  spawnTerminalWith,
+  TerminalSpawnFailedError,
+} from "../../src/index.js";
 import { makeDeps, sample } from "../_helpers.js";
 
 describe("spawnTerminalWith > windows", () => {

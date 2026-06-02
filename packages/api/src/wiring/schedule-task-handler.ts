@@ -1,7 +1,7 @@
 import type { CatalogService } from "@emploke/catalog";
+import type { TaskTargetData, TaskTargetPatch } from "@emploke/contracts";
 import type { ScheduleKindHandler } from "@emploke/schedule";
 import { AgentNotFoundError, AgentResolutionFailedError, type TaskService } from "@emploke/task";
-import type { TaskTargetData, TaskTargetPatch } from "../contracts/schedules.js";
 
 /**
  * Sole module knowing about all of `@emploke/schedule`,

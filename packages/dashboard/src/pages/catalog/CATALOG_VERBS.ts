@@ -1,4 +1,4 @@
-import type { CatalogKind } from "@emploke/catalog";
+import type { CatalogKind } from "@emploke/contracts";
 import {
   type AgentMetadataPatch,
   deleteAgent,

@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Startup / shutdown / supervisory concerns. Owns the boundary at which the
 // service hooks into the host process: log lines on boot, in-memory state

@@ -1,8 +1,7 @@
 import path from "node:path";
-import type { LaunchCommand } from "@emploke/runtime";
 import { escapeCmdArg, pwshEnvPrefix, pwshQuote, waitForEarlyFailure } from "../_shared.js";
 import { TerminalSpawnFailedError } from "../errors.js";
-import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
+import type { LaunchCommand, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
 /**
  * Windows: try Windows Terminal (`wt.exe`) first, fall back to `cmd.exe`.

@@ -46,7 +46,7 @@ packages/<pkg>/
 
 Every `packages/<pkg>/test/**/*.test.{ts,tsx}` file's location is
 determined mechanically by its source imports. Enforced by
-`packages/task/test/test-layout-convention.test.ts`.
+`packages/e2e/test/architecture/test-layout-convention.test.ts`.
 
 **The rule**: for each test file, collect every non-type value-import
 that resolves to a file under the same package's `src/` tree (resolve
@@ -82,7 +82,7 @@ audit asserts the allowlist contains no stale entries (file gone)
 and no idle entries (test the rule already passes for).
 
 For worked-out classification examples and the parser self-tests, see
-`packages/task/test/test-layout-convention.test.ts`.
+`packages/e2e/test/architecture/test-layout-convention.test.ts`.
 
 ## File naming convention
 
@@ -144,29 +144,34 @@ tree in order:
 | Kind of type | Lives in | One-line test |
 |---|---|---|
 | A single BC's entity / DTO / error / option shape | the owning domain pkg's `types.ts` / `errors.ts` | "Does it belong to one BC only? Would you delete it if you deleted that BC?" |
-| HTTP wire contract OR in-process composition / runtime container holding live service instances or callbacks | `@emploke/api` | "Will it appear in a Network tab payload, OR does it own `Promise<Service>` / a `(c) => Service` resolver, OR a cross-BC composition shape constructed once per workspace? Both live in `@emploke/api` now." |
+| HTTP wire contract OR cross-package path / route constant the surfaces need at compile time | `@emploke/contracts` | "Will it appear in a Network tab payload, OR is it a pure type / side-effect-free constant the dashboard / cli reaches for?" |
+| In-process composition / runtime container holding live service instances or callbacks | `@emploke/api` | "Does it own `Promise<Service>` / a `(c) => Service` resolver, OR a cross-BC composition shape constructed once per workspace?" |
 | HTTP-transport-internal type (`Hono.Context`-flavoured, route-resolver, middleware) | `@emploke/server` | "Does its signature reference `Hono.Context`, request bodies, or Express-style middleware?" |
 
 ### Decision rules (sharp edges)
 
-1. **Types crossing the public boundary OR cross-BC composition / live-instance shapes → `@emploke/api`.**
-   The 0.6.0 consolidation merged the legacy wire-types and
-   orchestration-root packages into one; the conceptual distinction
-   is preserved internally under `src/contracts/` (wire shapes) vs
-   `src/` (orchestration), but the public import path is uniform.
-   Domain pkgs can `import type` from `@emploke/api` when they need
-   to project their internal DTO to the wire shape; the inverse
-   direction (`@emploke/api` importing values from a domain pkg) is
-   fine for orchestration but the `contracts/` directory MUST stay
-   type-only so it remains a tree-shake-friendly leaf for dashboard
-   / cli.
+1. **Types crossing the public boundary → `@emploke/contracts`. Cross-BC composition / live-instance shapes → `@emploke/api`.**
+   The 0.6.0 split separates the two: `@emploke/contracts` holds
+   wire types + path helpers (pure types, side-effect-free
+   constants, zero orchestration), and `@emploke/api` holds the
+   composition root that wires T0/T1 into per-workspace contexts.
+   `@emploke/api` re-exports the contracts barrel so the in-process
+   server can import both via a single specifier; the fenced
+   consumers (`@emploke/dashboard`, `@emploke/cli`) MUST go through
+   `@emploke/contracts` directly. Domain pkgs can `import type` from
+   `@emploke/contracts` when projecting their internal DTOs to wire
+   shape — the inverse (a contracts file importing values from a
+   domain pkg) is also fine because contracts is type-only and the
+   value graph stays clean.
 
-2. **Single domain's entity / DTO / error → that domain's pkg, never `api`.**
+2. **Single domain's entity / DTO / error → that domain's pkg, never `api` or `contracts`.**
    If `Task` only makes sense as part of the task BC, it lives in
-   `packages/task/src/types.ts`. `api` re-exports nothing — downstream
-   consumers (server, cli) `import { type Task } from "@emploke/task"`
-   directly. `api` only owns *cross-BC composition* types and wire
-   contracts.
+   `packages/task/src/types.ts`. `@emploke/contracts` re-exports the
+   subset of domain types that actually appear on the HTTP wire
+   (it depends on the domain pkgs for the type-only re-export). The
+   server / cli `import { type Task } from "@emploke/contracts"`,
+   the domain pkg owns the definition. `@emploke/api` owns
+   *cross-BC composition* types only — never single-domain DTOs.
 
 3. **Transport-specific glue → `server` (or the future transport pkg), never `api`.**
    A type whose signature mentions `Hono.Context`, `Request`, `Response`,
@@ -182,25 +187,33 @@ tree in order:
    `@emploke/api`*. It must NOT value-import from `catalog` — that
    would couple two BCs at runtime and violate the "api is the only
    composer" invariant. Enforced mechanically by
-   `packages/task/test/inter-service-imports.test.ts`.
+   `packages/e2e/test/architecture/inter-service-imports.test.ts`.
+
+5. **Surface (`dashboard`, `cli`) imports go through `@emploke/contracts`.**
+   The fenced consumers MUST NOT import from `@emploke/api`, any T0
+   pkg, or any T1 pkg. Their entire emploke-workspace surface is
+   `@emploke/contracts` (plus, for `cli`, `@emploke/server` for the
+   in-process server boot — the cli binary IS the server bundle).
+   Enforced mechanically by
+   `packages/e2e/test/architecture/tier-invisibility.test.ts`.
 
 ### Corollaries
 
 - **Wire types vs domain types: when they diverge.** A domain pkg's
   internal `XxxEntity` and the wire `Xxx` DTO drift over time
   (`createdAt: Date` → `createdAt: string`, soft-delete fields hidden).
-  When that happens, the wire shape moves to `@emploke/api`'s
-  `src/contracts/`; the entity stays in the domain. The service in
-  the domain pkg owns the projection.
+  When that happens, the wire shape moves to `@emploke/contracts`;
+  the entity stays in the domain. The service in the domain pkg owns
+  the projection.
 
 - **Errors that cross the wire.** If an error name appears in an HTTP
   error response (i.e. the client branches on it), its `name` literal
-  is wire-shape and should be re-declared in `@emploke/api`. The Error
-  *class* stays in the domain pkg's `errors.ts`. Cross-pkg consumers
-  that need to discriminate the error should branch on `err.name ===
-  "AgentNotFoundError"` rather than `import`ing the class for
-  `instanceof` — the latter introduces a runtime cross-BC dep that
-  rule 4 forbids.
+  is wire-shape and should be re-declared in `@emploke/contracts`. The
+  Error *class* stays in the domain pkg's `errors.ts`. Cross-pkg
+  consumers that need to discriminate the error should branch on
+  `err.name === "AgentNotFoundError"` rather than `import`ing the
+  class for `instanceof` — the latter introduces a runtime cross-BC
+  dep that rule 4 forbids.
 
 - **Resolvers (`(c: Hono.Context) => Service`) stay in `server`.**
   Their parameter type is HTTP-specific; promoting to `api` would
@@ -217,17 +230,18 @@ tree in order:
 
 - Putting a wire shape in the originating domain pkg "because it's
   defined there" — couples the wire to the domain. **Fix:** move it
-  to `@emploke/api`'s `src/contracts/`; have the domain pkg
-  `import type` it for projection.
+  to `@emploke/contracts`; have the domain pkg `import type` it for
+  projection.
 
 - Putting an in-process resolver type in `@emploke/api` "because it's
   used by routes" — pollutes the api pkg with `Hono.Context`.
   **Fix:** keep in `server`.
 
-- Adding a type to `@emploke/api` "because multiple downstreams use
-  it" when it's actually a single-domain concept — bloats `api`.
-  **Fix:** put it in the owning domain pkg; let downstreams import
-  the domain pkg.
+- Adding a type to `@emploke/api` or `@emploke/contracts` "because
+  multiple downstreams use it" when it's actually a single-domain
+  concept — bloats T2. **Fix:** put it in the owning domain pkg;
+  re-export from `@emploke/contracts` only if it genuinely appears
+  in a Network-tab payload.
 
 - A domain pkg value-importing another domain pkg's service or error
   class — silently builds a runtime cross-BC dep. **Fix:** use
@@ -268,13 +282,79 @@ that introduces this convention.
 
 > **Scope.** These 7 rules apply ONLY when a subdir has a sibling `.ts` / `.tsx` file at the parent level (the SPLIT pattern — e.g. `task-service.ts` next to `task-service/`). Subdirs without a sibling file (CATEGORY dirs — e.g. `packages/catalog/src/agent/`, `packages/catalog/src/facade/`, `packages/server/src/routes/`) are a separate, pre-existing organisational pattern and are unaffected by these rules; they MAY contain an `index.ts` barrel and follow the multi-entity / per-route conventions documented elsewhere on this page.
 
-1. **Subdir basename equals facade basename AND is a direct sibling.** `task-service.ts` ↔ `task-service/` in the same directory. Enforced mechanically — see the structural test in `packages/task/test/split-convention.test.ts`. The subdir MUST sit next to its facade; a subdir at any other path (e.g. `src/internal/<role>/`) is not a recognised SPLIT and forfeits the no-barrel and package-private guarantees this convention provides.
+1. **Subdir basename equals facade basename AND is a direct sibling.** `task-service.ts` ↔ `task-service/` in the same directory. Enforced mechanically — see the structural test in `packages/e2e/test/architecture/split-convention.test.ts`. The subdir MUST sit next to its facade; a subdir at any other path (e.g. `src/internal/<role>/`) is not a recognised SPLIT and forfeits the no-barrel and package-private guarantees this convention provides.
 2. **No barrel re-export** inside the subdir (no `<entity>-<role>/index.ts`). The facade composes via direct relative imports (`./task-service/queries.js` etc.). Enforced by the same structural test.
 3. **Subdir files are package-private.** They MUST NOT appear in the package's top-level `src/index.ts` barrel. The facade is the only public surface.
 4. **Concern files use bare names** (`queries.ts`, `mutations.ts`, `shutdown.ts`) — the subdir name already supplies the entity context. Do NOT prefix (`task-queries.ts` inside `task-service/` is wrong).
 5. **Each concern file ≤ ~450 LOC.** If a single concern grows beyond that, that concern itself needs further decomposition — but always keep at one level of nesting (do NOT nest `task-service/queries/by-id.ts`).
 6. **Facade stays ≤ ~250 LOC** and contains only: constructor, ctx-object construction, and 1-line delegates to internals.
 7. **Shared context.** The facade builds a `<Entity>ServiceCtx` (or similar) once and passes it to every internal — no `this`-casting, no widening of class field visibility. Each internal exports plain functions taking `(ctx, …args)` OR a small object that consumes ctx.
+
+### On-disk reference example
+
+`packages/_template/_examples/split-layout/` contains a self-contained,
+fully-rule-compliant SPLIT skeleton with placeholder names — a
+copyable shape for contributors making their first split. The
+canonical real-world reference loaded with actual concern code is
+`packages/task/src/task-service.ts` + `packages/task/src/task-service/`;
+the `_examples/` version is the same shape stripped to placeholders so
+the structure is the foreground.
+
+The skeleton is **documentation that happens to be on disk**. It is
+NOT built, NOT typechecked under any tsconfig, NOT run by any test —
+the leading underscores on `_examples/` and `_template/` keep it out
+of the structural classifier in
+`packages/e2e/test/architecture/split-convention.test.ts` (see the
+`entry.name.startsWith("_")` skip in `walkSrcDirs`), and the
+scaffolder (`scripts/new-pkg.mjs`) skips this dir when copying so new
+packages do not inherit it.
+
+**Each hard rule mapped to its concrete artifact in the example:**
+
+| Rule | Demonstrated by |
+|------|-----------------|
+| **#1** Subdir basename equals facade basename AND is a direct sibling | `__entity-kebab__-service.ts` next to `__entity-kebab__-service/` in the same directory |
+| **#2** No barrel inside the subdir | The subdir contains `types.ts`, `queries.ts`, `mutations.ts`, `lifecycle.ts`, `_helpers.ts` — no `index.ts` |
+| **#3** Subdir files are package-private | The facade is the only thing a downstream `index.ts` would re-export; concern files are never named in the public barrel |
+| **#4** Concern files use bare names | `queries.ts`, `mutations.ts`, `lifecycle.ts` — no `__entity-kebab__-queries.ts` prefix |
+| **#5** Each concern file ≤ ~450 LOC; no nesting | The skeleton concerns stay tiny; there is no `queries/by-id.ts` subdir |
+| **#6** Facade ≤ ~250 LOC, only ctx construction + 1-line delegates | `__entity-kebab__-service.ts` does exactly that and stays under 100 LOC |
+| **#7** Shared context | Facade builds `__Entity__ServiceCtx` once (defined in `__entity-kebab__-service/types.ts`) and passes it to every concern function. No `this`-casting, no field-visibility widening |
+
+The `_helpers.ts` file inside the subdir demonstrates the
+package-private utility seam: extract a helper there when **the same
+logic appears in two or more concern files** (e.g. an ISO-timestamp
+parser used by both `queries.ts` and `mutations.ts`). The leading `_`
+on the filename is the same "package-private utility" signal as the
+top-level `_shared.ts` files cited under "When NOT to use this
+pattern" below. If a helper is used inside only one concern, keep it
+private to that concern instead.
+
+### Applying the convention
+
+When your real `<entity>-service.ts` outgrows the 600 LOC / 3-concern
+thresholds:
+
+1. **Copy the structure, not the content** from
+   `packages/_template/_examples/split-layout/` into your package's
+   `src/` (the facade file + the matching subdir + the concern peer
+   files). Do not copy the placeholder file bodies — write your own
+   logic.
+2. **Rename the placeholders.** Search-and-replace
+   `__entity-kebab__` → your kebab-case entity name (e.g.
+   `task-service`), and `__Entity__` → your `PascalCase` entity name
+   (e.g. `Task`). The scaffolder's token substitution recipe is
+   documented in `scripts/new-pkg.mjs`.
+3. **Move methods into the appropriate concern peer file.** One
+   concern at a time: cut the read methods from your old flat service
+   into `queries.ts`, the write methods into `mutations.ts`, the
+   lifecycle hooks into `lifecycle.ts`. Each function takes
+   `(ctx, …args)` as its first parameter. The facade keeps only
+   constructor + ctx-build + 1-line delegates — see the canonical
+   real-world reference at `packages/task/src/task-service.ts`.
+4. **Register the new SPLIT** — see § Migration of existing big files
+   below for the exact `REQUIRED_SPLITS` /
+   `EXPECTED_CATEGORY_DIRS_AT_CONVENTION_INTRODUCTION` updates.
 
 ### When NOT to use this pattern
 
@@ -286,7 +366,7 @@ that introduces this convention.
 
 Pre-existing big files do NOT need preemptive splitting. Apply this convention WHEN a refactor of that file is otherwise needed (e.g. a feature change, a bug fix that touches many sections, an audit-flagged improvement). PRs that opportunistically split should reference this section in the PR body.
 
-**Registry maintenance (mandatory).** When you split a previously-flat file under this convention, also update `packages/task/test/split-convention.test.ts`:
+**Registry maintenance (mandatory).** When you split a previously-flat file under this convention, also update `packages/e2e/test/architecture/split-convention.test.ts`:
 
 - Add the new subdir's repo-relative path to `REQUIRED_SPLITS` so future PRs cannot silently delete the facade (the structural test asserts every entry still classifies as SPLIT). If you remove or collapse a SPLIT, drop the entry in the same PR — the test treats `REQUIRED_SPLITS` as the *exact* set of on-disk SPLITs and will fail on either drift direction.
 - Remove the subdir from `EXPECTED_CATEGORY_DIRS_AT_CONVENTION_INTRODUCTION` if it was previously a CATEGORY (the SPLIT promotion turns the same path into a SPLIT, so leaving it in the snapshot would trip the "must still be CATEGORY" assertion).
@@ -514,6 +594,29 @@ Two rules:
 Route / CLI layers should branch on `error.name` (string literal), NOT on
 `instanceof XxxError` — bundlers can split the class definition across
 chunks and `instanceof` will silently fail across package boundaries.
+
+### Catch-block error normalization (inline only)
+
+Do NOT create `src/utils/errors.ts` or any helper file for catch-block
+error normalization (`errorMessage`, `isAbortError`, etc.). Use the
+inline form at each `catch (e) { ... }` site:
+
+```ts
+const msg = e instanceof Error ? e.message : String(e);
+```
+
+For abort-error detection:
+
+```ts
+if (e instanceof Error && e.name === "AbortError") return;
+```
+
+Rationale: these checks are tiny, stateless, and benefit from local
+readability over a shared abstraction. Backend packages do not use a
+`src/utils/` subfolder — keep `src/` flat. (Dashboard's `src/utils/`
+is a frontend convention with multiple files like `fqn.ts`, `time.ts`;
+that pattern is fine for the dashboard, but error normalization stays
+inline there too.)
 
 ## Migrations
 

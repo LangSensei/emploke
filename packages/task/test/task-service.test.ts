@@ -215,8 +215,8 @@ class StubRuntime implements Runtime {
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
   readonly dispatchCalls: {
-    taskDir: string;
-    agent: AgentResolveResult;
+    workdir: string;
+    agent: ResolvedAgent;
     prompt: string;
     workspaceDir?: string;
     subprocessEnv?: NodeJS.ProcessEnv;
@@ -335,8 +335,8 @@ class StubRuntime implements Runtime {
   readMetadataCallCount = 0;
 
   private async spawnHandle(opts: {
-    taskDir: string;
-    agent: AgentResolveResult;
+    workdir: string;
+    agent: ResolvedAgent;
     prompt: string;
     workspaceDir?: string;
     subprocessEnv?: NodeJS.ProcessEnv;

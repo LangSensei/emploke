@@ -1,7 +1,6 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { shExportPrefix, shQuote, waitForEarlyFailure } from "../_shared.js";
 import { NoTerminalFoundError } from "../errors.js";
-import type { Launcher, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
+import type { LaunchCommand, Launcher, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
 /**
  * Linux terminal candidates in order of preference. `x-terminal-emulator` is

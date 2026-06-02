@@ -19,7 +19,7 @@
  * `resolveWorkspace` below for the full rationale).
  */
 
-import { resolveEmplokeHome } from "@emploke/api";
+import { resolveEmplokeHome } from "@emploke/server";
 import { ApiClient } from "./api-client.js";
 import { readRuntimeFile } from "./runtime-file.js";
 

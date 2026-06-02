@@ -18,7 +18,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, open } from "node:fs/promises";
 import path from "node:path";
-import { logsDir, resolveEmplokeHome } from "@emploke/api";
+import { logsDir, resolveEmplokeHome } from "@emploke/server";
 import { waitForHealth } from "../health-probe.js";
 import type { CommandResult } from "../result.js";
 import {

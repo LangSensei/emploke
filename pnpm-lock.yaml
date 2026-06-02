@@ -49,6 +49,9 @@ importers:
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@emploke/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime
@@ -126,9 +129,9 @@ importers:
 
   packages/cli:
     dependencies:
-      '@emploke/api':
+      '@emploke/contracts':
         specifier: workspace:*
-        version: link:../api
+        version: link:../contracts
       '@emploke/server':
         specifier: workspace:*
         version: link:../server
@@ -145,6 +148,34 @@ importers:
       '@types/write-file-atomic':
         specifier: ^4.0.3
         version: 4.0.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(happy-dom@15.11.7)(msw@2.14.6(@types/node@22.19.17)(typescript@5.9.3))(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
+  packages/contracts:
+    dependencies:
+      '@emploke/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@emploke/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@emploke/schedule':
+        specifier: workspace:*
+        version: link:../schedule
+      '@emploke/session':
+        specifier: workspace:*
+        version: link:../session
+      '@emploke/task':
+        specifier: workspace:*
+        version: link:../task
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -176,15 +207,9 @@ importers:
         specifier: ^7.15.0
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
     devDependencies:
-      '@emploke/api':
+      '@emploke/contracts':
         specifier: workspace:*
-        version: link:../api
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
-      '@emploke/schedule':
-        specifier: workspace:*
-        version: link:../schedule
+        version: link:../contracts
       '@testing-library/react':
         specifier: ^16.3.0
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -423,10 +448,6 @@ importers:
         version: 4.1.5(@types/node@22.19.17)(happy-dom@15.11.7)(msw@2.14.6(@types/node@22.19.17)(typescript@5.9.3))(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/terminal:
-    dependencies:
-      '@emploke/runtime':
-        specifier: workspace:*
-        version: link:../runtime
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

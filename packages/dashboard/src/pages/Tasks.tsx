@@ -1,4 +1,4 @@
-import type { AgentEntry } from "@emploke/catalog";
+import type { AgentEntry } from "@emploke/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cancelTask, deleteTask, dispatchTask, type ServerConfig, type TaskRecord } from "../api";
 import { HeaderActions } from "../components/HeaderActions";

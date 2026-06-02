@@ -48,7 +48,7 @@ import { describe, expect, it } from "vitest";
  * the equality check still behaves consistently across platforms.
  */
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const PACKAGES_DIR = path.join(REPO_ROOT, "packages");
 
 const SKIP_DIR_NAMES = new Set(["node_modules", "__tests__", "drizzle", "migrations", "dist"]);
@@ -134,7 +134,7 @@ function classifyDir(absPath: string): ClassifiedDir {
   for (const cand of siblingCandidates) {
     const candAbs = path.join(parent, cand);
     try {
-      const entries = readdirSync(parent, { withFileTypes: true });
+      const entries = readdirSync(parent, { withFileTypes: true, encoding: "utf8" });
       const match = entries.find((e) => e.isFile() && e.name === cand);
       if (match) {
         siblingFile = candAbs;
@@ -153,9 +153,9 @@ function classifyDir(absPath: string): ClassifiedDir {
 }
 
 function walkSrcDirs(srcRoot: string, acc: string[]): void {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: import("node:fs").Dirent<string>[];
   try {
-    entries = readdirSync(srcRoot, { withFileTypes: true });
+    entries = readdirSync(srcRoot, { withFileTypes: true, encoding: "utf8" });
   } catch {
     return;
   }
@@ -171,7 +171,7 @@ function walkSrcDirs(srcRoot: string, acc: string[]): void {
 
 function collectAllSrcDirs(): ClassifiedDir[] {
   const out: ClassifiedDir[] = [];
-  const pkgs = readdirSync(PACKAGES_DIR, { withFileTypes: true });
+  const pkgs = readdirSync(PACKAGES_DIR, { withFileTypes: true, encoding: "utf8" });
   for (const pkg of pkgs) {
     if (!pkg.isDirectory()) continue;
     const srcRoot = path.join(PACKAGES_DIR, pkg.name, "src");
@@ -200,7 +200,7 @@ describe("facade + sibling subdir splits must not contain a barrel index.ts", ()
   it("no SPLIT subdir contains an index.ts or index.tsx barrel", () => {
     const violations: string[] = [];
     for (const split of splits) {
-      const entries = readdirSync(split.absPath, { withFileTypes: true });
+      const entries = readdirSync(split.absPath, { withFileTypes: true, encoding: "utf8" });
       for (const entry of entries) {
         if (!entry.isFile()) continue;
         if (entry.name === "index.ts" || entry.name === "index.tsx") {
@@ -218,7 +218,7 @@ describe("facade + sibling subdir splits must not contain a barrel index.ts", ()
   it("every SPLIT subdir contains at least one .ts or .tsx file (no empty splits)", () => {
     const empty: string[] = [];
     for (const split of splits) {
-      const entries = readdirSync(split.absPath, { withFileTypes: true });
+      const entries = readdirSync(split.absPath, { withFileTypes: true, encoding: "utf8" });
       const hasSource = entries.some(
         (e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".tsx")),
       );
@@ -238,7 +238,7 @@ describe("facade + sibling subdir splits must not contain a barrel index.ts", ()
     const messages: string[] = [];
     for (const extraSplit of orphanSplits) {
       messages.push(
-        `${extraSplit} — on-disk SPLIT not registered in REQUIRED_SPLITS. Add this path to REQUIRED_SPLITS in packages/task/test/split-convention.test.ts so future facade-deletion is caught (see Judge Z PR #250 review).`,
+        `${extraSplit} — on-disk SPLIT not registered in REQUIRED_SPLITS. Add this path to REQUIRED_SPLITS in packages/e2e/test/architecture/split-convention.test.ts so future facade-deletion is caught (see Judge Z PR #250 review).`,
       );
     }
     for (const missing of missingSplits) {

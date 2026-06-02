@@ -1,4 +1,4 @@
-// EXAMPLE FILE — not built. See _examples/split-layout/README.md.
+// EXAMPLE FILE — not built. See docs/pkg-template.md § Splitting big files via facade + sibling subdir.
 //
 // Package-private helpers shared across concern files inside this SPLIT.
 //

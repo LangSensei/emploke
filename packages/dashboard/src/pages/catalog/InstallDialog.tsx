@@ -1,4 +1,4 @@
-import type { CatalogKind } from "@emploke/catalog";
+import type { CatalogKind } from "@emploke/contracts";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { InstallProvider, InstallSource, ResolveManifest } from "../../api";
 import { Modal } from "../../components/Modal";

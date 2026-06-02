@@ -33,11 +33,21 @@ export interface Run {
 
 /**
  * Spawn the bundled CLI in a child process and capture stdout/stderr.
+ *
+ * Env merge: starts from `process.env`, then applies `env` on top.
+ * Keys set to `undefined` in `env` are DELETED from the merged
+ * result — this is the contract callers rely on to scrub
+ * developer-shell env leaks (e.g. `EMPLOKE_SERVER` set by a
+ * previous `pnpm dev`) before running a hermetic spawn.
  */
 export function runBin(args: readonly string[], env: NodeJS.ProcessEnv): Promise<Run> {
   return new Promise((resolve, reject) => {
+    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+    for (const k of Object.keys(env)) {
+      if (env[k] === undefined) delete merged[k];
+    }
     const child = spawn(process.execPath, [CLI_BIN, ...args], {
-      env: { ...process.env, ...env },
+      env: merged,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });

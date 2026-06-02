@@ -25,11 +25,11 @@ in a follow-up doc**.
 
 | Tier      | Name        | Packages                                            | Conceptual role                                                                         |
 | --------- | ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **T0**    | Foundations | `catalog`, `runtime`, `schedule`, `workspace`       | Who / Where / When / Scope — irreducible primitives                                     |
+| **T0**    | Foundations | `catalog`, `runtime`, `schedule`, `terminal`, `workspace` | Who / Where / When / Scope + leaf infrastructure — irreducible primitives                |
 | **T1**    | Modes       | `session`, `task`                                   | Interactive vs Headless execution mode (= Agent × Runtime × {mode})                     |
-| **T2**    | Application | `api` (merged from legacy `core` + `api-types`)     | Public type contracts + orchestration of T0/T1 into business capabilities               |
+| **T2**    | Application | `contracts` (wire types), `api` (orchestration)     | Two siblings: cross-pkg wire contracts + composition of T0/T1 into business capabilities |
 | **T3**    | Host        | `server`                                            | HTTP transport that exposes T2 capabilities over the wire                               |
-| **T_top** | Surfaces    | `terminal`, `dashboard`, `cli`                      | Platform-specific UI on top of T3                                                       |
+| **T_top** | Surfaces    | `dashboard`, `cli`                                  | Platform-specific UI on top of T3                                                       |
 
 `workflow` is intentionally excluded — deferred, not yet implemented.
 
@@ -47,23 +47,59 @@ wire format is a separate axis (see "Dependency invariants" — TBD).
   (Who runs · Where to run · When to run · within what Scope)
 - T1 — in what *mode* is the work running? (Interactive `session`
   vs Headless `task`)
-- T2 — what can the system *do*, and how is that spelled? `api`
-  owns both *contracts* (types that cross the public boundary) and
-  *orchestration* (functions composing T0/T1 to implement those
-  contracts).
+- T2 — what can the system *do*, and how is that spelled? Split
+  across two siblings:
+  - `contracts` — the *what is on the wire*: route catalog, request /
+    response DTO shapes, leaf path helpers (`EMPLOKE_HOME`,
+    `runtime.json`). Pure types + side-effect-free constants. The
+    universal surface that crosses the public boundary; consumed by
+    `server`, `dashboard`, `cli`, and downstream HTTP / IPC clients.
+  - `api` — the *how it's built*: `composeApplication`,
+    `WorkspaceContext`, per-workspace registries, schedule-task
+    wiring. Node-only orchestration that assembles T0/T1 services to
+    implement the contracts. Consumed by `server`. Re-exports the
+    contracts barrel as a convenience for the in-process server
+    composition root that needs both layers in one import site.
 - T3 — how do remote clients invoke T2? `server` is a thin HTTP
   binding.
 - T_top — how does a human (or another agent) interact?
 
-**Visibility rule (design intent — not yet machine-enforced).** T0
-and T1 packages MUST NOT be imported by T3 or T_top. Anything those
-layers need is re-exposed by `api` — usually a re-export, sometimes
-a wrapped / projected shape. This keeps the public surface stable
-even as primitives evolve.
+**Visibility rule.** The fence is **partial and partly
+machine-enforced**:
 
-**`api` is the single composition root.** New cross-cutting features
-land in `api`; transport (`server`) and UI (`terminal` / `dashboard`
-/ `cli`) stay thin.
+- **Strictly enforced** (lint test
+  `packages/e2e/test/architecture/tier-invisibility.test.ts`):
+  `@emploke/dashboard` source + tests may only reference
+  `@emploke/contracts`; `@emploke/cli` may only reference
+  `@emploke/contracts` and `@emploke/server`. Pkg-manifest deps are
+  audited alongside source imports — a dangling devDep that hoists
+  an orchestration pkg into the consumer's `node_modules` is
+  flagged even when no source file imports it.
+- **Convention only** (not machine-enforced): T0/T1 packages SHOULD
+  NOT be imported by T3 or T_top (server or other surfaces).
+  `server` may import T0/T1 directly today; the dashboard / cli
+  fence above is the strict half. `@emploke/api` re-exports the
+  contracts barrel for server's convenience.
+
+The fenced consumers' allowed edges:
+
+```text
+                       ┌──────────────────────────────┐
+@emploke/dashboard ──▶ │ @emploke/contracts (T2)      │
+@emploke/cli       ──▶ │   wire types + path helpers  │
+                       └──────────────────────────────┘
+@emploke/cli       ──▶ @emploke/server  (the cli binary IS the
+                                         server bundle; `emploke
+                                         serve` boots in-process,
+                                         `emploke start` spawns it)
+```
+
+**`api` is the orchestration composition root.** New cross-cutting
+features land in `api` (or split into `contracts` if they are
+wire-only); transport (`server`) and UI (`dashboard` / `cli`)
+stay thin. The leaf infrastructure pkgs (`terminal` and the runtime
+adapters) carry no orchestration of their own — `api` is the only
+in-process consumer that wires them together.
 
 ## Layering
 
@@ -75,26 +111,26 @@ gives each box a name.
 ```text
                 ┌────────────────────────┐
                 │ @emploke/dashboard     │  React + Vite SPA (T_top)
-                └───────────▲────────────┘
-                            │ HTTP /api/*
-                ┌───────────┴────────────┐
-                │ @emploke/cli           │  T_top
-                │ (lifecycle commands)   │
                 └───────────┬────────────┘
-                            │ HTTP /api/*
-                ┌───────────┴────────────┐
-                │ @emploke/server        │  T3 Host
-                │ (routes + middleware)  │
-                └───────────▲────────────┘
-                            │  re-exports + composes
-                ┌───────────┴────────────┐    ┌──────────────────┐
-                │ @emploke/api           │───▶│ @emploke/        │
-                │ T2 Application:        │    │  terminal        │
-                │  contracts (routes /   │    │ (spawn launcher) │
-                │  wire shapes)          │    └──────────────────┘
-                │  + composeApplication  │
-                │  + WorkspaceContext    │
-                │  registry              │
+                            │ HTTP /api/*      ┌────────────────┐
+                            │           ┌─────▶│ @emploke/      │
+                            │           │      │   contracts    │
+                ┌───────────▼────────────┤      │  (T2 — wire    │
+                │ @emploke/cli           │      │   types only)  │
+                │ (lifecycle commands)   │      └───────▲────────┘
+                └───────────┬────────────┘              │
+                            │ HTTP /api/*               │  re-exports
+                ┌───────────▼────────────┐              │
+                │ @emploke/server        │              │
+                │ (routes + middleware)  │  T3 Host     │
+                └───────────▲────────────┘              │
+                            │  composes T0/T1           │
+                ┌───────────┴────────────┐    ┌─────────┴──────┐
+                │ @emploke/api           │───▶│ @emploke/      │
+                │ T2 Application:        │    │  terminal      │
+                │  composeApplication    │    │ (spawn         │
+                │  + WorkspaceContext    │    │  launcher)     │
+                │  registry              │    └────────────────┘
                 └───────────▲────────────┘
                             │
    ┌───────────┬────────────┼────────────┬────────────────┐
@@ -107,18 +143,27 @@ gives each box a name.
    └───────────┴── runtime adapters consumed by task + session
 ```
 
-Both the wire types (route manifest, `runtime.json` shape,
-`EMPLOKE_HOME` resolution) and the composition root live in
-`@emploke/api` — there is no separate types-only package. The
-dashboard and cli pull wire types from `@emploke/api` for type-only
-imports; they do not value-import its orchestration entrypoints.
+`@emploke/contracts` is the strict-isolation surface for the fenced
+consumers: pure types + side-effect-free path / route constants,
+zero orchestration code. `@emploke/api` depends on it and
+re-exports the whole barrel, so the in-process server boot path can
+import "both halves" from a single specifier (`@emploke/api`).
+Dashboard and CLI MUST go through `@emploke/contracts` directly —
+the structural fence is enforced by
+`packages/e2e/test/architecture/tier-invisibility.test.ts`.
 
 `@emploke/terminal` is consumed **only by `@emploke/api`** at
 runtime — specifically by `WorkspaceContext.spawnSession()` which
 takes the `LaunchCommand` from `SessionService.buildInteractiveLaunch`
 and hands it to `spawnTerminal()`. Entity packages don't see it.
 `@emploke/runtime` produces `LaunchCommand` values but does not
-spawn terminals — the spawn step lives one layer up.
+spawn terminals — the spawn step lives one layer up. The dep
+direction is asymmetric and deliberate: `terminal` declares its own
+`LaunchCommand` shape as a **consumer port** (see
+`packages/terminal/src/types.ts`) and has zero workspace deps;
+`runtime`'s `LaunchCommand` is the producer-side definition;
+TypeScript's structural typing wires the two together at the
+`api` call site without forcing either pkg to depend on the other.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition

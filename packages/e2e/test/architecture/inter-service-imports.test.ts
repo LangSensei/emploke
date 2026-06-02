@@ -2,13 +2,8 @@
  * Structural enforcement of the "domain pkgs only type-import from
  * other domain pkgs" rule documented in `docs/pkg-template.md §
  * Type placement convention` (rule #5). Sibling to
- * `test-layout-convention.test.ts` (which audits test-file location).
- *
- * Hosted in `@emploke/task` purely for repo-audit infrastructure
- * co-location; the audit is repo-wide and not task-specific. (Same
- * hosting choice as `test-layout-convention.test.ts` — both walk the
- * whole `packages/**` tree; keeping the repo-audit harness in one
- * place makes the infrastructure findable.)
+ * `test-layout-convention.test.ts` (which audits test-file location)
+ * and `tier-invisibility.test.ts` (which audits T_top fences).
  *
  * Rule (from docs/pkg-template.md § rule 5):
  *
@@ -60,7 +55,7 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const PACKAGES_DIR = path.join(REPO_ROOT, "packages");
 const SKIP_DIR_NAMES = new Set(["node_modules", "dist", "drizzle"]);
 
@@ -126,9 +121,9 @@ function safeIsDir(p: string): boolean {
  * directories in `SKIP_DIR_NAMES` (`node_modules`, `dist`, `drizzle`).
  */
 function* walkTsFiles(dir: string): Generator<string> {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: import("node:fs").Dirent<string>[];
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
   } catch {
     return;
   }

@@ -1,5 +1,4 @@
-import type { LaunchCommand } from "@emploke/runtime";
-import type { SpawnHandle, SpawnTerminalDeps } from "../src/index.js";
+import type { LaunchCommand, SpawnHandle, SpawnTerminalDeps } from "../src/index.js";
 
 export const sample: LaunchCommand = {
   cmd: "copilot",

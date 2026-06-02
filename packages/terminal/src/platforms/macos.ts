@@ -1,7 +1,6 @@
-import type { LaunchCommand } from "@emploke/runtime";
 import { shExportPrefix, shQuote, waitForEarlyFailure } from "../_shared.js";
 import { TerminalSpawnFailedError } from "../errors.js";
-import type { SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
+import type { LaunchCommand, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
 /**
  * macOS: hand the command to Terminal.app via osascript's `do script`.
