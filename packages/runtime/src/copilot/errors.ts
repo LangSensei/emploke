@@ -32,11 +32,11 @@ export class InvalidMcpJson extends Error {
  *
  * This is a boot-time configuration error: the publishing pipeline
  * shipped a bundle whose runtime dep wasn't declared in the published
- * `package.json` (issue tracked in `fix/copilot-sdk-packaging-chain`),
- * or the operator manually deleted the SDK from `node_modules` after
- * install. Either way, every `tasks.dispatch` against the copilot
- * runtime would otherwise fail silently with `HTTP 400 internal error`
- * and no server log entry — surface it loudly at startup instead.
+ * `package.json`, or the operator manually deleted the SDK from
+ * `node_modules` after install. Either way, every `tasks.dispatch`
+ * against the copilot runtime would otherwise fail silently with
+ * `HTTP 400 internal error` and no server log entry — surface it
+ * loudly at startup instead.
  */
 export class CopilotSdkUnavailableError extends Error {
   constructor(cause: Error) {

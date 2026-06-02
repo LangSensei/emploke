@@ -28,22 +28,22 @@ the moment they''re needed.
 
 ```
 packages/runtime/src/
-  types.ts                       Public contract (Runtime, LaunchCommand, ActivityItem, )
+  types.ts                       Public contract (Runtime, LaunchCommand, ActivityItem, ...)
   errors.ts                      Cross-runtime error classes
-  runtime-registry.ts            RuntimeRegistry (kind  Runtime lookup)
+  runtime-registry.ts            RuntimeRegistry (kind -> Runtime lookup)
   placeholders.ts                ${workspaceDir} / ${sharedDir} expansion helpers
   shared-dir.ts                  Shared-state dir helper (cross-runtime)
   copilot/
-    copilot-runtime.ts           CopilotRuntime  the canonical adapter
+    copilot-runtime.ts           CopilotRuntime - the canonical adapter
     activity.ts                  ActivityItem translation from Copilot event log
-    ids.ts                       Copilot session-id allocators + parsers
+    ids.ts                       Copilot session-id allocators + parsers + safeCopilotId guard
     interactive-launch.ts        buildCopilotLaunchCommand (--session-id, --yolo)
-    launch-headless.ts           launchCopilotHeadless + mergeEnv
+    launch-headless.ts           launchCopilotHeadless + mergeEnv + .mcp.json polyfill
+    preflight.ts                 assertCopilotSdkResolvable (server-boot SDK presence check)
     provision.ts                 Bake AGENTS.md + .mcp.json into workdir
-    state.ts                     On-disk runtime-state paths + delete helper
+    state.ts                     workspace.yaml reader (CopilotWorkspaceMetadata)
     trust.ts                     Copilot trustedFolders preflight
     errors.ts                    Copilot-specific subclasses
-    validate.ts                  safeCopilotId guard
   index.ts                       public barrel
 ```
 
@@ -57,8 +57,8 @@ interface Runtime {
   // Interactive
   provision(
     workdir: string,
-    agent: AgentResolveResult,
-    catalog: CatalogService,
+    agent: ResolvedAgent,
+    catalog: AgentContentSource,
     ctx: ProvisionContext,
   ): Promise<{ runtimeSessionId: string | null }>;
 
@@ -75,12 +75,19 @@ interface Runtime {
   // Observability
   readMetadata?(runtimeSessionId: string): Promise<RuntimeSessionMetadata | null>;
   readActivity?(opts: ReadActivityOpts): Promise<ActivityResult | null>;
+  getLastAgentActivity?(runtimeSessionId: string): Promise<AgentActivity | null>;
   streamActivity?(opts: StreamActivityOpts): AsyncIterable<ActivityItem>;
 
   // Maintenance
   deleteState(runtimeSessionId: string): Promise<void>;
 }
 ```
+
+`ResolvedAgent` and `AgentContentSource` are runtime-private structural
+types (defined in `src/types.ts`). They name the shape the runtime needs
+from any agent / catalog source; consumers like `@emploke/catalog`
+satisfy them by structural typing without runtime ever importing the
+catalog package.
 
 ## CopilotRuntime
 
@@ -102,23 +109,24 @@ registry.register(runtime);
 ```
 
 `buildInteractiveLaunch` emits `copilot --session-id=<id> --yolo`
-(falling back to `--yolo` alone for a fresh session). The package
-targets Copilot CLI  1.0.45  earlier versions used `--resume` which
-is now broken.
+(falling back to `--yolo` alone for a fresh session). The package is
+verified empirically against Copilot CLI 1.0.44 (see the class jsdoc in
+`copilot/copilot-runtime.ts` and `copilot/trust.ts` for the per-feature
+verification notes).
 
 ## Env contract
 
-`LaunchCommand.env` is `Readonly<Record<string, string>>`  string
-values only, no `undefined`. The previous shape mixed positive (set
-this) and negative (delete this) semantics in one bag and crashed
-the windows terminal spawner when a value was `undefined`
-(`pwshQuote(undefined).replace(...)`). The split is now:
+`LaunchCommand.env` is `Readonly<Record<string, string>>` - string
+values only, no `undefined` (the windows terminal spawner cannot quote
+`undefined`, and inlined `export K=v` / `$env:K='v'` forms in display
+strings have no representation for "unset"). Two complementary knobs
+carry the split semantics:
 
-- `subprocessEnvBase`  positive declarations, applied on every
-  launch path
-- `subprocessEnvScrub`  "delete from parent env" keys, applied only
-  by `launchHeadless` (via `mergeEnv`'s `undefined`  `delete`
-  convention)
+- `subprocessEnvBase` - positive declarations, applied on every launch
+  path (both interactive and headless).
+- `subprocessEnvScrub` - "delete from parent env" keys, applied only
+  by `launchHeadless` (interactive shells inherit the parent env
+  wholesale and have no syntactic way to unset).
 
 See `packages/server/src/subprocess-env.ts` for the canonical
 production values.
@@ -129,9 +137,8 @@ production values.
 pnpm --filter @emploke/runtime test
 ```
 
-Vitest runs in `forks` pool  better-sqlite3 isn''t loaded directly
-but pool consistency across the monorepo prevents accidental
-regressions.
+Vitest runs in `forks` pool, matching the other emploke packages - keeps
+test-isolation semantics uniform across the monorepo.
 
 ## License
 

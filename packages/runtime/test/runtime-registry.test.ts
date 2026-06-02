@@ -8,9 +8,6 @@ function fakeRuntime(kind: string): Runtime {
     async provision() {
       return { runtimeSessionId: null };
     },
-    async refresh() {
-      return null;
-    },
     async buildInteractiveLaunch(
       _runtimeSessionId: string | null,
       workdir: string,
@@ -53,5 +50,17 @@ describe("RuntimeRegistry", () => {
     reg.register(fakeRuntime("gemini"));
     reg.register(fakeRuntime("claude-code"));
     expect(reg.kinds()).toEqual(["copilot", "gemini", "claude-code"]);
+  });
+
+  it("kinds() preserves registration order even when it is non-alphabetical", () => {
+    const reg = new RuntimeRegistry();
+    // Register in deliberately non-alphabetical order so a refactor
+    // that swapped the underlying store to a Set or sorted output
+    // would fail loudly here.
+    reg.register(fakeRuntime("zeta"));
+    reg.register(fakeRuntime("alpha"));
+    reg.register(fakeRuntime("mu"));
+    reg.register(fakeRuntime("beta"));
+    expect(reg.kinds()).toEqual(["zeta", "alpha", "mu", "beta"]);
   });
 });

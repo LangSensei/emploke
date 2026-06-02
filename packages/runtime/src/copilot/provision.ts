@@ -43,7 +43,7 @@ export const COPILOT_MCP_CONFIG = ".mcp.json";
  * `.github/skills/langsensei/weather/` would be misread, so scoped skill
  * names must be flattened to a single segment.
  *
- * **Critical (#39)**: the CLI also silently de-duplicates skills with the
+ * **Critical**: the CLI also silently de-duplicates skills with the
  * same `name` field — when two SKILL.md files share `name: tool-use`, only
  * the first one in readdir order survives, with no warning. This means the
  * frontmatter `name` field MUST also be rewritten to the flattened form,
@@ -138,9 +138,18 @@ export async function provisionCopilotWorkdir(
   placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
-  await materializeAgent(workdir, agent.agent.fqn, catalog);
-  await writeMcpConfig(workdir, agent.mcps, catalog, placeholders);
-  await materializeSkills(workdir, agent.skills, catalog);
+  // Each branch writes under a disjoint output prefix
+  // (`<workdir>/`, `<workdir>/.mcp.json`, `<workdir>/.github/skills/`)
+  // and creates its own intermediate dirs idempotently with
+  // `mkdir(..., recursive: true)`. The only overlap is
+  // `<workdir>/.github/hooks/`, which both `materializeAgent` and
+  // `materializeSkills` may create — `mkdir(recursive: true)` is
+  // concurrency-safe on that race.
+  await Promise.all([
+    materializeAgent(workdir, agent.agent.fqn, catalog),
+    writeMcpConfig(workdir, agent.mcps, catalog, placeholders),
+    materializeSkills(workdir, agent.skills, catalog),
+  ]);
 }
 
 /**

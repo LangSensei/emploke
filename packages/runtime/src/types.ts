@@ -448,6 +448,8 @@ export interface ReadActivityOpts {
   /**
    * Maximum number of items to return. Server enforces a default
    * (50) and a hard maximum (500) before calling into the runtime.
+   * Callers bypassing the server SHOULD set an explicit limit;
+   * omitting it returns every parsed item.
    *
    * Default-tail semantics: when neither {@link after} nor
    * {@link before} is set, the runtime returns the LATEST `limit`

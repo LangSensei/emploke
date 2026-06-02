@@ -27,3 +27,20 @@ export function generateCopilotSessionId(rng: () => string = randomUUID): string
   }
   return id;
 }
+
+/**
+ * Null-aware variant of `isCopilotSessionId`. Returns the id when it
+ * passes validation, null when the id is null or malformed. The
+ * CopilotRuntime methods that compose `runtimeSessionId` into a
+ * filesystem path or a `--session-id=<id>` argument
+ * (`readMetadata`, `readActivity`, `streamActivity`, `deleteState`,
+ * `buildInteractiveLaunch`) call this first, so a tampered persisted id
+ * degrades gracefully (no path traversal, no shell injection) rather
+ * than throwing.
+ *
+ * File-private to `@emploke/runtime` (not in the package barrel).
+ */
+export function safeCopilotId(id: string | null): string | null {
+  if (id === null) return null;
+  return isCopilotSessionId(id) ? id : null;
+}

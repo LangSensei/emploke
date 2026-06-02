@@ -6,8 +6,8 @@
  * server starts accepting traffic. Fail-fast — better to surface a
  * missing-dep misconfiguration at boot than to let every
  * `tasks.dispatch` fail with a silent `HTTP 400 internal error` later
- * on (the original symptom that motivated this preflight; see issue
- * `fix/copilot-sdk-packaging-chain`).
+ * on (each request would otherwise fail with a generic "internal error"
+ * body and no breadcrumb).
  *
  * # Why this exists (root cause)
  *

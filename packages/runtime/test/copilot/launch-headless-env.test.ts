@@ -69,7 +69,8 @@ function capturingClientFactory(): {
 } {
   const capture: { env?: NodeJS.ProcessEnv } = {};
   const factory = (options: ConstructorParameters<typeof CopilotClient>[0]): CopilotClient => {
-    capture.env = options?.env as NodeJS.ProcessEnv | undefined;
+    const env = options?.env as NodeJS.ProcessEnv | undefined;
+    if (env !== undefined) capture.env = env;
     // Minimal CopilotClient stub. We only need `start` to throw so the
     // launch flow exits via the documented RuntimeHeadlessLaunchFailed
     // path; nothing else is called after start() rejects.

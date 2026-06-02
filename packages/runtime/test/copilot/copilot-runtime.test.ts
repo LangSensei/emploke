@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { CopilotClient } from "@github/copilot-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
 import {
@@ -209,7 +210,7 @@ describe("CopilotRuntime", () => {
               start: () => Promise.reject(new Error("STUB_NO_START")),
               stop: () => Promise.resolve(),
               createSession: () => Promise.reject(new Error("unreached")),
-            } as unknown as ReturnType<typeof Object>;
+            } as unknown as CopilotClient;
           },
           registerSession: () => {},
         },
@@ -263,7 +264,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("refresh", () => {
+  describe("readMetadata", () => {
     it("returns null when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       expect(await rt.readMetadata("")).toBeNull();
@@ -345,7 +346,7 @@ describe("CopilotRuntime", () => {
       "12345678-1234-1234-1234-1234567890ab/../../escape",
     ];
 
-    it("refresh returns null for malformed ids without touching the filesystem", async () => {
+    it("readMetadata returns null for malformed ids without touching the filesystem", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       // Place a sentinel at the would-be-attacked path so we can assert it's
       // untouched (and that we don't accidentally read it).

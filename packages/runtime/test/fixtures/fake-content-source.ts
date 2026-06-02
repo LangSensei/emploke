@@ -32,8 +32,8 @@
  * same-package test fixture, not a public API consumer, so reaching
  * across the `src/index.ts` boundary for `AgentContentSource` /
  * `ResolvedAgent` is acceptable (and the only option, since these
- * types are deliberately not re-exported — see the P3 brief
- * Decision #2).
+ * types are deliberately not re-exported — runtime treats them as
+ * internal ports, not public API).
  */
 import type { AgentContentSource, ResolvedAgent } from "../../src/types.js";
 

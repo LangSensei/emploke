@@ -32,13 +32,17 @@ import type {
  *     {@link ToolCallItem} via `callId` (flips status to success/error,
  *     populates result + durationMs)
  *   - `session.shutdown` -> {@link SummaryItem} with stats + tokens
- *   - `hook.start/end`, `skill.invoked`, `subagent.{started,completed}`,
+ *   - `skill.invoked`, `subagent.{started,completed}`,
  *     `system.notification`, `session.error` -> {@link SystemItem}
  *
  * Filtered out (kept in the raw log only): `session.start`,
  * `session.info`, `session.model_change`, `system.message`,
- * `assistant.turn_start`, `assistant.turn_end`. These carry useful
- * signal for low-level debugging but not for the timeline view.
+ * `assistant.turn_start`, `assistant.turn_end`, `hook.start`,
+ * `hook.end`. The first six carry useful signal for low-level
+ * debugging but not for the timeline view. Hooks fire before AND
+ * after every tool call (Copilot's pre/postToolUse observability
+ * hooks) and carry no signal beyond what the adjacent tool_call
+ * item already shows.
  */
 
 interface ParsedEvent {
@@ -268,11 +272,6 @@ export class CopilotActivityStreamParser {
       ev.type === "system.notification" ||
       ev.type === "session.error"
     ) {
-      // hook.start / hook.end are intentionally NOT lifted — they fire
-      // before AND after every tool call (Copilot's pre/postToolUse
-      // observability hooks) and carry no signal beyond what the
-      // adjacent tool_call item already shows. Keeping them would
-      // bury real timeline content under hook.start/hook.end pairs.
       const subKind = systemSubKind(ev.type);
       const text =
         pickString(ev.data, "message") ??

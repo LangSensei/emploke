@@ -3,24 +3,9 @@ import path from "node:path";
 import yaml from "js-yaml";
 
 /**
- * Best-effort summary of one copilot session, parsed from its
- * `workspace.yaml`. All fields are optional except `runtimeSessionId`.
- */
-export interface CopilotSessionState {
-  /** Same UUID we used as the lookup key (echoed for caller convenience). */
-  readonly runtimeSessionId: string;
-  /** ISO string from `updated_at`, falling back to `created_at` if missing. */
-  readonly lastActiveAt: string;
-  /** Short user-facing label: `summary` if present, else `name`, else null. */
-  readonly preview: string | null;
-}
-
-/**
- * Subset of the parsed `workspace.yaml` shape that's useful for
- * runtime-neutral display ({@link Runtime.taskMetadata} via
- * {@link readCopilotWorkspaceYaml}). Kept separate from
- * {@link CopilotSessionState} so the session-shaped surface
- * (preview / lastActiveAt) doesn't leak into the task-shaped one.
+ * Runtime-neutral summary of a Copilot session parsed from its
+ * `workspace.yaml`. Returned by `readCopilotWorkspaceYaml` and
+ * surfaced to `CopilotRuntime.readMetadata` callers.
  */
 export interface CopilotWorkspaceMetadata {
   /**
@@ -41,39 +26,17 @@ export interface CopilotWorkspaceMetadata {
 }
 
 /**
- * Read a single copilot session's state by id. Returns `null` if:
- *
- *   - the directory doesn't exist (user hasn't launched copilot yet)
- *   - the directory exists but has no readable `workspace.yaml`
- *   - the file exists but is malformed
- *   - no usable timestamp can be derived
- *
- * Never throws — callers (`Runtime.refresh`) treat null as "no activity yet".
- *
- * Unlike the previous design, this does NOT scan all sessions or build a cwd
- * index. Each emploke session knows its copilot session id directly (we
- * pre-allocate it at provision time and persist it in `session.json`), so
- * lookup is a single direct file read.
- */
-export async function readCopilotSessionState(
-  copilotStateDir: string,
-  runtimeSessionId: string,
-): Promise<CopilotSessionState | null> {
-  const meta = await readCopilotWorkspaceYaml(copilotStateDir, runtimeSessionId);
-  if (meta === null || meta.lastActiveAt === null) return null;
-  return { runtimeSessionId, lastActiveAt: meta.lastActiveAt, preview: meta.title };
-}
-
-/**
  * Parse `<copilotStateDir>/<id>/workspace.yaml` into the runtime-
- * neutral metadata shape. Shared by {@link readCopilotSessionState}
- * (session refresh) and `CopilotRuntime.taskMetadata` (task
- * metadata enrichment) so both code paths see exactly the same
- * `title` field with no per-call divergence.
+ * neutral metadata shape. Sole caller is `CopilotRuntime.readMetadata`;
+ * returns null when the file can't be read or parsed. An empty/missing
+ * `name`/`summary` returns `{ title: null, ... }` (caller distinguishes
+ * "no title" from "no state").
  *
- * Returns null only when the file can't be read or parsed; an
- * empty/missing `name`/`summary` returns `{ title: null, ... }`
- * (caller distinguishes "no title" from "no state").
+ * Never throws — callers treat null as "no activity yet".
+ *
+ * Lookup is a single direct file read: each emploke session knows its
+ * copilot session id directly (we pre-allocate it at provision time and
+ * persist it in `session.json`), so no scan or cwd index is needed.
  */
 export async function readCopilotWorkspaceYaml(
   copilotStateDir: string,

@@ -25,10 +25,11 @@ const MAX_CONFIG_BYTES = 10 * 1024 * 1024;
  *     files and observing that only the `config.json` entry suppressed
  *     the "Confirm folder trust" prompt in `-i` mode.
  *
- * Using `config.json` is therefore both correct and stable. The previous
- * implementation wrote to `settings.json`, which was a no-op for the
- * trust gate — hence issue #38's report that interactive sessions still
- * showed the trust prompt despite "registration succeeding".
+ * Using `config.json` is therefore both correct and stable. Writing to
+ * `settings.json` (the file the leading comment in `config.json` points
+ * readers at) is a no-op for the trust gate, so an interactive launch
+ * in a "registered" workspace would still hit the blocking "Confirm
+ * folder trust" prompt.
  *
  * # When this runs (lazy, per-launch)
  *

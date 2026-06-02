@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { open, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import {
   RuntimeStateDeletionFailed,
 } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
+import { SHARED_SUBDIR } from "../shared-dir.js";
 import type {
   ActivityItem,
   ActivityResult,
@@ -34,7 +36,7 @@ import {
   deriveCopilotResult,
   parseCopilotActivity,
 } from "./activity.js";
-import { generateCopilotSessionId, isCopilotSessionId } from "./ids.js";
+import { generateCopilotSessionId, safeCopilotId } from "./ids.js";
 import { buildCopilotLaunchCommand } from "./interactive-launch.js";
 import {
   type EventBuffer,
@@ -47,7 +49,7 @@ import { ensureDirTrusted } from "./trust.js";
 
 const DEFAULT_COPILOT_STATE_DIR = path.join(homedir(), ".copilot", "session-state");
 const DEFAULT_COPILOT_CONFIG_PATH = path.join(homedir(), ".copilot", "config.json");
-const DEFAULT_SHARED_DIR = path.join(homedir(), ".emploke", "shared");
+const DEFAULT_SHARED_DIR = path.join(homedir(), ".emploke", SHARED_SUBDIR);
 
 export interface CopilotRuntimeConfig {
   /**
@@ -228,7 +230,7 @@ export class CopilotRuntime implements Runtime {
     this.sharedDir = config.sharedDir ?? DEFAULT_SHARED_DIR;
     this.subprocessEnvBase = config.subprocessEnvBase ?? {};
     this.subprocessEnvScrub = config.subprocessEnvScrub ?? [];
-    this.randomUUID = config.randomUUID ?? (() => generateCopilotSessionId());
+    this.randomUUID = config.randomUUID ?? randomUUID;
     this.headlessDeps = config.headlessDeps ?? {};
   }
 
@@ -654,6 +656,19 @@ export class CopilotRuntime implements Runtime {
     }
   }
 
+  /**
+   * Tail `events.jsonl` from disk for orphan-recovered sessions with
+   * no in-memory buffer.
+   *
+   * Cost note: when the caller doesn't pass `opts.after`, we re-read
+   * the historical file once to derive the starting `seq`, since
+   * `seq` is the cumulative count of items across the whole log and
+   * we have no stored counter (the no-state design). For a freshly-
+   * recovered session the dashboard pattern is to call
+   * `readActivity()` first to get the historical content, then
+   * subscribe to `streamActivity({ after: <last-seen-seq> })` —
+   * passing `after` skips the re-read entirely.
+   */
   private async *streamFromDisk(id: string, opts: StreamActivityOpts): AsyncIterable<ActivityItem> {
     const eventsPath = path.join(this.copilotStateDir, id, "events.jsonl");
 
@@ -667,11 +682,16 @@ export class CopilotRuntime implements Runtime {
       offset = st.size;
       // Resume at the seq the caller asked for (if any). When omitted,
       // we use the count of items in the historical content as the
-      // starting seq so subsequent items continue the sequence.
-      const startSeq =
-        typeof opts.after === "number"
-          ? opts.after + 1
-          : parseCopilotActivity(await readFile(eventsPath, "utf8")).length;
+      // starting seq so subsequent items continue the sequence. An
+      // empty file short-circuits to seq 0 to avoid a wasted read.
+      let startSeq: number;
+      if (typeof opts.after === "number") {
+        startSeq = opts.after + 1;
+      } else if (st.size === 0) {
+        startSeq = 0;
+      } else {
+        startSeq = parseCopilotActivity(await readFile(eventsPath, "utf8")).length;
+      }
       parser = new CopilotActivityStreamParser(startSeq);
     } catch {
       // File doesn't exist yet (task hasn't started writing). Start
@@ -753,16 +773,6 @@ const COPILOT_RAW_READ_CAP_BYTES = 4 * 1024 * 1024;
  * faster than this risks burning CPU on idle tasks.
  */
 const COPILOT_TAIL_POLL_MS = 250;
-
-/**
- * Return the id if it's a syntactically-valid copilot session id, else null.
- * Centralised so refresh/buildInteractiveLaunch/deleteState all defend against tampered
- * persisted state in the same way.
- */
-function safeCopilotId(id: string | null): string | null {
-  if (id === null) return null;
-  return isCopilotSessionId(id) ? id : null;
-}
 
 /**
  * Serialize an {@link EventBuffer} back to the JSONL shape that

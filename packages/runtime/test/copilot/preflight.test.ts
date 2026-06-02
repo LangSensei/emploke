@@ -146,14 +146,12 @@ describe("assertCopilotSdkResolvable", () => {
   });
 
   it("Step 2 fails with EACCES → CopilotSdkUnavailableError (denylist-of-one surfaces everything else)", () => {
-    // The explicit-filter change in this PR replaced the previous
-    // allowlist-of-two (only MODULE_NOT_FOUND / ERR_MODULE_NOT_FOUND
-    // would fail; everything else was silently swallowed) with a
-    // denylist-of-one (only ERR_PACKAGE_PATH_NOT_EXPORTED is
-    // swallowed; everything else fails). EACCES is the canonical
-    // example — a corrupted install with wrong file mode on the
-    // CLI binary used to pass the preflight and explode later at
-    // dispatch time; now it surfaces loudly at boot.
+    // EACCES is the canonical case for the denylist-of-one filter:
+    // every resolver error code EXCEPT ERR_PACKAGE_PATH_NOT_EXPORTED
+    // must surface the preflight failure, so a corrupted install with
+    // the wrong file mode on the CLI binary fails loudly at boot
+    // instead of slipping past as a no-op and exploding later at
+    // dispatch time.
     const cause = errnoError("EACCES: permission denied", "EACCES");
     const deps = makeDeps({
       createRequireAt: () =>
