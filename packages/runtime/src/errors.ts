@@ -23,15 +23,14 @@ export class UnknownRuntimeError extends Error {
  * diagnostic via `err.sessionId`, `err.cause`, and the server-side
  * `console.error` log emitted at the route boundary.
  *
- * Class name is pinned to `RuntimeRefreshFailed` (rather than
- * `RuntimeReadMetadataFailed`) because consumers in the dashboard
- * error-toast registry pattern-match on `instanceof
- * RuntimeRefreshFailed`. The actual call site — the only thrower —
- * is `CopilotRuntime.readMetadata`. `.message` (templated as
- * `runtime "<kind>" refresh failed`) and `.name`
- * (`"RuntimeRefreshFailed"`) carry the legacy wording for the same
- * backwards-compat reason: any consumer that string-matched on
- * either field would also break on rename.
+ * Naming note: the class is named `RuntimeRefreshFailed`, not
+ * `RuntimeReadMetadataFailed`, even though `CopilotRuntime.readMetadata`
+ * is the only thrower. The exported name and the `.message` template
+ * (`runtime "<kind>" refresh failed`) are part of the public error
+ * surface: `packages/server/src/routes/_shared.ts` allowlists the
+ * `.name` string when sanitising error payloads at the route boundary,
+ * so renaming the class (or rewriting `.message`) silently breaks the
+ * server's error mapping.
  */
 export class RuntimeRefreshFailed extends Error {
   constructor(
