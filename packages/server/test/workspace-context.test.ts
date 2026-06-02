@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type Application, WorkspaceHasLiveTasksError } from "@emploke/core";
+import { type Application, WorkspaceHasLiveTasksError } from "@emploke/api";
 import type { WorkspaceQueries, WorkspaceService } from "@emploke/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { captureLogger } from "./_capture-logger.js";

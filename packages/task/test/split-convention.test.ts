@@ -75,7 +75,7 @@ const EXPECTED_CATEGORY_DIRS_AT_CONVENTION_INTRODUCTION = new Set<string>([
   "packages/catalog/src/mcp",
   "packages/catalog/src/skill",
   "packages/cli/src/commands",
-  "packages/core/src/wiring",
+  "packages/api/src/wiring",
   "packages/dashboard/src/api",
   "packages/dashboard/src/components",
   "packages/dashboard/src/components/agents",

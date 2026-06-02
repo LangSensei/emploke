@@ -135,55 +135,53 @@ that plagued emploke before (DTOs scattered across `service.ts`,
 
 The "Where DTOs live" section above governs *intra-package* type layout
 (one `types.ts` per pkg). This section governs *inter-package* type
-layout — given a new type, which of emploke's four type-owning location
+layout — given a new type, which of emploke's three type-owning location
 kinds should host it.
 
-The monorepo has four kinds of type-owning location. Use this decision
+The monorepo has three kinds of type-owning location. Use this decision
 tree in order:
 
 | Kind of type | Lives in | One-line test |
 |---|---|---|
 | A single BC's entity / DTO / error / option shape | the owning domain pkg's `types.ts` / `errors.ts` | "Does it belong to one BC only? Would you delete it if you deleted that BC?" |
-| HTTP wire contract — request / response shape, ROUTES table, wire-side enum | `@emploke/api-types` | "Will it appear in a Network tab payload, or in a generated client?" |
-| In-process composition / runtime container holding live service instances or callbacks | `@emploke/core` | "Does it own `Promise<Service>` or a `(c) => Service` resolver? Is it constructed once per workspace?" |
+| HTTP wire contract OR in-process composition / runtime container holding live service instances or callbacks | `@emploke/api` | "Will it appear in a Network tab payload, OR does it own `Promise<Service>` / a `(c) => Service` resolver, OR a cross-BC composition shape constructed once per workspace? Both live in `@emploke/api` now." |
 | HTTP-transport-internal type (`Hono.Context`-flavoured, route-resolver, middleware) | `@emploke/server` | "Does its signature reference `Hono.Context`, request bodies, or Express-style middleware?" |
 
 ### Decision rules (sharp edges)
 
-1. **Crosses the HTTP boundary → `api-types`, never the originating domain pkg.**
-   If a type appears in a request body, response body, or ROUTES table,
-   it MUST live in `api-types`. Domain pkgs can `import type` from
-   `api-types` when they need to project their internal DTO to the wire
-   shape; the inverse direction (`api-types` importing values from a
-   domain pkg) is FORBIDDEN — `api-types` is type-only and
-   transport-internal.
+1. **Types crossing the public boundary OR cross-BC composition / live-instance shapes → `@emploke/api`.**
+   The 0.6.0 consolidation merged the legacy wire-types and
+   orchestration-root packages into one; the conceptual distinction
+   is preserved internally under `src/contracts/` (wire shapes) vs
+   `src/` (orchestration), but the public import path is uniform.
+   Domain pkgs can `import type` from `@emploke/api` when they need
+   to project their internal DTO to the wire shape; the inverse
+   direction (`@emploke/api` importing values from a domain pkg) is
+   fine for orchestration but the `contracts/` directory MUST stay
+   type-only so it remains a tree-shake-friendly leaf for dashboard
+   / cli.
 
-2. **Holds a live function / instance / context → `core`, never `api-types`.**
-   `core` is the composition root: it constructs `WorkspaceContext`,
-   `Application`, per-workspace service instances. Types that carry
-   `Promise<Service>`, `() => Service`, or compose-result shapes belong
-   here. `api-types` is transport-only and never holds instances.
-
-3. **Single domain's entity / DTO / error → that domain's pkg, never `core`.**
+2. **Single domain's entity / DTO / error → that domain's pkg, never `api`.**
    If `Task` only makes sense as part of the task BC, it lives in
-   `packages/task/src/types.ts`. `core` re-exports nothing — downstream
+   `packages/task/src/types.ts`. `api` re-exports nothing — downstream
    consumers (server, cli) `import { type Task } from "@emploke/task"`
-   directly. `core` only owns *cross-BC composition* types.
+   directly. `api` only owns *cross-BC composition* types and wire
+   contracts.
 
-4. **Transport-specific glue → `server` (or the future transport pkg), never `core`.**
+3. **Transport-specific glue → `server` (or the future transport pkg), never `api`.**
    A type whose signature mentions `Hono.Context`, `Request`, `Response`,
    or a route function is HTTP-specific and belongs in `server`. Promote
-   to `core` only when a second transport (CLI direct-mode, MCP, gRPC)
+   to `api` only when a second transport (CLI direct-mode, MCP, gRPC)
    actually arrives and needs the same abstraction generically.
    *Premature generification is the bigger sin than late generification
    here.*
 
-5. **Inter-domain-pkg dependencies must be `import type` ONLY.**
+4. **Inter-domain-pkg dependencies must be `import type` ONLY.**
    `task` may `import type` from `catalog` (e.g. `AgentResolveResult`)
    because it talks to catalog *through a service-instance threaded by
-   `core`*. It must NOT value-import from `catalog` — that would couple
-   two BCs at runtime and violate the "core is the only composer"
-   invariant. Enforced mechanically by
+   `@emploke/api`*. It must NOT value-import from `catalog` — that
+   would couple two BCs at runtime and violate the "api is the only
+   composer" invariant. Enforced mechanically by
    `packages/task/test/inter-service-imports.test.ts`.
 
 ### Corollaries
@@ -191,21 +189,21 @@ tree in order:
 - **Wire types vs domain types: when they diverge.** A domain pkg's
   internal `XxxEntity` and the wire `Xxx` DTO drift over time
   (`createdAt: Date` → `createdAt: string`, soft-delete fields hidden).
-  When that happens, the wire shape moves to `api-types`; the entity
-  stays in the domain. The service in the domain pkg owns the
-  projection.
+  When that happens, the wire shape moves to `@emploke/api`'s
+  `src/contracts/`; the entity stays in the domain. The service in
+  the domain pkg owns the projection.
 
 - **Errors that cross the wire.** If an error name appears in an HTTP
   error response (i.e. the client branches on it), its `name` literal
-  is wire-shape and should be re-declared in `api-types`. The Error
+  is wire-shape and should be re-declared in `@emploke/api`. The Error
   *class* stays in the domain pkg's `errors.ts`. Cross-pkg consumers
   that need to discriminate the error should branch on `err.name ===
   "AgentNotFoundError"` rather than `import`ing the class for
   `instanceof` — the latter introduces a runtime cross-BC dep that
-  rule 5 forbids.
+  rule 4 forbids.
 
 - **Resolvers (`(c: Hono.Context) => Service`) stay in `server`.**
-  Their parameter type is HTTP-specific; promoting to `core` would
+  Their parameter type is HTTP-specific; promoting to `api` would
   require introducing a generic `ServiceResolver<RequestCtx, Service>`,
   which has no second consumer today.
 
@@ -213,30 +211,30 @@ tree in order:
   `export type Foo = OriginalFoo` from pkg Y is a refactoring smell:
   it suggests either (a) X needs to own Foo for real (move the
   definition), or (b) consumers should import directly from Y (delete
-  the facade). Existing example removed in this PR's commit 6:
-  `server/src/bootstrap.ts` was a 14-line facade re-exporting `core`'s
-  `composeApplication` under `buildServerContainer` — deleted in favour
-  of consumers importing from `@emploke/core` directly.
+  the facade).
 
 ### Pitfalls observed in real PRs
 
 - Putting a wire shape in the originating domain pkg "because it's
   defined there" — couples the wire to the domain. **Fix:** move it
-  to `api-types`; have the domain pkg `import type` it for projection.
+  to `@emploke/api`'s `src/contracts/`; have the domain pkg
+  `import type` it for projection.
 
-- Putting an in-process resolver type in `api-types` "because it's
-  used by routes" — pollutes the wire-types pkg with `Hono.Context`.
+- Putting an in-process resolver type in `@emploke/api` "because it's
+  used by routes" — pollutes the api pkg with `Hono.Context`.
   **Fix:** keep in `server`.
 
-- Adding a type to `core` "because multiple downstreams use it" when
-  it's actually a single-domain concept — bloats `core`. **Fix:** put
-  it in the owning domain pkg; let downstreams import the domain pkg.
+- Adding a type to `@emploke/api` "because multiple downstreams use
+  it" when it's actually a single-domain concept — bloats `api`.
+  **Fix:** put it in the owning domain pkg; let downstreams import
+  the domain pkg.
 
 - A domain pkg value-importing another domain pkg's service or error
   class — silently builds a runtime cross-BC dep. **Fix:** use
-  `import type`; thread the live instance through `core`'s composer;
-  for cross-BC error discrimination, branch on `err.name` instead of
-  `instanceof`. Mechanically audited by `inter-service-imports.test.ts`.
+  `import type`; thread the live instance through `@emploke/api`'s
+  composer; for cross-BC error discrimination, branch on `err.name`
+  instead of `instanceof`. Mechanically audited by
+  `inter-service-imports.test.ts`.
 
 ## Splitting big files via facade + sibling subdir
 
@@ -481,7 +479,7 @@ interface). This is a real example from `@emploke/runtime`.
 
 ## Composition root
 
-The composition root (`@emploke/core`'s `WorkspaceRuntimeCache.load`)
+The composition root (`@emploke/api`'s `WorkspaceRuntimeCache.load`)
 calls each `compose<Entity>Module({ dbFile })` once per workspace and
 threads the `service` into downstream pkgs (either as-is or through a
 capability interface).

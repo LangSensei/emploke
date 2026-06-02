@@ -1,4 +1,4 @@
-import type { ServerConfig } from "@emploke/api-types";
+import type { ServerConfig } from "@emploke/api";
 import { Hono } from "hono";
 
 /**
@@ -6,7 +6,7 @@ import { Hono } from "hono";
  * fresh on each request so dynamic fields (currently `currentWorkspace`)
  * stay accurate as the registry mutates.
  *
- * The `ServerConfig` wire shape lives in `@emploke/api-types` so the
+ * The `ServerConfig` wire shape lives in `@emploke/api` so the
  * dashboard and CLI can typecheck against it without value-importing
  * `@emploke/server`.
  */

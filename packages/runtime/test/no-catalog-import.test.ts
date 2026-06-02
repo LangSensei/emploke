@@ -4,7 +4,7 @@
  * is the bottom layer of the package graph and never imports catalog,
  * not even as a test-only devDep. `CatalogService` satisfies runtime's
  * `AgentContentSource` port by structural typing only; the production
- * wiring layer (`@emploke/core`) is the sole composition root that
+ * wiring layer (`@emploke/api`) is the sole composition root that
  * value-imports both.
  *
  * This file enforces two complementary scans:

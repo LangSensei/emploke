@@ -22,9 +22,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@emploke/api-types": "workspace:*",
+    "@emploke/api": "workspace:*",
     "@emploke/catalog": "workspace:*",
-    "@emploke/core": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "@emploke/schedule": "workspace:*",
     "@emploke/session": "workspace:*",

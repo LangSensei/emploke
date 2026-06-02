@@ -44,7 +44,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/api-types:
+  packages/api:
     dependencies:
       '@emploke/catalog':
         specifier: workspace:*
@@ -61,6 +61,15 @@ importers:
       '@emploke/task':
         specifier: workspace:*
         version: link:../task
+      '@emploke/terminal':
+        specifier: workspace:*
+        version: link:../terminal
+      '@emploke/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      pino:
+        specifier: ^9.5.0
+        version: 9.14.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -68,6 +77,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(happy-dom@15.11.7)(msw@2.14.6(@types/node@22.19.17)(typescript@5.9.3))(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/catalog:
     dependencies:
@@ -114,9 +126,9 @@ importers:
 
   packages/cli:
     dependencies:
-      '@emploke/api-types':
+      '@emploke/api':
         specifier: workspace:*
-        version: link:../api-types
+        version: link:../api
       '@emploke/server':
         specifier: workspace:*
         version: link:../server
@@ -133,46 +145,6 @@ importers:
       '@types/write-file-atomic':
         specifier: ^4.0.3
         version: 4.0.3
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.5
-        version: 4.1.5(@types/node@22.19.17)(happy-dom@15.11.7)(msw@2.14.6(@types/node@22.19.17)(typescript@5.9.3))(vite@8.0.11(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
-
-  packages/core:
-    dependencies:
-      '@emploke/api-types':
-        specifier: workspace:*
-        version: link:../api-types
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
-      '@emploke/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-      '@emploke/schedule':
-        specifier: workspace:*
-        version: link:../schedule
-      '@emploke/session':
-        specifier: workspace:*
-        version: link:../session
-      '@emploke/task':
-        specifier: workspace:*
-        version: link:../task
-      '@emploke/terminal':
-        specifier: workspace:*
-        version: link:../terminal
-      '@emploke/workspace':
-        specifier: workspace:*
-        version: link:../workspace
-      pino:
-        specifier: ^9.5.0
-        version: 9.14.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.17
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -204,9 +176,9 @@ importers:
         specifier: ^7.15.0
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
     devDependencies:
-      '@emploke/api-types':
+      '@emploke/api':
         specifier: workspace:*
-        version: link:../api-types
+        version: link:../api
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
@@ -332,15 +304,12 @@ importers:
 
   packages/server:
     dependencies:
-      '@emploke/api-types':
+      '@emploke/api':
         specifier: workspace:*
-        version: link:../api-types
+        version: link:../api
       '@emploke/catalog':
         specifier: workspace:*
         version: link:../catalog
-      '@emploke/core':
-        specifier: workspace:*
-        version: link:../core
       '@emploke/runtime':
         specifier: workspace:*
         version: link:../runtime

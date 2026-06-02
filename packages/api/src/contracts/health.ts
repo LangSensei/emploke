@@ -1,9 +1,9 @@
 /**
- * Shape returned by `GET /api/health`. Lives in `@emploke/api-types`
- * (not in the server package) because both ends of the wire — the
- * server route handler that produces it AND the CLI / dashboard
- * clients that consume it — need to agree on the shape without one
- * package value-importing the other.
+ * Shape returned by `GET /api/health`. Lives in `@emploke/api`'s
+ * `contracts/` directory (not in the server package) because both ends
+ * of the wire — the server route handler that produces it AND the CLI
+ * / dashboard clients that consume it — need to agree on the shape
+ * without one package value-importing the other.
  *
  * Sensitive values are deliberately NOT exposed: the endpoint is
  * unauthenticated so it can serve the dashboard backoff probe before

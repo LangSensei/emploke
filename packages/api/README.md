@@ -1,19 +1,47 @@
-# @emploke/core
+# @emploke/api
 
-Composition root that wires the workspace registry to per-workspace
-contexts. Server (and future CLI / MCP / SDK consumers) call
-`composeApplication({...})` once and route every per-workspace
-request through the returned `Application`.
+The **T2 Application layer** — emploke's single composition root and
+public type surface. Both the cross-package *contracts* (HTTP wire
+shapes, out-of-band IPC files, `EMPLOKE_HOME` resolution) and the
+*orchestration* that wires T0 / T1 packages (`workspace`, `catalog`,
+`session`, `task`, `runtime`, `schedule`) into per-workspace runtime
+contexts live here. Pairs with `@emploke/server` (HTTP transport) and
+the surfaces (`@emploke/terminal`, `@emploke/dashboard`,
+`@emploke/cli`).
 
-Beyond per-workspace context resolution, this surface exposes the
-canonical cross-BC orchestration methods (`registerWorkspace`,
-`renameWorkspace`, `unregisterWorkspace`, `reloadWorkspace`) so
-transport layers (HTTP routes, CLI commands) become thin adapters.
+This package was formed in 0.6.0 by merging emploke's legacy
+orchestration-root and HTTP wire-contract packages into a single T2
+package. See [`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)
+for the rationale.
+
+## Internal layout
+
+```
+packages/api/src/
+├── contracts/                ← types that cross the public boundary
+│   ├── emploke-home.ts       (EMPLOKE_HOME + runtime.json + logs/ paths)
+│   ├── health.ts             (GET /api/health response)
+│   ├── plan-to-manifest.ts   (catalog install/sync ResolveManifest)
+│   ├── routes.ts             (ROUTES table + RouteSpec primitives)
+│   ├── runtimes.ts           (GET /api/runtimes wire shape)
+│   ├── schedules.ts          (per-kind wire shapes for /schedules)
+│   └── server-config.ts      (GET /api/config wire shape)
+├── application.ts            ← Application interface + composeApplication
+├── workspace-context.ts      ← WorkspaceContext + WorkspaceContextRegistry
+├── wiring/                   ← per-kind handler wiring (cross-BC glue)
+│   └── schedule-task-handler.ts
+└── index.ts                  ← public barrel (union of both subsystems)
+```
+
+The `contracts/` vs root-of-`src/` split is purely for code
+organisation. External consumers see one barrel
+(`import { ... } from "@emploke/api"`); the split is not exposed via
+separate subpath exports.
 
 ## Public API
 
 ```ts
-import { composeApplication } from "@emploke/core";
+import { composeApplication } from "@emploke/api";
 
 const app = await composeApplication({
   workspace: { dbFile: "/abs/global.db" },
@@ -77,28 +105,41 @@ The internal `WorkspaceContextRegistry` class is the source-of-truth
 holder of live SQLite handles, task supervisors, and SSE event buses.
 It is **not** an optimisation cache that can be silently dropped —
 dropping entries without `close()` leaks live resources. The class is
-intentionally not exported from `@emploke/core`; all access goes
+intentionally not exported from `@emploke/api`; all access goes
 through `Application` methods.
+
+## Tier
+
+`@emploke/api` is the **T2 Application layer** in emploke's tier model
+(see [`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)).
+T0 (foundations: `catalog`, `runtime`, `schedule`, `workspace`) and
+T1 (modes: `session`, `task`) sit below; T3 (`server`) and T_top
+(`terminal`, `dashboard`, `cli`) sit above.
 
 ## Layering
 
-Core may import:
-- `@emploke/workspace`
-- `@emploke/catalog`
-- `@emploke/session`
-- `@emploke/task`
-- `@emploke/runtime`
-- `@emploke/terminal`
+`@emploke/api` MAY import (value or type):
 
-Core must NOT import:
-- `@emploke/server` — server depends on core, not the reverse
-- `@emploke/dashboard`
-- `@emploke/cli`
+- `@emploke/workspace`, `@emploke/catalog`, `@emploke/session`,
+  `@emploke/task`, `@emploke/runtime`, `@emploke/schedule`,
+  `@emploke/terminal` (the last for `spawnTerminal` during session
+  spawn).
+
+`@emploke/api` MUST NOT import:
+
+- `@emploke/server` — server depends on api, not the reverse.
+- `@emploke/dashboard`, `@emploke/cli` — surfaces depend on api, not
+  the reverse.
+
+**`src/contracts/` internal sub-rule:** prefer `import type` over
+value imports; the contracts directory is a tree-shake-friendly leaf
+so dashboard / cli can pull wire types without dragging in
+orchestration code paths.
 
 ## Testing
 
 ```sh
-pnpm --filter @emploke/core test
+pnpm --filter @emploke/api test
 ```
 
 Vitest runs in `forks` pool.

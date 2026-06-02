@@ -1,5 +1,5 @@
 /**
- * Tests for `@emploke/core`. Coverage is focused on the orchestration
+ * Tests for `@emploke/api`. Coverage is focused on the orchestration
  * surface (`Application`) and the per-workspace context registry
  * lifecycle invariants the package owns:
  *

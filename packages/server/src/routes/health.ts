@@ -1,4 +1,4 @@
-import type { HealthResponse } from "@emploke/api-types";
+import type { HealthResponse } from "@emploke/api";
 import { Hono } from "hono";
 
 /**
@@ -10,7 +10,7 @@ import { Hono } from "hono";
  * server is running and is on version X", both of which a network
  * scanner could derive from the connection itself.
  *
- * The `HealthResponse` wire shape lives in `@emploke/api-types` so the
+ * The `HealthResponse` wire shape lives in `@emploke/api` so the
  * dashboard, CLI, and external monitors can typecheck against it
  * without value-importing `@emploke/server`.
  *

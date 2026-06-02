@@ -25,8 +25,7 @@ import pino from "pino";
 
 const silentLogger = pino({ level: "silent" });
 
-import { type HttpMethod, listRoutes, type RouteSpec } from "@emploke/api-types";
-import type { Application } from "@emploke/core";
+import { type Application, type HttpMethod, listRoutes, type RouteSpec } from "@emploke/api";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { ScheduleService } from "@emploke/schedule";
 import type { SessionService } from "@emploke/session";

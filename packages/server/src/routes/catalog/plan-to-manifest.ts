@@ -1,15 +1,15 @@
-import type { OrphanManifestEntry, ResolveManifest, ResolveManifestNode } from "@emploke/api-types";
+import type { OrphanManifestEntry, ResolveManifest, ResolveManifestNode } from "@emploke/api";
 import type { CatalogConflict, CatalogPlan, CatalogPlanNode } from "@emploke/catalog";
 
 // Re-export wire types for in-pkg consumers that already pulled them from
 // this module via `import type { ResolveManifest } from "./plan-to-manifest.js"`.
-// The canonical source is now `@emploke/api-types`; this re-export is
+// The canonical source is now `@emploke/api`; this re-export is
 // pure-type, no runtime emit.
 export type { OrphanManifestEntry, ResolveManifest, ResolveManifestNode };
 
 /**
  * Internal alias for the discriminated node-status field. Mirrors the
- * `BaseNode["status"]` union declared in `@emploke/api-types`; kept
+ * `BaseNode["status"]` union declared in `@emploke/api`; kept
  * private to this file to avoid leaking the implementation detail to
  * server-internal consumers.
  */

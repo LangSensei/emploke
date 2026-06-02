@@ -6,10 +6,10 @@ registry. Bundled into the published `emploke` binary; also runs
 standalone for development.
 
 Post de-DDD: the server is a **pure transport adapter** over
-[`@emploke/core`](../core). Every route is parse  dispatch to core
+[`@emploke/api`](../api). Every route is parse  dispatch to api
 or to the per-workspace runtime  format. Business logic lives in
 the entity services; orchestration (cache, spawn, register/rename)
-lives in core.
+lives in api.
 
 ## URL scheme
 
@@ -52,11 +52,11 @@ catalog the dashboard sees.
 ## Per-workspace context
 
 The server holds one `WorkspaceService` process-wide (via
-`@emploke/core`) and lazily mints per-workspace
+`@emploke/api`) and lazily mints per-workspace
 `{catalog, sessions, tasks}` bundles. Each bundle is a
 `WorkspaceContext`, resolved through `application.getContext(id)` and
 held by an internal `WorkspaceContextRegistry` private to
-`@emploke/core`. Implicit invalidation happens on workspace deletion
+`@emploke/api`. Implicit invalidation happens on workspace deletion
 or rename; an explicit `POST /api/workspaces/:id/reload` is also
 available for operator-driven reload (e.g. recovering after the
 persisted state on disk has been edited externally). Reload is

@@ -29,7 +29,7 @@ export interface Session {
 /**
  * Configuration for SessionService. After the de-DDD simplification,
  * persistence is supplied directly as a Drizzle handle (one per
- * workspace, owned by the @emploke/core orchestrator).
+ * workspace, owned by the @emploke/api orchestrator).
  */
 export interface SessionServiceConfig {
   /** Resolves agents at create() time (structural — catalog satisfies it). */

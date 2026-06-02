@@ -94,7 +94,7 @@ export interface WorkspaceContext {
  * NOT an optimisation cache that can be silently dropped — dropping
  * entries without `close()` leaks live resources.
  *
- * Internal to `@emploke/core`. Consumers go through `Application`
+ * Internal to `@emploke/api`. Consumers go through `Application`
  * methods (`getContext`, `loadedContexts`, `reloadWorkspace`,
  * `unregisterWorkspace`, `close`); the registry is not exported from
  * the package surface.

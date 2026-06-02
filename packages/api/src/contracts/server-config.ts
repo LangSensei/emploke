@@ -5,9 +5,10 @@
  * user the truth even when an env override like `EMPLOKE_HOME` is in
  * effect.
  *
- * Lives in `@emploke/api-types` so both the server's `configRoutes`
- * handler and the dashboard / CLI clients can typecheck against the
- * same shape without one package value-importing the other.
+ * Lives in `@emploke/api`'s `contracts/` directory so both the
+ * server's `configRoutes` handler and the dashboard / CLI clients can
+ * typecheck against the same shape without one package
+ * value-importing the other.
  *
  * Sensitive values are NOT exposed: the dashboard runs in single-user
  * mode on the same host as the server, so absolute paths are

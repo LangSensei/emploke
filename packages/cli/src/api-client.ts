@@ -1,5 +1,5 @@
 /**
- * Typed HTTP client over the route manifest exported by `@emploke/api-types`.
+ * Typed HTTP client over the route manifest exported by `@emploke/api`.
  *
  * Each call site looks like:
  *
@@ -31,7 +31,7 @@
  * with thin wrappers around `apiClient.call(...)`.
  */
 
-import { ROUTES, type RouteKey, type RouteReq, type RouteRes } from "@emploke/api-types";
+import { ROUTES, type RouteKey, type RouteReq, type RouteRes } from "@emploke/api";
 
 /** Extract the request `body` type for route key `K`, or `never` when absent. */
 export type BodyOf<K extends RouteKey> =

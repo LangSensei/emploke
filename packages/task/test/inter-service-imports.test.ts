@@ -29,14 +29,14 @@
  * scenarios. This audit targets production code (and its non-test
  * fixtures) only.
  *
- * Importing from `@emploke/core`, `@emploke/api-types`,
- * `@emploke/dev-conventions`, `@emploke/server`, `@emploke/cli`,
- * `@emploke/dashboard`, or any other non-domain pkg is OUT OF SCOPE
- * — the rule constrains only the closed set of 8 domain pkgs.
+ * Importing from `@emploke/api`, `@emploke/dev-conventions`,
+ * `@emploke/server`, `@emploke/cli`, `@emploke/dashboard`, or any
+ * other non-domain pkg is OUT OF SCOPE — the rule constrains only
+ * the closed set of 8 domain pkgs.
  *
- * Why the rule: `@emploke/core` is the sole composition root that
+ * Why the rule: `@emploke/api` is the sole composition root that
  * value-imports domain pkgs. Any other domain-to-domain value-import
- * creates a runtime cross-BC dependency that bypasses core's
+ * creates a runtime cross-BC dependency that bypasses the
  * per-workspace wiring discipline (see `docs/architecture.md`).
  *
  * Re-exports (`export { Foo } from "@emploke/catalog"`) are NOT
@@ -67,7 +67,7 @@ const SKIP_DIR_NAMES = new Set(["node_modules", "dist", "drizzle"]);
 /**
  * Closed set of domain (bounded-context) pkgs. Any import where the
  * imported specifier is `@emploke/<one-of-these>` is in scope; every
- * other `@emploke/*` specifier (core, api-types, server, cli, etc.)
+ * other `@emploke/*` specifier (api, server, cli, dashboard, etc.)
  * is out of scope.
  */
 const DOMAIN_PKGS: readonly string[] = [
@@ -298,7 +298,7 @@ describe("inter-service value-imports are forbidden", () => {
     const unexcused = all.filter((v) => !allowedKeys.has(`${v.file}::@emploke/${v.importedPkg}`));
     expect(
       unexcused,
-      `Found ${unexcused.length} cross-domain value-import(s) that violate rule 5:\n${formatViolations(unexcused)}\n\nEither (a) convert the import to type-only (\`import type { ... }\` or per-specifier \`type\` modifiers), (b) thread the live instance through @emploke/core (the only legitimate value-importer), or (c) add an ALLOWED_VIOLATIONS entry with a non-empty rationale.`,
+      `Found ${unexcused.length} cross-domain value-import(s) that violate rule 5:\n${formatViolations(unexcused)}\n\nEither (a) convert the import to type-only (\`import type { ... }\` or per-specifier \`type\` modifiers), (b) thread the live instance through @emploke/api (the only legitimate value-importer), or (c) add an ALLOWED_VIOLATIONS entry with a non-empty rationale.`,
     ).toEqual([]);
   });
 
@@ -395,7 +395,7 @@ describe("inter-service value-imports are forbidden", () => {
 // type nodes alike. Pins P1's outcome (arch/agent-resolver-port):
 // task + session now consume catalog only via the structural
 // `AgentResolverPort` / `AgentContentSource` ports that the
-// composition root (`@emploke/core`) supplies; the catalog package
+// composition root (`@emploke/api`) supplies; the catalog package
 // must never appear in either tree's source again. Future PRs that
 // accidentally reintroduce a catalog import will fail this assertion.
 // ──────────────────────────────────────────────────────────────────────

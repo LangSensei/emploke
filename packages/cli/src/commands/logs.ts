@@ -11,7 +11,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
+import { logsDir, resolveEmplokeHome } from "@emploke/api";
 import { resolveLatestLog } from "../log-paths.js";
 import type { CommandResult } from "../result.js";
 
