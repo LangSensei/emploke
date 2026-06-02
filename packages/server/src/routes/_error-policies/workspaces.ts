@@ -16,7 +16,7 @@
  * other sites fall back to the policy default of 400.
  */
 
-import { WorkspaceHasLiveTasksError } from "@emploke/core";
+import { WorkspaceHasLiveTasksError } from "@emploke/api";
 import {
   RegistryError,
   WorkspaceError,

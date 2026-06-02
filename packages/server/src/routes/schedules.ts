@@ -53,7 +53,7 @@
  *     this ordering prevents).
  */
 
-import type { ScheduleWire, TaskTargetData, TaskTargetPatch } from "@emploke/api-types";
+import type { ScheduleWire, TaskTargetData, TaskTargetPatch } from "@emploke/api";
 import {
   describeCron,
   type Schedule,

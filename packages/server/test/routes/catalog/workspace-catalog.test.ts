@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Application } from "@emploke/api";
 import type { CatalogService } from "@emploke/catalog";
-import type { Application } from "@emploke/core";
 import type { WorkspaceService } from "@emploke/workspace";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

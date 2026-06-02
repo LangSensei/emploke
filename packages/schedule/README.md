@@ -26,7 +26,7 @@ Only:
 2. Call `service.registerKind("<kind>", handler)` before
    `service.recover()`.
 3. (For server-exposed kinds) add per-kind URL routes + wire DTOs in
-   `@emploke/api-types` + (optionally) a partial JSON index migration
+   `@emploke/api` + (optionally) a partial JSON index migration
    in this pkg.
 
 ## Substrate ⇄ handler split

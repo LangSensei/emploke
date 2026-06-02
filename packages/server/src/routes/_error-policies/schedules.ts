@@ -29,7 +29,7 @@
  * two policy files to predict status.
  */
 
-import { TaskScheduleTargetError } from "@emploke/core";
+import { TaskScheduleTargetError } from "@emploke/api";
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
   InvalidCronExprError,
@@ -70,8 +70,8 @@ export const schedulesErrorPolicy: ErrorPolicy = {
     // Task-kind-handler-side input validation (the handler's
     // `validate` rejects malformed task target data — wire-side
     // duplicate of `validateTaskTargetData` for defense-in-depth).
-    // Lives in `@emploke/core` because the kind handler is wired
-    // there; reaches the policy via core's public surface.
+    // Lives in `@emploke/api` because the kind handler is wired
+    // there; reaches the policy via api's public surface.
     [TaskScheduleTargetError, 400],
     [ScheduleNotFoundError, 404],
     [ScheduleKindMismatchError, 404],

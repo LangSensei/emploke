@@ -7,8 +7,13 @@ process.env.UV_THREADPOOL_SIZE ??= "16";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
-import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
-import { type Application, composeApplication, type WorkspaceContext } from "@emploke/core";
+import {
+  type Application,
+  composeApplication,
+  logsDir,
+  resolveEmplokeHome,
+  type WorkspaceContext,
+} from "@emploke/api";
 import {
   assertCopilotSdkResolvable,
   CopilotRuntime,
@@ -36,7 +41,7 @@ import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
-// Route manifest and wire types now live in `@emploke/api-types`; CLI
+// Route manifest and wire types now live in `@emploke/api`; CLI
 // and dashboard import them directly from there. `@emploke/server`
 // no longer re-exports them — see Issue #255 and the C3 commit body
 // for the rationale. Server's public surface is now strictly its

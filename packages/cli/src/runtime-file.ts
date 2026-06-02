@@ -8,20 +8,20 @@
  * so a second `emploke status` invocation racing the writer never sees a
  * half-written JSON payload.
  *
- * The on-disk shape (`RuntimeFile`) is owned by `@emploke/api-types`
+ * The on-disk shape (`RuntimeFile`) is owned by `@emploke/api`
  * because the server writes it and the CLI reads it; this module
  * provides the CLI-side IO around that shared shape.
  */
 
 import { mkdir, readFile, unlink } from "node:fs/promises";
-import * as apiTypes from "@emploke/api-types";
+import * as apiTypes from "@emploke/api";
 import writeFileAtomic from "write-file-atomic";
 
-// Single source of truth for the api-types path: any rename of the
+// Single source of truth for the api path: any rename of the
 // upstream package only needs touching this import. The two re-exports
 // (`type RuntimeFile`, `runtimeFilePath`) pass the public types
 // through this module so cli consumers keep their existing import
-// paths without depending on @emploke/api-types directly.
+// paths without depending on @emploke/api directly.
 type RuntimeFile = apiTypes.RuntimeFile;
 const runtimeFilePath = apiTypes.runtimeFilePath;
 

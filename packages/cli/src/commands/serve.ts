@@ -13,7 +13,7 @@
 // remaining `runServer` import here is the single allowed exception
 // pending the subprocess-spawn refactor tracked in #255. Do NOT add new
 // value-imports from @emploke/server in this file or anywhere else in cli —
-// every other cli↔server wire contract goes through @emploke/api-types.
+// every other cli↔server wire contract goes through @emploke/api.
 import { type RunServerOpts, runServer } from "@emploke/server";
 
 export interface ServeOpts {

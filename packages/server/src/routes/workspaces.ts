@@ -1,9 +1,9 @@
 import type {
+  Application,
   WorkspaceCreateBody,
   WorkspaceCurrentPutBody,
   WorkspacePatchBody,
-} from "@emploke/api-types";
-import type { Application } from "@emploke/core";
+} from "@emploke/api";
 import { Hono } from "hono";
 import { workspacesErrorPolicy } from "./_error-policies/workspaces.js";
 import { respondError } from "./_respond-error.js";
@@ -19,9 +19,9 @@ type PatchBodyRaw = { [K in keyof WorkspacePatchBody]?: unknown };
  * separately so the workspace id is part of the resource URL.
  *
  * This is a thin transport adapter — every endpoint is parse body →
- * dispatch to `@emploke/core` → format response. The orchestration
+ * dispatch to `@emploke/api` → format response. The orchestration
  * (UUID minting, default workspaceDir, cache invalidation) lives in
- * core so CLI / MCP / SDK consumers get it for free.
+ * api so CLI / MCP / SDK consumers get it for free.
  */
 export function workspacesRoutes(application: Application): Hono {
   const app = new Hono();

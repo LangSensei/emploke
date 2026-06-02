@@ -27,7 +27,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@emploke/api-types": "workspace:*",
+    "@emploke/api": "workspace:*",
     "@emploke/server": "workspace:*",
     "commander": "^12.1.0",
     "write-file-atomic": "^5.0.1"

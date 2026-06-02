@@ -11,7 +11,7 @@
  * structured payload suitable for piping to `jq`.
  */
 
-import { resolveEmplokeHome } from "@emploke/api-types";
+import { resolveEmplokeHome } from "@emploke/api";
 import { probeHealth } from "../health-probe.js";
 import type { CommandResult } from "../result.js";
 import { deleteRuntimeFile, isPidAlive, readRuntimeFile } from "../runtime-file.js";

@@ -1,5 +1,4 @@
-import type { SessionCreateBody } from "@emploke/api-types";
-import type { WorkspaceContext } from "@emploke/core";
+import type { SessionCreateBody, WorkspaceContext } from "@emploke/api";
 import { Hono } from "hono";
 import { sessionsErrorPolicy } from "./_error-policies/sessions.js";
 import { respondError } from "./_respond-error.js";

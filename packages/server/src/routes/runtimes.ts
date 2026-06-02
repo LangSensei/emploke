@@ -1,4 +1,4 @@
-import type { RuntimeInfo } from "@emploke/api-types";
+import type { RuntimeInfo } from "@emploke/api";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import { Hono } from "hono";
 
@@ -9,7 +9,7 @@ import { Hono } from "hono";
  * button only renders enabled when the active runtime sets
  * `capabilities.remoteSession === true`).
  *
- * The `RuntimeInfo` wire shape lives in `@emploke/api-types` so
+ * The `RuntimeInfo` wire shape lives in `@emploke/api` so
  * dashboard / CLI consumers can typecheck against it without
  * value-importing `@emploke/server`.
  */

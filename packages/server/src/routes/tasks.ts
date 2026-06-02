@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import type { TaskDispatchBody } from "@emploke/api-types";
+import type { TaskDispatchBody } from "@emploke/api";
 import {
   InvalidTransition,
   type ListTaskOpts,

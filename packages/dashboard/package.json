@@ -21,7 +21,7 @@
     "react-router-dom": "^7.15.0"
   },
   "devDependencies": {
-    "@emploke/api-types": "workspace:*",
+    "@emploke/api": "workspace:*",
     "@emploke/catalog": "workspace:*",
     "@emploke/schedule": "workspace:*",
     "@testing-library/react": "^16.3.0",

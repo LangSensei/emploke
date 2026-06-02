@@ -1,7 +1,7 @@
 {
-  "name": "@emploke/api-types",
+  "name": "@emploke/api",
   "version": "0.0.1",
-  "description": "Out-of-band IPC contracts shared by emploke server + CLI: EMPLOKE_HOME resolution, runtime.json shape, HTTP route manifest, and wire types.",
+  "description": "Application layer for emploke: public type contracts and orchestration of T0/T1 packages into a composable runtime.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -13,30 +13,41 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js"
     }
   },
   "files": [
     "dist",
+    "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@emploke/catalog": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "@emploke/schedule": "workspace:*",
     "@emploke/session": "workspace:*",
-    "@emploke/task": "workspace:*"
+    "@emploke/task": "workspace:*",
+    "@emploke/terminal": "workspace:*",
+    "@emploke/workspace": "workspace:*",
+    "pino": "^9.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.5"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/LangSensei/emploke.git",
-    "directory": "packages/api-types"
+    "directory": "packages/api"
   }
 }

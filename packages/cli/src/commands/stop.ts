@@ -20,7 +20,7 @@
  */
 
 import { setTimeout as delay } from "node:timers/promises";
-import { resolveEmplokeHome } from "@emploke/api-types";
+import { resolveEmplokeHome } from "@emploke/api";
 import type { CommandResult } from "../result.js";
 import { deleteRuntimeFile, isPidAlive, readRuntimeFile } from "../runtime-file.js";
 

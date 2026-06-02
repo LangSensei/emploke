@@ -15,33 +15,86 @@ distinct from the community catalog at
 [emploke-marketplace](https://github.com/LangSensei/emploke-marketplace),
 which uses `scope: langsensei`.
 
+## Tier model
+
+emploke's packages organise around a 5-tier model. Each tier number
+describes *what kind of thing* a package is — not who imports whom.
+Dependency-direction invariants (port vs direct import, allowed
+imports per tier) are a **separate axis** with its own rules, **TBD
+in a follow-up doc**.
+
+| Tier      | Name        | Packages                                            | Conceptual role                                                                         |
+| --------- | ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **T0**    | Foundations | `catalog`, `runtime`, `schedule`, `workspace`       | Who / Where / When / Scope — irreducible primitives                                     |
+| **T1**    | Modes       | `session`, `task`                                   | Interactive vs Headless execution mode (= Agent × Runtime × {mode})                     |
+| **T2**    | Application | `api` (merged from legacy `core` + `api-types`)     | Public type contracts + orchestration of T0/T1 into business capabilities               |
+| **T3**    | Host        | `server`                                            | HTTP transport that exposes T2 capabilities over the wire                               |
+| **T_top** | Surfaces    | `terminal`, `dashboard`, `cli`                      | Platform-specific UI on top of T3                                                       |
+
+`workflow` is intentionally excluded — deferred, not yet implemented.
+
+### Tier philosophy
+
+**Pure conceptual classification.** A tier number describes *what
+kind of thing* a package is, not who imports whom. Two packages can
+sit in the same tier even if one imports the other. Whether a
+dependency flows via direct import, via a declared port, or via a
+wire format is a separate axis (see "Dependency invariants" — TBD).
+
+**Each tier answers a different question.**
+
+- T0 — what irreducible primitives does an agentic system need?
+  (Who runs · Where to run · When to run · within what Scope)
+- T1 — in what *mode* is the work running? (Interactive `session`
+  vs Headless `task`)
+- T2 — what can the system *do*, and how is that spelled? `api`
+  owns both *contracts* (types that cross the public boundary) and
+  *orchestration* (functions composing T0/T1 to implement those
+  contracts).
+- T3 — how do remote clients invoke T2? `server` is a thin HTTP
+  binding.
+- T_top — how does a human (or another agent) interact?
+
+**Visibility rule (design intent — not yet machine-enforced).** T0
+and T1 packages MUST NOT be imported by T3 or T_top. Anything those
+layers need is re-exposed by `api` — usually a re-export, sometimes
+a wrapped / projected shape. This keeps the public surface stable
+even as primitives evolve.
+
+**`api` is the single composition root.** New cross-cutting features
+land in `api`; transport (`server`) and UI (`terminal` / `dashboard`
+/ `cli`) stay thin.
+
 ## Layering
 
-The repo is one [pnpm workspace](https://pnpm.io/workspaces) of 11
+The repo is one [pnpm workspace](https://pnpm.io/workspaces) of
 packages with a strict layering. Higher layers may depend on lower
-layers; never the reverse.
+layers; never the reverse. The 5-tier model (see [§ Tier model](#tier-model))
+gives each box a name.
 
 ```text
                 ┌────────────────────────┐
-                │ @emploke/dashboard     │  React + Vite SPA
+                │ @emploke/dashboard     │  React + Vite SPA (T_top)
                 └───────────▲────────────┘
                             │ HTTP /api/*
-                ┌───────────┴────────────┐       ┌─────────────┐
-                │ @emploke/cli           │       │ @emploke/   │
-                │ (lifecycle commands)   │──────▶│  api-types  │
-                └───────────┬────────────┘       └──────▲──────┘
-                            │ HTTP /api/*               │
-                ┌───────────┴────────────┐              │
-                │ @emploke/server        │──────────────┘
-                │ (routes + middleware)  │  reads RuntimeFile shape
+                ┌───────────┴────────────┐
+                │ @emploke/cli           │  T_top
+                │ (lifecycle commands)   │
+                └───────────┬────────────┘
+                            │ HTTP /api/*
+                ┌───────────┴────────────┐
+                │ @emploke/server        │  T3 Host
+                │ (routes + middleware)  │
                 └───────────▲────────────┘
-                            │
+                            │  re-exports + composes
                 ┌───────────┴────────────┐    ┌──────────────────┐
-                │ @emploke/core          │───▶│ @emploke/        │
-                │ composition root +     │    │  terminal        │
-                │ WorkspaceRuntimeCache  │    │ (spawn launcher) │
-                │ + WorkspaceRuntime     │    └──────────────────┘
-                │   .spawnSession()      │
+                │ @emploke/api           │───▶│ @emploke/        │
+                │ T2 Application:        │    │  terminal        │
+                │  contracts (routes /   │    │ (spawn launcher) │
+                │  wire shapes)          │    └──────────────────┘
+                │  + composeApplication  │
+                │  + WorkspaceContext    │
+                │  registry              │
                 └───────────▲────────────┘
                             │
    ┌───────────┬────────────┼────────────┬────────────────┐
@@ -49,17 +102,19 @@ layers; never the reverse.
 ┌──┴──┐  ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐  ┌───────┴────┐
 │task │  │ session   │ │ catalog │ │ workspace │  │  runtime   │
 └──▲──┘  └─────▲─────┘ └─────────┘ └───────────┘  └────────────┘
+   T1          T1            T0          T0              T0
    │           │
    └───────────┴── runtime adapters consumed by task + session
 ```
 
-`@emploke/api-types` is the **out-of-band IPC contract** between
-`@emploke/cli` and `@emploke/server` (today: the `runtime.json` file
-shape + `EMPLOKE_HOME` resolution). Entity packages do NOT depend on
-it — they expose pkg-owned DTOs through their own `index.ts`.
+Both the wire types (route manifest, `runtime.json` shape,
+`EMPLOKE_HOME` resolution) and the composition root live in
+`@emploke/api` — there is no separate types-only package. The
+dashboard and cli pull wire types from `@emploke/api` for type-only
+imports; they do not value-import its orchestration entrypoints.
 
-`@emploke/terminal` is consumed **only by `@emploke/core`** at
-runtime — specifically by `WorkspaceRuntime.spawnSession()` which
+`@emploke/terminal` is consumed **only by `@emploke/api`** at
+runtime — specifically by `WorkspaceContext.spawnSession()` which
 takes the `LaunchCommand` from `SessionService.buildInteractiveLaunch`
 and hands it to `spawnTerminal()`. Entity packages don't see it.
 `@emploke/runtime` produces `LaunchCommand` values but does not
@@ -67,10 +122,10 @@ spawn terminals — the spawn step lives one layer up.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition
-happens at the [`@emploke/core`](../packages/core) layer: core holds
+happens at the [`@emploke/api`](../packages/api) layer: api holds
 one `WorkspaceService` process-wide and lazily mints per-workspace
 `{catalog, sessions, tasks}` bundles behind a
-`WorkspaceRuntimeCache`. The server depends on core, not on the
+`WorkspaceRuntimeCache`. The server depends on api, not on the
 entity pkgs directly. `runtime` is consumed by `session` + `task` to
 spawn agents.
 
@@ -182,7 +237,7 @@ entity:
   state (current-workspace pointer, future audit logs, etc).
 - **`<workspace>/workspace.db`** — every per-workspace entity (catalog,
   session, task, future workflow). One connection serves them all,
-  shared via DI from `WorkspaceRuntime` (in `@emploke/core`).
+  shared via DI from `WorkspaceRuntime` (in `@emploke/api`).
 
 Each pkg owns its own tables inside the shared DB. Schema evolution
 goes through **drizzle-kit** — `pnpm --filter @emploke/<pkg>
@@ -293,7 +348,7 @@ entry, so dashboard URLs survive workspace renames. There is no global
 catalog mount; switching workspace switches the catalog the dashboard
 sees.
 
-A `WorkspaceRuntimeCache` (in `@emploke/core`) lazily mints + retains
+A `WorkspaceRuntimeCache` (in `@emploke/api`) lazily mints + retains
 per-workspace `{catalog, sessions, tasks}` bundles behind that URL
 prefix; cache invalidation happens on workspace deletion or rename.
 An explicit `POST /api/workspaces/:id/reload` is also available for
@@ -668,6 +723,6 @@ them up.
   - [`@emploke/session`](../packages/session/README.md)
   - [`@emploke/task`](../packages/task/README.md)
   - [`@emploke/runtime`](../packages/runtime/README.md)
-  - [`@emploke/core`](../packages/core/README.md)
+  - [`@emploke/api`](../packages/api/README.md)
   - [`@emploke/server`](../packages/server/README.md)
 - [`docs/RELEASING.md`](./RELEASING.md) — maintainer release procedure.

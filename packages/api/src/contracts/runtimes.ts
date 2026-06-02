@@ -1,8 +1,9 @@
 /**
  * Per-runtime info advertised over `GET /api/runtimes`. Lives in
- * `@emploke/api-types` so both the server's `runtimesRoutes` handler
- * and the dashboard / CLI clients can typecheck against the same shape
- * without one package value-importing the other.
+ * `@emploke/api`'s `contracts/` directory so both the server's
+ * `runtimesRoutes` handler and the dashboard / CLI clients can
+ * typecheck against the same shape without one package
+ * value-importing the other.
  *
  * Wire shape: `[{ kind: string, capabilities: object }]`. Capabilities
  * are pass-through from `Runtime.capabilities`; an empty object `{}`
