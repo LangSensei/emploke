@@ -22,10 +22,10 @@ describe("ScheduleService.preview", () => {
     expect(result.nextRuns[2]).toBe("2026-05-03T09:00:00.000Z");
   });
 
-  it("returns a non-empty English describe (issue #224)", async () => {
+  it("returns a non-empty English describe", async () => {
     const result = await h.service.preview("0 9 * * *", "UTC");
     expect(result.describe.length).toBeGreaterThan(0);
-    // English output must not leak the previously-hardcoded zh_CN locale.
+    // The describe output must be ASCII English (no CJK code points).
     expect(/[\u4e00-\u9fa5]/.test(result.describe)).toBe(false);
   });
 

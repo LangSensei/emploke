@@ -5,9 +5,7 @@ import { MIGRATIONS } from "../src/migrations.js";
 import { openTestScheduleDb } from "../src/testing.js";
 
 /**
- * Drift guard + schema introspection for `@emploke/schedule`. Mirrors
- * `packages/workflow/test/schema.test.ts` so reviewers can compare
- * file-for-file across entity pkgs.
+ * Drift guard + schema introspection for `@emploke/schedule`.
  */
 describe("schedules migrations-inventory", () => {
   const onDiskCount = readdirSync(join(import.meta.dirname, "..", "drizzle")).filter((f) =>
@@ -59,8 +57,8 @@ describe("schedules schema", () => {
       name: string;
     }[];
     const names = cols.map((c) => c.name).sort();
-    // `target_agent` is dropped in 0001 (RFC #61 v2); the index is
-    // now a functional partial JSON-extract over `target_json`.
+    // `target_agent` is dropped in migration 0001; the index is now
+    // a functional partial JSON-extract over `target_json`.
     expect(names).toEqual(
       [
         "created_at",

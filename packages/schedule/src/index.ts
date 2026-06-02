@@ -1,9 +1,9 @@
 /**
  * Public API of `@emploke/schedule`.
  *
- * Cron-triggered substrate (`docs/paradigm.md` §"Scheduling") with
- * an OPEN handler registry — the pkg knows about no concrete kinds.
- * Callers register per-kind handlers at compose time:
+ * Cron-triggered substrate with an OPEN handler registry — the pkg
+ * knows about no concrete kinds. Callers register per-kind handlers
+ * at compose time:
  *
  * ```ts
  * const scheduleModule = await composeScheduleModule({ dbFile });
@@ -11,9 +11,9 @@
  * await scheduleModule.service.recover();
  * ```
  *
- * See `core/src/wiring/schedule-task-handler.ts` for the production
- * task-kind handler. Tests use `openTestScheduleDb()` from
- * `./testing` and the `makeStubHandler()` helper from
+ * See `packages/api/src/wiring/schedule-task-handler.ts` for the
+ * production task-kind handler. Tests use `openTestScheduleDb()`
+ * from `./testing` and the `makeStubHandler()` helper from
  * `./test/_helpers.ts`.
  */
 

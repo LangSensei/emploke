@@ -7,8 +7,7 @@ import type { ScheduleKindHandler } from "../src/types.js";
 
 /**
  * A spy-able implementation of {@link ScheduleKindHandler} for use
- * in schedule pkg tests. Replaces the pre-W3 task-dispatcher /
- * agent-validator stubs.
+ * in schedule pkg tests.
  *
  * Default behaviour is intentionally permissive so tests that don't
  * care about a specific surface still get a sensible response:

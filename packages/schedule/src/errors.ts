@@ -7,10 +7,10 @@
  * Agent-related errors live in `@emploke/task` (`AgentNotFoundError`,
  * `AgentResolutionFailedError`). The schedule pkg deliberately knows
  * nothing about agents — they are a concept owned by the task kind's
- * handler (see `core/src/wiring/schedule-task-handler.ts`). Catalog
- * misses surface those task-pkg classes directly through the schedule
- * service; the server's schedules-error-policy table has a single
- * row for each.
+ * handler (see `packages/api/src/wiring/schedule-task-handler.ts`).
+ * Catalog misses surface those task-pkg classes directly through the
+ * schedule service; the server's schedules-error-policy table has a
+ * single row for each.
  */
 
 export class ScheduleError extends Error {
