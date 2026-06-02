@@ -5,13 +5,7 @@ import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
 import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
 import { composeSessionModule, type SessionService } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
-import {
-  type Launcher,
-  NoTerminalFoundError,
-  type SpawnTerminalResult,
-  TerminalSpawnFailedError,
-  UnsupportedPlatformError,
-} from "@emploke/terminal";
+import type { SpawnTerminalResult } from "@emploke/terminal";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
@@ -29,9 +23,17 @@ export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
  * Result of {@link WorkspaceContext.spawnSession}. The `display` field
  * is always present so the dashboard can show a copy-paste fallback
  * even when the terminal launch itself failed.
+ *
+ * `launcher` is typed as `string` (widened from the previous
+ * `Launcher` union) because the spawn pass-through now delegates to
+ * `SessionService.spawnInteractive`, whose return type uses a
+ * structural `{ launcher: string }` shape to avoid coupling
+ * `@emploke/session` to `@emploke/terminal`. The on-wire JSON shape
+ * is unchanged: a string is a string. Consumers that need the narrow
+ * union can import `Launcher` from `@emploke/terminal` directly.
  */
 export type SpawnSessionResult =
-  | { readonly ok: true; readonly launcher: Launcher; readonly display: string }
+  | { readonly ok: true; readonly launcher: string; readonly display: string }
   | {
       readonly ok: false;
       readonly error: string;
@@ -268,6 +270,7 @@ export class WorkspaceContextRegistry {
         workspaceDir: workspace.workspaceDir,
         workspaceId: id,
         logger: this.logger,
+        spawnFn: this.spawnFn,
       });
       cleanup.push(() => sessionModule.close());
       taskModule = await composeTaskModule({
@@ -315,7 +318,6 @@ export class WorkspaceContextRegistry {
     }
 
     const sessions = sessionModule.service;
-    const spawnFn = this.spawnFn;
     const outerLogger = this.logger;
     const context: WorkspaceContext = {
       workspace,
@@ -324,41 +326,14 @@ export class WorkspaceContextRegistry {
       tasks: taskModule.service,
       schedules: scheduleModule.service,
       async spawnSession(sid, opts) {
-        // buildInteractiveLaunch can throw (e.g.
-        // RuntimeDoesNotSupportRemoteError, TrustRegistrationFailed,
-        // ENOENT on a stale runtimeSessionId). The SpawnSessionResult
-        // contract documents that `display` is ALWAYS present so the
-        // dashboard can show a copy-paste fallback even on failure —
-        // wrapping only the spawn step would let a build-side throw
-        // skip past the result-shape entirely.
-        let cmd: LaunchCommand;
-        try {
-          cmd = await sessions.buildInteractiveLaunch(sid, {
-            ...(opts?.remote === true ? { remote: true } : {}),
-          });
-        } catch (err) {
-          return {
-            ok: false as const,
-            error: err instanceof Error ? err.message : String(err),
-            code: err instanceof Error && err.name ? err.name : "BuildLaunchError",
-            display: "",
-          };
-        }
-        try {
-          const result = await spawnFn(cmd);
-          return {
-            ok: true as const,
-            launcher: result.launcher,
-            display: cmd.display,
-          };
-        } catch (err) {
-          return {
-            ok: false as const,
-            error: err instanceof Error ? err.message : String(err),
-            code: spawnErrorCode(err),
-            display: cmd.display,
-          };
-        }
+        // Pass-through to SessionService.spawnInteractive, which now
+        // owns the buildInteractiveLaunch + spawnFn(cmd) dance plus
+        // the error-name mapping. Kept on WorkspaceContext for one
+        // mergeable commit so test stubs that mock spawnSession on
+        // the context shape continue to work; the next commit deletes
+        // this method and the server route delegates straight to
+        // `ctx.sessions.spawnInteractive(...)`. See issue #276.
+        return sessions.spawnInteractive(sid, opts);
       },
       async close() {
         // Per-module try/catch: a throw from one module's close()
@@ -417,12 +392,4 @@ export class WorkspaceContextRegistry {
     );
     return context;
   }
-}
-
-function spawnErrorCode(err: unknown): string {
-  if (err instanceof NoTerminalFoundError) return "NoTerminalFoundError";
-  if (err instanceof TerminalSpawnFailedError) return "TerminalSpawnFailedError";
-  if (err instanceof UnsupportedPlatformError) return "UnsupportedPlatformError";
-  if (err instanceof Error && err.name) return err.name;
-  return "SpawnError";
 }
