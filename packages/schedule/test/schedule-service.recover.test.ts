@@ -212,4 +212,62 @@ describe("ScheduleService.recover", () => {
       otherDb.close();
     }
   });
+
+  it("after recover() preflight failure, registry stays frozen (dead-service state)", async () => {
+    // Pins the documented preflight-failure semantics: a failed
+    // recover() throws but leaves the registry frozen, so the only
+    // valid recovery path is dispose-and-rebuild. Seeded via the
+    // same raw-SQL pattern the preflight tests above use.
+    const otherDb = openTestScheduleDb();
+    const otherRepo = new ScheduleRepository({ db: otherDb.db });
+    const otherSvc = new ScheduleService({
+      repo: otherRepo,
+      now: () => nowRef.value,
+      randomUUID: fixedRandomUUID(VALID_UUIDS),
+    });
+    const taskStub = makeStubHandler();
+    otherSvc.registerKind("task", taskStub);
+    try {
+      const row = ScheduleEntity.create(baseArgs({ enabled: false }), {
+        id: VALID_UUIDS[0],
+        now: nowRef.value,
+      }).toRow();
+      otherDb.sqlite
+        .prepare(
+          "INSERT INTO schedules (id, name, trigger_kind, trigger_expr, trigger_tz, target_kind, target_json, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'workflow', ?, 0, ?, ?)",
+        )
+        .run(
+          row.id,
+          row.name,
+          row.triggerKind,
+          row.triggerExpr,
+          row.triggerTz,
+          row.targetJson,
+          row.createdAt,
+          row.updatedAt,
+        );
+
+      // Act 1: first recover() throws on preflight.
+      await expect(otherSvc.recover()).rejects.toBeInstanceOf(ScheduleKindNotRegisteredError);
+
+      // Assert 1: registry is frozen — registerKind throws.
+      expect(() => otherSvc.registerKind("workflow", makeStubHandler())).toThrow(
+        ScheduleKindRegistryFrozenError,
+      );
+
+      // Assert 2: second recover() is a no-op (returns undefined,
+      // does NOT re-throw, does NOT re-run preflight).
+      await expect(otherSvc.recover()).resolves.toBeUndefined();
+
+      // Assert 3: no timers were armed (recover() throws BEFORE the
+      // arming loop, and the second recover() short-circuits at the
+      // frozen-registry guard). Advancing a full day of fake time
+      // proves no late-armed timer fires.
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(taskStub.dispatchCalls).toHaveLength(0);
+    } finally {
+      await otherSvc.shutdown();
+      otherDb.close();
+    }
+  });
 });
