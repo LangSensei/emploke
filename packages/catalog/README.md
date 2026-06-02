@@ -22,10 +22,10 @@ What this package **does**:
 - Validate graph rules on writes: name uniqueness, kebab-case,
   missing-dependency, no cycles, reverse-dependency safety on
   uninstall. The catalog schema has no FK constraints, so each
-  `*Repository.delete` runs an in-transaction `count()` check over
-  the typed dep edge tables; on a non-zero count it throws an error
-  the facade's `deleteSkill` / `deleteMcp` translates into
-  `HasDependentsError` for callers.
+  `SkillRepository.delete` / `McpRepository.delete` runs an
+  in-transaction `count()` check over the typed dep edge tables and
+  throws `HasDependentsError` directly (rolling back the empty
+  delete).
 
 What this package **does not** do:
 
@@ -113,9 +113,9 @@ await close();
 - `*NotFoundError` — unknown FQN
 - `*OriginConflictError` — install collision
 - `CyclicDependencyError` — `resolveAgent` walk found a cycle
-- `HasDependentsError` — uninstall blocked by reverse-deps (raised by
-  `CatalogService.deleteSkill` / `.deleteMcp` after the repository's
-  in-transaction `count()` check finds dependents)
+- `HasDependentsError` — uninstall blocked by reverse-deps; raised
+  inside `SkillRepository.delete` / `McpRepository.delete` from the
+  same transaction that counts dependents
 - `McpInvalidJsonError` — MCP file failed JSON schema check
 - `FetchError` / `OriginParseError` — fetcher subpackage errors
 

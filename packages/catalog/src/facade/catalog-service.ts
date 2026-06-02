@@ -290,7 +290,7 @@ export class CatalogService {
     return projectAgentPojo(updated);
   }
 
-  // ─── Deletes (with dep-protection error wrapping) ────
+  // ─── Deletes (dep-protection raised by the repo layer) ────
 
   async deleteAgent(fqn: string): Promise<void> {
     await this.rt.agent.delete(fqn);

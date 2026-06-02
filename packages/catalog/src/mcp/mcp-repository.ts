@@ -20,7 +20,7 @@ export class McpRepository {
   }
 
   close(): void {
-    // intentionally empty
+    // intentionally empty — `compose.ts` owns the sqlite handle lifecycle
   }
 
   async add(mcp: McpEntity): Promise<void> {

@@ -106,7 +106,7 @@ describe("McpFormat.writeMeta", () => {
     expect(parsed._meta).toEqual({ name: "x/y" });
   });
 
-  it("merges _meta, overwriting name and preserving foreign keys (including legacy origin)", () => {
+  it("merges _meta, overwriting name and preserving all foreign keys including _meta.origin", () => {
     const original = JSON.stringify({
       command: "node",
       _meta: {

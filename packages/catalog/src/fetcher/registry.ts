@@ -50,8 +50,9 @@ export class FetcherRegistry {
 
   /**
    * Parse `originUri`, dispatch to the matching fetcher, and stream
-   * its full tree. Used by `deepInstall` and any caller that needs
-   * every regular file under the origin's entry root.
+   * its full tree. Used by callers that need every regular file under
+   * the origin's entry root (e.g. `SkillService.install` /
+   * `AgentService.install`'s tree slurp into the files map).
    */
   dispatchTree(originUri: string): AsyncIterable<EntryFile> {
     const origin = parseOrigin(originUri);

@@ -31,13 +31,16 @@ import {
   type DependencyKind,
   type DependencyRef,
   type EntryStatus,
+  FetchError,
   HasDependentsError,
+  ImmutableOriginError,
   type Mcp,
   McpInvalidJsonError,
   McpNameInvalidError,
   McpNotFoundError,
   McpOriginConflictError,
   makeFqn,
+  OriginParseError,
   PlanStaleError,
   type Skill,
   type SkillEntry,
@@ -54,7 +57,7 @@ import {
 } from "../src/index.js";
 
 describe("@emploke/catalog public API guard", () => {
-  it("exports the 15 concrete error classes with their canonical constructor signatures", () => {
+  it("exports the 19 concrete error classes with their canonical constructor signatures", () => {
     const errs: Error[] = [
       new AgentFrontmatterError("src", "reason"),
       new AgentFrontmatterError("src", "reason", { cause: new Error("upstream") }),
@@ -75,6 +78,9 @@ describe("@emploke/catalog public API guard", () => {
       new McpNotFoundError("name"),
       new McpOriginConflictError("name", "existing", "attempted"),
       new HasDependentsError("target", []),
+      new ImmutableOriginError("fqn", "origin"),
+      new FetchError("uri", "reason"),
+      new OriginParseError("uri", "reason"),
     ];
     expectTypeOf(errs[0]!).toExtend<Error>();
   });

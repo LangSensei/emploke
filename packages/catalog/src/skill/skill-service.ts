@@ -22,8 +22,11 @@ export interface SkillFetcher {
 }
 
 // Per-kind resolve types. Mirrored from the agent side by intent —
-// agent and skill are independent kinds with no shared `Anchored*`
-// abstraction. Duplication beats domain coupling.
+// agent and skill are independent kinds and intentionally don't share
+// a base class or shared resolve-types module. Duplication beats
+// domain coupling: the moment either kind grows a kind-specific field
+// the shared abstraction has to either widen or fork — both worse
+// than copying ~30 LOC.
 
 export type SkillResolveEvent =
   | { type: "fetching"; origin: string }

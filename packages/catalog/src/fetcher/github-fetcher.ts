@@ -352,7 +352,7 @@ export class GitHubFetcher implements Fetcher {
    */
   private async buildHeaders(accept: string): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
-      "User-Agent": "emploke-catalog-fetcher",
+      "User-Agent": "emploke-catalog",
       Accept: accept,
     };
     const token = await resolveDefaultGitHubToken("github.com");

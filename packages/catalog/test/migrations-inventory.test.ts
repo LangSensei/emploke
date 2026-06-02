@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/migrations.js";
 
 /**
- * Drift guard: if `pnpm db:generate` produces a new `*.sql` in
- * `drizzle/`, you must add a matching `?raw` import + `meta(...)`
- * entry in `src/migrations.ts`. This test fails loudly when the two
+ * Drift guard: every `drizzle/*.sql` file must have a matching entry
+ * in the auto-generated `src/migrations.ts`. Regenerate via
+ * `pnpm -F @emploke/catalog db:generate` (which runs `drizzle-kit
+ * generate` + `scripts/inline-migrations.mjs`); do NOT edit
+ * `src/migrations.ts` by hand. This test fails loudly when the two
  * go out of sync.
  *
  * Shape assertions check the `MigrationMeta` invariants that drizzle's

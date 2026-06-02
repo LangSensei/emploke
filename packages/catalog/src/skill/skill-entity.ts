@@ -209,11 +209,20 @@ export class SkillEntity {
   get prereqs(): string | undefined {
     return this._state.prereqs;
   }
-  /** See {@link AgentEntity.dependencies}. */
+  /**
+   * Local-catalog fqn-form dep view; populated from the dep tables by
+   * `fromStored`. Freshly-created entities expose empty arrays until
+   * the install pipeline writes the dep rows.
+   */
   get dependencies(): SkillDependencies {
     return this._state.dependencies;
   }
-  /** See {@link AgentEntity.depsRefs}. */
+  /**
+   * Origin URIs declared in the SKILL.md frontmatter `dependencies`
+   * block. Used by the install pipeline to look up sibling fqns. Empty
+   * for entities loaded via `fromStored` (origins aren't persisted past
+   * install — only the resolved fqns are).
+   */
   get depsRefs(): SkillDepRefs {
     return this._state.depsRefs;
   }

@@ -8,12 +8,13 @@ import { parseOrigin } from "./origin.js";
  * Fetcher for the `file:` scheme. Walks the source directory (or yields a
  * single entry for a single-file source) and emits `EntryFile` records.
  *
- * Symlinks are silently skipped (both file and directory symlinks); see
- * `walkInner` for rationale (mirrors the catalog repository walker).
+ * Symlinks are silently skipped (both file and directory symlinks): the
+ * `walk` generator below deliberately does not follow them, to avoid
+ * accidental traversal outside the origin root.
  *
- * 50 MB per-file cap matches the catalog walker. Skill/agent/mcp packages
- * are tiny in practice; a file that big in a source tree is almost
- * certainly an accident and would also be rejected on `entries()` later.
+ * 50 MB per-file cap mirrors the install-time tree filter in `fetchTree`.
+ * Skill/agent/mcp packages are tiny in practice; a file that big in a
+ * source tree is almost certainly an accident.
  */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 

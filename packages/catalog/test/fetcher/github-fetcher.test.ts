@@ -92,7 +92,7 @@ describe("GitHubFetcher — Authorization header from env var", () => {
     expect(captured.headers.get("authorization")).toBe("Bearer gho_envvalue123");
   });
 
-  it("attaches Bearer header when only GH_TOKEN is set (legacy fallback)", async () => {
+  it("attaches Bearer header when GH_TOKEN is set (GITHUB_TOKEN absent)", async () => {
     process.env.GH_TOKEN = "ghp_legacyenv";
     const captured = { headers: new Headers() };
     fetchSpy = vi.fn(async (_url: string | URL, init?: RequestInit) => {

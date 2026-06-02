@@ -14,11 +14,11 @@
  * form to humans and assembles the canonical origin URI client-side
  * before posting.
  *
- * Format validation (must start with `https://github.com/`,
- * `http://github.com/`, or `file:`) is delegated to `parseOrigin` in
- * `src/fetcher/origin.ts`, which owns the authoritative scheme/format
- * rules. The validator here only enforces the wire-level shape: the
- * field exists and is a non-empty string.
+ * Format validation (must start with `https://github.com/` or
+ * `file:`) is delegated to `parseOrigin` in `src/fetcher/origin.ts`,
+ * which owns the authoritative scheme/format rules. The validator
+ * here only enforces the wire-level shape: the field exists and is a
+ * non-empty string.
  */
 
 import { AgentFrontmatterError } from "./agent/errors.js";

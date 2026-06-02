@@ -110,7 +110,7 @@ describe("validateMcpInstallInput", () => {
     expect((out as unknown as Record<string, unknown>).name).toBeUndefined();
   });
 
-  it("ignores any caller-supplied name (no longer part of contract)", () => {
+  it("silently ignores a caller-supplied name field (validator strips to just origin)", () => {
     const out = validateMcpInstallInput({
       origin: "https://github.com/o/r/tree/main/mcps/x.json",
       name: "ignored/name",
