@@ -38,7 +38,10 @@ export function generateCopilotSessionId(rng: () => string = randomUUID): string
  * degrades gracefully (no path traversal, no shell injection) rather
  * than throwing.
  *
- * File-private to `@emploke/runtime` (not in the package barrel).
+ * Package-private — used by `copilot-runtime.ts` for its
+ * tampered-id defence but intentionally not re-exported from
+ * the `@emploke/runtime` barrel; external consumers should
+ * validate via `isCopilotSessionId` instead.
  */
 export function safeCopilotId(id: string | null): string | null {
   if (id === null) return null;

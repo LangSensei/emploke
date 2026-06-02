@@ -188,7 +188,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("launchHeadless — subprocessEnvScrub translation", () => {
+  describe("launchHeadless - subprocessEnvScrub translation", () => {
     // The server-side `SUBPROCESS_ENV_SCRUB_KEYS` list (currently
     // ["EMPLOKE_HOME"]) is plumbed through
     // `CopilotRuntimeConfig.subprocessEnvScrub` and translated by

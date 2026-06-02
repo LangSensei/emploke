@@ -102,7 +102,7 @@ describe("substitutePlaceholders", () => {
     );
   });
 
-  it("ignores `$workspaceDir` (no braces) and `$$` escapes — placeholders require braces", () => {
+  it("ignores `$workspaceDir` (no braces) and `$$` escapes - placeholders require braces", () => {
     // Mirroring VS Code: only the fully-qualified `${name}` form is a
     // placeholder. Single-`$` strings pass through verbatim.
     expect(substitutePlaceholders("$workspaceDir", CTX, "test")).toBe("$workspaceDir");
@@ -140,7 +140,7 @@ describe("substitutePlaceholdersDeep", () => {
     );
   });
 
-  it("returns a new object/array — does not mutate the input", () => {
+  it("returns a new object/array - does not mutate the input", () => {
     const original = ph("workspaceDir");
     const input = { args: [original] };
     const out = substitutePlaceholdersDeep(input, CTX, "test") as typeof input;
