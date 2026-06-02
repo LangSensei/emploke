@@ -41,12 +41,14 @@ const silentLogger: Logger = pino({ level: "silent" });
  * normalisation and any cross-pkg composition (none for workspace,
  * but session adds workdir + runtime metadata at this same layer).
  *
- * Each write method: parse input → validate → run async FS work →
- * write to the DB last. The FS-then-DB ordering is deliberate: FS
- * work is the side-effect we cannot rollback, so doing it before the
- * DB write means a crash mid-register at worst leaves an empty
- * directory (idempotent retry-friendly) rather than a registry row
- * pointing at a directory that doesn't exist.
+ * Write methods that touch the filesystem (`register`;
+ * `unregister({ purge: true })`) do FS work BEFORE the DB write.
+ * The FS-then-DB ordering is deliberate: FS work is the side-effect
+ * we cannot rollback, so doing it before the DB write means a crash
+ * mid-register at worst leaves an empty directory (idempotent
+ * retry-friendly) rather than a registry row pointing at a directory
+ * that doesn't exist. The pure-DB writes (`open`, `rename`,
+ * `unregister({ purge: false })`) skip the FS step entirely.
  *
  * Concurrency: register's pre-flight `findById` / `findByPath` checks
  * are best-effort UX. Two concurrent registers can race past them;

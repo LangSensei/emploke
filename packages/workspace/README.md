@@ -96,8 +96,9 @@ WorkspaceError
 ```
 
 `list()` returns workspaces ordered by `lastOpenedAt DESC`. `getById(id)`
-throws the typed error on validation failures and returns `null` for
-unknown ids.
+returns `null` for unknown ids AND malformed ids alike — reads do not
+validate the id. Only write methods (`register`, `open`, `rename`,
+`unregister`) validate and throw `WorkspaceIdInvalidError`.
 
 Concurrency: `register`'s pre-flight conflict checks are best-effort
 UX. Two concurrent registers can race past them; the UNIQUE / PRIMARY
@@ -125,10 +126,14 @@ All pure functions; no fs side effects. Used by downstream services
 (`SessionService` / `TaskService` / `CatalogService`) to compute the
 directories agents and runtimes use.
 
-The `workflow` slot is the planned home for workflow definitions.
-This package computes the path for consistency but does not yet
-create or clean up the directory — that wires in when the workflow
-feature lands.
+The `workflow` slot is currently unused inside this package:
+`register` does not allocate it and `unregister({ purge: true })`
+does not remove it. The `workflows/` directory is owned and resolved
+independently by `@emploke/workflow` via its own `workflowRoot()`
+helper; the slot here is retained only because the `WorkspaceLayout`
+type is in the public barrel and narrowing it would be a breaking
+change. Do not add new in-pkg consumers; route to `@emploke/workflow`
+instead.
 
 ## Testing
 

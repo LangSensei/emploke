@@ -7,13 +7,16 @@ import path from "node:path";
  * (`TaskService`, `SessionService`, `CatalogService`) to compute the
  * directories agents and runtimes use.
  *
- * `workflow` is the planned home for workflow definitions. The path
- * is computed here for consistency, but this package does not yet
- * allocate (`register`) or clean up (`unregister({ purge: true })`)
- * the directory — that wires in when the workflow feature lands. The
+ * `workflow` is currently unused inside this package: `register` does
+ * not allocate it and `unregister({ purge: true })` does not remove it.
+ * The `workflows/` directory is owned and resolved independently by
+ * `@emploke/workflow` via its own `workflowRoot()` helper; the slot
+ * here is retained only because the `WorkspaceLayout` type is in the
+ * public barrel and narrowing it would be a breaking change. Do not
+ * add new in-pkg consumers; route to `@emploke/workflow` instead. The
  * property name is singular while the directory is plural
- * (`workflows/`); the rename to `workflows` would be a public-type
- * change and is deferred with the rest of the feature.
+ * (`workflows/`); a rename to `workflows` would also be a public-type
+ * change and is intentionally deferred.
  */
 export interface WorkspaceLayout {
   readonly sessions: string;

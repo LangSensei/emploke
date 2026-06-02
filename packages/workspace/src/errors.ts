@@ -4,11 +4,14 @@
  * coarse "is this from workspace?" check; specific subclasses below
  * carry typed context (the offending id / name / path).
  *
- * `RegistryError` is a sub-base for everything that originates in the
- * registry table (id / path conflicts, missing rows). Both the 4xx-equivalent
- * subclasses (validation, conflict, not-registered) and the 5xx-equivalent
- * `RegistryError` itself are exported because the HTTP layer maps them
- * to status codes downstream.
+ * `RegistryError` is a sub-base for errors originating in the registry
+ * table itself (id / path conflicts, missing rows, raw constraint
+ * violations). Name validation is independent of the registry and
+ * lives directly under `WorkspaceError` (`WorkspaceNameInvalidError`).
+ * The 4xx-equivalent subclasses (id validation, name validation,
+ * conflicts, not-registered) and the 5xx-equivalent `RegistryError`
+ * itself are all exported so the HTTP layer can map them to status
+ * codes downstream.
  */
 export class WorkspaceError extends Error {
   constructor(message: string, options?: ErrorOptions) {
