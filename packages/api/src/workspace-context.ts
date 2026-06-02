@@ -30,8 +30,8 @@ export const silentLogger: Logger = pino({ level: "silent" });
 export type SpawnFn = SessionSpawnFn;
 
 /**
- * Result of {@link SessionService.spawnInteractive} (the canonical
- * "start an interactive session" call site since issue #276).
+ * Result of {@link SessionService.spawnInteractive} — the canonical
+ * "start an interactive session" call site.
  *
  * @deprecated Re-exported from `@emploke/session` for one minor cycle
  * to preserve the published type-import surface for external
@@ -61,10 +61,9 @@ export class WorkspaceHasLiveTasksError extends Error {
  * services (one per BC, sharing one `workspace.db` via WAL) plus the
  * cross-BC orchestration methods for this workspace.
  *
- * As of issue #276, "start an interactive session" semantics live on
- * `sessions.spawnInteractive(sid, opts)` (canonical). The legacy
- * `WorkspaceContext.spawnSession` pass-through has been removed —
- * callers go through `ctx.sessions.spawnInteractive(...)` directly.
+ * "Start an interactive session" semantics live on
+ * `sessions.spawnInteractive(sid, opts)` — callers reach the spawner
+ * via `ctx.sessions.spawnInteractive(...)`.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;

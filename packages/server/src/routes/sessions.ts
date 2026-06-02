@@ -11,8 +11,7 @@ import { logEvent, parseJsonBody } from "./_shared.js";
  *
  * The route accesses `.sessions` for CRUD operations and
  * `.sessions.spawnInteractive()` for the "start an interactive
- * session" call site (the canonical owner since issue #276; the
- * legacy `WorkspaceContext.spawnSession` pass-through is gone).
+ * session" call site.
  */
 export type WorkspaceContextResolver = (c: import("hono").Context) => WorkspaceContext;
 

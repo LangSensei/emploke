@@ -467,14 +467,10 @@ describe("sessionsRoutes", () => {
     });
 
     it("returns ok:false with code='SessionNotFoundError' on missing session", async () => {
-      // Post-#276 the spawn flow catches build-side throws inside
-      // SessionService.spawnInteractive and folds them into a
-      // SpawnSessionResult with `ok: false`. The HTTP request still
-      // returns 200 because the request itself succeeded; the body's
-      // discriminated union carries the typed error code. This
-      // matches what production has always done in
-      // WorkspaceContext.spawnSession; the pre-refactor stub didn't
-      // mirror that catch, which was a latent fixture bug.
+      // `SessionService.spawnInteractive` catches build-side throws
+      // and folds them into a `SpawnSessionResult` with `ok: false`.
+      // The HTTP request returns 200 — the request itself succeeded;
+      // the body's discriminated union carries the typed error code.
       const m = stubManager({
         buildInteractiveLaunch: vi.fn(async () => {
           throw new SessionNotFoundError("20260508-9dfbdf05");

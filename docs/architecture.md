@@ -157,7 +157,7 @@ runtime — specifically by `composeApplication`, which value-imports
 `spawnTerminal` and threads it as an injected `SpawnFn` through
 `composeSessionModule` into `SessionService`. The actual
 "build the `LaunchCommand` and hand it to the spawner" step lives
-inside `SessionService.spawnInteractive(sid, opts)` (issue #276);
+inside `SessionService.spawnInteractive(sid, opts)`.
 `api`'s job is wiring, not invocation. Entity packages don't see
 `@emploke/terminal` — `@emploke/session` consumes the spawner via
 the structurally-typed `SpawnFn` port (`(cmd: LaunchCommand) =>

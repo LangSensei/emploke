@@ -21,7 +21,7 @@
  * producer pkg and makes terminal a pure infrastructure leaf
  * consumable by anything that can produce a command of this shape.
  *
- * As of issue #276, the primary consumer is
+ * The primary consumer is
  * `SessionService.spawnInteractive` (in `@emploke/session`), which
  * receives `spawnTerminal` via a `SpawnFn` port injected by
  * `@emploke/api`'s `composeApplication`. `@emploke/session` deliberately

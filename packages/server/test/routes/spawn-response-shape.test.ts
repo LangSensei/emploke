@@ -1,16 +1,13 @@
 /**
  * Pinning tests for `POST /:sid/spawn`'s failure-response wire shape.
  *
- * The error-mapping logic for terminal-spawn failures moved from
- * `WorkspaceContext.spawnSession` (in `@emploke/api`, using
- * `instanceof` against the three terminal error classes) to
- * `SessionService.spawnInteractive` (in `@emploke/session`, using
- * `err.name` only — see issue #276 § "Option-3 framing"). This file
- * asserts the on-wire JSON body is BYTE-IDENTICAL for each of the
- * three terminal-pkg error classes (NoTerminalFoundError,
- * TerminalSpawnFailedError, UnsupportedPlatformError) across that
- * migration. It must pass at every commit in the series; if any
- * commit shifts the body, that commit is the bug.
+ * The error-mapping logic for terminal-spawn failures lives in
+ * `SessionService.spawnInteractive` (in `@emploke/session`) and
+ * matches on `err.name`. This file asserts the on-wire JSON body is
+ * BYTE-IDENTICAL for each of the three terminal-pkg error classes
+ * (NoTerminalFoundError, TerminalSpawnFailedError,
+ * UnsupportedPlatformError). It must pass at every commit in the
+ * series; if any commit shifts the body, that commit is the bug.
  *
  * This is a route-level pin: the test mounts `sessionsRoutes` with a
  * fake `WorkspaceContext` that has a real `SessionService` instance
@@ -107,9 +104,8 @@ function buildService(spawnError: Error): {
 function buildContext(service: SessionService): WorkspaceContext {
   // Minimal WorkspaceContext fake. The route only touches `.sessions`
   // (for buildInteractiveLaunch / get / etc.) and
-  // `.sessions.spawnInteractive()` (the post-#276 canonical
-  // call site, replacing the legacy `WorkspaceContext.spawnSession`
-  // pass-through).
+  // `.sessions.spawnInteractive()` — the canonical "start an
+  // interactive session" call site.
   const ctx: Partial<WorkspaceContext> = {
     sessions: service,
     catalog: {} as CatalogService,

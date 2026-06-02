@@ -1053,9 +1053,9 @@ describe("spawnInteractive()", () => {
       remote: true,
     });
 
-    // `opts.remote === false` and `undefined` MUST be filtered out
-    // (matches the pre-refactor spawnSession closure behaviour, which
-    // did `...(opts?.remote === true ? { remote: true } : {})`).
+    // `opts.remote === false` and `undefined` MUST be filtered out;
+    // `spawnInteractive` reapplies the same filter here so its caller
+    // contract stays consistent with `buildInteractiveLaunch`'s.
     await m.spawnInteractive(s.id, { remote: false });
     expect(buildSpy).toHaveBeenLastCalledWith(
       s.runtimeSessionId,

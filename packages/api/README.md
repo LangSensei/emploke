@@ -95,9 +95,7 @@ and immediately hands it to the configured terminal spawner
 field is always populated so callers can show a copy-paste command
 even on spawn failure. The result type `SpawnSessionResult` is
 canonical in `@emploke/session`; `@emploke/api` re-exports it (with
-`@deprecated` JSDoc) for one minor cycle, then it goes away. See
-[issue #276](https://github.com/LangSensei/emploke/issues/276) for
-the migration history.
+`@deprecated` JSDoc) for one minor cycle, then it goes away.
 
 ## Concurrency invariants
 
