@@ -35,10 +35,10 @@ describe("McpFormat.parse", () => {
   });
 
   it("ignores _meta.origin when present (origin lives on the entity, not in the file)", () => {
-    // Legacy installs and third-party tooling may bake `_meta.origin`
-    // into the file; parse must accept it without error and must NOT
-    // surface it on the typed meta view (callers should treat origin
-    // as an install-time fact, not a declared field).
+    // Files in the wild may bake `_meta.origin` into the JSON;
+    // parse must accept it without error and must NOT surface it
+    // on the typed meta view (callers should treat origin as an
+    // install-time fact, not a declared field).
     const content = JSON.stringify({ _meta: { name: "x/y", origin: "file:/abs/x" } });
     const { meta, body } = McpFormat.parse(content, LABEL);
     expect(meta).toEqual({ name: "x/y" });
@@ -106,7 +106,7 @@ describe("McpFormat.writeMeta", () => {
     expect(parsed._meta).toEqual({ name: "x/y" });
   });
 
-  it("merges _meta, overwriting name and preserving foreign keys (including legacy origin)", () => {
+  it("merges _meta, overwriting name and preserving all foreign keys including _meta.origin", () => {
     const original = JSON.stringify({
       command: "node",
       _meta: {
@@ -118,9 +118,9 @@ describe("McpFormat.writeMeta", () => {
     const out = McpFormat.writeMeta(original, { name: "new/name" }, LABEL);
     const parsed = JSON.parse(out);
     expect(parsed._meta.name).toBe("new/name");
-    // Origin is foreign data — writeMeta no longer manages it, so a
-    // pre-existing value survives untouched. New installs (with empty
-    // input or no _meta.origin) won't introduce it at all.
+    // Origin is foreign data — writeMeta treats `_meta.origin` as
+    // opaque, so a pre-existing value survives untouched and
+    // writeMeta never introduces it for new installs.
     expect(parsed._meta.origin).toBe("file:/abs/old");
     expect(parsed._meta["io.modelcontextprotocol.registry/extra"]).toEqual({ tag: "v1" });
     expect(parsed.command).toBe("node");

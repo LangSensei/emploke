@@ -21,19 +21,17 @@ export async function composeCatalogModule(opts: CatalogModuleOptions): Promise<
   const sqlite: BetterSqliteDatabase = new Database(opts.dbFile);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("synchronous = NORMAL");
-  // No `foreign_keys = ON` — the catalog schema has no FK
-  // constraints (the per-pkg migration framework that used to
-  // declare them was dropped in #148; reverse-dep safety on uninstall
-  // is enforced by an in-repo `count()`-then-throw inside the same
-  // transaction as the delete, see `*Repository.delete`). The
-  // pragma without FKs is a no-op, but keeping it would mislead
-  // future contributors into thinking FKs are honoured.
+  // No `foreign_keys = ON` — the catalog schema has no FK constraints.
+  // Reverse-dep safety on uninstall is enforced inside `*Repository.delete`
+  // via in-transaction `count()` checks that throw before the delete runs.
+  // Enabling the pragma without FKs is a no-op, but the explicit comment
+  // prevents future contributors from assuming FKs are honoured here.
   sqlite.pragma("busy_timeout = 5000");
   const db: Db = drizzle(sqlite, { schema });
   // Migration failure must close the SQLite handle before propagating:
   // a leaked handle would hold the WAL lock and break a subsequent
   // retry from the same caller (EBUSY on the lockfile / WAL files
-  // until process exit). Pattern mirrored in every entity pkg.
+  // until process exit).
   try {
     applyCatalogMigrations(db);
   } catch (err) {

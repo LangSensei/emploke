@@ -149,7 +149,7 @@ dependencies:
     expect(() => SkillFormat.parse(src, LABEL)).toThrow(SkillFrontmatterError);
   });
 
-  it("accepts dep refs that are bare strings (the new canonical form)", () => {
+  it("accepts dep refs that are bare strings", () => {
     const src = `---
 name: x
 description: x

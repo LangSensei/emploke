@@ -46,12 +46,13 @@ describe("validateSkillInstallInput", () => {
   });
 
   // Format validation (must start with `https://github.com/` or
-  // `file:`) is intentionally NOT done here — the catalog-fetcher's
-  // parseOrigin is the single source of truth for scheme rules and
-  // throws OriginParseError at fetch time. The validator only enforces
-  // the wire-level shape (field exists + non-empty string). Keeping
-  // them separate means new providers (e.g. `npm:`, `oci:`) need
-  // exactly one site change (the fetcher registry), not two.
+  // `file:`) is intentionally NOT done here — `parseOrigin` in
+  // `src/fetcher/origin.ts` is the single source of truth for scheme
+  // rules and throws OriginParseError at fetch time. The validator
+  // only enforces the wire-level shape (field exists + non-empty
+  // string). Keeping them separate means new providers (e.g.
+  // `npm:`, `oci:`) need exactly one site change (the fetcher
+  // registry), not two.
   it("does NOT enforce origin format (delegated to parseOrigin at fetch time)", () => {
     // ftp:// is not a recognised scheme, but the validator accepts
     // it — the fetcher will reject it later. Same for any other
@@ -64,11 +65,11 @@ describe("validateSkillInstallInput", () => {
     });
   });
 
-  it("ignores legacy { provider, location } fields when an origin is also present", () => {
-    // Defensive: if a stale client (e.g. an old dashboard tab the
-    // user left open) sends BOTH the legacy pair and the new origin,
-    // we honour the origin. The pair is silently dropped — there's
-    // no scenario where keeping it would help.
+  it("ignores unknown extra fields when an origin is present", () => {
+    // Defensive: if a client sends extra fields alongside the new
+    // origin (e.g. an old dashboard tab the user left open), we
+    // honour the origin and silently drop the extras — there's no
+    // scenario where keeping them would help.
     const out = validateSkillInstallInput({
       provider: "github",
       location: "https://github.com/legacy/path",
@@ -77,12 +78,7 @@ describe("validateSkillInstallInput", () => {
     expect(out.origin).toBe("https://github.com/o/r/tree/main/skills/x");
   });
 
-  it("rejects a body that has only legacy { provider, location } without origin", () => {
-    // Confirms the BREAKING wire-shape change: the previous
-    // `{ provider, location }` form is no longer accepted. The
-    // dashboard moved its assembly to client-side; CLI was always
-    // sending `{ origin }`. Test pins the regression: any code path
-    // that re-introduces the legacy form will fail loudly here.
+  it("rejects a body whose only fields are unknown extras (no origin)", () => {
     expect(() =>
       validateSkillInstallInput({
         provider: "github",
@@ -109,12 +105,12 @@ describe("validateMcpInstallInput", () => {
       origin: "file:/abs/azure.json",
     });
     expect(out.origin).toBe("file:/abs/azure.json");
-    // McpInstallBody no longer carries `name` — it's recovered from
+    // McpInstallBody has only `origin` — `name` is recovered from
     // the fetched JSON's _meta.name at install time.
-    expect((out as Record<string, unknown>).name).toBeUndefined();
+    expect((out as unknown as Record<string, unknown>).name).toBeUndefined();
   });
 
-  it("ignores any caller-supplied name (no longer part of contract)", () => {
+  it("silently ignores a caller-supplied name field (validator strips to just origin)", () => {
     const out = validateMcpInstallInput({
       origin: "https://github.com/o/r/tree/main/mcps/x.json",
       name: "ignored/name",

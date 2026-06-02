@@ -10,9 +10,7 @@
  *
  * Single responsibility: turn a URI into a stream of bytes. No
  * knowledge of frontmatter, scope, identity, or dependencies — those
- * live in the parent catalog package. Previously a standalone
- * `@emploke/catalog/fetcher` package; folded into catalog because it
- * has zero non-catalog consumers and changes always travel together.
+ * live in the parent catalog package.
  */
 
 export { FetchError, FetcherError, OriginParseError } from "./errors.js";

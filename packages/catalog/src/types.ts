@@ -18,12 +18,11 @@ export type EntryStatus = "ready" | "blocked";
 export type DependencyKind = "skill" | "mcp";
 
 /**
- * A dependency reference in the wire DTO. v2 uses an object form with
- * the resolved `fqn`. Origin URIs no longer surface here — the local
- * catalog dep storage is keyed by fqn (the install pipeline resolves
- * origin → fqn at install time and writes to the FK dep tables).
- * Frontmatter wire shape is unchanged (still origin URIs); only the
- * catalog DTO carries fqns.
+ * A dependency reference in the wire DTO. Identifies a dep by its
+ * resolved fqn (the local catalog dep storage is keyed by fqn; the
+ * install pipeline resolves origin → fqn at install time and writes to
+ * the typed dep tables). Frontmatter wire shape carries origin URIs;
+ * only the catalog DTO carries fqns.
  */
 export interface DependencyRef {
   readonly fqn: string;
@@ -79,10 +78,10 @@ export interface Skill {
   readonly version: string;
   readonly prereqs?: string;
   /**
-   * True iff the entry can be edited via PUT/PATCH. Phase 2 rule:
-   * mutable iff origin starts with `file:`. Remote-sourced entries
-   * (`github:`, future `npm:`/`fqn:`) are read-only mirrors — to pick
-   * up upstream changes, re-install via the same origin.
+   * True iff the entry can be edited via PUT/PATCH: mutable iff origin
+   * starts with `file:`. Remote-sourced entries (`github:`, future
+   * `npm:`/`fqn:`) are read-only mirrors — to pick up upstream changes,
+   * re-install via the same origin.
    */
   readonly mutable: boolean;
   /**
@@ -97,9 +96,9 @@ export interface Skill {
    * every install/sync.
    */
   readonly orphaned: boolean;
-  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  /** ISO 8601 UTC timestamp of first install. */
   readonly installedAt: string;
-  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  /** ISO 8601 UTC timestamp of the most recent upsert. */
   readonly updatedAt: string;
   readonly dependencies?: {
     readonly skills?: readonly DependencyRef[];
@@ -123,9 +122,9 @@ export interface Agent {
    * are user-launchable units worth pausing).
    */
   readonly disabledByUser: boolean;
-  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  /** ISO 8601 UTC timestamp of first install. */
   readonly installedAt: string;
-  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  /** ISO 8601 UTC timestamp of the most recent upsert. */
   readonly updatedAt: string;
   readonly dependencies?: {
     readonly skills?: readonly DependencyRef[];
@@ -134,16 +133,16 @@ export interface Agent {
 }
 
 export interface Mcp {
-  /** Renamed from `name` in catalog v2 (issue #122). */
+  /** Fully-qualified MCP spec name (`<namespace>/<short>`). */
   readonly fqn: string;
   readonly origin: string;
   /** See {@link Skill.mutable}. */
   readonly mutable: boolean;
   /** See {@link Skill.orphaned}. MCPs can be orphaned just like skills. */
   readonly orphaned: boolean;
-  /** ISO 8601 UTC timestamp of first install (catalog v2). */
+  /** ISO 8601 UTC timestamp of first install. */
   readonly installedAt: string;
-  /** ISO 8601 UTC timestamp of the most recent upsert (catalog v2). */
+  /** ISO 8601 UTC timestamp of the most recent upsert. */
   readonly updatedAt: string;
 }
 
@@ -168,7 +167,6 @@ export interface ResolvedSkill {
 }
 
 export interface ResolvedMcp {
-  /** Renamed from `name` in catalog v2 (issue #122). */
   readonly fqn: string;
 }
 
@@ -193,11 +191,11 @@ export interface SkillResolveResult {
 /**
  * Patch shape for {@link CatalogService.updateSkillMetadata}.
  *
- * NOTE (issue #122): the wire shape for `dependencies` on the metadata
- * patch intentionally remains origin URI strings — the frontmatter
- * format itself is out of scope for v2, and the patch is applied
- * verbatim into the YAML block by `applyFrontmatterPatch`. The DTO's
- * `dependencies` field (read path) uses the new `{ fqn: string }` form.
+ * The patch's `dependencies` field carries origin URI strings (the
+ * same shape consumers paste into SKILL.md / AGENTS.md frontmatter)
+ * because it's applied verbatim into the YAML block by
+ * `applyFrontmatterPatch`. The DTO's read-side `dependencies` carries
+ * `{ fqn }` objects derived from the dep tables.
  */
 export interface SkillMetadataPatch {
   readonly description?: string;

@@ -7,13 +7,11 @@ import type { McpRepository } from "./mcp-repository.js";
 export type McpFetcher = (origin: string) => Promise<string>;
 
 /**
- * Application-layer service for MCP operations.
- *
- * v2 (issue #122) renames internal terminology from `name` →
- * `fqn` / `content` → `spec`. The public service surface keeps the
- * `name` arg name on `install` (since that's the wire-side input —
- * the frontmatter / dep-ref form is still origin URI), but uses
- * `fqn` everywhere else.
+ * Application-layer service for MCP operations. Uses `fqn` everywhere
+ * internally (matches the FK columns in the catalog DB). The single
+ * exception is `install(name, ...)` where `name` is the wire-side
+ * input that an external caller provides; downstream the value is
+ * treated as the fqn and validated as such.
  */
 export class McpService {
   constructor(

@@ -6,35 +6,19 @@
  * Shared across HTTP / future CLI / future programmatic SDK so all
  * channels enforce the same body shape rules.
  *
- * **Wire shape**: clients send `{ origin: string }` (plus `name` for
- * MCPs is no longer needed — derived from the fetched JSON's
- * `_meta.name`). The origin URI is the canonical identity for
- * everything downstream; the wire shape and the post-validated form
- * are therefore the same shape.
+ * **Wire shape**: clients send `{ origin: string }`. The origin URI
+ * is the canonical identity in every layer of the system (catalog DB
+ * rows, AGENTS.md / SKILL.md `dependencies:` blocks, fetcher
+ * dispatch), so the wire body and the post-validated form are
+ * identical. The dashboard presents a friendly `provider + location`
+ * form to humans and assembles the canonical origin URI client-side
+ * before posting.
  *
- * Why a single `origin` field rather than the historical
- * `{ provider, location }` pair: the origin URI **is** the canonical
- * identity in every other layer of the system (catalog DB rows,
- * AGENTS.md / SKILL.md `dependencies:` blocks, fetcher dispatch).
- * Splitting it on the wire forced two separate places to know the
- * provider list and made the wire body trivially incompatible
- * between clients (the CLI assumed `{ origin }` per the manifest
- * type, the dashboard sent `{ provider, location }` per its own
- * client-side type — server validator only accepted the latter,
- * silently bricking CLI install). Collapsing both clients onto
- * `{ origin }` removes the gap class entirely.
- *
- * The dashboard still presents a friendly `provider + location` form
- * to humans, but assembles the canonical origin URI client-side
- * before posting; see `packages/dashboard/src/api.ts`. CLI users
- * always typed an origin URI in the first place.
- *
- * Format validation (must start with `https://github.com/`,
- * `http://github.com/`, or `file:`) is delegated to the catalog-
- * fetcher's `parseOrigin` at fetch time — that's where the
- * authoritative scheme/format rules live (`packages/catalog-fetcher/
- * src/origin.ts`). The validator here only enforces the wire-level
- * shape: the field exists and is a non-empty string.
+ * Format validation (must start with `https://github.com/` or
+ * `file:`) is delegated to `parseOrigin` in `src/fetcher/origin.ts`,
+ * which owns the authoritative scheme/format rules. The validator
+ * here only enforces the wire-level shape: the field exists and is a
+ * non-empty string.
  */
 
 import { AgentFrontmatterError } from "./agent/errors.js";

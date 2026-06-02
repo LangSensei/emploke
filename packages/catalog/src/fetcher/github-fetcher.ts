@@ -352,7 +352,7 @@ export class GitHubFetcher implements Fetcher {
    */
   private async buildHeaders(accept: string): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
-      "User-Agent": "emploke-catalog-fetcher",
+      "User-Agent": "emploke-catalog",
       Accept: accept,
     };
     const token = await resolveDefaultGitHubToken("github.com");
@@ -361,9 +361,9 @@ export class GitHubFetcher implements Fetcher {
   }
 
   /**
-   * Original tarball-streaming implementation, kept as the fallback
-   * for whole-repo origins (`subPath === null`) and for tree-listing
-   * truncation. See class jsdoc for when each transport is used.
+   * Tarball transport: used for whole-repo origins (`subPath === null`)
+   * and as a fallback when the Trees API marks the listing truncated.
+   * See class jsdoc for when each of the three transports is selected.
    */
   private async *fetchTreeViaTarball(
     uri: string,

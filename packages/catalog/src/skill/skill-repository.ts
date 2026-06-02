@@ -1,7 +1,8 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { emptyDeps } from "../_shared/dep-keys.js";
+import { HasDependentsError } from "../_shared/dependents-error.js";
 import type * as schema from "../schema.js";
 import { agentSkillDeps, skillFiles, skillMcpDeps, skillSkillDeps, skills } from "../schema.js";
 import { SkillNotFoundError } from "./errors.js";
@@ -31,7 +32,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * Dep dedupe, blob coercion, and dep-rows aggregation are inlined per
  * kind (see {@link toBuf}, the `add`'s skipSelf-dedupe loop, and
  * {@link loadAllDeps}) — no shared helper module. Agent mirrors the
- * same shape by intent. See skill-entity.ts header for the principle.
+ * same shape by intent.
  */
 export class SkillRepository {
   private readonly db: Db;
@@ -137,30 +138,30 @@ export class SkillRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    // Race-free: count + delete in one transaction so a concurrent
-    // `installSkill` / `installAgent` that adds a dep on this skill
-    // can't slip between our count check and the row removal. The
-    // synthetic `SQLITE_CONSTRAINT_FOREIGNKEY` thrown inside the
-    // transaction rolls back the empty delete and propagates.
+    // Race-free: collect dependents + delete in one transaction so a
+    // concurrent `installSkill` / `installAgent` that adds a dep on
+    // this skill can't slip between our check and the row removal.
+    // Stands in for missing FK constraints. Throwing
+    // `HasDependentsError` inside the transaction rolls back the empty
+    // delete and propagates to the caller.
     this.db.transaction((tx) => {
-      const skillDepCount =
-        tx
-          .select({ c: count() })
-          .from(skillSkillDeps)
-          .where(eq(skillSkillDeps.targetFqn, fqn))
-          .get()?.c ?? 0;
-      const agentDepCount =
-        tx
-          .select({ c: count() })
-          .from(agentSkillDeps)
-          .where(eq(agentSkillDeps.targetFqn, fqn))
-          .get()?.c ?? 0;
-      if (skillDepCount + agentDepCount > 0) {
-        const e = new Error(
-          `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
-        );
-        (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
-        throw e;
+      const skillDeps = tx
+        .select({ sourceFqn: skillSkillDeps.sourceFqn })
+        .from(skillSkillDeps)
+        .where(eq(skillSkillDeps.targetFqn, fqn))
+        .orderBy(skillSkillDeps.sourceFqn)
+        .all();
+      const agentDeps = tx
+        .select({ sourceFqn: agentSkillDeps.sourceFqn })
+        .from(agentSkillDeps)
+        .where(eq(agentSkillDeps.targetFqn, fqn))
+        .orderBy(agentSkillDeps.sourceFqn)
+        .all();
+      if (skillDeps.length + agentDeps.length > 0) {
+        throw new HasDependentsError(fqn, [
+          ...skillDeps.map((r) => ({ kind: "skill" as const, name: r.sourceFqn })),
+          ...agentDeps.map((r) => ({ kind: "agent" as const, name: r.sourceFqn })),
+        ]);
       }
       tx.delete(skillFiles).where(eq(skillFiles.skillFqn, fqn)).run();
       tx.delete(skillSkillDeps).where(eq(skillSkillDeps.sourceFqn, fqn)).run();

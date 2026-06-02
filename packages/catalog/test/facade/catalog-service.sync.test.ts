@@ -19,7 +19,7 @@ import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
  * Tests for the sync flow: identity check, version short-circuit, dep
  * diff (orphan detection), and orphan auto-clear on subsequent install.
  *
- * Uses the same fake-fetcher pattern as `catalog-manager.test.ts` but
+ * Uses the same fake-fetcher pattern as `catalog-service.test.ts` but
  * spelled out locally so each test can mutate fixture content in-flight
  * (sync's whole point is "what changed upstream") without polluting
  * the broader test fixture.
@@ -130,7 +130,7 @@ ${extra}
 
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
-let orm: ReturnType<typeof openTestCatalogDb>;
+let orm: ReturnType<typeof bootstrapCatalogDb>;
 let mcpRepo: McpRepository;
 let skillRepo: SkillRepository;
 let agentRepo: AgentRepository;
@@ -316,11 +316,9 @@ describe("sync resolve — orphan detection", () => {
   });
 
   it("removing an agent flips its dep skill to orphan (live derivation, no flag write)", async () => {
-    // Regression for the gap where `deleteAgent` did not propagate
-    // orphan status to the skills it depended on. Under the new
-    // derived model the answer is computed from the live dep graph
-    // each time a wire DTO is projected, so the right thing happens
-    // automatically — no flag-marking pass needed.
+    // Removing an agent flips its dep skill to orphan live (no
+    // flag-marking pass): orphan status is derived from the live
+    // dep graph each time a wire DTO is projected.
     fakes.setSkill("file:/abs/tool", { "SKILL.md": SKILL_ANCHOR("tool", "1.0.0") });
     fakes.setAgent("file:/abs/agent", {
       "AGENTS.md": AGENT_ANCHOR(
@@ -345,16 +343,16 @@ describe("sync resolve — orphan detection", () => {
   });
 
   it("rejects a self-referential skill at install time (degenerate cycle)", async () => {
-    // Originally raised during code review as "degenerate but legal";
-    // subsequent review tightened the contract — emploke refuses
-    // cyclic catalog deps at resolve/install (see CyclicDependencyError),
-    // and self-ref is the simplest cycle. With install-time rejection
-    // in place, the orphan-derivation paths in `newCascadeContext`
-    // and `computeReverseDepIndex` no longer need defensive self-ref
-    // filtering: a self-referencing skill cannot exist in a
-    // well-formed catalog. If a future bypass path (direct SQLite
-    // write, FS edit) ever produces one, the right fix is a
-    // catalog-load integrity check, not patching every consumer.
+    // Self-referential skill rejected at install time: emploke
+    // refuses cyclic catalog deps (see CyclicDependencyError), and
+    // self-ref is the simplest cycle. Because the catalog is acyclic
+    // by construction at install time, the orphan-derivation paths
+    // in `newCascadeContext` and `computeReverseDepIndex` don't
+    // carry defensive self-ref filtering — a self-referencing skill
+    // cannot exist in a well-formed catalog. If a future bypass path
+    // (direct SQLite write, FS edit) ever produces one, the right
+    // fix is a catalog-load integrity check, not patching every
+    // consumer.
     fakes.setSkill("file:/abs/loner", {
       "SKILL.md": SKILL_ANCHOR(
         "loner",

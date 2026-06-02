@@ -71,7 +71,7 @@ describe("McpEntity.withContent", () => {
 });
 
 describe("McpEntity.toJSON", () => {
-  it("emits v2 wire shape: fqn (not name), no spec, with timestamps", () => {
+  it("emits the wire shape: fqn (not name), no spec, with timestamps", () => {
     const m = McpEntity.create("x/y", "file:/abs/x", "{}");
     const json = m.toJSON();
     expect(json).toHaveProperty("fqn", "x/y");

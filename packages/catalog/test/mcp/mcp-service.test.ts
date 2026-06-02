@@ -41,14 +41,14 @@ for (const backend of BACKENDS) {
   describe(`McpService over ${backend.name}`, () => {
     let repo: McpRepository;
     let teardown: () => Promise<void>;
-    let fetchStub: ReturnType<typeof vi.fn>;
+    let fetchStub: ReturnType<typeof vi.fn<(origin: string) => Promise<string>>>;
     let svc: McpService;
 
     beforeEach(async () => {
       const setup = await backend.setup();
       repo = setup.repo;
       teardown = setup.teardown;
-      fetchStub = vi.fn();
+      fetchStub = vi.fn<(origin: string) => Promise<string>>();
       svc = new McpService(repo, (origin) => fetchStub(origin));
     });
 

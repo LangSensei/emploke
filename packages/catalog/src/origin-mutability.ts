@@ -4,16 +4,16 @@ import { parseOrigin } from "./fetcher/index.js";
  * Origin mutability — single rule for "can the catalog mutate this entry's
  * SQLite-stored content / metadata?".
  *
- * **Phase 2 rule**: an entry is mutable iff its origin's parsed scheme is
- * in {@link MUTABLE_SCHEMES}. Currently `file:` only — local working
+ * An entry is mutable iff its origin's parsed scheme is in
+ * {@link MUTABLE_SCHEMES}. Currently `file:` only — local working
  * copies are mutable; remote-sourced entries (`github:`, future `npm:`/
  * `oci:`/`fqn:`) are read-only mirrors that can only be refreshed from
  * upstream via re-install (which is upsert).
  *
- * Mutation is **catalog-only** (Phase 2 decision): editing a `file:`
- * entry in the dashboard updates the SQLite copy WITHOUT writing back
- * to the origin file. A future `export` flow can write the catalog
- * back to the origin path.
+ * Mutation is **catalog-only**: editing a `file:` entry in the
+ * dashboard updates the SQLite copy WITHOUT writing back to the
+ * origin file. A future `export` flow can write the catalog back to
+ * the origin path.
  *
  * Why route through `parseOrigin` instead of a `startsWith("file:")`
  * substring check? Two reasons:

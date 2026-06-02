@@ -1,8 +1,9 @@
 /**
- * Pure projection + cascade-status helpers shared by `CatalogService`
- * (writes; needs to project the post-write result into DTOs) and
- * `CatalogService` (reads). No I/O — every function operates over
- * already-loaded entities + a {@link CascadeContext} snapshot.
+ * Pure projection + cascade-status helpers used by `CatalogService`
+ * for both its write side (project the post-write result into DTOs)
+ * and its read side (list / get / resolve). No I/O — every function
+ * operates over already-loaded entities + a {@link CascadeContext}
+ * snapshot.
  */
 
 import type { AgentEntity } from "../agent/agent-entity.js";
@@ -195,11 +196,4 @@ export function buildAgentEntry(a: AgentEntity, ctx: CascadeContext): AgentEntry
     return { ...out, missingDeps: reason.missingDeps };
   }
   return out;
-}
-
-export function isForeignKeyError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: unknown }).code;
-  if (typeof code === "string" && code.includes("FOREIGNKEY")) return true;
-  return /FOREIGN\s*KEY/i.test(err.message);
 }

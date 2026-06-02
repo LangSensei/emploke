@@ -19,7 +19,7 @@ interface MockChildProcess extends EventEmitter {
 type SpawnFactory = () => MockChildProcess;
 
 let spawnFactory: SpawnFactory | null = null;
-let spawnSpy: ReturnType<typeof vi.fn> = vi.fn();
+let spawnSpy = vi.fn<(...args: unknown[]) => void>();
 
 vi.mock("node:child_process", () => ({
   spawn: (...args: unknown[]) => {

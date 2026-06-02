@@ -22,9 +22,11 @@ export interface SkillFetcher {
 }
 
 // Per-kind resolve types. Mirrored from the agent side by intent —
-// see the maintainer principle in skill-entity.ts's header JSDoc: there
-// is no shared `Anchored*` abstraction because agent and skill are
-// independent kinds. Duplication beats domain coupling.
+// agent and skill are independent kinds and intentionally don't share
+// a base class or shared resolve-types module. Duplication beats
+// domain coupling: the moment either kind grows a kind-specific field
+// the shared abstraction has to either widen or fork — both worse
+// than copying ~30 LOC.
 
 export type SkillResolveEvent =
   | { type: "fetching"; origin: string }
@@ -67,8 +69,7 @@ export interface SkillResolvePlan {
  *
  * Mirrors `resolveAgentOrigin` in `agent/agent-service.ts` by intent;
  * the two copies are independent and must NOT be re-factored into a
- * shared helper (see the skill-entity.ts header JSDoc for the
- * principle).
+ * shared helper.
  */
 async function resolveSkillOrigin(args: {
   readonly origin: string;
@@ -299,7 +300,7 @@ export class SkillService {
    * Resolve frontmatter dep origins to local sibling fqns. Skill deps
    * are looked up in THIS repo (skills can depend on other skills);
    * MCP deps go through `siblings.mcps`. Origins that don't resolve
-   * are silently skipped — matches v1 tolerant behaviour.
+   * are silently skipped (matches the catalog's tolerant behaviour).
    *
    * Inlined per kind (skill owns this lookup loop) — the skill bucket
    * points at THIS service's repo, not an injected sibling, so the

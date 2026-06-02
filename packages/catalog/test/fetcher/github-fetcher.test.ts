@@ -2,17 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FetchError, GitHubFetcher } from "../../src/fetcher/index.js";
 
 /**
- * `GitHubFetcher` integration tests focused on the credential-resolution
- * layer added in this PR. We don't exercise tarball extraction here — the
- * existing test surface (catalog deepInstall integration) covers that path
- * end-to-end. Here we want fast, isolated assertions on:
- *
- *   1. The `Authorization` header is built from the right source under each
- *      fallback branch (env / gh / anonymous).
- *   2. A token never appears in `FetchError.message` when the upstream
- *      returns non-2xx (security regression test — historical bugs in
- *      similar fetchers have leaked the token via "received {status}: {body}"
- *      style messages).
+ * `GitHubFetcher` tests focused on the credential-resolution layer:
+ * token source attribution under the env / gh / anonymous branches,
+ * and a regression guard that token bytes never reach
+ * `FetchError.message` on non-2xx upstream. Tarball extraction is
+ * covered by the live install integration tests rather than
+ * re-implemented here against a stubbed gunzip stream.
  *
  * Strategy: stub `globalThis.fetch` so the network is never hit. We capture
  * the headers off the request and assert directly. No tarball parsing path
@@ -48,7 +43,7 @@ function stubFetchReturning404(): Headers {
   const captured = { headers: new Headers() };
   fetchSpy = vi.fn(async (_url: string | URL, init?: RequestInit) => {
     if (init?.headers) {
-      captured.headers = new Headers(init.headers as HeadersInit);
+      captured.headers = new Headers(init.headers);
     }
     return new Response("forbidden", { status: 404, statusText: "Not Found" });
   });
@@ -88,7 +83,7 @@ describe("GitHubFetcher — Authorization header from env var", () => {
     process.env.GITHUB_TOKEN = "gho_envvalue123";
     const captured = { headers: new Headers() };
     fetchSpy = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      if (init?.headers) captured.headers = new Headers(init.headers as HeadersInit);
+      if (init?.headers) captured.headers = new Headers(init.headers);
       return new Response("nope", { status: 404, statusText: "Not Found" });
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
@@ -97,38 +92,17 @@ describe("GitHubFetcher — Authorization header from env var", () => {
     expect(captured.headers.get("authorization")).toBe("Bearer gho_envvalue123");
   });
 
-  it("attaches Bearer header when only GH_TOKEN is set (legacy fallback)", async () => {
+  it("attaches Bearer header when GH_TOKEN is set (GITHUB_TOKEN absent)", async () => {
     process.env.GH_TOKEN = "ghp_legacyenv";
     const captured = { headers: new Headers() };
     fetchSpy = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      if (init?.headers) captured.headers = new Headers(init.headers as HeadersInit);
+      if (init?.headers) captured.headers = new Headers(init.headers);
       return new Response("nope", { status: 404, statusText: "Not Found" });
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
     await runFetcher();
     expect(captured.headers.get("authorization")).toBe("Bearer ghp_legacyenv");
-  });
-});
-
-describe("GitHubFetcher — anonymous when nothing is configured", () => {
-  it("omits Authorization header when env unset and gh fallback returns null", async () => {
-    // Force gh fallback to return null by stubbing the spawn-backed helper.
-    // We can't easily mock spawn from this test file (vi.mock would need
-    // to be hoisted), but we can short-circuit via the cache: prime it with null.
-    const ghMod = await import("../../src/fetcher/gh-token.js");
-    ghMod._resetGhTokenCache();
-    // Calling resolveDefaultGitHubToken once with no env and a forced cache miss
-    // would invoke real spawn — which on this machine might succeed. Instead
-    // we set GITHUB_TOKEN to empty string... no, falsy means env-skip and gh runs.
-    // Simplest: set GITHUB_TOKEN to a known dummy then assert; the anonymous
-    // branch is exercised in the gh-token unit tests already (env unset + spawn
-    // returns null). Here we cover only what's reachable without spawn mocking.
-    //
-    // Skip-rationale: the anonymous branch is sufficiently covered by the
-    // gh-token.test.ts cases. This describe block remains for future
-    // expansion if we add a dependency-injected resolver.
-    expect(true).toBe(true);
   });
 });
 
@@ -165,7 +139,7 @@ describe("GitHubFetcher.fetchFile — Contents API path", () => {
     const captured = { headers: new Headers() };
     fetchSpy = vi.fn(async (url: string | URL, init?: RequestInit) => {
       capturedUrl = String(url);
-      if (init?.headers) captured.headers = new Headers(init.headers as HeadersInit);
+      if (init?.headers) captured.headers = new Headers(init.headers);
       return new Response("# hello\n", { status: 200, statusText: "OK" });
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
@@ -268,7 +242,7 @@ describe("GitHubFetcher.fetchTree — Trees+Blobs subpath transport", () => {
         });
       }
       if (route.kind === "raw") {
-        return new Response(route.body as BodyInit, { status: route.status ?? 200 });
+        return new Response(route.body, { status: route.status ?? 200 });
       }
       return new Response("err", { status: route.status, statusText: route.statusText ?? "Err" });
     });
@@ -334,7 +308,7 @@ describe("GitHubFetcher.fetchTree — Trees+Blobs subpath transport", () => {
         );
       }
       if (u.includes("/git/blobs/")) {
-        blobAccept = new Headers(init?.headers as HeadersInit).get("accept");
+        blobAccept = new Headers(init?.headers).get("accept");
         return new Response("# hi\n", { status: 200 });
       }
       return new Response("nope", { status: 599 });

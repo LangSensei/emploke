@@ -20,10 +20,11 @@ import { McpInvalidJsonError } from "./errors.js";
  * Origin (install-source URI) is NOT carried in `_meta`. It's known
  * at install time as the fetch URI and persisted on the SQLite row
  * directly. Files in the wild that happen to carry `_meta.origin`
- * (legacy installs, third-party tooling) are tolerated: parse ignores
- * the field, {@link writeMeta} preserves it untouched alongside other
- * foreign keys, and {@link contentDigestExcludingMeta} strips the
- * whole `_meta` block so it never affects equality.
+ * (e.g. from third-party tooling that treats `_meta` as a free-form
+ * metadata bag) are tolerated: parse ignores the field,
+ * {@link writeMeta} preserves it untouched alongside other foreign
+ * keys, and {@link contentDigestExcludingMeta} strips the whole
+ * `_meta` block so it never affects equality.
  *
  * Any other `_meta.*` keys (e.g., reverse-DNS namespaced sub-objects
  * from `registry.modelcontextprotocol.io`) survive untouched through
@@ -95,9 +96,9 @@ export function parse(content: string, sourceLabel: string): McpFile {
  *    `{ "_meta": { name } }` object
  *  - object with no `_meta` → adds a `_meta` block with `name`
  *  - object with existing `_meta` (e.g., MCP-registry sub-objects,
- *    legacy `_meta.origin`) → shallow-merges: emploke's `name`
- *    overwrites, all other top-level keys inside `_meta` survive
- *    untouched
+ *    a pre-existing `_meta.origin`) → shallow-merges: emploke's
+ *    `name` overwrites, all other top-level keys inside `_meta`
+ *    survive untouched
  *  - output is `JSON.stringify(..., null, 2)` with a trailing newline
  *
  * Origin is NOT written: the install-time URI lives in the SQLite
@@ -139,9 +140,10 @@ export function writeMeta(content: string, meta: McpMeta, sourceLabel: string): 
 }
 
 /**
- * Strip the entire `_meta` key from MCP file bytes. Used by the
- * runtime when materializing `.mcp.json` for Copilot CLI — Copilot
- * never sees emploke's metadata.
+ * Strip the entire `_meta` key from MCP file bytes. Used by runtime
+ * adapters when materializing the MCP client-config file (typically
+ * `.mcp.json`) for a downstream MCP host; the downstream host should
+ * never see emploke's `_meta` block.
  *
  * Returns the stripped object as a plain JS value (caller decides
  * whether to re-stringify). Throws {@link McpInvalidJsonError} if the
@@ -167,9 +169,9 @@ export function stripMeta(content: string, sourceLabel: string): Record<string, 
  * Used by the sync resolve path to detect "no upstream change". We
  * deliberately strip the entire `_meta` block so install-time
  * additions (emploke writes `_meta.name`, registry tooling may add
- * its own sub-objects, legacy `_meta.origin` may linger from older
- * installs) don't show up as spurious diffs against pristine upstream
- * bytes.
+ * its own sub-objects, `_meta.origin` may already be present on the
+ * upstream file) don't show up as spurious diffs against pristine
+ * upstream bytes.
  *
  * `null` if the content is unparseable; callers treat that as "always
  * different" so a parse-failed upstream still falls into the will-sync

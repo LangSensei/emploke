@@ -1,7 +1,7 @@
 import { OriginParseError } from "./errors.js";
 
 /**
- * Parsed shape of a Phase-1 origin URI. Two schemes:
+ * Parsed shape of an origin URI. Two schemes are supported:
  *
  * - `github` — a GitHub browser URL of the form
  *   `https://github.com/<owner>/<repo>/tree/<ref>/<path?>` (path optional;
@@ -11,9 +11,6 @@ import { OriginParseError } from "./errors.js";
  * - `file` — a `file:<absolutePath>` URI pointing at a local directory. Used
  *   when installing from a local source dir; auto-injected by the local
  *   install routes when frontmatter omits `origin`.
- *
- * Phase 1 deliberately omits `npm:` and generic `git+ssh://` — they are
- * deferred to Phase 2 to keep this PR focused.
  */
 export type ParsedOrigin =
   | {
@@ -35,23 +32,6 @@ const GITHUB_TREE_RE =
   /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/tree\/([^/\s]+)(?:\/(.+))?\/?$/;
 
 /**
- * Parse a Phase-1 origin URI. Throws {@link OriginParseError} on any input
- * that doesn't match a supported scheme. The caller is expected to have
- * already trimmed surrounding whitespace.
- *
- * Examples:
- *  - `https://github.com/anthropic/skills/tree/main/tool-use`
- *      → { scheme: "github", owner, repo, ref: "main", path: "tool-use", … }
- *  - `https://github.com/foo/bar/tree/main`
- *      → { …, path: null }
- *  - `file:/abs/path` or `file:C:/abs/path` (Windows)
- *      → { scheme: "file", path }
- *
- * Bare repo URLs (no `/tree/<ref>`) are explicitly rejected: refusing here
- * avoids a network round-trip to discover the default branch and forces the
- * user to commit to a specific ref so installs are reproducible.
- */
-/**
  * Cross-platform absolute-path detection. Accepts:
  *  - POSIX:    `/usr/local/...`
  *  - Windows:  `C:/...`, `C:\...`, `\\server\share\...`
@@ -67,6 +47,23 @@ function isAbsolutePath(p: string): boolean {
   return false;
 }
 
+/**
+ * Parse an origin URI. Throws {@link OriginParseError} on any input
+ * that doesn't match a supported scheme. The caller is expected to have
+ * already trimmed surrounding whitespace.
+ *
+ * Examples:
+ *  - `https://github.com/anthropic/skills/tree/main/tool-use`
+ *      → { scheme: "github", owner, repo, ref: "main", path: "tool-use", … }
+ *  - `https://github.com/foo/bar/tree/main`
+ *      → { …, path: null }
+ *  - `file:/abs/path` or `file:C:/abs/path` (Windows)
+ *      → { scheme: "file", path }
+ *
+ * Bare repo URLs (no `/tree/<ref>`) are explicitly rejected: refusing here
+ * avoids a network round-trip to discover the default branch and forces the
+ * user to commit to a specific ref so installs are reproducible.
+ */
 export function parseOrigin(uri: string): ParsedOrigin {
   if (typeof uri !== "string" || uri.length === 0) {
     throw new OriginParseError(String(uri), "must be a non-empty string");
@@ -117,7 +114,7 @@ export function parseOrigin(uri: string): ParsedOrigin {
 
   throw new OriginParseError(
     uri,
-    "unsupported scheme; Phase 1 supports only https://github.com/.../tree/<ref>/[path] and file:<path>",
+    "unsupported scheme; supported schemes are https://github.com/<owner>/<repo>/tree/<ref>[/path] and file:<absolutePath>",
   );
 }
 

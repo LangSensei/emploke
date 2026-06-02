@@ -1,7 +1,8 @@
 /**
- * Shared types + the adapter signature used by both `CatalogService`
- * (writes/install) and `CatalogService` (resolves). Pulled out so
- * neither class needs to import the other.
+ * Shared types + the adapter signature used by `CatalogService` for both
+ * its write side (install / update / delete) and its read side (resolve /
+ * list / get). Pulled out so the per-entity services and the facade can
+ * both import the plan shapes without importing each other.
  */
 
 import type { AgentResolvedNode } from "../agent/agent-service.js";

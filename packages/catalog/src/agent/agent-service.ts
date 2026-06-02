@@ -23,9 +23,11 @@ export interface AgentFetcher {
 }
 
 // Per-kind resolve types. Mirrored from the skill side by intent —
-// see the maintainer principle in agent-entity.ts's header JSDoc: there
-// is no shared `Anchored*` abstraction because agent and skill are
-// independent kinds. Duplication beats domain coupling.
+// agent and skill are independent kinds and intentionally don't share
+// a base class or shared resolve-types module. Duplication beats
+// domain coupling: the moment either kind grows a kind-specific field
+// the shared abstraction has to either widen or fork — both worse
+// than copying ~30 LOC.
 
 export type AgentResolveEvent =
   | { type: "fetching"; origin: string }
@@ -68,8 +70,7 @@ export interface AgentResolvePlan {
  *
  * Mirrors `resolveSkillOrigin` in `skill/skill-service.ts` by intent;
  * the two copies are independent and must NOT be re-factored into a
- * shared helper (see the agent-entity.ts header JSDoc for the
- * principle).
+ * shared helper.
  */
 async function resolveAgentOrigin(args: {
   readonly origin: string;
@@ -134,9 +135,9 @@ async function resolveAgentOrigin(args: {
  * shape in `skill/skill-service.ts` by intent — agent and skill are
  * independent kinds with no shared domain methods.
  *
- * Sibling repos are optional in legacy callers; when omitted, dep
- * refs that cannot be resolved are silently dropped (mirrors the v1
- * catalog's tolerant behaviour).
+ * Sibling repos are optional; when omitted, dep refs that cannot be
+ * resolved are silently skipped (matches the catalog's tolerant
+ * behaviour).
  *
  * The agent-only `disableByUser` / `enableByUser` methods live here
  * (skills cannot be user-disabled).
@@ -324,13 +325,11 @@ export class AgentService {
   /**
    * Resolve frontmatter dep origins to local sibling fqns. Origins
    * that don't resolve to an installed sibling are silently skipped —
-   * matches v1 tolerant behaviour, lets the resolve pipeline surface
-   * `MissingDep` separately if the consumer cares.
+   * matches the catalog's tolerant behaviour and lets the resolve
+   * pipeline surface `MissingDep` separately if the consumer cares.
    *
-   * Inlined per kind (agent owns this lookup loop) by intent — no
-   * shared sibling-lookup helper exists, by design, as part of the
-   * structural-only sharing refactor; see agent-entity.ts header
-   * JSDoc for the principle.
+   * Inlined per kind (agent owns this lookup loop) — no shared
+   * sibling-lookup helper exists, by design.
    */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];

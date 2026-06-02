@@ -9,7 +9,6 @@ import type {
   McpResolvedNode,
 } from "../../src/facade/plan-types.js";
 import type { EntryFile } from "../../src/fetcher/index.js";
-import { McpEntity } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
@@ -143,7 +142,7 @@ const MCP_BODY = `{
   "args": ["server.js"]
 }`;
 
-let orm: ReturnType<typeof openTestCatalogDb>;
+let orm: ReturnType<typeof bootstrapCatalogDb>;
 let mcpRepo: McpRepository;
 let skillRepo: SkillRepository;
 let agentRepo: AgentRepository;
@@ -456,7 +455,7 @@ describe("CatalogService.install", () => {
   it("already-installed deps are skipped, not re-installed", async () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
     // Pre-install the mcp
-    await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
+    await mgr.installMcpFromOrigin("file:/abs/mcp/x");
 
     fetchers.setSkill("file:/abs/tool", {
       "SKILL.md": SKILL_ANCHOR("tool", `dependencies:\n  mcps:\n    - "file:/abs/mcp/x"`),
@@ -553,7 +552,7 @@ describe("CatalogService — single-shot installers", () => {
 
   it("installMcp is resolveMcp + install", async () => {
     fetchers.setMcp("file:/abs/mcp/x", "vendor/x", MCP_BODY);
-    const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x", "vendor/x");
+    const result = await mgr.installMcpFromOrigin("file:/abs/mcp/x");
     expect(result.installed[0]?.fqn).toBe("vendor/x");
   });
 });
@@ -589,5 +588,3 @@ describe("CatalogService plan token cache", () => {
     expect(mgr.takePlan(token2)).toBe(plan);
   });
 });
-
-void McpEntity; // satisfy unused-import check; we reference it elsewhere via type

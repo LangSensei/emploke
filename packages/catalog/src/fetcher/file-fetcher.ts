@@ -8,12 +8,13 @@ import { parseOrigin } from "./origin.js";
  * Fetcher for the `file:` scheme. Walks the source directory (or yields a
  * single entry for a single-file source) and emits `EntryFile` records.
  *
- * Symlinks are silently skipped (both file and directory symlinks); see
- * `walkInner` for rationale (mirrors the catalog repository walker).
+ * Symlinks are silently skipped (both file and directory symlinks): the
+ * `walk` generator below deliberately does not follow them, to avoid
+ * accidental traversal outside the origin root.
  *
- * 50 MB per-file cap matches the catalog walker. Skill/agent/mcp packages
- * are tiny in practice; a file that big in a source tree is almost
- * certainly an accident and would also be rejected on `entries()` later.
+ * 50 MB per-file cap mirrors the install-time tree filter in `fetchTree`.
+ * Skill/agent/mcp packages are tiny in practice; a file that big in a
+ * source tree is almost certainly an accident.
  */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
@@ -33,12 +34,11 @@ export class FileFetcher implements Fetcher {
     }
     let target: string;
     if (relPath === "") {
-      // Origin points at the file itself (mcp single-file case).
-      // Tolerate the legacy fixture shape `file:/abs/dir` where the
-      // directory contains a single <name>.json: we pick the
-      // alphabetically-first regular file in the directory. Mirrors
-      // the old "fetch the stream and take the first file" semantics
-      // that callers relied on for MCP origins.
+      // MCP-origin tolerance: when `relPath === ""` and `origin.path`
+      // is a directory rather than a single file, pick the
+      // alphabetically-first regular file inside. Lets `file:/abs/mcps/`
+      // origins resolve without requiring callers to spell the filename
+      // in the URI.
       let st: Awaited<ReturnType<typeof stat>>;
       try {
         st = await stat(origin.path);

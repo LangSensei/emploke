@@ -12,24 +12,26 @@ What this package **does**:
 - Read `AGENTS.md` / `SKILL.md` frontmatter and project six fields:
   required `name` / `description` / `version`, optional `scope`
   (defaults to `public`), optional `prereqs`, optional
-  `dependencies.{skills,mcps}`. Other frontmatter fields
-  (`license`, ) are preserved on disk but **not interpreted**.
-- Track the names of MCP server JSON files (`mcps/<name>.json`). The
-  contents of those files are **never read** by emploke beyond
-  recording metadata.
+  `dependencies.{skills,mcps}`. Other frontmatter fields (such as
+  `license`) are preserved on disk but **not interpreted**.
+- Track MCP server specs (`<namespace>/<short>` FQN, e.g. `azure/mcp`).
+  The JSON spec body is stored verbatim in `workspace.db` as a BLOB
+  and is never parsed beyond extracting `_meta.name` at install time.
 - Resolve transitive dependency closures (topological sort) for any
   skill or agent.
 - Validate graph rules on writes: name uniqueness, kebab-case,
   missing-dependency, no cycles, reverse-dependency safety on
-  uninstall (via in-repo `count()` checks, since FK constraints were
-  dropped along with the previous per-pkg migration framework  the
-  service throws a synthetic `HasDependentsError` instead).
+  uninstall. The catalog schema has no FK constraints, so each
+  `SkillRepository.delete` / `McpRepository.delete` runs an
+  in-transaction `count()` check over the typed dep edge tables and
+  throws `HasDependentsError` directly (rolling back the empty
+  delete).
 
 What this package **does not** do:
 
 - Interpret business fields (`prereqs`, semantic version checks,
-  signature verification, ). That belongs in install tools layered
-  on top.
+  signature verification, etc.). That belongs in install tools
+  layered on top.
 - Read or interpret MCP JSON contents. Substrates parse the file
   when they spawn the server.
 - Execute, copy or "ingest" skills into agents. That is a substrate /
@@ -52,7 +54,7 @@ packages/catalog/src/
   facade/                  Cross-entity CatalogService + DTOs
   fetcher/                 Origin parser + remote bytes fetcher
   migrations.ts            applyCatalogMigrations (drizzle migration applier)
-  compose.ts               composeCatalogModule({ dbFile|db, fetcher? })
+  compose.ts               composeCatalogModule({ dbFile, logger? })
   testing.ts               openTestCatalogDb helper (via /testing subpath)
   index.ts                 public barrel
 drizzle/                   generated SQL migrations (committed)
@@ -69,8 +71,8 @@ agent and skill source content (frontmatter + Markdown body) is
 read out of the BLOB columns.
 
 > Why SQLite for catalog? See
-> [docs/architecture.md  Backend selection](../../docs/architecture.md#backend-selection-when-sqlite)
->  catalog has cross-entity dependency-graph queries (`resolveAgent`)
+> [docs/architecture.md — Backend selection](../../docs/architecture.md#backend-selection-when-sqlite)
+> — catalog has cross-entity dependency-graph queries (`resolveAgent`)
 > and BLOB content streams, which are exactly the cases the rule says
 > SQLite owns.
 
@@ -90,7 +92,7 @@ await catalog.installSkill("file:/tmp/sop-prepared");
 await catalog.installAgent("github:org/repo/tree/main/agents/code-reviewer");
 await catalog.installMcpFromOrigin("file:/tmp/mcps/playwright.json");
 
-// Resolve from the local catalog (no network  DAG walk over
+// Resolve from the local catalog (no network — DAG walk over
 // already-installed entries; used by the runtime when materialising
 // a workdir).
 const plan = await catalog.resolveAgent("public/code-reviewer");
@@ -106,15 +108,16 @@ await close();
 
 ## Errors
 
-- `AgentFrontmatterError` / `SkillFrontmatterError`  malformed YAML
-- `*NameInvalidError`  fails kebab-case / length / charset
-- `*NotFoundError`  unknown FQN
-- `*OriginConflictError`  install collision
-- `CyclicDependencyError`  `resolveAgent` walk found a cycle
-- `HasDependentsError`  uninstall blocked by reverse-deps (the FK
-  substitute mentioned above)
-- `McpInvalidJsonError`  MCP file failed JSON schema check
-- `FetchError` / `OriginParseError`  fetcher subpackage errors
+- `AgentFrontmatterError` / `SkillFrontmatterError` — malformed YAML
+- `*NameInvalidError` — fails kebab-case / length / charset
+- `*NotFoundError` — unknown FQN
+- `*OriginConflictError` — install collision
+- `CyclicDependencyError` — `resolveAgent` walk found a cycle
+- `HasDependentsError` — uninstall blocked by reverse-deps; raised
+  inside `SkillRepository.delete` / `McpRepository.delete` from the
+  same transaction that counts dependents
+- `McpInvalidJsonError` — MCP file failed JSON schema check
+- `FetchError` / `OriginParseError` — fetcher subpackage errors
 
 ## Testing
 
@@ -122,7 +125,7 @@ await close();
 pnpm --filter @emploke/catalog test
 ```
 
-Vitest runs in `forks` pool (better-sqlite3''s native binding
+Vitest runs in `forks` pool (better-sqlite3's native binding
 segfaults on worker-thread teardown on Windows).
 
 ## License

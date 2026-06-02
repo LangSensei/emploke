@@ -1,29 +1,12 @@
 /**
  * Cross-entity catalog errors. Errors that originate inside a single
  * entity service (skill / agent / mcp) propagate as-is; this file
- * only declares errors specific to facade-level concerns.
+ * re-exports the dep-protection error from `_shared/` so existing
+ * facade-internal imports (`./errors.js`) keep working.
  *
- * Extends native `Error` directly — no shared abstract base.
+ * `HasDependentsError` itself lives in `_shared/dependents-error.ts`
+ * because the per-entity repositories (which sit below the facade
+ * layer) raise it directly from inside their delete transactions.
  */
 
-import type { CatalogKind } from "../types.js";
-
-/**
- * Thrown when deleting an entity that other entities still depend on.
- * The facade detects this by scanning all skills/agents for refs to
- * the target name.
- */
-export class HasDependentsError extends Error {
-  override readonly name = "HasDependentsError";
-
-  constructor(
-    public readonly targetName: string,
-    public readonly dependents: readonly { kind: CatalogKind; name: string }[],
-  ) {
-    super(
-      `cannot delete "${targetName}" — still referenced by ${dependents
-        .map((d) => `${d.kind} ${d.name}`)
-        .join(", ")}`,
-    );
-  }
-}
+export { HasDependentsError } from "../_shared/dependents-error.js";

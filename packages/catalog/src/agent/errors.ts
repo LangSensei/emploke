@@ -69,9 +69,12 @@ export class AgentFrontmatterError extends Error {
 /**
  * Thrown by `install` when the resolve plan is stale — i.e. the
  * upstream anchor's `version` changed between resolve and install.
- * Caller should re-resolve before retrying. See {@link
- * PlanStaleError} (skill counterpart) for the version-not-hash
- * rationale.
+ * Caller should re-resolve before retrying.
+ *
+ * Why `version` (not a byte hash)? Emploke's authoring contract
+ * requires any meaningful change to AGENTS.md to bump `version`; an
+ * unbumped edit is, by contract, not a change emploke needs to react
+ * to.
  */
 export class AgentPlanStaleError extends Error {
   override readonly name = "AgentPlanStaleError";
