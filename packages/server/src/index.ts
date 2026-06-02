@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path, { sep as pathSep } from "node:path";
 import { logsDir, resolveEmplokeHome } from "@emploke/api-types";
-import type { Application, WorkspaceContext } from "@emploke/core";
+import { type Application, composeApplication, type WorkspaceContext } from "@emploke/core";
 import {
   assertCopilotSdkResolvable,
   CopilotRuntime,
@@ -20,7 +20,6 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono, type MiddlewareHandler } from "hono";
 import { assertBindIsSafe, isLoopbackBind } from "./auth.js";
-import { buildServerContainer } from "./bootstrap.js";
 import { buildLogger, type Logger, type LogLevel } from "./log/build-logger.js";
 import { accessLog } from "./middleware/access-log.js";
 import { requestId } from "./middleware/request-id.js";
@@ -202,7 +201,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // landing page prompts the user to create one explicitly.
   await mkdir(home, { recursive: true });
 
-  const composition = await buildServerContainer({
+  const composition = await composeApplication({
     workspace: { dbFile: globalDbPath(home) },
     runtimeRegistry,
     defaultWorkspaceParent: workspacesParentDir(home),
