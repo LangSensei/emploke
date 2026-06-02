@@ -42,6 +42,48 @@ packages/<pkg>/
   vitest.config.ts
 ```
 
+## Test layout convention
+
+Every `packages/<pkg>/test/**/*.test.{ts,tsx}` file's location is
+determined mechanically by its source imports. Enforced by
+`packages/task/test/test-layout-convention.test.ts`.
+
+**The rule**: for each test file, collect every non-type value-import
+that resolves to a file under the same package's `src/` tree (resolve
+relative to the test file's directory; exclude type-only imports,
+`vi.mock(...)`, `vi.importActual(...)`, and imports of other workspace
+packages or node builtins).
+
+1. **Zero in-pkg value-imports** → flat at `test/<name>.test.{ts,tsx}`
+   (cross-cutting / e2e / fs-walk audits).
+2. **All value-imports share a common subdirectory under `src/`
+   strictly deeper than `src/` itself** → MUST live at
+   `test/<that-subdir>/<name>.test.{ts,tsx}`.
+3. **Multiple value-imports with no common subdir below `src/`** →
+   flat at `test/<name>.test.{ts,tsx}`.
+
+Type-only imports (`import type { Foo } from "..."` and the `type`
+modifier inside mixed `import { type Foo, bar }` specifiers) compile
+away and do NOT count. `vi.mock("...")` and `vi.importActual("...")`
+are harness, not subject, and do NOT count. Side-effect-only
+`import "x"` DOES count — it executes top-level code.
+
+**When source moves, tests move.** If `src/utils/x.ts` is relocated
+to `src/x.ts`, the rule's verdict changes and the test must be
+relocated in the same PR. The enforcement test fails until both
+halves are in sync.
+
+**Allowlisting**: a test whose actual location diverges from the
+rule's required location but has a documented reason (umbrella
+reflection test, in-flight migration, pre-existing per-area subdir
+whose imports happen to span sibling top-level src files) may be
+added to `ALLOWED_FLAT_EXCEPTIONS` with a one-line rationale. The
+audit asserts the allowlist contains no stale entries (file gone)
+and no idle entries (test the rule already passes for).
+
+For worked-out classification examples and the parser self-tests, see
+`packages/task/test/test-layout-convention.test.ts`.
+
 ## File naming convention
 
 > See [docs/architecture.md § Per-package src layout](./architecture.md#per-package-src-layout) for the full rationale.
@@ -86,6 +128,115 @@ types. The exceptions are:
 This rule prevents the "where do I find the `Workspace` interface" drift
 that plagued emploke before (DTOs scattered across `service.ts`,
 `schema.ts`, separate `dto.ts`).
+
+## Type placement (which package owns this type?)
+
+> See [docs/architecture.md § The three layers](./architecture.md#the-three-layers) for the Row / Entity / DTO split inside one package. This section covers the orthogonal question: *which package* should host a given type.
+
+The "Where DTOs live" section above governs *intra-package* type layout
+(one `types.ts` per pkg). This section governs *inter-package* type
+layout — given a new type, which of emploke's four type-owning location
+kinds should host it.
+
+The monorepo has four kinds of type-owning location. Use this decision
+tree in order:
+
+| Kind of type | Lives in | One-line test |
+|---|---|---|
+| A single BC's entity / DTO / error / option shape | the owning domain pkg's `types.ts` / `errors.ts` | "Does it belong to one BC only? Would you delete it if you deleted that BC?" |
+| HTTP wire contract — request / response shape, ROUTES table, wire-side enum | `@emploke/api-types` | "Will it appear in a Network tab payload, or in a generated client?" |
+| In-process composition / runtime container holding live service instances or callbacks | `@emploke/core` | "Does it own `Promise<Service>` or a `(c) => Service` resolver? Is it constructed once per workspace?" |
+| HTTP-transport-internal type (`Hono.Context`-flavoured, route-resolver, middleware) | `@emploke/server` | "Does its signature reference `Hono.Context`, request bodies, or Express-style middleware?" |
+
+### Decision rules (sharp edges)
+
+1. **Crosses the HTTP boundary → `api-types`, never the originating domain pkg.**
+   If a type appears in a request body, response body, or ROUTES table,
+   it MUST live in `api-types`. Domain pkgs can `import type` from
+   `api-types` when they need to project their internal DTO to the wire
+   shape; the inverse direction (`api-types` importing values from a
+   domain pkg) is FORBIDDEN — `api-types` is type-only and
+   transport-internal.
+
+2. **Holds a live function / instance / context → `core`, never `api-types`.**
+   `core` is the composition root: it constructs `WorkspaceContext`,
+   `Application`, per-workspace service instances. Types that carry
+   `Promise<Service>`, `() => Service`, or compose-result shapes belong
+   here. `api-types` is transport-only and never holds instances.
+
+3. **Single domain's entity / DTO / error → that domain's pkg, never `core`.**
+   If `Task` only makes sense as part of the task BC, it lives in
+   `packages/task/src/types.ts`. `core` re-exports nothing — downstream
+   consumers (server, cli) `import { type Task } from "@emploke/task"`
+   directly. `core` only owns *cross-BC composition* types.
+
+4. **Transport-specific glue → `server` (or the future transport pkg), never `core`.**
+   A type whose signature mentions `Hono.Context`, `Request`, `Response`,
+   or a route function is HTTP-specific and belongs in `server`. Promote
+   to `core` only when a second transport (CLI direct-mode, MCP, gRPC)
+   actually arrives and needs the same abstraction generically.
+   *Premature generification is the bigger sin than late generification
+   here.*
+
+5. **Inter-domain-pkg dependencies must be `import type` ONLY.**
+   `task` may `import type` from `catalog` (e.g. `AgentResolveResult`)
+   because it talks to catalog *through a service-instance threaded by
+   `core`*. It must NOT value-import from `catalog` — that would couple
+   two BCs at runtime and violate the "core is the only composer"
+   invariant. Enforced mechanically by
+   `packages/task/test/inter-service-imports.test.ts`.
+
+### Corollaries
+
+- **Wire types vs domain types: when they diverge.** A domain pkg's
+  internal `XxxEntity` and the wire `Xxx` DTO drift over time
+  (`createdAt: Date` → `createdAt: string`, soft-delete fields hidden).
+  When that happens, the wire shape moves to `api-types`; the entity
+  stays in the domain. The service in the domain pkg owns the
+  projection.
+
+- **Errors that cross the wire.** If an error name appears in an HTTP
+  error response (i.e. the client branches on it), its `name` literal
+  is wire-shape and should be re-declared in `api-types`. The Error
+  *class* stays in the domain pkg's `errors.ts`. Cross-pkg consumers
+  that need to discriminate the error should branch on `err.name ===
+  "AgentNotFoundError"` rather than `import`ing the class for
+  `instanceof` — the latter introduces a runtime cross-BC dep that
+  rule 5 forbids.
+
+- **Resolvers (`(c: Hono.Context) => Service`) stay in `server`.**
+  Their parameter type is HTTP-specific; promoting to `core` would
+  require introducing a generic `ServiceResolver<RequestCtx, Service>`,
+  which has no second consumer today.
+
+- **Avoid pure-rename facades.** A file in pkg X that does nothing but
+  `export type Foo = OriginalFoo` from pkg Y is a refactoring smell:
+  it suggests either (a) X needs to own Foo for real (move the
+  definition), or (b) consumers should import directly from Y (delete
+  the facade). Existing example removed in this PR's commit 6:
+  `server/src/bootstrap.ts` was a 14-line facade re-exporting `core`'s
+  `composeApplication` under `buildServerContainer` — deleted in favour
+  of consumers importing from `@emploke/core` directly.
+
+### Pitfalls observed in real PRs
+
+- Putting a wire shape in the originating domain pkg "because it's
+  defined there" — couples the wire to the domain. **Fix:** move it
+  to `api-types`; have the domain pkg `import type` it for projection.
+
+- Putting an in-process resolver type in `api-types` "because it's
+  used by routes" — pollutes the wire-types pkg with `Hono.Context`.
+  **Fix:** keep in `server`.
+
+- Adding a type to `core` "because multiple downstreams use it" when
+  it's actually a single-domain concept — bloats `core`. **Fix:** put
+  it in the owning domain pkg; let downstreams import the domain pkg.
+
+- A domain pkg value-importing another domain pkg's service or error
+  class — silently builds a runtime cross-BC dep. **Fix:** use
+  `import type`; thread the live instance through `core`'s composer;
+  for cross-BC error discrimination, branch on `err.name` instead of
+  `instanceof`. Mechanically audited by `inter-service-imports.test.ts`.
 
 ## Splitting big files via facade + sibling subdir
 

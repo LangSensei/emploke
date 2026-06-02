@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import type { TaskDispatchBody } from "@emploke/api-types";
 import {
   InvalidTransition,
   type ListTaskOpts,
@@ -11,7 +12,6 @@ import { Hono } from "hono";
 import { tasksErrorPolicy } from "./_error-policies/tasks.js";
 import { respondError } from "./_respond-error.js";
 import { logEvent, parseJsonBody } from "./_shared.js";
-import type { TaskDispatchBody } from "./manifest.js";
 
 /**
  * Defensive parse alias for the dispatch body. See `sessions.ts` for

@@ -25,6 +25,7 @@ import pino from "pino";
 
 const silentLogger = pino({ level: "silent" });
 
+import { type HttpMethod, listRoutes, type RouteSpec } from "@emploke/api-types";
 import type { Application } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { ScheduleService } from "@emploke/schedule";
@@ -35,7 +36,6 @@ import { describe, expect, it } from "vitest";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
 import { configRoutes } from "../src/routes/config.js";
 import { healthRoutes } from "../src/routes/health.js";
-import { type HttpMethod, listRoutes, type RouteSpec } from "../src/routes/manifest.js";
 import { runtimesRoutes } from "../src/routes/runtimes.js";
 import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
 import { schedulesRoutes } from "../src/routes/schedules.js";

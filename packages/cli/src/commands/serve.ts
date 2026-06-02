@@ -9,6 +9,11 @@
  * triggers `runServer`'s graceful shutdown.
  */
 
+// XXX(issue-255): cli should NOT value-import from @emploke/server. The
+// remaining `runServer` import here is the single allowed exception
+// pending the subprocess-spawn refactor tracked in #255. Do NOT add new
+// value-imports from @emploke/server in this file or anywhere else in cli —
+// every other cli↔server wire contract goes through @emploke/api-types.
 import { type RunServerOpts, runServer } from "@emploke/server";
 
 export interface ServeOpts {

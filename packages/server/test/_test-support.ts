@@ -1,9 +1,8 @@
 import path from "node:path";
-import type { Application } from "@emploke/core";
+import { type Application, composeApplication } from "@emploke/core";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { WorkspaceService } from "@emploke/workspace";
 import type { Logger } from "pino";
-import { buildServerContainer } from "../src/bootstrap.js";
 
 /**
  * Shared scaffolding for server-side tests. Builds the full `Application`
@@ -27,7 +26,7 @@ export async function setupTestSubsystem(opts: {
     new CopilotRuntime({ copilotConfigPath: path.join(opts.scratch, "copilot-config.json") }),
   );
   const defaultWorkspaceParent = path.join(opts.scratch, "default-workspaces");
-  const composition = await buildServerContainer({
+  const composition = await composeApplication({
     workspace: { dbFile: ":memory:" },
     runtimeRegistry,
     defaultWorkspaceParent,
