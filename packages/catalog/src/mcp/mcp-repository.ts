@@ -61,10 +61,12 @@ export class McpRepository {
     // Race-free: count + delete in one transaction so a concurrent
     // `installSkill` that adds a new dep on this mcp can't slip
     // between our count check and the row removal (the synthetic
-    // FOREIGN KEY error we throw is the only thing standing in for
-    // the FK constraint we dropped along with the migration
-    // framework). Throwing inside the transaction callback rolls
-    // back the empty delete and the synthetic error propagates.
+    // SQLITE_CONSTRAINT_FOREIGNKEY we throw is the count-then-throw
+    // pattern that stands in for missing FK constraints in these
+    // tables, exactly as `SkillRepository.delete` /
+    // `AgentRepository.delete` do). Throwing inside the transaction
+    // callback rolls back the empty delete and the synthetic error
+    // propagates.
     this.db.transaction((tx) => {
       const skillDepCount =
         tx.select({ c: count() }).from(skillMcpDeps).where(eq(skillMcpDeps.targetFqn, fqn)).get()

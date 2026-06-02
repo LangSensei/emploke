@@ -71,8 +71,8 @@ agent and skill source content (frontmatter + Markdown body) is
 read out of the BLOB columns.
 
 > Why SQLite for catalog? See
-> [docs/architecture.md  Backend selection](../../docs/architecture.md#backend-selection-when-sqlite)
->  catalog has cross-entity dependency-graph queries (`resolveAgent`)
+> [docs/architecture.md — Backend selection](../../docs/architecture.md#backend-selection-when-sqlite)
+> — catalog has cross-entity dependency-graph queries (`resolveAgent`)
 > and BLOB content streams, which are exactly the cases the rule says
 > SQLite owns.
 
@@ -92,7 +92,7 @@ await catalog.installSkill("file:/tmp/sop-prepared");
 await catalog.installAgent("github:org/repo/tree/main/agents/code-reviewer");
 await catalog.installMcpFromOrigin("file:/tmp/mcps/playwright.json");
 
-// Resolve from the local catalog (no network  DAG walk over
+// Resolve from the local catalog (no network — DAG walk over
 // already-installed entries; used by the runtime when materialising
 // a workdir).
 const plan = await catalog.resolveAgent("public/code-reviewer");
@@ -108,16 +108,16 @@ await close();
 
 ## Errors
 
-- `AgentFrontmatterError` / `SkillFrontmatterError`  malformed YAML
-- `*NameInvalidError`  fails kebab-case / length / charset
-- `*NotFoundError`  unknown FQN
-- `*OriginConflictError`  install collision
-- `CyclicDependencyError`  `resolveAgent` walk found a cycle
-- `HasDependentsError`  uninstall blocked by reverse-deps (raised by
+- `AgentFrontmatterError` / `SkillFrontmatterError` — malformed YAML
+- `*NameInvalidError` — fails kebab-case / length / charset
+- `*NotFoundError` — unknown FQN
+- `*OriginConflictError` — install collision
+- `CyclicDependencyError` — `resolveAgent` walk found a cycle
+- `HasDependentsError` — uninstall blocked by reverse-deps (raised by
   `CatalogService.deleteSkill` / `.deleteMcp` after the repository's
   in-transaction `count()` check finds dependents)
-- `McpInvalidJsonError`  MCP file failed JSON schema check
-- `FetchError` / `OriginParseError`  fetcher subpackage errors
+- `McpInvalidJsonError` — MCP file failed JSON schema check
+- `FetchError` / `OriginParseError` — fetcher subpackage errors
 
 ## Testing
 
@@ -125,7 +125,7 @@ await close();
 pnpm --filter @emploke/catalog test
 ```
 
-Vitest runs in `forks` pool (better-sqlite3''s native binding
+Vitest runs in `forks` pool (better-sqlite3's native binding
 segfaults on worker-thread teardown on Windows).
 
 ## License

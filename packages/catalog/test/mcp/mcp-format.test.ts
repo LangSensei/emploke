@@ -118,9 +118,9 @@ describe("McpFormat.writeMeta", () => {
     const out = McpFormat.writeMeta(original, { name: "new/name" }, LABEL);
     const parsed = JSON.parse(out);
     expect(parsed._meta.name).toBe("new/name");
-    // Origin is foreign data — writeMeta no longer manages it, so a
-    // pre-existing value survives untouched. New installs (with empty
-    // input or no _meta.origin) won't introduce it at all.
+    // Origin is foreign data — writeMeta treats `_meta.origin` as
+    // opaque, so a pre-existing value survives untouched and
+    // writeMeta never introduces it for new installs.
     expect(parsed._meta.origin).toBe("file:/abs/old");
     expect(parsed._meta["io.modelcontextprotocol.registry/extra"]).toEqual({ tag: "v1" });
     expect(parsed.command).toBe("node");

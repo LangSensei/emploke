@@ -15,15 +15,7 @@ import type {
 } from "./plan-types.js";
 
 /**
- * Sync resolve, broken into three independently-testable phases.
- *
- * Pre-refactor, `walkSkill` / `walkAgent` / `walkMcp` interleaved
- * three concerns in one recursive walk: fetching upstream, looking
- * up local state, and deciding per-node disposition. That made
- * each concern hard to read in isolation and impossible to unit-
- * test without a fetcher AND a SQLite repo wired together.
- *
- * The three phases here:
+ * Sync resolve, broken into three independently-testable phases:
  *
  * 1. {@link buildUpstreamClosure} — pure network walk, returns a
  *    `Closure` keyed by origin. Detects cycles. Knows nothing

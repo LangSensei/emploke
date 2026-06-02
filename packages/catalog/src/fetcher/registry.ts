@@ -5,7 +5,7 @@ import { type ParsedOrigin, parseOrigin } from "./origin.js";
 
 /**
  * Lookup table from origin scheme → fetcher implementation. Built once at
- * construction so adding a Phase-2 scheme is just `register("npm", ...)`.
+ * construction so adding a new scheme is just `register(new MyFetcher())`.
  *
  * Why a registry rather than a switch? Two reasons:
  *
@@ -13,8 +13,8 @@ import { type ParsedOrigin, parseOrigin } from "./origin.js";
  *     GitHubFetcher for one that yields from an in-memory tarball
  *     fixture) without monkey-patching call sites.
  *
- *  2. Phase-2 schemes (npm, generic git+ssh) can be added in their own
- *     subpackage that depends only on the fetcher contract.
+ *  2. Future schemes (e.g. `npm:`, generic `git+ssh://`) can be added in
+ *     their own subpackage that depends only on the fetcher contract.
  */
 export class FetcherRegistry {
   private readonly bySchemeMap = new Map<string, Fetcher>();
