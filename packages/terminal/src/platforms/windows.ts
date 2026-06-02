@@ -16,9 +16,10 @@ import type { LaunchCommand, SpawnTerminalDeps, SpawnTerminalResult } from "../t
  *
  * NOTE: the `exists` check must handle App Execution Aliases (0-byte reparse
  * points with tag `IO_REPARSE_TAG_APPEXECLINK`). `fs.existsSync` follows the
- * reparse point and returns false for these — that bug previously made the wt
- * branch unreachable in production. Default deps now use `lstatSync` via
- * `existsLike` (see `_shared.ts`); test deps inject `filesTable` directly.
+ * reparse point and returns false for these — if not handled the wt branch
+ * is silently unreachable even when Windows Terminal is installed. Default
+ * deps use `lstatSync` via `existsLike` (see `_shared.ts`); test deps inject
+ * `filesTable` directly.
  *
  * SHELL HOSTING: the launched program (`copilot`) is wrapped in a PowerShell
  * `-NoLogo -NoExit -Command "& '<cmd>' '<arg>' …"` envelope rather than
@@ -100,10 +101,10 @@ export async function spawnWindows(
  * host (pwsh → powershell → none) and wraps the LaunchCommand so wt opens
  * a tab in that host with the command pre-running.
  *
- * When neither pwsh nor powershell is on PATH we fall through to the
- * legacy "wt runs copilot directly" form. This preserves the prior
- * behaviour rather than failing the launch — the renderer race is
- * intermittent, not deterministic.
+ * When neither pwsh nor powershell is on PATH we fall through to wt's
+ * bare "wt runs copilot directly" form rather than failing the launch.
+ * The renderer race documented above is intermittent, not deterministic,
+ * so a possibly-flaky tab still beats a hard failure.
  *
  * Env injection: when `cmd.env` is non-empty AND we have a pwsh host,
  * we prepend `$env:K = 'v'; …; ` to the -Command payload. wt.exe runs

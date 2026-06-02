@@ -2,19 +2,17 @@ import { describe, expect, it } from "vitest";
 import { pwshEnvPrefix, shExportPrefix } from "../src/_shared.js";
 
 /**
- * Regression test for the defence-in-depth filter added to the env
- * prefix builders.
+ * Regression test for the defence-in-depth filter inside the env
+ * prefix builders (`shExportPrefix`, `pwshEnvPrefix` in `_shared.ts`).
  *
- * Original bug (PR #148 round 1): the windows terminal spawner
- * crashed with "Cannot read properties of undefined (reading
- * 'replace')" when `LaunchCommand.env` contained an `undefined`
- * value. Root cause was in CopilotRuntime (mixed scrub semantic in
- * the base env bag, fixed at the source).
- *
- * This test pins the secondary guard inside `_shared.ts`: even if a
- * future regression re-introduces an undefined env value upstream,
- * the prefix builders must NOT crash. They drop the bad entry and
- * emit the rest verbatim.
+ * If an `undefined` env value leaks into `LaunchCommand.env` despite
+ * the typed contract (`Readonly<Record<string, string>>`), the
+ * prefix builders previously crashed at `shQuote(value)` with
+ * "Cannot read properties of undefined (reading 'replace')". The
+ * root cause was fixed upstream where the env bag is assembled;
+ * this test pins the secondary guard so a future regression
+ * upstream cannot resurface the crash here — the builders drop the
+ * bad entry and emit the rest verbatim.
  */
 describe("env prefix builders: defence-in-depth undefined filter", () => {
   it("shExportPrefix skips undefined values without throwing", () => {

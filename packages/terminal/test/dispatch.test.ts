@@ -15,6 +15,12 @@ describe("spawnTerminalWith — dispatch + validation", () => {
     await expect(spawnTerminalWith(bad, deps)).rejects.toThrow(/control character/);
   });
 
+  it("rejects command containing a control character", async () => {
+    const { deps } = makeDeps({ platform: "linux" });
+    const bad: LaunchCommand = { ...sample, cmd: "copilot\x07" };
+    await expect(spawnTerminalWith(bad, deps)).rejects.toThrow(/control character/);
+  });
+
   it("throws UnsupportedPlatformError on unknown platform", async () => {
     const { deps } = makeDeps({ platform: "freebsd" as NodeJS.Platform });
     await expect(spawnTerminalWith(sample, deps)).rejects.toThrow(UnsupportedPlatformError);

@@ -90,6 +90,26 @@ export function pwshQuote(s: string): string {
 }
 
 /**
+ * Filter an env bag down to `[key, string-value]` tuples, defensively
+ * dropping `undefined` / `null` values that may have leaked past the
+ * typed contract (`Readonly<Record<string, string>>`) via an upstream
+ * `as`-cast over `NodeJS.ProcessEnv`. Without this filter, a leaked
+ * `undefined` would crash `shQuote(v)` / `pwshQuote(v)` at
+ * `undefined.replace` — the "Cannot read properties of undefined
+ * (reading 'replace')" class of bug. Filter, don't crash.
+ *
+ * Returns an empty array when `env` is `undefined`, so callers can
+ * unconditionally call `filterStringEntries(env)` and then branch on
+ * `entries.length === 0` for the empty-prefix shortcut.
+ */
+function filterStringEntries(
+  env: Readonly<Record<string, string>> | undefined,
+): [string, string][] {
+  if (env === undefined) return [];
+  return Object.entries(env).filter((e): e is [string, string] => typeof e[1] === "string");
+}
+
+/**
  * POSIX shell `export K='v' M='v' && ` prefix, suitable for prepending to a
  * `sh -c` line that should run with these env vars set. Returns an empty
  * string when `env` is empty or undefined so callers can unconditionally
@@ -108,17 +128,7 @@ export function pwshQuote(s: string): string {
  * are safe.
  */
 export function shExportPrefix(env: Readonly<Record<string, string>> | undefined): string {
-  if (env === undefined) return "";
-  // Defence in depth: skip undefined / null values defensively. The
-  // typed contract (`Readonly<Record<string, string>>`) forbids them,
-  // but the JS runtime can still have one if a caller routed a
-  // `NodeJS.ProcessEnv` through an `as`-cast. A leaked undefined would
-  // throw at `shQuote(v)` (`undefined.replace`) — exactly the windows
-  // terminal-spawn class of bug that surfaced as "Cannot read
-  // properties of undefined (reading 'replace')". Filter, don't crash.
-  const entries = Object.entries(env).filter(
-    (e): e is [string, string] => typeof e[1] === "string",
-  );
+  const entries = filterStringEntries(env);
   if (entries.length === 0) return "";
   const parts = entries.map(([k, v]) => `${k}=${shQuote(v)}`);
   return `export ${parts.join(" ")} && `;
@@ -141,11 +151,7 @@ export function shExportPrefix(env: Readonly<Record<string, string>> | undefined
  * `pwshQuote`; embedded `'` becomes `''` per pwsh single-quote rules.
  */
 export function pwshEnvPrefix(env: Readonly<Record<string, string>> | undefined): string {
-  if (env === undefined) return "";
-  // Defence in depth: see shExportPrefix above for the rationale.
-  const entries = Object.entries(env).filter(
-    (e): e is [string, string] => typeof e[1] === "string",
-  );
+  const entries = filterStringEntries(env);
   if (entries.length === 0) return "";
   return `${entries.map(([k, v]) => `$env:${k} = ${pwshQuote(v)}`).join("; ")}; `;
 }
@@ -164,10 +170,15 @@ export function realSpawn(file: string, args: readonly string[], opts: SpawnOpts
       detached: true,
       stdio: "ignore",
       windowsVerbatimArguments: opts.windowsVerbatimArguments,
-      // env: undefined means "inherit parent's process.env" (Node default).
-      // The cmd /k fallback path on Windows uses this as a belt-and-
-      // suspenders for the inline `set …` form (which it doesn't actually
-      // need on cmd, but kept consistent with the other platforms).
+      // Omit the spawn `env` key entirely when the caller passes
+      // `opts.env === undefined`, so the child inherits the parent's
+      // `process.env` (Node's default behaviour). The wt-branch path
+      // does this — env propagation there happens by inlining `$env:`
+      // assignments into the pwsh -Command payload (see
+      // `platforms/windows.ts:buildWtArgs`). The cmd /k fallback sets
+      // `opts.env` explicitly when `cmd.env` is non-empty, because
+      // `cmd /k` reliably inherits from its parent process and no
+      // inline `set …` prefix is needed.
       ...(opts.env !== undefined ? { env: opts.env } : {}),
     });
   } catch (err) {
