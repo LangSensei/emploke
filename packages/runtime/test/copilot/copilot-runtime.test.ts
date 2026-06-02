@@ -94,13 +94,14 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("registerWorkspace (no longer exists; trust now lives in buildInteractiveLaunch)", () => {
-    it("does not expose a registerWorkspace method on Runtime", () => {
+  describe("Runtime contract has no workspace-bootstrap hook", () => {
+    it("CopilotRuntime does not expose a registerWorkspace method", () => {
       const rt = new CopilotRuntime();
-      // The method was removed in favour of per-launch preflight inside
-      // buildInteractiveLaunch (see class jsdoc: per-mode trust matrix). Verifying
-      // the absence here pins the design choice — anyone re-adding it
-      // should think twice and update both this test and the jsdoc.
+      // Workspace bootstrap is intentionally NOT part of the Runtime
+      // contract — trust setup is `buildInteractiveLaunch`'s per-launch
+      // preflight (see CopilotRuntime jsdoc, per-mode trust matrix).
+      // Pin the absence so a future PR adding a bootstrap method has
+      // to actively delete this test and the matching jsdoc paragraph.
       expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
     });
   });
@@ -163,12 +164,13 @@ describe("CopilotRuntime", () => {
     });
 
     it("exposes subprocessEnvBase verbatim on the returned LaunchCommand.env", async () => {
-      // Regression: a previous shape allowed `undefined` values in the
-      // base bag, which silently broke the windows terminal spawner
+      // Contract: `subprocessEnvBase` is string-only — `undefined`
+      // values would break the windows terminal spawner
       // (`pwshQuote(undefined)` → "Cannot read properties of undefined
-      // reading 'replace'"). The base is now string-only by config
-      // contract; this test pins the round-trip so a future refactor
-      // can't reintroduce a transform that drops or mangles keys.
+      // reading 'replace'") and have no representation in the inlined
+      // `$env:K='v'` display form. This test pins the round-trip so
+      // a future refactor introducing a transform can't silently drop
+      // or mangle keys.
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
         subprocessEnvBase: {
@@ -607,10 +609,12 @@ describe("CopilotRuntime", () => {
 
     it("returns the last assistant utterance, skipping trailing tool/system events", async () => {
       // Stream: user → assistant("first") → user → assistant("second") →
-      // tool_call(success) → system. The "second" assistant message
-      // must win — earlier code that picked the literal last event
-      // would have surfaced the tool call's display text or the
-      // system note instead.
+      // tool_call(success) → system. The contract: `getLastAgentActivity`
+      // returns the last ASSISTANT utterance (skipping trailing tool /
+      // system events) — a naive "literal last event" picker would
+      // surface the tool call's display text or the system note instead,
+      // which is wrong for the dashboard's "what did the agent last
+      // say" headline.
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });
       const lines = [

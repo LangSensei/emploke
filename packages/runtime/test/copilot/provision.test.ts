@@ -35,11 +35,11 @@ const targetDir = (): string => path.join(scratch, "target");
  * fixtures and return a tuple ready to pass to `provisionCopilotWorkdir`.
  *
  * `agent.body` defaults to a minimal valid AGENTS.md. `agent.siblings`
- * lets a test stuff sibling files into the agent dir - this is the new
- * multi-file-agent shape. Skill / MCP dependency edges are declared in
- * the fixture's `deps` map rather than via AGENTS.md / SKILL.md
- * frontmatter, because the fake does NOT parse frontmatter (unlike the
- * previous catalog-backed fixture pipeline).
+ * lets a test stuff sibling files into the agent dir - provision
+ * materialises the whole agent tree, not just AGENTS.md. Skill / MCP
+ * dependency edges are declared in the fixture's `deps` map because
+ * the fake does NOT parse frontmatter; tests therefore spell their
+ * dependency graph out explicitly.
  */
 async function setup(opts: {
   agent?: { name?: string; body?: string; siblings?: Record<string, string> };
@@ -92,8 +92,9 @@ async function setup(opts: {
     fixtures.skills[name] = { files, ...(sk.deps ? { deps: sk.deps } : {}) };
   }
   // MCP fixtures are runtime-shape (parsed JSON, no `_meta`); the fake
-  // never injects or strips `_meta`. Tests that previously passed raw
-  // catalog-format JSON strings still hand us strings, so we parse here.
+  // never injects or strips `_meta`. The setup helper takes JSON strings
+  // for ergonomics (tests inline their MCP bodies as JSON literals) and
+  // parses here so each fixture is stored as a `Record<string, unknown>`.
   for (const [fqn, json] of Object.entries(opts.mcps ?? {})) {
     fixtures.mcps[fqn] = JSON.parse(json);
   }
@@ -104,9 +105,9 @@ async function setup(opts: {
 /**
  * Build a fake whose only mcp ("broken") is registered with a
  * `setMcpConfigOverride(_, new Error(...))` so the runtime's
- * `getMcpRuntimeConfig` call rejects - reproducing the corruption
- * scenario the previous fixture simulated by overwriting on-disk
- * SQLite bytes.
+ * `getMcpRuntimeConfig` call rejects - exercising provision's wrap
+ * path that turns an upstream source failure into `InvalidMcpJson`
+ * with the per-MCP fqn attached.
  */
 async function makeFakeWithBrokenMcp(specName: string): Promise<{
   source: AgentContentSource;
@@ -193,9 +194,9 @@ describe("provisionCopilotWorkdir - basics", () => {
   });
 
   it("copies sibling files the agent installs alongside AGENTS.md", async () => {
-    // Regression: the old impl only cp'd AGENTS.md, silently dropping
-    // sibling files (templates, scripts) the operator bundled into the
-    // agent dir. The streaming impl must materialize the whole tree.
+    // Contract: provision materialises the WHOLE agent tree (AGENTS.md
+    // plus every sibling - templates, scripts, ...), not just AGENTS.md.
+    // The streaming pipeline must walk every catalog entry.
     const t = targetDir();
     const { source, agentName } = await setup({
       agent: {
@@ -257,12 +258,11 @@ describe("provisionCopilotWorkdir - path-traversal hardening", () => {
     // malicious / corrupted SQLite-backed catalog row could still
     // hand back `relPath: "../escape"`. provision must refuse.
     //
-    // Built from the real `makeFakeContentSource` fake so the port
-    // shape is enforced by TypeScript; we then override `agentEntries`
-    // to inject the adversarial `relPath`. The previous shape declared
-    // an inline `as any` stub that drifted from the real
-    // `AgentContentSource` port (carrying a stale `getMcpContent`
-    // method name) and silently allowed the drift to live.
+    // Built from `makeFakeContentSource` so the port shape is enforced
+    // by TypeScript; the adversarial `relPath` is injected by
+    // overriding `agentEntries` on the returned source. An inline
+    // `as any` stub would let port drift live silently - using the
+    // real fake catches that at compile time.
     const t = targetDir();
     const { source: baseSource } = makeFakeContentSource({
       agents: { demo: { files: { "AGENTS.md": "ok" } } },

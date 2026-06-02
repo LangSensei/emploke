@@ -35,9 +35,10 @@ describe("parseCopilotActivity — basic kinds", () => {
       text: "hello back",
       seq: 1,
       parentSeq: 0,
-      // Per-message Copilot events only carry outputTokens; input is omitted
-      // (rather than the historical `input: 0` lie) so callers know to look
-      // at the session shutdown aggregate for input counts.
+      // Per-message Copilot events only carry `outputTokens`; `input`
+      // is omitted (MUST NOT be reported as `0`, see TokenUsage jsdoc)
+      // so callers look at the session-shutdown aggregate for input
+      // counts.
       tokens: { output: 19 },
       model: "claude",
     });

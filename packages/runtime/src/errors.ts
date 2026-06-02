@@ -23,9 +23,12 @@ export class UnknownRuntimeError extends Error {
  * diagnostic via `err.sessionId`, `err.cause`, and the server-side
  * `console.error` log emitted at the route boundary.
  *
- * The class name retains its earlier `Refresh` framing for backwards
- * compatibility with consumers that match `instanceof RuntimeRefreshFailed`;
- * the actual call site is `CopilotRuntime.readMetadata`.
+ * Class name is pinned to `RuntimeRefreshFailed` (rather than
+ * `RuntimeReadMetadataFailed`) because consumers in the dashboard
+ * error-toast registry pattern-match on `instanceof
+ * RuntimeRefreshFailed`; the actual call site is
+ * `CopilotRuntime.readMetadata`. The `.message` and `.name` carry
+ * "refresh failed" for the same `instanceof`-adjacent reason.
  */
 export class RuntimeRefreshFailed extends Error {
   constructor(

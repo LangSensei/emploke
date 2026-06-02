@@ -425,12 +425,10 @@ function parseAttachments(raw: unknown): Attachment[] {
 function parseAssistantTokens(d: Record<string, unknown>): TokenUsage | null {
   // Copilot's `assistant.message.data` only carries `outputTokens`. The
   // input token count for that turn lives in `session.shutdown.modelMetrics`
-  // as an aggregate across the whole session — not per message. Earlier
-  // versions returned `{ input: 0, output, total: output }` which was a
-  // lie (the ":input is 0" reading was wrong; it really means "unknown")
-  // and broke downstream `input > 0 || output > 0` checks. We now omit
-  // `input` / `total` per the new optional shape; consumers render the
-  // output count alone and fall back to "—" or skip the input column.
+  // as an aggregate across the whole session — not per message. Omitting
+  // `input` (rather than reporting `0`) is the contract: `input + output
+  // > 0` reads as "this turn measured at all", and consumers render the
+  // output count alone with `—`/`?` for the input column.
   const output = numOrUndefined(d.outputTokens);
   if (output === undefined) return null;
   return { output };

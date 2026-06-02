@@ -180,9 +180,10 @@ export interface CopilotRuntimeConfig {
  * filesystem path or a `--session-id=<id>` argument runs it through
  * `isCopilotSessionId` first. A tampered `session.json` with a malicious id
  * (e.g. `"../../etc"` for path-traversal, or one with shell metacharacters
- * for the display string) is treated as if the id were null — refresh
- * returns "no activity", deleteState is a no-op, and buildInteractiveLaunch produces a
- * fresh launch (no --session-id). That degrades gracefully for the user and
+ * for the display string) is treated as if the id were null —
+ * `readMetadata` / `readActivity` / `streamActivity` return null,
+ * `deleteState` is a no-op, and `buildInteractiveLaunch` produces
+ * a fresh launch (no `--session-id`). That degrades gracefully for the user and
  * keeps the surface immune to malformed persisted state.
  */
 export class CopilotRuntime implements Runtime {

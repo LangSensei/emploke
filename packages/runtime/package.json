@@ -1,7 +1,7 @@
 {
   "name": "@emploke/runtime",
   "version": "0.0.1",
-  "description": "Runtime \u2014 per-CLI adapters (provision, refresh, launch, deleteState) used by sessions and tasks",
+  "description": "Runtime \u2014 per-CLI adapters (provision, buildInteractiveLaunch, launchHeadless, readActivity, deleteState) used by sessions and tasks",
   "license": "MIT",
   "type": "module",
   "engines": {

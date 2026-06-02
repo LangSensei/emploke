@@ -114,12 +114,12 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  * catalog paths; a future SQLite-backed catalog implementation works the same
  * way.
  *
- * **Trust handling moved out**: previous versions of this function also
- * appended `workdir` to `~/.copilot/config.json.trustedFolders`. That
- * concern is now `CopilotRuntime.buildInteractiveLaunch`'s preflight, which writes
- * the workspace dir (idempotently, with ancestor coverage) into
- * `config.json` immediately before producing the launch spec. Per-session
- * provision no longer touches the user's Copilot config file.
+ * Does NOT touch the Copilot CLI's `config.json` `trustedFolders`.
+ * Folder-trust is `CopilotRuntime.buildInteractiveLaunch`'s preflight
+ * (it writes the workspace dir into `config.json` immediately before
+ * producing the launch spec, idempotently and with ancestor
+ * coverage). Keeping the two concerns separate lets workspaces that
+ * are only used for SDK-headless tasks skip the trust write entirely.
  *
  * Idempotent in the trivial sense (re-running with the same inputs produces
  * the same files), but emploke's session manager always provisions into a
