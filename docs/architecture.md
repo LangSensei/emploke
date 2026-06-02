@@ -153,17 +153,25 @@ the structural fence is enforced by
 `packages/e2e/test/architecture/tier-invisibility.test.ts`.
 
 `@emploke/terminal` is consumed **only by `@emploke/api`** at
-runtime — specifically by `WorkspaceContext.spawnSession()` which
-takes the `LaunchCommand` from `SessionService.buildInteractiveLaunch`
-and hands it to `spawnTerminal()`. Entity packages don't see it.
-`@emploke/runtime` produces `LaunchCommand` values but does not
-spawn terminals — the spawn step lives one layer up. The dep
-direction is asymmetric and deliberate: `terminal` declares its own
-`LaunchCommand` shape as a **consumer port** (see
-`packages/terminal/src/types.ts`) and has zero workspace deps;
-`runtime`'s `LaunchCommand` is the producer-side definition;
-TypeScript's structural typing wires the two together at the
-`api` call site without forcing either pkg to depend on the other.
+runtime — specifically by `composeApplication`, which value-imports
+`spawnTerminal` and threads it as an injected `SpawnFn` through
+`composeSessionModule` into `SessionService`. The actual
+"build the `LaunchCommand` and hand it to the spawner" step lives
+inside `SessionService.spawnInteractive(sid, opts)` (issue #276);
+`api`'s job is wiring, not invocation. Entity packages don't see
+`@emploke/terminal` — `@emploke/session` consumes the spawner via
+the structurally-typed `SpawnFn` port (`(cmd: LaunchCommand) =>
+Promise<{ launcher: string }>`) without importing terminal at all,
+so the cross-domain architecture fence
+(`packages/e2e/test/architecture/inter-service-imports.test.ts`)
+stays intact. `@emploke/runtime` produces `LaunchCommand` values
+but does not spawn terminals. The dep direction is asymmetric and
+deliberate: `terminal` declares its own `LaunchCommand` shape as a
+**consumer port** (see `packages/terminal/src/types.ts`) and has
+zero workspace deps; `runtime`'s `LaunchCommand` is the
+producer-side definition; TypeScript's structural typing wires the
+two together at the `composeApplication` call site without forcing
+either pkg to depend on the other.
 
 The entity packages (`workspace`, `session`, `task`, `catalog`) sit at
 the same level — they don't depend on each other directly. Composition
