@@ -60,7 +60,7 @@ describe("CopilotRuntime", () => {
       const r = await rt.provision(workdir, agent, source, { workspaceDir: scratch });
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
-      // No `.git/` is planted â€” Copilot CLI loads hooks from
+      // No `.git/` is planted — Copilot CLI loads hooks from
       // `<cwd>/.github/hooks/*.json` directly, so a git repo is not
       // needed for any runtime feature. See provision.ts docstring.
       expect(await exists(path.join(workdir, ".git"))).toBe(false);
@@ -99,7 +99,7 @@ describe("CopilotRuntime", () => {
       const rt = new CopilotRuntime();
       // The method was removed in favour of per-launch preflight inside
       // buildInteractiveLaunch (see class jsdoc: per-mode trust matrix). Verifying
-      // the absence here pins the design choice â€” anyone re-adding it
+      // the absence here pins the design choice — anyone re-adding it
       // should think twice and update both this test and the jsdoc.
       expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
     });
@@ -297,7 +297,7 @@ describe("CopilotRuntime", () => {
     it("is a no-op when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       await rt.deleteState("");
-      // No throw, no fs effect â€” pass.
+      // No throw, no fs effect — pass.
     });
 
     it("removes the copilot state directory for the id", async () => {
@@ -316,7 +316,7 @@ describe("CopilotRuntime", () => {
 
     it("wraps unexpected fs errors in RuntimeStateDeletionFailed", async () => {
       // Simulate by passing a copilotStateDir that points at a non-directory
-      // file path so that path.join â†’ rm hits a weird shape. On many systems
+      // file path so that path.join → rm hits a weird shape. On many systems
       // rm with force:true tolerates this; if it does, this test simply
       // passes the no-op path. Keep as a smoke check that the error class
       // construction is wired correctly.

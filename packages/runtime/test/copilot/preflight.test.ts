@@ -33,8 +33,10 @@ import {
  *   - Step 2 ERR_PACKAGE_PATH_NOT_EXPORTED is swallowed (healthy
  *     install — CLI publishes the subpath under ESM-only exports).
  *   - Step 2 EACCES (and any other code) surfaces — pins the
- *     denylist-of-one behaviour the explicit-filter change brought
- *     in (the previous allowlist would have swallowed EACCES).
+ *     denylist-of-one filter: only ERR_PACKAGE_PATH_NOT_EXPORTED is
+ *     swallowed; every other resolver error code (EACCES, ENOTDIR,
+ *     and any future Node resolver code) fails the preflight loudly
+ *     at boot rather than slipping past as a no-op.
  */
 
 const FAKE_SDK_URL = "file:///fake/node_modules/@github/copilot-sdk/dist/index.js";
