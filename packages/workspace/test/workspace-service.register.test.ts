@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  InputValidationError,
+  WorkspaceError,
   WorkspaceIdConflictError,
   WorkspaceIdInvalidError,
   WorkspaceNameInvalidError,
@@ -86,5 +88,18 @@ describe("WorkspaceService.register", () => {
     await expect(
       sys.service.register({ id: UUID_B, workspaceDir: wsDir, name: "second" }),
     ).rejects.toBeInstanceOf(WorkspacePathConflictError);
+  });
+
+  it("throws InputValidationError when input fails the zod shape check", async () => {
+    const promise = sys.service.register({
+      id: UUID_A,
+      name: "Project",
+      // workspaceDir omitted — fails RegisterWorkspaceInput's shape
+    } as unknown as Parameters<typeof sys.service.register>[0]);
+    await expect(promise).rejects.toBeInstanceOf(InputValidationError);
+    // Lock in the documented asymmetry: InputValidationError does NOT
+    // extend WorkspaceError, so an `instanceof WorkspaceError` filter
+    // (per the README catch-block recipe) must miss it.
+    await expect(promise).rejects.not.toBeInstanceOf(WorkspaceError);
   });
 });

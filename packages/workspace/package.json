@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workspace",
   "version": "0.0.1",
-  "description": "Workspace abstraction for emploke — per-project root directory holding sessions/ + tasks/ + workspace.db, plus a $EMPLOKE_HOME-level registry",
+  "description": "Workspace registry for emploke — manages $EMPLOKE_HOME/global.db plus allocation/cleanup of per-workspace sessions/ and tasks/ subdirs (workspace.db is owned by sibling packages)",
   "license": "MIT",
   "type": "module",
   "engines": {

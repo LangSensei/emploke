@@ -103,9 +103,9 @@ InputValidationError                   400 — register() input failed zod shape
 ```
 
 A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
-`InputValidationError`; catch it separately (or by `Error`) if you
-need to surface zod shape failures distinctly from typed domain
-errors.
+`InputValidationError`; add a second `else if (e instanceof InputValidationError) …`
+arm if you need to surface zod shape failures distinctly from typed
+domain errors.
 
 `list()` returns workspaces ordered by `lastOpenedAt DESC`. `getById(id)`
 returns `null` for unknown ids AND malformed ids alike — reads do not
