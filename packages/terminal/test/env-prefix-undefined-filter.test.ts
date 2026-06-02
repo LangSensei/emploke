@@ -5,14 +5,16 @@ import { pwshEnvPrefix, shExportPrefix } from "../src/_shared.js";
  * Regression test for the defence-in-depth filter inside the env
  * prefix builders (`shExportPrefix`, `pwshEnvPrefix` in `_shared.ts`).
  *
- * If an `undefined` env value leaks into `LaunchCommand.env` despite
- * the typed contract (`Readonly<Record<string, string>>`), the
- * prefix builders previously crashed at `shQuote(value)` with
+ * The typed contract for `LaunchCommand.env` is
+ * `Readonly<Record<string, string>>`, but an `undefined` value can
+ * still slip in via an unchecked `as`-cast over `NodeJS.ProcessEnv`
+ * at the assembly site. Without this filter, `shQuote(value)` /
+ * `pwshQuote(value)` would crash on the `undefined` with
  * "Cannot read properties of undefined (reading 'replace')". The
- * root cause was fixed upstream where the env bag is assembled;
- * this test pins the secondary guard so a future regression
- * upstream cannot resurface the crash here — the builders drop the
- * bad entry and emit the rest verbatim.
+ * primary guard lives upstream where the env bag is assembled; this
+ * test pins the secondary guard inside the prefix builders so an
+ * upstream regression cannot reach the crashing path — the builders
+ * drop the bad entry and emit the rest verbatim.
  */
 describe("env prefix builders: defence-in-depth undefined filter", () => {
   it("shExportPrefix skips undefined values without throwing", () => {
