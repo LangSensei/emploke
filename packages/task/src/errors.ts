@@ -5,7 +5,7 @@
  * narrow with `instanceof`.
  */
 
-import type { BlockedReason } from "@emploke/catalog";
+import type { BlockedReason } from "./ports.js";
 
 export class TaskError extends Error {
   constructor(message: string, options?: ErrorOptions) {

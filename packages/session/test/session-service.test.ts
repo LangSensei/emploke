@@ -1,9 +1,7 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
-import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
-import type { LaunchCommand, Runtime } from "@emploke/runtime";
+import type { AgentContentSource, LaunchCommand, ResolvedAgent, Runtime } from "@emploke/runtime";
 import {
   RuntimeProvisionFailed,
   RuntimeRegistry,
@@ -14,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
   AgentResolutionFailedError,
+  type AgentResolverPort,
   InvalidSessionIdError,
   SessionNotFoundError,
   SessionRepository,
@@ -26,7 +25,6 @@ import { openTestSessionDb } from "../src/testing.js";
 
 let sessionsDir: string;
 let scratch: string;
-let catalogDir: string;
 
 /**
  * Per-test ORMs that the buildManager helper hands out. Tracked so
@@ -43,17 +41,21 @@ function makeDb(): DbHandle {
 
 /**
  * Construct a `SessionService` with a fresh `:memory:` Drizzle db
- * injected. Tests that need to inspect the persisted state can
- * override `opts.db` with their own.
+ * injected and a default `contentSource` stub. Tests that need to
+ * inspect the persisted state can override `opts.db` with their own;
+ * tests that exercise the content-source path can override
+ * `opts.contentSource`.
  */
 async function buildManager(
-  opts: Omit<SessionServiceConfig, "db"> & Partial<Pick<SessionServiceConfig, "db">>,
+  opts: Omit<SessionServiceConfig, "db" | "contentSource"> &
+    Partial<Pick<SessionServiceConfig, "db" | "contentSource">>,
 ): Promise<SessionService> {
+  const contentSource = opts.contentSource ?? stubContentSource();
   if (opts.db !== undefined) {
-    return new SessionService(opts as SessionServiceConfig);
+    return new SessionService({ ...opts, contentSource } as SessionServiceConfig);
   }
   const orm = makeDb();
-  return new SessionService({ ...opts, db: orm.db });
+  return new SessionService({ ...opts, contentSource, db: orm.db });
 }
 
 beforeEach(async () => {
@@ -62,7 +64,6 @@ beforeEach(async () => {
   // from workspaceDir). Tests reference it for assertions on session workdirs.
   sessionsDir = path.join(scratch, "sessions");
   await mkdir(sessionsDir, { recursive: true });
-  catalogDir = await mkdtemp(path.join(tmpdir(), "emploke-catalog-"));
 });
 afterEach(async () => {
   for (const o of openHandles.splice(0)) {
@@ -75,34 +76,61 @@ afterEach(async () => {
   openHandles = [];
   await rm(sessionsDir, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
-  await rm(catalogDir, { recursive: true, force: true });
 });
 
-interface StubCatalogOpts {
-  agents?: Record<string, AgentResolveResult>;
+interface StubResolverOpts {
+  agents?: Record<string, ResolvedAgent>;
+  /** Forces `resolveAgent(...)` to throw — used to test 500 mapping. */
   resolveError?: Error;
 }
 
-function stubCatalog(opts: StubCatalogOpts = {}): CatalogService {
+function stubAgentResolver(opts: StubResolverOpts = {}): AgentResolverPort {
   const agents = opts.agents ?? {};
   return {
-    catalogDir,
-    async resolveAgent(name: string): Promise<AgentResolveResult> {
+    async resolveAgent(name: string): Promise<ResolvedAgent> {
       if (opts.resolveError) throw opts.resolveError;
       const a = agents[name];
       if (!a) throw new Error(`agent not found in catalog: "${name}"`);
       return a;
     },
-  } as unknown as CatalogService;
+    // Mirrors catalog.getAgentEntry: returns null for unknown agents.
+    // Catalog's real behaviour never throws AgentNotFoundError from
+    // this path.
+    async getAgentEntry(name: string) {
+      if (!(name in agents)) return null;
+      return { status: "ready" as const };
+    },
+  };
 }
 
-const fakeAgentResolve = (name: string): AgentResolveResult =>
-  ({
-    agent: { fqn: `public/${name}`, name, description: "x", version: "0.0.1" },
-    agentPath: path.join(catalogDir, "agents", name),
-    skills: [],
-    mcps: [],
-  }) as unknown as AgentResolveResult;
+/**
+ * Minimal `AgentContentSource` stub. The session tests' stub runtime
+ * ignores the content source (its `provision` writes a fixed
+ * AGENTS.md and never touches it), so the methods just need to
+ * satisfy the type.
+ */
+function stubContentSource(): AgentContentSource {
+  return {
+    async resolveAgent(_name: string): Promise<ResolvedAgent> {
+      return { agent: { fqn: "stub" }, skills: [], mcps: [] };
+    },
+    async *agentEntries(_fqn: string) {
+      // no entries
+    },
+    async *skillEntries(_fqn: string) {
+      // no entries
+    },
+    async getMcpRuntimeConfig(_fqn: string) {
+      return {};
+    },
+  };
+}
+
+const fakeAgentResolve = (name: string): ResolvedAgent => ({
+  agent: { fqn: `public/${name}` },
+  skills: [],
+  mcps: [],
+});
 
 /**
  * A configurable in-memory Runtime that mimics the contract without touching
@@ -111,7 +139,7 @@ const fakeAgentResolve = (name: string): AgentResolveResult =>
  */
 class StubRuntime implements Runtime {
   readonly kind: string;
-  provisionCalls: { workdir: string; agent: AgentResolveResult }[] = [];
+  provisionCalls: { workdir: string; agent: ResolvedAgent }[] = [];
   readMetadataCalls: string[] = [];
   deleteStateCalls: string[] = [];
   buildLaunchCalls: {
@@ -147,14 +175,14 @@ class StubRuntime implements Runtime {
 
   async provision(
     workdir: string,
-    agent: AgentResolveResult,
+    agent: ResolvedAgent,
   ): Promise<{ runtimeSessionId: string | null }> {
     this.provisionCalls.push({ workdir, agent });
     if (this.provisionError) throw this.provisionError;
     await mkdir(workdir, { recursive: true });
     await writeFile(
       path.join(workdir, "AGENTS.md"),
-      `---\nname: ${agent.agent.name}\n---\n# agent\n`,
+      `---\nname: ${agent.agent.fqn}\n---\n# agent\n`,
       "utf8",
     );
     if (this.provisionId === "per-call") {
@@ -230,7 +258,7 @@ const recorder = () => {
 describe("SessionService construction", () => {
   it("constructs with catalog + runtimeRegistry + sessionsDir", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -245,7 +273,7 @@ describe("create()", () => {
     const rt = new StubRuntime();
     const orm = makeDb();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
@@ -276,22 +304,23 @@ describe("create()", () => {
 
   it("throws AgentNotFoundError for empty agent", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
     await expect(m.create({ agent: "" })).rejects.toBeInstanceOf(AgentNotFoundError);
   });
 
-  it("wraps a CatalogAgentNotFoundError from resolveAgent as session's AgentNotFoundError", async () => {
-    // The catalog's typed not-found marker MUST be preserved as a
-    // session-package AgentNotFoundError (400). Without the
-    // `instanceof CatalogAgentNotFoundError` branch in
-    // session-service.ts, this would wrap as AgentResolutionFailedError
-    // (500) and surface to users as 'internal error'.
-    const catalogErr = new CatalogAgentNotFoundError("missing");
+  it("throws AgentNotFoundError when getAgentEntry returns null (unknown agent)", async () => {
+    // Option II discrimination (Decision #9): the resolver port
+    // reports "unknown" by returning null from getAgentEntry, NOT by
+    // throwing a typed not-found error. Destructive validation for
+    // the `entry === null` check in session-service.ts's create()
+    // flow: deleting it would let the call sail into resolveAgent
+    // and surface as a 500 AgentResolutionFailedError instead of
+    // the user-facing 400.
     const m = await buildManager({
-      catalog: stubCatalog({ resolveError: catalogErr }),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -301,38 +330,40 @@ describe("create()", () => {
     );
     expect(err).toBeInstanceOf(AgentNotFoundError);
     expect(err).not.toBeInstanceOf(AgentResolutionFailedError);
-    expect((err as AgentNotFoundError).cause).toBe(catalogErr);
+    // No `cause` — the resolver simply said "not here", no upstream
+    // error to chain.
+    expect((err as AgentNotFoundError).cause).toBeUndefined();
   });
 
-  it("wraps a generic catalog error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
-    // A non-typed catalog failure (DB exploded, parser blew up, etc.)
-    // is a system fault, not a user error. The previous behaviour
-    // wrapped every catalog throw as AgentNotFoundError (400),
-    // masking real bugs behind a misleading 'agent not found'
-    // response. Destructive validation for the
-    // `instanceof CatalogAgentNotFoundError` branch in
-    // session-service.ts: removing the AgentResolutionFailedError
-    // throw collapses this back to AgentNotFoundError and this
-    // assertion must fail.
+  it("wraps a generic resolver error from resolveAgent as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
+    // A non-typed resolver failure (DB exploded, parser blew up,
+    // etc.) is a system fault, not a user error. Option II's
+    // contract: any throw from `agentResolver.resolveAgent(...)` is
+    // classified as a 500. The not-found path only fires when
+    // `getAgentEntry` returns null. Destructive validation for the
+    // AgentResolutionFailedError throw site in session-service.ts.
     const foreign = new Error("DB exploded");
     const m = await buildManager({
-      catalog: stubCatalog({ resolveError: foreign }),
+      agentResolver: stubAgentResolver({
+        agents: { demo: fakeAgentResolve("demo") },
+        resolveError: foreign,
+      }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
-    const err = await m.create({ agent: "missing" }).then(
+    const err = await m.create({ agent: "demo" }).then(
       () => null,
       (e) => e,
     );
     expect(err).toBeInstanceOf(AgentResolutionFailedError);
     expect(err).not.toBeInstanceOf(AgentNotFoundError);
-    expect((err as AgentResolutionFailedError).agent).toBe("missing");
+    expect((err as AgentResolutionFailedError).agent).toBe("demo");
     expect((err as AgentResolutionFailedError).cause).toBe(foreign);
   });
 
   it("throws UnknownRuntimeError when runtime kind is not registered", async () => {
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime("copilot")),
       workspaceDir: scratch,
     });
@@ -346,7 +377,7 @@ describe("create()", () => {
     const reg = new RuntimeRegistry();
     reg.register(claudeRt);
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: reg,
       defaultRuntime: "claude",
       workspaceDir: scratch,
@@ -359,7 +390,7 @@ describe("create()", () => {
     const rt = new StubRuntime();
     rt.provisionError = new RuntimeProvisionFailed("copilot", "/x", new Error("boom"));
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -372,7 +403,7 @@ describe("create()", () => {
     const rt = new StubRuntime();
     rt.provisionId = null;
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -386,7 +417,7 @@ describe("create()", () => {
 describe("list()", () => {
   it("returns empty when sessionsDir does not exist", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       sessionsDir: path.join(sessionsDir, "missing"),
       workspaceDir: scratch,
@@ -398,7 +429,7 @@ describe("list()", () => {
     const r = recorder();
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       logger: r.logger,
@@ -417,7 +448,7 @@ describe("list()", () => {
 
   it("filters by agent", async () => {
     const m = await buildManager({
-      catalog: stubCatalog({
+      agentResolver: stubAgentResolver({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
@@ -434,7 +465,7 @@ describe("list()", () => {
     const rt = new StubRuntime();
     let nowMs = Date.UTC(2026, 0, 1); // Jan 1 2026
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       now: () => new Date(nowMs),
@@ -456,7 +487,7 @@ describe("list()", () => {
   it("createdSince combined with agent narrows further", async () => {
     let nowMs = Date.UTC(2026, 0, 1);
     const m = await buildManager({
-      catalog: stubCatalog({
+      agentResolver: stubAgentResolver({
         agents: { a: fakeAgentResolve("a"), b: fakeAgentResolve("b") },
       }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
@@ -482,7 +513,7 @@ describe("list()", () => {
       userTitled: false,
     };
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -495,7 +526,7 @@ describe("list()", () => {
   it("treats null refresh as no activity (lastActiveAt/preview stay null)", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -514,7 +545,7 @@ describe("list()", () => {
     const sharedOrm = makeDb();
     const rtA = new StubRuntime();
     const m1 = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rtA),
       workspaceDir: scratch,
       db: sharedOrm.db,
@@ -522,7 +553,7 @@ describe("list()", () => {
     await m1.create({ agent: "demo" });
 
     const m2 = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime("gemini")),
       workspaceDir: scratch,
       logger: r.logger,
@@ -548,7 +579,7 @@ describe("list()", () => {
     };
     const orm = makeDb();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       db: orm.db,
@@ -563,7 +594,7 @@ describe("list()", () => {
   it("sorts never-launched sessions first, then active by lastActiveAt desc (#43)", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -590,7 +621,7 @@ describe("list()", () => {
   it("activeSince filter drops sessions whose lastActiveAt is null or older than the cutoff", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -625,7 +656,7 @@ describe("list()", () => {
     // brand-new session behind its default time filter.
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       now: fixedNow("2026-05-08T01:05:00.000Z"),
@@ -645,7 +676,7 @@ describe("list()", () => {
 describe("get()", () => {
   it("returns the record by id", async () => {
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -656,7 +687,7 @@ describe("get()", () => {
 
   it("returns null for valid-but-unknown id", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -665,7 +696,7 @@ describe("get()", () => {
 
   it("throws InvalidSessionIdError for malformed id", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -678,7 +709,7 @@ describe("get()", () => {
 describe("delete()", () => {
   it("removes the metadata; workdir is preserved by default", async () => {
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -693,7 +724,7 @@ describe("delete()", () => {
 
   it("removes the workdir when purge=true", async () => {
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -704,7 +735,7 @@ describe("delete()", () => {
 
   it("throws SessionNotFoundError for unknown id", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -713,7 +744,7 @@ describe("delete()", () => {
 
   it("validates id format", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -723,7 +754,7 @@ describe("delete()", () => {
   it("with purge=true: calls runtime.deleteState before removing row + workdir", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -739,7 +770,7 @@ describe("delete()", () => {
     const rt = new StubRuntime();
     rt.deleteStateError = new RuntimeStateDeletionFailed("copilot", "anyid", new Error("EBUSY"));
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -757,7 +788,7 @@ describe("delete()", () => {
   it("default (archive): does NOT call runtime.deleteState and preserves workdir", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -778,7 +809,7 @@ describe("buildInteractiveLaunch()", () => {
   it("returns launch command for a real session", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -806,7 +837,7 @@ describe("buildInteractiveLaunch()", () => {
       userTitled: false,
     };
     const m = await buildManager({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
     });
@@ -817,7 +848,7 @@ describe("buildInteractiveLaunch()", () => {
 
   it("throws SessionNotFoundError for unknown", async () => {
     const m = await buildManager({
-      catalog: stubCatalog(),
+      agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
     });
@@ -830,7 +861,7 @@ describe("buildInteractiveLaunch()", () => {
     const rt = new StubRuntime();
     const orm = makeDb();
     const m = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       db: orm.db,
@@ -858,7 +889,7 @@ describe("buildInteractiveLaunch()", () => {
     const rt = new StubRuntime();
     const orm = makeDb();
     const m = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       db: orm.db,
@@ -898,7 +929,7 @@ describe("buildInteractiveLaunch()", () => {
   it.skip("layers EMPLOKE_* env onto LaunchCommand (env source changed  needs rewrite)", async () => {
     const rt = new StubRuntime();
     const m = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       workspaceId: "ws-uuid-alpha",
@@ -922,7 +953,7 @@ describe("buildInteractiveLaunch()", () => {
   it.skip("omits EMPLOKE_WORKSPACE (back-compat  workspaceId now required)", async () => {
     const rt = new StubRuntime();
     const m = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       db: makeDb().db,
@@ -943,7 +974,7 @@ describe("buildInteractiveLaunch()", () => {
     const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
 
     const mA = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
       workspaceId: "ws-A",
@@ -951,7 +982,7 @@ describe("buildInteractiveLaunch()", () => {
       db: makeDb().db,
     });
     const mB = new SessionService({
-      catalog: stubCatalog({ agents: { demo: fakeAgentResolve("demo") } }),
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(new StubRuntime()),
       workspaceDir: scratch,
       workspaceId: "ws-B",

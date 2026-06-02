@@ -1,9 +1,9 @@
-import type { CatalogService } from "@emploke/catalog";
-import type { RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import { applySessionMigrations } from "./migrations.js";
+import type { AgentResolverPort } from "./ports.js";
 import * as schema from "./schema.js";
 import { SessionService } from "./session-service.js";
 
@@ -11,7 +11,8 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 export interface SessionModuleOptions {
   readonly dbFile: string;
-  readonly catalog: CatalogService;
+  readonly agentResolver: AgentResolverPort;
+  readonly contentSource: AgentContentSource;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly workspaceDir: string;
   readonly workspaceId: string;
@@ -43,7 +44,8 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   }
 
   const service = new SessionService({
-    catalog: opts.catalog,
+    agentResolver: opts.agentResolver,
+    contentSource: opts.contentSource,
     runtimeRegistry: opts.runtimeRegistry,
     workspaceDir: opts.workspaceDir,
     workspaceId: opts.workspaceId,

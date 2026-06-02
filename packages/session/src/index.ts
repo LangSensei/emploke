@@ -32,6 +32,7 @@ export {
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
+export type { AgentEntry, AgentResolverPort } from "./ports.js";
 // `SessionRow` (Drizzle `$inferSelect` alias) is intentionally NOT
 // re-exported. It is an implementation detail of the persistence
 // layer; external callers should consume the `Session` DTO below

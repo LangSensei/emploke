@@ -1,11 +1,13 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import {
-  AgentNotFoundError as CatalogAgentNotFoundError,
-  type CatalogService,
-} from "@emploke/catalog";
-import type { LaunchCommand, Runtime, RuntimeRegistry } from "@emploke/runtime";
+import type {
+  AgentContentSource,
+  LaunchCommand,
+  ResolvedAgent,
+  Runtime,
+  RuntimeRegistry,
+} from "@emploke/runtime";
 import pino, { type Logger } from "pino";
 import {
   AgentNotFoundError,
@@ -14,6 +16,7 @@ import {
   SessionNotFoundError,
 } from "./errors.js";
 import { safeJoinUnderRoot, sessionsRoot } from "./paths.js";
+import type { AgentResolverPort } from "./ports.js";
 import type { SessionEntity } from "./session-entity.js";
 import { SessionRepository } from "./session-repository.js";
 import type {
@@ -45,7 +48,8 @@ const MAX_CREATE_RETRIES = 5;
  * runtime adapter, and on-disk workdir operations directly.
  */
 export class SessionService {
-  private readonly catalog: CatalogService;
+  private readonly agentResolver: AgentResolverPort;
+  private readonly contentSource: AgentContentSource;
   private readonly runtimeRegistry: RuntimeRegistry;
   private readonly sessionsDir: string;
   private readonly workspaceDir: string;
@@ -56,7 +60,8 @@ export class SessionService {
   private readonly randomBytes: (n: number) => Buffer;
 
   constructor(config: SessionServiceConfig) {
-    this.catalog = config.catalog;
+    this.agentResolver = config.agentResolver;
+    this.contentSource = config.contentSource;
     this.runtimeRegistry = config.runtimeRegistry;
     this.workspaceDir = path.resolve(config.workspaceDir);
     this.sessionsDir = sessionsRoot(this.workspaceDir);
@@ -75,16 +80,19 @@ export class SessionService {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    let resolveResult: Awaited<ReturnType<CatalogService["resolveAgent"]>>;
+    // Option II discrimination: null-check via getAgentEntry first,
+    // generic catch on resolveAgent for system faults. No
+    // `instanceof CatalogAgentNotFoundError` branch. TOCTOU: if the
+    // agent disappears between the two calls the failure surfaces as
+    // AgentResolutionFailedError (500); accepted per Decision #9.
+    const entry = await this.agentResolver.getAgentEntry(agentName);
+    if (entry === null) {
+      throw new AgentNotFoundError(agentName);
+    }
+    let resolveResult: ResolvedAgent;
     try {
-      resolveResult = await this.catalog.resolveAgent(agentName);
+      resolveResult = await this.agentResolver.resolveAgent(agentName);
     } catch (err) {
-      // Catalog said "agent does not exist" → present as user error (400).
-      if (err instanceof CatalogAgentNotFoundError) {
-        throw new AgentNotFoundError(agentName, err);
-      }
-      // Any other catalog failure is a system fault, NOT user input —
-      // surface as 500 with the cause preserved for `5xx fault` logs.
       throw new AgentResolutionFailedError(agentName, err);
     }
 
@@ -114,9 +122,14 @@ export class SessionService {
 
     let provisionedRuntimeSessionId: string | null = null;
     try {
-      const { runtimeSessionId } = await runtime.provision(workdir, resolveResult, this.catalog, {
-        workspaceDir: this.workspaceDir,
-      });
+      const { runtimeSessionId } = await runtime.provision(
+        workdir,
+        resolveResult,
+        this.contentSource,
+        {
+          workspaceDir: this.workspaceDir,
+        },
+      );
       provisionedRuntimeSessionId = runtimeSessionId;
       const createdAt = this.now().toISOString();
       // Catalog is the source of truth for the canonical agent FQN —

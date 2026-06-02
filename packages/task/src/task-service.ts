@@ -20,10 +20,10 @@
 
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import path from "node:path";
-import type { CatalogService } from "@emploke/catalog";
-import type { RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
 import pino, { type Logger } from "pino";
 import { tasksRoot } from "./paths.js";
+import type { AgentResolverPort } from "./ports.js";
 import type { TaskEntity } from "./task-entity.js";
 import { TaskRepository } from "./task-repository.js";
 import { getTaskActivity, getTaskActivityStream } from "./task-service/activity-stream.js";
@@ -62,7 +62,8 @@ export const DEFAULT_RUNTIME = "copilot";
  * `import type`. NOT re-exported from `./index.ts`.
  */
 export interface TaskServiceCtx {
-  readonly catalog: CatalogService;
+  readonly agentResolver: AgentResolverPort;
+  readonly contentSource: AgentContentSource;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly tasksDir: string;
   readonly workspaceDir: string;
@@ -117,7 +118,8 @@ export class TaskService {
     const workspaceDir = path.resolve(config.workspaceDir);
     const logger = config.logger ?? silentLogger;
     this.ctx = {
-      catalog: config.catalog,
+      agentResolver: config.agentResolver,
+      contentSource: config.contentSource,
       runtimeRegistry: config.runtimeRegistry,
       workspaceDir,
       tasksDir: tasksRoot(workspaceDir),
