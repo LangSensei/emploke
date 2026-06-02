@@ -57,14 +57,12 @@ function stubManager(overrides: Partial<Record<keyof SessionService, unknown>>):
  * Wrap a SessionService stub into a WorkspaceContext shaped value.
  * Optional `spawnImpl` lets tests inject a terminal spawn fake.
  *
- * As of #276 the spawn invocation lives on `SessionService.spawnInteractive`
- * (the route delegates to `ctx.sessions.spawnInteractive(...)` after
- * commit 4). The stub adds `spawnInteractive` to the SessionService
- * fake — its body mirrors what the real SessionService does:
- * `buildInteractiveLaunch` → `spawnImpl` → SpawnSessionResult. The
- * legacy `spawnSession` pass-through is still wired on the context so
- * tests that pre-date the route migration keep working through the
- * commit-4 transition.
+ * As of #276 the spawn invocation lives on
+ * `SessionService.spawnInteractive` (the route delegates to
+ * `ctx.sessions.spawnInteractive(...)`). The stub attaches
+ * `spawnInteractive` to the SessionService fake — its body mirrors
+ * what the real SessionService does: `buildInteractiveLaunch` →
+ * `spawnImpl` → SpawnSessionResult.
  */
 function stubContext(
   sessions: SessionService,
@@ -107,9 +105,6 @@ function stubContext(
     sessions: sessionsWithSpawn,
     catalog: {} as CatalogService,
     tasks: {} as TaskService,
-    async spawnSession(sid, opts) {
-      return sessionsWithSpawn.spawnInteractive(sid, opts);
-    },
   };
   return context as WorkspaceContext;
 }

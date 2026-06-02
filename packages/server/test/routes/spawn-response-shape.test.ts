@@ -15,11 +15,9 @@
  * This is a route-level pin: the test mounts `sessionsRoutes` with a
  * fake `WorkspaceContext` that has a real `SessionService` instance
  * (constructed against an in-memory db) whose injected `spawnFn`
- * throws the error class under test. Both the pre-commit-4
- * `ctx.spawnSession` pass-through and the post-commit-4 direct
- * `ctx.sessions.spawnInteractive(...)` call site flow through the
- * same `SessionService.spawnInteractive` code path, so the same
- * fixture covers both.
+ * throws the error class under test. The route calls
+ * `ctx.sessions.spawnInteractive(...)`, which flows through the
+ * production error-mapping branch in `SessionService.spawnInteractive`.
  *
  * Test files are out of scope for the
  * `inter-service-imports.test.ts` architecture fence, so this file
@@ -108,16 +106,14 @@ function buildService(spawnError: Error): {
 
 function buildContext(service: SessionService): WorkspaceContext {
   // Minimal WorkspaceContext fake. The route only touches `.sessions`
-  // (for buildInteractiveLaunch / get / etc.) and `.spawnSession()`
-  // (the pre-commit-4 pass-through). Both code paths route through
-  // SessionService.spawnInteractive, so the wire shape is identical.
+  // (for buildInteractiveLaunch / get / etc.) and
+  // `.sessions.spawnInteractive()` (the post-#276 canonical
+  // call site, replacing the legacy `WorkspaceContext.spawnSession`
+  // pass-through).
   const ctx: Partial<WorkspaceContext> = {
     sessions: service,
     catalog: {} as CatalogService,
     tasks: {} as TaskService,
-    async spawnSession(sid, opts) {
-      return service.spawnInteractive(sid, opts);
-    },
   };
   return ctx as WorkspaceContext;
 }

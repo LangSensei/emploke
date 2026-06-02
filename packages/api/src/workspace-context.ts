@@ -1,11 +1,15 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
-import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
+import type { RuntimeRegistry } from "@emploke/runtime";
 import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
-import { composeSessionModule, type SessionService } from "@emploke/session";
+import {
+  composeSessionModule,
+  type SessionService,
+  type SpawnFn as SessionSpawnFn,
+  type SpawnSessionResult as SessionSpawnSessionResult,
+} from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
-import type { SpawnTerminalResult } from "@emploke/terminal";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
@@ -16,30 +20,26 @@ export const silentLogger: Logger = pino({ level: "silent" });
  * Inject a fake terminal spawner. Tests pass a stub to avoid touching
  * the real host; production callers omit it to get the default
  * {@link import("@emploke/terminal").spawnTerminal} from `@emploke/terminal`.
+ *
+ * @deprecated Re-exported from `@emploke/session` for one minor cycle
+ * to preserve the published type-import surface for external
+ * consumers. New code SHOULD import `SpawnFn` from `@emploke/session`
+ * directly. The api-side re-export will be removed in the next minor
+ * after consumers migrate.
  */
-export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
+export type SpawnFn = SessionSpawnFn;
 
 /**
- * Result of {@link WorkspaceContext.spawnSession}. The `display` field
- * is always present so the dashboard can show a copy-paste fallback
- * even when the terminal launch itself failed.
+ * Result of {@link SessionService.spawnInteractive} (the canonical
+ * "start an interactive session" call site since issue #276).
  *
- * `launcher` is typed as `string` (widened from the previous
- * `Launcher` union) because the spawn pass-through now delegates to
- * `SessionService.spawnInteractive`, whose return type uses a
- * structural `{ launcher: string }` shape to avoid coupling
- * `@emploke/session` to `@emploke/terminal`. The on-wire JSON shape
- * is unchanged: a string is a string. Consumers that need the narrow
- * union can import `Launcher` from `@emploke/terminal` directly.
+ * @deprecated Re-exported from `@emploke/session` for one minor cycle
+ * to preserve the published type-import surface for external
+ * consumers. New code SHOULD import `SpawnSessionResult` from
+ * `@emploke/session` directly. The api-side re-export will be removed
+ * in the next minor after consumers migrate.
  */
-export type SpawnSessionResult =
-  | { readonly ok: true; readonly launcher: string; readonly display: string }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly code: string;
-      readonly display: string;
-    };
+export type SpawnSessionResult = SessionSpawnSessionResult;
 
 /**
  * Thrown by `WorkspaceContextRegistry.reload` when the cached context
@@ -60,6 +60,11 @@ export class WorkspaceHasLiveTasksError extends Error {
  * Per-workspace bundle of long-lived state. Holds three SQLite-backed
  * services (one per BC, sharing one `workspace.db` via WAL) plus the
  * cross-BC orchestration methods for this workspace.
+ *
+ * As of issue #276, "start an interactive session" semantics live on
+ * `sessions.spawnInteractive(sid, opts)` (canonical). The legacy
+ * `WorkspaceContext.spawnSession` pass-through has been removed —
+ * callers go through `ctx.sessions.spawnInteractive(...)` directly.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
@@ -73,15 +78,6 @@ export interface WorkspaceContext {
    * doesn't race a closed `TaskService`.
    */
   readonly schedules: ScheduleService;
-  /**
-   * Build the session's interactive launch command via
-   * {@link SessionService.buildInteractiveLaunch} and immediately hand
-   * it to {@link import("@emploke/terminal").spawnTerminal} (or the
-   * injected `spawnFn`). The returned `display` field is always
-   * populated so callers can show a copy-paste command even on spawn
-   * failure.
-   */
-  spawnSession(sid: string, opts?: { remote?: boolean }): Promise<SpawnSessionResult>;
   /** Closes all backing connections. Idempotent. */
   close(): Promise<void>;
 }
@@ -317,24 +313,13 @@ export class WorkspaceContextRegistry {
       throw err;
     }
 
-    const sessions = sessionModule.service;
     const outerLogger = this.logger;
     const context: WorkspaceContext = {
       workspace,
       catalog: catalogModule.service,
-      sessions,
+      sessions: sessionModule.service,
       tasks: taskModule.service,
       schedules: scheduleModule.service,
-      async spawnSession(sid, opts) {
-        // Pass-through to SessionService.spawnInteractive, which now
-        // owns the buildInteractiveLaunch + spawnFn(cmd) dance plus
-        // the error-name mapping. Kept on WorkspaceContext for one
-        // mergeable commit so test stubs that mock spawnSession on
-        // the context shape continue to work; the next commit deletes
-        // this method and the server route delegates straight to
-        // `ctx.sessions.spawnInteractive(...)`. See issue #276.
-        return sessions.spawnInteractive(sid, opts);
-      },
       async close() {
         // Per-module try/catch: a throw from one module's close()
         // must NOT skip the others. Earlier shape chained awaits
