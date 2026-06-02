@@ -25,8 +25,9 @@ type Db = BetterSQLite3Database<typeof schema>;
  * projection here and `WorkspaceEntity` stops being assignable from
  * the row directly. Until then, the type-level alias is enough.
  *
- * Service layer maps `WorkspaceEntity` → wire `Workspace` DTO. See
- * `docs/pkg-template.md` "Repository contract".
+ * Service layer maps `WorkspaceEntity` → wire `Workspace` DTO by
+ * coalescing the nullable `lastOpenedAt` to `createdAt` (so DTO
+ * consumers never see `null`).
  */
 export class WorkspaceRepository {
   private readonly db: Db;
@@ -62,12 +63,13 @@ export class WorkspaceRepository {
 
   async findLastOpenedId(): Promise<string | undefined> {
     // ORDER BY chain — `lastOpenedAt DESC` is the primary sort
-    // (matches what `getLastOpened` exposes); `createdAt DESC` is
-    // the secondary tiebreaker for ISO-8601 ms collisions; `id ASC`
-    // is the final deterministic fallback. Without the tiebreakers
-    // SQLite's order is implementation-defined for equal keys,
-    // which surfaced in earlier reads tests as flaky ordering
-    // requiring `setTimeout(r, 5)` between back-to-back registers.
+    // (matches what `getLastOpened` exposes); `createdAt DESC` is the
+    // secondary tiebreaker for ISO-8601-ms collisions; `id ASC` is
+    // the final deterministic fallback. Tests that need "second
+    // register wins" insert a small `setTimeout` between back-to-back
+    // registers to guarantee a strictly greater `lastOpenedAt`,
+    // because identical millisecond stamps collapse to id-ASC
+    // ordering — which returns the *first* registered id.
     const row = this.db
       .select({ id: workspaces.id })
       .from(workspaces)

@@ -6,6 +6,14 @@ import path from "node:path";
  * own service and by downstream package managers
  * (`TaskService`, `SessionService`, `CatalogService`) to compute the
  * directories agents and runtimes use.
+ *
+ * `workflow` is the planned home for workflow definitions. The path
+ * is computed here for consistency, but this package does not yet
+ * allocate (`register`) or clean up (`unregister({ purge: true })`)
+ * the directory — that wires in when the workflow feature lands. The
+ * property name is singular while the directory is plural
+ * (`workflows/`); the rename to `workflows` would be a public-type
+ * change and is deferred with the rest of the feature.
  */
 export interface WorkspaceLayout {
   readonly sessions: string;

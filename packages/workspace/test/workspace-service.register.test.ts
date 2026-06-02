@@ -48,6 +48,9 @@ describe("WorkspaceService.register", () => {
     expect((await stat(wsDir)).isDirectory()).toBe(true);
     expect((await stat(path.join(wsDir, "sessions"))).isDirectory()).toBe(true);
     expect((await stat(path.join(wsDir, "tasks"))).isDirectory()).toBe(true);
+    // `catalog/` is allocated by @emploke/catalog, not this pkg —
+    // register() must not pre-create it (would mask catalog's own
+    // install behaviour).
     await expect(stat(path.join(wsDir, "catalog"))).rejects.toThrow();
   });
 

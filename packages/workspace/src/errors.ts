@@ -1,18 +1,18 @@
 /**
- * Base error class for everything thrown by `@emploke/workspace`. Callers
- * who only need a coarse "is this from workspace?" check can `instanceof`
- * this; specific subclasses below carry richer typed context.
+ * Error hierarchy for `@emploke/workspace`. Every public throw extends
+ * `WorkspaceError` so callers can `instanceof WorkspaceError` for a
+ * coarse "is this from workspace?" check; specific subclasses below
+ * carry typed context (the offending id / name / path).
  *
- * Surface intentionally narrow — only errors actually constructed by
- * `WorkspaceService` and its repository live here. Earlier
- * iterations exported defensive `*NotFound` / `*Corrupted` /
- * `Registry*` subclasses for cases that never materialised in the
- * de-DDD codebase; trimmed when a code-review pass flagged them as
- * dead exports.
+ * `RegistryError` is a sub-base for everything that originates in the
+ * registry table (id / path conflicts, missing rows). Both the 4xx-equivalent
+ * subclasses (validation, conflict, not-registered) and the 5xx-equivalent
+ * `RegistryError` itself are exported because the HTTP layer maps them
+ * to status codes downstream.
  */
 export class WorkspaceError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options as ErrorOptions);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "WorkspaceError";
   }
 }
@@ -31,7 +31,7 @@ export class WorkspaceNameInvalidError extends WorkspaceError {
 
 /** Base for all registry-related errors. */
 export class RegistryError extends WorkspaceError {
-  constructor(message: string, options?: { cause?: unknown }) {
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "RegistryError";
   }

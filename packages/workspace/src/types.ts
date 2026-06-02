@@ -1,8 +1,10 @@
 /**
  * Public types for `@emploke/workspace`.
  *
- * All public DTOs and option shapes live here per the
- * architecture-design Section 11 convention.
+ * Wire DTOs (returned by the service) and option-bag shapes live
+ * here. The internal Drizzle row type lives in `schema.ts` and the
+ * pkg-owned domain shape lives in `workspace-entity.ts` — neither is
+ * exported from this barrel.
  */
 
 /** Wire-shape DTO returned by `WorkspaceService` reads. */

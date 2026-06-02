@@ -5,10 +5,9 @@ import { WorkspaceIdInvalidError, WorkspaceNameInvalidError } from "./errors.js"
 /**
  * Validation helpers for workspace inputs.
  *
- * No value-object wrappers — these are plain functions that validate
- * strings against the rules the API contract requires. The service
- * calls them at the API boundary; persistence code (`WorkspaceRepository`,
- * `WorkspaceQueries`) trusts what the service hands it.
+ * Plain functions that validate raw input strings against the
+ * API-contract rules. `WorkspaceService` calls them at its boundary;
+ * the repository trusts whatever the service hands it.
  */
 
 /** RFC-4122 UUID. Accept any version; we mint v4 but external sources may differ. */
@@ -63,11 +62,15 @@ export function normalizeWorkspaceDir(value: unknown): string {
   return path.resolve(value);
 }
 
-// ─── Zod shape guards (anti-DoS + presence) ──────────────────────
+// ─── Zod shape guards (presence + types) ──────────────────────
 
 export const RegisterWorkspaceInput = z.object({
   id: z.string(),
-  name: z.string().max(1000, "workspace name payload too large"),
+  // Length cap lives in `assertValidWorkspaceName` (MAX_DISPLAY_NAME_LENGTH).
+  // We don't repeat it here so over-length names surface as the typed
+  // `WorkspaceNameInvalidError` (with context), not as a generic
+  // `InputValidationError` from a duplicate-and-looser zod bound.
+  name: z.string(),
   workspaceDir: z
     .string()
     .min(1, "workspaceDir cannot be empty")
