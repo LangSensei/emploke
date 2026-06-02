@@ -114,3 +114,12 @@ the kind-specific payload; `target_kind` already carried the
 discriminator. The on-disk shape change is that `target_json` no
 longer redundantly nests `kind` inside the JSON (it lives in its own
 column).
+
+### Internal
+
+- **runtime**: dropped `@emploke/catalog` test-fixture dependency; runtime
+  is now structurally decoupled from catalog at every layer (production
+  code AND tests). New fake `AgentContentSource` lives at
+  `packages/runtime/test/fixtures/fake-content-source.ts`. No user-visible
+  change; `CatalogService` continues to satisfy `AgentContentSource` by
+  structural typing in production wiring.

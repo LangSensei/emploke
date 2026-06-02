@@ -277,9 +277,6 @@ importers:
         specifier: ^5.0.1
         version: 5.0.1
     devDependencies:
-      '@emploke/catalog':
-        specifier: workspace:*
-        version: link:../catalog
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9

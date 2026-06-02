@@ -1,11 +1,11 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogService } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { provisionCopilotWorkdir } from "../../src/copilot/provision.js";
 import { flattenSkillName, InvalidMcpJson } from "../../src/index.js";
-import { makeTestCatalog, type TestCatalogFixtures } from "./test-catalog.js";
+import type { AgentContentSource } from "../../src/types.js";
+import { type FakeFixtures, makeFakeContentSource } from "../fixtures/fake-content-source.js";
 
 const TEST_PLACEHOLDERS = { workspaceDir: "/test/workspace", sharedDir: "/test/global" } as const;
 
@@ -31,13 +31,15 @@ const exists = async (p: string): Promise<boolean> => {
 const targetDir = (): string => path.join(scratch, "target");
 
 /**
- * Helper: build an in-memory catalog from declarative fixtures, install
- * the (single) agent + the listed skills + mcps, then return a tuple
- * ready to pass to `provisionCopilotWorkdir`.
+ * Helper: build an in-process `AgentContentSource` fake from declarative
+ * fixtures and return a tuple ready to pass to `provisionCopilotWorkdir`.
  *
  * `agent.body` defaults to a minimal valid AGENTS.md. `agent.siblings`
  * lets a test stuff sibling files into the agent dir â€” this is the new
- * multi-file-agent shape.
+ * multi-file-agent shape. Skill / MCP dependency edges are declared in
+ * the fixture's `deps` map rather than via AGENTS.md / SKILL.md
+ * frontmatter, because the fake does NOT parse frontmatter (unlike the
+ * previous catalog-backed fixture pipeline).
  */
 async function setup(opts: {
   agent?: { name?: string; body?: string; siblings?: Record<string, string> };
@@ -51,27 +53,11 @@ async function setup(opts: {
     }
   >;
   mcps?: Record<string, string>;
-}): Promise<{ catalog: CatalogService; agentName: string }> {
+}): Promise<{ source: AgentContentSource; agentName: string }> {
   const agentShortName = opts.agent?.name ?? "demo-agent";
-  // Pre-create the source root so we know absolute origin URIs in
-  // advance â€” they're embedded in frontmatter dep refs as bare URI
-  // strings (the post-rename Phase 2 contract).
-  const { mkdtemp } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const sourceRoot = await mkdtemp(path.join(tmpdir(), "test-catalog-src-"));
-  const skillOrigin = (key: string): string => {
-    const slash = key.lastIndexOf("/");
-    const short = slash >= 0 ? key.slice(slash + 1) : key;
-    return `file:${path.join(sourceRoot, "skills", short)}`;
-  };
-  const mcpOrigin = (key: string): string =>
-    `file:${path.join(sourceRoot, "mcps", `${key.replace("/", "_")}.json`)}`;
+  const skillKeys = Object.keys(opts.skills ?? {});
+  const mcpKeys = Object.keys(opts.mcps ?? {});
 
-  const agentDeps = {
-    skills: Object.keys(opts.skills ?? {}),
-    mcps: Object.keys(opts.mcps ?? {}),
-  };
-  const renderDepRef = (origin: string): string => `    - '${origin.replace(/'/g, "''")}'`;
   const agentBody =
     opts.agent?.body ??
     [
@@ -79,109 +65,92 @@ async function setup(opts: {
       `name: ${agentShortName}`,
       "description: agent for tests",
       "version: 0.0.1",
-      ...(agentDeps.skills.length || agentDeps.mcps.length
-        ? [
-            "dependencies:",
-            ...(agentDeps.skills.length
-              ? ["  skills:", ...agentDeps.skills.map((k) => renderDepRef(skillOrigin(k)))]
-              : []),
-            ...(agentDeps.mcps.length
-              ? ["  mcps:", ...agentDeps.mcps.map((k) => renderDepRef(mcpOrigin(k)))]
-              : []),
-          ]
-        : []),
       "---",
       "",
     ].join("\n");
 
-  const fixtures: TestCatalogFixtures = {
+  const fixtures: {
+    -readonly [K in keyof FakeFixtures]: NonNullable<FakeFixtures[K]>;
+  } = {
     agents: {
-      [agentShortName]: { "AGENTS.md": agentBody, ...(opts.agent?.siblings ?? {}) },
+      [agentShortName]: {
+        files: { "AGENTS.md": agentBody, ...(opts.agent?.siblings ?? {}) },
+        deps: { skills: skillKeys, mcps: mcpKeys },
+      },
     },
     skills: {},
-    mcps: opts.mcps ?? {},
+    mcps: {},
   };
   for (const [name, sk] of Object.entries(opts.skills ?? {})) {
     const skillBody =
       sk.body ??
-      [
-        "---",
-        `name: ${name}`,
-        "description: test skill",
-        "version: 0.0.1",
-        ...(sk.deps
-          ? [
-              "dependencies:",
-              ...(sk.deps.skills?.length
-                ? ["  skills:", ...sk.deps.skills.map((k) => renderDepRef(skillOrigin(k)))]
-                : []),
-              ...(sk.deps.mcps?.length
-                ? ["  mcps:", ...sk.deps.mcps.map((k) => renderDepRef(mcpOrigin(k)))]
-                : []),
-            ]
-          : []),
-        "---",
-        "",
-      ].join("\n");
+      ["---", `name: ${name}`, "description: test skill", "version: 0.0.1", "---", ""].join("\n");
     const files: Record<string, string> = { "SKILL.md": skillBody, ...(sk.extras ?? {}) };
     for (const [rel, c] of Object.entries(sk.hooks ?? {})) {
       files[`hooks/copilot/${rel}`] = c;
     }
-    fixtures.skills![name] = files;
+    fixtures.skills[name] = { files, ...(sk.deps ? { deps: sk.deps } : {}) };
   }
-  const { catalog } = await makeTestCatalog(fixtures, sourceRoot);
-  return { catalog, agentName: `public/${agentShortName}` };
+  // MCP fixtures are runtime-shape (parsed JSON, no `_meta`); the fake
+  // never injects or strips `_meta`. Tests that previously passed raw
+  // catalog-format JSON strings still hand us strings, so we parse here.
+  for (const [fqn, json] of Object.entries(opts.mcps ?? {})) {
+    fixtures.mcps[fqn] = JSON.parse(json);
+  }
+  const { source } = makeFakeContentSource(fixtures);
+  return { source, agentName: `public/${agentShortName}` };
 }
 
 /**
- * Build a catalog whose only mcp ("broken") starts as valid JSON (so the
- * catalog scan accepts it), then overwrite the on-disk bytes with garbage.
- * Mirrors a real "scan validated, then file got corrupted out of band"
- * scenario.
+ * Build a fake whose only mcp ("broken") is registered with a
+ * `setMcpConfigOverride(_, new Error(...))` so the runtime's
+ * `getMcpRuntimeConfig` call rejects â€” reproducing the corruption
+ * scenario the previous fixture simulated by overwriting on-disk
+ * SQLite bytes.
  */
-async function makeTestCatalogWithBrokenMcp(specName: string): Promise<{
-  catalog: CatalogService;
+async function makeFakeWithBrokenMcp(specName: string): Promise<{
+  source: AgentContentSource;
   agentName: string;
   mcpName: string;
 }> {
-  const { mkdtemp } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const sourceRoot = await mkdtemp(path.join(tmpdir(), "test-catalog-src-"));
-  const mcpOrigin = `file:${path.join(sourceRoot, "mcps", `${specName.replace("/", "_")}.json`)}`;
   const agentShortName = "demo-agent";
   const agentBody = [
     "---",
     `name: ${agentShortName}`,
     "description: a",
     "version: 0.0.1",
-    "dependencies:",
-    "  mcps:",
-    `    - '${mcpOrigin}'`,
     "---",
     "",
   ].join("\n");
-  const { catalog, corruptMcp } = await makeTestCatalog(
-    {
-      agents: { [agentShortName]: { "AGENTS.md": agentBody } },
-      mcps: { [specName]: '{"command":"ok"}' },
+  const fake = makeFakeContentSource({
+    agents: {
+      [agentShortName]: {
+        files: { "AGENTS.md": agentBody },
+        // CRITICAL: declare the MCP dep here. The fake does NOT parse
+        // AGENTS.md frontmatter; if deps.mcps is omitted, resolveAgent
+        // returns mcps: [] and getMcpRuntimeConfig is never called â€”
+        // the InvalidMcpJson path would NOT fire and the test would
+        // pass for the wrong reason.
+        deps: { mcps: [specName] },
+      },
     },
-    sourceRoot,
-  );
-  // Now corrupt the MCP's bytes â€” the catalog still believes it
-  // exists (it was valid at scan time).
-  await corruptMcp(specName, "{not-json");
-  return { catalog, agentName: `public/${agentShortName}`, mcpName: specName };
+    // Placeholder body; overridden on the next line via the setter so
+    // getMcpRuntimeConfig(specName) rejects with the broken-JSON error.
+    mcps: { [specName]: {} },
+  });
+  fake.setMcpConfigOverride(specName, new Error("invalid MCP JSON"));
+  return { source: fake.source, agentName: `public/${agentShortName}`, mcpName: specName };
 }
 
 describe("provisionCopilotWorkdir â€” basics", () => {
   it("creates the target directory if it does not exist", async () => {
     const t = targetDir();
     expect(await exists(t)).toBe(false);
-    const { catalog, agentName } = await setup({});
+    const { source, agentName } = await setup({});
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(t)).toBe(true);
@@ -199,11 +168,11 @@ describe("provisionCopilotWorkdir â€” basics", () => {
       "Be a good reviewer.",
       "",
     ].join("\n");
-    const { catalog, agentName } = await setup({ agent: { name: "code-reviewer", body } });
+    const { source, agentName } = await setup({ agent: { name: "code-reviewer", body } });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, "AGENTS.md"), "utf8")).toBe(body);
@@ -213,11 +182,11 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     const t = targetDir();
     const configPath = path.join(scratch, "copilot-config.json");
     expect(await exists(configPath)).toBe(false);
-    const { catalog, agentName } = await setup({});
+    const { source, agentName } = await setup({});
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(configPath)).toBe(false);
@@ -228,7 +197,7 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     // sibling files (templates, scripts) the operator bundled into the
     // agent dir. The streaming impl must materialize the whole tree.
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       agent: {
         name: "rich-agent",
         siblings: {
@@ -239,8 +208,8 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, "prompt.txt"), "utf8")).toBe("extra prompt fragment");
@@ -249,7 +218,7 @@ describe("provisionCopilotWorkdir â€” basics", () => {
 
   it("merges agent-side hooks/copilot/ into .github/hooks/", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       agent: {
         name: "hook-agent",
         siblings: { "hooks/copilot/preTool.js": "// agent hook\n" },
@@ -257,8 +226,8 @@ describe("provisionCopilotWorkdir â€” basics", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, ".github", "hooks", "preTool.js"), "utf8")).toBe(
@@ -305,9 +274,9 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
     await expect(
       provisionCopilotWorkdir(
         t,
-        // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentResolveResult surface
+        // biome-ignore lint/suspicious/noExplicitAny: stub injected as ResolvedAgent surface
         (await malicious.resolveAgent("x")) as any,
-        // biome-ignore lint/suspicious/noExplicitAny: stub injected as CatalogService surface
+        // biome-ignore lint/suspicious/noExplicitAny: stub injected as AgentContentSource surface
         malicious as any,
         TEST_PLACEHOLDERS,
       ),
@@ -320,7 +289,7 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
 describe("provisionCopilotWorkdir â€” MCP config", () => {
   it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers (spec FQN keys, _meta stripped)", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       mcps: {
         "io.playwright/mcp": JSON.stringify({ command: "npx", args: ["@playwright/mcp"] }),
         "swat/cli": JSON.stringify({ command: "swat" }),
@@ -328,8 +297,8 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
 
@@ -348,11 +317,11 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
 
   it("does not write .mcp.json when there are no MCPs", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({});
+    const { source, agentName } = await setup({});
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(path.join(t, ".mcp.json"))).toBe(false);
@@ -360,12 +329,12 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
 
   it("throws InvalidMcpJson when an MCP is corrupted between scan and provision", async () => {
     const t = targetDir();
-    const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
+    const dirty = await makeFakeWithBrokenMcp("broken/mcp");
     await expect(
       provisionCopilotWorkdir(
         t,
-        await dirty.catalog.resolveAgent(dirty.agentName),
-        dirty.catalog,
+        await dirty.source.resolveAgent(dirty.agentName),
+        dirty.source,
         TEST_PLACEHOLDERS,
       ),
     ).rejects.toBeInstanceOf(InvalidMcpJson);
@@ -373,12 +342,12 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
 
   it("InvalidMcpJson exposes mcpName and cause", async () => {
     const t = targetDir();
-    const dirty = await makeTestCatalogWithBrokenMcp("broken/mcp");
+    const dirty = await makeFakeWithBrokenMcp("broken/mcp");
     try {
       await provisionCopilotWorkdir(
         t,
-        await dirty.catalog.resolveAgent(dirty.agentName),
-        dirty.catalog,
+        await dirty.source.resolveAgent(dirty.agentName),
+        dirty.source,
         TEST_PLACEHOLDERS,
       );
       expect.fail("should have thrown");
@@ -394,13 +363,13 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
 describe("provisionCopilotWorkdir â€” skills copy", () => {
   it("copies SKILL.md to .github/skills/<name>/SKILL.md", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: { foo: { body: "---\nname: foo\ndescription: f\nversion: 0.0.1\n---\n# Foo\n" } },
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, ".github/skills/foo/SKILL.md"), "utf8")).toContain(
@@ -410,15 +379,15 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
 
   it("preserves nested files under the skill directory", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: {
         foo: { extras: { "assets/logo.png": "PNG", "templates/main.tmpl": "TMPL" } },
       },
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, ".github/skills/foo/assets/logo.png"), "utf8")).toBe("PNG");
@@ -429,13 +398,13 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
 
   it("excludes the skill's top-level hooks/copilot/ subdirectory from the skills copy", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: { foo: { hooks: { "h.sh": "#!/bin/sh\n" } } },
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(path.join(t, ".github/skills/foo/hooks"))).toBe(false);
@@ -443,7 +412,7 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
 
   it("flattens scoped skill names", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: {
         "langsensei/weather": {
           // Per #39 contract, frontmatter `name` is the SHORT name and
@@ -456,8 +425,8 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(
@@ -470,7 +439,7 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
 describe("provisionCopilotWorkdir â€” hooks composition", () => {
   it("merges hooks/copilot/* from each skill into .github/hooks/", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: {
         a: { hooks: { "a.sh": "A\n" } },
         b: { hooks: { "b.sh": "B\n", "shared/cfg.json": '{"x":1}' } },
@@ -478,8 +447,8 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     // Skill hooks are prefixed `<flattenedFqn>__` so two skills sharing a
@@ -494,11 +463,11 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
 
   it("does not create .github/hooks/ when no skill contributes copilot hooks", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({ skills: { foo: {} } });
+    const { source, agentName } = await setup({ skills: { foo: {} } });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(path.join(t, ".github/hooks"))).toBe(false);
@@ -506,7 +475,7 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
 
   it("on file conflict, the later skill in topological order wins", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       skills: {
         // `later` depends on `earlier` so the topological order is
         // [earlier, later] in the resolve result. Hook filenames are
@@ -520,8 +489,8 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await readFile(path.join(t, ".github/hooks/earlier__shared.sh"), "utf8")).toBe(
@@ -539,11 +508,11 @@ describe("provisionCopilotWorkdir â€” workdir prep", () => {
   // keeps purge cheap.
   it("does NOT initialise a git repository in the target directory", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({});
+    const { source, agentName } = await setup({});
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
     expect(await exists(path.join(t, ".git"))).toBe(false);
@@ -553,7 +522,7 @@ describe("provisionCopilotWorkdir â€” workdir prep", () => {
 describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
   it("produces the documented layout for a full agent definition", async () => {
     const t = targetDir();
-    const { catalog, agentName } = await setup({
+    const { source, agentName } = await setup({
       agent: { name: "demo", siblings: { "prompt.md": "## extra\n" } },
       skills: {
         "dev/lint": {
@@ -566,8 +535,8 @@ describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
     });
     await provisionCopilotWorkdir(
       t,
-      await catalog.resolveAgent(agentName),
-      catalog,
+      await source.resolveAgent(agentName),
+      source,
       TEST_PLACEHOLDERS,
     );
 

@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
 import {
@@ -9,7 +8,8 @@ import {
   RuntimeProvisionFailed,
   RuntimeStateDeletionFailed,
 } from "../../src/index.js";
-import { makeTestCatalog } from "./test-catalog.js";
+import type { AgentContentSource, ResolvedAgent } from "../../src/types.js";
+import { makeFakeContentSource } from "../fixtures/fake-content-source.js";
 
 let scratch: string;
 let workdir: string;
@@ -34,12 +34,12 @@ const exists = async (p: string): Promise<boolean> => {
   }
 };
 
-async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogService }> {
+async function buildAgent(): Promise<{ agent: ResolvedAgent; source: AgentContentSource }> {
   const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
-  const { catalog } = await makeTestCatalog({
-    agents: { demo: { "AGENTS.md": agentBody } },
+  const { source } = makeFakeContentSource({
+    agents: { demo: { files: { "AGENTS.md": agentBody } } },
   });
-  return { agent: await catalog.resolveAgent("public/demo"), catalog };
+  return { agent: await source.resolveAgent("public/demo"), source };
 }
 
 const FIXED_UUID = "12345678-1234-1234-1234-1234567890ab";
@@ -55,8 +55,8 @@ describe("CopilotRuntime", () => {
         randomUUID: () => FIXED_UUID,
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
-      const { agent, catalog } = await buildAgent();
-      const r = await rt.provision(workdir, agent, catalog, { workspaceDir: scratch });
+      const { agent, source } = await buildAgent();
+      const r = await rt.provision(workdir, agent, source, { workspaceDir: scratch });
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
       // No `.git/` is planted â€” Copilot CLI loads hooks from
@@ -70,25 +70,25 @@ describe("CopilotRuntime", () => {
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
       });
       // Force a provision failure by handing the runtime a fabricated
-      // `AgentResolveResult` whose agent name doesn't exist in the catalog â€”
-      // catalog.agentEntries() will throw NotFound, which provision wraps
-      // as RuntimeProvisionFailed.
-      const { catalog } = await buildAgent();
-      const broken: AgentResolveResult = {
-        agent: { name: "absent", description: "d", version: "0.0.1" },
+      // `ResolvedAgent` whose fqn doesn't exist in the source — the
+      // fake's `agentEntries()` will throw "agent not found", which
+      // provision wraps as RuntimeProvisionFailed.
+      const { source } = await buildAgent();
+      const broken: ResolvedAgent = {
+        agent: { fqn: "public/absent" },
         skills: [],
         mcps: [],
       };
       await expect(
-        rt.provision(workdir, broken, catalog, { workspaceDir: scratch }),
+        rt.provision(workdir, broken, source, { workspaceDir: scratch }),
       ).rejects.toBeInstanceOf(RuntimeProvisionFailed);
     });
 
     it("does NOT touch the Copilot config file (trust handled by buildInteractiveLaunch preflight)", async () => {
       const sp = path.join(scratch, "copilot-config.json");
       const rt = new CopilotRuntime({ copilotConfigPath: sp });
-      const { agent, catalog } = await buildAgent();
-      await rt.provision(workdir, agent, catalog, { workspaceDir: scratch });
+      const { agent, source } = await buildAgent();
+      await rt.provision(workdir, agent, source, { workspaceDir: scratch });
       expect(await exists(sp)).toBe(false);
     });
   });
@@ -216,13 +216,13 @@ describe("CopilotRuntime", () => {
       });
       const ws = path.join(scratch, "ws");
       await mkdir(ws, { recursive: true });
-      const { catalog, agent } = await buildAgent();
+      const { source, agent } = await buildAgent();
       try {
         await rt.launchHeadless({
           workdir: ws,
           workspaceDir: ws,
           agent,
-          catalog,
+          catalog: source,
           prompt: "hi",
           ...(callerEnv ? { subprocessEnv: callerEnv } : {}),
         });
