@@ -60,6 +60,10 @@ The service owns reads + writes. There is no separate `Queries`
 class. The repository is package-private — consumers go through the
 service.
 
+`list()` returns workspaces ordered by `lastOpenedAt DESC`, with ties
+broken by `createdAt DESC` then `id ASC` (so identical-ms timestamps
+resolve to the lowest UUID).
+
 ## On-disk wire format
 
 ```sql
@@ -110,12 +114,10 @@ A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
 arm if you need to surface zod shape failures distinctly from typed
 domain errors.
 
-`list()` returns workspaces ordered by `lastOpenedAt DESC`, with ties
-broken by `createdAt DESC` then `id ASC` (so identical-ms timestamps
-resolve to the lowest UUID). `getById(id)` returns `null` for unknown
-ids AND malformed ids alike — reads do not validate the id. Only
-write methods (`register`, `open`, `rename`, `unregister`) validate
-and throw `WorkspaceIdInvalidError`.
+`getById(id)` returns `null` for unknown ids AND malformed ids
+alike — reads do not validate the id. Only write methods
+(`register`, `open`, `rename`, `unregister`) validate and throw
+`WorkspaceIdInvalidError`.
 
 Concurrency: `register`'s pre-flight conflict checks are best-effort
 UX. Two concurrent registers can race past them; the UNIQUE / PRIMARY
