@@ -34,7 +34,6 @@
     "write-file-atomic": "^5.0.1"
   },
   "devDependencies": {
-    "@emploke/catalog": "workspace:*",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/proper-lockfile": "^4.1.4",

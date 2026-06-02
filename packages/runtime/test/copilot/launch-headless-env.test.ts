@@ -26,12 +26,12 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { AgentResolveResult, CatalogService } from "@emploke/catalog";
 import type { CopilotClient } from "@github/copilot-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchCopilotHeadless } from "../../src/copilot/launch-headless.js";
 import { RuntimeHeadlessLaunchFailed } from "../../src/errors.js";
-import { makeTestCatalog } from "./test-catalog.js";
+import type { AgentContentSource, ResolvedAgent } from "../../src/types.js";
+import { makeFakeContentSource } from "../fixtures/fake-content-source.js";
 
 const FRAMING = "do the thing";
 
@@ -50,12 +50,12 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function buildAgent(): Promise<{ agent: AgentResolveResult; catalog: CatalogService }> {
+async function buildAgent(): Promise<{ agent: ResolvedAgent; source: AgentContentSource }> {
   const agentBody = "---\nname: demo\ndescription: d\nversion: 0.0.1\n---\n# demo\n";
-  const { catalog } = await makeTestCatalog({
-    agents: { demo: { "AGENTS.md": agentBody } },
+  const { source } = makeFakeContentSource({
+    agents: { demo: { files: { "AGENTS.md": agentBody } } },
   });
-  return { agent: await catalog.resolveAgent("public/demo"), catalog };
+  return { agent: await source.resolveAgent("public/demo"), source };
 }
 
 /**
@@ -84,7 +84,7 @@ function capturingClientFactory(): {
 
 describe("launchCopilotHeadless env merge", () => {
   it("merges subprocessEnv on top of process.env", async () => {
-    const { agent, catalog } = await buildAgent();
+    const { agent, source } = await buildAgent();
     const { capture, factory } = capturingClientFactory();
 
     await expect(
@@ -92,7 +92,7 @@ describe("launchCopilotHeadless env merge", () => {
         {
           taskDir: workdir,
           agent,
-          catalog,
+          catalog: source,
           prompt: FRAMING,
           workspaceDir: scratch,
           subprocessEnv: {
@@ -125,7 +125,7 @@ describe("launchCopilotHeadless env merge", () => {
   });
 
   it("honours undefined overrides as 'delete the key from parent env'", async () => {
-    const { agent, catalog } = await buildAgent();
+    const { agent, source } = await buildAgent();
 
     // Seed a real env var in the parent process so we can assert it
     // gets stripped by the override.
@@ -139,7 +139,7 @@ describe("launchCopilotHeadless env merge", () => {
           {
             taskDir: workdir,
             agent,
-            catalog,
+            catalog: source,
             prompt: FRAMING,
             workspaceDir: scratch,
             subprocessEnv: {
@@ -168,7 +168,7 @@ describe("launchCopilotHeadless env merge", () => {
   });
 
   it("passes the parent env through unchanged when no subprocessEnv is supplied", async () => {
-    const { agent, catalog } = await buildAgent();
+    const { agent, source } = await buildAgent();
     const { capture, factory } = capturingClientFactory();
 
     await expect(
@@ -176,7 +176,7 @@ describe("launchCopilotHeadless env merge", () => {
         {
           taskDir: workdir,
           agent,
-          catalog,
+          catalog: source,
           prompt: FRAMING,
           workspaceDir: scratch,
         },
