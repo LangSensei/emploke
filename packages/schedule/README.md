@@ -64,6 +64,7 @@ packages/schedule/
 ├── package.json
 ├── README.md
 ├── tsconfig.json
+├── tsconfig.test.json       Test-scope typecheck (includes test/**/*, noEmit)
 ├── vitest.config.ts
 ├── drizzle/0000_*.sql       Drizzle-kit generated migration (committed)
 ├── drizzle/0001_*.sql       Hand-written: drops target_agent + adds
@@ -72,7 +73,8 @@ packages/schedule/
     ├── _helpers.ts           kind-name / JSON-path / name / trigger validators
     ├── compose.ts            composeScheduleModule({ dbFile | db, logger, now, randomUUID })
     ├── cron.ts               croner + cronstrue wrapper (validate / nextRuns / describe)
-    ├── errors.ts             ScheduleError + 10 named subclasses
+    ├── cronstrue-i18n.d.ts   Ambient decl for `cronstrue/i18n.js` (no `exports` field upstream)
+    ├── errors.ts             ScheduleError + 11 named subclasses
     ├── index.ts              public barrel
     ├── migrations.ts         AUTO-GENERATED inlined SQL
     ├── schedule-entity.ts    ScheduleEntity (kind-agnostic envelope container)
