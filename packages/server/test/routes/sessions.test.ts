@@ -55,34 +55,60 @@ function stubManager(overrides: Partial<Record<keyof SessionService, unknown>>):
 
 /**
  * Wrap a SessionService stub into a WorkspaceContext shaped value.
- * Optional `spawnImpl` lets tests inject a terminal spawn fake; the
- * default returns a happy result so spawn tests that don't care can
- * pass an empty stub.
+ * Optional `spawnImpl` lets tests inject a terminal spawn fake.
+ *
+ * As of #276 the spawn invocation lives on `SessionService.spawnInteractive`
+ * (the route delegates to `ctx.sessions.spawnInteractive(...)` after
+ * commit 4). The stub adds `spawnInteractive` to the SessionService
+ * fake — its body mirrors what the real SessionService does:
+ * `buildInteractiveLaunch` → `spawnImpl` → SpawnSessionResult. The
+ * legacy `spawnSession` pass-through is still wired on the context so
+ * tests that pre-date the route migration keep working through the
+ * commit-4 transition.
  */
 function stubContext(
   sessions: SessionService,
   spawnImpl?: (cmd: LaunchCommand) => Promise<SpawnTerminalResult>,
 ): WorkspaceContext {
+  const sessionsWithSpawn = sessions as SessionService & {
+    spawnInteractive: (
+      sid: string,
+      opts?: { readonly remote?: boolean },
+    ) => Promise<SpawnSessionResult>;
+  };
+  sessionsWithSpawn.spawnInteractive = async (sid, opts) => {
+    let cmd: LaunchCommand;
+    try {
+      cmd = await sessions.buildInteractiveLaunch(sid, opts ?? {});
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        code: err instanceof Error && err.name ? err.name : "BuildLaunchError",
+        display: "",
+      };
+    }
+    if (spawnImpl === undefined) {
+      return { ok: true, launcher: "manual", display: cmd.display };
+    }
+    try {
+      const result = await spawnImpl(cmd);
+      return { ok: true, launcher: result.launcher, display: cmd.display };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        code: spawnErrorCode(err),
+        display: cmd.display,
+      };
+    }
+  };
   const context: Partial<WorkspaceContext> = {
-    sessions,
+    sessions: sessionsWithSpawn,
     catalog: {} as CatalogService,
     tasks: {} as TaskService,
-    async spawnSession(sid, opts): Promise<SpawnSessionResult> {
-      const cmd = await sessions.buildInteractiveLaunch(sid, opts ?? {});
-      if (spawnImpl === undefined) {
-        return { ok: true, launcher: "manual", display: cmd.display };
-      }
-      try {
-        const result = await spawnImpl(cmd);
-        return { ok: true, launcher: result.launcher, display: cmd.display };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          code: spawnErrorCode(err),
-          display: cmd.display,
-        };
-      }
+    async spawnSession(sid, opts) {
+      return sessionsWithSpawn.spawnInteractive(sid, opts);
     },
   };
   return context as WorkspaceContext;
@@ -445,7 +471,15 @@ describe("sessionsRoutes", () => {
       expect(body.error).toMatch(/ENOENT/);
     });
 
-    it("propagates SessionNotFoundError as 404", async () => {
+    it("returns ok:false with code='SessionNotFoundError' on missing session", async () => {
+      // Post-#276 the spawn flow catches build-side throws inside
+      // SessionService.spawnInteractive and folds them into a
+      // SpawnSessionResult with `ok: false`. The HTTP request still
+      // returns 200 because the request itself succeeded; the body's
+      // discriminated union carries the typed error code. This
+      // matches what production has always done in
+      // WorkspaceContext.spawnSession; the pre-refactor stub didn't
+      // mirror that catch, which was a latent fixture bug.
       const m = stubManager({
         buildInteractiveLaunch: vi.fn(async () => {
           throw new SessionNotFoundError("20260508-9dfbdf05");
@@ -458,11 +492,19 @@ describe("sessionsRoutes", () => {
           method: "POST",
         },
       );
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.code).toBe("SessionNotFoundError");
+      // display is empty because no LaunchCommand was produced.
+      expect(body.display).toBe("");
       expect(spawn).not.toHaveBeenCalled();
     });
 
-    it("propagates InvalidSessionIdError as 400", async () => {
+    it("returns ok:false with code='InvalidSessionIdError' on a malformed id", async () => {
+      // Same semantics as the SessionNotFoundError case above —
+      // build-side typed throws are folded into SpawnSessionResult
+      // inside SessionService.spawnInteractive.
       const m = stubManager({
         buildInteractiveLaunch: vi.fn(async () => {
           throw new InvalidSessionIdError("bad");
@@ -472,7 +514,11 @@ describe("sessionsRoutes", () => {
       const res = await sessionsRoutes(() => stubContext(m, spawn)).request("/bad/spawn", {
         method: "POST",
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.code).toBe("InvalidSessionIdError");
+      expect(body.display).toBe("");
       expect(spawn).not.toHaveBeenCalled();
     });
   });
