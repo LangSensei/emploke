@@ -138,11 +138,11 @@ export function ScheduleDetail({
     setBusyAction("run");
     setError(null);
     try {
-      const { taskId } = await runSchedule(scheduleId);
+      const { dispatchId } = await runSchedule(scheduleId);
       if (!mounted.current) return;
       setRecentRefresh((n) => n + 1);
       navigate(
-        `/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(taskId)}`,
+        `/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(dispatchId)}`,
       );
     } catch (e) {
       if (!mounted.current) return;

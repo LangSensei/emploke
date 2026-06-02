@@ -1,13 +1,11 @@
-import { assertValidCronExpr, assertValidTimezone } from "./cron.js";
+import { assertValidName, assertValidTrigger } from "./_helpers.js";
 import { ScheduleError } from "./errors.js";
 import type { NewScheduleRow, ScheduleRow } from "./schema.js";
 import type {
-  CreateTaskScheduleArgs,
+  CreateScheduleArgs,
   Schedule,
-  ScheduleTarget,
+  ScheduleTargetEnvelope,
   ScheduleTrigger,
-  TaskScheduleTarget,
-  TaskTargetPatch,
 } from "./types.js";
 import { assertValidScheduleId } from "./validate.js";
 
@@ -15,32 +13,30 @@ import { assertValidScheduleId } from "./validate.js";
  * Pure value-object representation of one schedule. Repository
  * returns this; service maps it to the wire `Schedule` DTO.
  *
- * Invariants enforced (synchronously) at construction and on every
- * `with*` mutation:
+ * The entity is a stupid container for the schedule envelope: it
+ * stores `{ kind, data: unknown }` and does NOT introspect the data.
+ * All kind-aware logic (shape validation, RFC 7396 merge, dispatch)
+ * lives in the registered `ScheduleKindHandler`. The entity's
+ * remaining invariants are kind-agnostic:
  *
- *   1. `id` matches `SCHEDULE_ID_RE` (UUID v4).
- *   2. `trigger.kind === 'cron'` → 5-field expression + valid IANA tz.
- *   3. `target.kind === 'task'` → non-empty `agent`; `brief` is a
- *      non-empty single-line string ≤ 200 chars; `details?` if set
- *      must be a string (empty string allowed, mirroring `@emploke/task`).
+ *   1. `id` matches the UUID v4 grammar (see `validate.ts`).
+ *   2. `name` is a non-empty trimmed string.
+ *   3. `trigger.kind === "cron"` → 5-field expression + valid IANA tz.
  *
- * Agent existence is NOT an entity invariant — it requires async
- * catalog lookup, so it lives in {@link ScheduleService}.
+ * Target-shape invariants and async cross-checks (e.g. agent existence
+ * for the task kind) belong to the handler — `ScheduleService.create`
+ * calls `handler.validate(args.target.data)` BEFORE constructing the
+ * entity, so anything that lands here has already passed the handler's
+ * shape check.
  *
  * ## Mutation API
  *
- * Three composable methods split the old `withPatched`:
- *
  *   - {@link withMetadata} — scalar set of `name` / `enabled`.
  *   - {@link withTrigger}  — atomic replace of the whole trigger object.
- *   - {@link withTaskTarget} — RFC 7396 deep merge of the target's
- *     flat record (only valid when the current entity has
- *     `target.kind === "task"`); `null` on optional `details` /
- *     `runtime` deletes the field.
- *
- * The service composes the three in order with a single `now`
- * timestamp so one logical patch produces exactly one `updatedAt`
- * stamp.
+ *   - {@link withTarget}   — atomic replace of the whole envelope
+ *     (service composes patch via `handler.mergePatch` +
+ *     `handler.validate` BEFORE calling this; the entity does no
+ *     deep-merge of its own).
  *
  * Not re-exported from `index.ts`: external consumers see only the
  * `Schedule` DTO. The entity is the contract between the repository
@@ -51,7 +47,7 @@ export class ScheduleEntity {
     readonly id: string,
     readonly name: string,
     readonly trigger: ScheduleTrigger,
-    readonly target: ScheduleTarget,
+    readonly target: ScheduleTargetEnvelope,
     readonly enabled: boolean,
     readonly createdAt: string,
     readonly updatedAt: string,
@@ -60,20 +56,22 @@ export class ScheduleEntity {
   ) {}
 
   static create(
-    args: CreateTaskScheduleArgs,
+    args: CreateScheduleArgs,
     opts: { readonly id: string; readonly now: Date },
   ): ScheduleEntity {
     assertValidScheduleId(opts.id);
     assertValidName(args.name);
     assertValidTrigger(args.trigger);
-    const target: TaskScheduleTarget = { kind: "task", ...args.target };
-    assertValidTarget(target);
+    // Target data is opaque here: the service called
+    // `handler.validate(args.target.data)` and replaced `data` with
+    // the validated value before constructing args, so the kind
+    // handler already enforced its shape rules.
     const nowIso = opts.now.toISOString();
     return new ScheduleEntity(
       opts.id,
       args.name,
       args.trigger,
-      target,
+      { kind: args.target.kind, data: args.target.data },
       args.enabled ?? true,
       nowIso,
       nowIso,
@@ -82,11 +80,11 @@ export class ScheduleEntity {
     );
   }
 
-  /** Hydrate from a Drizzle row (parses `target_json`, narrows kinds). */
+  /** Hydrate from a Drizzle row (parses `target_json` opaquely). */
   static fromStored(row: ScheduleRow): ScheduleEntity {
     assertValidScheduleId(row.id);
-    const trigger: ScheduleTrigger = parseTriggerRow(row);
-    const target: ScheduleTarget = parseTargetRow(row);
+    const trigger = parseTriggerRow(row);
+    const target = parseTargetRow(row);
     return new ScheduleEntity(
       row.id,
       row.name,
@@ -115,7 +113,14 @@ export class ScheduleEntity {
     };
   }
 
-  /** Project to a Drizzle row for the repository. */
+  /**
+   * Project to a Drizzle row for the repository. `target_json` stores
+   * the DATA payload only, not the full envelope — `kind` already
+   * lives in its own column (`target_kind`). Double-encoding it
+   * inside the JSON would make every read pay for redundant
+   * parse/destructure and would silently allow a row whose
+   * `target_kind` column disagreed with the JSON `kind` field.
+   */
   toRow(): NewScheduleRow {
     return {
       id: this.id,
@@ -124,7 +129,7 @@ export class ScheduleEntity {
       triggerExpr: this.trigger.expr,
       triggerTz: this.trigger.tz,
       targetKind: this.target.kind,
-      targetJson: JSON.stringify(this.target),
+      targetJson: JSON.stringify(this.target.data),
       enabled: this.enabled,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
@@ -175,31 +180,23 @@ export class ScheduleEntity {
   }
 
   /**
-   * RFC 7396 deep-merge a task target. The current entity must already
-   * be a task; callers (service) guard this with
-   * {@link ScheduleKindMismatchError}.
-   *
-   *   - `agent` / `brief` set if present (validation rejects empty).
-   *   - `details` / `runtime` set if string; deleted if `null`; kept
-   *     if absent.
-   *
-   * Re-validates the merged target via {@link assertValidTarget} so
-   * trim + nonEmpty + brief-line / 200-char limits are enforced exactly
-   * as on create.
+   * Replace the target envelope wholesale. The service composes the
+   * RFC 7396 patch (via the registered handler's `mergePatch` +
+   * `validate`) BEFORE calling this — the entity does no merging of
+   * its own. The new envelope's `kind` MUST match the existing
+   * `kind` (changing kind on an existing row is not supported in v1).
    */
-  withTaskTarget(patch: TaskTargetPatch, now: Date): ScheduleEntity {
-    if (this.target.kind !== "task") {
+  withTarget(envelope: ScheduleTargetEnvelope, now: Date): ScheduleEntity {
+    if (envelope.kind !== this.target.kind) {
       throw new ScheduleError(
-        `Cannot apply task target patch to schedule "${this.id}" (target.kind="${this.target.kind}")`,
+        `Cannot change target.kind on schedule "${this.id}" (current="${this.target.kind}", attempted="${envelope.kind}")`,
       );
     }
-    const merged = mergeTaskTarget(this.target, patch);
-    assertValidTarget(merged);
     return new ScheduleEntity(
       this.id,
       this.name,
       this.trigger,
-      merged,
+      { kind: envelope.kind, data: envelope.data },
       this.enabled,
       this.createdAt,
       now.toISOString(),
@@ -224,9 +221,9 @@ export class ScheduleEntity {
   }
 
   /**
-   * Set or clear `nextFireAt` without touching `lastFiredAt`. Used by
-   * `ScheduleService.createTask` (pre-arm with no prior fire) and
-   * `ScheduleService.patchTask` (trigger / enabled change recomputes
+   * Set or clear `nextFireAt` without touching `lastFiredAt`. Used
+   * by `ScheduleService.create` (pre-arm with no prior fire) and
+   * `ScheduleService.patch` (trigger / enabled change recomputes
    * the next fire without faking a fire).
    */
   withNextFireAt(nextFireAt: string | undefined): ScheduleEntity {
@@ -244,114 +241,6 @@ export class ScheduleEntity {
   }
 }
 
-/**
- * Apply the RFC 7396 merge rules for a task target patch.
- *
- * `kind` is fixed — callers cannot change it via patch. `agent` and
- * `brief` may be set but not deleted (they are required-on-entity);
- * the route layer rejects `null` for these with a 400 before we get
- * here, but `assertValidTarget` is the entity-side belt-and-braces.
- *
- * `details` and `runtime` accept `string | null | undefined`:
- *   - string  → set
- *   - `null`  → delete the field on the merged record
- *   - absent  → keep existing
- */
-function mergeTaskTarget(existing: TaskScheduleTarget, patch: TaskTargetPatch): TaskScheduleTarget {
-  const agent = patch.agent !== undefined ? patch.agent : existing.agent;
-  const brief = patch.brief !== undefined ? patch.brief : existing.brief;
-
-  let details: string | undefined;
-  if (patch.details === null) {
-    details = undefined;
-  } else if (patch.details !== undefined) {
-    details = patch.details;
-  } else {
-    details = existing.details;
-  }
-
-  let runtime: string | undefined;
-  if (patch.runtime === null) {
-    runtime = undefined;
-  } else if (patch.runtime !== undefined) {
-    runtime = patch.runtime;
-  } else {
-    runtime = existing.runtime;
-  }
-
-  return {
-    kind: "task",
-    agent,
-    brief,
-    ...(details !== undefined ? { details } : {}),
-    ...(runtime !== undefined ? { runtime } : {}),
-  };
-}
-
-function assertValidName(name: string): void {
-  if (typeof name !== "string" || name.trim().length === 0) {
-    throw new ScheduleError(`Schedule name must be a non-empty string`);
-  }
-}
-
-function assertValidTrigger(trigger: ScheduleTrigger): void {
-  if (trigger === null || typeof trigger !== "object") {
-    throw new ScheduleError("Schedule trigger must be an object");
-  }
-  switch (trigger.kind) {
-    case "cron":
-      assertValidCronExpr(trigger.expr);
-      assertValidTimezone(trigger.tz);
-      return;
-    default: {
-      const _exhaustive: never = trigger.kind;
-      throw new ScheduleError(`Unknown trigger kind: ${String(_exhaustive)}`);
-    }
-  }
-}
-
-function assertValidTarget(target: ScheduleTarget): void {
-  if (target === null || typeof target !== "object") {
-    throw new ScheduleError("Schedule target must be an object");
-  }
-  switch (target.kind) {
-    case "task": {
-      if (typeof target.agent !== "string" || target.agent.trim().length === 0) {
-        throw new ScheduleError("Task target requires non-empty agent");
-      }
-      // Brief mirrors `@emploke/task`'s assertValidBrief: non-empty
-      // single-line string ≤ 200 chars.
-      if (typeof target.brief !== "string" || target.brief.trim().length === 0) {
-        throw new ScheduleError("Task target requires non-empty brief");
-      }
-      if (target.brief.includes("\n") || target.brief.includes("\r")) {
-        throw new ScheduleError(
-          "Task target brief must be a single line (no newline characters); pass long content via details",
-        );
-      }
-      if (target.brief.trim().length > 200) {
-        throw new ScheduleError("Task target brief must be 200 characters or fewer");
-      }
-      // Details is optional and unconstrained beyond `typeof string`
-      // — empty string is allowed (mirrors `@emploke/task` exactly).
-      if (target.details !== undefined && typeof target.details !== "string") {
-        throw new ScheduleError("Task target details, when set, must be a string");
-      }
-      if (
-        target.runtime !== undefined &&
-        (typeof target.runtime !== "string" || target.runtime.trim().length === 0)
-      ) {
-        throw new ScheduleError("Task target runtime, when set, must be a non-empty string");
-      }
-      return;
-    }
-    default: {
-      const _exhaustive: never = target.kind;
-      throw new ScheduleError(`Unknown target kind: ${String(_exhaustive)}`);
-    }
-  }
-}
-
 function parseTriggerRow(row: ScheduleRow): ScheduleTrigger {
   switch (row.triggerKind) {
     case "cron":
@@ -363,59 +252,25 @@ function parseTriggerRow(row: ScheduleRow): ScheduleTrigger {
   }
 }
 
-function parseTargetRow(row: ScheduleRow): ScheduleTarget {
-  let parsed: unknown;
+/**
+ * Hydrate the envelope from a row. Generic: `kind` comes straight
+ * from the `target_kind` column and `data` is `JSON.parse`d as
+ * unknown. The schedule pkg does NOT invoke
+ * `handler.validate(data)` on reads — persisted data is trusted (it
+ * was validated by the handler at create / patch time). Re-validating
+ * on every read would (a) require a catalog round-trip per row in
+ * the list endpoint and (b) be redundant. Handlers that want
+ * belt-and-braces re-checks on dispatch can do so inside
+ * `handler.dispatch` themselves.
+ */
+function parseTargetRow(row: ScheduleRow): ScheduleTargetEnvelope {
+  let data: unknown;
   try {
-    parsed = JSON.parse(row.targetJson);
+    data = JSON.parse(row.targetJson);
   } catch (err) {
     throw new ScheduleError(
       `Schedule "${row.id}" corrupted: target_json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json must decode to an object`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  switch (row.targetKind) {
-    case "task": {
-      const agent = obj.agent;
-      const brief = obj.brief;
-      const details = obj.details;
-      const runtime = obj.runtime;
-      if (typeof agent !== "string" || agent.length === 0) {
-        throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json.agent missing`);
-      }
-      // Fail-fast guard for pre-v2 (RFC #61 v2) rows that still carry
-      // `instructions` instead of `brief`. Migration 0001 does not
-      // rewrite target_json, so a local dev DB created before the
-      // redesign would otherwise leak through as a cryptic
-      // undefined-property error deep in the dispatch loop. No
-      // production rows exist (pre-release).
-      if (brief === undefined && obj.instructions !== undefined) {
-        throw new ScheduleError(
-          `Schedule "${row.id}" uses pre-v2 target shape (target_json carries "instructions", not "brief"). This row was created before RFC #61 v2; delete your local dev DB (typically under ~/.emploke/) and re-create the schedule, or hand-rewrite target_json from {instructions} to {brief, details?} via SQL.`,
-        );
-      }
-      if (typeof brief !== "string" || brief.length === 0) {
-        throw new ScheduleError(`Schedule "${row.id}" corrupted: target_json.brief missing`);
-      }
-      if (details !== undefined && typeof details !== "string") {
-        throw new ScheduleError(
-          `Schedule "${row.id}" corrupted: target_json.details, when set, must be a string`,
-        );
-      }
-      const target: ScheduleTarget = {
-        kind: "task",
-        agent,
-        brief,
-        ...(details !== undefined ? { details } : {}),
-        ...(runtime !== undefined ? { runtime: runtime as string } : {}),
-      };
-      return target;
-    }
-    default:
-      throw new ScheduleError(
-        `Schedule "${row.id}" corrupted: unknown target_kind="${row.targetKind}"`,
-      );
-  }
+  return { kind: row.targetKind, data };
 }

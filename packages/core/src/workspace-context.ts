@@ -14,8 +14,7 @@ import {
 } from "@emploke/terminal";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
-import { makeScheduleAgentValidator } from "./wiring/schedule-agent-validator.js";
-import { makeScheduleTaskDispatcher } from "./wiring/schedule-task-dispatcher.js";
+import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
 
 export const silentLogger: Logger = pino({ level: "silent" });
 
@@ -280,23 +279,33 @@ export class WorkspaceContextRegistry {
       });
       cleanup.push(() => taskModule.close());
 
-      // Schedules are composed AFTER tasks so the TaskDispatcher
-      // adapter has a live `TaskService` to bridge to. The same
-      // workspace.db file is reused (WAL-mode shared connection per
-      // ADR-3); migrations are idempotent.
+      // Schedules are composed AFTER tasks so the kind handler's
+      // `dispatch` / `hasInFlightForSchedule` / `deleteForSchedule`
+      // can bridge to a live `TaskService`. The same workspace.db
+      // file is reused (WAL-mode shared connection per ADR-3);
+      // migrations are idempotent.
       scheduleModule = await composeScheduleModule({
         dbFile,
-        taskDispatcher: makeScheduleTaskDispatcher(taskModule.service),
-        agentValidator: makeScheduleAgentValidator(catalogModule.service),
         logger: this.logger,
       });
       cleanup.push(() => scheduleModule.close());
 
       await taskModule.service.recoverOrphaned();
-      // Schedule recovery MUST run AFTER tasks.recoverOrphaned so a
-      // catchup fire (next_fire_at in the past at boot) sees the
-      // freshly-reconciled task list when it checks
-      // hasInFlightForSchedule.
+      // Register every kind BEFORE recover(). recover() freezes the
+      // registry and preflights every persisted row's target_kind
+      // against it — any row with an unregistered kind throws
+      // ScheduleKindNotRegisteredError naming the kind + the
+      // register-before-recover requirement. The order is also
+      // load-bearing for the catchup path: a catchup fire (next
+      // fire in the past at boot) needs the freshly-reconciled
+      // task list when it checks hasInFlightForSchedule.
+      scheduleModule.service.registerKind(
+        "task",
+        makeTaskKindHandler({
+          tasks: taskModule.service,
+          catalog: catalogModule.service,
+        }),
+      );
       await scheduleModule.service.recover();
     } catch (err) {
       await teardown();

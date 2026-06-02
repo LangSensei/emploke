@@ -53,15 +53,15 @@
  *     this ordering prevents).
  */
 
+import type { TaskTargetData, TaskTargetPatch } from "@emploke/api-types";
 import {
   describeCron,
+  type Schedule,
   ScheduleError,
   ScheduleKindMismatchError,
   ScheduleNotFoundError,
   type ScheduleService,
   type ScheduleTrigger,
-  type TaskTargetData,
-  type TaskTargetPatch,
 } from "@emploke/schedule";
 // `ScheduleError` is used by both the `/:sid/preview` n-bound check
 // and the new `/preview-cron` n-bound check (issue #222) for a typed
@@ -244,6 +244,35 @@ function validateTrigger(raw: unknown): ValidationResult<ScheduleTrigger> {
   return { ok: true, value: { kind: "cron", expr: obj.expr, tz: obj.tz } };
 }
 
+/**
+ * Project the internal `Schedule` envelope to the flat wire shape
+ * that dashboard / CLI consumers read. The schedule pkg is
+ * kind-agnostic and stores `{ kind: "task", data: { agent, ... } }`;
+ * the wire shape stays flat (`{ kind: "task", agent, ... }`) so the
+ * dashboard / CLI's `schedule.target.agent` reads keep working.
+ *
+ * When future kinds land, extend this switch with each kind's flat
+ * wire shape; the default branch passes the envelope through so a
+ * brand-new kind still appears on the wire (just without the flat
+ * projection) until the route gets explicit support.
+ */
+function projectScheduleToWire(s: Schedule): Schedule {
+  if (s.target.kind === "task") {
+    const data = s.target.data as TaskTargetData;
+    return {
+      ...s,
+      target: {
+        kind: "task",
+        agent: data.agent,
+        brief: data.brief,
+        ...(data.details !== undefined ? { details: data.details } : {}),
+        ...(data.runtime !== undefined ? { runtime: data.runtime } : {}),
+      } as unknown as Schedule["target"],
+    };
+  }
+  return s;
+}
+
 export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
   const app = new Hono();
 
@@ -259,11 +288,20 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       enabled = enabledRaw === "true";
     }
     try {
+      // The schedule pkg's list opts are kind-agnostic: the wire's
+      // `?agent=` query maps to `{ kind: "task", dataEquals: {
+      // path: "$.agent", value: agent } }`. The combination
+      // engages the partial JSON-extract index
+      // `schedules_target_agent_idx` (defined `WHERE
+      // target_kind='task'`); both predicates must appear in the
+      // WHERE clause for SQLite's planner to use it.
       const list = await resolve(c).list({
-        ...(agent !== undefined ? { agent } : {}),
+        ...(agent !== undefined
+          ? { kind: "task" as const, dataEquals: { path: "$.agent", value: agent } }
+          : {}),
         ...(enabled !== undefined ? { enabled } : {}),
       });
-      return c.json(list);
+      return c.json(list.map(projectScheduleToWire));
     } catch (err) {
       return respondError(c, err, {
         route: "schedules.list",
@@ -274,8 +312,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
 
   // ── POST /task — create a task-kind schedule ──────────────────────
   // URL-discriminated: the body carries no `target.kind` (the URL
-  // declares it). Server injects `kind: "task"` before forwarding
-  // to `ScheduleService.createTask`.
+  // declares it). Server narrows the validated wire shape to
+  // `TaskTargetData` and forwards as `{ kind: "task", data: ... }`;
+  // the registered task kind handler validates the shape again +
+  // performs the async catalog existence lookup.
   app.post("/task", async (c) => {
     const parsed = await parseJsonBody<Record<string, unknown>>(c);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -302,17 +342,17 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
     if (!triggerResult.ok) return c.json({ error: triggerResult.error }, 400);
 
     try {
-      const created = await resolve(c).createTask({
+      const created = await resolve(c).create({
         name,
-        target: targetResult.value,
         trigger: triggerResult.value,
+        target: { kind: "task", data: targetResult.value },
         ...(enabled !== undefined ? { enabled } : {}),
       });
       logEvent(c, "schedule.create", {
         scheduleId: created.id,
         agent: targetResult.value.agent,
       });
-      return c.json(created, 201);
+      return c.json(projectScheduleToWire(created), 201);
     } catch (err) {
       return respondError(c, err, {
         route: "schedules.task.create",
@@ -380,7 +420,10 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
       // can render the human-readable text without a second round-trip.
       // NOT persisted on the entity — `trigger.expr` is the single
       // source of truth.
-      return c.json({ ...found, describe: describeCron(found.trigger.expr) });
+      return c.json({
+        ...projectScheduleToWire(found),
+        describe: describeCron(found.trigger.expr),
+      });
     } catch (err) {
       return respondError(c, err, {
         route: "schedules.get",
@@ -451,9 +494,21 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
     }
 
     try {
-      const updated = await resolve(c).patchTask(sid, patch);
+      // `expectedKind: "task"` lets the service throw
+      // `ScheduleKindMismatchError` (rather than blindly merging into
+      // a non-task envelope) when `:sid` resolves to a schedule of a
+      // different kind. We project the mismatch to a generic
+      // `ScheduleNotFoundError` envelope below so the wire shape
+      // doesn't leak the actual kind to the client.
+      const updated = await resolve(c).patch(sid, {
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.trigger !== undefined ? { trigger: patch.trigger } : {}),
+        ...(patch.target !== undefined ? { target: { patch: patch.target } } : {}),
+        expectedKind: "task",
+      });
       logEvent(c, "schedule.patch", { scheduleId: sid });
-      return c.json(updated);
+      return c.json(projectScheduleToWire(updated));
     } catch (err) {
       // Project `ScheduleKindMismatchError` to the standard
       // `ScheduleNotFoundError` envelope so the wire shape does not
@@ -478,9 +533,9 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
   app.delete("/:sid", async (c) => {
     const sid = c.req.param("sid");
     try {
-      const { deletedTaskCount } = await resolve(c).delete(sid);
-      logEvent(c, "schedule.delete", { scheduleId: sid, deletedTaskCount });
-      return c.json({ ok: true as const, deletedTaskCount });
+      const { deletedDispatchCount } = await resolve(c).delete(sid);
+      logEvent(c, "schedule.delete", { scheduleId: sid, deletedDispatchCount });
+      return c.json({ ok: true as const, deletedDispatchCount });
     } catch (err) {
       return respondError(c, err, {
         route: "schedules.delete",
@@ -493,9 +548,9 @@ export function schedulesRoutes(resolve: ScheduleServiceResolver): Hono {
   app.post("/:sid/run", async (c) => {
     const sid = c.req.param("sid");
     try {
-      const { taskId } = await resolve(c).run(sid);
-      logEvent(c, "schedule.run", { scheduleId: sid, taskId });
-      return c.json({ taskId });
+      const { dispatchId } = await resolve(c).run(sid);
+      logEvent(c, "schedule.run", { scheduleId: sid, dispatchId });
+      return c.json({ dispatchId });
     } catch (err) {
       return respondError(c, err, {
         route: "schedules.run",

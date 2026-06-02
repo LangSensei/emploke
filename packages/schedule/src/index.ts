@@ -1,14 +1,20 @@
 /**
  * Public API of `@emploke/schedule`.
  *
- * Cron-triggered task dispatch as a substrate-side referee
- * (`docs/paradigm.md` §"Scheduling"). `ScheduleService` owns the
- * trigger; the dispatched task is the responsibility of the injected
- * `TaskDispatcher` (production binding = `@emploke/task`'s
- * `TaskService.dispatch` + `hasInFlightForSchedule`).
+ * Cron-triggered substrate (`docs/paradigm.md` §"Scheduling") with
+ * an OPEN handler registry — the pkg knows about no concrete kinds.
+ * Callers register per-kind handlers at compose time:
  *
- * Construction: `composeScheduleModule({ dbFile, taskDispatcher, agentValidator })`.
- * Tests use `openTestScheduleDb()` from `./testing`.
+ * ```ts
+ * const scheduleModule = await composeScheduleModule({ dbFile });
+ * scheduleModule.service.registerKind("task", makeTaskKindHandler({ tasks, catalog }));
+ * await scheduleModule.service.recover();
+ * ```
+ *
+ * See `core/src/wiring/schedule-task-handler.ts` for the production
+ * task-kind handler. Tests use `openTestScheduleDb()` from
+ * `./testing` and the `makeStubHandler()` helper from
+ * `./test/_helpers.ts`.
  */
 
 export {
@@ -18,28 +24,27 @@ export {
 } from "./compose.js";
 export { describeCron } from "./cron.js";
 export {
-  AgentNotFoundError,
-  AgentResolutionFailedError,
   InvalidCronExprError,
+  InvalidJsonPathError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
   ScheduleEnabledError,
   ScheduleError,
   ScheduleHasInFlightError,
+  ScheduleKindAlreadyRegisteredError,
   ScheduleKindMismatchError,
+  ScheduleKindNotRegisteredError,
+  ScheduleKindRegistryFrozenError,
   ScheduleNotFoundError,
 } from "./errors.js";
 export { ScheduleService } from "./schedule-service.js";
 export type {
-  CreateTaskScheduleArgs,
+  CreateScheduleArgs,
   ListScheduleOpts,
-  PatchTaskScheduleArgs,
+  PatchScheduleArgs,
   PreviewResult,
   Schedule,
-  ScheduleTarget,
+  ScheduleKindHandler,
+  ScheduleTargetEnvelope,
   ScheduleTrigger,
-  TaskDispatcher,
-  TaskScheduleTarget,
-  TaskTargetData,
-  TaskTargetPatch,
 } from "./types.js";

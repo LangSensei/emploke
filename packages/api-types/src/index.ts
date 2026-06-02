@@ -71,6 +71,8 @@ export {
   type SchedulePathParams,
   type SchedulePreviewCronQuery,
   type SchedulePreviewQuery,
+  type ScheduleRunResponse,
+  type ScheduleWire,
   type SessionCreateBody,
   type SessionDeleteQuery,
   type SessionListQuery,
@@ -93,4 +95,10 @@ export {
   type WorkspaceSummary,
 } from "./routes.js";
 export type { RuntimeInfo } from "./runtimes.js";
+export type {
+  ScheduleWireTarget,
+  TaskScheduleTargetWire,
+  TaskTargetData,
+  TaskTargetPatch,
+} from "./schedules.js";
 export type { ServerConfig } from "./server-config.js";

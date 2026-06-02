@@ -21,8 +21,11 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
  * recomputed on `recover()` and on `patch(trigger.*)`.
  *
  * No DB-level FK to `agents` — codebase convention is
- * application-level validation. ScheduleService.create/patch calls
- * the injected `agentValidator(fqn)`.
+ * application-level validation. The registered `ScheduleKindHandler`
+ * (see `compose.ts`) owns the existence lookup for whatever entity
+ * its kind references (for the `task` kind, that's
+ * `core/src/wiring/schedule-task-handler.ts` calling
+ * `CatalogService.getAgent` during `validate`).
  */
 export const schedules = sqliteTable(
   "schedules",

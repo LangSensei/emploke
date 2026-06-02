@@ -4,9 +4,11 @@
  *
  * These tests pin the cross-cutting behavior the refactor introduced:
  *
- *   1. The 4 `AgentNotFoundError` classes (catalog / task / schedule
- *      / session) — same `.name` string, different `.status` per
- *      domain — keep mapping independently.
+ *   1. The 3 `AgentNotFoundError` classes (catalog / task / session)
+ *      — same `.name` string, different `.status` per domain — keep
+ *      mapping independently. The schedule pkg no longer owns its
+ *      own class; its routes reuse the task-pkg class via the kind
+ *      handler.
  *   2. `routes/sessions.ts` and `routes/workspaces.ts` now emit the
  *      structured "unmapped error fell through" log line for
  *      unrecognised errors (the observability gap that PR #241 left
@@ -28,10 +30,6 @@
  */
 
 import { AgentNotFoundError as CatalogAgentNotFoundError } from "@emploke/catalog";
-import {
-  AgentNotFoundError as ScheduleAgentNotFoundError,
-  AgentResolutionFailedError as ScheduleAgentResolutionFailedError,
-} from "@emploke/schedule";
 import {
   AgentNotFoundError as SessionAgentNotFoundError,
   AgentResolutionFailedError as SessionAgentResolutionFailedError,
@@ -139,11 +137,17 @@ describe("respondError contract — cross-domain status preservation", () => {
     expect(body.code).toBe("AgentNotFoundError");
   });
 
-  it("schedule route's AgentNotFoundError (schedule package) → 400", async () => {
-    const createTask = vi.fn(async () => {
-      throw new ScheduleAgentNotFoundError("ghost");
+  it("schedule route's AgentNotFoundError (task pkg, via kind handler) → 400", async () => {
+    // Post-W3 the schedule pkg no longer owns its own
+    // AgentNotFoundError class. The task-kind handler
+    // (`core/src/wiring/schedule-task-handler.ts`) throws
+    // task-pkg's `AgentNotFoundError` directly on catalog miss, and
+    // the schedules policy maps that class to 400. The pre-W3
+    // duplicate row is collapsed into the single task-pkg row.
+    const create = vi.fn(async () => {
+      throw new TaskAgentNotFoundError("ghost");
     });
-    const stub = { list: vi.fn(async () => []), createTask } as never;
+    const stub = { list: vi.fn(async () => []), create } as never;
     const res = await schedulesRoutes(() => stub).request("/task", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -485,13 +489,11 @@ describe("respondError contract — AgentResolutionFailedError 500 path", () => 
     expect(unmapped).toBeUndefined();
   });
 
-  it("schedules CREATE AgentResolutionFailedError (schedule package) → 500 + opaque body + 5xx fault log", async () => {
-    const createTask = vi.fn(async () => {
-      throw new ScheduleAgentResolutionFailedError("public/writer", {
-        cause: new Error("DB exploded"),
-      });
+  it("schedules CREATE AgentResolutionFailedError (task pkg, via kind handler) → 500 + opaque body + 5xx fault log", async () => {
+    const create = vi.fn(async () => {
+      throw new TaskAgentResolutionFailedError("public/writer", new Error("DB exploded"));
     });
-    const stub = { list: vi.fn(async () => []), createTask } as never;
+    const stub = { list: vi.fn(async () => []), create } as never;
     const { app, cap } = await buildAppWithLogger((a) => {
       a.route(
         "/",

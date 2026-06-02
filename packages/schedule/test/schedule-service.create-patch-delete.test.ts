@@ -1,31 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  AgentNotFoundError,
-  AgentResolutionFailedError,
   ScheduleEnabledError,
+  ScheduleError,
   ScheduleHasInFlightError,
+  ScheduleKindMismatchError,
   ScheduleNotFoundError,
 } from "../src/errors.js";
-import type { CreateTaskScheduleArgs } from "../src/types.js";
+import type { CreateScheduleArgs } from "../src/types.js";
 import {
   fixedRandomUUID,
   makeScheduleTestHandle,
-  rejectAgentAsNotFound,
-  rejectAgentWithFault,
   type ScheduleTestHandle,
   VALID_UUIDS,
 } from "./_helpers.js";
 
-function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskScheduleArgs {
+function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { agent: "report-bot", brief: "Run the daily report" },
+    target: { kind: "task", data: { agent: "report-bot", brief: "Run the daily report" } },
     ...over,
   };
 }
 
-describe("ScheduleService.createTask / patchTask / delete", () => {
+describe("ScheduleService.create / patch / delete", () => {
   let h: ScheduleTestHandle;
 
   beforeEach(() => {
@@ -40,8 +38,8 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
     h.close();
   });
 
-  it("createTask populates id, timestamps, enabled default, and next_fire_at", async () => {
-    const s = await h.service.createTask(baseArgs());
+  it("create populates id, timestamps, enabled default, and next_fire_at", async () => {
+    const s = await h.service.create(baseArgs());
     expect(s.id).toBe(VALID_UUIDS[0]);
     expect(s.name).toBe("daily-report");
     expect(s.enabled).toBe(true);
@@ -49,62 +47,48 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
     expect(s.updatedAt).toBe("2026-05-01T00:00:00.000Z");
     expect(s.lastFiredAt).toBeUndefined();
     expect(s.nextFireAt).toBe("2026-05-01T09:00:00.000Z");
-    // The service injects `kind: "task"` from the URL-discriminated args.
     expect(s.target.kind).toBe("task");
+    expect(s.target.data).toEqual({ agent: "report-bot", brief: "Run the daily report" });
   });
 
-  it("createTask with enabled=false does NOT pre-arm next_fire_at", async () => {
-    const s = await h.service.createTask(baseArgs({ enabled: false }));
+  it("create with enabled=false does NOT pre-arm next_fire_at", async () => {
+    const s = await h.service.create(baseArgs({ enabled: false }));
     expect(s.enabled).toBe(false);
     expect(s.nextFireAt).toBeUndefined();
   });
 
-  it("createTask surfaces the agentValidator rejection as AgentNotFoundError", async () => {
-    const handle = makeScheduleTestHandle({
-      agentValidator: rejectAgentAsNotFound,
-      randomUUID: fixedRandomUUID(VALID_UUIDS),
+  it("create routes through handler.validate (called BEFORE entity construction)", async () => {
+    await h.service.create(baseArgs());
+    expect(h.taskHandler.validateCalls).toHaveLength(1);
+    expect(h.taskHandler.validateCalls[0]?.data).toEqual({
+      agent: "report-bot",
+      brief: "Run the daily report",
     });
-    try {
-      await expect(handle.service.createTask(baseArgs())).rejects.toBeInstanceOf(
-        AgentNotFoundError,
-      );
-    } finally {
-      await handle.service.shutdown();
-      handle.close();
-    }
+    expect(h.taskHandler.validateCalls[0]?.changedKeys).toBeUndefined();
   });
 
-  it("createTask wraps a non-not-found validator fault as AgentResolutionFailedError (500)", async () => {
-    // The schedule-agent-validator throws schedule's own typed
-    // AgentNotFoundError on null catalog lookup; anything else (DB
-    // exploded, parser crashed) must surface as a system fault,
-    // NOT a misleading 400 'agent not found'. Destructive
-    // validation for the `instanceof AgentNotFoundError` branch in
-    // schedule-service.ts: removing it collapses this back to
-    // AgentNotFoundError and the assertions below must fail.
-    const cause = new Error("DB exploded");
-    const handle = makeScheduleTestHandle({
-      agentValidator: rejectAgentWithFault(cause),
-      randomUUID: fixedRandomUUID(VALID_UUIDS),
-    });
-    try {
-      const err = await handle.service.createTask(baseArgs()).then(
-        () => null,
-        (e) => e,
-      );
-      expect(err).toBeInstanceOf(AgentResolutionFailedError);
-      expect(err).not.toBeInstanceOf(AgentNotFoundError);
-      expect((err as AgentResolutionFailedError).agent).toBe("report-bot");
-      expect((err as AgentResolutionFailedError).cause).toBeInstanceOf(Error);
-      expect(((err as AgentResolutionFailedError).cause as Error).message).toBe("DB exploded");
-    } finally {
-      await handle.service.shutdown();
-      handle.close();
-    }
+  it("create runs schedule-level invariants BEFORE handler.validate (regression: catalog stub throws would mask the real error)", async () => {
+    // The synchronous-first invariant. The handler's validate would
+    // throw "fake catalog error" if called; but with a bad name
+    // we never reach it — the service rejects synchronously.
+    let validateCalled = false;
+    h.taskHandler.validate = async () => {
+      validateCalled = true;
+      throw new Error("fake catalog error");
+    };
+    await expect(h.service.create(baseArgs({ name: "" }))).rejects.toThrow(ScheduleError);
+    expect(validateCalled).toBe(false);
+  });
+
+  it("create propagates handler.validate rejections (e.g. catalog miss)", async () => {
+    h.taskHandler.validate = async () => {
+      throw new Error("agent not found");
+    };
+    await expect(h.service.create(baseArgs())).rejects.toThrow("agent not found");
   });
 
   it("get returns the wire DTO; null when missing", async () => {
-    await h.service.createTask(baseArgs());
+    await h.service.create(baseArgs());
     const got = await h.service.get(VALID_UUIDS[0]);
     expect(got?.name).toBe("daily-report");
     const missing = await h.service.get("550e8400-e29b-41d4-a716-44665544aaaa");
@@ -112,212 +96,154 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
   });
 
   it("list filters by enabled flag", async () => {
-    await h.service.createTask(baseArgs({ name: "a", enabled: true }));
-    await h.service.createTask(baseArgs({ name: "b", enabled: false }));
+    await h.service.create(baseArgs({ name: "a", enabled: true }));
+    await h.service.create(baseArgs({ name: "b", enabled: false }));
     const enabled = await h.service.list({ enabled: true });
     expect(enabled.map((s) => s.name)).toEqual(["a"]);
     const disabled = await h.service.list({ enabled: false });
     expect(disabled.map((s) => s.name)).toEqual(["b"]);
   });
 
-  it("list filters by target.agent", async () => {
-    await h.service.createTask(baseArgs({ name: "a" }));
-    await h.service.createTask(
+  it("list filters by generic dataEquals { kind, path, value } (replaces old agent filter)", async () => {
+    await h.service.create(baseArgs({ name: "a" }));
+    await h.service.create(
       baseArgs({
         name: "b",
-        target: { agent: "other-bot", brief: "x" },
+        target: { kind: "task", data: { agent: "other-bot", brief: "x" } },
       }),
     );
-    const filtered = await h.service.list({ agent: "report-bot" });
+    const filtered = await h.service.list({
+      kind: "task",
+      dataEquals: { path: "$.agent", value: "report-bot" },
+    });
     expect(filtered.map((s) => s.name)).toEqual(["a"]);
   });
 
-  it("patchTask(name) updates name and stamps updatedAt; preserves nextFireAt", async () => {
-    await h.service.createTask(baseArgs());
+  it("patch(name) updates name and stamps updatedAt; preserves nextFireAt", async () => {
+    await h.service.create(baseArgs());
     h.setNow(new Date("2026-05-01T01:00:00.000Z"));
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, { name: "renamed" });
+    const p = await h.service.patch(VALID_UUIDS[0]!, { name: "renamed" });
     expect(p.name).toBe("renamed");
     expect(p.updatedAt).toBe("2026-05-01T01:00:00.000Z");
     expect(p.nextFireAt).toBe("2026-05-01T09:00:00.000Z");
   });
 
-  it("patchTask(trigger) recomputes nextFireAt", async () => {
-    await h.service.createTask(baseArgs());
+  it("patch(trigger) recomputes nextFireAt", async () => {
+    await h.service.create(baseArgs());
     h.setNow(new Date("2026-05-01T00:30:00.000Z"));
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, {
+    const p = await h.service.patch(VALID_UUIDS[0]!, {
       trigger: { kind: "cron", expr: "0 10 * * *", tz: "UTC" },
     });
     expect(p.nextFireAt).toBe("2026-05-01T10:00:00.000Z");
   });
 
-  it("patchTask(enabled: true → false) clears nextFireAt", async () => {
-    await h.service.createTask(baseArgs());
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, { enabled: false });
+  it("patch(enabled: true → false) clears nextFireAt", async () => {
+    await h.service.create(baseArgs());
+    const p = await h.service.patch(VALID_UUIDS[0]!, { enabled: false });
     expect(p.enabled).toBe(false);
     expect(p.nextFireAt).toBeUndefined();
   });
 
-  it("patchTask(enabled: false → true) recomputes nextFireAt", async () => {
-    await h.service.createTask(baseArgs({ enabled: false }));
+  it("patch(enabled: false → true) recomputes nextFireAt", async () => {
+    await h.service.create(baseArgs({ enabled: false }));
     h.setNow(new Date("2026-05-01T05:00:00.000Z"));
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, { enabled: true });
+    const p = await h.service.patch(VALID_UUIDS[0]!, { enabled: true });
     expect(p.enabled).toBe(true);
     expect(p.nextFireAt).toBe("2026-05-01T09:00:00.000Z");
   });
 
-  it("patchTask on missing id throws ScheduleNotFoundError", async () => {
+  it("patch on missing id throws ScheduleNotFoundError", async () => {
     await expect(
-      h.service.patchTask("550e8400-e29b-41d4-a716-44665544aaaa", { name: "x" }),
+      h.service.patch("550e8400-e29b-41d4-a716-44665544aaaa", { name: "x" }),
     ).rejects.toThrow(ScheduleNotFoundError);
   });
 
-  // Regression for #226: a sparse target patch must NOT wipe siblings
-  // (the old `withPatched` did wholesale replace, which silently
-  // dropped agent/brief when the caller only sent { details }).
-  it("patchTask(sparse target.details) preserves agent / brief", async () => {
-    await h.service.createTask(
-      baseArgs({
-        target: {
-          agent: "report-bot",
-          brief: "Run the daily report",
-          runtime: "node-22",
-        },
-      }),
-    );
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, {
-      target: { details: "with extra context" },
+  it("patch(expectedKind) throws ScheduleKindMismatchError when current kind differs", async () => {
+    await h.service.create(baseArgs());
+    // The seeded schedule has kind="task". A patch with
+    // expectedKind="workflow" must surface the mismatch (the route
+    // layer projects this to 404).
+    await expect(
+      h.service.patch(VALID_UUIDS[0]!, { name: "x", expectedKind: "workflow" }),
+    ).rejects.toBeInstanceOf(ScheduleKindMismatchError);
+  });
+
+  it("patch without expectedKind does NOT enforce the kind check (forward-compat for polymorphic patches)", async () => {
+    await h.service.create(baseArgs());
+    // No expectedKind set: any registered kind passes. The seeded
+    // task schedule patches happily.
+    const p = await h.service.patch(VALID_UUIDS[0]!, { name: "renamed" });
+    expect(p.name).toBe("renamed");
+  });
+
+  it("patch(target) routes through handler.mergePatch then handler.validate({ changedKeys })", async () => {
+    await h.service.create(baseArgs());
+    // Default stub's mergePatch returns {...existing, ...patch} so
+    // the merged data carries the new brief on top of the seeded agent.
+    h.taskHandler.validateCalls.length = 0;
+    h.taskHandler.mergePatchCalls.length = 0;
+    const p = await h.service.patch(VALID_UUIDS[0]!, {
+      target: { patch: { brief: "new brief" } },
     });
+    expect(h.taskHandler.mergePatchCalls).toHaveLength(1);
+    expect(h.taskHandler.mergePatchCalls[0]?.existing).toEqual({
+      agent: "report-bot",
+      brief: "Run the daily report",
+    });
+    expect(h.taskHandler.mergePatchCalls[0]?.patch).toEqual({ brief: "new brief" });
+    expect(h.taskHandler.validateCalls).toHaveLength(1);
+    expect(h.taskHandler.validateCalls[0]?.changedKeys).toEqual(["brief"]);
+    // Merged data persisted in target.data.
     expect(p.target.kind).toBe("task");
-    if (p.target.kind === "task") {
-      expect(p.target.agent).toBe("report-bot");
-      expect(p.target.brief).toBe("Run the daily report");
-      expect(p.target.details).toBe("with extra context");
-      expect(p.target.runtime).toBe("node-22");
-    }
-  });
-
-  // RFC 7396: `null` on `details` deletes the field, sibling agent / brief
-  // / runtime unchanged.
-  it("patchTask(target.details: null) deletes details only", async () => {
-    await h.service.createTask(
-      baseArgs({
-        target: {
-          agent: "report-bot",
-          brief: "x",
-          details: "old details",
-          runtime: "node-22",
-        },
-      }),
-    );
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, {
-      target: { details: null },
-    });
-    if (p.target.kind === "task") {
-      expect(p.target.details).toBeUndefined();
-      expect(p.target.runtime).toBe("node-22");
-      expect(p.target.agent).toBe("report-bot");
-    }
-  });
-
-  it("patchTask(target.runtime: null) deletes runtime only", async () => {
-    await h.service.createTask(
-      baseArgs({
-        target: {
-          agent: "report-bot",
-          brief: "x",
-          details: "keep me",
-          runtime: "node-22",
-        },
-      }),
-    );
-    const p = await h.service.patchTask(VALID_UUIDS[0]!, {
-      target: { runtime: null },
-    });
-    if (p.target.kind === "task") {
-      expect(p.target.runtime).toBeUndefined();
-      expect(p.target.details).toBe("keep me");
-    }
-  });
-
-  // agentValidator is only invoked when the patch supplies an agent
-  // string. Non-agent target patches (brief / details / runtime only)
-  // skip the async lookup so a target-only edit never surfaces a
-  // misleading "agent not found" 404.
-  it("patchTask without target.agent does not invoke agentValidator", async () => {
-    await h.service.createTask(baseArgs());
-    const rejectingHandle = makeScheduleTestHandle({
-      agentValidator: rejectAgentAsNotFound,
-      randomUUID: fixedRandomUUID(VALID_UUIDS),
-    });
-    try {
-      const repoBacked = new (await import("../src/schedule-repository.js")).ScheduleRepository({
-        db: h.db.db,
-      });
-      const Svc = (await import("../src/schedule-service.js")).ScheduleService;
-      const svc = new Svc({
-        repo: repoBacked,
-        taskDispatcher: h.dispatcher,
-        agentValidator: rejectAgentAsNotFound,
-        now: () => h.nowRef.value,
-        randomUUID: fixedRandomUUID(VALID_UUIDS),
-      });
-      // No `target.agent` in the patch ⇒ rejecting validator must not run.
-      await expect(
-        svc.patchTask(VALID_UUIDS[0]!, { target: { brief: "new brief" } }),
-      ).resolves.toMatchObject({ id: VALID_UUIDS[0] });
-      await svc.shutdown();
-    } finally {
-      await rejectingHandle.service.shutdown();
-      rejectingHandle.close();
-    }
+    expect(p.target.data).toEqual({ agent: "report-bot", brief: "new brief" });
   });
 
   it("delete throws ScheduleEnabledError when enabled", async () => {
-    await h.service.createTask(baseArgs());
+    await h.service.create(baseArgs());
     await expect(h.service.delete(VALID_UUIDS[0]!)).rejects.toThrow(ScheduleEnabledError);
   });
 
-  it("delete throws ScheduleHasInFlightError when dispatcher reports in-flight", async () => {
-    await h.service.createTask(baseArgs({ enabled: false }));
-    h.dispatcher.inFlightSet.add(VALID_UUIDS[0]!);
+  it("delete throws ScheduleHasInFlightError when handler reports in-flight", async () => {
+    await h.service.create(baseArgs({ enabled: false }));
+    h.taskHandler.inFlightSet.add(VALID_UUIDS[0]!);
     await expect(h.service.delete(VALID_UUIDS[0]!)).rejects.toThrow(ScheduleHasInFlightError);
   });
 
-  it("delete succeeds when disabled and no in-flight", async () => {
-    await h.service.createTask(baseArgs({ enabled: false }));
+  it("delete succeeds when disabled and no in-flight (returns deletedDispatchCount: 0)", async () => {
+    await h.service.create(baseArgs({ enabled: false }));
     const result = await h.service.delete(VALID_UUIDS[0]!);
-    expect(result).toEqual({ deletedTaskCount: 0 });
+    expect(result).toEqual({ deletedDispatchCount: 0 });
     expect(await h.service.get(VALID_UUIDS[0]!)).toBeNull();
   });
 
-  it("delete cascades historical tasks via dispatcher and surfaces the count", async () => {
-    await h.service.createTask(baseArgs({ enabled: false }));
-    h.dispatcher.deleteForScheduleReturns.set(VALID_UUIDS[0]!, { deletedCount: 5 });
+  it("delete cascades historical dispatches via handler.deleteForSchedule and surfaces the count", async () => {
+    await h.service.create(baseArgs({ enabled: false }));
+    h.taskHandler.deleteReturns.set(VALID_UUIDS[0]!, { deletedCount: 5 });
     const result = await h.service.delete(VALID_UUIDS[0]!);
-    expect(result).toEqual({ deletedTaskCount: 5 });
-    expect(h.dispatcher.deleteForScheduleCalls).toEqual([VALID_UUIDS[0]]);
+    expect(result).toEqual({ deletedDispatchCount: 5 });
+    expect(h.taskHandler.deleteCalls).toEqual([VALID_UUIDS[0]]);
     expect(await h.service.get(VALID_UUIDS[0]!)).toBeNull();
   });
 
-  it("delete refuses if a manual run() races a fresh task in between checks (TOCTOU)", async () => {
+  it("delete refuses if a manual run() races a fresh dispatch in between checks (TOCTOU)", async () => {
     // Simulate: original `hasInFlight` returns false, cascade runs,
-    // then a concurrent run() inserts a new task → second
+    // then a concurrent run() inserts a new dispatch → second
     // `hasInFlight` returns true → service must refuse the row
-    // delete so we never orphan a running task pointing to a dead
-    // schedule.
-    await h.service.createTask(baseArgs({ enabled: false }));
+    // delete so we never orphan a running unit-of-work pointing to
+    // a dead schedule.
+    await h.service.create(baseArgs({ enabled: false }));
     const sid = VALID_UUIDS[0]!;
     let hasInFlightCalls = 0;
-    h.dispatcher.hasInFlightForSchedule = async () => {
+    h.taskHandler.hasInFlightForSchedule = async () => {
       hasInFlightCalls += 1;
       // First call (pre-flight): clean. Second call (post-cascade):
-      // a racing manual run snuck a fresh running task in.
+      // a racing manual run snuck a fresh dispatch in.
       return hasInFlightCalls > 1;
     };
-    h.dispatcher.deleteForScheduleReturns.set(sid, { deletedCount: 2 });
+    h.taskHandler.deleteReturns.set(sid, { deletedCount: 2 });
     await expect(h.service.delete(sid)).rejects.toThrow(ScheduleHasInFlightError);
     expect(hasInFlightCalls).toBe(2);
-    expect(h.dispatcher.deleteForScheduleCalls).toEqual([sid]);
+    expect(h.taskHandler.deleteCalls).toEqual([sid]);
     // Schedule row must still exist — we refused to commit.
     expect(await h.service.get(sid)).not.toBeNull();
   });
@@ -326,41 +252,5 @@ describe("ScheduleService.createTask / patchTask / delete", () => {
     await expect(h.service.delete("550e8400-e29b-41d4-a716-44665544aaaa")).rejects.toThrow(
       ScheduleNotFoundError,
     );
-  });
-
-  it("patchTask with bad target agent surfaces AgentNotFoundError", async () => {
-    // Seed a schedule with accept-all validator, then patch with a
-    // service that has a rejecting validator. The rejecting service
-    // shares the same DB so the patched record exists.
-    await h.service.createTask(baseArgs());
-    const rejectingHandle = makeScheduleTestHandle({
-      agentValidator: rejectAgentAsNotFound,
-      randomUUID: fixedRandomUUID(VALID_UUIDS),
-    });
-    try {
-      // Wire the rejecting service to the SAME underlying DB by
-      // bypassing makeScheduleTestHandle's fresh-DB default: we
-      // instead manually thread the existing repo.
-      const repoBacked = new (await import("../src/schedule-repository.js")).ScheduleRepository({
-        db: h.db.db,
-      });
-      const Svc = (await import("../src/schedule-service.js")).ScheduleService;
-      const svc = new Svc({
-        repo: repoBacked,
-        taskDispatcher: h.dispatcher,
-        agentValidator: rejectAgentAsNotFound,
-        now: () => h.nowRef.value,
-        randomUUID: fixedRandomUUID(VALID_UUIDS),
-      });
-      await expect(
-        svc.patchTask(VALID_UUIDS[0]!, {
-          target: { agent: "missing-bot" },
-        }),
-      ).rejects.toBeInstanceOf(AgentNotFoundError);
-      await svc.shutdown();
-    } finally {
-      await rejectingHandle.service.shutdown();
-      rejectingHandle.close();
-    }
   });
 });

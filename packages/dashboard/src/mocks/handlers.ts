@@ -339,7 +339,7 @@ export const handlers = [
     const idx = schedulesState.findIndex((s) => s.id === params.sid);
     if (idx === -1) return notFound("schedule not found");
     schedulesState.splice(idx, 1);
-    return HttpResponse.json({ ok: true, deletedTaskCount: 0 });
+    return HttpResponse.json({ ok: true, deletedDispatchCount: 0 });
   }),
   http.post(`/api/workspaces/${W}/schedules/:sid/run`, ({ params }) => {
     const row = schedulesState.find((s) => s.id === params.sid);
@@ -350,16 +350,16 @@ export const handlers = [
     // `/runtime/tasks?taskId=<new>` shows a valid row instead of a
     // 404 "not found" detail pane.
     synthFireSeq += 1;
-    const taskId = `sched-${row.id}-run-${synthFireSeq}`;
+    const dispatchId = `sched-${row.id}-run-${synthFireSeq}`;
     const firedAt = new Date().toISOString();
     tasksState.unshift({
-      id: taskId,
+      id: dispatchId,
       agent: row.target.agent,
       brief: `${row.name} (manual run)`,
       origin: "schedule",
       status: "running",
       metadata: {
-        workdir: `/mock/workspaces/designer/tasks/${taskId}`,
+        workdir: `/mock/workspaces/designer/tasks/${dispatchId}`,
         ...(row.target.runtime !== undefined ? { runtime: row.target.runtime } : {}),
         scheduleId: row.id,
         firedAt,
@@ -367,7 +367,7 @@ export const handlers = [
       createdAt: firedAt,
       startedAt: firedAt,
     });
-    return HttpResponse.json({ taskId });
+    return HttpResponse.json({ dispatchId });
   }),
 
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────

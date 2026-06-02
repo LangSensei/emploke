@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { assertValidJsonPath } from "./_helpers.js";
 import { ScheduleNotFoundError } from "./errors.js";
 import { ScheduleEntity } from "./schedule-entity.js";
 import type * as schema from "./schema.js";
@@ -15,6 +16,16 @@ type Db = BetterSQLite3Database<typeof schema>;
 /**
  * Drizzle-backed CRUD for the `schedules` table. Private to the pkg:
  * external callers go through {@link ScheduleService}.
+ *
+ * The repository is intentionally kind-blind. The `list({ kind,
+ * dataEquals })` opts are generic: callers that want a kind-specific
+ * filter compose them (e.g. the server route maps the wire `?agent=`
+ * query to `{ kind: "task", dataEquals: { path: "$.agent", value }}`).
+ * The `target_kind = 'task'` predicate ALONG WITH the matching
+ * `json_extract(target_json, '$.agent') = ?` predicate is what
+ * engages SQLite's partial index `schedules_target_agent_idx`
+ * (defined `WHERE target_kind = 'task'`); future kinds add their
+ * own partial indexes when they need them.
  *
  * Defense-in-depth id validation lives here so the table grammar is
  * enforced even if a future caller forgets to validate at the
@@ -42,18 +53,21 @@ export class ScheduleRepository {
     if (opts.enabled !== undefined) {
       conditions.push(eq(schedules.enabled, opts.enabled));
     }
-    if (opts.agent !== undefined) {
-      // Engages the functional partial index `schedules_target_agent_idx`
-      // (see schema.ts + drizzle/0001_drop_target_agent_add_json_index.sql).
-      // The expression MUST match the index declaration verbatim —
-      // different whitespace or quoting will silently skip the index.
-      // The `target_kind = 'task'` predicate is REQUIRED for SQLite's
-      // planner to engage a partial index — without it the planner
-      // can't prove the partial predicate holds and falls back to a
-      // full scan. It's also correct: `$.agent` is only defined on
-      // task targets; future kinds may not have an `agent` field.
-      conditions.push(eq(schedules.targetKind, "task"));
-      conditions.push(sql`json_extract(${schedules.targetJson}, '$.agent') = ${opts.agent}`);
+    if (opts.kind !== undefined) {
+      conditions.push(eq(schedules.targetKind, opts.kind));
+    }
+    if (opts.dataEquals !== undefined) {
+      // SQL-injection defence: the path is string-concatenated into
+      // the `json_extract` first argument because Drizzle's `sql`
+      // template only parameterises `?` placeholders, not the path
+      // expression. Reject anything that doesn't match the
+      // `^\$(\.[a-zA-Z_][a-zA-Z0-9_]*)+$` grammar BEFORE building
+      // the fragment.
+      assertValidJsonPath(opts.dataEquals.path);
+      const path = opts.dataEquals.path;
+      conditions.push(
+        sql`json_extract(${schedules.targetJson}, ${path}) = ${opts.dataEquals.value}`,
+      );
     }
     const baseQuery = this.db.select().from(schedules);
     const whereQuery = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
@@ -62,6 +76,22 @@ export class ScheduleRepository {
     // from the RFC (newest-armed first, never-armed last).
     const rows = whereQuery.orderBy(sql`${schedules.nextFireAt} ASC NULLS LAST`).all();
     return rows.map(rowToEntity);
+  }
+
+  /**
+   * Cheap preflight read used by `ScheduleService.recover()` to
+   * detect rows whose `target_kind` has no registered handler. Only
+   * the `(id, targetKind)` projection is selected so a workspace
+   * with thousands of disabled schedules doesn't pull every blob's
+   * `target_json` into memory just to count kinds.
+   */
+  async allRowsForPreflight(): Promise<
+    readonly { readonly id: string; readonly targetKind: string }[]
+  > {
+    return this.db
+      .select({ id: schedules.id, targetKind: schedules.targetKind })
+      .from(schedules)
+      .all();
   }
 
   async insert(entity: ScheduleEntity): Promise<void> {

@@ -27,6 +27,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@emploke/api-types": "workspace:*",
     "@emploke/catalog": "workspace:*",
     "@emploke/runtime": "workspace:*",
     "@emploke/schedule": "workspace:*",
