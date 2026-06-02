@@ -8,8 +8,7 @@
  * Note: `InputValidationError` (defined in `validate.ts`, also
  * exported from the public barrel) is a separate hierarchy that
  * extends `Error` directly — `instanceof WorkspaceError` will NOT
- * catch it. See the "Errors" section of the README for the
- * catch-block contract.
+ * catch it.
  *
  * `RegistryError` is a sub-base for errors originating in the registry
  * table itself (id / path conflicts, missing rows, raw constraint
