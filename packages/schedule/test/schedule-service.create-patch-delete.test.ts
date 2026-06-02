@@ -104,7 +104,7 @@ describe("ScheduleService.create / patch / delete", () => {
     expect(disabled.map((s) => s.name)).toEqual(["b"]);
   });
 
-  it("list filters by generic dataEquals { kind, path, value } (replaces old agent filter)", async () => {
+  it("list filters by generic dataEquals { kind, path, value }", async () => {
     await h.service.create(baseArgs({ name: "a" }));
     await h.service.create(
       baseArgs({

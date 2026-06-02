@@ -9,9 +9,9 @@ const FIVE_FIELD_RE = /^\s*\S+\s+\S+\s+\S+\s+\S+\s+\S+\s*$/;
  * service.create / service.patch / service.preview. Throws
  * `InvalidCronExprError` or `InvalidTimezoneError` on bad input.
  *
- * v1 hard-rejects 6-field (sub-minute) cron — the RFC locks the
- * dialect to POSIX/Vixie/Kubernetes/GH Actions standard so users get
- * a predictable surface across editors. Future `trigger.kind='interval'`
+ * v1 hard-rejects 6-field (sub-minute) cron — the dialect is locked
+ * to POSIX/Vixie/Kubernetes/GH Actions standard so users get a
+ * predictable surface across editors. Future `trigger.kind='interval'`
  * can cover sub-minute when it lands.
  */
 export function assertValidCronExpr(expr: string): void {

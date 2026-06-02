@@ -67,7 +67,7 @@ export class ScheduleRepository {
     const whereQuery = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
     // ORDER BY next_fire_at ASC NULLS LAST. SQLite sorts NULLs first
     // by default; the raw `sql` modifier covers the wire contract
-    // from the RFC (newest-armed first, never-armed last).
+    // (newest-armed first, never-armed last).
     const rows = whereQuery.orderBy(sql`${schedules.nextFireAt} ASC NULLS LAST`).all();
     return rows.map(rowToEntity);
   }
