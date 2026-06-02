@@ -35,11 +35,11 @@ const targetDir = (): string => path.join(scratch, "target");
  * fixtures and return a tuple ready to pass to `provisionCopilotWorkdir`.
  *
  * `agent.body` defaults to a minimal valid AGENTS.md. `agent.siblings`
- * lets a test stuff sibling files into the agent dir â€” this is the new
- * multi-file-agent shape. Skill / MCP dependency edges are declared in
- * the fixture's `deps` map rather than via AGENTS.md / SKILL.md
- * frontmatter, because the fake does NOT parse frontmatter (unlike the
- * previous catalog-backed fixture pipeline).
+ * lets a test stuff sibling files into the agent dir - provision
+ * materialises the whole agent tree, not just AGENTS.md. Skill / MCP
+ * dependency edges are declared in the fixture's `deps` map because
+ * the fake does NOT parse frontmatter; tests therefore spell their
+ * dependency graph out explicitly.
  */
 async function setup(opts: {
   agent?: { name?: string; body?: string; siblings?: Record<string, string> };
@@ -70,7 +70,7 @@ async function setup(opts: {
     ].join("\n");
 
   const fixtures: {
-    -readonly [K in keyof FakeFixtures]: NonNullable<FakeFixtures[K]>;
+    -readonly [K in keyof FakeFixtures]-?: NonNullable<FakeFixtures[K]>;
   } = {
     agents: {
       [agentShortName]: {
@@ -92,8 +92,9 @@ async function setup(opts: {
     fixtures.skills[name] = { files, ...(sk.deps ? { deps: sk.deps } : {}) };
   }
   // MCP fixtures are runtime-shape (parsed JSON, no `_meta`); the fake
-  // never injects or strips `_meta`. Tests that previously passed raw
-  // catalog-format JSON strings still hand us strings, so we parse here.
+  // never injects or strips `_meta`. The setup helper takes JSON strings
+  // for ergonomics (tests inline their MCP bodies as JSON literals) and
+  // parses here so each fixture is stored as a `Record<string, unknown>`.
   for (const [fqn, json] of Object.entries(opts.mcps ?? {})) {
     fixtures.mcps[fqn] = JSON.parse(json);
   }
@@ -104,9 +105,9 @@ async function setup(opts: {
 /**
  * Build a fake whose only mcp ("broken") is registered with a
  * `setMcpConfigOverride(_, new Error(...))` so the runtime's
- * `getMcpRuntimeConfig` call rejects â€” reproducing the corruption
- * scenario the previous fixture simulated by overwriting on-disk
- * SQLite bytes.
+ * `getMcpRuntimeConfig` call rejects - exercising provision's wrap
+ * path that turns an upstream source failure into `InvalidMcpJson`
+ * with the per-MCP fqn attached.
  */
 async function makeFakeWithBrokenMcp(specName: string): Promise<{
   source: AgentContentSource;
@@ -128,7 +129,7 @@ async function makeFakeWithBrokenMcp(specName: string): Promise<{
         files: { "AGENTS.md": agentBody },
         // CRITICAL: declare the MCP dep here. The fake does NOT parse
         // AGENTS.md frontmatter; if deps.mcps is omitted, resolveAgent
-        // returns mcps: [] and getMcpRuntimeConfig is never called â€”
+        // returns mcps: [] and getMcpRuntimeConfig is never called -
         // the InvalidMcpJson path would NOT fire and the test would
         // pass for the wrong reason.
         deps: { mcps: [specName] },
@@ -142,7 +143,7 @@ async function makeFakeWithBrokenMcp(specName: string): Promise<{
   return { source: fake.source, agentName: `public/${agentShortName}`, mcpName: specName };
 }
 
-describe("provisionCopilotWorkdir â€” basics", () => {
+describe("provisionCopilotWorkdir - basics", () => {
   it("creates the target directory if it does not exist", async () => {
     const t = targetDir();
     expect(await exists(t)).toBe(false);
@@ -193,9 +194,9 @@ describe("provisionCopilotWorkdir â€” basics", () => {
   });
 
   it("copies sibling files the agent installs alongside AGENTS.md", async () => {
-    // Regression: the old impl only cp'd AGENTS.md, silently dropping
-    // sibling files (templates, scripts) the operator bundled into the
-    // agent dir. The streaming impl must materialize the whole tree.
+    // Contract: provision materialises the WHOLE agent tree (AGENTS.md
+    // plus every sibling - templates, scripts, ...), not just AGENTS.md.
+    // The streaming pipeline must walk every catalog entry.
     const t = targetDir();
     const { source, agentName } = await setup({
       agent: {
@@ -250,19 +251,18 @@ describe("flattenSkillName", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
+describe("provisionCopilotWorkdir - path-traversal hardening", () => {
   it("refuses to write a catalog entry whose relPath escapes the workdir", async () => {
     // Catalog walker rejects symlinks and only yields readdir-segment
-    // names (no `..` possible), so this is defense-in-depth â€” but a
+    // names (no `..` possible), so this is defense-in-depth - but a
     // malicious / corrupted SQLite-backed catalog row could still
     // hand back `relPath: "../escape"`. provision must refuse.
     //
-    // Built from the real `makeFakeContentSource` fake so the port
-    // shape is enforced by TypeScript; we then override `agentEntries`
-    // to inject the adversarial `relPath`. The previous shape declared
-    // an inline `as any` stub that drifted from the real
-    // `AgentContentSource` port (carrying a stale `getMcpContent`
-    // method name) and silently allowed the drift to live.
+    // Built from `makeFakeContentSource` so the port shape is enforced
+    // by TypeScript; the adversarial `relPath` is injected by
+    // overriding `agentEntries` on the returned source. An inline
+    // `as any` stub would let port drift live silently - using the
+    // real fake catches that at compile time.
     const t = targetDir();
     const { source: baseSource } = makeFakeContentSource({
       agents: { demo: { files: { "AGENTS.md": "ok" } } },
@@ -283,7 +283,7 @@ describe("provisionCopilotWorkdir â€” path-traversal hardening", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” MCP config", () => {
+describe("provisionCopilotWorkdir - MCP config", () => {
   it("writes .mcp.json with each MCP's parsed JSON nested under mcpServers (spec FQN keys, _meta stripped)", async () => {
     const t = targetDir();
     const { source, agentName } = await setup({
@@ -300,9 +300,9 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
     );
 
     const written = JSON.parse(await readFile(path.join(t, ".mcp.json"), "utf8"));
-    // Phase 2: keys are the FULL MCP-spec FQN with `/` (Copilot CLI
-    // accepts `/` â€” verified empirically). The `_meta` block is stripped
-    // from each MCP body before writing â€” Copilot CLI shouldn't see
+    // Keys are the FULL MCP-spec FQN with `/` (Copilot CLI accepts
+    // `/` - verified empirically). The `_meta` block is stripped
+    // from each MCP body before writing - Copilot CLI shouldn't see
     // emploke's metadata.
     expect(written).toEqual({
       mcpServers: {
@@ -357,7 +357,7 @@ describe("provisionCopilotWorkdir â€” MCP config", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” skills copy", () => {
+describe("provisionCopilotWorkdir - skills copy", () => {
   it("copies SKILL.md to .github/skills/<name>/SKILL.md", async () => {
     const t = targetDir();
     const { source, agentName } = await setup({
@@ -412,10 +412,10 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
     const { source, agentName } = await setup({
       skills: {
         "langsensei/weather": {
-          // Per #39 contract, frontmatter `name` is the SHORT name and
-          // scope is set explicitly (or auto-derived from origin). Here
-          // we override scope so the FQN becomes langsensei/weather even
-          // though the synthetic origin would otherwise yield `local`.
+          // Frontmatter `name` is the SHORT name and scope is set
+          // explicitly (or auto-derived from origin). Here we override
+          // scope so the FQN becomes langsensei/weather even though the
+          // synthetic origin would otherwise yield `local`.
           body: "---\nname: weather\nscope: langsensei\ndescription: w\nversion: 0.0.1\n---\n# Weather\n",
         },
       },
@@ -433,7 +433,7 @@ describe("provisionCopilotWorkdir â€” skills copy", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” hooks composition", () => {
+describe("provisionCopilotWorkdir - hooks composition", () => {
   it("merges hooks/copilot/* from each skill into .github/hooks/", async () => {
     const t = targetDir();
     const { source, agentName } = await setup({
@@ -476,10 +476,10 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
       skills: {
         // `later` depends on `earlier` so the topological order is
         // [earlier, later] in the resolve result. Hook filenames are
-        // prefixed per-skill, so a true cross-skill collision actually
-        // can't happen post-#39 â€” but if `later` were authored to ship
-        // a hook that overrode `earlier`'s contribution, the prefixed
-        // names ensure the writer rewrites only its own slot.
+        // prefixed per-skill, so a true cross-skill collision is
+        // impossible by construction - but if `later` were authored to
+        // ship a hook that overrode `earlier`'s contribution, the
+        // prefixed names ensure the writer rewrites only its own slot.
         earlier: { hooks: { "shared.sh": "first\n" } },
         later: { deps: { skills: ["earlier"] }, hooks: { "shared.sh": "second\n" } },
       },
@@ -497,10 +497,10 @@ describe("provisionCopilotWorkdir â€” hooks composition", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” workdir prep", () => {
+describe("provisionCopilotWorkdir - workdir prep", () => {
   // Pin the contract that we do NOT plant a .git/ directory. Copilot CLI
   // loads hooks from <cwd>/.github/hooks/*.json directly (per the
-  // official hooks reference) â€” no git repo required. Skipping `git
+  // official hooks reference) - no git repo required. Skipping `git
   // init` removes a hard dependency on the host's `git` binary and
   // keeps purge cheap.
   it("does NOT initialise a git repository in the target directory", async () => {
@@ -516,7 +516,7 @@ describe("provisionCopilotWorkdir â€” workdir prep", () => {
   });
 });
 
-describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
+describe("provisionCopilotWorkdir - end-to-end shape", () => {
   it("produces the documented layout for a full agent definition", async () => {
     const t = targetDir();
     const { source, agentName } = await setup({
@@ -542,10 +542,10 @@ describe("provisionCopilotWorkdir â€” end-to-end shape", () => {
     expect(await exists(path.join(t, ".mcp.json"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/SKILL.md"))).toBe(true);
     expect(await exists(path.join(t, ".github/skills/dev__lint/rules.json"))).toBe(true);
-    // dev__lint__post-write.sh â€” skill hooks ARE prefixed (cross-skill
+    // dev__lint__post-write.sh - skill hooks ARE prefixed (cross-skill
     // collision-prevention); see provision.ts SCOPE_FLATTEN_SEP doc.
     expect(await exists(path.join(t, ".github/hooks/dev__lint__post-write.sh"))).toBe(true);
-    // No .git/ â€” see the workdir-prep describe block above.
+    // No .git/ - see the workdir-prep describe block above.
     expect(await exists(path.join(t, ".git"))).toBe(false);
   });
 });

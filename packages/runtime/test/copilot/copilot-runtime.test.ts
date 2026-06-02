@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { CopilotClient } from "@github/copilot-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrustRegistrationFailed } from "../../src/copilot/errors.js";
 import {
@@ -59,7 +60,7 @@ describe("CopilotRuntime", () => {
       const r = await rt.provision(workdir, agent, source, { workspaceDir: scratch });
       expect(r.runtimeSessionId).toBe(FIXED_UUID);
       expect(await readFile(path.join(workdir, "AGENTS.md"), "utf8")).toContain("# demo\n");
-      // No `.git/` is planted â€” Copilot CLI loads hooks from
+      // No `.git/` is planted — Copilot CLI loads hooks from
       // `<cwd>/.github/hooks/*.json` directly, so a git repo is not
       // needed for any runtime feature. See provision.ts docstring.
       expect(await exists(path.join(workdir, ".git"))).toBe(false);
@@ -93,13 +94,14 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("registerWorkspace (no longer exists; trust now lives in buildInteractiveLaunch)", () => {
-    it("does not expose a registerWorkspace method on Runtime", () => {
+  describe("Runtime contract has no workspace-bootstrap hook", () => {
+    it("CopilotRuntime does not expose a registerWorkspace method", () => {
       const rt = new CopilotRuntime();
-      // The method was removed in favour of per-launch preflight inside
-      // buildInteractiveLaunch (see class jsdoc: per-mode trust matrix). Verifying
-      // the absence here pins the design choice â€” anyone re-adding it
-      // should think twice and update both this test and the jsdoc.
+      // Workspace bootstrap is intentionally NOT part of the Runtime
+      // contract — trust setup is `buildInteractiveLaunch`'s per-launch
+      // preflight (see CopilotRuntime jsdoc, per-mode trust matrix).
+      // Pin the absence so a future PR adding a bootstrap method has
+      // to actively delete this test and the matching jsdoc paragraph.
       expect((rt as unknown as { registerWorkspace?: unknown }).registerWorkspace).toBeUndefined();
     });
   });
@@ -162,12 +164,13 @@ describe("CopilotRuntime", () => {
     });
 
     it("exposes subprocessEnvBase verbatim on the returned LaunchCommand.env", async () => {
-      // Regression: a previous shape allowed `undefined` values in the
-      // base bag, which silently broke the windows terminal spawner
+      // Contract: `subprocessEnvBase` is string-only — `undefined`
+      // values would break the windows terminal spawner
       // (`pwshQuote(undefined)` → "Cannot read properties of undefined
-      // reading 'replace'"). The base is now string-only by config
-      // contract; this test pins the round-trip so a future refactor
-      // can't reintroduce a transform that drops or mangles keys.
+      // reading 'replace'") and have no representation in the inlined
+      // `$env:K='v'` display form. This test pins the round-trip so
+      // a future refactor introducing a transform can't silently drop
+      // or mangle keys.
       const rt = new CopilotRuntime({
         copilotConfigPath: path.join(scratch, "copilot-config.json"),
         subprocessEnvBase: {
@@ -185,7 +188,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("launchHeadless — subprocessEnvScrub translation", () => {
+  describe("launchHeadless - subprocessEnvScrub translation", () => {
     // The server-side `SUBPROCESS_ENV_SCRUB_KEYS` list (currently
     // ["EMPLOKE_HOME"]) is plumbed through
     // `CopilotRuntimeConfig.subprocessEnvScrub` and translated by
@@ -209,7 +212,7 @@ describe("CopilotRuntime", () => {
               start: () => Promise.reject(new Error("STUB_NO_START")),
               stop: () => Promise.resolve(),
               createSession: () => Promise.reject(new Error("unreached")),
-            } as unknown as ReturnType<typeof Object>;
+            } as unknown as CopilotClient;
           },
           registerSession: () => {},
         },
@@ -263,7 +266,7 @@ describe("CopilotRuntime", () => {
     });
   });
 
-  describe("refresh", () => {
+  describe("readMetadata", () => {
     it("returns null when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       expect(await rt.readMetadata("")).toBeNull();
@@ -296,7 +299,7 @@ describe("CopilotRuntime", () => {
     it("is a no-op when runtimeSessionId is null", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       await rt.deleteState("");
-      // No throw, no fs effect â€” pass.
+      // No throw, no fs effect — pass.
     });
 
     it("removes the copilot state directory for the id", async () => {
@@ -315,7 +318,7 @@ describe("CopilotRuntime", () => {
 
     it("wraps unexpected fs errors in RuntimeStateDeletionFailed", async () => {
       // Simulate by passing a copilotStateDir that points at a non-directory
-      // file path so that path.join â†’ rm hits a weird shape. On many systems
+      // file path so that path.join → rm hits a weird shape. On many systems
       // rm with force:true tolerates this; if it does, this test simply
       // passes the no-op path. Keep as a smoke check that the error class
       // construction is wired correctly.
@@ -345,7 +348,7 @@ describe("CopilotRuntime", () => {
       "12345678-1234-1234-1234-1234567890ab/../../escape",
     ];
 
-    it("refresh returns null for malformed ids without touching the filesystem", async () => {
+    it("readMetadata returns null for malformed ids without touching the filesystem", async () => {
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       // Place a sentinel at the would-be-attacked path so we can assert it's
       // untouched (and that we don't accidentally read it).
@@ -606,10 +609,12 @@ describe("CopilotRuntime", () => {
 
     it("returns the last assistant utterance, skipping trailing tool/system events", async () => {
       // Stream: user → assistant("first") → user → assistant("second") →
-      // tool_call(success) → system. The "second" assistant message
-      // must win — earlier code that picked the literal last event
-      // would have surfaced the tool call's display text or the
-      // system note instead.
+      // tool_call(success) → system. The contract: `getLastAgentActivity`
+      // returns the last ASSISTANT utterance (skipping trailing tool /
+      // system events) — a naive "literal last event" picker would
+      // surface the tool call's display text or the system note instead,
+      // which is wrong for the dashboard's "what did the agent last
+      // say" headline.
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });
       const lines = [

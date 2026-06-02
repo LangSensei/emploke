@@ -31,6 +31,7 @@ import {
 import { RuntimeHeadlessLaunchFailed, RuntimeProvisionFailed } from "../errors.js";
 import type { PlaceholderContext } from "../placeholders.js";
 import type { AgentContentSource, ResolvedAgent, RuntimeExit, RuntimeHandle } from "../types.js";
+import { InvalidMcpJson } from "./errors.js";
 import { COPILOT_MCP_CONFIG, provisionCopilotWorkdir } from "./provision.js";
 
 export { COPILOT_MCP_CONFIG };
@@ -346,8 +347,12 @@ function mergeEnv(
  * the server advertises). An explicit empty array on disk is preserved
  * as "no tools" so authors can narrow exposure when needed.
  *
- * Throws on malformed JSON or unexpected shape so the caller can wrap
- * in `RuntimeHeadlessLaunchFailed`. ENOENT is not an error.
+ * Throws {@link InvalidMcpJson} on malformed JSON or unexpected shape so
+ * the caller can wrap it as `RuntimeHeadlessLaunchFailed` while preserving
+ * the typed cause (consumers pattern-matching on `instanceof InvalidMcpJson`
+ * via `.cause` still get the per-MCP attribution). The "name" slot carries
+ * `.mcp.json` for whole-file failures and the offending server name for
+ * per-server shape failures. ENOENT is not an error.
  */
 async function readMcpServersFromWorkdir(
   workdir: string,
@@ -365,7 +370,11 @@ async function readMcpServersFromWorkdir(
   try {
     parsed = JSON.parse(raw);
   } catch (cause) {
-    throw new Error(`Failed to parse ${COPILOT_MCP_CONFIG}: ${(cause as Error).message}`);
+    // Use the file name as the "name" slot — top-level parse failure
+    // has no per-server attribution, but typing the failure as
+    // InvalidMcpJson keeps the consumer's `instanceof` check working
+    // (the outer RuntimeHeadlessLaunchFailed.cause carries it intact).
+    throw new InvalidMcpJson(COPILOT_MCP_CONFIG, cause as Error);
   }
 
   if (
@@ -375,8 +384,9 @@ async function readMcpServersFromWorkdir(
     typeof (parsed as { mcpServers: unknown }).mcpServers !== "object" ||
     (parsed as { mcpServers: unknown }).mcpServers === null
   ) {
-    throw new Error(
-      `Malformed ${COPILOT_MCP_CONFIG}: expected { mcpServers: { ... } } at top level`,
+    throw new InvalidMcpJson(
+      COPILOT_MCP_CONFIG,
+      new Error(`expected { mcpServers: { ... } } at top level`),
     );
   }
 
@@ -386,7 +396,7 @@ async function readMcpServersFromWorkdir(
   const out: Record<string, MCPServerConfig> = {};
   for (const [name, body] of Object.entries(sourceMap)) {
     if (body === null || typeof body !== "object") {
-      throw new Error(`Malformed ${COPILOT_MCP_CONFIG}: server "${name}" must be an object`);
+      throw new InvalidMcpJson(name, new Error(`server config must be an object`));
     }
     const merged = { ...(body as Record<string, unknown>) };
     if (!("tools" in merged)) {

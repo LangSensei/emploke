@@ -4,17 +4,28 @@
  */
 
 /**
- * Thrown when an MCP server config retrieved from the catalog cannot be
- * parsed as JSON. Catalog scan validates JSON at install time, so this
- * normally indicates corruption or an out-of-band edit between scan and
- * provision.
+ * Thrown when an MCP server config (or the `.mcp.json` file that contains
+ * it) is invalid — either unparseable as JSON, or parsed JSON whose shape
+ * violates the `{ mcpServers: { name: serverConfig, ... } }` contract.
+ *
+ * `mcpName` carries the offending server's FQN for per-server failures
+ * (catalog-source resolution in `provision.ts`, or per-entry shape checks
+ * in `launch-headless.ts`'s `readMcpServersFromWorkdir`) or the literal
+ * `".mcp.json"` for whole-file failures (top-level parse or top-level
+ * shape failure of the workdir's `.mcp.json`).
+ *
+ * Catalog scan validates JSON at install time, so per-server parse
+ * failures normally indicate corruption or an out-of-band edit between
+ * scan and provision. Whole-file failures of the provisioned `.mcp.json`
+ * similarly indicate an out-of-band edit between `provision` and
+ * `launchHeadless`.
  */
 export class InvalidMcpJson extends Error {
   constructor(
     public readonly mcpName: string,
     cause: Error,
   ) {
-    super(`MCP "${mcpName}" is not valid JSON: ${cause.message}`);
+    super(`MCP "${mcpName}" config is invalid: ${cause.message}`);
     this.name = "InvalidMcpJson";
     this.cause = cause;
   }
@@ -32,11 +43,11 @@ export class InvalidMcpJson extends Error {
  *
  * This is a boot-time configuration error: the publishing pipeline
  * shipped a bundle whose runtime dep wasn't declared in the published
- * `package.json` (issue tracked in `fix/copilot-sdk-packaging-chain`),
- * or the operator manually deleted the SDK from `node_modules` after
- * install. Either way, every `tasks.dispatch` against the copilot
- * runtime would otherwise fail silently with `HTTP 400 internal error`
- * and no server log entry — surface it loudly at startup instead.
+ * `package.json`, or the operator manually deleted the SDK from
+ * `node_modules` after install. Either way, every `tasks.dispatch`
+ * against the copilot runtime would otherwise fail silently with
+ * `HTTP 400 internal error` and no server log entry — surface it
+ * loudly at startup instead.
  */
 export class CopilotSdkUnavailableError extends Error {
   constructor(cause: Error) {

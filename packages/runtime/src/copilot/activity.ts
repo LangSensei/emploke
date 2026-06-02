@@ -32,13 +32,17 @@ import type {
  *     {@link ToolCallItem} via `callId` (flips status to success/error,
  *     populates result + durationMs)
  *   - `session.shutdown` -> {@link SummaryItem} with stats + tokens
- *   - `hook.start/end`, `skill.invoked`, `subagent.{started,completed}`,
+ *   - `skill.invoked`, `subagent.{started,completed}`,
  *     `system.notification`, `session.error` -> {@link SystemItem}
  *
  * Filtered out (kept in the raw log only): `session.start`,
  * `session.info`, `session.model_change`, `system.message`,
- * `assistant.turn_start`, `assistant.turn_end`. These carry useful
- * signal for low-level debugging but not for the timeline view.
+ * `assistant.turn_start`, `assistant.turn_end`, `hook.start`,
+ * `hook.end`. The first six carry useful signal for low-level
+ * debugging but not for the timeline view. Hooks fire before AND
+ * after every tool call (Copilot's pre/postToolUse observability
+ * hooks) and carry no signal beyond what the adjacent tool_call
+ * item already shows.
  */
 
 interface ParsedEvent {
@@ -268,11 +272,6 @@ export class CopilotActivityStreamParser {
       ev.type === "system.notification" ||
       ev.type === "session.error"
     ) {
-      // hook.start / hook.end are intentionally NOT lifted — they fire
-      // before AND after every tool call (Copilot's pre/postToolUse
-      // observability hooks) and carry no signal beyond what the
-      // adjacent tool_call item already shows. Keeping them would
-      // bury real timeline content under hook.start/hook.end pairs.
       const subKind = systemSubKind(ev.type);
       const text =
         pickString(ev.data, "message") ??
@@ -426,12 +425,10 @@ function parseAttachments(raw: unknown): Attachment[] {
 function parseAssistantTokens(d: Record<string, unknown>): TokenUsage | null {
   // Copilot's `assistant.message.data` only carries `outputTokens`. The
   // input token count for that turn lives in `session.shutdown.modelMetrics`
-  // as an aggregate across the whole session — not per message. Earlier
-  // versions returned `{ input: 0, output, total: output }` which was a
-  // lie (the ":input is 0" reading was wrong; it really means "unknown")
-  // and broke downstream `input > 0 || output > 0` checks. We now omit
-  // `input` / `total` per the new optional shape; consumers render the
-  // output count alone and fall back to "—" or skip the input column.
+  // as an aggregate across the whole session — not per message. Omitting
+  // `input` (rather than reporting `0`) is the contract: `input + output
+  // > 0` reads as "this turn measured at all", and consumers render the
+  // output count alone with `—`/`?` for the input column.
   const output = numOrUndefined(d.outputTokens);
   if (output === undefined) return null;
   return { output };

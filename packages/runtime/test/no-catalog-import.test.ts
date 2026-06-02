@@ -28,18 +28,17 @@
  *      maps. If a future config file ever names `@emploke/catalog`,
  *      this assertion catches it.
  *
- * `ALLOWED_VIOLATIONS` is empty by design — this audit is binary;
- * the whole point of P3 is to keep it empty. Adding an entry here
- * would defeat the purpose; either fix the import or argue (in a
- * fresh PR with explicit Goal-section amendment) why an exception
- * is warranted.
+ * `ALLOWED_VIOLATIONS` is empty by design — this audit is binary, no
+ * exceptions. Adding an entry here would defeat the purpose; either fix
+ * the import or argue (in a fresh PR with explicit Goal-section
+ * amendment) why an exception is warranted.
  *
  * The extractor pattern mirrors
  * `packages/e2e/test/architecture/inter-service-imports.test.ts`; cycle through
  * that file if you need to extend the AST coverage.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -53,9 +52,8 @@ const SKIP_DIR_NAMES = new Set(["node_modules", "dist"]);
 const BANNED = "@emploke/catalog";
 
 /**
- * Empty by design — this audit is binary; the whole point of P3 is to
- * keep it empty. If you find yourself wanting to add an entry, raise
- * the question in a PR description first.
+ * Empty by design — this audit is binary. If you find yourself wanting
+ * to add an entry, raise the question in a PR description first.
  */
 const ALLOWED_VIOLATIONS: ReadonlySet<string> = new Set<string>();
 
@@ -80,9 +78,9 @@ function safeIsDir(p: string): boolean {
 
 /** Recursively yield every `.ts` / `.tsx` file under `dir`. */
 function* walkTsFiles(dir: string): Generator<string> {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent[];
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
   } catch {
     return;
   }
@@ -257,9 +255,9 @@ function listConfigFiles(): string[] {
     ".config.mjs",
     ".config.cjs",
   ]);
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent[];
   try {
-    entries = readdirSync(RUNTIME_ROOT, { withFileTypes: true });
+    entries = readdirSync(RUNTIME_ROOT, { withFileTypes: true }) as Dirent[];
   } catch {
     return out;
   }

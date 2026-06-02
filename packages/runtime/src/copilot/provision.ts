@@ -43,7 +43,7 @@ export const COPILOT_MCP_CONFIG = ".mcp.json";
  * `.github/skills/langsensei/weather/` would be misread, so scoped skill
  * names must be flattened to a single segment.
  *
- * **Critical (#39)**: the CLI also silently de-duplicates skills with the
+ * **Critical**: the CLI also silently de-duplicates skills with the
  * same `name` field — when two SKILL.md files share `name: tool-use`, only
  * the first one in readdir order survives, with no warning. This means the
  * frontmatter `name` field MUST also be rewritten to the flattened form,
@@ -114,12 +114,12 @@ const DEFAULT_SCOPE_PREFIX = "public/";
  * catalog paths; a future SQLite-backed catalog implementation works the same
  * way.
  *
- * **Trust handling moved out**: previous versions of this function also
- * appended `workdir` to `~/.copilot/config.json.trustedFolders`. That
- * concern is now `CopilotRuntime.buildInteractiveLaunch`'s preflight, which writes
- * the workspace dir (idempotently, with ancestor coverage) into
- * `config.json` immediately before producing the launch spec. Per-session
- * provision no longer touches the user's Copilot config file.
+ * Does NOT touch the Copilot CLI's `config.json` `trustedFolders`.
+ * Folder-trust is `CopilotRuntime.buildInteractiveLaunch`'s preflight
+ * (it writes the workspace dir into `config.json` immediately before
+ * producing the launch spec, idempotently and with ancestor
+ * coverage). Keeping the two concerns separate lets workspaces that
+ * are only used for SDK-headless tasks skip the trust write entirely.
  *
  * Idempotent in the trivial sense (re-running with the same inputs produces
  * the same files), but emploke's session manager always provisions into a
@@ -138,9 +138,18 @@ export async function provisionCopilotWorkdir(
   placeholders: PlaceholderContext,
 ): Promise<void> {
   await mkdir(workdir, { recursive: true });
-  await materializeAgent(workdir, agent.agent.fqn, catalog);
-  await writeMcpConfig(workdir, agent.mcps, catalog, placeholders);
-  await materializeSkills(workdir, agent.skills, catalog);
+  // Each branch writes under a disjoint output prefix
+  // (`<workdir>/`, `<workdir>/.mcp.json`, `<workdir>/.github/skills/`)
+  // and creates its own intermediate dirs idempotently with
+  // `mkdir(..., recursive: true)`. The only overlap is
+  // `<workdir>/.github/hooks/`, which both `materializeAgent` and
+  // `materializeSkills` may create — `mkdir(recursive: true)` is
+  // concurrency-safe on that race.
+  await Promise.all([
+    materializeAgent(workdir, agent.agent.fqn, catalog),
+    writeMcpConfig(workdir, agent.mcps, catalog, placeholders),
+    materializeSkills(workdir, agent.skills, catalog),
+  ]);
 }
 
 /**

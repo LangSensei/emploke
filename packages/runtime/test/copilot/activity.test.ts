@@ -17,7 +17,7 @@ function ev(o: Record<string, unknown>): string {
   return `${JSON.stringify({ timestamp: ts, ...o })}\n`;
 }
 
-describe("parseCopilotActivity — basic kinds", () => {
+describe("parseCopilotActivity - basic kinds", () => {
   it("emits user + assistant items with text + seq", () => {
     const raw =
       ev({ type: "user.message", id: "u1", parentId: null, data: { content: "hi" } }) +
@@ -35,9 +35,10 @@ describe("parseCopilotActivity — basic kinds", () => {
       text: "hello back",
       seq: 1,
       parentSeq: 0,
-      // Per-message Copilot events only carry outputTokens; input is omitted
-      // (rather than the historical `input: 0` lie) so callers know to look
-      // at the session shutdown aggregate for input counts.
+      // Per-message Copilot events only carry `outputTokens`; `input`
+      // is omitted (MUST NOT be reported as `0`, see TokenUsage jsdoc)
+      // so callers look at the session-shutdown aggregate for input
+      // counts.
       tokens: { output: 19 },
       model: "claude",
     });
@@ -56,7 +57,7 @@ describe("parseCopilotActivity — basic kinds", () => {
   });
 });
 
-describe("parseCopilotActivity — reasoning trace (CoT)", () => {
+describe("parseCopilotActivity - reasoning trace (CoT)", () => {
   it("emits a ThinkingItem before AssistantItem when reasoningText is present", () => {
     // Mirrors the real shape of `assistant.message` events from
     // extended-thinking models (Claude with thinking enabled): both
@@ -125,7 +126,7 @@ describe("parseCopilotActivity — reasoning trace (CoT)", () => {
   });
 });
 
-describe("parseCopilotActivity — tool_call merge", () => {
+describe("parseCopilotActivity - tool_call merge", () => {
   it("emits tool_call (running) per toolRequests on assistant message", () => {
     const raw = ev({
       type: "assistant.message",
@@ -195,7 +196,7 @@ describe("parseCopilotActivity — tool_call merge", () => {
   });
 });
 
-describe("parseCopilotActivity — system items", () => {
+describe("parseCopilotActivity - system items", () => {
   it.each([
     ["skill.invoked", "skill"],
     ["subagent.started", "subagent"],
@@ -217,7 +218,7 @@ describe("parseCopilotActivity — system items", () => {
     }
   });
 
-  it("drops hook.start and hook.end (low signal — duplicates tool_call info)", () => {
+  it("drops hook.start and hook.end (low signal - duplicates tool_call info)", () => {
     const raw =
       ev({ type: "hook.start", id: "h1", parentId: null, data: { hookType: "preToolUse" } }) +
       ev({ type: "hook.end", id: "h2", parentId: null, data: { hookType: "preToolUse" } }) +
@@ -228,7 +229,7 @@ describe("parseCopilotActivity — system items", () => {
   });
 });
 
-describe("parseCopilotActivity — summary item", () => {
+describe("parseCopilotActivity - summary item", () => {
   it("translates session.shutdown into a summary item with stats + tokens", () => {
     const raw = ev({
       type: "session.shutdown",
@@ -381,7 +382,7 @@ describe("deriveCopilotResult", () => {
   });
 });
 
-describe("CopilotActivityStreamParser — incremental parsing", () => {
+describe("CopilotActivityStreamParser - incremental parsing", () => {
   it("yields items one at a time as lines arrive", () => {
     const parser = new CopilotActivityStreamParser();
     const r1 = parser.parseLine(

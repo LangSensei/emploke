@@ -1,7 +1,7 @@
 {
   "name": "@emploke/runtime",
   "version": "0.0.1",
-  "description": "Runtime \u2014 per-CLI adapters (provision, refresh, launch, deleteState) used by sessions and tasks",
+  "description": "Runtime \u2014 per-CLI adapters (provision, buildInteractiveLaunch, launchHeadless, readActivity, deleteState) used by sessions and tasks",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -17,12 +17,11 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -6,8 +6,8 @@
  * server starts accepting traffic. Fail-fast — better to surface a
  * missing-dep misconfiguration at boot than to let every
  * `tasks.dispatch` fail with a silent `HTTP 400 internal error` later
- * on (the original symptom that motivated this preflight; see issue
- * `fix/copilot-sdk-packaging-chain`).
+ * on (each request would otherwise fail with a generic "internal error"
+ * body and no breadcrumb).
  *
  * # Why this exists (root cause)
  *
@@ -102,18 +102,13 @@ const defaultDeps: CopilotPreflightDeps = {
   resolveSpecifier: (spec) => import.meta.resolve(spec),
   createRequireAt: (sdkUrl) => {
     // Normalise `file:///C:/…` URLs to native paths before handing
-    // them to `createRequire`. `createRequire` accepts both file URL
-    // strings and absolute file paths on Node 22, but only the
-    // file-path form is reliably battle-tested on Windows under
-    // pnpm's symlink/junction store layout. Some Node 22 builds
-    // (and historical CI Windows runners under heavy fs-filter
-    // load) take a slower internal path when handed a URL string,
-    // which compounds with the cold-boot SQLite + Defender chain
-    // and was suspected as a contributor to the e2e
-    // `integration-smoke` 30s hook timeout on the
-    // `windows-latest` runner. Passing the absolute path skips
-    // that conversion entirely. On POSIX the two forms behave
-    // identically, so this is a no-op there.
+    // them to `createRequire`. `createRequire` accepts both forms on
+    // Node 22, but the file-URL form takes a slower internal path on
+    // Windows under pnpm's symlink/junction store layout — measurable
+    // enough on cold boot to matter for a preflight that runs in the
+    // startup-latency critical section. The native-path form skips
+    // that conversion entirely. POSIX behaviour is identical for the
+    // two forms, so this is a no-op there.
     const sdkPath = sdkUrl.startsWith("file:") ? fileURLToPath(sdkUrl) : sdkUrl;
     return createRequire(sdkPath);
   },

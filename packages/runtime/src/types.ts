@@ -448,6 +448,8 @@ export interface ReadActivityOpts {
   /**
    * Maximum number of items to return. Server enforces a default
    * (50) and a hard maximum (500) before calling into the runtime.
+   * Callers bypassing the server SHOULD set an explicit limit;
+   * omitting it returns every parsed item.
    *
    * Default-tail semantics: when neither {@link after} nor
    * {@link before} is set, the runtime returns the LATEST `limit`
@@ -708,11 +710,10 @@ export interface SummaryItem extends BaseActivityItem {
  * `input` and `total` are optional because per-message events from
  * Copilot's NDJSON log don't carry an input token count; only the
  * session shutdown's `modelMetrics.usage.inputTokens` aggregate does.
- * Earlier code papered over this by lying about `input: 0`, which
- * meant `total` was wrong and downstream `input + output > 0` checks
- * were perpetually true. Consumers should treat `input === undefined`
- * as "not measured at this granularity" and either omit the input
- * column from rendering or render `?`/`—`.
+ * Consumers MUST treat `input === undefined` as "not measured at
+ * this granularity" (NOT as zero — `input + output > 0` would be
+ * perpetually true otherwise) and either omit the input column from
+ * rendering or render `?`/`—`.
  *
  * `cached`, `cacheWrite`, and `reasoning` are optional add-ons emitted
  * when the upstream provides per-class breakdown:

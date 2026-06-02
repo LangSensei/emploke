@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { safeCopilotId } from "../../src/copilot/ids.js";
 import {
   COPILOT_SESSION_ID_RE,
   generateCopilotSessionId,
@@ -40,5 +41,23 @@ describe("generateCopilotSessionId", () => {
 
   it("rejects an injected rng that returns a malformed id", () => {
     expect(() => generateCopilotSessionId(() => "garbage")).toThrow(/not a valid copilot/);
+  });
+});
+
+describe("safeCopilotId", () => {
+  it("returns null for null input", () => {
+    expect(safeCopilotId(null)).toBeNull();
+  });
+
+  it("returns null for malformed ids (path-traversal, garbage, empty)", () => {
+    expect(safeCopilotId("../../etc/passwd")).toBeNull();
+    expect(safeCopilotId("not-a-uuid")).toBeNull();
+    expect(safeCopilotId("")).toBeNull();
+    expect(safeCopilotId("12345678-1234-1234-1234-1234567890ab/../../escape")).toBeNull();
+  });
+
+  it("returns the id verbatim when it passes validation", () => {
+    const id = "11111111-1111-1111-1111-111111111111";
+    expect(safeCopilotId(id)).toBe(id);
   });
 });

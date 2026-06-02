@@ -1,28 +1,27 @@
 /**
  * In-process fake implementing the runtime's `AgentContentSource`
- * port. Replaces the previous `makeTestCatalog` helper (which spun up
- * an in-memory catalog DB and drove the real install pipeline) with a
- * pure value-builder: fixtures are stored in Maps and read directly.
+ * port. Fixtures are stored in Maps and read directly — no install
+ * pipeline, no SQLite, no `_meta` injection.
  *
  * Why a fake instead of the real catalog:
  *
- *   1. The runtime is the bottom layer of the package graph; depending
- *      on the catalog (even as a test-only devDep) visually suggests
- *      runtime → catalog coupling that does not exist in production
- *      code.
+ *   1. The runtime is the bottom layer of the package graph;
+ *      depending on the catalog (even as a test-only devDep)
+ *      visually suggests runtime → catalog coupling that does not
+ *      exist in production code.
  *   2. Alt-catalog packages cannot integration-test against runtime
- *      without duplicating fixture infrastructure tied to one catalog
- *      implementation.
- *   3. The fake's narrower surface (no install pipeline, no SQLite,
- *      no `_meta` injection) makes test failures easier to localize.
+ *      without duplicating fixture infrastructure tied to one
+ *      catalog implementation.
+ *   3. The narrow surface (no install pipeline, no SQLite, no
+ *      `_meta` injection) makes test failures easy to localize.
  *
  * The fake intentionally does NOT:
  *
  *   - Parse `AGENTS.md` / `SKILL.md` frontmatter. Skill / MCP
  *     dependencies are declared in the fixture's `deps` field
- *     explicitly. Tests that previously relied on frontmatter dep
- *     parsing must move those edges to `deps.skills` / `deps.mcps`.
- *   - Inject or strip `_meta`. Fixtures pass through verbatim.
+ *     explicitly — tests must spell out their dependency graph
+ *     instead of leaning on frontmatter parsing.
+ *   - Inject or strip `_meta`. Fixtures pass through verbatim;
  *     MCP configs must be pre-stripped (runtime-shape).
  *   - Validate FQNs against the catalog's install rules. The fake's
  *     job is to satisfy the runtime's port, not to enforce catalog
@@ -32,8 +31,8 @@
  * same-package test fixture, not a public API consumer, so reaching
  * across the `src/index.ts` boundary for `AgentContentSource` /
  * `ResolvedAgent` is acceptable (and the only option, since these
- * types are deliberately not re-exported — see the P3 brief
- * Decision #2).
+ * types are deliberately not re-exported — runtime treats them as
+ * internal ports, not public API).
  */
 import type { AgentContentSource, ResolvedAgent } from "../../src/types.js";
 
@@ -152,9 +151,9 @@ function walkSkills(
  * `InvalidMcpJson`-wrap path in `provision.ts`); any other value
  * resolves verbatim, overriding the fixture's MCP body.
  *
- * `close()` is a no-op retained for symmetry with the previous
- * `makeTestCatalog` shape — the old helper closed an in-memory
- * SQLite handle here.
+ * `close()` is a no-op kept on the returned shape so callers can
+ * write `try { … } finally { await source.close() }` without
+ * branching on whether the implementation owns disposable state.
  */
 export function makeFakeContentSource(fixtures: FakeFixtures = {}): {
   readonly source: AgentContentSource;

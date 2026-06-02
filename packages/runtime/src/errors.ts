@@ -12,16 +12,25 @@ export class UnknownRuntimeError extends Error {
 }
 
 /**
- * Wraps a failure that happened inside `Runtime.refresh`. The original cause
- * is attached as `this.cause` per ES2022 conventions.
+ * Wraps a failure that happened inside `Runtime.readMetadata`. The original
+ * cause is attached as `this.cause` per ES2022 conventions.
  *
  * The user-facing `.message` intentionally carries only the runtime kind —
  * not `sessionId` or the underlying `cause.message`. The kind is sufficient
  * for a UI surface ("Copilot session refresh failed; check server logs"),
  * while the path / fs error string would leak host paths and Node `fs`
- * codes through the JSON response (see issue #24). Operators can still
- * recover the full diagnostic via `err.sessionId`, `err.cause`, and the
- * server-side `console.error` log emitted at the route boundary.
+ * codes through the JSON response. Operators can still recover the full
+ * diagnostic via `err.sessionId`, `err.cause`, and the server-side
+ * `console.error` log emitted at the route boundary.
+ *
+ * Naming note: the class is named `RuntimeRefreshFailed`, not
+ * `RuntimeReadMetadataFailed`, even though `CopilotRuntime.readMetadata`
+ * is the only thrower. The exported name and the `.message` template
+ * (`runtime "<kind>" refresh failed`) are part of the public error
+ * surface: `packages/server/src/routes/_shared.ts` allowlists the
+ * `.name` string when sanitising error payloads at the route boundary,
+ * so renaming the class (or rewriting `.message`) silently breaks the
+ * server's error mapping.
  */
 export class RuntimeRefreshFailed extends Error {
   constructor(
@@ -40,7 +49,7 @@ export class RuntimeRefreshFailed extends Error {
  * cause is attached as `this.cause`.
  *
  * `.message` carries only the runtime kind. See `RuntimeRefreshFailed` for
- * the rationale (issue #24).
+ * the same rationale (don't leak host paths through the wire string).
  */
 export class RuntimeStateDeletionFailed extends Error {
   constructor(
@@ -59,7 +68,8 @@ export class RuntimeStateDeletionFailed extends Error {
  *
  * `.message` carries only the runtime kind. The workdir + cause stay on
  * the instance (`err.workdir`, `err.cause`) for server-side logging but
- * are kept out of the wire string. See `RuntimeRefreshFailed` (issue #24).
+ * are kept out of the wire string. See `RuntimeRefreshFailed` for the
+ * same rationale.
  */
 export class RuntimeProvisionFailed extends Error {
   constructor(
@@ -83,8 +93,8 @@ export class RuntimeProvisionFailed extends Error {
  * returned `TaskHandle.exit` instead — that's a normal task outcome, not
  * a headless-launch failure.
  *
- * `.message` carries only the runtime kind. See `RuntimeRefreshFailed`
- * (issue #24).
+ * `.message` carries only the runtime kind. See `RuntimeRefreshFailed` for
+ * the same rationale.
  */
 export class RuntimeHeadlessLaunchFailed extends Error {
   constructor(
