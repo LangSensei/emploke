@@ -119,7 +119,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
   // stale outcome text.
   const [deleteNotice, setDeleteNotice] = useState<{
     name: string;
-    deletedTaskCount: number;
+    deletedDispatchCount: number;
   } | null>(null);
 
   const [editTarget, setEditTarget] = useState<ScheduleDetailType | null>(null);
@@ -234,7 +234,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     // while the new delete is in flight.
     setDeleteNotice(null);
     try {
-      const { deletedTaskCount } = await deleteSchedule(deleteTarget.id);
+      const { deletedDispatchCount } = await deleteSchedule(deleteTarget.id);
       if (!mounted.current) return;
       if (selectedId === deleteTarget.id) {
         // Atomic clear so a stale fireTaskId can't outlive the
@@ -242,7 +242,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
         setMasterDetailUrl({ scheduleId: null, fireTaskId: null });
       }
       setSchedules((prev) => prev.filter((s) => s.id !== deleteTarget.id));
-      setDeleteNotice({ name: deleteTarget.name, deletedTaskCount });
+      setDeleteNotice({ name: deleteTarget.name, deletedDispatchCount });
       setDeleteTarget(null);
       setRefreshToken((n) => n + 1);
     } catch (e) {
@@ -375,9 +375,9 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
             data-testid="schedules-delete-notice"
           >
             Schedule <code>{deleteNotice.name}</code> deleted
-            {deleteNotice.deletedTaskCount > 0
-              ? ` (${deleteNotice.deletedTaskCount} historical task ${
-                  deleteNotice.deletedTaskCount === 1 ? "run" : "runs"
+            {deleteNotice.deletedDispatchCount > 0
+              ? ` (${deleteNotice.deletedDispatchCount} historical dispatch ${
+                  deleteNotice.deletedDispatchCount === 1 ? "run" : "runs"
                 } also removed).`
               : "."}
           </div>

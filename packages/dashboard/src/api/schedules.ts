@@ -11,6 +11,7 @@
 // `target` (siblings preserved; `null` deletes `details` / `runtime`)
 // and wholesale-replace on `trigger`.
 
+import type { TaskScheduleTargetWire } from "@emploke/api-types";
 import type { PreviewResult, Schedule } from "@emploke/schedule";
 import {
   fetchJson,
@@ -21,12 +22,17 @@ import {
 } from "./http.js";
 
 /**
- * Wire-shape view of a schedule — re-exports `@emploke/schedule`'s
- * `Schedule` so the dashboard doesn't have to mirror the type by
- * hand. The schedule package is a `devDependency` (type-only import),
- * so it tree-shakes out of the runtime bundle.
+ * Wire-shape view of a schedule as the dashboard sees it. The server
+ * projects the substrate's opaque `{ kind, data }` envelope to a
+ * flat per-kind shape on the way out (`projectScheduleToWire`); the
+ * dashboard only supports the task kind in v1, so we type `target`
+ * narrowly as {@link TaskScheduleTargetWire} (`{ kind: "task",
+ * agent, brief, details?, runtime? }`). When a second concrete
+ * kind ships the dashboard needs an explicit switch — until then
+ * a narrow type keeps the existing `schedule.target.agent` reads
+ * compiling without per-call casts.
  */
-export type ScheduleView = Schedule;
+export type ScheduleView = Omit<Schedule, "target"> & { target: TaskScheduleTargetWire };
 
 /**
  * Response shape for `GET /schedules/:sid` — the entity plus the
@@ -114,16 +120,19 @@ export const patchSchedule = (sid: string, body: PatchScheduleBody): Promise<Sch
     jsonInit("PATCH", body as object),
   );
 
-export const deleteSchedule = (sid: string): Promise<{ deletedTaskCount: number }> =>
-  mutateJson<{ deletedTaskCount: number }>(
+export const deleteSchedule = (sid: string): Promise<{ deletedDispatchCount: number }> =>
+  mutateJson<{ deletedDispatchCount: number }>(
     `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}`,
     { method: "DELETE" },
   );
 
-export const runSchedule = (sid: string): Promise<{ taskId: string }> =>
-  mutateJson<{ taskId: string }>(`${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/run`, {
-    method: "POST",
-  });
+export const runSchedule = (sid: string): Promise<{ dispatchId: string }> =>
+  mutateJson<{ dispatchId: string }>(
+    `${workspacePrefix()}/schedules/${encodeURIComponent(sid)}/run`,
+    {
+      method: "POST",
+    },
+  );
 
 /**
  * Body for `POST /api/workspaces/:wsId/schedules/task` — mirrors the

@@ -5,7 +5,6 @@ import { applyScheduleMigrations } from "./migrations.js";
 import { ScheduleRepository } from "./schedule-repository.js";
 import { ScheduleService } from "./schedule-service.js";
 import * as schema from "./schema.js";
-import type { TaskDispatcher } from "./types.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -13,14 +12,28 @@ export type ScheduleModuleOptions = (
   | { readonly db: Db; readonly dbFile?: never }
   | { readonly dbFile: string; readonly db?: never }
 ) & {
-  readonly taskDispatcher: TaskDispatcher;
-  readonly agentValidator: (fqn: string) => Promise<void>;
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
 };
 
 export interface ScheduleModule {
+  /**
+   * The composed service. Callers MUST register every kind they need
+   * via {@link ScheduleService.registerKind} BEFORE calling
+   * {@link ScheduleService.recover} — recover freezes the registry
+   * and preflights every persisted row's `target_kind` against it,
+   * throwing if any are unregistered.
+   *
+   * Production wiring is in `core/src/workspace-context.ts`:
+   *
+   * ```ts
+   * const scheduleModule = await composeScheduleModule({ dbFile, logger });
+   * scheduleModule.service.registerKind("task", makeTaskKindHandler({ tasks, catalog }));
+   * await taskModule.service.recoverOrphaned();
+   * await scheduleModule.service.recover();
+   * ```
+   */
   readonly service: ScheduleService;
   close(): Promise<void>;
 }
@@ -30,12 +43,6 @@ export interface ScheduleModule {
  * (the pkg opens its own better-sqlite3 connection in WAL mode and
  * runs pending migrations); tests pass an existing `db` from
  * `openTestScheduleDb()`.
- *
- * `taskDispatcher` and `agentValidator` are required capabilities —
- * the schedule pkg never imports `@emploke/task` or `@emploke/catalog`
- * directly. In production they're adapted in PR 3 from
- * `TaskService.dispatch` + `TaskService.hasInFlightForSchedule` and
- * `CatalogService.getAgentFqn`. In tests they're stubs.
  *
  * `close()` calls `service.shutdown()` BEFORE the SQLite handle is
  * released — the in-flight setTimeout callback would otherwise hit a
@@ -69,8 +76,6 @@ export async function composeScheduleModule(opts: ScheduleModuleOptions): Promis
   });
   const service = new ScheduleService({
     repo,
-    taskDispatcher: opts.taskDispatcher,
-    agentValidator: opts.agentValidator,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.randomUUID !== undefined ? { randomUUID: opts.randomUUID } : {}),

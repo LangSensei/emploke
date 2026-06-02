@@ -51,14 +51,23 @@ export async function scheduleList(opts: ScheduleListOpts = {}): Promise<Command
       exitCode: 0,
       stdout: formatTable(
         ["id", "name", "agent", "cron", "tz", "enabled"],
-        list.map((s) => [
-          s.id ?? "",
-          s.name ?? "",
-          s.target?.kind === "task" ? (s.target.agent ?? "") : "",
-          s.trigger?.kind === "cron" ? (s.trigger.expr ?? "") : "",
-          s.trigger?.kind === "cron" ? (s.trigger.tz ?? "") : "",
-          String(s.enabled),
-        ]),
+        list.map((s) => {
+          // The wire shape for the task kind is flat
+          // (`TaskScheduleTargetWire`); future kinds project as
+          // opaque `{ kind, data }`. Cast through `unknown` for the
+          // task case so TypeScript accepts the property access
+          // even though the union member type isn't fully
+          // narrowable on a `kind: string` supertype.
+          const target = s.target as { kind: string; agent?: string };
+          return [
+            s.id ?? "",
+            s.name ?? "",
+            target.kind === "task" ? (target.agent ?? "") : "",
+            s.trigger?.kind === "cron" ? (s.trigger.expr ?? "") : "",
+            s.trigger?.kind === "cron" ? (s.trigger.tz ?? "") : "",
+            String(s.enabled),
+          ];
+        }),
       ),
     };
   } catch (err) {
@@ -221,9 +230,9 @@ export async function scheduleRm(opts: ScheduleRmOpts): Promise<CommandResult> {
     const result = await client.call("schedules.delete", {
       params: { id, sid: opts.sid },
     });
-    const n = result.deletedTaskCount;
+    const n = result.deletedDispatchCount;
     const suffix =
-      n === 0 ? "" : n === 1 ? " (and 1 historical task)" : ` (and ${n} historical tasks)`;
+      n === 0 ? "" : n === 1 ? " (and 1 historical dispatch)" : ` (and ${n} historical dispatches)`;
     return { exitCode: 0, stdout: `schedule ${opts.sid} removed${suffix}\n` };
   } catch (err) {
     return formatError(err);
@@ -245,7 +254,7 @@ export async function scheduleRun(opts: ScheduleRunOpts): Promise<CommandResult>
     const result = await client.call("schedules.run", { params: { id, sid: opts.sid } });
     const fmt = pickFormat(opts, "table");
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(result) };
-    return { exitCode: 0, stdout: `${result.taskId}\n` };
+    return { exitCode: 0, stdout: `${result.dispatchId}\n` };
   } catch (err) {
     return formatError(err);
   }

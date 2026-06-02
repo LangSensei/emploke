@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { InvalidCronExprError, InvalidScheduleIdError, ScheduleError } from "../src/errors.js";
 import { ScheduleEntity } from "../src/schedule-entity.js";
 import type { ScheduleRow } from "../src/schema.js";
-import type { CreateTaskScheduleArgs } from "../src/types.js";
+import type { CreateScheduleArgs } from "../src/types.js";
 
 const VALID_ID = "550e8400-e29b-41d4-a716-446655440000";
 const FIXED_NOW = new Date("2026-05-01T00:00:00.000Z");
 
-function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskScheduleArgs {
+function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { agent: "report-bot", brief: "Run the daily report" },
+    target: { kind: "task", data: { agent: "report-bot", brief: "Run the daily report" } },
     ...over,
   };
 }
@@ -23,6 +23,7 @@ describe("ScheduleEntity.create", () => {
     expect(e.name).toBe("daily-report");
     expect(e.trigger.kind).toBe("cron");
     expect(e.target.kind).toBe("task");
+    expect(e.target.data).toEqual({ agent: "report-bot", brief: "Run the daily report" });
     expect(e.enabled).toBe(true);
     expect(e.createdAt).toBe(FIXED_NOW.toISOString());
     expect(e.updatedAt).toBe(FIXED_NOW.toISOString());
@@ -86,166 +87,99 @@ describe("ScheduleEntity.create", () => {
     ).toThrow();
   });
 
-  it("rejects empty agent in task target", () => {
-    expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { agent: "", brief: "X" } }), {
-        id: VALID_ID,
-        now: FIXED_NOW,
-      }),
-    ).toThrow(ScheduleError);
-  });
-
-  it("rejects empty brief in task target", () => {
-    expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "" } }), {
-        id: VALID_ID,
-        now: FIXED_NOW,
-      }),
-    ).toThrow(ScheduleError);
-  });
-
-  it("rejects brief over 200 chars", () => {
-    const longBrief = "x".repeat(201);
-    expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: longBrief } }), {
-        id: VALID_ID,
-        now: FIXED_NOW,
-      }),
-    ).toThrow(ScheduleError);
-  });
-
-  it("rejects brief containing newline", () => {
-    expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\nbar" } }), {
-        id: VALID_ID,
-        now: FIXED_NOW,
-      }),
-    ).toThrow(ScheduleError);
-  });
-
-  it("rejects brief containing carriage return", () => {
-    expect(() =>
-      ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "foo\rbar" } }), {
-        id: VALID_ID,
-        now: FIXED_NOW,
-      }),
-    ).toThrow(ScheduleError);
-  });
-
-  it("accepts brief of exactly 200 chars (boundary)", () => {
-    const boundary = "x".repeat(200);
-    const e = ScheduleEntity.create(
-      baseArgs({ target: { agent: "report-bot", brief: boundary } }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
-    expect((e.target as { brief: string }).brief.length).toBe(200);
-  });
-
-  it("accepts details as a string (including empty string — mirrors @emploke/task)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({ target: { agent: "report-bot", brief: "B", details: "" } }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
-    expect((e.target as { details?: string }).details).toBe("");
-  });
-
-  it("accepts details containing newlines (multi-line)", () => {
+  it("stores target.data opaquely without inspecting it (handler owns shape)", () => {
+    // The entity is kind-agnostic: it does NOT validate the data
+    // payload (the handler's validate is called by the service
+    // BEFORE constructing the entity). Smoke-test: a "task" envelope
+    // with a malformed payload still round-trips at the entity layer.
+    // Real shape rejection happens in the task handler tests.
     const e = ScheduleEntity.create(
       baseArgs({
-        target: { agent: "report-bot", brief: "B", details: "line 1\nline 2" },
+        target: { kind: "task", data: { agent: "", brief: "" } },
       }),
       { id: VALID_ID, now: FIXED_NOW },
     );
-    expect((e.target as { details?: string }).details).toBe("line 1\nline 2");
-  });
-
-  it("accepts target without details (optional, omitted)", () => {
-    const e = ScheduleEntity.create(baseArgs({ target: { agent: "report-bot", brief: "B" } }), {
-      id: VALID_ID,
-      now: FIXED_NOW,
-    });
-    expect((e.target as { details?: string }).details).toBeUndefined();
-  });
-
-  it("rejects details of non-string type", () => {
-    expect(() =>
-      ScheduleEntity.create(
-        baseArgs({
-          target: {
-            agent: "report-bot",
-            brief: "B",
-            details: 123 as unknown as string,
-          },
-        }),
-        { id: VALID_ID, now: FIXED_NOW },
-      ),
-    ).toThrow(ScheduleError);
+    expect(e.target.kind).toBe("task");
+    expect(e.target.data).toEqual({ agent: "", brief: "" });
   });
 });
 
 describe("ScheduleEntity.toRow / fromStored round-trip", () => {
-  it("serialises target_json with agent + brief", () => {
+  it("toRow stores target_json as the DATA payload only (not the full envelope)", () => {
+    // Regression guard: serialising the full envelope into target_json
+    // would double-encode `kind` (it already lives in target_kind)
+    // and let the column disagree with the JSON.
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
     const row = e.toRow();
     expect(row.targetKind).toBe("task");
-    expect(row.triggerKind).toBe("cron");
-    expect(row.triggerExpr).toBe("0 9 * * *");
-    expect(row.triggerTz).toBe("UTC");
-    expect(row.enabled).toBe(true);
-    // target_agent column is gone post-RFC #61 v2; toRow must not
-    // emit it (drizzle would otherwise try to write to a missing
-    // column and fail at runtime).
-    expect(Object.hasOwn(row as object, "targetAgent")).toBe(false);
+    expect(row.targetJson).toBe(
+      JSON.stringify({ agent: "report-bot", brief: "Run the daily report" }),
+    );
+    // Explicit reverse assertion — parsed JSON must NOT carry `kind`.
+    const parsed = JSON.parse(row.targetJson) as Record<string, unknown>;
+    expect(Object.hasOwn(parsed, "kind")).toBe(false);
+    expect(parsed.agent).toBe("report-bot");
+    expect(parsed.brief).toBe("Run the daily report");
   });
 
-  it("serialises target_json with agent + brief + details + runtime", () => {
+  it("toRow with details + runtime serialises them inside target_json", () => {
     const e = ScheduleEntity.create(
       baseArgs({
         target: {
-          agent: "report-bot",
-          brief: "Hi",
-          details: "Full body here.",
-          runtime: "copilot-cli",
+          kind: "task",
+          data: {
+            agent: "report-bot",
+            brief: "Hi",
+            details: "Full body here.",
+            runtime: "copilot-cli",
+          },
         },
       }),
       { id: VALID_ID, now: FIXED_NOW },
     );
     const row = e.toRow();
     const parsed = JSON.parse(row.targetJson) as Record<string, unknown>;
-    expect(parsed.kind).toBe("task");
     expect(parsed.agent).toBe("report-bot");
     expect(parsed.brief).toBe("Hi");
     expect(parsed.details).toBe("Full body here.");
     expect(parsed.runtime).toBe("copilot-cli");
   });
 
-  it("round-trips through fromStored", () => {
+  it("round-trips through fromStored losslessly (kind in column, data in JSON)", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
     const row = e.toRow() as ScheduleRow;
     const hydrated = ScheduleEntity.fromStored(row);
     expect(hydrated.id).toBe(e.id);
     expect(hydrated.name).toBe(e.name);
     expect(hydrated.trigger).toEqual(e.trigger);
-    expect(hydrated.target).toEqual(e.target);
+    expect(hydrated.target.kind).toBe(e.target.kind);
+    expect(hydrated.target.data).toEqual(e.target.data);
     expect(hydrated.enabled).toBe(e.enabled);
     expect(hydrated.createdAt).toBe(e.createdAt);
     expect(hydrated.updatedAt).toBe(e.updatedAt);
   });
 
-  it("round-trips empty-string details (mirrors @emploke/task contract)", () => {
+  it("round-trips an arbitrary opaque payload (substrate is kind-agnostic)", () => {
     const e = ScheduleEntity.create(
       baseArgs({
-        target: { agent: "report-bot", brief: "B", details: "" },
+        target: {
+          kind: "task",
+          data: { nested: { deeply: ["arbitrary", "shape"] }, flag: true, n: 42 },
+        },
       }),
       { id: VALID_ID, now: FIXED_NOW },
     );
     const row = e.toRow() as ScheduleRow;
     const hydrated = ScheduleEntity.fromStored(row);
-    expect((hydrated.target as { details?: string }).details).toBe("");
+    expect(hydrated.target.data).toEqual({
+      nested: { deeply: ["arbitrary", "shape"] },
+      flag: true,
+      n: 42,
+    });
   });
 });
 
-describe("ScheduleEntity.withMetadata / withTrigger / withTaskTarget", () => {
+describe("ScheduleEntity.withMetadata / withTrigger / withTarget", () => {
   const later = new Date("2026-05-02T00:00:00.000Z");
 
   it("withMetadata sets name and stamps updatedAt", () => {
@@ -286,81 +220,22 @@ describe("ScheduleEntity.withMetadata / withTrigger / withTaskTarget", () => {
     );
   });
 
-  it("withTaskTarget(sparse) preserves siblings (regression for #226)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({
-        target: {
-          agent: "report-bot",
-          brief: "Run the daily report",
-          runtime: "node-22",
-        },
-      }),
-      { id: VALID_ID, now: FIXED_NOW },
+  it("withTarget replaces the envelope wholesale and stamps updatedAt", () => {
+    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
+    const p = e.withTarget(
+      { kind: "task", data: { agent: "other-bot", brief: "different" } },
+      later,
     );
-    const p = e.withTaskTarget({ details: "added context" }, later);
-    if (p.target.kind === "task") {
-      expect(p.target.agent).toBe("report-bot");
-      expect(p.target.brief).toBe("Run the daily report");
-      expect(p.target.runtime).toBe("node-22");
-      expect(p.target.details).toBe("added context");
-    }
+    expect(p.target.kind).toBe("task");
+    expect(p.target.data).toEqual({ agent: "other-bot", brief: "different" });
     expect(p.updatedAt).toBe(later.toISOString());
   });
 
-  it("withTaskTarget(details: null) deletes details only (RFC 7396)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({
-        target: {
-          agent: "report-bot",
-          brief: "B",
-          details: "old",
-          runtime: "node-22",
-        },
-      }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
-    const p = e.withTaskTarget({ details: null }, later);
-    if (p.target.kind === "task") {
-      expect(p.target.details).toBeUndefined();
-      expect(p.target.runtime).toBe("node-22");
-    }
-  });
-
-  it("withTaskTarget(runtime: null) deletes runtime only (RFC 7396)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({
-        target: { agent: "report-bot", brief: "B", details: "keep", runtime: "node-22" },
-      }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
-    const p = e.withTaskTarget({ runtime: null }, later);
-    if (p.target.kind === "task") {
-      expect(p.target.runtime).toBeUndefined();
-      expect(p.target.details).toBe("keep");
-    }
-  });
-
-  it("withTaskTarget(details: '') sets to empty string (distinct from delete)", () => {
-    const e = ScheduleEntity.create(
-      baseArgs({
-        target: { agent: "report-bot", brief: "B", details: "old" },
-      }),
-      { id: VALID_ID, now: FIXED_NOW },
-    );
-    const p = e.withTaskTarget({ details: "" }, later);
-    if (p.target.kind === "task") {
-      expect(p.target.details).toBe("");
-    }
-  });
-
-  it("withTaskTarget re-validates merged result (rejects empty-agent override)", () => {
+  it("withTarget refuses to change the kind on an existing row", () => {
     const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    expect(() => e.withTaskTarget({ agent: "" }, FIXED_NOW)).toThrow(ScheduleError);
-  });
-
-  it("withTaskTarget re-validates brief constraints on merged result", () => {
-    const e = ScheduleEntity.create(baseArgs(), { id: VALID_ID, now: FIXED_NOW });
-    expect(() => e.withTaskTarget({ brief: "foo\nbar" }, FIXED_NOW)).toThrow(ScheduleError);
+    expect(() => e.withTarget({ kind: "workflow", data: { wfId: "wf-1" } }, later)).toThrow(
+      ScheduleError,
+    );
   });
 });
 
@@ -384,7 +259,7 @@ describe("ScheduleEntity.withNextFireAt / withFired", () => {
 
 describe("ScheduleEntity.fromStored corruption guards", () => {
   function makeRow(over: Partial<ScheduleRow> = {}): ScheduleRow {
-    const target = { kind: "task", agent: "report-bot", brief: "Run" };
+    const data = { agent: "report-bot", brief: "Run" };
     return {
       id: VALID_ID,
       name: "daily-report",
@@ -392,7 +267,7 @@ describe("ScheduleEntity.fromStored corruption guards", () => {
       triggerExpr: "0 9 * * *",
       triggerTz: "UTC",
       targetKind: "task",
-      targetJson: JSON.stringify(target),
+      targetJson: JSON.stringify(data),
       enabled: true,
       createdAt: FIXED_NOW.toISOString(),
       updatedAt: FIXED_NOW.toISOString(),
@@ -408,49 +283,20 @@ describe("ScheduleEntity.fromStored corruption guards", () => {
     );
   });
 
-  it("throws on unknown target_kind", () => {
-    expect(() => ScheduleEntity.fromStored(makeRow({ targetKind: "workflow" }))).toThrow(
-      ScheduleError,
-    );
+  it("accepts arbitrary target_kind on read (substrate is kind-blind; preflight is the gate)", () => {
+    // The entity layer trusts persisted data — `recover()`'s
+    // preflight is the single point that catches "no handler for
+    // this kind". `fromStored` happily produces an envelope for any
+    // string kind because the caller (the service) routes through
+    // `handlerFor` before using `data`.
+    const e = ScheduleEntity.fromStored(makeRow({ targetKind: "workflow" }));
+    expect(e.target.kind).toBe("workflow");
   });
 
   it("throws on target_json that is not valid JSON", () => {
     expect(() => ScheduleEntity.fromStored(makeRow({ targetJson: "not json" }))).toThrow(
       ScheduleError,
     );
-  });
-
-  it("throws a remediation-bearing error on pre-v2 target_json with `instructions` but no `brief`", () => {
-    // Fail-fast guard for local dev DBs created before RFC #61 v2.
-    // The remediation hint MUST mention deleting the dev DB so the
-    // symptom is obvious rather than leaking through as a cryptic
-    // undefined-property error deep in the dispatch loop.
-    const preV2Target = { kind: "task", agent: "report-bot", instructions: "Run" };
-    let caught: unknown;
-    try {
-      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(preV2Target) }));
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ScheduleError);
-    const msg = (caught as Error).message;
-    expect(msg).toMatch(/pre-v2 target shape/);
-    expect(msg).toMatch(/RFC #61 v2/);
-    expect(msg).toMatch(/delete your local dev DB/);
-  });
-
-  it("throws when target_json.brief is missing (no instructions either)", () => {
-    const noBrief = { kind: "task", agent: "report-bot" };
-    expect(() =>
-      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(noBrief) })),
-    ).toThrow(ScheduleError);
-  });
-
-  it("throws when target_json.details is non-string", () => {
-    const badDetails = { kind: "task", agent: "report-bot", brief: "B", details: 7 };
-    expect(() =>
-      ScheduleEntity.fromStored(makeRow({ targetJson: JSON.stringify(badDetails) })),
-    ).toThrow(ScheduleError);
   });
 
   it("hydrates lastFiredAt + nextFireAt to undefined when row column is null", () => {

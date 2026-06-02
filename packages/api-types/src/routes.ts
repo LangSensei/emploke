@@ -49,6 +49,7 @@ import type { Task, TaskStatus } from "@emploke/task";
 import type { HealthResponse } from "./health.js";
 import type { ResolveManifest } from "./plan-to-manifest.js";
 import type { RuntimeInfo } from "./runtimes.js";
+import type { ScheduleWireTarget } from "./schedules.js";
 import type { ServerConfig } from "./server-config.js";
 
 // ──────────────────────────────────────────────────────────────────────
@@ -291,16 +292,31 @@ export interface SchedulePathParams {
 
 /**
  * GET /api/workspaces/:id/schedules/:sid response. Mirrors `Schedule`
- * but adds a derived `describe` field (zh_CN human-readable cron text)
- * so the dashboard and `emploke schedule show` can render it without
- * a second round-trip. The field is computed on the response — it is
- * NOT persisted on the entity (the underlying cron expression is the
- * single source of truth; persisting `describe` would require keeping
- * it in sync on every patch + a migration).
+ * but adds a derived `describe` field (zh_CN human-readable cron
+ * text) so the dashboard and `emploke schedule show` can render it
+ * without a second round-trip. The field is computed on the response
+ * — it is NOT persisted on the entity (the underlying cron
+ * expression is the single source of truth; persisting `describe`
+ * would require keeping it in sync on every patch + a migration).
+ *
+ * The `target` field is the FLAT wire shape (`ScheduleWireTarget`),
+ * not the internal envelope — the server's `projectScheduleToWire`
+ * helper converts on the way out. Dashboard / CLI code keeps
+ * reading `schedule.target.agent` etc.
  */
-export interface ScheduleGetResponse extends Schedule {
+export interface ScheduleGetResponse extends Omit<Schedule, "target"> {
+  readonly target: ScheduleWireTarget;
   readonly describe: string;
 }
+
+/**
+ * GET / list response item. Same flat-target projection as
+ * {@link ScheduleGetResponse} but without the derived `describe`
+ * field (list endpoints stay terse).
+ */
+export type ScheduleWire = Omit<Schedule, "target"> & {
+  readonly target: ScheduleWireTarget;
+};
 
 /**
  * GET /api/workspaces/:id/schedules/:sid/preview query params.
@@ -443,18 +459,29 @@ export interface OkResponse {
  * DELETE /api/workspaces/:id/schedules/:sid response.
  *
  * Cascade-delete semantics (see `ScheduleService.delete`): the
- * trigger is removed AND every TERMINAL task it ever fired is purged.
- * `deletedTaskCount` is the number of historical task rows removed
- * from the DB in the same operation. In-flight tasks are protected by
- * the pre-flight 409 (`SCHEDULE_HAS_INFLIGHT`) — they are never
- * touched by the cascade.
+ * trigger is removed AND every TERMINAL unit-of-work the schedule
+ * ever fired is purged via the registered kind handler's
+ * `deleteForSchedule` (for the task kind, that's terminal tasks).
+ * `deletedDispatchCount` is the number of historical rows the
+ * handler removed in the same operation. In-flight dispatches are
+ * protected by the pre-flight 409 (`SCHEDULE_HAS_INFLIGHT`) — they
+ * are never touched by the cascade.
  *
  * Surfaced in: CLI suffix ("schedule X removed (and N historical
- * tasks)"), dashboard confirm-modal post-delete toast.
+ * dispatches)"), dashboard confirm-modal post-delete toast.
  */
 export interface ScheduleDeleteResponse {
   readonly ok: true;
-  readonly deletedTaskCount: number;
+  readonly deletedDispatchCount: number;
+}
+
+/**
+ * POST /api/workspaces/:id/schedules/:sid/run response. The
+ * substrate-side id of the unit-of-work the kind handler dispatched
+ * — for the task kind, that's the new task id.
+ */
+export interface ScheduleRunResponse {
+  readonly dispatchId: string;
 }
 
 /** Standard error envelope. Returned by handlers via `errorBody(err)`. */
@@ -584,19 +611,19 @@ export const ROUTES = {
   // ── schedules (workspace-scoped) ───────────────────────────────────
   "schedules.list": defineRoute<
     { params: WorkspacePathParams; query: ScheduleListQuery },
-    readonly Schedule[]
+    readonly ScheduleWire[]
   >("GET", "/api/workspaces/:id/schedules"),
   /**
    * Create a task-kind schedule. URL-discriminated by `target.kind`
    * so the body can omit `kind` (the URL declares it) — the server
-   * injects `kind: "task"` before forwarding to
-   * `ScheduleService.createTask`. When `workflow` target lands later
-   * it gets its own `schedules.workflow.create` route paired with
-   * `ScheduleService.createWorkflow`.
+   * narrows the body to `TaskTargetData` then calls
+   * `service.create({ name, trigger, target: { kind: "task", data }, enabled })`.
+   * When a `workflow` target lands later it gets its own
+   * `schedules.workflow.create` route.
    */
   "schedules.task.create": defineRoute<
     { params: WorkspacePathParams; body: TaskScheduleCreateBody },
-    Schedule
+    ScheduleWire
   >("POST", "/api/workspaces/:id/schedules/task"),
   "schedules.get": defineRoute<{ params: SchedulePathParams }, ScheduleGetResponse>(
     "GET",
@@ -606,13 +633,15 @@ export const ROUTES = {
    * Patch a task-kind schedule with RFC 7396 deep-merge semantics
    * on `target` (siblings preserved; `null` deletes optional fields),
    * wholesale-replace on `trigger`, and scalar-set on
-   * `name` / `enabled`. URL-discriminated by `target.kind`: if `:sid`
-   * exists but its `target.kind !== "task"`, the server returns 404
-   * with a generic `ScheduleNotFoundError` envelope.
+   * `name` / `enabled`. URL-discriminated by `target.kind`: the
+   * server passes `expectedKind: "task"` to `service.patch`; if
+   * `:sid` exists but its `target.kind !== "task"` the service
+   * throws `ScheduleKindMismatchError` which the route projects to
+   * a generic 404 envelope (no kind-information leak).
    */
   "schedules.task.patch": defineRoute<
     { params: SchedulePathParams; body: TaskSchedulePatchBody },
-    Schedule
+    ScheduleWire
   >("PATCH", "/api/workspaces/:id/schedules/task/:sid"),
   "schedules.delete": defineRoute<{ params: SchedulePathParams }, ScheduleDeleteResponse>(
     "DELETE",
@@ -620,16 +649,16 @@ export const ROUTES = {
   ),
   /**
    * Manual fire-now. Server invokes `ScheduleService.run(sid)` which
-   * dispatches a task under the same code path as a cron-driven fire
-   * (origin = "schedule", metadata = { scheduleId, firedAt: now }).
-   * Does NOT advance the schedule's `lastFiredAt` / `nextFireAt`
-   * cursor — manual runs are out-of-band and the next cron fire still
-   * lands on its expected wall clock.
+   * dispatches through the registered kind handler under the same
+   * code path as a cron-driven fire. Does NOT advance the schedule's
+   * `lastFiredAt` / `nextFireAt` cursor — manual runs are out-of-band
+   * and the next cron fire still lands on its expected wall clock.
    *
-   * Returns `{ taskId }` so the caller can poll / cancel the resulting
-   * task without a second round-trip.
+   * Returns `{ dispatchId }` (the handler's substrate-side id —
+   * for the task kind, that's the task id) so the caller can poll /
+   * cancel the resulting unit-of-work without a second round-trip.
    */
-  "schedules.run": defineRoute<{ params: SchedulePathParams }, { readonly taskId: string }>(
+  "schedules.run": defineRoute<{ params: SchedulePathParams }, ScheduleRunResponse>(
     "POST",
     "/api/workspaces/:id/schedules/:sid/run",
   ),

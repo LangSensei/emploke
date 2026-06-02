@@ -1,66 +1,59 @@
 /**
  * Per-domain error policy for the schedules routes.
  *
- * Source of truth for the (class, status) pairs is the pre-refactor
- * `statusForScheduleError` function in `routes/schedules.ts`.
+ * Source of truth for the (class, status) pairs is the
+ * `statusForScheduleError` function from before the policy-table
+ * refactor in `routes/schedules.ts`.
  *
- * Institutional knowledge from the pre-refactor shadow (PR #241 — why
- * the schedule-package `AgentNotFoundError` MUST be listed explicitly):
+ * ## Why agent errors come from `@emploke/task`
  *
- *   The schedule-package `AgentNotFoundError` and the task-package
- *   `AgentNotFoundError` share the same .name string but are distinct
- *   classes. A name-string switch can't distinguish them, and at the
- *   schedule-route layer we want both to map to 400 (caller-fixable
- *   input). Listing the schedule-package class explicitly means this
- *   route's `respondError` finds a typed match instead of falling
- *   through to the task-policy chain, so its 400 doesn't trip the
- *   `isUnmapped` log path (the original intent of the shadow's
- *   typed-branch-not-fallthrough comment in `statusForScheduleError`).
+ * The schedule pkg is now a kind-agnostic substrate (PR-on-#257 v2).
+ * It does not know what an "agent" is and does not throw agent-related
+ * errors directly. The task-kind handler in
+ * `core/src/wiring/schedule-task-handler.ts` performs the catalog
+ * existence lookup during `validate(data)` and throws
+ * `@emploke/task`'s `AgentNotFoundError` / `AgentResolutionFailedError`
+ * directly on miss / failure. Those errors propagate through
+ * `ScheduleService.create` / `.patch` untouched, so the schedules
+ * route policy only needs ONE row each (the previous design's
+ * duplicate schedule-pkg classes are gone). The same rows also cover
+ * the `POST /:sid/run` path, which dispatches a task via the same
+ * handler.
  *
- * Fallthrough: the `POST /:sid/run` handler invokes
- * `TaskService.dispatch` under the hood, so task-package errors
- * (EntryNotReadyError → 409, ManagerShuttingDownError → 503, etc.)
- * leak through. The pre-refactor `statusForScheduleError` chained to
- * `statusForError` for exactly this; here we spell out the same
- * task-package entries (cheap, ~10 lines) so callers don't have to
- * read two policy files to predict status. The order is:
- * schedule-package classes first, then task-package classes; both
- * `AgentNotFoundError` rows fire correctly because each row matches
- * only its own class via `instanceof`.
+ * ## Fallthrough into the task-package
  *
- * Both `AgentResolutionFailedError` classes (schedule's own and
- * task's) are listed:
- *   - schedule's covers CREATE / PATCH / DELETE paths whose
- *     agentValidator can surface a catalog system fault.
- *   - task's covers `POST /:sid/run` which delegates to
- *     `TaskService.dispatch`; without the task-package entry, a
- *     task-side resolution fault on schedule-run would fall through
- *     to 400 'unmapped' instead of the intended 500. Both carry the
- *     same opaque body builder.
+ * `POST /:sid/run` invokes `TaskService.dispatch` (via the handler)
+ * which can surface other task-pkg errors at runtime
+ * (`EntryNotReadyError → 409`, `ManagerShuttingDownError → 503`,
+ * etc.). Those rows are listed below so callers don't have to read
+ * two policy files to predict status.
  */
 
+import { TaskScheduleTargetError } from "@emploke/core";
 import { RuntimeHeadlessLaunchFailed } from "@emploke/runtime";
 import {
-  AgentNotFoundError,
-  AgentResolutionFailedError,
   InvalidCronExprError,
+  InvalidJsonPathError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
   ScheduleEnabledError,
   ScheduleError,
   ScheduleHasInFlightError,
+  ScheduleKindAlreadyRegisteredError,
   ScheduleKindMismatchError,
+  ScheduleKindNotRegisteredError,
+  ScheduleKindRegistryFrozenError,
   ScheduleNotFoundError,
 } from "@emploke/schedule";
 import {
+  AgentNotFoundError,
+  AgentResolutionFailedError,
   CorruptedTaskError,
   EntryNotReadyError,
   InvalidTaskIdError,
   InvalidTransition,
   ManagerShuttingDownError,
   RuntimeDoesNotSupportTasksError,
-  AgentNotFoundError as TaskAgentNotFoundError,
-  AgentResolutionFailedError as TaskAgentResolutionFailedError,
   TaskIdAllocationFailedError,
   TaskNotFoundError,
 } from "@emploke/task";
@@ -73,22 +66,42 @@ export const schedulesErrorPolicy: ErrorPolicy = {
     [InvalidScheduleIdError, 400],
     [InvalidCronExprError, 400],
     [InvalidTimezoneError, 400],
-    [AgentNotFoundError, 400],
-    [AgentResolutionFailedError, 500, opaqueAgentResolutionBody],
+    [InvalidJsonPathError, 400],
+    // Task-kind-handler-side input validation (the handler's
+    // `validate` rejects malformed task target data — wire-side
+    // duplicate of `validateTaskTargetData` for defense-in-depth).
+    // Lives in `@emploke/core` because the kind handler is wired
+    // there; reaches the policy via core's public surface.
+    [TaskScheduleTargetError, 400],
     [ScheduleNotFoundError, 404],
     [ScheduleKindMismatchError, 404],
     [ScheduleEnabledError, 409],
     [ScheduleHasInFlightError, 409],
+    // Operator-config bugs (the wiring layer forgot a registerKind
+    // call, or registered twice, or ran recover() too early). These
+    // are 500s with opaque bodies — they should never reach a
+    // production wire surface in a healthy deploy, but if they do
+    // the response shouldn't leak the kind name.
+    [ScheduleKindNotRegisteredError, 500, opaqueAgentResolutionBody],
+    [ScheduleKindAlreadyRegisteredError, 500, opaqueAgentResolutionBody],
+    [ScheduleKindRegistryFrozenError, 500, opaqueAgentResolutionBody],
     // `ScheduleError` is the abstract base — listed LAST among
     // schedule-package entries so concrete subclasses (e.g.
     // `InvalidCronExprError`) match first.
     [ScheduleError, 400],
 
-    // Task-package fallthrough (POST /:sid/run dispatches a task).
+    // Task-package surface. ONE row per class — these cover BOTH
+    // the create / patch validation path (the task handler calls
+    // catalog.getAgent and re-throws as task-pkg's AgentNotFoundError
+    // / AgentResolutionFailedError) AND the `POST /:sid/run` task
+    // dispatch path. The pre-W3 design had duplicate
+    // schedule-pkg-owned classes for the create/patch case; the
+    // open-registry design pushes that responsibility to the
+    // handler so we have a single source of truth.
     [InvalidTaskIdError, 400],
     [TaskNotFoundError, 404],
-    [TaskAgentNotFoundError, 400],
-    [TaskAgentResolutionFailedError, 500, opaqueAgentResolutionBody],
+    [AgentNotFoundError, 400],
+    [AgentResolutionFailedError, 500, opaqueAgentResolutionBody],
     [RuntimeDoesNotSupportTasksError, 400],
     [
       EntryNotReadyError,

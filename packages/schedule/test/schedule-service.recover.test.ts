@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ScheduleKindNotRegisteredError, ScheduleKindRegistryFrozenError } from "../src/errors.js";
 import { ScheduleEntity } from "../src/schedule-entity.js";
 import { ScheduleRepository } from "../src/schedule-repository.js";
 import { ScheduleService } from "../src/schedule-service.js";
 import { openTestScheduleDb } from "../src/testing.js";
-import type { CreateTaskScheduleArgs } from "../src/types.js";
-import { acceptAgent, fixedRandomUUID, makeStubDispatcher, VALID_UUIDS } from "./_helpers.js";
+import type { CreateScheduleArgs } from "../src/types.js";
+import { fixedRandomUUID, makeStubHandler, VALID_UUIDS } from "./_helpers.js";
 
-function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskScheduleArgs {
+function baseArgs(over: Partial<CreateScheduleArgs> = {}): CreateScheduleArgs {
   return {
     name: "daily-report",
     trigger: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    target: { agent: "report-bot", brief: "Run the daily report" },
+    target: { kind: "task", data: { agent: "report-bot", brief: "Run the daily report" } },
     ...over,
   };
 }
@@ -18,7 +19,7 @@ function baseArgs(over: Partial<CreateTaskScheduleArgs> = {}): CreateTaskSchedul
 describe("ScheduleService.recover", () => {
   let db: ReturnType<typeof openTestScheduleDb>;
   let repo: ScheduleRepository;
-  let dispatcher: ReturnType<typeof makeStubDispatcher>;
+  let handler: ReturnType<typeof makeStubHandler>;
   let service: ScheduleService;
   let nowRef: { value: Date };
 
@@ -26,15 +27,14 @@ describe("ScheduleService.recover", () => {
     vi.useFakeTimers();
     db = openTestScheduleDb();
     repo = new ScheduleRepository({ db: db.db });
-    dispatcher = makeStubDispatcher();
+    handler = makeStubHandler();
     nowRef = { value: new Date("2026-05-02T00:00:00.000Z") };
     service = new ScheduleService({
       repo,
-      taskDispatcher: dispatcher,
-      agentValidator: acceptAgent,
       now: () => nowRef.value,
       randomUUID: fixedRandomUUID(VALID_UUIDS),
     });
+    service.registerKind("task", handler);
   });
 
   afterEach(async () => {
@@ -54,11 +54,11 @@ describe("ScheduleService.recover", () => {
 
     await service.recover();
 
-    expect(dispatcher.calls).toHaveLength(1);
-    const call = dispatcher.calls[0]!;
+    expect(handler.dispatchCalls).toHaveLength(1);
+    const call = handler.dispatchCalls[0]!;
     // firedAt is the PLANNED past time, not `now`.
-    expect(call.metadata.firedAt).toBe(plannedFireIso);
-    expect(call.metadata.scheduleId).toBe(VALID_UUIDS[0]);
+    expect(call.firedAt).toBe(plannedFireIso);
+    expect(call.scheduleId).toBe(VALID_UUIDS[0]);
     // After recover, recorded last_fired_at = planned, next_fire_at = next from now.
     const after = await service.get(VALID_UUIDS[0]);
     expect(after?.lastFiredAt).toBe(plannedFireIso);
@@ -76,7 +76,7 @@ describe("ScheduleService.recover", () => {
 
     await service.recover();
 
-    expect(dispatcher.calls).toHaveLength(1);
+    expect(handler.dispatchCalls).toHaveLength(1);
   });
 
   it("arms timer (no dispatch) for an enabled schedule with FUTURE next_fire_at", async () => {
@@ -87,15 +87,15 @@ describe("ScheduleService.recover", () => {
     await repo.insert(entity);
 
     await service.recover();
-    expect(dispatcher.calls).toHaveLength(0);
+    expect(handler.dispatchCalls).toHaveLength(0);
 
     // Advance to the scheduled time — the armed timer should fire.
     nowRef.value = new Date("2026-05-02T09:00:00.000Z");
     await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
-    expect(dispatcher.calls).toHaveLength(1);
+    expect(handler.dispatchCalls).toHaveLength(1);
   });
 
-  it("skips disabled schedules entirely", async () => {
+  it("skips disabled schedules entirely (after preflight)", async () => {
     const entity = ScheduleEntity.create(baseArgs({ enabled: false }), {
       id: VALID_UUIDS[0],
       now: new Date("2026-05-01T00:00:00.000Z"),
@@ -103,14 +103,14 @@ describe("ScheduleService.recover", () => {
     await repo.insert(entity);
 
     await service.recover();
-    expect(dispatcher.calls).toHaveLength(0);
+    expect(handler.dispatchCalls).toHaveLength(0);
     // last_fired_at / next_fire_at must not be rewritten.
     const after = await service.get(VALID_UUIDS[0]);
     expect(after?.lastFiredAt).toBe("2026-05-01T09:00:00.000Z");
     expect(after?.nextFireAt).toBe("2026-05-01T18:00:00.000Z");
   });
 
-  it("recover after shutdown is a no-op for canceled timers", async () => {
+  it("recover is idempotent (second call is a no-op; no double-arming)", async () => {
     const entity = ScheduleEntity.create(baseArgs(), {
       id: VALID_UUIDS[0],
       now: nowRef.value,
@@ -118,27 +118,98 @@ describe("ScheduleService.recover", () => {
     await repo.insert(entity);
 
     await service.recover();
-    await service.shutdown();
-
-    // Advance the clock past the fire — no dispatch should happen.
-    nowRef.value = new Date("2026-05-02T10:00:00.000Z");
-    await vi.advanceTimersByTimeAsync(20 * 60 * 60_000);
-    expect(dispatcher.calls).toHaveLength(0);
-  });
-
-  it("recover can be re-called after shutdown to re-arm timers", async () => {
-    const entity = ScheduleEntity.create(baseArgs(), {
-      id: VALID_UUIDS[0],
-      now: nowRef.value,
-    }).withNextFireAt("2026-05-02T09:00:00.000Z");
-    await repo.insert(entity);
-
-    await service.recover();
-    await service.shutdown();
-    await service.recover();
+    await service.recover(); // second call no-ops (registry stays frozen)
 
     nowRef.value = new Date("2026-05-02T09:00:00.000Z");
     await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
-    expect(dispatcher.calls).toHaveLength(1);
+    // Only ONE fire from the single armed timer — not two.
+    expect(handler.dispatchCalls).toHaveLength(1);
+  });
+
+  it("registerKind after recover throws ScheduleKindRegistryFrozenError", async () => {
+    await service.recover();
+    expect(() => service.registerKind("workflow", makeStubHandler())).toThrow(
+      ScheduleKindRegistryFrozenError,
+    );
+  });
+
+  it("recover preflight throws when an ENABLED row's kind has no registered handler", async () => {
+    const otherDb = openTestScheduleDb();
+    const otherRepo = new ScheduleRepository({ db: otherDb.db });
+    const otherSvc = new ScheduleService({
+      repo: otherRepo,
+      now: () => nowRef.value,
+      randomUUID: fixedRandomUUID(VALID_UUIDS),
+    });
+    otherSvc.registerKind("task", makeStubHandler());
+    try {
+      // Insert a row whose target_kind = "workflow" directly via
+      // raw SQL — the public service surface refuses unregistered
+      // kinds at create time, so we have to bypass it to seed the
+      // preflight target.
+      const row = ScheduleEntity.create(baseArgs(), {
+        id: VALID_UUIDS[0],
+        now: nowRef.value,
+      }).toRow();
+      otherDb.sqlite
+        .prepare(
+          "INSERT INTO schedules (id, name, trigger_kind, trigger_expr, trigger_tz, target_kind, target_json, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'workflow', ?, 1, ?, ?)",
+        )
+        .run(
+          row.id,
+          row.name,
+          row.triggerKind,
+          row.triggerExpr,
+          row.triggerTz,
+          row.targetJson,
+          row.createdAt,
+          row.updatedAt,
+        );
+      const err = await otherSvc.recover().then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ScheduleKindNotRegisteredError);
+      expect((err as Error).message).toMatch(/workflow/);
+      expect((err as Error).message).toMatch(/registerKind/);
+    } finally {
+      await otherSvc.shutdown();
+      otherDb.close();
+    }
+  });
+
+  it("recover preflight throws when a DISABLED row's kind has no registered handler (orphan-row gate)", async () => {
+    const otherDb = openTestScheduleDb();
+    const otherRepo = new ScheduleRepository({ db: otherDb.db });
+    const otherSvc = new ScheduleService({
+      repo: otherRepo,
+      now: () => nowRef.value,
+      randomUUID: fixedRandomUUID(VALID_UUIDS),
+    });
+    otherSvc.registerKind("task", makeStubHandler());
+    try {
+      const row = ScheduleEntity.create(baseArgs({ enabled: false }), {
+        id: VALID_UUIDS[0],
+        now: nowRef.value,
+      }).toRow();
+      otherDb.sqlite
+        .prepare(
+          "INSERT INTO schedules (id, name, trigger_kind, trigger_expr, trigger_tz, target_kind, target_json, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'workflow', ?, 0, ?, ?)",
+        )
+        .run(
+          row.id,
+          row.name,
+          row.triggerKind,
+          row.triggerExpr,
+          row.triggerTz,
+          row.targetJson,
+          row.createdAt,
+          row.updatedAt,
+        );
+      await expect(otherSvc.recover()).rejects.toBeInstanceOf(ScheduleKindNotRegisteredError);
+    } finally {
+      await otherSvc.shutdown();
+      otherDb.close();
+    }
   });
 });

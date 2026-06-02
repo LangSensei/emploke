@@ -13,10 +13,11 @@
  *   - 400 mapping for InvalidCronExprError / InvalidTimezoneError
  *   - preview slicing behaviour when n < service's fixed 3
  *   - response envelope (`code` is always present for typed errors)
+ *   - wire-shape projection (envelope → flat task target stays
+ *     dashboard-compatible)
  */
 
 import {
-  AgentNotFoundError,
   InvalidCronExprError,
   InvalidScheduleIdError,
   InvalidTimezoneError,
@@ -28,22 +29,25 @@ import {
   ScheduleNotFoundError,
   type ScheduleService,
 } from "@emploke/schedule";
-import {
-  EntryNotReadyError,
-  ManagerShuttingDownError,
-  AgentNotFoundError as TaskAgentNotFoundError,
-} from "@emploke/task";
+import { AgentNotFoundError, EntryNotReadyError, ManagerShuttingDownError } from "@emploke/task";
 import { describe, expect, it, vi } from "vitest";
 import { schedulesRoutes } from "../../src/routes/schedules.js";
 
+/**
+ * Sample schedule in the new internal envelope shape. The route's
+ * `projectScheduleToWire` flattens this for the HTTP response so
+ * `body.target.agent` etc. still work on the wire.
+ */
 const sampleSchedule: Schedule = {
   id: "sched-abc",
   name: "Weekday morning summary",
   target: {
     kind: "task",
-    agent: "writer",
-    brief: "Summarise yesterday's commits",
-    details: "Pull yesterday's commit log and produce a short digest grouped by author.",
+    data: {
+      agent: "writer",
+      brief: "Summarise yesterday's commits",
+      details: "Pull yesterday's commit log and produce a short digest grouped by author.",
+    },
   },
   trigger: { kind: "cron", expr: "0 9 * * 1-5", tz: "Asia/Shanghai" },
   enabled: true,
@@ -54,11 +58,11 @@ const sampleSchedule: Schedule = {
 function stubService(overrides: Partial<Record<keyof ScheduleService, unknown>>): ScheduleService {
   const stub: Partial<Record<keyof ScheduleService, unknown>> = {
     list: vi.fn(async () => [sampleSchedule]),
-    createTask: vi.fn(async () => sampleSchedule),
+    create: vi.fn(async () => sampleSchedule),
     get: vi.fn(async () => sampleSchedule),
-    patchTask: vi.fn(async () => sampleSchedule),
-    delete: vi.fn(async () => ({ deletedTaskCount: 0 })),
-    run: vi.fn(async () => ({ taskId: "task-001" })),
+    patch: vi.fn(async () => sampleSchedule),
+    delete: vi.fn(async () => ({ deletedDispatchCount: 0 })),
+    run: vi.fn(async () => ({ dispatchId: "task-001" })),
     // Stub mirrors the real service's contract: returns exactly `n`
     // entries (default 3) so the route-layer tests that exercise
     // `?n=10` see the count plumbed through.
@@ -77,20 +81,36 @@ function stubService(overrides: Partial<Record<keyof ScheduleService, unknown>>)
 }
 
 describe("schedulesRoutes — list", () => {
-  it("GET / returns the schedule list", async () => {
+  // Sample as it appears on the WIRE after projectScheduleToWire flattens
+  // the internal envelope. The route always returns the flat shape.
+  const wireSample = {
+    ...sampleSchedule,
+    target: {
+      kind: "task",
+      agent: "writer",
+      brief: "Summarise yesterday's commits",
+      details: "Pull yesterday's commit log and produce a short digest grouped by author.",
+    },
+  };
+
+  it("GET / returns the schedule list (flat-target wire shape)", async () => {
     const svc = stubService({});
     const res = await schedulesRoutes(() => svc).request("/");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([sampleSchedule]);
+    expect(await res.json()).toEqual([wireSample]);
     expect(svc.list).toHaveBeenCalledWith({});
   });
 
-  it("GET /?agent=x&enabled=true forwards both filters", async () => {
+  it("GET /?agent=x&enabled=true maps to { kind: 'task', dataEquals, enabled }", async () => {
     const list = vi.fn(async () => []);
     const svc = stubService({ list });
     const res = await schedulesRoutes(() => svc).request("/?agent=writer&enabled=true");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ agent: "writer", enabled: true });
+    expect(list).toHaveBeenCalledWith({
+      kind: "task",
+      dataEquals: { path: "$.agent", value: "writer" },
+      enabled: true,
+    });
   });
 
   it("GET /?enabled=bogus returns 400", async () => {
@@ -106,14 +126,14 @@ describe("schedulesRoutes — list", () => {
 describe("schedulesRoutes — create", () => {
   // POST /task — URL discriminates by kind; body's target has no `kind`.
   const validTarget = {
-    agent: sampleSchedule.target.agent,
-    brief: sampleSchedule.target.brief,
-    details: sampleSchedule.target.details,
+    agent: "writer",
+    brief: "Summarise yesterday's commits",
+    details: "Pull yesterday's commit log and produce a short digest grouped by author.",
   };
 
-  it("POST /task creates and returns 201", async () => {
-    const createTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ createTask });
+  it("POST /task creates and returns 201 (flat-target wire shape)", async () => {
+    const create = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -124,12 +144,16 @@ describe("schedulesRoutes — create", () => {
       }),
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual(sampleSchedule);
-    expect(createTask).toHaveBeenCalledTimes(1);
-    // Service receives a kind-less target (the URL implies kind).
-    expect(createTask).toHaveBeenCalledWith({
+    const body = await res.json();
+    // Wire shape stays flat for task — projectScheduleToWire converts
+    // the internal envelope on the way out.
+    expect(body.target).toEqual({ kind: "task", ...validTarget });
+    expect(create).toHaveBeenCalledTimes(1);
+    // The service receives the new envelope shape — wire is flat,
+    // internal is `{ kind, data }`.
+    expect(create).toHaveBeenCalledWith({
       name: "Weekday morning summary",
-      target: validTarget,
+      target: { kind: "task", data: validTarget },
       trigger: sampleSchedule.trigger,
     });
   });
@@ -161,7 +185,7 @@ describe("schedulesRoutes — create", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/kind/);
-    expect(svc.createTask).not.toHaveBeenCalled();
+    expect(svc.create).not.toHaveBeenCalled();
   });
 
   it("POST /task with target null returns 400", async () => {
@@ -223,7 +247,7 @@ describe("schedulesRoutes — create", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/brief/);
-    expect(svc.createTask).not.toHaveBeenCalled();
+    expect(svc.create).not.toHaveBeenCalled();
   });
 
   it("POST /task with target.brief over 200 chars returns 400", async () => {
@@ -272,8 +296,8 @@ describe("schedulesRoutes — create", () => {
   });
 
   it("POST /task with target.details set to empty string returns 201 (mirrors @emploke/task)", async () => {
-    const createTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ createTask });
+    const create = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -284,7 +308,7 @@ describe("schedulesRoutes — create", () => {
       }),
     });
     expect(res.status).toBe(201);
-    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("POST /task with target.details set to a non-string returns 400", async () => {
@@ -303,8 +327,8 @@ describe("schedulesRoutes — create", () => {
   });
 
   it("POST /task with target.details omitted returns 201", async () => {
-    const createTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ createTask });
+    const create = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -315,14 +339,14 @@ describe("schedulesRoutes — create", () => {
       }),
     });
     expect(res.status).toBe(201);
-    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("POST /task with invalid cron expr maps to 400 with typed code", async () => {
-    const createTask = vi.fn(async () => {
+    const create = vi.fn(async () => {
       throw new InvalidCronExprError("bogus", "not a cron");
     });
-    const svc = stubService({ createTask });
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -337,10 +361,10 @@ describe("schedulesRoutes — create", () => {
   });
 
   it("POST /task with invalid timezone maps to 400 with typed code", async () => {
-    const createTask = vi.fn(async () => {
+    const create = vi.fn(async () => {
       throw new InvalidTimezoneError("Mars/Olympus");
     });
-    const svc = stubService({ createTask });
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -354,17 +378,17 @@ describe("schedulesRoutes — create", () => {
     expect((await res.json()).code).toBe("InvalidTimezoneError");
   });
 
-  it("POST /task maps schedule.AgentNotFoundError → 400 with typed code", async () => {
-    // schedule-package `AgentNotFoundError` (declared in
-    // `packages/schedule/src/errors.ts`) is caller-fixable input —
-    // the user pointed at a non-existent agent. Mirrors how the
-    // task-package class of the same name is mapped via
-    // `statusForError` in `_shared.ts`. Pre-PR this was 404; the
-    // brief calls this a user-visible behavior change.
-    const createTask = vi.fn(async () => {
+  it("POST /task maps task-pkg's AgentNotFoundError → 400 with typed code", async () => {
+    // Post-W3 the task kind handler throws task-pkg's
+    // AgentNotFoundError directly on catalog miss; the
+    // schedule-pkg's old `AgentNotFoundError` is gone. The
+    // schedules-error-policy table has a single row for this class
+    // covering both the create/patch validation path AND the
+    // /:sid/run dispatch path.
+    const create = vi.fn(async () => {
       throw new AgentNotFoundError("ghost-agent");
     });
-    const svc = stubService({ createTask });
+    const svc = stubService({ create });
     const res = await schedulesRoutes(() => svc).request("/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -416,15 +440,15 @@ describe("schedulesRoutes — get", () => {
 
 describe("schedulesRoutes — patch", () => {
   it("PATCH /task/:sid forwards the partial body", async () => {
-    const patchTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ patchTask });
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: false }),
     });
     expect(res.status).toBe(200);
-    expect(patchTask).toHaveBeenCalledWith("sched-abc", { enabled: false });
+    expect(patch).toHaveBeenCalledWith("sched-abc", { enabled: false, expectedKind: "task" });
   });
 
   it("PATCH /task/:sid with a non-JSON body returns 400", async () => {
@@ -437,14 +461,14 @@ describe("schedulesRoutes — patch", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/JSON/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid maps ScheduleNotFoundError → 404 with typed code", async () => {
-    const patchTask = vi.fn(async () => {
+    const patch = vi.fn(async () => {
       throw new ScheduleNotFoundError("x");
     });
-    const svc = stubService({ patchTask });
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/x", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -455,10 +479,10 @@ describe("schedulesRoutes — patch", () => {
   });
 
   it("PATCH /task/:sid maps ScheduleKindMismatchError → 404 with standard not-found envelope (no kind leak)", async () => {
-    const patchTask = vi.fn(async () => {
+    const patch = vi.fn(async () => {
       throw new ScheduleKindMismatchError("sched-abc", "task", "workflow");
     });
-    const svc = stubService({ patchTask });
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -474,10 +498,10 @@ describe("schedulesRoutes — patch", () => {
   });
 
   it("PATCH /task/:sid maps InvalidCronExprError → 400 with typed code", async () => {
-    const patchTask = vi.fn(async () => {
+    const patch = vi.fn(async () => {
       throw new InvalidCronExprError("bogus", "not a cron");
     });
-    const svc = stubService({ patchTask });
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -491,10 +515,10 @@ describe("schedulesRoutes — patch", () => {
     // Mirrors the POST counterpart — schedule-package
     // `AgentNotFoundError` is caller-fixable input (target.agent
     // doesn't exist in the catalog), so 400, not 404.
-    const patchTask = vi.fn(async () => {
+    const patch = vi.fn(async () => {
       throw new AgentNotFoundError("ghost-agent");
     });
-    const svc = stubService({ patchTask });
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -513,7 +537,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/kind/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects target: null", async () => {
@@ -525,7 +549,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/target/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects target.agent: null (required field; omit to keep)", async () => {
@@ -537,7 +561,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/agent/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects target.brief: null (required field; omit to keep)", async () => {
@@ -549,7 +573,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/brief/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects trigger: null", async () => {
@@ -561,7 +585,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/trigger/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects partial trigger (must be wholesale)", async () => {
@@ -573,7 +597,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/trigger/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects unknown nested target key", async () => {
@@ -585,7 +609,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/surprise|unknown key/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid rejects unknown top-level body key", async () => {
@@ -597,7 +621,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/extra|unknown key/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid with target.brief over 200 chars returns 400 (route-layer rejection)", async () => {
@@ -611,7 +635,7 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/200/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid with target.brief containing newline returns 400", async () => {
@@ -638,12 +662,12 @@ describe("schedulesRoutes — patch", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/details/);
-    expect(svc.patchTask).not.toHaveBeenCalled();
+    expect(svc.patch).not.toHaveBeenCalled();
   });
 
   it("PATCH /task/:sid with target.details empty string is forwarded (mirrors @emploke/task)", async () => {
-    const patchTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ patchTask });
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -652,15 +676,16 @@ describe("schedulesRoutes — patch", () => {
       }),
     });
     expect(res.status).toBe(200);
-    expect(patchTask).toHaveBeenCalledTimes(1);
-    expect(patchTask).toHaveBeenCalledWith("sched-abc", {
-      target: { agent: "writer", brief: "ok", details: "" },
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith("sched-abc", {
+      target: { patch: { agent: "writer", brief: "ok", details: "" } },
+      expectedKind: "task",
     });
   });
 
   it("PATCH /task/:sid with target.details: null forwards as null (RFC 7396 delete)", async () => {
-    const patchTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ patchTask });
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -669,14 +694,15 @@ describe("schedulesRoutes — patch", () => {
       }),
     });
     expect(res.status).toBe(200);
-    expect(patchTask).toHaveBeenCalledWith("sched-abc", {
-      target: { details: null },
+    expect(patch).toHaveBeenCalledWith("sched-abc", {
+      target: { patch: { details: null } },
+      expectedKind: "task",
     });
   });
 
   it("PATCH /task/:sid with target.runtime: null forwards as null (RFC 7396 delete)", async () => {
-    const patchTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ patchTask });
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -685,14 +711,15 @@ describe("schedulesRoutes — patch", () => {
       }),
     });
     expect(res.status).toBe(200);
-    expect(patchTask).toHaveBeenCalledWith("sched-abc", {
-      target: { runtime: null },
+    expect(patch).toHaveBeenCalledWith("sched-abc", {
+      target: { patch: { runtime: null } },
+      expectedKind: "task",
     });
   });
 
   it("PATCH /task/:sid with sparse target forwards only the named fields (deep-merge contract)", async () => {
-    const patchTask = vi.fn(async () => sampleSchedule);
-    const svc = stubService({ patchTask });
+    const patch = vi.fn(async () => sampleSchedule);
+    const svc = stubService({ patch });
     const res = await schedulesRoutes(() => svc).request("/task/sched-abc", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -701,30 +728,33 @@ describe("schedulesRoutes — patch", () => {
       }),
     });
     expect(res.status).toBe(200);
-    // Route does not synthesise sibling fields; the service deep-merges
-    // against the persisted entity.
-    expect(patchTask).toHaveBeenCalledWith("sched-abc", {
-      target: { brief: "renamed brief" },
+    // Route does not synthesise sibling fields; the kind handler's
+    // mergePatch deep-merges against the persisted entity. The
+    // route wraps the validated patch in `{ patch: ... }` per the
+    // PatchScheduleArgs.target contract.
+    expect(patch).toHaveBeenCalledWith("sched-abc", {
+      target: { patch: { brief: "renamed brief" } },
+      expectedKind: "task",
     });
   });
 });
 
 describe("schedulesRoutes — delete", () => {
-  it("DELETE /:sid returns { ok: true, deletedTaskCount: 0 } when nothing to cascade", async () => {
-    const del = vi.fn(async () => ({ deletedTaskCount: 0 }));
+  it("DELETE /:sid returns { ok: true, deletedDispatchCount: 0 } when nothing to cascade", async () => {
+    const del = vi.fn(async () => ({ deletedDispatchCount: 0 }));
     const svc = stubService({ delete: del });
     const res = await schedulesRoutes(() => svc).request("/sched-abc", { method: "DELETE" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, deletedTaskCount: 0 });
+    expect(await res.json()).toEqual({ ok: true, deletedDispatchCount: 0 });
     expect(del).toHaveBeenCalledWith("sched-abc");
   });
 
   it("DELETE /:sid surfaces the cascade count from the service", async () => {
-    const del = vi.fn(async () => ({ deletedTaskCount: 7 }));
+    const del = vi.fn(async () => ({ deletedDispatchCount: 7 }));
     const svc = stubService({ delete: del });
     const res = await schedulesRoutes(() => svc).request("/sched-abc", { method: "DELETE" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, deletedTaskCount: 7 });
+    expect(await res.json()).toEqual({ ok: true, deletedDispatchCount: 7 });
   });
 
   it("DELETE /:sid maps ScheduleEnabledError → 409", async () => {
@@ -749,12 +779,12 @@ describe("schedulesRoutes — delete", () => {
 });
 
 describe("schedulesRoutes — run", () => {
-  it("POST /:sid/run returns { taskId }", async () => {
-    const run = vi.fn(async () => ({ taskId: "task-fresh" }));
+  it("POST /:sid/run returns { dispatchId }", async () => {
+    const run = vi.fn(async () => ({ dispatchId: "task-fresh" }));
     const svc = stubService({ run });
     const res = await schedulesRoutes(() => svc).request("/sched-abc/run", { method: "POST" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ taskId: "task-fresh" });
+    expect(await res.json()).toEqual({ dispatchId: "task-fresh" });
     expect(run).toHaveBeenCalledWith("sched-abc");
   });
 
@@ -803,7 +833,7 @@ describe("schedulesRoutes — run", () => {
     // future refactor that confuses the two cannot silently regress
     // either mapping.
     const run = vi.fn(async () => {
-      throw new TaskAgentNotFoundError("ghost-agent");
+      throw new AgentNotFoundError("ghost-agent");
     });
     const svc = stubService({ run });
     const res = await schedulesRoutes(() => svc).request("/sched-abc/run", { method: "POST" });
