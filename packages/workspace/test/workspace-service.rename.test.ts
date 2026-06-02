@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorkspaceNameInvalidError, WorkspaceNotRegisteredError } from "../src/index.js";
 import {
@@ -8,18 +11,21 @@ import {
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 
+let scratch: string;
 let sys: WorkspaceTestSubsystem;
 
 beforeEach(async () => {
+  scratch = await mkdtemp(path.join(tmpdir(), "emploke-ws-rename-"));
   sys = await setupWorkspaceTestSubsystem();
 });
 
 afterEach(async () => {
   await teardownWorkspaceTestSubsystem(sys);
+  await rm(scratch, { recursive: true, force: true });
 });
 
 async function seed(name = "Old"): Promise<void> {
-  await sys.service.register({ id: UUID_A, workspaceDir: "/tmp/emploke-rename", name });
+  await sys.service.register({ id: UUID_A, workspaceDir: path.join(scratch, "p"), name });
 }
 
 describe("WorkspaceService.rename", () => {
