@@ -30,11 +30,10 @@
  * always typed an origin URI in the first place.
  *
  * Format validation (must start with `https://github.com/`,
- * `http://github.com/`, or `file:`) is delegated to the catalog-
- * fetcher's `parseOrigin` at fetch time — that's where the
- * authoritative scheme/format rules live (`packages/catalog-fetcher/
- * src/origin.ts`). The validator here only enforces the wire-level
- * shape: the field exists and is a non-empty string.
+ * `http://github.com/`, or `file:`) is delegated to `parseOrigin` in
+ * `src/fetcher/origin.ts`, which owns the authoritative scheme/format
+ * rules. The validator here only enforces the wire-level shape: the
+ * field exists and is a non-empty string.
  */
 
 import { AgentFrontmatterError } from "./agent/errors.js";

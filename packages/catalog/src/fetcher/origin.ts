@@ -1,7 +1,7 @@
 import { OriginParseError } from "./errors.js";
 
 /**
- * Parsed shape of a Phase-1 origin URI. Two schemes:
+ * Parsed shape of an origin URI. Two schemes are supported:
  *
  * - `github` — a GitHub browser URL of the form
  *   `https://github.com/<owner>/<repo>/tree/<ref>/<path?>` (path optional;
@@ -11,9 +11,6 @@ import { OriginParseError } from "./errors.js";
  * - `file` — a `file:<absolutePath>` URI pointing at a local directory. Used
  *   when installing from a local source dir; auto-injected by the local
  *   install routes when frontmatter omits `origin`.
- *
- * Phase 1 deliberately omits `npm:` and generic `git+ssh://` — they are
- * deferred to Phase 2 to keep this PR focused.
  */
 export type ParsedOrigin =
   | {
@@ -35,7 +32,7 @@ const GITHUB_TREE_RE =
   /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/tree\/([^/\s]+)(?:\/(.+))?\/?$/;
 
 /**
- * Parse a Phase-1 origin URI. Throws {@link OriginParseError} on any input
+ * Parse an origin URI. Throws {@link OriginParseError} on any input
  * that doesn't match a supported scheme. The caller is expected to have
  * already trimmed surrounding whitespace.
  *
@@ -117,7 +114,7 @@ export function parseOrigin(uri: string): ParsedOrigin {
 
   throw new OriginParseError(
     uri,
-    "unsupported scheme; Phase 1 supports only https://github.com/.../tree/<ref>/[path] and file:<path>",
+    "unsupported scheme; supported schemes are https://github.com/<owner>/<repo>/tree/<ref>[/path] and file:<absolutePath>",
   );
 }
 

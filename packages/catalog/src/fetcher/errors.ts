@@ -1,10 +1,9 @@
 /**
- * Error types thrown by `@emploke/catalog/fetcher`.
- *
- * These are deliberately defined here (not in `@emploke/catalog`) because
- * `catalog-fetcher` has zero `@emploke/catalog` dep — it is the lower
- * layer. `catalog` re-exports them from its own `index.ts` for the
- * benefit of consumers that already import from `@emploke/catalog`.
+ * Error types thrown by the `src/fetcher/` subdir. Re-exported from
+ * the package barrel (`src/index.ts`) so consumers don't reach across
+ * subdir boundaries to construct them. The fetcher subdir intentionally
+ * doesn't import from sibling subdirs — it's the catalog's bytes-on-disk
+ * layer, with no knowledge of frontmatter, scope, identity, or deps.
  */
 
 export class FetcherError extends Error {
@@ -17,7 +16,7 @@ export class FetcherError extends Error {
 /**
  * Origin URI failed to parse. Surfaces the raw URI plus the reason so the
  * dashboard / CLI can echo it back to the user without exposing internal
- * paths. Phase 1 schemes: `https://github.com/owner/repo/tree/ref/[path]`
+ * paths. Supported schemes: `https://github.com/<owner>/<repo>/tree/<ref>[/path]`
  * and `file:<absolutePath>`.
  */
 export class OriginParseError extends FetcherError {

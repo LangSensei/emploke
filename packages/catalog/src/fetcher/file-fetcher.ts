@@ -33,12 +33,11 @@ export class FileFetcher implements Fetcher {
     }
     let target: string;
     if (relPath === "") {
-      // Origin points at the file itself (mcp single-file case).
-      // Tolerate the legacy fixture shape `file:/abs/dir` where the
-      // directory contains a single <name>.json: we pick the
-      // alphabetically-first regular file in the directory. Mirrors
-      // the old "fetch the stream and take the first file" semantics
-      // that callers relied on for MCP origins.
+      // MCP-origin tolerance: when `relPath === ""` and `origin.path`
+      // is a directory rather than a single file, pick the
+      // alphabetically-first regular file inside. Lets `file:/abs/mcps/`
+      // origins resolve without requiring callers to spell the filename
+      // in the URI.
       let st: Awaited<ReturnType<typeof stat>>;
       try {
         st = await stat(origin.path);

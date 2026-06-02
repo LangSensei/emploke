@@ -51,7 +51,7 @@ ${deps}
 # Body
 `;
 
-let orm: ReturnType<typeof openTestCatalogDb>;
+let orm: ReturnType<typeof bootstrapCatalogDb>;
 let repo: SkillRepository;
 let fetcher: ReturnType<typeof makeFetcher>;
 let svc: SkillService;

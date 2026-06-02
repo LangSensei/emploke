@@ -137,8 +137,8 @@ export async function buildUpstreamClosure(
   const inStack = new Set<string>();
   const visited = new Set<string>();
 
-  // v2: building local-source closure entries requires translating
-  // fqn-form dep entries back to origins. Preload once for cheap
+  // Translating fqn-form dep entries back to origins for the
+  // local-source closure entries built below. Preload once for cheap
   // O(1) lookup in the install-mode optimization branches.
   let cachedMaps: {
     skillOriginByFqn: Map<string, string>;
@@ -304,9 +304,9 @@ export async function buildLocalClosure(
   const skillByOrigin = new Map(skills.map((s) => [s.origin, s] as const));
   const agentByOrigin = new Map(agents.map((a) => [a.origin, a] as const));
   const mcpByOrigin = new Map(mcps.map((m) => [m.origin, m] as const));
-  // v2: deps are fqn-form on the entity. Build fqn → origin lookups
-  // so we can translate dep fqns back to origins (the closure is
-  // keyed by origin).
+  // Deps are fqn-form on the entity. Build fqn → origin lookups so we
+  // can translate dep fqns back to origins (the closure is keyed by
+  // origin).
   const skillOriginByFqn = new Map(skills.map((s) => [s.fqn, s.origin] as const));
   const mcpOriginByFqn = new Map(mcps.map((m) => [m.fqn, m.origin] as const));
 
@@ -531,13 +531,12 @@ function nodesAreUpToDate(a: ClosureNode, b: ClosureNode): boolean {
   if (a.kind !== b.kind) return false;
   if (a.node.fqn !== b.node.fqn) return false;
   if (a.kind === "mcp" && b.kind === "mcp") {
-    // MCPs don't have a `version` field — author contract for "did
-    // anything change" is the file content itself. We strip `_meta`
-    // before hashing because emploke stamps `_meta.name` on every
-    // install (and registry tooling may add other sub-objects);
-    // those install-time additions would otherwise show as
-    // spurious diffs against pristine upstream bytes. Same algo
-    // the previous walkMcp used.
+    // MCPs don't have a `version` field — the author contract for
+    // "did anything change" is the file content itself. We strip
+    // `_meta` before hashing because emploke stamps `_meta.name` on
+    // every install (and registry tooling may add other sub-objects);
+    // those install-time additions would otherwise show as spurious
+    // diffs against pristine upstream bytes.
     const localDigest = McpFormat.contentDigestExcludingMeta(a.node.content, `local:${a.node.fqn}`);
     const upstreamDigest = McpFormat.contentDigestExcludingMeta(
       b.node.content,

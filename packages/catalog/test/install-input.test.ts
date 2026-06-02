@@ -111,7 +111,7 @@ describe("validateMcpInstallInput", () => {
     expect(out.origin).toBe("file:/abs/azure.json");
     // McpInstallBody no longer carries `name` — it's recovered from
     // the fetched JSON's _meta.name at install time.
-    expect((out as Record<string, unknown>).name).toBeUndefined();
+    expect((out as unknown as Record<string, unknown>).name).toBeUndefined();
   });
 
   it("ignores any caller-supplied name (no longer part of contract)", () => {

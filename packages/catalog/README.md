@@ -12,24 +12,26 @@ What this package **does**:
 - Read `AGENTS.md` / `SKILL.md` frontmatter and project six fields:
   required `name` / `description` / `version`, optional `scope`
   (defaults to `public`), optional `prereqs`, optional
-  `dependencies.{skills,mcps}`. Other frontmatter fields
-  (`license`, ) are preserved on disk but **not interpreted**.
-- Track the names of MCP server JSON files (`mcps/<name>.json`). The
-  contents of those files are **never read** by emploke beyond
-  recording metadata.
+  `dependencies.{skills,mcps}`. Other frontmatter fields (such as
+  `license`) are preserved on disk but **not interpreted**.
+- Track MCP server specs (`<namespace>/<short>` FQN, e.g. `azure/mcp`).
+  The JSON spec body is stored verbatim in `workspace.db` as a BLOB
+  and is never parsed beyond extracting `_meta.name` at install time.
 - Resolve transitive dependency closures (topological sort) for any
   skill or agent.
 - Validate graph rules on writes: name uniqueness, kebab-case,
   missing-dependency, no cycles, reverse-dependency safety on
-  uninstall (via in-repo `count()` checks, since FK constraints were
-  dropped along with the previous per-pkg migration framework  the
-  service throws a synthetic `HasDependentsError` instead).
+  uninstall. The catalog schema has no FK constraints, so each
+  `*Repository.delete` runs an in-transaction `count()` check over
+  the typed dep edge tables; on a non-zero count it throws an error
+  the facade's `deleteSkill` / `deleteMcp` translates into
+  `HasDependentsError` for callers.
 
 What this package **does not** do:
 
 - Interpret business fields (`prereqs`, semantic version checks,
-  signature verification, ). That belongs in install tools layered
-  on top.
+  signature verification, etc.). That belongs in install tools
+  layered on top.
 - Read or interpret MCP JSON contents. Substrates parse the file
   when they spawn the server.
 - Execute, copy or "ingest" skills into agents. That is a substrate /
@@ -52,7 +54,7 @@ packages/catalog/src/
   facade/                  Cross-entity CatalogService + DTOs
   fetcher/                 Origin parser + remote bytes fetcher
   migrations.ts            applyCatalogMigrations (drizzle migration applier)
-  compose.ts               composeCatalogModule({ dbFile|db, fetcher? })
+  compose.ts               composeCatalogModule({ dbFile, logger? })
   testing.ts               openTestCatalogDb helper (via /testing subpath)
   index.ts                 public barrel
 drizzle/                   generated SQL migrations (committed)
@@ -111,8 +113,9 @@ await close();
 - `*NotFoundError`  unknown FQN
 - `*OriginConflictError`  install collision
 - `CyclicDependencyError`  `resolveAgent` walk found a cycle
-- `HasDependentsError`  uninstall blocked by reverse-deps (the FK
-  substitute mentioned above)
+- `HasDependentsError`  uninstall blocked by reverse-deps (raised by
+  `CatalogService.deleteSkill` / `.deleteMcp` after the repository's
+  in-transaction `count()` check finds dependents)
 - `McpInvalidJsonError`  MCP file failed JSON schema check
 - `FetchError` / `OriginParseError`  fetcher subpackage errors
 

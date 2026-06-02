@@ -139,9 +139,10 @@ export function writeMeta(content: string, meta: McpMeta, sourceLabel: string): 
 }
 
 /**
- * Strip the entire `_meta` key from MCP file bytes. Used by the
- * runtime when materializing `.mcp.json` for Copilot CLI — Copilot
- * never sees emploke's metadata.
+ * Strip the entire `_meta` key from MCP file bytes. Used by runtime
+ * adapters when materializing the MCP client-config file (typically
+ * `.mcp.json`) for a downstream MCP host; the downstream host should
+ * never see emploke's `_meta` block.
  *
  * Returns the stripped object as a plain JS value (caller decides
  * whether to re-stringify). Throws {@link McpInvalidJsonError} if the

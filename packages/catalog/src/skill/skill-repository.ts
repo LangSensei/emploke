@@ -31,7 +31,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * Dep dedupe, blob coercion, and dep-rows aggregation are inlined per
  * kind (see {@link toBuf}, the `add`'s skipSelf-dedupe loop, and
  * {@link loadAllDeps}) — no shared helper module. Agent mirrors the
- * same shape by intent. See skill-entity.ts header for the principle.
+ * same shape by intent.
  */
 export class SkillRepository {
   private readonly db: Db;

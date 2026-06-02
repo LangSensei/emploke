@@ -1,15 +1,10 @@
 /**
- * Parametric dep keys. The ONE concession to capability-trait style
- * (Judge C) carried into the B+ design — eliminates the
- * `{skills, mcps}` hardcoded discriminator union that bit hardest in
- * the abstract-base design.
- *
- * Each anchored kind declares its own dep-spec set (e.g. agents:
- * `["skills", "mcps"]`; a hypothetical future agent-only `tools`
- * declares `["skills", "mcps", "tools"]` without rippling through
- * skill's DTO/projection/repo/service). Helpers in `_shared/` operate
- * generically over `<K extends string>` and never name the kinds
- * themselves.
+ * Parametric dep keys. Each anchored kind (agent, skill, future kinds)
+ * declares its own dep-spec set as a const array (e.g. agents:
+ * `["skills", "mcps"]`). Helpers in this file operate generically over
+ * `<K extends string>` and never name a specific dep-kind, so adding a
+ * new kind never requires changes here — only a new spec declaration
+ * in the per-kind frontmatter module.
  */
 
 /** A resolved fqn-form dep reference. */

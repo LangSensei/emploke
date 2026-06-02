@@ -29,14 +29,12 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
  * The skill mirror in `skill/skill-frontmatter.ts` is byte-equivalent
  * to this codec apart from the error class, anchor filename, and the
  * SKILL_DEP_SPECS `skipSelf: true` on the `skills` bucket. Maintainers
- * MUST NOT extract a shared factory — see agent-entity.ts header.
+ * MUST NOT extract a shared factory.
  *
- * Behavior change (F2-1, disclosed in PR body and still in effect):
- * the legacy `{ origin: "…" }` object form for `dependencies.<kind>[*]`
- * is no longer accepted. Only string items are valid, matching the
- * skill-side schema. No first-party or marketplace agent uses the
- * object form; third-party authors that do will receive a clear
- * AgentFrontmatterError on first install attempt.
+ * `dependencies.<kind>[*]` items must be bare origin URI strings.
+ * Object forms like `{ origin: "..." }` are rejected with
+ * AgentFrontmatterError at parse time. (Same rule as the skill schema —
+ * both kinds share the wire shape.)
  */
 
 export type AgentDepKind = "skills" | "mcps";

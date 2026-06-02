@@ -32,7 +32,7 @@ type Db = BetterSQLite3Database<typeof schema>;
  * Dep dedupe, blob coercion, and dep-rows aggregation are inlined per
  * kind (see {@link toBuf}, the `add`'s skipSelf-dedupe loop, and
  * {@link loadAllDeps}) — no shared helper module. Skill mirrors the
- * same shape by intent. See agent-entity.ts header for the principle.
+ * same shape by intent.
  */
 export class AgentRepository {
   private readonly db: Db;
@@ -88,9 +88,9 @@ export class AgentRepository {
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
       // Per-kind dedupe + skipSelf-apply, fanned out to the typed
       // dep tables. The `skipSelf` branch is dead for agent today
-      // (no AGENT_DEP_SPEC sets `skipSelf`), but it's kept here to
-      // preserve behavioural equivalence with the deleted shared
-      // helper and to future-proof against agents gaining the flag.
+      // (no AGENT_DEP_SPEC sets `skipSelf`), but kept so agents
+      // gaining a self-edge-bearing dep-kind in the future can opt
+      // in by flipping spec.skipSelf — no surgery here.
       for (const spec of AGENT_DEP_SPECS) {
         const list = (spec.kind === "skills" ? deps.skills : deps.mcps) ?? [];
         const seen = new Set<string>();
@@ -145,8 +145,9 @@ export class AgentRepository {
     // agent (agents are top-of-graph). Compare with
     // `SkillRepository.delete` / `McpRepository.delete` which guard
     // against dependent skills / mcps via in-repo `count()` checks
-    // (FK substitute for the constraints we dropped). For agents
-    // there's no FK-substitute guard to apply.
+    // (the count-then-throw pattern that stands in for missing FK
+    // constraints in those tables). For agents there is no analogous
+    // guard to apply.
     this.db.transaction((tx) => {
       tx.delete(agentFiles).where(eq(agentFiles.agentFqn, fqn)).run();
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, fqn)).run();

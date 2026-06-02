@@ -19,7 +19,7 @@ import { bootstrapCatalogDb } from "../helpers/bootstrap.js";
  * Tests for the sync flow: identity check, version short-circuit, dep
  * diff (orphan detection), and orphan auto-clear on subsequent install.
  *
- * Uses the same fake-fetcher pattern as `catalog-manager.test.ts` but
+ * Uses the same fake-fetcher pattern as `catalog-service.test.ts` but
  * spelled out locally so each test can mutate fixture content in-flight
  * (sync's whole point is "what changed upstream") without polluting
  * the broader test fixture.
@@ -130,7 +130,7 @@ ${extra}
 
 const MCP_BODY = `{ "command": "node", "args": ["server.js"] }`;
 
-let orm: ReturnType<typeof openTestCatalogDb>;
+let orm: ReturnType<typeof bootstrapCatalogDb>;
 let mcpRepo: McpRepository;
 let skillRepo: SkillRepository;
 let agentRepo: AgentRepository;

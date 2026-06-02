@@ -14,7 +14,7 @@ describe("SkillEntity.create", () => {
   it("returns an entity with derived FQN and exposed metadata", () => {
     const s = SkillEntity.create(MIN_VALID, "file:/abs/skills/tool-use", "test");
     expect(s.fqn).toBe("public/tool-use");
-    expect(s.scope).toBe("public"); // derived from fqn (catalog v2)
+    expect(s.scope).toBe("public"); // derived from fqn
     expect(s.shortName).toBe("tool-use");
     expect(s.origin).toBe("file:/abs/skills/tool-use");
     expect(s.description).toBe("Helpful patterns");
@@ -108,7 +108,7 @@ describe("SkillEntity.withAnchor", () => {
 });
 
 describe("SkillEntity.toJSON", () => {
-  it("emits the v2 wire shape (no scope/shortName/anchorContent, with timestamps)", () => {
+  it("emits the wire shape (no scope/shortName/anchorContent, with timestamps)", () => {
     const s = SkillEntity.create(MIN_VALID, "file:/abs/x", "test");
     const json = s.toJSON();
     expect(json).toHaveProperty("fqn");
