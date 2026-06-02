@@ -93,7 +93,19 @@ WorkspaceError
 ├── WorkspaceIdConflictError       409 — register({id}) collision
 ├── WorkspacePathConflictError     409 — workspaceDir already registered
 └── RegistryError                  500 — registry-level failure (base)
+
+// Separate hierarchy — extends Error directly, NOT WorkspaceError:
+InputValidationError               400 — register() input failed zod shape check
+                                         (only register validates shape today;
+                                          open/rename/unregister go through the
+                                          assertValid* helpers and throw the
+                                          typed WorkspaceError subclasses above)
 ```
+
+A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
+`InputValidationError`; catch it separately (or by `Error`) if you
+need to surface zod shape failures distinctly from typed domain
+errors.
 
 `list()` returns workspaces ordered by `lastOpenedAt DESC`. `getById(id)`
 returns `null` for unknown ids AND malformed ids alike — reads do not

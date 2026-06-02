@@ -18,8 +18,7 @@
   "files": [
     "dist",
     "drizzle",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
