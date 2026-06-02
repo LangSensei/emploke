@@ -90,12 +90,13 @@ export interface UpstreamClosureOptions {
   /**
    * "install" mode: when traversing a dep, if the dep is already
    * installed locally we record its local node and DO NOT fetch
-   * upstream — preserves the legacy install-flow optimization
-   * (avoids per-shared-dep network round-trips).
+   * upstream — install mode's per-shared-dep network round-trip
+   * optimization.
    *
    * "sync" mode: always fetch upstream for every node in the
-   * closure, even if locally installed. Required so phase 3 can
-   * compare versions and detect dep churn.
+   * closure, even if locally installed. "sync" opts out of the
+   * optimization so phase 3 can compare versions and detect dep
+   * churn.
    */
   readonly mode: "install" | "sync";
 }

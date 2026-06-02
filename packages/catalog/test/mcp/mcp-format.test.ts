@@ -35,10 +35,10 @@ describe("McpFormat.parse", () => {
   });
 
   it("ignores _meta.origin when present (origin lives on the entity, not in the file)", () => {
-    // Legacy installs and third-party tooling may bake `_meta.origin`
-    // into the file; parse must accept it without error and must NOT
-    // surface it on the typed meta view (callers should treat origin
-    // as an install-time fact, not a declared field).
+    // Files in the wild may bake `_meta.origin` into the JSON;
+    // parse must accept it without error and must NOT surface it
+    // on the typed meta view (callers should treat origin as an
+    // install-time fact, not a declared field).
     const content = JSON.stringify({ _meta: { name: "x/y", origin: "file:/abs/x" } });
     const { meta, body } = McpFormat.parse(content, LABEL);
     expect(meta).toEqual({ name: "x/y" });

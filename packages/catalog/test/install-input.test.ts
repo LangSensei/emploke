@@ -105,7 +105,7 @@ describe("validateMcpInstallInput", () => {
       origin: "file:/abs/azure.json",
     });
     expect(out.origin).toBe("file:/abs/azure.json");
-    // McpInstallBody no longer carries `name` — it's recovered from
+    // McpInstallBody has only `origin` — `name` is recovered from
     // the fetched JSON's _meta.name at install time.
     expect((out as unknown as Record<string, unknown>).name).toBeUndefined();
   });
