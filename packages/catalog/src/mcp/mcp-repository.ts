@@ -1,6 +1,7 @@
-import { count, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
+import { HasDependentsError } from "../_shared/dependents-error.js";
 import type * as schema from "../schema.js";
 import { agentMcpDeps, mcps, skillMcpDeps } from "../schema.js";
 import { McpEntity } from "./mcp-entity.js";
@@ -58,28 +59,31 @@ export class McpRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    // Race-free: count + delete in one transaction so a concurrent
-    // `installSkill` that adds a new dep on this mcp can't slip
-    // between our count check and the row removal (the synthetic
-    // SQLITE_CONSTRAINT_FOREIGNKEY we throw is the count-then-throw
-    // pattern that stands in for missing FK constraints in these
-    // tables, exactly as `SkillRepository.delete` /
-    // `AgentRepository.delete` do). Throwing inside the transaction
-    // callback rolls back the empty delete and the synthetic error
-    // propagates.
+    // Race-free: collect dependents + delete in one transaction so a
+    // concurrent `installSkill` / `installAgent` that adds a new dep
+    // on this mcp can't slip between our check and the row removal.
+    // Stands in for missing FK constraints in these tables — same
+    // pattern as `SkillRepository.delete` / `AgentRepository.delete`.
+    // Throwing inside the transaction callback rolls back the empty
+    // delete and propagates `HasDependentsError` to the caller.
     this.db.transaction((tx) => {
-      const skillDepCount =
-        tx.select({ c: count() }).from(skillMcpDeps).where(eq(skillMcpDeps.targetFqn, fqn)).get()
-          ?.c ?? 0;
-      const agentDepCount =
-        tx.select({ c: count() }).from(agentMcpDeps).where(eq(agentMcpDeps.targetFqn, fqn)).get()
-          ?.c ?? 0;
-      if (skillDepCount + agentDepCount > 0) {
-        const e = new Error(
-          `FOREIGN KEY constraint failed: ${skillDepCount + agentDepCount} dependent(s) reference ${fqn}`,
-        );
-        (e as Error & { code: string }).code = "SQLITE_CONSTRAINT_FOREIGNKEY";
-        throw e;
+      const skillDeps = tx
+        .select({ sourceFqn: skillMcpDeps.sourceFqn })
+        .from(skillMcpDeps)
+        .where(eq(skillMcpDeps.targetFqn, fqn))
+        .orderBy(skillMcpDeps.sourceFqn)
+        .all();
+      const agentDeps = tx
+        .select({ sourceFqn: agentMcpDeps.sourceFqn })
+        .from(agentMcpDeps)
+        .where(eq(agentMcpDeps.targetFqn, fqn))
+        .orderBy(agentMcpDeps.sourceFqn)
+        .all();
+      if (skillDeps.length + agentDeps.length > 0) {
+        throw new HasDependentsError(fqn, [
+          ...skillDeps.map((r) => ({ kind: "skill" as const, name: r.sourceFqn })),
+          ...agentDeps.map((r) => ({ kind: "agent" as const, name: r.sourceFqn })),
+        ]);
       }
       tx.delete(mcps).where(eq(mcps.fqn, fqn)).run();
     });

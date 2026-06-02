@@ -126,8 +126,9 @@ export async function tryGhAuthToken(host: string): Promise<string | null> {
       // else printed to stdout (extension wrapper, login banner, …).
       // Either way it's an unexpected condition the user almost certainly
       // wants to know about — emit a one-shot Node warning so it surfaces
-      // in CI logs and process.on("warning") handlers without forcing
-      // catalog-fetcher to depend on a logger.
+      // in CI logs and process.on("warning") handlers without forcing the
+      // fetcher subdir to depend on a logger (it's the lowest layer of the
+      // package and is reachable before any caller has constructed one).
       process.emitWarning(
         `gh auth token --hostname ${normalisedHost} returned data that does not look like a GitHub token; ` +
           "treating as no token and falling back to anonymous request",

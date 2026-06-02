@@ -32,6 +32,22 @@ const GITHUB_TREE_RE =
   /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/tree\/([^/\s]+)(?:\/(.+))?\/?$/;
 
 /**
+ * Cross-platform absolute-path detection. Accepts:
+ *  - POSIX:    `/usr/local/...`
+ *  - Windows:  `C:/...`, `C:\...`, `\\server\share\...`
+ *
+ * Rejects: `./foo`, `../foo`, bare `foo`, `~/foo`.
+ */
+function isAbsolutePath(p: string): boolean {
+  if (p.length === 0) return false;
+  if (p.startsWith("/")) return true;
+  if (p.startsWith("\\\\")) return true; // Windows UNC
+  // Windows drive: `C:/...` or `C:\...`. Case-insensitive single letter.
+  if (p.length >= 3 && /^[a-zA-Z]:[\\/]/.test(p)) return true;
+  return false;
+}
+
+/**
  * Parse an origin URI. Throws {@link OriginParseError} on any input
  * that doesn't match a supported scheme. The caller is expected to have
  * already trimmed surrounding whitespace.
@@ -48,22 +64,6 @@ const GITHUB_TREE_RE =
  * avoids a network round-trip to discover the default branch and forces the
  * user to commit to a specific ref so installs are reproducible.
  */
-/**
- * Cross-platform absolute-path detection. Accepts:
- *  - POSIX:    `/usr/local/...`
- *  - Windows:  `C:/...`, `C:\...`, `\\server\share\...`
- *
- * Rejects: `./foo`, `../foo`, bare `foo`, `~/foo`.
- */
-function isAbsolutePath(p: string): boolean {
-  if (p.length === 0) return false;
-  if (p.startsWith("/")) return true;
-  if (p.startsWith("\\\\")) return true; // Windows UNC
-  // Windows drive: `C:/...` or `C:\...`. Case-insensitive single letter.
-  if (p.length >= 3 && /^[a-zA-Z]:[\\/]/.test(p)) return true;
-  return false;
-}
-
 export function parseOrigin(uri: string): ParsedOrigin {
   if (typeof uri !== "string" || uri.length === 0) {
     throw new OriginParseError(String(uri), "must be a non-empty string");

@@ -45,7 +45,7 @@ export {
   type McpResolvedNode,
   type OrphanedEntry,
 } from "./facade/index.js";
-// ─── catalog-fetcher re-exports ─────────────────────
+// ─── Fetcher re-exports ─────────────────────────────
 export {
   FetchError,
   type FetcherRegistry,

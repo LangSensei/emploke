@@ -197,10 +197,3 @@ export function buildAgentEntry(a: AgentEntity, ctx: CascadeContext): AgentEntry
   }
   return out;
 }
-
-export function isForeignKeyError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: unknown }).code;
-  if (typeof code === "string" && code.includes("FOREIGNKEY")) return true;
-  return /FOREIGN\s*KEY/i.test(err.message);
-}

@@ -9,7 +9,6 @@ import type {
   McpResolvedNode,
 } from "../../src/facade/plan-types.js";
 import type { EntryFile } from "../../src/fetcher/index.js";
-import { McpEntity } from "../../src/mcp/mcp-entity.js";
 import * as McpFormat from "../../src/mcp/mcp-format.js";
 import { McpRepository } from "../../src/mcp/mcp-repository.js";
 import { McpService } from "../../src/mcp/mcp-service.js";
@@ -589,5 +588,3 @@ describe("CatalogService plan token cache", () => {
     expect(mgr.takePlan(token2)).toBe(plan);
   });
 });
-
-void McpEntity; // satisfy unused-import check; we reference it elsewhere via type

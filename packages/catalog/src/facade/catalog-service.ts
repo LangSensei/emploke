@@ -30,7 +30,6 @@ import type {
   SkillMetadataPatch,
   SkillResolveResult,
 } from "../types.js";
-import { HasDependentsError } from "./errors.js";
 import type {
   CatalogInstalledEntry,
   CatalogInstallFailure,
@@ -44,7 +43,6 @@ import type {
 import {
   buildAgentEntry,
   buildSkillEntry,
-  isForeignKeyError,
   newCascadeContext,
   projectAgentPojo,
   projectMcpMetadata,
@@ -299,27 +297,11 @@ export class CatalogService {
   }
 
   async deleteSkill(fqn: string): Promise<void> {
-    try {
-      await this.rt.skill.delete(fqn);
-    } catch (err) {
-      if (isForeignKeyError(err)) {
-        const dependents = await this.findSkillDependents(fqn);
-        throw new HasDependentsError(fqn, dependents);
-      }
-      throw err;
-    }
+    await this.rt.skill.delete(fqn);
   }
 
   async deleteMcp(fqn: string): Promise<void> {
-    try {
-      await this.rt.mcp.delete(fqn);
-    } catch (err) {
-      if (isForeignKeyError(err)) {
-        const dependents = await this.findMcpDependents(fqn);
-        throw new HasDependentsError(fqn, dependents);
-      }
-      throw err;
-    }
+    await this.rt.mcp.delete(fqn);
   }
 
   // ─── Resolve (cross-entity walk, no writes) ──────────
