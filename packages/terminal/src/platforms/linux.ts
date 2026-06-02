@@ -3,12 +3,36 @@ import { NoTerminalFoundError } from "../errors.js";
 import type { LaunchCommand, Launcher, SpawnTerminalDeps, SpawnTerminalResult } from "../types.js";
 
 /**
+ * The subset of `Launcher` that names a Linux terminal emulator. Used to
+ * make `LINUX_CANDIDATES` and `buildLinuxArgs` precise enough that
+ * TypeScript can verify the per-terminal switches are exhaustive — any
+ * future entry added to `LINUX_CANDIDATES` must also gain a switch arm
+ * or the build will fail rather than silently fall through to a
+ * cwd-dropping fallback.
+ */
+type LinuxLauncher = Extract<
+  Launcher,
+  | "gnome-terminal"
+  | "kgx"
+  | "konsole"
+  | "xfce4-terminal"
+  | "mate-terminal"
+  | "tilix"
+  | "wezterm"
+  | "alacritty"
+  | "kitty"
+  | "lxterminal"
+  | "xterm"
+  | "x-terminal-emulator"
+>;
+
+/**
  * Linux terminal candidates in order of preference. `x-terminal-emulator` is
  * intentionally last because on Debian/Ubuntu it points to whatever the user
  * picked (xterm, lxterminal, etc.) and has no portable arg convention; we
  * only fall back to it with a generic shell wrapper.
  */
-const LINUX_CANDIDATES: Launcher[] = [
+const LINUX_CANDIDATES: LinuxLauncher[] = [
   "gnome-terminal",
   "kgx",
   "konsole",
@@ -56,11 +80,11 @@ export async function spawnLinux(
  * that reliably sets env at the moment the actual command exec's.
  * See `shExportPrefix` for the rationale.
  */
-function buildLinuxArgs(term: Launcher, cmd: LaunchCommand): string[] {
+function buildLinuxArgs(term: LinuxLauncher, cmd: LaunchCommand): string[] {
   const argv = [cmd.cmd, ...cmd.args];
   // Single canonical shell line used by every "fallback to sh -lc"
   // branch below AND by the env-set route. The export prefix is empty
-  // when env is unset, so the line stays equivalent to the historical
+  // when env is unset, so the line collapses to a plain
   // `cd <cwd> && exec <argv>`.
   const shellLine = `${shExportPrefix(cmd.env)}cd ${shQuote(cmd.cwd)} && exec ${argv.map(shQuote).join(" ")}`;
 
@@ -92,8 +116,6 @@ function buildLinuxArgs(term: Launcher, cmd: LaunchCommand): string[] {
       case "xterm":
       case "x-terminal-emulator":
         return ["-e", "sh", "-lc", shellLine];
-      default:
-        return ["-e", "sh", "-lc", shellLine];
     }
   }
 
@@ -120,7 +142,5 @@ function buildLinuxArgs(term: Launcher, cmd: LaunchCommand): string[] {
       // Conservative: use sh -lc so the command runs in the requested cwd
       // regardless of which terminal x-terminal-emulator points to.
       return ["-e", "sh", "-lc", shellLine];
-    default:
-      return ["-e", ...argv];
   }
 }

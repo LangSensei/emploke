@@ -73,7 +73,15 @@ export interface SpawnTerminalResult {
 }
 
 export interface SpawnHandle {
-  /** Resolves on early failure (process emits "error" or non-zero exit). */
+  /**
+   * Resolves to `{ reason }` if the child emits `error` (e.g. ENOENT)
+   * or exits with a non-zero code before the caller's observation
+   * window elapses. In the happy path the promise stays pending —
+   * the caller is expected to race it against an observation timer
+   * (see `waitForEarlyFailure`). The `null` arm of the union exists
+   * so that the post-race result can share this type; no producer in
+   * this package resolves the promise with `null` directly.
+   */
   earlyFailure: Promise<{ reason: string } | null>;
 }
 
