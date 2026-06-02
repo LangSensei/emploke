@@ -53,7 +53,7 @@
  *     this ordering prevents).
  */
 
-import type { TaskTargetData, TaskTargetPatch } from "@emploke/api-types";
+import type { ScheduleWire, TaskTargetData, TaskTargetPatch } from "@emploke/api-types";
 import {
   describeCron,
   type Schedule,
@@ -256,7 +256,7 @@ function validateTrigger(raw: unknown): ValidationResult<ScheduleTrigger> {
  * brand-new kind still appears on the wire (just without the flat
  * projection) until the route gets explicit support.
  */
-function projectScheduleToWire(s: Schedule): Schedule {
+function projectScheduleToWire(s: Schedule): ScheduleWire {
   if (s.target.kind === "task") {
     const data = s.target.data as TaskTargetData;
     return {
@@ -267,7 +267,7 @@ function projectScheduleToWire(s: Schedule): Schedule {
         brief: data.brief,
         ...(data.details !== undefined ? { details: data.details } : {}),
         ...(data.runtime !== undefined ? { runtime: data.runtime } : {}),
-      } as unknown as Schedule["target"],
+      },
     };
   }
   return s;

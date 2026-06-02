@@ -134,6 +134,10 @@ packages/schedule/
   would let the column disagree with the JSON, and would force every
   read to pay for a redundant parse).
 
+Legacy rows containing a redundant `kind` key inside `target_json`
+(written by code that pre-dates `1ef5335`) are read transparently and
+the key is silently dropped on the first patch — no migration needed.
+
 **Indexes.** `schedules_target_agent_idx` is a **functional partial
 index** on `json_extract(target_json, '$.agent')` filtered
 `WHERE target_kind = 'task'`. It's task-kind-specific (the task

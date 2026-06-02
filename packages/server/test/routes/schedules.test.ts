@@ -511,10 +511,13 @@ describe("schedulesRoutes — patch", () => {
     expect((await res.json()).code).toBe("InvalidCronExprError");
   });
 
-  it("PATCH /task/:sid maps schedule.AgentNotFoundError → 400 with typed code", async () => {
-    // Mirrors the POST counterpart — schedule-package
-    // `AgentNotFoundError` is caller-fixable input (target.agent
-    // doesn't exist in the catalog), so 400, not 404.
+  it("PATCH /task/:sid maps task.AgentNotFoundError → 400 with typed code", async () => {
+    // Mirrors the POST counterpart — task-package
+    // `AgentNotFoundError` is caller-fixable input (the FQN points
+    // at an agent that's not in the catalog), so 400, not 404. The
+    // schedule pkg's own `AgentNotFoundError` was deleted in
+    // PR #257; the task handler now imports and re-throws task's
+    // class.
     const patch = vi.fn(async () => {
       throw new AgentNotFoundError("ghost-agent");
     });
@@ -828,10 +831,12 @@ describe("schedulesRoutes — run", () => {
   });
 
   it("POST /:sid/run on task.AgentNotFoundError → 400 with typed code", async () => {
-    // Distinct class from `@emploke/schedule`'s `AgentNotFoundError`
-    // (same `name`, different `instanceof`). Pinned separately so a
-    // future refactor that confuses the two cannot silently regress
-    // either mapping.
+    // Task's `AgentNotFoundError` is its own class (lives in
+    // `@emploke/task`); catalog's `CatalogAgentNotFoundError` is a
+    // separate class. The schedule pkg no longer has its own
+    // `AgentNotFoundError` post-#257. Pinned separately from the
+    // catalog mapping so a future refactor that confuses the two
+    // cannot silently regress either mapping.
     const run = vi.fn(async () => {
       throw new AgentNotFoundError("ghost-agent");
     });

@@ -340,6 +340,19 @@ export class ScheduleService {
    *
    * Idempotent: repeated calls after the first return immediately
    * (the registry stays frozen; no double-arming).
+   *
+   * **On preflight failure, the registry remains frozen.** The only
+   * correct recovery path is to dispose this service via
+   * `composeScheduleModule().close()` and rebuild. Calling
+   * `registerKind()` after a failed `recover()` will throw
+   * `ScheduleKindRegistryFrozenError`; calling `recover()` again
+   * will return immediately without re-running preflight. Freeze-
+   * before-preflight prevents registry mutation while recovery is
+   * verifying persisted rows and arming timers — callers must
+   * complete all `registerKind()` calls BEFORE `recover()` starts.
+   * Canonical wiring at `packages/core/src/workspace-context.ts:309-313`
+   * handles this correctly by running `teardown()` on any error and
+   * rebuilding from scratch.
    */
   async recover(): Promise<void> {
     if (this.registryFrozen) return;
