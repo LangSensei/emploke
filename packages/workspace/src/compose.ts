@@ -8,11 +8,6 @@ import { WorkspaceService } from "./workspace-service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
-/**
- * Open a better-sqlite3 connection in WAL mode, run pending migrations,
- * and wire up `WorkspaceService`. Tests pass `dbFile: ":memory:"`;
- * production passes the absolute path to `global.db`.
- */
 export interface WorkspaceModuleOptions {
   readonly dbFile: string;
   readonly logger?: Logger;
@@ -24,6 +19,11 @@ export interface WorkspaceModule {
   close(): Promise<void>;
 }
 
+/**
+ * Open a better-sqlite3 connection in WAL mode, run pending migrations,
+ * and wire up `WorkspaceService`. Tests pass `dbFile: ":memory:"`;
+ * production passes the absolute path to `global.db`.
+ */
 export async function composeWorkspaceModule(
   options: WorkspaceModuleOptions,
 ): Promise<WorkspaceModule> {
