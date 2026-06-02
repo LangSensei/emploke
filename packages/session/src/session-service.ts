@@ -26,6 +26,8 @@ import type {
   ListSessionOpts,
   Session,
   SessionServiceConfig,
+  SpawnFn,
+  SpawnSessionResult,
 } from "./types.js";
 import { assertValidSessionId, generateSessionId } from "./validate.js";
 
@@ -58,6 +60,7 @@ export class SessionService {
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomBytes: (n: number) => Buffer;
+  private readonly spawnFn: SpawnFn | undefined;
 
   constructor(config: SessionServiceConfig) {
     this.agentResolver = config.agentResolver;
@@ -70,6 +73,7 @@ export class SessionService {
     this.repo = new SessionRepository({ db: config.db });
     this.now = config.now ?? (() => new Date());
     this.randomBytes = config.randomBytes ?? defaultRandomBytes;
+    this.spawnFn = config.spawnFn;
   }
 
   // ─── create ──────────────────────────────────────────────
@@ -319,6 +323,88 @@ export class SessionService {
     }
 
     return launchWithEnv;
+  }
+
+  // ─── spawnInteractive ───────────────────────────────────────────────
+
+  /**
+   * Build the session's interactive launch command via
+   * {@link SessionService.buildInteractiveLaunch} and immediately hand
+   * it to the injected `spawnFn` (in production, `spawnTerminal` from
+   * `@emploke/terminal`, wired by `@emploke/api`'s composition root).
+   *
+   * The returned `display` field is always populated so callers can
+   * show a copy-paste command even on spawn failure. The `code` field
+   * carries a stable error-class name string when the call fails:
+   *   - `"BuildLaunchError"` (or the upstream `err.name`) when
+   *     `buildInteractiveLaunch` throws — `display` is empty in this
+   *     case because no launch command was produced.
+   *   - `"SpawnError"` (or the upstream `err.name`) when the injected
+   *     `spawnFn` throws. For terminal-pkg errors
+   *     (`NoTerminalFoundError`, `TerminalSpawnFailedError`,
+   *     `UnsupportedPlatformError`), the class's stable `name`
+   *     property (set as `override readonly name = "..."`) flows
+   *     through unchanged, preserving the wire contract historically
+   *     produced by the api-side `spawnErrorCode` helper.
+   *
+   * Throws (rather than returning `{ ok: false }`) only when no
+   * `spawnFn` was supplied at compose time — i.e. misconfiguration
+   * of the composition root, not a runtime spawn failure.
+   */
+  async spawnInteractive(
+    id: string,
+    opts: BuildInteractiveLaunchSessionOpts = {},
+  ): Promise<SpawnSessionResult> {
+    if (this.spawnFn === undefined) {
+      throw new Error(
+        "SessionService.spawnInteractive: no spawnFn was injected at compose time " +
+          "(composeSessionModule must pass `spawnFn`)",
+      );
+    }
+    // buildInteractiveLaunch can throw (e.g.
+    // RuntimeDoesNotSupportRemoteError, TrustRegistrationFailed,
+    // ENOENT on a stale runtimeSessionId). The SpawnSessionResult
+    // contract documents that `display` is ALWAYS present so the
+    // dashboard can show a copy-paste fallback even on failure —
+    // wrapping only the spawn step would let a build-side throw
+    // skip past the result-shape entirely.
+    let cmd: LaunchCommand;
+    try {
+      cmd = await this.buildInteractiveLaunch(id, {
+        ...(opts.remote === true ? { remote: true } : {}),
+      });
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+        code: err instanceof Error && err.name ? err.name : "BuildLaunchError",
+        display: "",
+      };
+    }
+    try {
+      const result = await this.spawnFn(cmd);
+      return {
+        ok: true as const,
+        launcher: result.launcher,
+        display: cmd.display,
+      };
+    } catch (err) {
+      // Error-class mapping uses `err.name` ONLY — no `instanceof`
+      // checks against terminal-pkg classes. This is byte-identical
+      // to the previous api-side `spawnErrorCode` mapping because
+      // the terminal pkg's three error classes set their `name`
+      // property as `override readonly name = "..."` on the class,
+      // so `err.name` returns the same string `instanceof` would
+      // have selected. The name-only path lets `@emploke/session`
+      // honour the architecture fence (no value imports of
+      // `@emploke/terminal`).
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+        code: err instanceof Error && err.name ? err.name : "SpawnError",
+        display: cmd.display,
+      };
+    }
   }
 
   /**

@@ -1004,5 +1004,197 @@ describe("buildInteractiveLaunch()", () => {
   });
 });
 
+// ───── spawnInteractive ──────────────────────────────────────────
+//
+// Wraps `buildInteractiveLaunch` and the injected `spawnFn`, returning
+// the `SpawnSessionResult` discriminated union that the dashboard +
+// CLI consume on `POST /sessions/:sid/spawn`. The wire-shape pinning
+// test for that route lives in
+// `packages/server/test/routes/spawn-response-shape.test.ts`.
+
+describe("spawnInteractive()", () => {
+  it("returns ok:true with launcher + display on a happy spawn", async () => {
+    const rt = new StubRuntime();
+    const spawnFn = vi.fn(async (cmd: LaunchCommand) => {
+      expect(cmd.cmd).toBe("stub");
+      return { launcher: "wt" as const };
+    });
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    const s = await m.create({ agent: "demo" });
+    const result = await m.spawnInteractive(s.id);
+    expect(result.ok).toBe(true);
+    if (result.ok === true) {
+      expect(result.launcher).toBe("wt");
+      // `display` mirrors the LaunchCommand the stub runtime returned.
+      expect(result.display).toBe(`stub ${s.workdir}`);
+    }
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("threads opts.remote through to buildInteractiveLaunch (filters falsy out)", async () => {
+    const rt = new StubRuntime();
+    const buildSpy = vi.spyOn(rt, "buildInteractiveLaunch");
+    const spawnFn = vi.fn(async () => ({ launcher: "wt" as const }));
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    const s = await m.create({ agent: "demo" });
+
+    await m.spawnInteractive(s.id, { remote: true });
+    expect(buildSpy).toHaveBeenLastCalledWith(s.runtimeSessionId, s.workdir, expect.any(String), {
+      remote: true,
+    });
+
+    // `opts.remote === false` and `undefined` MUST be filtered out
+    // (matches the pre-refactor spawnSession closure behaviour, which
+    // did `...(opts?.remote === true ? { remote: true } : {})`).
+    await m.spawnInteractive(s.id, { remote: false });
+    expect(buildSpy).toHaveBeenLastCalledWith(
+      s.runtimeSessionId,
+      s.workdir,
+      expect.any(String),
+      {},
+    );
+
+    await m.spawnInteractive(s.id);
+    expect(buildSpy).toHaveBeenLastCalledWith(
+      s.runtimeSessionId,
+      s.workdir,
+      expect.any(String),
+      {},
+    );
+  });
+
+  it("returns ok:false with code='BuildLaunchError' and empty display when buildInteractiveLaunch throws an unknown error", async () => {
+    const rt = new StubRuntime();
+    // Use a bare `Error` whose `.name` we blank, to verify the
+    // `"BuildLaunchError"` fallback fires (typed errors like
+    // SessionNotFoundError carry their own `name` and are covered by
+    // the next test).
+    const spawnFn = vi.fn(async () => ({ launcher: "wt" as const }));
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    const s = await m.create({ agent: "demo" });
+    vi.spyOn(rt, "buildInteractiveLaunch").mockImplementationOnce(async () => {
+      const e = new Error("custom build failure");
+      Object.defineProperty(e, "name", { value: "", configurable: true });
+      throw e;
+    });
+    const result = await m.spawnInteractive(s.id);
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.error).toBe("custom build failure");
+      expect(result.code).toBe("BuildLaunchError");
+      expect(result.display).toBe("");
+    }
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it("returns ok:false carrying err.name for a typed build error (SessionNotFoundError)", async () => {
+    const rt = new StubRuntime();
+    const spawnFn = vi.fn(async () => ({ launcher: "wt" as const }));
+    const m = await buildManager({
+      agentResolver: stubAgentResolver(),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    // No `create()` → buildInteractiveLaunch throws SessionNotFoundError.
+    const result = await m.spawnInteractive("20260508-deadbeef");
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.code).toBe("SessionNotFoundError");
+      // display empty because we never produced a LaunchCommand.
+      expect(result.display).toBe("");
+    }
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  // The three terminal-pkg error classes set `name` via
+  // `override readonly name = "..."`. SessionService's mapping uses
+  // `err.name` only (no `instanceof` against terminal classes —
+  // forbidden under the architecture fence). Re-creating the same
+  // shape via plain `Error` + `Object.defineProperty(name)` here keeps
+  // the test in the session pkg's own scope; the terminal-class
+  // verification lives in the server pinning test
+  // (`packages/server/test/routes/spawn-response-shape.test.ts`),
+  // which CAN value-import terminal because test files are out of
+  // scope for the architecture fence.
+  it.each([
+    ["NoTerminalFoundError", "No supported terminal emulator was found on this system."],
+    ["TerminalSpawnFailedError", "Failed to launch wt: ENOENT"],
+    ["UnsupportedPlatformError", "Unsupported platform for terminal launch: aix"],
+  ])("returns ok:false with code=%s + cmd.display when spawnFn throws an %s-named error", async (errName, errMsg) => {
+    const rt = new StubRuntime();
+    const spawnFn = vi.fn(async () => {
+      const e = new Error(errMsg);
+      Object.defineProperty(e, "name", { value: errName, configurable: true });
+      throw e;
+    });
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    const s = await m.create({ agent: "demo" });
+    const result = await m.spawnInteractive(s.id);
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.code).toBe(errName);
+      expect(result.error).toBe(errMsg);
+      // display lifted from the LaunchCommand StubRuntime returned.
+      expect(result.display).toBe(`stub ${s.workdir}`);
+    }
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to code='SpawnError' when spawnFn throws an error with no name", async () => {
+    const rt = new StubRuntime();
+    const spawnFn = vi.fn(async () => {
+      const e = new Error("anonymous");
+      Object.defineProperty(e, "name", { value: "", configurable: true });
+      throw e;
+    });
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      spawnFn,
+    });
+    const s = await m.create({ agent: "demo" });
+    const result = await m.spawnInteractive(s.id);
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.code).toBe("SpawnError");
+      expect(result.error).toBe("anonymous");
+    }
+  });
+
+  it("throws when spawnFn was not injected at compose time", async () => {
+    const rt = new StubRuntime();
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      // spawnFn intentionally omitted
+    });
+    const s = await m.create({ agent: "demo" });
+    await expect(m.spawnInteractive(s.id)).rejects.toThrow(/no spawnFn/);
+  });
+});
+
 // Suppress unused imports warning for vi (kept available for future tests).
 void vi;

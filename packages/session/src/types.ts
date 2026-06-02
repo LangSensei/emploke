@@ -1,4 +1,4 @@
-import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import type { AgentResolverPort } from "./ports.js";
@@ -8,6 +8,60 @@ import type * as schema from "./schema.js";
 export type { LaunchCommand } from "@emploke/runtime";
 
 type Db = BetterSQLite3Database<typeof schema>;
+
+/**
+ * Structural result shape returned by an injected {@link SpawnFn}.
+ *
+ * Deliberately a minimal interface — `launcher` is typed `string` here
+ * (not the closed `Launcher` union from `@emploke/terminal`) so this
+ * package never imports `@emploke/terminal`, even type-only. Today's
+ * production wiring passes `spawnTerminal` from `@emploke/terminal`,
+ * whose `SpawnTerminalResult = { launcher: Launcher }` is structurally
+ * assignable here because `Launcher` is a `string` subtype.
+ *
+ * Consumers that need the narrower union (e.g. dashboard rendering)
+ * import from `@emploke/terminal` directly.
+ */
+export interface SpawnInteractiveResult {
+  readonly launcher: string;
+}
+
+/**
+ * Injection seam for the terminal spawner. Wired by `composeApplication`
+ * (in `@emploke/api`), which value-imports `@emploke/terminal`'s
+ * `spawnTerminal` and threads it through `composeSessionModule` →
+ * `SessionService` constructor. Session itself never value-imports
+ * (or even type-imports) terminal, so the cross-domain architecture
+ * fence (`packages/e2e/test/architecture/inter-service-imports.test.ts`)
+ * stays intact and session does not need terminal in its dep graph.
+ *
+ * Structurally typed: `spawnTerminal` from `@emploke/terminal`, a test
+ * fake, or any alternative spawner with the same shape is acceptable.
+ */
+export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnInteractiveResult>;
+
+/**
+ * Result of {@link import("./session-service.js").SessionService.spawnInteractive}.
+ *
+ * The `display` field is ALWAYS present (even on failure) so the
+ * dashboard / CLI can show a copy-paste fallback even when the
+ * terminal launch itself failed. The `code` field carries a stable
+ * error-class name string (e.g. `"NoTerminalFoundError"`,
+ * `"TerminalSpawnFailedError"`, `"UnsupportedPlatformError"`,
+ * `"BuildLaunchError"`, or the upstream `err.name`).
+ */
+export type SpawnSessionResult =
+  | {
+      readonly ok: true;
+      readonly launcher: string;
+      readonly display: string;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly code: string;
+      readonly display: string;
+    };
 
 /**
  * Wire-level session value — combines the persisted row with workdir
@@ -56,6 +110,19 @@ export interface SessionServiceConfig {
    * table.
    */
   readonly db: Db;
+  /**
+   * Optional terminal spawner. When supplied, enables
+   * {@link import("./session-service.js").SessionService.spawnInteractive};
+   * when omitted, calls to `spawnInteractive` throw a documented
+   * error so misconfiguration surfaces loudly at use time rather
+   * than at compose time.
+   *
+   * The composition root in `@emploke/api` always supplies one
+   * (`spawnTerminal` from `@emploke/terminal` by default; tests may
+   * inject a fake). The field is optional so test setups that don't
+   * exercise spawn can omit it.
+   */
+  readonly spawnFn?: SpawnFn;
   /** Optional logger. Defaults to silent. */
   readonly logger?: Logger;
   /** Test seam: clock for ID generation. Defaults to `() => new Date()`. */

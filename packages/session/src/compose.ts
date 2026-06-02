@@ -6,6 +6,7 @@ import { applySessionMigrations } from "./migrations.js";
 import type { AgentResolverPort } from "./ports.js";
 import * as schema from "./schema.js";
 import { SessionService } from "./session-service.js";
+import type { SpawnFn } from "./types.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -17,6 +18,14 @@ export interface SessionModuleOptions {
   readonly workspaceDir: string;
   readonly workspaceId: string;
   readonly logger?: Logger;
+  /**
+   * Terminal spawner. Wired by `@emploke/api`'s composition root
+   * (`spawnTerminal` from `@emploke/terminal` by default; tests may
+   * inject a fake). Optional so that test setups that don't exercise
+   * spawn can omit it; in production every caller threads it
+   * through.
+   */
+  readonly spawnFn?: SpawnFn;
 }
 
 export interface SessionModule {
@@ -50,6 +59,7 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
     workspaceDir: opts.workspaceDir,
     workspaceId: opts.workspaceId,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
+    ...(opts.spawnFn !== undefined ? { spawnFn: opts.spawnFn } : {}),
     db,
   });
 
