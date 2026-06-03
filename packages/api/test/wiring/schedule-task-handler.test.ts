@@ -2,12 +2,12 @@
  * Unit tests for `makeTaskKindHandler`. This is the sole module
  * that knows about all three of `@emploke/schedule`,
  * `@emploke/task`, and `@emploke/catalog` — see
- * `core/src/wiring/schedule-task-handler.ts`. Covers:
+ * `../../src/wiring/schedule-task-handler.ts`. Covers:
  *
  *   - `validate(data)` shape checks (agent / brief / details / runtime)
  *   - `validate(data, { changedKeys })` SKIPs catalog lookup when
  *     `agent` is not in `changedKeys` (the patch-when-catalog-down
- *     property the pre-W3 service preserved)
+ *     property the service preserves)
  *   - `validate` throws task-pkg's `AgentNotFoundError` on null
  *     catalog hit, and `AgentResolutionFailedError` on any other
  *     catalog throw
@@ -156,7 +156,7 @@ describe("makeTaskKindHandler.validate — catalog cross-check", () => {
     const h = makeTaskKindHandler({ catalog: deps.catalog, tasks: deps.tasks });
     await h.validate({ agent: "writer", brief: "new brief" }, { changedKeys: ["brief"] });
     // No catalog round-trip — preserves the patch-when-catalog-down
-    // property the pre-W3 service exposed.
+    // property the service exposes.
     expect(deps.getAgent).not.toHaveBeenCalled();
   });
 
@@ -202,7 +202,7 @@ describe("makeTaskKindHandler.mergePatch", () => {
     const h = makeTaskKindHandler({ catalog: deps.catalog, tasks: deps.tasks });
     const out = h.mergePatch({ agent: "old", brief: "old-b" }, { agent: "new", brief: "new-b" });
     expect(out.data).toEqual({ agent: "new", brief: "new-b" });
-    expect(out.changedKeys.sort()).toEqual(["agent", "brief"]);
+    expect([...out.changedKeys].sort()).toEqual(["agent", "brief"]);
   });
 
   it("null on details deletes the field (RFC 7396)", () => {

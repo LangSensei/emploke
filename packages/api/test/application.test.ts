@@ -18,8 +18,8 @@
  * composeSessionModule / composeTaskModule succeed.
  *
  * Registry-internal race semantics (closeAll drain, partial load
- * rollback) are covered separately in `workspace-context.test.ts`,
- * which imports the registry class via a relative path.
+ * rollback) are pinned in `workspace-context.test.ts`, which imports
+ * `WorkspaceContextRegistry` via a relative path.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,14 +38,16 @@ class StubRuntime implements Runtime {
   readonly kind = "copilot";
   readonly capabilities: RuntimeCapabilities = { remoteSession: true };
   // Every method exists but is never called by the tests; throw if
-  // something unexpectedly tries to.
-  async provision() {
+  // something unexpectedly tries to. Explicit `Promise<never>` return
+  // types satisfy the `Runtime` interface (covariant `Promise<T>`)
+  // without forcing the stubs to fabricate a real response shape.
+  async provision(): Promise<never> {
     throw new Error("StubRuntime.provision: not implemented for tests");
   }
-  async buildInteractiveLaunch() {
+  async buildInteractiveLaunch(): Promise<never> {
     throw new Error("StubRuntime.buildInteractiveLaunch: not implemented");
   }
-  async launchHeadless() {
+  async launchHeadless(): Promise<never> {
     throw new Error("StubRuntime.launchHeadless: not implemented");
   }
   async readMetadata() {
@@ -72,7 +74,7 @@ let scratch: string;
 const apps: Application[] = [];
 
 beforeEach(async () => {
-  scratch = await mkdtemp(path.join(tmpdir(), "core-test-"));
+  scratch = await mkdtemp(path.join(tmpdir(), "api-test-"));
 });
 
 afterEach(async () => {

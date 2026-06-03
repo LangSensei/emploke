@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { RuntimeRegistry } from "@emploke/runtime";
+import type { SpawnFn } from "@emploke/session";
 import { spawnTerminal } from "@emploke/terminal";
 import {
   composeWorkspaceModule,
@@ -9,13 +10,9 @@ import {
   type WorkspaceService,
 } from "@emploke/workspace";
 import type { Logger } from "pino";
-import {
-  type SpawnFn,
-  type WorkspaceContext,
-  WorkspaceContextRegistry,
-} from "./workspace-context.js";
+import { type WorkspaceContext, WorkspaceContextRegistry } from "./workspace-context.js";
 
-export type { SpawnFn, SpawnSessionResult } from "./workspace-context.js";
+export type { SpawnSessionResult } from "./workspace-context.js";
 
 /**
  * Composition root for the global registry plus on-demand
@@ -89,6 +86,7 @@ export interface Application {
   close(): Promise<void>;
 }
 
+/** Exposed so consumers can declare a typed options variable separately from the inline composeApplication() call. */
 export interface ApplicationOptions {
   readonly workspace: WorkspaceModuleOptions;
   readonly runtimeRegistry: RuntimeRegistry;
