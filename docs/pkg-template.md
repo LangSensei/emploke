@@ -28,6 +28,7 @@ packages/<pkg>/
     schema.ts                  Drizzle table defs (private; only types are exported)
     errors.ts                  Domain error classes (exported)
     types.ts                   Public DTOs + option shapes (exported)
+    ports.ts                   Capability-interface seams (OPTIONAL — see below)
     validate.ts                id regex + assertValidXxxId (+ other input validators)
     <entity>-repository.ts     Drizzle CRUD (PRIVATE — never exported from index)
     <entity>-service.ts        <Entity>Service — reads + writes, returns DTOs (exported)
@@ -108,6 +109,30 @@ TypeORM, etc. all prefix the class-bearing files. Single-entity packages
 in emploke (workspace, session, task) still prefix to keep the
 convention uniform across the monorepo.
 
+## Package-private utility files
+
+Files and subdirs whose names start with `_` are package-private
+utilities — pure functions, type aliases, or test factories that
+the pkg uses internally but does NOT export. The convention is
+enforced by `packages/e2e/test/architecture/split-convention.test.ts`,
+which skips `_*` files when checking SPLIT compliance (they are
+allowed to be siblings of the facade without being delegates).
+
+Canonical names:
+
+- `_helpers.ts` — pure helper functions specific to a single facade
+  or module. Used by `task/src/task-service/_helpers.ts`,
+  `schedule/src/_helpers.ts`.
+- `_shared.ts` — pure helpers shared across multiple files within
+  the same pkg or subdir. Used by `terminal/src/_shared.ts`.
+- `_<topic>/` — package-private subdir grouping related helpers
+  (e.g. `catalog/src/_shared/` groups DI plumbing helpers).
+
+Files starting with `_` are NEVER re-exported from `index.ts`.
+Tests for `_` files live alongside the helper they cover
+(`test/_helpers.test.ts` is a valid layout per § "Test layout
+convention" rule 2).
+
 ## Where DTOs live
 
 > See [docs/architecture.md § The three layers](./architecture.md#the-three-layers) for the Row / Entity / DTO split that motivates the single `types.ts` rule.
@@ -124,6 +149,16 @@ types. The exceptions are:
 - `errors.ts` exports Error subclasses (classes are values, not pure types)
 - `<entity>-entity.ts` exports the class (a value) for rich-domain BCs
 - Multi-entity BCs' `facade/plan-types.ts` may export facade-internal types
+- `ports.ts` exports capability interfaces declared by the consumer
+  (e.g. `AgentResolverPort`, `SpawnFn`). The port surface is a
+  cross-pkg seam, distinct from runtime DTOs that flow over HTTP
+  or through the service. See `packages/session/src/ports.ts` and
+  `packages/task/src/ports.ts`.
+- `compose.ts` MAY export `<Entity>Module` and `<Entity>ModuleOptions`
+  alongside `compose<Entity>Module`. These are composition surface
+  (how downstream packages WIRE the pkg), distinct from runtime DTOs
+  (what flows over HTTP / through the service). The template's own
+  `compose.ts` follows this shape.
 
 This rule prevents the "where do I find the `Workspace` interface" drift
 that plagued emploke before (DTOs scattered across `service.ts`,
@@ -405,6 +440,29 @@ Tests under a sub-folder mirror the source sub-folder:
 NEVER name a test file by an old class name (`manager.test.ts` was wrong
 after `SessionManager` was renamed to `SessionService`) or by a non-source
 concept word.
+
+## Public API guard
+
+Every pkg ships a `test/public-api-guard.test.ts` that uses Vitest's
+`expectTypeOf` to lock the pkg's public surface at typecheck time.
+The test:
+
+- Asserts every method on the public service class exists by name.
+- Asserts every declared error class is exported and constructible.
+- Asserts every public DTO / interface shape.
+
+Why: silent renames or accidental signature changes break downstream
+consumers without warning. `expectTypeOf` catches them at
+`pnpm typecheck` time, BEFORE downstream pkgs surface the
+breakage. Because it is a type-only assertion, it costs nothing at
+runtime.
+
+When a public method, error class, or DTO is added / renamed / removed,
+the guard test fails until updated in the SAME PR — review enforces
+the coupling.
+
+Reference shape: `packages/_template/test/public-api-guard.test.ts`.
+Worked example: `packages/catalog/test/public-api-guard.test.ts`.
 
 ## Naming conventions
 
