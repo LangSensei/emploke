@@ -7,6 +7,7 @@ import {
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
+import type { Agent } from "../types.js";
 import {
   AGENT_DEP_SPECS,
   type AgentDepKind,
@@ -261,8 +262,11 @@ export class AgentEntity {
     return this._state.updatedAt;
   }
 
-  toJSON(): Record<string, unknown> {
-    const out: Record<string, unknown> = {
+  toJSON(): Omit<Agent, "mutable"> {
+    const out: Omit<Agent, "mutable"> & {
+      prereqs?: string;
+      dependencies?: Agent["dependencies"];
+    } = {
       fqn: this._state.fqn,
       origin: this._state.origin,
       description: this._state.description,

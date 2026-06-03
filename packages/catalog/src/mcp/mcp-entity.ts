@@ -1,3 +1,4 @@
+import type { Mcp } from "../types.js";
 import * as McpFormat from "./mcp-format.js";
 import { validateMcpName } from "./validate.js";
 
@@ -67,7 +68,7 @@ export class McpEntity {
   }
 
   /** Plain JSON projection. */
-  toJSON(): Record<string, unknown> {
+  toJSON(): Omit<Mcp, "mutable" | "orphaned"> {
     return {
       fqn: this._fqn,
       origin: this._origin,

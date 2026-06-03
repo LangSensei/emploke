@@ -7,6 +7,7 @@ import {
   normaliseFqnDeps,
   type OriginDeps,
 } from "../_shared/dep-keys.js";
+import type { Skill } from "../types.js";
 import {
   parse,
   SKILL_DEP_SPECS,
@@ -236,8 +237,11 @@ export class SkillEntity {
     return this._state.updatedAt;
   }
 
-  toJSON(): Record<string, unknown> {
-    const out: Record<string, unknown> = {
+  toJSON(): Omit<Skill, "mutable" | "orphaned"> {
+    const out: Omit<Skill, "mutable" | "orphaned"> & {
+      prereqs?: string;
+      dependencies?: Skill["dependencies"];
+    } = {
       fqn: this._state.fqn,
       origin: this._state.origin,
       description: this._state.description,

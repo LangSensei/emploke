@@ -63,25 +63,25 @@ export function newCascadeContext(
 
 export function projectSkillPojo(s: SkillEntity, ctx: CascadeContext): Skill {
   return {
-    ...(s.toJSON() as object),
+    ...s.toJSON(),
     mutable: isOriginMutable(s.origin),
     orphaned: !ctx.referencedSkillFqns.has(s.fqn),
-  } as unknown as Skill;
+  };
 }
 
 export function projectAgentPojo(a: AgentEntity): Agent {
   return {
-    ...(a.toJSON() as object),
+    ...a.toJSON(),
     mutable: isOriginMutable(a.origin),
-  } as unknown as Agent;
+  };
 }
 
 export function projectMcpMetadata(m: McpEntity, ctx: CascadeContext): Mcp {
   return {
-    ...(m.toJSON() as object),
+    ...m.toJSON(),
     mutable: isOriginMutable(m.origin),
     orphaned: !ctx.referencedMcpFqns.has(m.fqn),
-  } as unknown as Mcp;
+  };
 }
 
 interface SelfConditions {
