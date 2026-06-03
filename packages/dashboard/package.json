@@ -1,7 +1,11 @@
 {
   "name": "@emploke/dashboard",
   "version": "0.0.1",
+  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "dev:mock": "cross-env VITE_USE_MOCKS=1 vite --port 8788 --strictPort",
@@ -37,5 +41,10 @@
     "workerDirectory": [
       "public"
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LangSensei/emploke.git",
+    "directory": "packages/dashboard"
   }
 }
