@@ -1,7 +1,6 @@
 /**
- * Issue #119: dispatching a task with `origin: 'workflow'` should
- * persist the origin verbatim on the row and round-trip through the
- * repository.
+ * Dispatching a task with `origin: 'workflow'` should persist the
+ * origin verbatim on the row and round-trip through the repository.
  */
 
 import { describe, expect, it } from "vitest";

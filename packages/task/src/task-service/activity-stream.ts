@@ -1,7 +1,7 @@
 import type { ActivityItem, ActivityResult, Runtime } from "@emploke/runtime";
 import { readTaskRuntimeMetadata } from "../task-meta.js";
 import { pickRuntimeSessionId, type TaskServiceCtx } from "../task-service.js";
-import { getTask } from "./queries.js";
+import { assertValidTaskId } from "../validate.js";
 
 /**
  * Fetch a task's activity timeline + derived headline result via
@@ -30,7 +30,8 @@ export async function getTaskActivity(
   id: string,
   opts?: { readonly before?: number; readonly after?: number; readonly limit?: number },
 ): Promise<ActivityResult | null> {
-  const task = await getTask(ctx, id);
+  assertValidTaskId(id);
+  const task = await ctx.repository.read(id);
   if (task === null) return null;
   const meta = readTaskRuntimeMetadata(task);
   if (typeof meta.runtime !== "string") return null;
@@ -73,7 +74,8 @@ export async function getTaskActivityStream(
   id: string,
   opts: { readonly after?: number; readonly signal?: AbortSignal },
 ): Promise<AsyncIterable<ActivityItem> | null> {
-  const task = await getTask(ctx, id);
+  assertValidTaskId(id);
+  const task = await ctx.repository.read(id);
   if (task === null) return null;
   // Streaming a terminal task is wasted work — the iterator would
   // immediately yield nothing and close. Force callers to use the

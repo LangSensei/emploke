@@ -92,9 +92,9 @@ export class TaskRepository {
     if (opts.scheduleId !== undefined) {
       // Functional predicate: `metadata` is a JSON text column, and
       // `scheduleId` lives at `$.scheduleId`. The companion functional
-      // index `tasks_schedule_id_idx` (PR 1 of #61) makes this O(log n)
-      // when the optimiser can prove the WHERE shape lines up — combine
-      // with `origin='schedule'` in the same query to engage it.
+      // index `tasks_schedule_id_idx` makes this O(log n) when the
+      // optimiser can prove the WHERE shape lines up — combine with
+      // `origin='schedule'` in the same query to engage it.
       filters.push(sql`json_extract(${tasks.metadata}, '$.scheduleId') = ${opts.scheduleId}`);
     }
     const query = this.db.select().from(tasks);
@@ -114,10 +114,10 @@ export class TaskRepository {
    * True if any task with `origin='schedule'` and
    * `metadata.scheduleId === scheduleId` is non-terminal (i.e. status
    * is not in {@link TERMINAL_TASK_STATUSES}). Backed by the
-   * `tasks_schedule_id_idx` functional index added in PR 1 of #61; the
-   * partial WHERE on the index matches the `origin = 'schedule'`
-   * predicate here, so the planner can satisfy the query from the
-   * index without a full table scan.
+   * `tasks_schedule_id_idx` functional index; the partial WHERE on
+   * the index matches the `origin = 'schedule'` predicate here, so
+   * the planner can satisfy the query from the index without a full
+   * table scan.
    *
    * Non-terminal (rather than `status = 'running'`) is the right
    * semantic for both the scheduler's concurrency=1 check and the

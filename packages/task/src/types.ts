@@ -23,21 +23,22 @@ import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
 import type { AgentResolverPort } from "./ports.js";
 
 /**
- * Status lifecycle: `running → succeeded | failed | cancelled` (issue #119).
+ * Status lifecycle: `running → succeeded | failed | cancelled`.
  *
- * v4 normalized the enum to all-adjective form so the wire shape lines
- * up with `workflow_nodes.status` in #118. Tasks are created directly
- * in `running` (the historical `not_started` placeholder is gone — the
- * manager's exit watcher / cancel path is the only producer of a
- * terminal transition; nothing ever queued a `not_started` row to disk).
+ * The enum is all-adjective so the wire shape lines up with the
+ * workflow node status column. Tasks are created directly in
+ * `running` — there is no intermediate state between dispatch and
+ * the subprocess actually starting; the manager's exit watcher /
+ * cancel path is the only producer of a terminal transition.
  *
- * `cancelled` is produced by `TaskService.cancel(id)` (the user-initiated
- * verb introduced in ADR-001). `failed` covers everything else the
- * subprocess might do — crashing, exiting non-zero, getting SIGTERM'd
- * by `shutdown()`, or being marked orphan by `recoverOrphaned`.
+ * `cancelled` is produced by `TaskService.cancel(id)` — the only
+ * user-initiated verb that ends a task. `failed` covers everything
+ * else the subprocess might do — crashing, exiting non-zero, getting
+ * SIGTERM'd by `shutdown()`, or being marked orphan by
+ * `recoverOrphaned`.
  *
- * `delete(id)` no longer touches subprocesses after ADR-001; it requires
- * the task to be terminal first and removes only the record.
+ * `delete(id)` never touches subprocesses; it requires the task to
+ * be terminal first and removes only the record.
  */
 export type TaskStatus = "running" | "succeeded" | "failed" | "cancelled";
 
@@ -63,13 +64,13 @@ export const TERMINAL_TASK_STATUSES = [
 ] as const satisfies readonly TerminalStatus[];
 
 /**
- * Who launched this task. v4 first-class column (issue #119) — pre-
- * positioned for #118 (workflow-launched tasks) and future schedule /
- * agent-launched tasks. New dispatches default to `'standalone'` (a
- * direct CLI / dashboard / MCP call).
+ * Who launched this task. A first-class column on the row, pre-
+ * positioned for workflow- and schedule-launched tasks. New
+ * dispatches default to `'standalone'` (a direct CLI / dashboard /
+ * MCP call).
  *
  * String union (not enum) so future additions are additive — adding
- * `'schedule'` later does not break consumers that only branch on
+ * a new origin later does not break consumers that only branch on
  * existing values.
  */
 export type TaskOrigin = "standalone" | "workflow" | "schedule";
@@ -78,7 +79,7 @@ export type TaskOrigin = "standalone" | "workflow" | "schedule";
  * Payload attached when a Task transitions to `succeeded`. Both fields
  * are populated at terminal time by `TaskService.applyTerminal` and
  * are persisted verbatim into the `success` JSON column — they are
- * never re-derived on read (issue #181).
+ * never re-derived on read.
  */
 export interface TaskSuccess {
   /**
@@ -112,9 +113,9 @@ export interface TaskSuccess {
  *  - `shutdown` — `TaskService.shutdown()` killed the subprocess (server stop).
  *  - `orphan`   — `recoverOrphaned` marked a row whose owning process is gone.
  *  - `internal` — kernel-side fault (e.g. exit watcher rejected); covers
- *                 the legacy-row read path (rows written before this ADR
- *                 had only a free-string `failure_error` column — those
- *                 surface as `{ kind: 'internal', message }`).
+ *                 the legacy-row read path (rows written before typed
+ *                 failure payloads had only a free-string `failure_error`
+ *                 column — those surface as `{ kind: 'internal', message }`).
  */
 export type TaskFailure =
   | { readonly kind: "exited"; readonly exit_code: number; readonly message: string }
@@ -131,10 +132,10 @@ export type TaskFailure =
  *                the operator's request (today the only normal source).
  *  - `cascade` — cancelled as a side-effect of another manager-side
  *                event (e.g. orphan-row reconciliation, future parent-
- *                workflow cancellation). Pre-v4 the orphan-recovery
- *                path produced `{ kind: 'orphan' }`; folded into
- *                `cascade` in #119 since the distinction was never
- *                consumed by callers.
+ *                workflow cancellation). The orphan-recovery path
+ *                produces `cascade` rather than a distinct orphan
+ *                kind, because no caller branches on the orphan
+ *                flavour specifically.
  *
  * Discriminator is `kind` (not `source`) to stay consistent with
  * {@link TaskFailure} and to fit future event-shaped variants

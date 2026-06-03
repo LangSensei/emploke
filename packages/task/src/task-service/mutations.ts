@@ -7,37 +7,24 @@ import {
   TaskIdAllocationFailedError,
   TaskNotFoundError,
 } from "../errors.js";
-import { TASK_ARTIFACT_SUBDIR } from "../framing.js";
 import { safeJoinUnderRoot } from "../paths.js";
 import type { TaskEntity } from "../task-entity.js";
 import { DEFAULT_RUNTIME, pickRuntimeSessionId, type TaskServiceCtx } from "../task-service.js";
 import type { DispatchOpts } from "../types.js";
 import { assertValidTaskId, generateTaskId } from "../validate.js";
-import { listWorkdirFiles } from "../workdir.js";
-import {
-  pickRuntime,
-  resolveDispatchAgent,
-  runDispatch,
-  type TerminalDecision,
-} from "./agent-resolver.js";
+import { applyTerminal } from "./_helpers.js";
+import { pickRuntime, resolveDispatchAgent } from "./agent-resolver.js";
+import { runDispatch } from "./dispatch.js";
 
 const MAX_CREATE_RETRIES = 5;
-
-/**
- * Maximum chars retained from the agent's final assistant utterance
- * into `TaskSuccess.output`. Caps the persisted row size — the full
- * text is preserved in the runtime's activity log. Truncated from the
- * **tail** (`slice(0, MAX)`) so the head (typically a PR URL or
- * headline) is always preserved (iter-2 B2 fix; was `slice(-MAX)`).
- */
-const TASK_OUTPUT_MAX_CHARS = 8000;
 
 /**
  * Public dispatch entry. Resolves the agent, picks the runtime,
  * reserves a workdir on disk, registers the id in
  * `ctx.dispatchInProgress`, and hands off to `runDispatch` for the
  * spawn + post-spawn flow. Refuses with `ManagerShuttingDownError`
- * once `shutdown()` has been called (ADR-001 — route maps to 503).
+ * once `shutdown()` has been called so the HTTP route can map both
+ * dispatch and cancel cleanly to 503.
  */
 export async function dispatchTask(ctx: TaskServiceCtx, opts: DispatchOpts): Promise<TaskEntity> {
   if (ctx.shuttingDown) {
@@ -111,13 +98,15 @@ export async function dispatchTask(ctx: TaskServiceCtx, opts: DispatchOpts): Pro
  * persistence, and returns the cancelled `TaskEntity`.
  *
  * - Terminal-state input → `InvalidTransition` (route → 409).
- * - Concurrent same-id cancel: first call owns the kill; the Nth
- *   throws `InvalidTransition` after awaiting `live.settled` (pins T3).
+ * - Concurrent same-id cancel: first call owns the kill; every
+ *   subsequent call throws `InvalidTransition` after awaiting
+ *   `live.settled`, so callers observe a consistent terminal state.
  * - Orphan path (no live entry): synthesises a terminal decision and
  *   routes through `applyTerminal` to mirror the normal-path row
  *   shape; warns so the operator knows `recoverOrphaned` missed it.
- * - R-1 race defence: refuses with `InvalidTransition` if
- *   `dispatchInProgress.has(id)` (internal callers only).
+ * - Refuses with `InvalidTransition` if a dispatch for `id` is mid-
+ *   flight (the row exists on disk but no `LiveTask` is wired yet),
+ *   so the cancel cannot race past the just-spawned subprocess.
  * - Refuses while shutting down (`ManagerShuttingDownError` → 503).
  * - Throws `TaskNotFoundError` if id doesn't exist.
  */
@@ -162,9 +151,9 @@ export async function cancelTask(ctx: TaskServiceCtx, id: string): Promise<TaskE
   } else {
     // Orphan path: undetected by recoverOrphaned. Route through
     // applyTerminal with a synthesised decision so the persisted row
-    // shape matches the normal-path output. v4 folded the orphan
-    // cancellation variant into `cascade`, since no caller branches
-    // on the orphan flavour specifically.
+    // shape matches the normal-path output. The orphan flavour is
+    // recorded as `cascade` because no caller branches on a separate
+    // orphan-cancellation kind.
     ctx.logger.warn(
       { taskId: id },
       "tasks: cancelling row in running status with no live subprocess (orphan)",
@@ -184,16 +173,17 @@ export async function cancelTask(ctx: TaskServiceCtx, id: string): Promise<TaskE
 }
 
 /**
- * Remove a task. Post-ADR-001 this verb only ever removes records —
- * it never touches subprocesses. The task MUST be in a terminal
- * status; non-terminal input throws `InvalidTransition` (route → 409).
+ * Remove a task. This verb only ever removes records — it never
+ * touches subprocesses. The task MUST be in a terminal status;
+ * non-terminal input throws `InvalidTransition` (route → 409).
  *
  * Default ("archive") drops only the metadata row; the workdir stays
  * on disk so the user can inspect agent artifacts. `{ purge: true }`
  * also schedules a serialised background `runtime.deleteState` +
  * `rm -rf workdir`. Background failures are warn-logged; orphan dirs
- * are recoverable per ADR-001 §3.5. Stays fire-and-forget because
- * Windows `fs.rm` of a copilot state dir can take tens of seconds.
+ * remain recoverable via the workspace's `sqlite3` CLI as the
+ * recovery channel. Stays fire-and-forget because Windows `fs.rm` of
+ * a copilot state dir can take tens of seconds.
  *
  * Throws `TaskNotFoundError` when id doesn't exist.
  */
@@ -214,8 +204,8 @@ export async function deleteTask(
     existing.status !== "failed" &&
     existing.status !== "cancelled"
   ) {
-    // ADR-001 §3.5: delete requires terminal status. Cancel the
-    // task first before deleting.
+    // delete requires terminal status. Cancel the task first before
+    // deleting.
     throw new InvalidTransition(existing.status, "delete");
   }
 
@@ -290,102 +280,12 @@ export async function recoverOrphaned(ctx: TaskServiceCtx): Promise<void> {
 }
 
 /**
- * Apply a terminal decision to a running task and persist. v4
- * (issue #119) keeps `exit_code` / `signal` strictly inside the
- * `failure` payload (no metadata mirror). Persistence failure is
- * warn-logged but not rethrown.
- */
-export async function applyTerminal(
-  ctx: TaskServiceCtx,
-  workdir: string,
-  running: TaskEntity,
-  decision: TerminalDecision,
-): Promise<void> {
-  let next: TaskEntity;
-  try {
-    switch (decision.kind) {
-      case "succeeded": {
-        // Per issue #181: collect the agent's last assistant
-        // utterance + the `<workdir>/artifact/` listing as part of
-        // the terminal write. Both sub-collectors are best-effort.
-        const [output, artifacts] = await collectSuccessPayload(ctx, workdir, running);
-        next = running.complete({ output, artifacts }, { now: ctx.now().toISOString() });
-        break;
-      }
-      case "failed":
-        next = running.fail(decision.failure, { now: ctx.now().toISOString() });
-        break;
-      case "cancelled":
-        next = running.cancel(decision.cancellation, { now: ctx.now().toISOString() });
-        break;
-    }
-    await ctx.repository.save(next);
-  } catch (err) {
-    ctx.logger.warn({ taskId: running.id, err }, "tasks: failed to persist terminal status");
-  }
-}
-
-/**
- * Best-effort assembly of `TaskSuccess` payload at terminal time
- * (issue #181). Asks the runtime for its last agent-produced
- * activity (capped to `TASK_OUTPUT_MAX_CHARS`, head preserved) and
- * lists `<workdir>/artifact/`. Both sub-collectors fan out in
- * parallel. Any sub-failure degrades to `null` / `[]` and warns —
- * never blocks the terminal transition.
- */
-async function collectSuccessPayload(
-  ctx: TaskServiceCtx,
-  workdir: string,
-  task: TaskEntity,
-): Promise<[string | null, readonly string[]]> {
-  const runtimeName = task.metadata.runtime;
-  const runtimeSessionId = pickRuntimeSessionId(task.metadata);
-
-  const outputP: Promise<string | null> = (async () => {
-    if (typeof runtimeName !== "string" || runtimeSessionId === null) return null;
-    let runtime: Runtime;
-    try {
-      runtime = ctx.runtimeRegistry.get(runtimeName);
-    } catch {
-      return null;
-    }
-    if (typeof runtime.getLastAgentActivity !== "function") return null;
-    try {
-      const last = await runtime.getLastAgentActivity(runtimeSessionId);
-      if (last === null) return null;
-      // Head-preserving cap: earlier `slice(-MAX)` silently dropped
-      // opening characters when the final reply exceeded MAX.
-      return last.text.slice(0, TASK_OUTPUT_MAX_CHARS);
-    } catch (err) {
-      ctx.logger.warn(
-        { taskId: task.id, err },
-        "tasks: applyTerminal getLastAgentActivity failed; output left null",
-      );
-      return null;
-    }
-  })();
-
-  const artifactsP: Promise<readonly string[]> = (async () => {
-    try {
-      return await listWorkdirFiles(workdir, TASK_ARTIFACT_SUBDIR);
-    } catch (err) {
-      ctx.logger.warn(
-        { taskId: task.id, err },
-        "tasks: applyTerminal listWorkdirFiles failed; artifacts left empty",
-      );
-      return [];
-    }
-  })();
-
-  return Promise.all([outputP, artifactsP]);
-}
-
-/**
  * Chain a workdir + runtime-state purge onto the serial
- * `ctx.purgeQueue`. Per ADR-002 a single chain replaced parallel
- * `Set<Promise>` because Windows fs.rm of a copilot state dir holds
- * a libuv worker for tens of seconds. Both continuations re-enqueue
- * so a prior failure never stalls the queue.
+ * `ctx.purgeQueue`. A single chained promise (rather than a parallel
+ * `Set<Promise>`) keeps fs.rm of a copilot state dir from saturating
+ * the libuv worker pool — on Windows a single such rm pins a worker
+ * for tens of seconds. Both continuations re-enqueue so a prior
+ * failure never stalls the queue.
  */
 export function scheduleBackgroundPurge(
   ctx: TaskServiceCtx,

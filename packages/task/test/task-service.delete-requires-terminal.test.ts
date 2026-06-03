@@ -1,7 +1,5 @@
 /**
- * ADR-001 §3.8 #6 — delete-requires-terminal.
- *
- * Tightening: delete() on a non-terminal task now throws
+ * delete-requires-terminal: delete() on a non-terminal task throws
  * {@link InvalidTransition}. The route layer maps that to 409 with
  * a structured body `{ code: 'InvalidTransition', status: <running>,
  * transition: 'delete' }` so the dashboard can render a typed CTA

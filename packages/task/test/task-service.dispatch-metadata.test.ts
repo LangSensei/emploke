@@ -1,9 +1,9 @@
 /**
- * PR 1 of #61: `DispatchOpts.metadata` lets the caller seed
- * `Task.metadata` at dispatch time. Caller keys are shallow-merged
- * first, then the kernel adds `workdir` + `runtime` — so the kernel
- * always wins for those two keys (a scheduler can't spoof the runtime
- * column by passing `metadata: { runtime: '...' }`).
+ * `DispatchOpts.metadata` lets the caller seed `Task.metadata` at
+ * dispatch time. Caller keys are shallow-merged first, then the
+ * kernel adds `workdir` + `runtime` — so the kernel always wins for
+ * those two keys (a scheduler can't spoof the runtime column by
+ * passing `metadata: { runtime: '...' }`).
  */
 
 import { describe, expect, it } from "vitest";

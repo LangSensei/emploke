@@ -1,7 +1,6 @@
 /**
- * Issue #119: SqliteTaskRepository.list accepts an `origin` filter,
- * either as a single TaskOrigin or as an array. Tasks of every other
- * origin are excluded.
+ * Repository list() accepts an origin filter (single value or array);
+ * rows of every other origin are excluded.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

@@ -26,8 +26,8 @@ import { tasksRoot } from "./paths.js";
 import type { AgentResolverPort } from "./ports.js";
 import type { TaskEntity } from "./task-entity.js";
 import { TaskRepository } from "./task-repository.js";
+import type { LiveTask } from "./task-service/_helpers.js";
 import { getTaskActivity, getTaskActivityStream } from "./task-service/activity-stream.js";
-import type { LiveTask } from "./task-service/agent-resolver.js";
 import {
   cancelTask,
   deleteTask,
@@ -86,10 +86,11 @@ export interface TaskServiceCtx {
   /**
    * Serialised chain of background purges scheduled by
    * `scheduleBackgroundPurge`. Tests await its tail via
-   * `_drainPendingPurgesForTest`. Per ADR-002 a single chained
-   * promise replaces the original parallel `Set<Promise>` because
-   * fs.rm of a copilot state dir on Windows pins a libuv worker for
-   * tens of seconds.
+   * `_drainPendingPurgesForTest`. A single chained promise (rather
+   * than a parallel `Set<Promise>`) is used because fs.rm of a
+   * copilot state dir on Windows pins a libuv worker for tens of
+   * seconds; serialising prevents the worker pool from being
+   * saturated.
    */
   purgeQueue: Promise<void>;
 }
@@ -136,10 +137,11 @@ export class TaskService {
   }
 
   /**
-   * @internal Back-compat seam for `cancel()`'s R-1 race test
+   * @internal Test seam for `cancel()`'s during-dispatch race
    * (`task-service.cancel-during-dispatch-window.test.ts`) which
-   * casts the instance to `{ dispatchInProgress: Set<string> }`.
-   * Returns the same `Set` the ctx owns.
+   * casts the instance to `{ dispatchInProgress: Set<string> }` to
+   * pre-populate an id before exercising cancel. Returns the same
+   * `Set` the ctx owns.
    */
   private get dispatchInProgress(): Set<string> {
     return this.ctx.dispatchInProgress;
@@ -238,6 +240,3 @@ export function pickRuntimeSessionId(metadata: Readonly<Record<string, unknown>>
   const v = metadata.runtimeSessionId;
   return typeof v === "string" && v.length > 0 ? v : null;
 }
-
-export type { TaskRuntimeMetadata } from "./task-meta.js";
-export { readTaskRuntimeMetadata } from "./task-meta.js";

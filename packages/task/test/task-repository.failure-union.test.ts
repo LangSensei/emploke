@@ -1,7 +1,7 @@
 /**
- * v4 (issue #119) round-trip: every TaskFailure / TaskCancellation
- * variant must survive save → read through the new JSON-column storage
- * shape with its discriminator + per-variant extras intact.
+ * Round-trip: every TaskFailure / TaskCancellation variant must
+ * survive save → read through the JSON-column storage shape with its
+ * discriminator + per-variant extras intact.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

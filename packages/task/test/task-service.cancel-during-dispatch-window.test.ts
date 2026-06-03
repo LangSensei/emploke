@@ -1,8 +1,7 @@
 /**
- * R-10 / ADR-001 §3.8 #8 — T1 cancel-during-dispatch-window.
- *
- * Pins the R-1 race defence: cancel() refuses with
- * {@link InvalidTransition} if `dispatchInProgress.has(id)` is true.
+ * cancel-during-dispatch race defence: cancel() refuses with
+ * {@link InvalidTransition} if `dispatchInProgress.has(id)` is true,
+ * so cancel cannot race past a just-spawned subprocess.
  *
  * External HTTP callers cannot reach this branch (the id is unknown
  * until dispatch returns), but the invariant matters for future
@@ -24,15 +23,15 @@ afterEach(async () => {
   await teardownCancelFixture(fx);
 });
 
-describe("TaskService.cancel — during-dispatch window (R-1)", () => {
+describe("TaskService.cancel — during-dispatch window", () => {
   it("throws InvalidTransition with eventType='cancel-during-dispatch'", async () => {
     const id = "20260518-aaaaaaaa";
 
     // Reach into the private dispatchInProgress set to simulate the
     // window where workdir has been reserved + row persisted but
-    // `live.set` has not yet executed. ADR-001 §3.4 specifies the
-    // check order assertValidTaskId → shuttingDown → dispatchInProgress
-    // → repository.read, so we do NOT need a real row on disk — the
+    // `live.set` has not yet executed. cancel()'s check order is
+    // assertValidTaskId → shuttingDown → dispatchInProgress →
+    // repository.read, so we do NOT need a real row on disk — the
     // dispatchInProgress check fires before repository.read runs.
     const privateState = fx.m as unknown as { dispatchInProgress: Set<string> };
     privateState.dispatchInProgress.add(id);

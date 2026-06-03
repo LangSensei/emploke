@@ -20,14 +20,24 @@ packages/task/src/
   types.ts                 Public DTOs (Task, status, opts shapes)
   validate.ts              id regex + assertValidTaskId + generators
   task-repository.ts       Drizzle CRUD (private; never exported)
-  task-entity.ts           TaskEntity  state machine (private)
-  task-service.ts          TaskService facade — dispatch/get/list/cancel/delete/getTaskActivity
-  task-service/            Internal concern modules (queries, mutations, agent-resolver,
-                           activity-stream, shutdown) composed by the facade; see
-                           docs/pkg-template.md § Splitting big files via facade + sibling subdir
+  task-entity.ts           TaskEntity state machine (private)
+  task-service.ts          TaskService facade - dispatch/get/list/cancel/delete/getTaskActivity
+  task-service/            Internal concern modules composed by the facade:
+                           agent-resolver.ts (catalog/runtime resolution),
+                           dispatch.ts (per-dispatch spawn + exit-watcher wiring),
+                           mutations.ts (cancel/delete/recover write-side),
+                           queries.ts (read-side), activity-stream.ts (runtime
+                           activity surface), shutdown.ts (lifecycle hooks),
+                           _helpers.ts (shared private utilities: LiveTask,
+                           applyTerminal, decideTerminal, safeRm).
   task-meta.ts             readTaskRuntimeMetadata (runtime hook)
-  framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers
+  framing.ts               TASK_FRAMING_PROMPT_COPILOT + formatTaskMd helpers +
+                           TASK_FILENAME / TASK_TEMP_SUBDIR / TASK_ARTIFACT_SUBDIR
+                           on-disk contract constants + assertFramingPromptIsSafe
   paths.ts                 safeJoinUnderRoot path-traversal guard
+  ports.ts                 AgentResolverPort + AgentEntry / BlockedReason /
+                           BlockedDep / MissingDep (structural catalog contract)
+  workdir.ts               listWorkdirFiles workdir-artifact enumerator
   migrations.ts            applyTaskMigrations (drizzle migration applier)
   compose.ts               composeTaskModule({ dbFile, catalog, runtimeRegistry, … })
   testing.ts               openTestTaskDb helper (via /testing subpath)
@@ -36,7 +46,7 @@ drizzle/                   generated SQL migrations (committed)
 drizzle.config.ts          drizzle-kit config
 ```
 
-`task-service/` is the **SPLIT sub-layout** — present here because `task-service.ts` outgrew the 600 LOC / 3-concern thresholds. Most packages should stay flat (no sibling subdir); see [`docs/pkg-template.md § Splitting big files via facade + sibling subdir`](../../docs/pkg-template.md#splitting-big-files-via-facade--sibling-subdir) for the trigger criteria, the hard rules that apply once a split is taken, and the on-disk reference example at [`packages/_template/_examples/split-layout/`](../_template/_examples/split-layout/) (which the spec doc now documents inline under "On-disk reference example").
+`task-service/` is the **SPLIT sub-layout** - present here because `task-service.ts` outgrew the split threshold (>= 600 LOC AND >= 3 cohesive concerns). Most packages should stay flat (no sibling subdir); see [`docs/pkg-template.md § Splitting big files via facade + sibling subdir`](../../docs/pkg-template.md#splitting-big-files-via-facade--sibling-subdir) for the full hard-rule list and the on-disk reference example at [`packages/_template/_examples/split-layout/`](../_template/_examples/split-layout/).
 
 ## On-disk
 
@@ -74,10 +84,15 @@ const task = await service.dispatch({
   details: "Tone: warm. Length: ~600 words.",
 });
 
-await service.list();                     // Task[]
-await service.get(task.id);               // Task | null
-await service.cancel(task.id);            // best-effort SIGTERM
+await service.list();                                       // Task[]
+await service.list({ statuses: ["running"], agent: "writer" });
+await service.get(task.id);                                 // Task | null
+await service.liveCount();                                  // number — in-flight + live
+await service.hasInFlightForSchedule(scheduleId);           // boolean
+await service.deleteForSchedule(scheduleId);                // { deletedCount }
+await service.cancel(task.id);                              // best-effort SIGTERM
 await service.delete(task.id, { purge: false });
+const abs = await service.resolveArtifactPath(task.id, "report.html");
 
 // Activity streaming
 const items = await service.getTaskActivity(task.id, { limit: 50 });
@@ -88,7 +103,43 @@ if (stream !== null) {
   }
 }
 
-await close();                            // sweeps live subprocesses + closes DB
+await service.shutdown();                  // kill + drain live subprocesses
+service.close();                           // release manager-owned resources (no-op today)
+await close();                             // composeTaskModule cleanup: closes DB
+```
+
+### Helpers (framing / paths / metadata / port contract)
+
+These are all top-level exports from `@emploke/task` for callers that need
+to interact with the on-disk task contract or implement the
+`AgentResolverPort`:
+
+```ts
+import {
+  // file-based task brief + artifact contract
+  TASK_FILENAME,            // "TASK.md"
+  TASK_TEMP_SUBDIR,         // "temp"
+  TASK_ARTIFACT_SUBDIR,     // "artifact"
+  TASK_FRAMING_PROMPT_COPILOT,
+  assertFramingPromptIsSafe,
+  formatTaskMd,             // render `# <brief>\n\n<details>\n`
+  // workdir + path helpers
+  listWorkdirFiles,         // enumerate `<workdir>/<subdir>` recursively
+  safeJoinUnderRoot,        // path-traversal-safe join
+  // runtime metadata projection
+  readTaskRuntimeMetadata,
+  type TaskRuntimeMetadata,
+  // structural catalog port (implement to plug a different catalog)
+  type AgentResolverPort,
+  type AgentEntry,
+  type BlockedReason,
+  type BlockedDep,
+  type MissingDep,
+  // id helpers
+  assertValidTaskId,
+  generateTaskId,
+  TASK_ID_RE,
+} from "@emploke/task";
 ```
 
 ## State machine
@@ -119,10 +170,12 @@ are honoured on the headless launch path by `mergeEnv`.
 
 ## Errors
 
+- `TaskError`  base class for the errors below; consumers narrow with `instanceof`
 - `TaskNotFoundError`  unknown id
 - `InvalidTaskIdError`  id regex failed
 - `CorruptedTaskError`  row failed validation on read
 - `AgentNotFoundError`  agent FQN not in catalog
+- `AgentResolutionFailedError`  catalog itself misbehaved while resolving the agent (vs `AgentNotFoundError`, which is a clean miss)
 - `InvalidTransition`  illegal state-machine transition
 - `EntryNotReadyError`  runtime returned before agent was ready
 - `ManagerShuttingDownError`  dispatch refused during shutdown

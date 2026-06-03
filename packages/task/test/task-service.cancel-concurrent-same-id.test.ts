@@ -1,15 +1,13 @@
 /**
- * R-10 / ADR-001 §3.8 #10 — T3 cancel-concurrent-same-id.
+ * Concurrent cancel(id) for the same task: first call cancels, the
+ * rest throw InvalidTransition (idempotent).
  *
- * Two concurrent cancel(id) calls for the same live task. The
- * implementation coordinates via the `wasFirstToCancel` guard
- * inside cancel(): the first call observes `killReason === null`
- * and "owns" the kill; subsequent callers observe the prior reason,
- * await the same `live.settled` promise, then throw
- * InvalidTransition('cancelled', 'cancel') — the route maps to 409
- * for the Nth caller.
- *
- * This pins the idempotency contract.
+ * Two concurrent cancel(id) calls for the same live task coordinate
+ * via the `wasFirstToCancel` guard inside cancel(): the first call
+ * observes `killReason === null` and "owns" the kill; subsequent
+ * callers observe the prior reason, await the same `live.settled`
+ * promise, then throw InvalidTransition('cancelled', 'cancel') —
+ * the route maps to 409 for the Nth caller.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,16 +37,17 @@ describe("TaskService.cancel — concurrent same-id", () => {
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
 
-    const resolvedTask = fulfilled[0].status === "fulfilled" ? fulfilled[0].value : (null as never);
+    const resolvedTask =
+      fulfilled[0]!.status === "fulfilled" ? fulfilled[0]!.value : (null as never);
     expect(resolvedTask.status).toBe("cancelled");
     expect(resolvedTask.cancellation?.kind).toBe("user");
 
-    const err = rejected[0].status === "rejected" ? rejected[0].reason : (null as never);
+    const err = rejected[0]!.status === "rejected" ? rejected[0]!.reason : (null as never);
     expect(err).toBeInstanceOf(InvalidTransition);
     expect((err as InvalidTransition).eventType).toBe("cancel");
 
     // Subprocess was killed exactly once (the second cancel saw
     // killReason !== null and skipped its own kill() call).
-    expect(fx.rt.handles[0].killCount).toBe(1);
+    expect(fx.rt.handles[0]!.killCount).toBe(1);
   });
 });
