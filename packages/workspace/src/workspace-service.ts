@@ -1,6 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import pino, { type Logger } from "pino";
 import {
+  WorkspaceError,
   WorkspaceIdConflictError,
   WorkspaceNotRegisteredError,
   WorkspacePathConflictError,
@@ -24,23 +25,41 @@ const silentLogger: Logger = pino({ level: "silent" });
  * Exposes the full workspace surface: write commands (`register`,
  * `open`, `rename`, `unregister`) and read projections (`getById`,
  * `list`, `getLastOpened`, `getLastOpenedId`). All read paths go
- * through the repository to the {@link WorkspaceEntity} layer and
- * the service projects to the wire {@link Workspace} DTO via
- * {@link entityToDto}. Three-layer split per
- * `docs/pkg-template.md` "Repository contract":
+ * through the repository (which returns the internal `WorkspaceEntity`
+ * shape, structurally identical to the Drizzle row today) and are
+ * projected inline to the wire `Workspace` DTO by coalescing the
+ * nullable `lastOpenedAt` to `createdAt` so consumers never see
+ * `null`. The same projection is repeated in each read method; if a
+ * future column makes it non-trivial, extract a private `entityToDto`
+ * helper at that point.
+ *
+ * Three-layer split:
  *
  *   Drizzle Row → WorkspaceEntity (repo boundary) → Workspace (wire)
  *
  * The repository hides ORM specifics; the service hides nullability
- * normalisation and any cross-pkg composition (none for workspace,
- * but session adds workdir + runtime metadata at this same layer).
+ * normalisation, and would also be the place to fold in cross-pkg
+ * composition if any were needed (none for workspace today).
  *
- * Each write method: parse input → validate → run async FS work →
- * write to the DB last. The FS-then-DB ordering is deliberate: FS
- * work is the side-effect we cannot rollback, so doing it before the
- * DB write means a crash mid-register at worst leaves an empty
- * directory (idempotent retry-friendly) rather than a registry row
- * pointing at a directory that doesn't exist.
+ * Write methods that touch the filesystem (`register`;
+ * `unregister({ purge: true })`) do FS work BEFORE the DB write, but
+ * the rationale differs per method:
+ *
+ *   - `register` mkdir-then-insert: FS work is the side-effect we
+ *     cannot rollback, so doing it before the DB write means a crash
+ *     mid-register at worst leaves an empty directory (idempotent
+ *     retry-friendly) rather than a registry row pointing at a
+ *     directory that doesn't exist.
+ *
+ *   - `unregister({ purge: true })` rm-then-delete: the row is the
+ *     only thing that tells us *which* dirs to clean up, so deleting
+ *     it first would orphan the directories; rm-first means a crash
+ *     leaves the row in place and a re-run of `unregister` finishes
+ *     the cleanup (`findById` returning the still-present row drives
+ *     the second rm attempt).
+ *
+ * The pure-DB writes (`open`, `rename`, `unregister({ purge: false })`)
+ * skip the FS step entirely.
  *
  * Concurrency: register's pre-flight `findById` / `findByPath` checks
  * are best-effort UX. Two concurrent registers can race past them;
@@ -57,6 +76,19 @@ export class WorkspaceService {
     private readonly logger: Logger = silentLogger,
   ) {}
 
+  // Triaged write-path failure log. Typed user-input rejections
+  // (`WorkspaceError` subclasses, `InputValidationError`) are 4xx-class
+  // and emitted at `debug` — they're routine signal about malformed
+  // client input, not actionable noise for ops. Anything else is
+  // unexpected and goes through at `warn`.
+  private logCommandFailure(command: string, err: unknown): void {
+    if (err instanceof WorkspaceError || err instanceof InputValidationError) {
+      this.logger.debug({ command, err }, "command rejected");
+    } else {
+      this.logger.warn({ command, err }, "command failed");
+    }
+  }
+
   // ─── Reads ─────────────────────────────────────────────
 
   async getById(id: string): Promise<Workspace | null> {
@@ -65,28 +97,11 @@ export class WorkspaceService {
   }
 
   async list(): Promise<Workspace[]> {
-    // Per README contract: "a single unreadable workspace is silently
-    // dropped rather than failing the whole list" — wrap each entity
-    // projection so a malformed row (future stricter view, schema
-    // skew, NULL-where-not-expected) doesn't blow up the whole call.
-    // `getById` keeps fail-loud behaviour because the caller asked for
-    // that specific id.
     const entities = await this.repo.findAllByLastOpened();
-    const out: Workspace[] = [];
-    for (const entity of entities) {
-      try {
-        out.push({ ...entity, lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt });
-      } catch (err) {
-        this.logger.warn(
-          {
-            workspaceId: entity.id,
-            err,
-          },
-          "workspace list: dropping malformed row",
-        );
-      }
-    }
-    return out;
+    return entities.map((entity) => ({
+      ...entity,
+      lastOpenedAt: entity.lastOpenedAt ?? entity.createdAt,
+    }));
   }
 
   async getLastOpened(): Promise<Workspace | null> {
@@ -161,13 +176,12 @@ export class WorkspaceService {
           }
           if (msg.includes("workspaces.workspace_dir")) {
             // We don't know the conflicting id without a re-read; do
-            // one targeted lookup so the typed error carries it.
-            // Guard against the re-read itself throwing (db closed,
-            // lock timeout) — losing the original SQLITE_CONSTRAINT
-            // diagnostic to a follow-up error would mask the real
-            // cause. On lookup failure, throw the typed error with
-            // a sentinel id and re-emit the original constraint
-            // error as `cause` so logs can still find it.
+            // one targeted lookup so the typed error carries it. If
+            // the re-read itself throws (db closed, lock timeout),
+            // fall back to a sentinel id so the typed error still
+            // surfaces — losing the lookup is preferable to masking
+            // the original constraint violation behind a follow-up
+            // error.
             let conflictingId = "<unknown>";
             try {
               const existing = await this.repo.findByPath(workspaceDir);
@@ -184,7 +198,7 @@ export class WorkspaceService {
       this.logger.debug({ command: "register", id: input.id }, "command handled");
       return { id: input.id };
     } catch (err) {
-      this.logger.warn({ command: "register", err }, "command failed");
+      this.logCommandFailure("register", err);
       throw err;
     }
   }
@@ -198,7 +212,7 @@ export class WorkspaceService {
       await this.repo.update(id, { lastOpenedAt: new Date().toISOString() });
       this.logger.debug({ command: "open", id }, "command handled");
     } catch (err) {
-      this.logger.warn({ command: "open", err }, "command failed");
+      this.logCommandFailure("open", err);
       throw err;
     }
   }
@@ -218,7 +232,7 @@ export class WorkspaceService {
       await this.repo.update(id, { name: opts.newName });
       this.logger.debug({ command: "rename", id }, "command handled");
     } catch (err) {
-      this.logger.warn({ command: "rename", err }, "command failed");
+      this.logCommandFailure("rename", err);
       throw err;
     }
   }
@@ -243,7 +257,7 @@ export class WorkspaceService {
       await this.repo.delete(id);
       this.logger.debug({ command: "unregister", id }, "command handled");
     } catch (err) {
-      this.logger.warn({ command: "unregister", err }, "command failed");
+      this.logCommandFailure("unregister", err);
       throw err;
     }
   }

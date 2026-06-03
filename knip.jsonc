@@ -69,13 +69,6 @@
         "src/kindMeta.ts"
       ]
     },
-    "packages/workspace": {
-      // Drizzle-kit migration overhaul (#153) regenerated this seam on
-      // 2026-05-22; the brief's "≥14 days untouched" rule for file deletion
-      // does not apply yet, and the file is the standard `openTestXxxDb`
-      // helper every other entity pkg exposes.
-      "ignore": ["src/testing.ts"]
-    },
     "packages/runtime": {
       // resolveTestAgent is a one-liner Promise wrapper kept for symmetry
       // with the catalog-shaped helpers in this fixture file; no current

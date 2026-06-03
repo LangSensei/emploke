@@ -2,10 +2,15 @@ import path from "node:path";
 
 /**
  * Conventional sub-path layout under a workspace's `workspaceDir`.
- * Pure function; no fs side effects. Used by the workspace package's
- * own service and by downstream package managers
- * (`TaskService`, `SessionService`, `CatalogService`) to compute the
- * directories agents and runtimes use.
+ *
+ * `workflow` is currently unused inside this package: `register` does
+ * not allocate it and `unregister({ purge: true })` does not remove it.
+ * The slot is retained only because the `WorkspaceLayout` type is in
+ * the public barrel and narrowing it would be a breaking change. Do
+ * not add new in-pkg consumers; route to `@emploke/workflow` instead.
+ * The property name is singular while the directory is plural
+ * (`workflows/`); a rename to `workflows` would also be a public-type
+ * change and is intentionally deferred.
  */
 export interface WorkspaceLayout {
   readonly sessions: string;
@@ -13,6 +18,17 @@ export interface WorkspaceLayout {
   readonly workflow: string;
 }
 
+/**
+ * Compute the conventional sub-path layout under `workspaceDir`. Pure
+ * function; no fs side effects. Used by `WorkspaceService` for the
+ * `register` / `unregister({ purge: true })` FS work; also exported
+ * so downstream pkgs can compute the same paths without importing
+ * the service. Today no sibling pkg consumes it directly —
+ * `@emploke/workflow` owns its `workflows/` subdir via its own
+ * `workflowRoot()` helper, session/task compute their paths
+ * independently, and catalog stores its data inside the per-workspace
+ * `workspace.db` rather than under a subdirectory.
+ */
 export function workspaceLayout(workspaceDir: string): WorkspaceLayout {
   const root = path.resolve(workspaceDir);
   return {

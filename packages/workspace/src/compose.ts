@@ -8,11 +8,6 @@ import { WorkspaceService } from "./workspace-service.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
-/**
- * Open a better-sqlite3 connection in WAL mode, run pending migrations,
- * and wire up `WorkspaceService`. Tests pass `dbFile: ":memory:"`;
- * production passes the absolute path to `global.db`.
- */
 export interface WorkspaceModuleOptions {
   readonly dbFile: string;
   readonly logger?: Logger;
@@ -24,13 +19,18 @@ export interface WorkspaceModule {
   close(): Promise<void>;
 }
 
+/**
+ * Open a better-sqlite3 connection in WAL mode, run pending migrations,
+ * and wire up `WorkspaceService`. Tests pass `dbFile: ":memory:"`;
+ * production passes the absolute path to `global.db`.
+ */
 export async function composeWorkspaceModule(
   options: WorkspaceModuleOptions,
 ): Promise<WorkspaceModule> {
   const sqlite: BetterSqliteDatabase = new Database(options.dbFile);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("synchronous = NORMAL");
-  // No `foreign_keys = ON`  schema has no FK constraints; the
+  // No `foreign_keys = ON` — schema has no FK constraints; the
   // pragma without FKs is a no-op and would mislead readers.
   sqlite.pragma("busy_timeout = 5000");
   const db: Db = drizzle(sqlite, { schema });

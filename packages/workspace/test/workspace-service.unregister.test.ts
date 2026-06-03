@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,8 +25,6 @@ afterEach(async () => {
 
 async function seedOnDisk(wsDir: string): Promise<void> {
   await sys.service.register({ id: UUID_A, workspaceDir: wsDir, name: "X" });
-  await mkdir(path.join(wsDir, "sessions"), { recursive: true });
-  await mkdir(path.join(wsDir, "tasks"), { recursive: true });
 }
 
 describe("WorkspaceService.unregister", () => {

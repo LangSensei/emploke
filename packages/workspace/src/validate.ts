@@ -5,10 +5,9 @@ import { WorkspaceIdInvalidError, WorkspaceNameInvalidError } from "./errors.js"
 /**
  * Validation helpers for workspace inputs.
  *
- * No value-object wrappers — these are plain functions that validate
- * strings against the rules the API contract requires. The service
- * calls them at the API boundary; persistence code (`WorkspaceRepository`,
- * `WorkspaceQueries`) trusts what the service hands it.
+ * Plain functions that validate raw input strings against the
+ * API-contract rules. `WorkspaceService` calls them at its boundary;
+ * the repository trusts whatever the service hands it.
  */
 
 /** RFC-4122 UUID. Accept any version; we mint v4 but external sources may differ. */
@@ -63,17 +62,35 @@ export function normalizeWorkspaceDir(value: unknown): string {
   return path.resolve(value);
 }
 
-// ─── Zod shape guards (anti-DoS + presence) ──────────────────────
+// ─── Zod schema (presence + types; plus workspaceDir-must-be-absolute) ──
 
 export const RegisterWorkspaceInput = z.object({
   id: z.string(),
-  name: z.string().max(1000, "workspace name payload too large"),
+  // Length cap lives in `assertValidWorkspaceName` (MAX_DISPLAY_NAME_LENGTH).
+  // We don't repeat it here so over-length names surface as the typed
+  // `WorkspaceNameInvalidError` (with context), not as a generic
+  // `InputValidationError` from a duplicate-and-looser zod bound.
+  name: z.string(),
   workspaceDir: z
     .string()
     .min(1, "workspaceDir cannot be empty")
+    // The absolute-path check stays in zod (rather than mirroring the
+    // assertValid* pattern) for two reasons: there is no typed
+    // `WorkspacePathInvalidError` to throw, and the downstream
+    // `normalizeWorkspaceDir`'s `path.resolve` would silently
+    // absolutize a relative input — so the rejection has to happen
+    // here, before resolve masks the problem.
     .refine((p) => path.isAbsolute(p), "workspaceDir must be an absolute path"),
 });
 
+/**
+ * Thrown by `WorkspaceService.register` when the input fails the zod
+ * shape check (presence + types). Extends `Error` directly, NOT
+ * `WorkspaceError` — an `instanceof WorkspaceError` filter will miss
+ * it. The other writes (`open`, `rename`, `unregister`) bypass zod
+ * and instead throw the typed `WorkspaceError` subclasses via the
+ * `assertValid*` helpers.
+ */
 export class InputValidationError extends Error {
   constructor(scope: string, issues: readonly { path: readonly PropertyKey[]; message: string }[]) {
     super(

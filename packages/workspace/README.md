@@ -1,13 +1,15 @@
 # @emploke/workspace
 
-The workspace registry. A *workspace* is the user-chosen working
-directory holding emploke's per-project state (sessions, tasks,
-catalog) inside a single `workspace.db` SQLite file plus agent
-workdirs under `sessions/` and `tasks/`. The directory is normally
-user-chosen but can also be auto-allocated under
+A *workspace* is a user-chosen directory that holds emploke's
+per-project state. This package manages only the registry side: a
+single `$EMPLOKE_HOME/global.db` SQLite table mapping opaque UUIDs to
+absolute paths, plus allocation/cleanup of the per-workspace
+`sessions/` and `tasks/` subdirectories. The per-workspace
+`workspace.db` file is created and populated by sibling packages
+(`@emploke/session`, `@emploke/task`, `@emploke/catalog`). The
+directory is normally user-chosen but can also be auto-allocated under
 `$EMPLOKE_HOME/workspaces/<uuid>/` when the caller doesn't specify
-one. The `$EMPLOKE_HOME/global.db` SQLite registry maps opaque UUIDs
-to absolute workspace paths and stores each workspace's display name +
+one. The global registry stores each workspace's display name +
 last-opened timestamp; there is no per-workspace metadata sidecar
 file.
 
@@ -25,7 +27,6 @@ packages/workspace/src/
   layout.ts                  Pure path helpers (workspaceLayout, globalDbPath, ...)
   migrations.ts              applyWorkspaceMigrations (drizzle migration applier)
   compose.ts                 composeWorkspaceModule({ dbFile, logger? })
-  testing.ts                 openTestWorkspaceDb helper (via /testing subpath)
   index.ts                   public barrel
 drizzle/                     generated SQL migrations (committed)
 drizzle.config.ts            drizzle-kit config
@@ -59,6 +60,10 @@ The service owns reads + writes. There is no separate `Queries`
 class. The repository is package-private — consumers go through the
 service.
 
+`list()` returns workspaces ordered by `lastOpenedAt DESC`, with ties
+broken by `createdAt DESC` then `id ASC` (so identical-ms timestamps
+resolve to the lowest UUID).
+
 ## On-disk wire format
 
 ```sql
@@ -86,17 +91,33 @@ Per-workspace metadata (`name`, `createdAt`) lives in the same
 
 ```
 WorkspaceError
-├── WorkspaceNameInvalidError      400 — name failed validation
-├── WorkspaceIdInvalidError        400 — id is not a valid UUID
-├── WorkspaceNotRegisteredError    404 — id has no entry in the registry
-├── WorkspaceIdConflictError       409 — register({id}) collision
-├── WorkspacePathConflictError     409 — workspaceDir already registered
-└── RegistryError                  500 — registry-level failure (base)
+├── WorkspaceNameInvalidError          400 — name failed validation
+└── RegistryError                      500 — registry-level failure (base)
+    ├── WorkspaceIdInvalidError        400 — id is not a valid UUID
+    ├── WorkspaceNotRegisteredError    404 — id has no entry in the registry
+    ├── WorkspaceIdConflictError       409 — register({id}) collision
+    └── WorkspacePathConflictError     409 — workspaceDir already registered
+
+// Separate hierarchy — extends Error directly, NOT WorkspaceError:
+InputValidationError                   400 — register() input failed the zod schema
+                                             (missing/wrong-typed field, or
+                                              workspaceDir not absolute; only
+                                              register validates input through zod
+                                              today — open/rename/unregister go
+                                              through the assertValid* helpers and
+                                              throw the typed WorkspaceError
+                                              subclasses above)
 ```
 
-`list()` is resilient to per-row corruption: a single unreadable
-workspace is silently dropped rather than failing the whole list.
-`getById(id)` still throws the typed error.
+A `catch (e) { if (e instanceof WorkspaceError) … }` block will miss
+`InputValidationError`; add a second `else if (e instanceof InputValidationError) …`
+arm if you need to surface zod shape failures distinctly from typed
+domain errors.
+
+`getById(id)` returns `null` for unknown ids AND malformed ids
+alike — reads do not validate the id. Only write methods
+(`register`, `open`, `rename`, `unregister`) validate and throw
+`WorkspaceIdInvalidError`.
 
 Concurrency: `register`'s pre-flight conflict checks are best-effort
 UX. Two concurrent registers can race past them; the UNIQUE / PRIMARY
@@ -106,19 +127,38 @@ errors back into typed domain errors.
 
 ## Layout helper
 
+The `workflow` slot is currently unused inside this package:
+`register` does not allocate it and `unregister({ purge: true })`
+does not remove it. The slot is retained only because the
+`WorkspaceLayout` type is in the public barrel and narrowing it
+would be a breaking change. Do not add new in-pkg consumers; route
+to `@emploke/workflow` instead.
+
 ```ts
 import { workspaceLayout, globalDbPath, workspacesParentDir } from "@emploke/workspace";
 
 workspaceLayout("/abs/workspace-dir");
-// { sessions: "/abs/workspace-dir/sessions", tasks: "/abs/workspace-dir/tasks" }
+// {
+//   sessions: "/abs/workspace-dir/sessions",
+//   tasks:    "/abs/workspace-dir/tasks",
+//   workflow: "/abs/workspace-dir/workflows", // vestigial — see note above; do not consume
+// }
 
 globalDbPath("/abs/home");        // "/abs/home/global.db"
 workspacesParentDir("/abs/home"); // "/abs/home/workspaces"
 ```
 
-All pure functions; no fs side effects. Used by downstream services
-(`SessionService` / `TaskService` / `CatalogService`) to compute the
-directories agents and runtimes use.
+All pure functions; no fs side effects. `workspaceLayout` is used by
+this pkg's `WorkspaceService` for the `register` /
+`unregister({ purge: true })` FS work; it is exported so downstream
+pkgs can compute the same paths without importing the service, but
+today no sibling consumes it directly (`@emploke/workflow` owns its
+`workflows/` subdir via its own `workflowRoot()` helper, session/task
+compute their paths independently, and catalog stores its data
+inside the per-workspace `workspace.db` rather than under a
+subdirectory). `globalDbPath` and `workspacesParentDir` are consumed
+by `@emploke/server` to locate the global DB and the auto-allocation
+parent for new workspaces.
 
 ## Testing
 
