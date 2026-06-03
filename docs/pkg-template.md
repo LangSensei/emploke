@@ -40,8 +40,48 @@ packages/<pkg>/
   drizzle.config.ts            drizzle-kit codegen config
   package.json                 depends on better-sqlite3 + drizzle-orm + pino
   tsconfig.json                extends ../../tsconfig.base.json
+  tsconfig.typecheck.json      typecheck-only config covering src/ + test/
   vitest.config.ts
 ```
+
+## Typecheck configuration
+
+Every pkg ships a dedicated `tsconfig.typecheck.json` that broadens
+`include` to cover both `src/**/*` and `test/**/*`. The `typecheck`
+script invokes `tsc -p tsconfig.typecheck.json`; the file extends
+`./tsconfig.json` (the build config) and overrides only what's
+needed for a typecheck-only pass:
+
+```jsonc
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+**Why split out a typecheck config**: `vitest run` uses esbuild
+transpile-only — type errors in `.test.ts` files never surface during
+a test run. Without a typecheck pass over `test/`, real type errors
+(like passing `undefined` to a field whose type forbids it under
+`exactOptionalPropertyTypes`) accumulate silently.
+
+**Why `noEmit: true` in the config (not just on the CLI)**: lets
+callers run `tsc -p tsconfig.typecheck.json` without remembering to
+pass `--noEmit`. Bare `tsc` on this config refuses to emit; you can't
+accidentally write `.d.ts` or `.js` into `dist/` from a typecheck
+step.
+
+**Pkgs that diverge**: `packages/dashboard` keeps the same script
+shape but its `tsconfig.typecheck.json` uses `"include": ["src",
+"test"]` (no `rootDir`, no `exclude`) — Vite's module-resolution
+settings make the backend-style options unsafe to copy verbatim.
+`packages/e2e` uses `"include": ["test/**/*"]` (no `src/**/*`)
+because it has no `src/`.
 
 ## Test layout convention
 

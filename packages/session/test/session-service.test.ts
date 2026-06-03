@@ -8,6 +8,7 @@ import {
   RuntimeStateDeletionFailed,
   UnknownRuntimeError,
 } from "@emploke/runtime";
+import type { Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentNotFoundError,
@@ -47,15 +48,16 @@ function makeDb(): DbHandle {
  * `opts.contentSource`.
  */
 async function buildManager(
-  opts: Omit<SessionServiceConfig, "db" | "contentSource"> &
-    Partial<Pick<SessionServiceConfig, "db" | "contentSource">>,
+  opts: Omit<SessionServiceConfig, "db" | "contentSource" | "workspaceId"> &
+    Partial<Pick<SessionServiceConfig, "db" | "contentSource" | "workspaceId">>,
 ): Promise<SessionService> {
   const contentSource = opts.contentSource ?? stubContentSource();
+  const workspaceId = opts.workspaceId ?? "ws-test";
   if (opts.db !== undefined) {
-    return new SessionService({ ...opts, contentSource } as SessionServiceConfig);
+    return new SessionService({ ...opts, contentSource, workspaceId } as SessionServiceConfig);
   }
   const orm = makeDb();
-  return new SessionService({ ...opts, contentSource, db: orm.db });
+  return new SessionService({ ...opts, contentSource, workspaceId, db: orm.db });
 }
 
 beforeEach(async () => {
@@ -241,7 +243,10 @@ const seqRandom = () => {
 
 const recorder = () => {
   // Matches pino's API shape: (meta, msg). Tight-loop assertion
-  // timing rules out a real pino-backed captureLogger here.
+  // timing rules out a real pino-backed captureLogger here. Only
+  // `warn` is exercised by SessionService (the only level production
+  // code reaches in the paths under test); the cast is safe because
+  // the stub satisfies the surface SessionService actually calls.
   const calls: { msg: string; meta?: object }[] = [];
   return {
     logger: {
@@ -249,7 +254,7 @@ const recorder = () => {
         if (typeof meta === "string") calls.push({ msg: meta });
         else calls.push({ msg: msg ?? "", meta });
       },
-    },
+    } as unknown as Logger,
     calls,
   };
 };
@@ -798,6 +803,8 @@ describe("buildInteractiveLaunch()", () => {
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
+      workspaceId: "ws-test",
+      contentSource: stubContentSource(),
       db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
@@ -822,6 +829,8 @@ describe("buildInteractiveLaunch()", () => {
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
+      workspaceId: "ws-test",
+      contentSource: stubContentSource(),
       db: orm.db,
     });
     const s = await m.create({ agent: "demo" });
