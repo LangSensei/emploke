@@ -42,14 +42,13 @@ interface Harness {
   cap: ReturnType<typeof captureLogger>;
   application: Application;
   service: WorkspaceService;
-  queries: WorkspaceService;
 }
 
 async function makeHarness(): Promise<Harness> {
   const cap = captureLogger();
   const sys = await setupTestSubsystem({ scratch, logger: cap.logger });
   openSubsystems.push(sys);
-  return { cap, application: sys.application, service: sys.service, queries: sys.service };
+  return { cap, application: sys.application, service: sys.service };
 }
 
 async function registerWs(
