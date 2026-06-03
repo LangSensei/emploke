@@ -142,20 +142,12 @@ describe("route manifest", () => {
   });
 
   it("listRoutes returns 65 entries (the current API surface)", () => {
-    // A canary so a stealth route addition that DOES update the manifest
-    // (good) and the handler (good) still surfaces in code review.
-    // Bumped 52 → 53 for ADR-001's `tasks.cancel` route.
-    // Bumped 53 → 55 for issue #122's `catalog.{agents,skills}.anchor`
-    // dedicated endpoints (split-out anchor fetch from entry GET).
-    // Bumped 55 → 56 for issue #181's `tasks.artifact` download route.
-    // Bumped 56 → 57 for #61 PR 1's `scheduledTasks.list` route
-    // (split-out of the legacy `?origin=schedule` filter on `/tasks`).
-    // Bumped 57 → 64 for #61 PR 3's seven `schedules.*` CRUD routes
-    // (list, create, get, patch, delete, run, preview).
-    // Renamed (no count change) for #225–#229's URL-discriminated split:
-    // `schedules.create` → `schedules.task.create` on `/schedules/task`;
-    // `schedules.patch` → `schedules.task.patch` on `/schedules/task/:sid`.
-    expect(listRoutes()).toHaveLength(65); // +1 schedules.previewCron (#222)
+    // Canary against silent surface drift — updating the manifest AND
+    // the handler in a single commit keeps this assertion satisfied
+    // and forces a deliberate ++N here, which surfaces in code review.
+    // Historical bumps are reachable via `git log -p`; the running
+    // total is the only fact a reader needs today.
+    expect(listRoutes()).toHaveLength(65);
   });
 });
 

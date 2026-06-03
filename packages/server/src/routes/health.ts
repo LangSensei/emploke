@@ -4,15 +4,18 @@ import { Hono } from "hono";
 /**
  * GET /api/health — unauthenticated liveness + version surface.
  *
- * **Mount before any auth middleware** so the dashboard's backoff probe
- * can detect server-up without first having to acquire an API key. This
- * is intentional: an unauth health check leaks nothing more than "the
- * server is running and is on version X", both of which a network
- * scanner could derive from the connection itself.
+ * If a future auth middleware lands (today none exists; the server
+ * binds loopback-only and delegates auth to operator-managed
+ * transports — see `auth.ts`), mount it AFTER this route so the
+ * dashboard's backoff probe can detect server-up without
+ * authenticating. The endpoint exposes only `name`, `version`,
+ * `startedAt`, and `uptimeSec` — nothing a network observer couldn't
+ * already derive from the running socket.
  *
- * The `HealthResponse` wire shape lives in `@emploke/api` so the
- * dashboard, CLI, and external monitors can typecheck against it
- * without value-importing `@emploke/server`.
+ * The `HealthResponse` wire shape lives in `@emploke/contracts`
+ * (re-exported via `@emploke/api`) so the dashboard, CLI, and
+ * external monitors can typecheck against it without value-importing
+ * `@emploke/server`.
  *
  * `deps.now` is injected so tests can pin uptime; production passes
  * `() => Date.now()`.

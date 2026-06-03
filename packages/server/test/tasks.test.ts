@@ -679,7 +679,8 @@ describe("tasksRoutes", () => {
       });
       expect(res.status).toBe(409);
       const body = await res.json();
-      // R-6: structured envelope so the dashboard branches on code.
+      // Structured envelope so the dashboard branches on code (the
+      // 409 contract pinned by `error-response-contract.test.ts`).
       expect(body.code).toBe("InvalidTransition");
       expect(body.status).toBe("success");
       expect(body.transition).toBe("cancel");
@@ -711,7 +712,7 @@ describe("tasksRoutes", () => {
       const res = await tasksRoutes(() => m).request(`/${sampleTask.id}`, { method: "DELETE" });
       expect(res.status).toBe(409);
       const body = await res.json();
-      // R-6: same envelope shape as the cancel handler — only the
+      // Same envelope shape as the cancel handler — only the
       // transition discriminator differs so the dashboard can branch
       // its 409 handler typed.
       expect(body.code).toBe("InvalidTransition");

@@ -2,8 +2,11 @@ import { Writable } from "node:stream";
 import pino, { type Level, type Logger } from "pino";
 
 /**
- * Test-only helpers for the logging surface. Re-exported under
- * `pino (was @emploke/logger; pkg folded into consumers)/testing` so production bundles don't pick them up.
+ * Test-only helpers for the logging surface. Internal to
+ * `packages/server/test/`; sibling test files import directly via
+ * relative paths (`./_capture-logger.js`). Not re-exported; not part
+ * of any pkg's public surface. The underscore prefix signals the
+ * internal-to-this-directory convention.
  */
 
 /**

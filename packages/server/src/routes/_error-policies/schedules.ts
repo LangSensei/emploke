@@ -7,11 +7,11 @@
  *
  * ## Why agent errors come from `@emploke/task`
  *
- * The schedule pkg is now a kind-agnostic substrate (PR-on-#257 v2).
- * It does not know what an "agent" is and does not throw agent-related
+ * The schedule pkg is a kind-agnostic substrate (issue #257). It
+ * does not know what an "agent" is and does not throw agent-related
  * errors directly. The task-kind handler in
- * `core/src/wiring/schedule-task-handler.ts` performs the catalog
- * existence lookup during `validate(data)` and throws
+ * `packages/api/src/wiring/schedule-task-handler.ts` performs the
+ * catalog existence lookup during `validate(data)` and throws
  * `@emploke/task`'s `AgentNotFoundError` / `AgentResolutionFailedError`
  * directly on miss / failure. Those errors propagate through
  * `ScheduleService.create` / `.patch` untouched, so the schedules
@@ -94,10 +94,10 @@ export const schedulesErrorPolicy: ErrorPolicy = {
     // the create / patch validation path (the task handler calls
     // catalog.getAgent and re-throws as task-pkg's AgentNotFoundError
     // / AgentResolutionFailedError) AND the `POST /:sid/run` task
-    // dispatch path. The pre-W3 design had duplicate
-    // schedule-pkg-owned classes for the create/patch case; the
-    // open-registry design pushes that responsibility to the
-    // handler so we have a single source of truth.
+    // dispatch path. The schedule pkg is kind-agnostic and does not own
+    // agent-related classes; the open-registry design pushes that
+    // responsibility into the task-kind handler so the policy has a
+    // single source of truth per class.
     [InvalidTaskIdError, 400],
     [TaskNotFoundError, 404],
     [AgentNotFoundError, 400],

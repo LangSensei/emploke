@@ -143,12 +143,12 @@ describe("respondError contract — cross-domain status preservation", () => {
   });
 
   it("schedule route's AgentNotFoundError (task pkg, via kind handler) → 400", async () => {
-    // Post-W3 the schedule pkg no longer owns its own
-    // AgentNotFoundError class. The task-kind handler
-    // (`core/src/wiring/schedule-task-handler.ts`) throws
+    // The schedule pkg is kind-agnostic and does not own an
+    // AgentNotFoundError class. The task-kind handler (in
+    // `packages/api/src/wiring/schedule-task-handler.ts`) throws
     // task-pkg's `AgentNotFoundError` directly on catalog miss, and
-    // the schedules policy maps that class to 400. The pre-W3
-    // duplicate row is collapsed into the single task-pkg row.
+    // the schedules policy maps that class to 400 (one row covers
+    // both the validation and dispatch paths).
     const create = vi.fn(async () => {
       throw new TaskAgentNotFoundError("ghost");
     });

@@ -2,6 +2,18 @@
   "name": "@emploke/server",
   "version": "0.0.1",
   "type": "module",
+  "description": "HTTP API surface (Hono) for emploke -- workspace-scoped catalog / sessions / tasks / schedules over a per-workspace context registry. Pure transport adapter over @emploke/api.",
+  "keywords": [
+    "emploke",
+    "server",
+    "hono",
+    "agentic",
+    "workspace",
+    "catalog",
+    "sessions",
+    "tasks",
+    "schedules"
+  ],
   "_devPortNote": "The PORT=41817 in scripts.dev MUST stay in lock-step with the proxy target in packages/dashboard/vite.config.ts. If they drift, dev /api/* requests silently ECONNREFUSED.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +31,8 @@
     "build": "tsc",
     "start": "node dist/index.js --serve-static",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:strict": "tsc -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@emploke/api": "workspace:*",

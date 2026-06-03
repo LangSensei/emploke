@@ -41,13 +41,10 @@ export async function parseJsonBody<T = unknown>(
 const SAFE_ERROR_NAMES = new Set<string>([
   // @emploke/catalog
   // Real instances only — the catalog never throws an instance of the
-  // abstract `CatalogError` base class, and previous entries
-  // (`CatalogStateError`, `CycleDetected`, `MissingDependencies`,
-  // `UnsupportedCatalogVersionError`) named classes that don't exist
-  // in the codebase. Adding speculative names here would mask future
-  // typos: an entry on this list looks intentional even when the
-  // referenced class never gets thrown. Update by grepping
-  // `^export class \w+Error` in `packages/catalog/src/**`.
+  // abstract `CatalogError` base class. Adding speculative names here
+  // would mask future typos: an entry on this list looks intentional
+  // even when the referenced class never gets thrown. Update by
+  // grepping `^export class \w+Error` in `packages/catalog/src/**`.
   "FetchError",
   "AgentFrontmatterError",
   "SkillFrontmatterError",
@@ -59,6 +56,9 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "SkillNameInvalidError",
   "AgentNameInvalidError",
   "SkillNotFoundError",
+  // `AgentNotFoundError` is shared across catalog / session / schedule
+  // / task — one allow-list entry covers all four. Each owning pkg
+  // audits its own super(...) template for safety per the rules above.
   "AgentNotFoundError",
   "McpNotFoundError",
   "SkillOriginConflictError",
@@ -69,7 +69,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "AgentPlanStaleError",
   "RuntimeDoesNotSupportRemoteError",
   // @emploke/session
-  "AgentNotFoundError",
   "InvalidSessionIdError",
   "SessionIdAllocationFailedError",
   "SessionNotFoundError",
