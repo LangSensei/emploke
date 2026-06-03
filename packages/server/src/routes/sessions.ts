@@ -10,7 +10,8 @@ import { logEvent, parseJsonBody } from "./_shared.js";
  * (set by the workspace middleware on the parent route).
  *
  * The route accesses `.sessions` for CRUD operations and
- * `.spawnSession()` for the cross-BC spawn orchestration.
+ * `.sessions.spawnInteractive()` for the "start an interactive
+ * session" call site.
  */
 export type WorkspaceContextResolver = (c: import("hono").Context) => WorkspaceContext;
 
@@ -20,8 +21,11 @@ type SessionCreateBodyRaw = { [K in keyof SessionCreateBody]?: unknown };
  * Routes for `/api/workspaces/:id/sessions/*`. Pure transport — every
  * endpoint is parse body → dispatch to the workspace context → format
  * response. The cross-BC `spawn` endpoint delegates to
- * `WorkspaceContext.spawnSession()` which in turn calls
- * `SessionService.buildInteractiveLaunch` + `@emploke/terminal`.
+ * `SessionService.spawnInteractive()` which builds the interactive
+ * launch via `runtime.buildInteractiveLaunch` and hands the
+ * `LaunchCommand` to the injected terminal spawner (in production,
+ * `spawnTerminal` from `@emploke/terminal`, wired by
+ * `composeApplication`).
  */
 export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
   const app = new Hono();
@@ -162,9 +166,9 @@ export function sessionsRoutes(resolve: WorkspaceContextResolver): Hono {
       }
     }
 
-    let result: Awaited<ReturnType<WorkspaceContext["spawnSession"]>>;
+    let result: Awaited<ReturnType<WorkspaceContext["sessions"]["spawnInteractive"]>>;
     try {
-      result = await resolve(c).spawnSession(id, { remote });
+      result = await resolve(c).sessions.spawnInteractive(id, { remote });
     } catch (err) {
       return respondError(c, err, {
         route: "sessions",

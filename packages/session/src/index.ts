@@ -50,4 +50,7 @@ export type {
   ListSessionOpts,
   Session,
   SessionServiceConfig,
+  SpawnFn,
+  SpawnInteractiveResult,
+  SpawnSessionResult,
 } from "./types.js";

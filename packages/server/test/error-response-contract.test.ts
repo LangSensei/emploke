@@ -124,8 +124,13 @@ describe("respondError contract — cross-domain status preservation", () => {
       throw new SessionAgentNotFoundError("ghost");
     });
     const sessionsCtx = {
-      sessions: { list: vi.fn(async () => []), create, get: vi.fn(), delete: vi.fn() },
-      spawnSession: vi.fn(),
+      sessions: {
+        list: vi.fn(async () => []),
+        create,
+        get: vi.fn(),
+        delete: vi.fn(),
+        spawnInteractive: vi.fn(),
+      },
     };
     const res = await sessionsRoutes(() => sessionsCtx as never).request("/", {
       method: "POST",
@@ -193,8 +198,13 @@ describe("respondError contract — unmapped-fault observability gap-closes", ()
       throw new Error("ERR_MODULE_NOT_FOUND: cannot resolve @github/copilot-sdk");
     });
     const sessionsCtx = {
-      sessions: { list: vi.fn(async () => []), create, get: vi.fn(), delete: vi.fn() },
-      spawnSession: vi.fn(),
+      sessions: {
+        list: vi.fn(async () => []),
+        create,
+        get: vi.fn(),
+        delete: vi.fn(),
+        spawnInteractive: vi.fn(),
+      },
     };
     const { app, cap } = await buildAppWithLogger((a) => {
       a.route(
@@ -228,8 +238,13 @@ describe("respondError contract — unmapped-fault observability gap-closes", ()
       throw new Error("metadata.jsonl read failed");
     });
     const sessionsCtx = {
-      sessions: { list, create: vi.fn(), get: vi.fn(), delete: vi.fn() },
-      spawnSession: vi.fn(),
+      sessions: {
+        list,
+        create: vi.fn(),
+        get: vi.fn(),
+        delete: vi.fn(),
+        spawnInteractive: vi.fn(),
+      },
     };
     const { app, cap } = await buildAppWithLogger((a) => {
       a.route(
@@ -464,8 +479,13 @@ describe("respondError contract — AgentResolutionFailedError 500 path", () => 
       throw new SessionAgentResolutionFailedError("public/demo", new Error("DB exploded"));
     });
     const sessionsCtx = {
-      sessions: { list: vi.fn(async () => []), create, get: vi.fn(), delete: vi.fn() },
-      spawnSession: vi.fn(),
+      sessions: {
+        list: vi.fn(async () => []),
+        create,
+        get: vi.fn(),
+        delete: vi.fn(),
+        spawnInteractive: vi.fn(),
+      },
     };
     const { app, cap } = await buildAppWithLogger((a) => {
       a.route(

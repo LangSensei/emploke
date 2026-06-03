@@ -1,17 +1,15 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
-import type { LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
+import type { RuntimeRegistry } from "@emploke/runtime";
 import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
-import { composeSessionModule, type SessionService } from "@emploke/session";
-import { composeTaskModule, type TaskService } from "@emploke/task";
 import {
-  type Launcher,
-  NoTerminalFoundError,
-  type SpawnTerminalResult,
-  TerminalSpawnFailedError,
-  UnsupportedPlatformError,
-} from "@emploke/terminal";
+  composeSessionModule,
+  type SessionService,
+  type SpawnFn as SessionSpawnFn,
+  type SpawnSessionResult as SessionSpawnSessionResult,
+} from "@emploke/session";
+import { composeTaskModule, type TaskService } from "@emploke/task";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
@@ -22,22 +20,26 @@ export const silentLogger: Logger = pino({ level: "silent" });
  * Inject a fake terminal spawner. Tests pass a stub to avoid touching
  * the real host; production callers omit it to get the default
  * {@link import("@emploke/terminal").spawnTerminal} from `@emploke/terminal`.
+ *
+ * @deprecated Re-exported from `@emploke/session` for one minor cycle
+ * to preserve the published type-import surface for external
+ * consumers. New code SHOULD import `SpawnFn` from `@emploke/session`
+ * directly. The api-side re-export will be removed in the next minor
+ * after consumers migrate.
  */
-export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnTerminalResult>;
+export type SpawnFn = SessionSpawnFn;
 
 /**
- * Result of {@link WorkspaceContext.spawnSession}. The `display` field
- * is always present so the dashboard can show a copy-paste fallback
- * even when the terminal launch itself failed.
+ * Result of {@link SessionService.spawnInteractive} — the canonical
+ * "start an interactive session" call site.
+ *
+ * @deprecated Re-exported from `@emploke/session` for one minor cycle
+ * to preserve the published type-import surface for external
+ * consumers. New code SHOULD import `SpawnSessionResult` from
+ * `@emploke/session` directly. The api-side re-export will be removed
+ * in the next minor after consumers migrate.
  */
-export type SpawnSessionResult =
-  | { readonly ok: true; readonly launcher: Launcher; readonly display: string }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly code: string;
-      readonly display: string;
-    };
+export type SpawnSessionResult = SessionSpawnSessionResult;
 
 /**
  * Thrown by `WorkspaceContextRegistry.reload` when the cached context
@@ -58,6 +60,10 @@ export class WorkspaceHasLiveTasksError extends Error {
  * Per-workspace bundle of long-lived state. Holds three SQLite-backed
  * services (one per BC, sharing one `workspace.db` via WAL) plus the
  * cross-BC orchestration methods for this workspace.
+ *
+ * "Start an interactive session" semantics live on
+ * `sessions.spawnInteractive(sid, opts)` — callers reach the spawner
+ * via `ctx.sessions.spawnInteractive(...)`.
  */
 export interface WorkspaceContext {
   readonly workspace: Workspace;
@@ -71,15 +77,6 @@ export interface WorkspaceContext {
    * doesn't race a closed `TaskService`.
    */
   readonly schedules: ScheduleService;
-  /**
-   * Build the session's interactive launch command via
-   * {@link SessionService.buildInteractiveLaunch} and immediately hand
-   * it to {@link import("@emploke/terminal").spawnTerminal} (or the
-   * injected `spawnFn`). The returned `display` field is always
-   * populated so callers can show a copy-paste command even on spawn
-   * failure.
-   */
-  spawnSession(sid: string, opts?: { remote?: boolean }): Promise<SpawnSessionResult>;
   /** Closes all backing connections. Idempotent. */
   close(): Promise<void>;
 }
@@ -268,6 +265,7 @@ export class WorkspaceContextRegistry {
         workspaceDir: workspace.workspaceDir,
         workspaceId: id,
         logger: this.logger,
+        spawnFn: this.spawnFn,
       });
       cleanup.push(() => sessionModule.close());
       taskModule = await composeTaskModule({
@@ -314,52 +312,13 @@ export class WorkspaceContextRegistry {
       throw err;
     }
 
-    const sessions = sessionModule.service;
-    const spawnFn = this.spawnFn;
     const outerLogger = this.logger;
     const context: WorkspaceContext = {
       workspace,
       catalog: catalogModule.service,
-      sessions,
+      sessions: sessionModule.service,
       tasks: taskModule.service,
       schedules: scheduleModule.service,
-      async spawnSession(sid, opts) {
-        // buildInteractiveLaunch can throw (e.g.
-        // RuntimeDoesNotSupportRemoteError, TrustRegistrationFailed,
-        // ENOENT on a stale runtimeSessionId). The SpawnSessionResult
-        // contract documents that `display` is ALWAYS present so the
-        // dashboard can show a copy-paste fallback even on failure —
-        // wrapping only the spawn step would let a build-side throw
-        // skip past the result-shape entirely.
-        let cmd: LaunchCommand;
-        try {
-          cmd = await sessions.buildInteractiveLaunch(sid, {
-            ...(opts?.remote === true ? { remote: true } : {}),
-          });
-        } catch (err) {
-          return {
-            ok: false as const,
-            error: err instanceof Error ? err.message : String(err),
-            code: err instanceof Error && err.name ? err.name : "BuildLaunchError",
-            display: "",
-          };
-        }
-        try {
-          const result = await spawnFn(cmd);
-          return {
-            ok: true as const,
-            launcher: result.launcher,
-            display: cmd.display,
-          };
-        } catch (err) {
-          return {
-            ok: false as const,
-            error: err instanceof Error ? err.message : String(err),
-            code: spawnErrorCode(err),
-            display: cmd.display,
-          };
-        }
-      },
       async close() {
         // Per-module try/catch: a throw from one module's close()
         // must NOT skip the others. Earlier shape chained awaits
@@ -417,12 +376,4 @@ export class WorkspaceContextRegistry {
     );
     return context;
   }
-}
-
-function spawnErrorCode(err: unknown): string {
-  if (err instanceof NoTerminalFoundError) return "NoTerminalFoundError";
-  if (err instanceof TerminalSpawnFailedError) return "TerminalSpawnFailedError";
-  if (err instanceof UnsupportedPlatformError) return "UnsupportedPlatformError";
-  if (err instanceof Error && err.name) return err.name;
-  return "SpawnError";
 }

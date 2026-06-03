@@ -3,7 +3,13 @@
 Per-session workdir registry. Each session is a directory with an
 agent baked in by the runtime adapter (see
 [`@emploke/runtime`](../runtime)). This package **organizes** those
-workdirs  it does not spawn any process.
+workdirs — and, when an injected `SpawnFn` is supplied by the
+composition root, it also **invokes** the spawner via
+`SessionService.spawnInteractive(sid, opts)`. The actual spawning
+work lives in `@emploke/terminal`, which this package does not
+import (the `SpawnFn` type is structurally compatible with
+`spawnTerminal`'s signature; the wiring happens in
+`@emploke/api`'s `composeApplication`).
 
 ## Why
 
@@ -16,11 +22,16 @@ is the chat UI. emploke''s job is to:
   the opaque `runtimeSessionId` the runtime returned (this package)
 - give callers the exact incantation to launch / resume the runtime
   in a workdir
+- when a `SpawnFn` is injected at compose time, hand the incantation
+  to that spawner via `SessionService.spawnInteractive(sid, opts)`
+  and return the `SpawnSessionResult` discriminated union the
+  dashboard / CLI consume on `POST /sessions/:sid/spawn`
 - surface runtime-side display metadata (title / lastActiveAt) in
   `list()` by calling the runtime''s optional `readMetadata` hook
 
-You launch the CLI yourself (or `WorkspaceContext.spawnSession`
-in `@emploke/api` hands the command to `@emploke/terminal`).
+If no `SpawnFn` is wired in, `spawnInteractive` throws a
+documented misconfiguration error and you launch the CLI yourself
+from the `LaunchCommand` returned by `buildInteractiveLaunch`.
 
 ## Layout
 
@@ -28,16 +39,21 @@ in `@emploke/api` hands the command to `@emploke/terminal`).
 packages/session/src/
   schema.ts                Drizzle table def (private; only types exported)
   errors.ts                Domain error classes (exported)
-  types.ts                 Public DTOs (Session, LaunchCommand, opts shapes)
+  types.ts                 Public DTOs (Session, LaunchCommand, SpawnFn,
+                           SpawnInteractiveResult, SpawnSessionResult, opts shapes)
   validate.ts              id regex + assertValidSessionId + generators
   session-repository.ts    Drizzle CRUD (exported as type for advanced reads)
   session-entity.ts        SessionEntity (private; service projects to DTO)
-  session-service.ts       SessionService  create/get/list/delete/buildInteractiveLaunch
+  session-service.ts       SessionService  create/get/list/delete/
+                           buildInteractiveLaunch/spawnInteractive
   paths.ts                 Pure path builders for per-session workdirs
   migrations.ts            applySessionMigrations (drizzle migration applier)
-  compose.ts               composeSessionModule({ dbFile, catalog, runtimeRegistry, … })
+  compose.ts               composeSessionModule({ dbFile, catalog,
+                           runtimeRegistry, spawnFn?, … })
   testing.ts               openTestSessionDb helper (via /testing subpath)
   index.ts                 public barrel
+drizzle/                   generated SQL migrations (committed)
+drizzle.config.ts          drizzle-kit config
 drizzle/                   generated SQL migrations (committed)
 drizzle.config.ts          drizzle-kit config
 ```
@@ -81,13 +97,17 @@ session id**.
 
 ```ts
 import { composeSessionModule } from "@emploke/session";
-
+// `spawnTerminal` is wired in by `@emploke/api`'s `composeApplication`;
+// pass-throughs receive it via DI. Standalone session callers can
+// inject their own SpawnFn-compatible spawner here, or omit it (in
+// which case `service.spawnInteractive` throws on call).
 const { service, close } = await composeSessionModule({
   dbFile: "/abs/path/to/workspace.db",
   catalog,                                  // CatalogService
   runtimeRegistry,                          // RuntimeRegistry from @emploke/runtime
   workspaceDir: "/abs/workspace-dir",
   workspaceId: "<uuid>",
+  spawnFn,                                  // optional SpawnFn
 });
 
 const session = await service.create({ agent: "demo-agent" });
@@ -96,6 +116,16 @@ console.log(session.workdir);
 const cmd = await service.buildInteractiveLaunch(session.id);
 console.log(cmd.display);
 //  cd "/.../sessions/20260508-9dfbdf05" && copilot --session-id=<id> --yolo
+
+// One-shot: build the launch command AND hand it to the injected spawner.
+// Returns a SpawnSessionResult discriminated union; `display` is always
+// populated so callers can show a copy-paste fallback on failure.
+const result = await service.spawnInteractive(session.id, { remote: false });
+if (result.ok) {
+  console.log("launched in", result.launcher, "—", result.display);
+} else {
+  console.error(result.code, result.error, result.display);
+}
 
 await service.list();                       // Session[]
 await service.get(session.id);              // Session | null
@@ -125,9 +155,10 @@ returned.
 
 ## What this package does NOT do
 
-- Spawn `copilot`. `buildInteractiveLaunch` returns the invocation;
-  the terminal pkg or `WorkspaceContext.spawnSession` (in
-  `@emploke/api`) hands it to a terminal.
+- Implement terminal launching. `spawnInteractive` calls an
+  *injected* `SpawnFn`; the impl lives in `@emploke/terminal`
+  (production) or any structurally-compatible test fake. Session
+  itself does not import `@emploke/terminal`.
 - Track headless task execution. That''s [`@emploke/task`](../task).
 - Stream events from Copilot. The Copilot CLI handles the chat UI
   itself.

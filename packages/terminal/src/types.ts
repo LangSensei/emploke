@@ -14,14 +14,24 @@
  *
  * **Consumer port.** Terminal defines the shape it needs to spawn a
  * process into a platform terminal emulator. Producers — currently
- * `@emploke/runtime`'s `Runtime.buildInteractiveLaunch`, but anything
- * structurally compatible would work — own their own definition; the
- * wiring (in `@emploke/api`'s `application.ts`, where the producer's
- * output is handed to `spawnTerminal`) relies on TypeScript's
- * structural typing to confirm compatibility at the call site. Keeping
- * this type local removes terminal's workspace dep on any specific
+ * `@emploke/runtime`'s `Runtime.buildInteractiveLaunch` — own their
+ * own definition; the wiring relies on TypeScript's structural
+ * typing to confirm compatibility at the call sites. Keeping this
+ * type local removes terminal's workspace dep on any specific
  * producer pkg and makes terminal a pure infrastructure leaf
  * consumable by anything that can produce a command of this shape.
+ *
+ * The primary consumer is
+ * `SessionService.spawnInteractive` (in `@emploke/session`), which
+ * receives `spawnTerminal` via a `SpawnFn` port injected by
+ * `@emploke/api`'s `composeApplication`. `@emploke/session` deliberately
+ * does NOT import `@emploke/terminal` at all (neither value nor
+ * type); `SpawnFn`'s structural shape
+ * (`(cmd: LaunchCommand) => Promise<{ launcher: string }>`) is what
+ * holds the two together, with `spawnTerminal`'s return type
+ * (`SpawnTerminalResult = { launcher: Launcher }`) satisfying it
+ * via covariance (`Launcher` is a `string` subtype). The "consumable
+ * by anything" framing therefore remains realised, not aspirational.
  *
  * The `cmd`/`args`/`cwd` triple is suitable for `child_process.spawn`;
  * `display` is a single-line string suitable for showing to the user

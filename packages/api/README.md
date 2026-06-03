@@ -66,7 +66,7 @@ ctx.workspace;                                   // Workspace
 ctx.catalog;                                     // CatalogService
 ctx.sessions;                                    // SessionService
 ctx.tasks;                                       // TaskService
-await ctx.spawnSession(sid, { remote? });        // SpawnSessionResult
+await ctx.sessions.spawnInteractive(sid, { remote? }); // SpawnSessionResult
 
 app.loadedContexts();                            // snapshot of currently-loaded contexts
 
@@ -86,12 +86,16 @@ list-like operations:
 | `sessions` | `SessionService` | many sessions per workspace; service is the collection   |
 | `tasks`    | `TaskService`    | many tasks per workspace                                 |
 
-`spawnSession` builds the session's interactive launch command via
-`SessionService.buildInteractiveLaunch` and immediately hands it to
-the configured terminal spawner (`@emploke/terminal`'s
-`spawnTerminal` by default). The returned `display` field is always
-populated so callers can show a copy-paste command even on spawn
-failure.
+`sessions.spawnInteractive(sid, { remote? })` (a method on
+`SessionService` from `@emploke/session`) builds the session's
+interactive launch command via `SessionService.buildInteractiveLaunch`
+and immediately hands it to the configured terminal spawner
+(`@emploke/terminal`'s `spawnTerminal` by default, wired by
+`composeApplication`'s `spawnFn` option). The returned `display`
+field is always populated so callers can show a copy-paste command
+even on spawn failure. The result type `SpawnSessionResult` is
+canonical in `@emploke/session`; `@emploke/api` re-exports it (with
+`@deprecated` JSDoc) for one minor cycle, then it goes away.
 
 ## Concurrency invariants
 
@@ -128,8 +132,9 @@ Its sibling at T2 is `@emploke/contracts` (wire types). T0
 - `@emploke/contracts` (re-exported from the public barrel).
 - `@emploke/workspace`, `@emploke/catalog`, `@emploke/session`,
   `@emploke/task`, `@emploke/runtime`, `@emploke/schedule`,
-  `@emploke/terminal` (the last for `spawnTerminal` during session
-  spawn).
+  `@emploke/terminal` (the last for `spawnTerminal` which is injected
+  into `composeSessionModule` as the canonical `SpawnFn`; see
+  `application.ts`).
 
 `@emploke/api` MUST NOT import:
 
