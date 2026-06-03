@@ -3,30 +3,13 @@ import path from "node:path";
 import { type CatalogService, composeCatalogModule } from "@emploke/catalog";
 import type { RuntimeRegistry } from "@emploke/runtime";
 import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
-import {
-  composeSessionModule,
-  type SessionService,
-  type SpawnSessionResult as SessionSpawnSessionResult,
-  type SpawnFn,
-} from "@emploke/session";
+import { composeSessionModule, type SessionService, type SpawnFn } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
-
-/**
- * Result of {@link SessionService.spawnInteractive} — the canonical
- * "start an interactive session" call site.
- *
- * @deprecated Re-exported from `@emploke/session` for one minor cycle
- * to preserve the published type-import surface for external
- * consumers. New code SHOULD import `SpawnSessionResult` from
- * `@emploke/session` directly. The api-side re-export will be removed
- * in the next minor after consumers migrate.
- */
-export type SpawnSessionResult = SessionSpawnSessionResult;
 
 /**
  * Thrown by `WorkspaceContextRegistry.reload` when the cached context
