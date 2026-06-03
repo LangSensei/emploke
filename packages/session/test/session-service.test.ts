@@ -904,6 +904,26 @@ describe("buildInteractiveLaunch()", () => {
     expect(launch.env?.EMPLOKE_WORK_ID).toBe(s.id);
   });
 
+  it("per-session keys WIN on collision with runtime-supplied keys", async () => {
+    const rt = new StubRuntime();
+    rt.launchEnv = {
+      EMPLOKE_WORKSPACE: "runtime-wrong",
+      EMPLOKE_WORK_KIND: "task",
+      EMPLOKE_WORK_DIR: "/runtime/wrong",
+    };
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      workspaceId: "ws-uuid-delta",
+    });
+    const s = await m.create({ agent: "demo" });
+    const launch = await m.buildInteractiveLaunch(s.id);
+    expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-delta");
+    expect(launch.env?.EMPLOKE_WORK_KIND).toBe("session");
+    expect(launch.env?.EMPLOKE_WORK_DIR).toBe(s.workdir);
+  });
+
   it("stamps EMPLOKE_WORK_KIND='session' and EMPLOKE_WORK_ID=<sid> for the session under launch", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({

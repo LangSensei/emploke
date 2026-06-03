@@ -17,7 +17,7 @@ export function openTestSessionDb(): {
 } {
   const sqlite = new Database(":memory:");
   sqlite.pragma("journal_mode = WAL");
-  // No `foreign_keys = ON`  schema has no FK constraints; the pragma
+  // No `foreign_keys = ON` -- schema has no FK constraints; the pragma
   // without FKs is a no-op and would mislead readers.
   const db = drizzle(sqlite, { schema });
   applySessionMigrations(db);
