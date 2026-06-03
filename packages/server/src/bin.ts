@@ -1,10 +1,10 @@
 /**
  * Bundled binary entry point.
  *
- * The dev/source entry (`./index.ts`) exports `runServer` for direct use;
- * this file is the historical foreground bin that gets run by
- * `node packages/server/dist/index.js` (bundled production binary path
- * before the CLI takes over) and by the local `pnpm dev` workflow. The
+ * The library entry (`./index.ts`) exports `runServer` for direct use;
+ * this file is the foreground bin that gets run by
+ * `node packages/server/dist/bin.js` (the published binary path before
+ * the CLI takes over) and by the local `pnpm dev` workflow. The
  * dashboard is always shipped alongside the server, so we default
  * `--serve-static` ON unless the operator explicitly opts out with
  * `--no-serve-static`.

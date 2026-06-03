@@ -21,8 +21,8 @@ import {
  * `renameWorkspace`, `reloadWorkspace`) rather than reaching at the
  * registry directly.
  *
- * Phase 2 / ADR-3: the global registry now goes through Drizzle
- * (`setupTestSubsystem` opens the ORM internally).
+ * The global registry is opened via the workspace pkg's Drizzle
+ * composer (`setupTestSubsystem` does this internally).
  */
 
 let scratch: string;

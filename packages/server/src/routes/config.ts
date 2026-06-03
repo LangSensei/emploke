@@ -6,9 +6,9 @@ import { Hono } from "hono";
  * fresh on each request so dynamic fields (currently `currentWorkspace`)
  * stay accurate as the registry mutates.
  *
- * The `ServerConfig` wire shape lives in `@emploke/api` so the
- * dashboard and CLI can typecheck against it without value-importing
- * `@emploke/server`.
+ * The `ServerConfig` wire shape lives in `@emploke/contracts`
+ * (re-exported via `@emploke/api`) so the dashboard and CLI can
+ * typecheck against it without value-importing `@emploke/server`.
  */
 export function configRoutes(deps: {
   emplokeHome: string;

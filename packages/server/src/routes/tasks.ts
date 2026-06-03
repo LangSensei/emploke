@@ -31,7 +31,7 @@ export type TaskServiceResolver = (c: import("hono").Context) => TaskService;
  * Build the structured 409 body that pairs with an InvalidTransition
  * thrown out of cancel() / delete() / similar verbs.
  *
- * Shape (R-6 pinned):
+ * Shape (pinned by `error-response-contract.test.ts` and `tasks.test.ts`):
  *   {
  *     error:      "<human message>",
  *     code:       "InvalidTransition",
@@ -258,7 +258,7 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
   //   - 404 (TaskNotFoundError): unknown id
   //   - 409 (InvalidTransition): task already terminal → body carries
   //     `{ code, status, transition: 'cancel' }` so dashboard branches
-  //     typed (R-6 pinned shape)
+  //     typed
   //   - 503 (ManagerShuttingDownError): server is shutting down
   app.post("/:tid/cancel", async (c) => {
     const id = c.req.param("tid");

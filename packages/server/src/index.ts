@@ -36,10 +36,9 @@ import { tasksRoutes } from "./routes/tasks.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
-// Route manifest and wire types now live in `@emploke/api`; CLI
-// and dashboard import them directly from there. `@emploke/server`
-// no longer re-exports them — see Issue #255 and the C3 commit body
-// for the rationale. Server's public surface is now strictly its
+// Route manifest and wire types live in `@emploke/contracts`,
+// re-exported via `@emploke/api`; CLI and dashboard import them
+// directly from api. Server's public surface is strictly its
 // transport (`runServer`, `RunServerOpts`) + the auth helpers below
 // + the CLI lifecycle breadcrumb helpers (`resolveEmplokeHome`,
 // `logsDir`, `runtimeFilePath`, the `RuntimeFile` shape) re-exported
@@ -159,14 +158,14 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   // would throw `ERR_MODULE_NOT_FOUND` deep inside the SDK and
   // bubble back as a generic `HTTP 400 internal error` with no
   // server log — the exact silent-failure mode that motivated this
-  // gate (see issue `fix/copilot-sdk-packaging-chain`).
+  // gate.
   //
   // The thrown `CopilotSdkUnavailableError` carries the install
   // hint and the underlying `ERR_MODULE_NOT_FOUND` chain so the
   // operator sees actionable output on stderr.
   //
-  // Pairs with Change 3 (unmapped-error fall-through logging in
-  // tasks.ts) — the preflight catches the common case at boot;
+  // Pairs with the unmapped-error fall-through logging in
+  // `tasks.ts` — the preflight catches the common case at boot;
   // the route-level log catches any residual deep-resolution
   // failure at dispatch time. Together they fully eliminate the
   // silent-failure surface.
@@ -193,11 +192,8 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   );
 
   // Open the workspace registry (`global.db`) via the workspace pkg's
-  // composer. Phase 2 / ADR-3 (#139) replaced the previous
-  // `DatabaseSync` + custom migration framework with a Drizzle-managed
-  // entity layout; the encapsulation refactor (P1-5 follow-up) moved
-  // the Drizzle init into the workspace pkg itself, so the server
-  // only passes the DB file path. On first launch the workspace
+  // composer. The workspace pkg owns the Drizzle init internally, so
+  // the server only passes the DB file path. On first launch the
   // composer creates the schema from its own entity list; on
   // subsequent launches `orm.schema.updateSchema()` is a no-op for
   // matching schemas. (Production hardening: switch to
@@ -214,7 +210,7 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     defaultWorkspaceParent: workspacesParentDir(home),
     logger,
   });
-  logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg (Phase 2 / ADR-3)");
+  logger.info({ file: globalDbPath(home) }, "global.db opened via workspace pkg");
 
   const workspaceService = composition.workspaceService;
   const application = composition;
@@ -234,11 +230,15 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   app.use("*", requestLogger(logger));
   app.use("*", accessLog());
 
-  // /api/health is mounted *before* the auth middleware so the dashboard's
-  // backoff probe and external liveness checks can poll without first
-  // acquiring an API key. The endpoint exposes only `name`, `version`,
-  // `startedAt`, and `uptimeSec` — nothing a network observer couldn't
-  // already derive from the running socket.
+  // /api/health stays before any future auth middleware so the
+  // dashboard's backoff probe and external liveness checks can poll
+  // without authenticating. Today there is no auth middleware (issue
+  // #98 follow-up removed `EMPLOKE_API_KEY`; auth is delegated to the
+  // operator's reverse proxy / SSH tunnel / mesh VPN — see auth.ts);
+  // the route order convention is kept for the day a layer returns.
+  // The endpoint exposes only `name`, `version`, `startedAt`, and
+  // `uptimeSec` — nothing a network observer couldn't already derive
+  // from the running socket.
   const { name: serverName, version: serverVersion } = await readServerPackageMeta();
   const startedAtMs = Date.now();
   app.route(

@@ -379,12 +379,11 @@ describe("schedulesRoutes — create", () => {
   });
 
   it("POST /task maps task-pkg's AgentNotFoundError → 400 with typed code", async () => {
-    // Post-W3 the task kind handler throws task-pkg's
-    // AgentNotFoundError directly on catalog miss; the
-    // schedule-pkg's old `AgentNotFoundError` is gone. The
-    // schedules-error-policy table has a single row for this class
-    // covering both the create/patch validation path AND the
-    // /:sid/run dispatch path.
+    // The task kind handler throws task-pkg's AgentNotFoundError
+    // directly on catalog miss; the schedule pkg owns no agent-related
+    // classes. The schedules-error-policy table has a single row for
+    // this class covering both the create/patch validation path AND
+    // the /:sid/run dispatch path.
     const create = vi.fn(async () => {
       throw new AgentNotFoundError("ghost-agent");
     });

@@ -10,7 +10,8 @@
  * Why a dedicated module:
  *   - Keeps `index.ts` focused on Hono wiring instead of env munging.
  *   - The `0.0.0.0` → loopback rewrite has subtle platform behaviour and
- *     deserves its own dock-test surface.
+ *     deserves its own dedicated unit-test surface
+ *     (`test/subprocess-env.test.ts`).
  *
  * Variables emitted (all required, all string-typed):
  *   - EMPLOKE_SERVER     — `http://<host>:<port>`

@@ -9,9 +9,9 @@ import { Hono } from "hono";
  * button only renders enabled when the active runtime sets
  * `capabilities.remoteSession === true`).
  *
- * The `RuntimeInfo` wire shape lives in `@emploke/api` so
- * dashboard / CLI consumers can typecheck against it without
- * value-importing `@emploke/server`.
+ * The `RuntimeInfo` wire shape lives in `@emploke/contracts`
+ * (re-exported via `@emploke/api`) so dashboard / CLI consumers can
+ * typecheck against it without value-importing `@emploke/server`.
  */
 export function runtimesRoutes(registry: RuntimeRegistry): Hono {
   const app = new Hono();
