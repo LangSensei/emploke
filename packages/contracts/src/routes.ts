@@ -433,9 +433,6 @@ export interface ContentUpdateBody {
   readonly content: string;
 }
 
-/** PATCH body shared by metadata-update routes (skills / agents). Free-form record. */
-export type MetadataPatchBody = Record<string, unknown>;
-
 /** GET /api/workspaces/:id/catalog/skills/:name response (entry + content). */
 export type SkillWithContent = SkillEntry & { readonly content: string };
 
