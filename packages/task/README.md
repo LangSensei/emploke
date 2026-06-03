@@ -170,10 +170,12 @@ are honoured on the headless launch path by `mergeEnv`.
 
 ## Errors
 
+- `TaskError`  base class for the errors below; consumers narrow with `instanceof`
 - `TaskNotFoundError`  unknown id
 - `InvalidTaskIdError`  id regex failed
 - `CorruptedTaskError`  row failed validation on read
 - `AgentNotFoundError`  agent FQN not in catalog
+- `AgentResolutionFailedError`  catalog itself misbehaved while resolving the agent (vs `AgentNotFoundError`, which is a clean miss)
 - `InvalidTransition`  illegal state-machine transition
 - `EntryNotReadyError`  runtime returned before agent was ready
 - `ManagerShuttingDownError`  dispatch refused during shutdown

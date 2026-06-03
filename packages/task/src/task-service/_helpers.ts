@@ -1,11 +1,39 @@
 /**
- * Shared utilities for the task-service SPLIT sub-layout. Sibling
- * concern files (`dispatch.ts`, `mutations.ts`, `agent-resolver.ts`,
- * `queries.ts`, `activity-stream.ts`, `shutdown.ts`) all compose
- * through the facade and pull cross-cutting helpers from here, so no
- * sibling-to-sibling import edges remain. Leading underscore marks
- * this file as private utility (NOT a SPLIT peer) per the
- * pkg-template convention.
+ * Shared utilities for the SPLIT sub-layout of `task-service.ts`.
+ * Leading underscore marks this file as a private utility module
+ * (NOT a SPLIT peer) per the pkg-template convention. Cross-cutting
+ * helpers (`LiveTask`, `decideTerminal`, `applyTerminal`, `safeRm`)
+ * live here so the sibling concern modules do not need to reach into
+ * each other for shared types or functions.
+ *
+ * ## `task-service/` SPLIT layout convention
+ *
+ * **Leaf modules** — `activity-stream.ts`, `agent-resolver.ts`,
+ * `dispatch.ts`, `queries.ts`, and `shutdown.ts` — import only from
+ * `./_helpers.js` and the parent `../task-service.js` index. They
+ * MUST NOT import each other, and they MUST NOT import
+ * `./mutations.js`.
+ *
+ * **Orchestrator exception** — `mutations.ts` is the single
+ * exception: it sits at the top of the sub-layout DAG and wires
+ * `dispatch.ts` + `agent-resolver.ts` together for the
+ * dispatch / cancel / delete lifecycle. As the orchestrator it
+ * imports from sibling modules deliberately; nothing reverse-imports
+ * `mutations.ts`, so the graph stays acyclic (orchestrator →
+ * orchestrated, never the reverse).
+ *
+ * **Why not route the orchestrator through `_helpers.ts`?** Two
+ * unattractive alternatives:
+ *
+ *   - Re-export the `dispatch` / `agent-resolver` surface from
+ *     `_helpers.ts`. Pure indirection with no benefit, and
+ *     `_helpers` would no longer be a leaf utility.
+ *   - Collapse `mutations.ts` back into a flat module. Defeats the
+ *     SPLIT trigger (>= 600 LOC AND >= 3 cohesive concerns) that
+ *     justified carving the subdir out in the first place.
+ *
+ * The orchestrator pattern keeps the DAG acyclic AND the cohesive
+ * split intact.
  */
 
 import { rm } from "node:fs/promises";
