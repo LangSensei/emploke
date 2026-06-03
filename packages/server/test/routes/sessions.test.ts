@@ -1,5 +1,6 @@
-import type { SpawnSessionResult, WorkspaceContext } from "@emploke/api";
+import type { WorkspaceContext } from "@emploke/api";
 import type { CatalogService } from "@emploke/catalog";
+import type { SpawnSessionResult } from "@emploke/session";
 import {
   AgentNotFoundError,
   InvalidSessionIdError,

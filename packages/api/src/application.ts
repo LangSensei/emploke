@@ -12,8 +12,6 @@ import {
 import type { Logger } from "pino";
 import { type WorkspaceContext, WorkspaceContextRegistry } from "./workspace-context.js";
 
-export type { SpawnSessionResult } from "./workspace-context.js";
-
 /**
  * Composition root for the global registry plus on-demand
  * per-workspace contexts. The server (and future CLI / MCP / SDK
