@@ -1,7 +1,7 @@
 {
   "name": "@emploke/contracts",
   "version": "0.0.1",
-  "description": "Wire contracts and leaf path helpers for emploke. The strict-isolation entrypoint for dashboard + CLI: pure types plus pure-function path helpers, with no orchestration code in the runtime graph.",
+  "description": "Wire contracts for emploke. The strict-isolation entrypoint for dashboard + CLI: pure types only, with no orchestration code in the runtime graph.",
   "license": "MIT",
   "type": "module",
   "engines": {

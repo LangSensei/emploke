@@ -6,7 +6,9 @@ type re-exports) plus pure-function path helpers. No orchestration code.
 
 ## Audience
 
-- **`@emploke/dashboard`** — sole workspace dep. Browser code needs wire
+- **`@emploke/dashboard`** — sole workspace dep (declared under
+  `devDependencies` because every import is `import type` and gets
+  erased). Browser code needs wire
   shapes for HTTP responses and the route catalog for typed `fetch` calls;
   it must never pull Node-side orchestration into the SPA bundle. This pkg
   is structurally incapable of leaking such code into the dependency graph.
